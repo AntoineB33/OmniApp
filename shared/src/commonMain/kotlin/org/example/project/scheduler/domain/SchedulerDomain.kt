@@ -139,10 +139,13 @@ object SchedulerDomain {
         state: SchedulerState,
         cellId: CellId,
         text: String,
+        /** Draft task created while "New task" is selected; already represented by that menu row. */
+        excludeTaskId: TaskId? = null,
     ): List<TaskId> {
         val forbidden = siblingTaskIds(state, cellId) + ancestorTaskIds(state, cellId)
         return state.tasks.keys
             .filter { !isRootTask(it) && !isMainTask(it) }
+            .filter { it != excludeTaskId }
             .filter { it !in forbidden }
             .filter { task ->
                 val title = state.tasks[task]?.title.orEmpty()
@@ -162,8 +165,9 @@ object SchedulerDomain {
         state: SchedulerState,
         cellId: CellId,
         draftText: String,
+        excludeTaskId: TaskId? = null,
     ): List<ChangeTaskMenuEntry> {
-        val eligible = eligibleAssignTaskIds(state, cellId, draftText)
+        val eligible = eligibleAssignTaskIds(state, cellId, draftText, excludeTaskId)
         return buildList {
             add(ChangeTaskMenuEntry(taskId = null, label = "New task"))
             for (taskId in eligible) {

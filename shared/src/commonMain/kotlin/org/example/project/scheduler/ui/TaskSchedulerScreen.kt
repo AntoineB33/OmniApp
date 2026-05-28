@@ -26,6 +26,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +45,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.example.project.scheduler.domain.SchedulerDomain
@@ -258,7 +261,15 @@ private fun EditModeMenus(
         }
 
         if (session.mode == CellEditMode.ChangeTask) {
-            val taskEntries = SchedulerDomain.changeTaskMenuEntries(state, cellId, draftText)
+            val excludeDraftTask =
+                if (session.selectedAssignTaskId == null) session.newTaskDraftId else null
+            val taskEntries =
+                SchedulerDomain.changeTaskMenuEntries(
+                    state,
+                    cellId,
+                    draftText,
+                    excludeTaskId = excludeDraftTask,
+                )
             if (taskEntries.size > 1) {
                 val selectedIndex =
                     SchedulerDomain.changeTaskMenuSelectedIndex(
@@ -365,12 +376,29 @@ private fun TaskRow(
                 Text(if (expanded) "▾" else "▸")
             }
             if (isEditing) {
+                var textFieldValue by remember(cellId) { mutableStateOf(TextFieldValue()) }
+                SideEffect {
+                    if (!isEditing) {
+                        textFieldValue = TextFieldValue()
+                        return@SideEffect
+                    }
+                    if (textFieldValue.text != displayTitle) {
+                        textFieldValue =
+                            TextFieldValue(
+                                text = displayTitle,
+                                selection = TextRange(displayTitle.length),
+                            )
+                    }
+                }
                 OutlinedTextField(
                     modifier = Modifier
                         .weight(1f)
                         .focusRequester(editFocusRequester),
-                    value = displayTitle,
-                    onValueChange = onTextChange,
+                    value = textFieldValue,
+                    onValueChange = { newValue ->
+                        textFieldValue = newValue
+                        onTextChange(newValue.text)
+                    },
                     singleLine = false,
                     label = { Text("Task") },
                 )

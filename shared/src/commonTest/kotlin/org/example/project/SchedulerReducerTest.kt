@@ -505,6 +505,32 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun typing_to_begin_edit_does_not_duplicate_new_task_in_change_menu() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.BeginEdit(cellId = cellId, initialText = "h"),
+            )
+        val session = s.editSession!!
+        assertEquals(null, session.selectedAssignTaskId)
+        assertNotNull(session.newTaskDraftId)
+        assertEquals("h", s.tasks[session.newTaskDraftId!!]!!.title)
+
+        val entries =
+            SchedulerDomain.changeTaskMenuEntries(
+                s,
+                cellId,
+                session.draftText,
+                excludeTaskId = session.newTaskDraftId,
+            )
+        assertEquals(1, entries.size)
+        assertEquals(null, entries.single().taskId)
+        assertEquals("New task", entries.single().label)
+    }
+
+    @Test
     fun cancel_edit_restores_tree_before_session() {
         var s = SchedulerState.empty()
         val cellId = s.lists[s.rootListId]!!.cellIds.first()
