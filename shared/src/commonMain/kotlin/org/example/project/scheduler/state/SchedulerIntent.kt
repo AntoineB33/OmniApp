@@ -35,6 +35,8 @@ sealed interface SchedulerIntent {
 
     data class PickTaskFromMenu(val taskId: TaskId) : SchedulerIntent
 
+    data object SelectCreateAssignTask : SchedulerIntent
+
     data class PickTitleSuggestion(val title: String) : SchedulerIntent
 
     data object CancelEdit : SchedulerIntent

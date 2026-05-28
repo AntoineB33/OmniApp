@@ -39,16 +39,16 @@ The application maintains a dual-state selection model: **Main Selection** (a si
 While in Edit Mode, two contextual menus remain visible until editing concludes:
 
 **Menu 1: Mode Selector ("Change Task" vs. "Rename")**
-* **Change Task (Default):** A task menu displays existing `taskIds` matching the cell's current text. 
+* **Change Task (Default):** A task menu displays existing `taskIds` matching the cell's current text. The menu doesn't appear if there is only one element. There is always one of the elements that is selected. 
   * *Presentation:* `taskIds` are represented by their shortest path in the Task Tree (or a list of child titles if no cells point to it).
   * *Filtering:* Impossible IDs (already in the same list, or in the cell's ancestor path) are hidden.
-  * *Creation:* Typing dynamically creates a *new* `taskId` placed at the top of the task menu.
+  * *Creation:* Typing dynamically creates a *new* `taskId` placed at the top of the task menu. This element is selected by default when the text content changes.
   * *Sorting:* Shortest to longest path length -> alphabetical by path -> alphabetical by child titles.
   * *Cleanup:* If a task with no children loses all cell pointers, it is purged from the Task Tree.
 * **Rename:** Modifying the text updates the title field in the global `Tree`. *All* cells sharing this `taskId` will temporarily reflect the new text. If the mode is switched back or canceled, other cells revert to their original state.
 
 **Menu 2: Title Suggestions**
-* Displays a list of existing task titles similar to the current input.
+* Displays a list of existing task titles similar to the current input (except the exact same title). The menu doesn't appear if there is only one element.
 * *Sorting:* String similarity -> alphabetical -> number of `taskIds` sharing the title -> total occurrence count.
 * *Action:* Selecting a suggestion updates the cell text, but keeps the cell in Edit Mode with menus active.
 

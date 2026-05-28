@@ -404,6 +404,51 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun title_suggestions_exclude_exact_same_title() {
+        var s = SchedulerState.empty()
+        val first = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(first, "Cook pasta"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds.last(), "Cook pasta deluxe"))
+
+        val suggestions = SchedulerDomain.titleSuggestions(s, "Cook pasta")
+        assertFalse("Cook pasta" in suggestions)
+        assertEquals(listOf("Cook pasta deluxe"), suggestions)
+    }
+
+    @Test
+    fun change_task_menu_selects_create_new_when_draft_text_changes() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Alpha"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId))
+        assertEquals(s.cells[cellId]!!.taskId, s.editSession!!.selectedAssignTaskId)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText("Alphabet"))
+        assertEquals(null, s.editSession!!.selectedAssignTaskId)
+    }
+
+    @Test
+    fun change_task_menu_selects_picked_task() {
+        var s = SchedulerState.empty()
+        val alphaCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaCell, "Alpha"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(alphaCell))
+        val alphaListId = s.tasks[s.cells[alphaCell]!!.taskId!!]!!.childListId!!
+        val nestedCell = s.lists[alphaListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(nestedCell, "Nested"))
+
+        val betaCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(betaCell, "Beta"))
+        val betaId = s.cells[betaCell]!!.taskId!!
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(nestedCell))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PickTaskFromMenu(betaId))
+        assertEquals(betaId, s.editSession!!.selectedAssignTaskId)
+        assertEquals("Beta", s.editSession!!.draftText)
+        assertEquals(betaId, s.cells[nestedCell]!!.taskId)
+    }
+
+    @Test
     fun begin_edit_opens_session_with_default_change_task_mode() {
         var s = SchedulerState.empty()
         val cellId = s.lists[s.rootListId]!!.cellIds.first()

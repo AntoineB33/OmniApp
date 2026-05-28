@@ -125,6 +125,12 @@ object SchedulerDomain {
             .joinToString(", ")
     }
 
+    data class ChangeTaskMenuEntry(
+        /** `null` = create a new task from the current draft text. */
+        val taskId: TaskId?,
+        val label: String,
+    )
+
     /**
      * Task IDs eligible for "Change Task" on [cellId] while editing [text].
      * Filters ancestors/siblings; sorts by path length, path label, child titles (PRD §4).
@@ -151,6 +157,40 @@ object SchedulerDomain {
             )
     }
 
+    /** All rows in the Change Task menu; each row represents one task (or a new task from the draft). */
+    fun changeTaskMenuEntries(
+        state: SchedulerState,
+        cellId: CellId,
+        draftText: String,
+    ): List<ChangeTaskMenuEntry> {
+        val eligible = eligibleAssignTaskIds(state, cellId, draftText)
+        return buildList {
+            if (draftText.isNotEmpty()) {
+                add(ChangeTaskMenuEntry(taskId = null, label = draftText))
+            }
+            for (taskId in eligible) {
+                val pathLabel = taskPathLabel(state, taskId)
+                val childLabel = childTitlesLabel(state, taskId)
+                val label =
+                    if (childLabel.isNotEmpty()) "$pathLabel ($childLabel)"
+                    else pathLabel
+                add(ChangeTaskMenuEntry(taskId = taskId, label = label))
+            }
+        }
+    }
+
+    fun changeTaskMenuSelectedIndex(
+        entries: List<ChangeTaskMenuEntry>,
+        selectedAssignTaskId: TaskId?,
+    ): Int {
+        if (entries.isEmpty()) return -1
+        if (selectedAssignTaskId != null) {
+            val index = entries.indexOfFirst { it.taskId == selectedAssignTaskId }
+            if (index >= 0) return index
+        }
+        return 0
+    }
+
     fun titleSimilarity(title: String, input: String): Int {
         if (input.isEmpty()) return 0
         return when {
@@ -172,6 +212,7 @@ object SchedulerDomain {
      */
     fun titleSuggestions(state: SchedulerState, input: String): List<String> =
         state.titleToTaskIds.keys
+            .filter { it != input }
             .filter { input.isEmpty() || it.contains(input, ignoreCase = true) }
             .sortedWith(
                 compareByDescending<String> { titleSimilarity(it, input) }

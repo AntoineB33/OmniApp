@@ -19,6 +19,7 @@ object SchedulerReducer {
             is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
             is SchedulerIntent.SetEditMode -> reduceSetEditMode(state, intent.mode)
             is SchedulerIntent.PickTaskFromMenu -> reducePickTaskFromMenu(state, intent.taskId)
+            SchedulerIntent.SelectCreateAssignTask -> reduceSelectCreateAssignTask(state)
             is SchedulerIntent.PickTitleSuggestion -> reducePickTitleSuggestion(state, intent.title)
             SchedulerIntent.CancelEdit -> reduceCancelEdit(state)
             SchedulerIntent.Undo -> undo(state)
@@ -37,6 +38,9 @@ object SchedulerReducer {
                     SchedulerEditSession(
                         cellId = intent.cellId,
                         draftText = draft,
+                        selectedAssignTaskId =
+                            if (intent.initialText != null || draft != currentTitle) null
+                            else cell.taskId,
                         treeBefore = state.captureTree(),
                     ),
                 selection = SchedulerSelection(main = intent.cellId, selected = emptySet()),
@@ -51,7 +55,15 @@ object SchedulerReducer {
     private fun reduceUpdateEditText(state: SchedulerState, text: String): SchedulerState {
         val session = state.editSession ?: return state
         if (text == session.draftText) return state
-        val withDraft = state.copy(editSession = session.copy(draftText = text))
+        val withDraft =
+            state.copy(
+                editSession =
+                    session.copy(
+                        draftText = text,
+                        selectedAssignTaskId =
+                            if (session.mode == CellEditMode.ChangeTask) null else session.selectedAssignTaskId,
+                    ),
+            )
         return commitDelta(withDraft, editTextDelta(withDraft, text))
     }
 
@@ -67,12 +79,21 @@ object SchedulerReducer {
         if (!SchedulerDomain.canAssignTaskId(state, cellId, taskId)) return state
         val title = state.tasks[taskId]?.title.orEmpty()
         val assigned = commitDelta(state, assignTaskIdDelta(state, cellId, taskId))
-        val withDraft = assigned.copy(editSession = session.copy(draftText = title))
+        val withDraft =
+            assigned.copy(
+                editSession = session.copy(draftText = title, selectedAssignTaskId = taskId),
+            )
         return if (title != session.draftText) {
             commitDelta(withDraft, editTextDelta(withDraft, title))
         } else {
             withDraft
         }
+    }
+
+    private fun reduceSelectCreateAssignTask(state: SchedulerState): SchedulerState {
+        val session = state.editSession ?: return state
+        if (session.mode != CellEditMode.ChangeTask || session.selectedAssignTaskId == null) return state
+        return state.copy(editSession = session.copy(selectedAssignTaskId = null))
     }
 
     private fun reducePickTitleSuggestion(state: SchedulerState, title: String): SchedulerState {

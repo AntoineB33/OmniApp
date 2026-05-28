@@ -258,33 +258,39 @@ private fun EditModeMenus(
         }
 
         if (session.mode == CellEditMode.ChangeTask) {
-            Text(
-                text = "Tasks",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (draftText.isNotEmpty()) {
-                TaskMenuRow(
-                    label = "Create: $draftText",
-                    emphasized = true,
-                    onClick = { /* draft already applied via typing */ },
+            val taskEntries = SchedulerDomain.changeTaskMenuEntries(state, cellId, draftText)
+            if (taskEntries.size > 1) {
+                val selectedIndex =
+                    SchedulerDomain.changeTaskMenuSelectedIndex(
+                        taskEntries,
+                        session.selectedAssignTaskId,
+                    )
+                Text(
+                    text = "Tasks",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-            SchedulerDomain.eligibleAssignTaskIds(state, cellId, draftText).forEach { taskId ->
-                val pathLabel = SchedulerDomain.taskPathLabel(state, taskId)
-                val childLabel = SchedulerDomain.childTitlesLabel(state, taskId)
-                val label =
-                    if (childLabel.isNotEmpty()) "$pathLabel ($childLabel)"
-                    else pathLabel
-                TaskMenuRow(
-                    label = label,
-                    onClick = { onIntent(SchedulerIntent.PickTaskFromMenu(taskId)) },
-                )
+                taskEntries.forEachIndexed { index, entry ->
+                    val label =
+                        if (entry.taskId == null) "Create: ${entry.label}"
+                        else entry.label
+                    TaskMenuRow(
+                        label = label,
+                        selected = index == selectedIndex,
+                        onClick = {
+                            if (entry.taskId == null) {
+                                onIntent(SchedulerIntent.SelectCreateAssignTask)
+                            } else {
+                                onIntent(SchedulerIntent.PickTaskFromMenu(entry.taskId))
+                            }
+                        },
+                    )
+                }
             }
         }
 
         val suggestions = SchedulerDomain.titleSuggestions(state, draftText)
-        if (suggestions.isNotEmpty()) {
+        if (suggestions.size > 1) {
             Text(
                 text = "Title suggestions",
                 style = MaterialTheme.typography.labelMedium,
@@ -303,7 +309,7 @@ private fun EditModeMenus(
 @Composable
 private fun TaskMenuRow(
     label: String,
-    emphasized: Boolean = false,
+    selected: Boolean = false,
     onClick: () -> Unit,
 ) {
     Text(
@@ -313,10 +319,10 @@ private fun TaskMenuRow(
             .padding(vertical = 4.dp, horizontal = 8.dp),
         text = label,
         style =
-            if (emphasized) MaterialTheme.typography.bodyMedium
+            if (selected) MaterialTheme.typography.bodyMedium
             else MaterialTheme.typography.bodySmall,
         color =
-            if (emphasized) MaterialTheme.colorScheme.primary
+            if (selected) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.onSurface,
     )
 }
