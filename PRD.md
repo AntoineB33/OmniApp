@@ -20,7 +20,7 @@ OmniApp is a unified, multi-platform workspace application. The initial release 
 * **Quality Assurance:** Behavior-Driven Development (BDD) / Test-Driven Development (TDD). No UI code is to be merged without corresponding ViewModel state tests passing.
 
 ## 5. Future Roadmap
-* **v1.0.0+:** Priority assignement (absolute percentage, relative percentage, hours per day...) 
+* **v1.0.0+:** Priority assignment (absolute percentage, relative percentage, hours per day).
 * **v2.0.0+:** Additional specialized pages accessible via the top-right navigation dropdown.
 * **v3.0.0:** Cloud synchronization and real-time collaboration.
 
