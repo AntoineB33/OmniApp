@@ -23,6 +23,22 @@ sealed interface SchedulerIntent {
         val taskId: TaskId,
     ) : SchedulerIntent
 
+    /** [initialText] non-null when entering via typing (replaces cell content with first keystroke). */
+    data class BeginEdit(
+        val cellId: CellId,
+        val initialText: String? = null,
+    ) : SchedulerIntent
+
+    data class UpdateEditText(val text: String) : SchedulerIntent
+
+    data class SetEditMode(val mode: CellEditMode) : SchedulerIntent
+
+    data class PickTaskFromMenu(val taskId: TaskId) : SchedulerIntent
+
+    data class PickTitleSuggestion(val title: String) : SchedulerIntent
+
+    data object CancelEdit : SchedulerIntent
+
     data object Undo : SchedulerIntent
     data object Redo : SchedulerIntent
 }

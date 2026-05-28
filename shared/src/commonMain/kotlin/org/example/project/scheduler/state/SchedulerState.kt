@@ -46,6 +46,7 @@ data class SchedulerState(
     val titleToTaskIds: Map<String, List<TaskId>>,
     val expanded: Set<CellId>,
     val selection: SchedulerSelection,
+    val editSession: SchedulerEditSession? = null,
     val history: SchedulerHistory,
     private val nextTaskCounter: Int = 0,
 ) {

@@ -2,6 +2,8 @@ package org.example.project.scheduler.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,20 +12,44 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
 
@@ -34,11 +60,33 @@ fun TaskSchedulerScreen(
 ) {
     val state by vm.state.collectAsState()
     val visibleOrder = SchedulerDomain.visibleCellOrder(state)
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface)
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (state.editSession != null) {
+                    if (event.key == Key.Delete && !event.isCtrlPressed) {
+                        vm.dispatch(SchedulerIntent.CancelEdit)
+                        return@onPreviewKeyEvent true
+                    }
+                    return@onPreviewKeyEvent false
+                }
+                val main = state.selection.main ?: return@onPreviewKeyEvent false
+                if (!SchedulerDomain.isSelectableCell(state, main)) return@onPreviewKeyEvent false
+                val typed = event.printableChar() ?: return@onPreviewKeyEvent false
+                vm.dispatch(SchedulerIntent.BeginEdit(main, typed))
+                true
+            }
             .padding(12.dp),
     ) {
         Text(
@@ -47,7 +95,10 @@ fun TaskSchedulerScreen(
         )
         Spacer(Modifier.height(12.dp))
 
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            modifier = Modifier.verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             CellListSection(
                 state = state,
                 listId = state.rootListId,
@@ -57,6 +108,14 @@ fun TaskSchedulerScreen(
             )
         }
     }
+}
+
+private fun androidx.compose.ui.input.key.KeyEvent.printableChar(): String? {
+    if (isCtrlPressed || isMetaPressed) return null
+    if (key == Key.Enter || key == Key.Tab || key == Key.Escape || key == Key.Backspace) return null
+    val codePoint = utf16CodePoint
+    if (codePoint <= 0x1F) return null
+    return Char(codePoint).toString()
 }
 
 @Composable
@@ -75,15 +134,18 @@ private fun CellListSection(
         val isSelected =
             selectable &&
                 (state.selection.main == cellId || state.selection.selected.contains(cellId))
+        val isEditing = state.editSession?.cellId == cellId
+        val editDraft = if (isEditing) state.editSession!!.draftText else title
         val hasChildren = cell.taskId?.let { state.tasks[it]?.childListId != null } == true
         val expanded = cellId in state.expanded
 
         TaskRow(
             depth = depth,
             cellId = cellId,
-            title = title,
+            displayTitle = if (isEditing) editDraft else title,
             selected = isSelected,
             selectable = selectable,
+            isEditing = isEditing,
             hasChildren = hasChildren,
             expanded = expanded,
             onClick = { clicked, ctrl, shift ->
@@ -97,12 +159,30 @@ private fun CellListSection(
                     ),
                 )
             },
-            onTitleChange = { newTitle ->
-                if (selectable) onIntent(SchedulerIntent.SetCellTitle(cellId, newTitle))
+            onDoubleClick = {
+                if (selectable && !isEditing) {
+                    onIntent(SchedulerIntent.BeginEdit(cellId))
+                }
+            },
+            onTextChange = { newText ->
+                onIntent(SchedulerIntent.UpdateEditText(newText))
             },
             onToggleExpand = {
                 if (hasChildren) onIntent(SchedulerIntent.ToggleExpand(cellId))
             },
+            editMenus =
+                if (isEditing) {
+                    {
+                        EditModeMenus(
+                            state = state,
+                            cellId = cellId,
+                            draftText = editDraft,
+                            onIntent = onIntent,
+                        )
+                    }
+                } else {
+                    null
+                },
         )
 
         if (expanded && hasChildren) {
@@ -118,20 +198,151 @@ private fun CellListSection(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditModeMenus(
+    state: SchedulerState,
+    cellId: CellId,
+    draftText: String,
+    onIntent: (SchedulerIntent) -> Unit,
+) {
+    val session = state.editSession ?: return
+    var modeMenuExpanded by remember(session.cellId) { mutableStateOf(false) }
+    val modeLabel =
+        when (session.mode) {
+            CellEditMode.ChangeTask -> "Change Task"
+            CellEditMode.Rename -> "Rename"
+        }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        ExposedDropdownMenuBox(
+            expanded = modeMenuExpanded,
+            onExpandedChange = { modeMenuExpanded = it },
+        ) {
+            OutlinedTextField(
+                modifier = Modifier
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                    .widthIn(max = 220.dp),
+                value = modeLabel,
+                onValueChange = {},
+                readOnly = true,
+                singleLine = true,
+                label = { Text("Mode") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modeMenuExpanded) },
+                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+            )
+            ExposedDropdownMenu(
+                expanded = modeMenuExpanded,
+                onDismissRequest = { modeMenuExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Change Task") },
+                    onClick = {
+                        onIntent(SchedulerIntent.SetEditMode(CellEditMode.ChangeTask))
+                        modeMenuExpanded = false
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Rename") },
+                    onClick = {
+                        onIntent(SchedulerIntent.SetEditMode(CellEditMode.Rename))
+                        modeMenuExpanded = false
+                    },
+                )
+            }
+        }
+
+        if (session.mode == CellEditMode.ChangeTask) {
+            Text(
+                text = "Tasks",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (draftText.isNotEmpty()) {
+                TaskMenuRow(
+                    label = "Create: $draftText",
+                    emphasized = true,
+                    onClick = { /* draft already applied via typing */ },
+                )
+            }
+            SchedulerDomain.eligibleAssignTaskIds(state, cellId, draftText).forEach { taskId ->
+                val pathLabel = SchedulerDomain.taskPathLabel(state, taskId)
+                val childLabel = SchedulerDomain.childTitlesLabel(state, taskId)
+                val label =
+                    if (childLabel.isNotEmpty()) "$pathLabel ($childLabel)"
+                    else pathLabel
+                TaskMenuRow(
+                    label = label,
+                    onClick = { onIntent(SchedulerIntent.PickTaskFromMenu(taskId)) },
+                )
+            }
+        }
+
+        val suggestions = SchedulerDomain.titleSuggestions(state, draftText)
+        if (suggestions.isNotEmpty()) {
+            Text(
+                text = "Title suggestions",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            suggestions.take(8).forEach { suggestion ->
+                TaskMenuRow(
+                    label = suggestion,
+                    onClick = { onIntent(SchedulerIntent.PickTitleSuggestion(suggestion)) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TaskMenuRow(
+    label: String,
+    emphasized: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Text(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp, horizontal = 8.dp),
+        text = label,
+        style =
+            if (emphasized) MaterialTheme.typography.bodyMedium
+            else MaterialTheme.typography.bodySmall,
+        color =
+            if (emphasized) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurface,
+    )
+}
+
 @Composable
 private fun TaskRow(
     depth: Int,
     cellId: CellId,
-    title: String,
+    displayTitle: String,
     selected: Boolean,
     selectable: Boolean,
+    isEditing: Boolean,
     hasChildren: Boolean,
     expanded: Boolean,
     onClick: (CellId, ctrl: Boolean, shift: Boolean) -> Unit,
-    onTitleChange: (String) -> Unit,
+    onDoubleClick: () -> Unit,
+    onTextChange: (String) -> Unit,
     onToggleExpand: () -> Unit,
+    editMenus: (@Composable () -> Unit)?,
 ) {
-    Row(
+    val editFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(isEditing) {
+        if (isEditing) editFocusRequester.requestFocus()
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = (depth * 16).dp)
@@ -139,29 +350,46 @@ private fun TaskRow(
                 if (selected) MaterialTheme.colorScheme.primaryContainer
                 else MaterialTheme.colorScheme.surfaceVariant,
             )
-            .padding(8.dp)
-            .then(
-                if (selectable) {
-                    Modifier.clickable { onClick(cellId, false, false) }
-                } else {
-                    Modifier
-                },
-            ),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(8.dp),
     ) {
-        IconButton(
-            onClick = onToggleExpand,
-            enabled = hasChildren,
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(if (expanded) "▾" else "▸")
+            IconButton(
+                onClick = onToggleExpand,
+                enabled = hasChildren,
+            ) {
+                Text(if (expanded) "▾" else "▸")
+            }
+            if (isEditing) {
+                OutlinedTextField(
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(editFocusRequester),
+                    value = displayTitle,
+                    onValueChange = onTextChange,
+                    singleLine = false,
+                    label = { Text("Task") },
+                )
+            } else {
+                Text(
+                    modifier = Modifier
+                        .weight(1f)
+                        .then(
+                            if (selectable) {
+                                Modifier.combinedClickable(
+                                    onClick = { onClick(cellId, false, false) },
+                                    onDoubleClick = onDoubleClick,
+                                )
+                            } else {
+                                Modifier
+                            },
+                        ),
+                    text = displayTitle.ifEmpty { " " },
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            }
         }
-        OutlinedTextField(
-            modifier = Modifier.weight(1f),
-            value = title,
-            onValueChange = onTitleChange,
-            enabled = selectable,
-            singleLine = false,
-            label = { Text("Task") },
-        )
+        editMenus?.invoke()
     }
 }

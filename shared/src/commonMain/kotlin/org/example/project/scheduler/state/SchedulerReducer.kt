@@ -15,10 +15,86 @@ object SchedulerReducer {
             is SchedulerIntent.ToggleExpand -> commitDelta(state, ToggleExpandDelta(intent.cellId))
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
             is SchedulerIntent.AssignTaskId -> commitDelta(state, assignTaskIdDelta(state, intent.cellId, intent.taskId))
+            is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
+            is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
+            is SchedulerIntent.SetEditMode -> reduceSetEditMode(state, intent.mode)
+            is SchedulerIntent.PickTaskFromMenu -> reducePickTaskFromMenu(state, intent.taskId)
+            is SchedulerIntent.PickTitleSuggestion -> reducePickTitleSuggestion(state, intent.title)
+            SchedulerIntent.CancelEdit -> reduceCancelEdit(state)
             SchedulerIntent.Undo -> undo(state)
             SchedulerIntent.Redo -> redo(state)
         }
     }
+
+    private fun reduceBeginEdit(state: SchedulerState, intent: SchedulerIntent.BeginEdit): SchedulerState {
+        if (!SchedulerDomain.isSelectableCell(state, intent.cellId)) return state
+        val cell = state.cells[intent.cellId] ?: return state
+        val currentTitle = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()
+        val draft = intent.initialText ?: currentTitle
+        val withSession =
+            state.copy(
+                editSession =
+                    SchedulerEditSession(
+                        cellId = intent.cellId,
+                        draftText = draft,
+                        treeBefore = state.captureTree(),
+                    ),
+                selection = SchedulerSelection(main = intent.cellId, selected = emptySet()),
+            )
+        return if (intent.initialText != null || draft != currentTitle) {
+            commitDelta(withSession, editTextDelta(withSession, draft))
+        } else {
+            withSession
+        }
+    }
+
+    private fun reduceUpdateEditText(state: SchedulerState, text: String): SchedulerState {
+        val session = state.editSession ?: return state
+        if (text == session.draftText) return state
+        val withDraft = state.copy(editSession = session.copy(draftText = text))
+        return commitDelta(withDraft, editTextDelta(withDraft, text))
+    }
+
+    private fun reduceSetEditMode(state: SchedulerState, mode: CellEditMode): SchedulerState {
+        val session = state.editSession ?: return state
+        if (session.mode == mode) return state
+        return state.copy(editSession = session.copy(mode = mode))
+    }
+
+    private fun reducePickTaskFromMenu(state: SchedulerState, taskId: TaskId): SchedulerState {
+        val session = state.editSession ?: return state
+        val cellId = session.cellId
+        if (!SchedulerDomain.canAssignTaskId(state, cellId, taskId)) return state
+        val title = state.tasks[taskId]?.title.orEmpty()
+        val assigned = commitDelta(state, assignTaskIdDelta(state, cellId, taskId))
+        val withDraft = assigned.copy(editSession = session.copy(draftText = title))
+        return if (title != session.draftText) {
+            commitDelta(withDraft, editTextDelta(withDraft, title))
+        } else {
+            withDraft
+        }
+    }
+
+    private fun reducePickTitleSuggestion(state: SchedulerState, title: String): SchedulerState {
+        return reduceUpdateEditText(state, title)
+    }
+
+    private fun reduceCancelEdit(state: SchedulerState): SchedulerState {
+        val session = state.editSession ?: return state
+        val delta = CancelEditDelta(before = state.captureTree(), after = session.treeBefore)
+        return commitDelta(state, delta).copy(editSession = null)
+    }
+
+    private fun editTextDelta(state: SchedulerState, text: String): Delta {
+        val session = state.editSession ?: return NoOpDelta
+        val cellId = session.cellId
+        return when (session.mode) {
+            CellEditMode.Rename -> setCellTitleDelta(state, cellId, text)
+            CellEditMode.ChangeTask -> setCellTitleDelta(state, cellId, text)
+        }
+    }
+
+    private fun endEditSession(state: SchedulerState): SchedulerState = state.copy(editSession = null)
 
     private fun reduceClick(state: SchedulerState, intent: SchedulerIntent.ClickCell): SchedulerState {
         if (!SchedulerDomain.isSelectableCell(state, intent.cellId)) return state
@@ -51,13 +127,19 @@ object SchedulerReducer {
                 else -> SchedulerSelection(main = intent.cellId, selected = emptySet())
             }
 
-        return commitDelta(
-            state,
-            SetSelectionDelta(
-                before = state.selection,
-                after = newSelection,
-            ),
-        )
+        var next =
+            commitDelta(
+                state,
+                SetSelectionDelta(
+                    before = state.selection,
+                    after = newSelection,
+                ),
+            )
+        val editing = state.editSession
+        if (editing != null && intent.cellId != editing.cellId) {
+            next = endEditSession(next)
+        }
+        return next
     }
 
     private fun undo(state: SchedulerState): SchedulerState {
@@ -286,4 +368,19 @@ private data class TreeMutationDelta(
     override fun undo(state: SchedulerState): SchedulerState = state.applyTree(before)
 
     override fun redo(state: SchedulerState): SchedulerState = state.applyTree(after)
+}
+
+private data class CancelEditDelta(
+    val before: TreeSnapshot,
+    val after: TreeSnapshot,
+) : Delta {
+    override fun undo(state: SchedulerState): SchedulerState = state.applyTree(before)
+
+    override fun redo(state: SchedulerState): SchedulerState = state.applyTree(after)
+}
+
+private object NoOpDelta : Delta {
+    override fun undo(state: SchedulerState): SchedulerState = state
+
+    override fun redo(state: SchedulerState): SchedulerState = state
 }

@@ -7,6 +7,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.WellKnownIds
+import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
@@ -400,6 +401,61 @@ class SchedulerReducerTest {
 
         val suggestions = SchedulerDomain.titleSuggestions(s, "Cook")
         assertEquals(listOf("Cook pasta", "Cook rice"), suggestions)
+    }
+
+    @Test
+    fun begin_edit_opens_session_with_default_change_task_mode() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.BeginEdit(cellId = cellId, initialText = "x"),
+            )
+        assertNotNull(s.editSession)
+        assertEquals(cellId, s.editSession!!.cellId)
+        assertEquals("x", s.editSession!!.draftText)
+        assertEquals(CellEditMode.ChangeTask, s.editSession!!.mode)
+    }
+
+    @Test
+    fun cancel_edit_restores_tree_before_session() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        val treeBefore = s.captureTree()
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.BeginEdit(cellId = cellId, initialText = "Draft"),
+            )
+        assertNotNull(s.cells[cellId]!!.taskId)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CancelEdit)
+        assertEquals(null, s.editSession)
+        assertEquals(treeBefore.tasks, s.tasks)
+        assertEquals(treeBefore.cells[cellId]?.taskId, s.cells[cellId]?.taskId)
+    }
+
+    @Test
+    fun click_other_cell_ends_edit_session() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.BeginEdit(cellId = visible[0], initialText = "A"),
+            )
+        assertNotNull(s.editSession)
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.ClickCell(
+                    cellId = visible[1],
+                    ctrl = false,
+                    shift = false,
+                    visibleOrder = visible,
+                ),
+            )
+        assertEquals(null, s.editSession)
     }
 
     @Test
