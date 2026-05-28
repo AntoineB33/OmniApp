@@ -18,6 +18,7 @@ class SchedulerReducerTest {
         assertEquals(WellKnownIds.MAIN_LIST, s.rootListId)
         assertNotNull(s.tasks[WellKnownIds.ROOT_TASK])
         assertNotNull(s.tasks[WellKnownIds.MAIN_TASK])
+        assertEquals("root", s.tasks[WellKnownIds.ROOT_TASK]!!.title)
         assertEquals("main", s.tasks[WellKnownIds.MAIN_TASK]!!.title)
         assertEquals(listOf(WellKnownIds.MAIN_TASK), s.tasks[WellKnownIds.ROOT_TASK]!!.childTaskIds)
         assertEquals(listOf(WellKnownIds.MAIN_TASK), s.titleToTaskIds["main"])
@@ -25,9 +26,19 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun new_task_is_linked_under_main_in_task_tree() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Daily"))
+
+        val taskId = s.cells[cellId]!!.taskId!!
+        assertTrue(taskId in s.tasks[WellKnownIds.MAIN_TASK]!!.childTaskIds)
+    }
+
+    @Test
     fun click_sets_main_and_clears_multi() {
         var s = seedThreeTasks()
-        val visible = SchedulerDomain.visibleCellOrder(s)
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
 
         s = SchedulerReducer.reduce(
             s,
@@ -54,7 +65,7 @@ class SchedulerReducerTest {
     @Test
     fun shift_click_selects_range_in_visible_order() {
         var s = seedThreeTasks()
-        val visible = SchedulerDomain.visibleCellOrder(s)
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
 
         s = SchedulerReducer.reduce(
             s,
@@ -63,6 +74,24 @@ class SchedulerReducerTest {
         s = SchedulerReducer.reduce(
             s,
             SchedulerIntent.ClickCell(cellId = visible[2], ctrl = false, shift = true, visibleOrder = visible),
+        )
+
+        assertEquals(visible[2], s.selection.main)
+        assertEquals(setOf(visible[0], visible[1], visible[2]), s.selection.selected)
+    }
+
+    @Test
+    fun ctrl_shift_click_expands_selection_like_shift_click() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[2], ctrl = true, shift = true, visibleOrder = visible),
         )
 
         assertEquals(visible[2], s.selection.main)
@@ -124,7 +153,7 @@ class SchedulerReducerTest {
         val task = s.tasks[s.cells[cellId]!!.taskId!!]!!
         assertNotNull(task.childListId)
         assertFalse(s.expanded.contains(cellId))
-        val subList = s.lists[task.childListId!!]!!
+        val subList = s.lists[task.childListId]!!
         assertEquals(1, subList.cellIds.size)
         assertEquals(null, s.cells[subList.cellIds.first()]!!.taskId)
         assertEquals(2, s.lists[s.rootListId]!!.cellIds.size)
@@ -190,6 +219,45 @@ class SchedulerReducerTest {
 
         assertEquals(before, s.cells[second]!!.taskId)
         assertFalse(s.cells[second]!!.taskId == duplicateId)
+    }
+
+    @Test
+    fun assign_task_id_purges_task_when_last_cell_reassigned() {
+        var s = SchedulerState.empty()
+        val parentCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(parentCell, "Parent"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(parentCell))
+        val childListId = s.tasks[s.cells[parentCell]!!.taskId!!]!!.childListId!!
+        val child = s.lists[childListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(child, "Temp"))
+        val tempId = s.cells[child]!!.taskId!!
+
+        val keeperCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(keeperCell, "Keeper"))
+        val keeperId = s.cells[keeperCell]!!.taskId!!
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AssignTaskId(child, keeperId))
+
+        assertEquals(keeperId, s.cells[child]!!.taskId)
+        assertFalse(s.tasks.containsKey(tempId))
+    }
+
+    @Test
+    fun occurrences_sorted_by_shortest_cell_path() {
+        var s = SchedulerState.empty()
+        val shallow = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(shallow, "Shared"))
+        val sharedId = s.cells[shallow]!!.taskId!!
+
+        val branch = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branch, "Branch"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(branch))
+        val deepCell = s.lists[s.tasks[s.cells[branch]!!.taskId!!]!!.childListId!!]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AssignTaskId(deepCell, sharedId))
+
+        val depths = s.tasks[sharedId]!!.occurrences.map { SchedulerDomain.cellTreeDepth(s, it) }
+        assertEquals(depths, depths.sorted())
+        assertTrue(depths.first() < depths.last())
     }
 
     @Test
@@ -276,6 +344,85 @@ class SchedulerReducerTest {
 
         assertEquals(sharedChildListId, s.tasks[sharedTaskId]!!.childListId)
         assertEquals(sharedTaskId, s.cells[branchBChild]!!.taskId)
+    }
+
+    @Test
+    fun eligible_assign_task_ids_hide_ancestors_and_siblings() {
+        var s = SchedulerState.empty()
+        val parent = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(parent, "Parent"))
+        val parentTask = s.cells[parent]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(parent))
+
+        val childListId = s.tasks[parentTask]!!.childListId!!
+        val firstChild = s.lists[childListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstChild, "First"))
+        val firstChildTask = s.cells[firstChild]!!.taskId!!
+
+        val emptySlot = s.lists[childListId]!!.cellIds.last()
+        val eligible = SchedulerDomain.eligibleAssignTaskIds(s, emptySlot, "")
+        assertFalse(parentTask in eligible)
+        assertFalse(firstChildTask in eligible)
+    }
+
+    @Test
+    fun eligible_assign_task_ids_sorted_by_path_length_then_label() {
+        var s = SchedulerState.empty()
+        val alphaCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaCell, "Alpha"))
+        val alphaId = s.cells[alphaCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(alphaCell))
+        val alphaListId = s.tasks[alphaId]!!.childListId!!
+        val nestedCell = s.lists[alphaListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(nestedCell, "Nested"))
+        val nestedId = s.cells[nestedCell]!!.taskId!!
+
+        val betaCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(betaCell, "Beta"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(betaCell))
+        val betaListId = s.tasks[s.cells[betaCell]!!.taskId!!]!!.childListId!!
+
+        val emptyInSublist = s.lists[betaListId]!!.cellIds.last()
+        val eligible = SchedulerDomain.eligibleAssignTaskIds(s, emptyInSublist, "")
+        val alphaIndex = eligible.indexOf(alphaId)
+        val nestedIndex = eligible.indexOf(nestedId)
+        assertTrue(alphaIndex >= 0 && nestedIndex >= 0)
+        assertTrue(alphaIndex < nestedIndex)
+    }
+
+    @Test
+    fun title_suggestions_sorted_by_similarity_then_alphabetical() {
+        var s = SchedulerState.empty()
+        val first = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(first, "Cook pasta"))
+        val second = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(second, "Cook rice"))
+
+        val suggestions = SchedulerDomain.titleSuggestions(s, "Cook")
+        assertEquals(listOf("Cook pasta", "Cook rice"), suggestions)
+    }
+
+    @Test
+    fun assign_task_id_is_undoable() {
+        var s = SchedulerState.empty()
+        val a = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(a, "A"))
+        val taskA = s.cells[a]!!.taskId!!
+
+        val b = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(b, "B"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(b))
+        val child = s.lists[s.tasks[s.cells[b]!!.taskId!!]!!.childListId!!]!!.cellIds.first()
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AssignTaskId(child, taskA))
+        assertEquals(taskA, s.cells[child]!!.taskId)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertEquals(null, s.cells[child]!!.taskId)
+        assertEquals(listOf(a), s.tasks[taskA]!!.occurrences)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Redo)
+        assertEquals(taskA, s.cells[child]!!.taskId)
     }
 
     private fun seedThreeTasks(): SchedulerState {

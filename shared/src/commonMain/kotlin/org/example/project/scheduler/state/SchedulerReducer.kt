@@ -23,7 +23,8 @@ object SchedulerReducer {
     private fun reduceClick(state: SchedulerState, intent: SchedulerIntent.ClickCell): SchedulerState {
         if (!SchedulerDomain.isSelectableCell(state, intent.cellId)) return state
 
-        val visibleOrder = intent.visibleOrder.ifEmpty { SchedulerDomain.visibleCellOrder(state) }
+        val visibleOrder =
+            intent.visibleOrder.ifEmpty { SchedulerDomain.selectableVisibleOrder(state) }
         val currentMain = state.selection.main
         val newSelection =
             when {
@@ -117,15 +118,29 @@ private fun assignTaskIdDelta(
 
 private fun applyAssignTaskId(state: SchedulerState, cellId: CellId, taskId: TaskId): SchedulerState {
     val cell = state.cells[cellId] ?: return state
-    val task = state.tasks[taskId] ?: return state
+    val targetTask = state.tasks[taskId] ?: return state
+
+    var tasks = state.tasks.toMutableMap()
+    val oldTaskId = cell.taskId
+
+    if (oldTaskId != null && oldTaskId != taskId) {
+        val oldTask = tasks[oldTaskId] ?: return state
+        tasks[oldTaskId] = oldTask.copy(occurrences = oldTask.occurrences - cellId)
+    }
 
     val cells = state.cells.toMutableMap()
     cells[cellId] = cell.copy(taskId = taskId)
 
-    val tasks = state.tasks.toMutableMap()
-    tasks[taskId] = task.copy(occurrences = (task.occurrences + cellId).distinct())
+    var working = state.copy(cells = cells, tasks = tasks)
+    val mergedOccurrences = (targetTask.occurrences + cellId).distinct()
+    tasks[taskId] = targetTask.copy(occurrences = SchedulerDomain.sortOccurrences(working, mergedOccurrences))
+    working = working.copy(tasks = tasks)
 
-    return state.copy(cells = cells, tasks = tasks)
+    SchedulerDomain.parentTaskId(working, cellId)?.let { parentId ->
+        working = working.copy(tasks = SchedulerDomain.linkChildUnderParent(working.tasks, parentId, taskId))
+    }
+
+    return SchedulerDomain.purgeOrphanTasks(working)
 }
 
 private fun setCellTitleDelta(
@@ -145,6 +160,7 @@ private fun applySetCellTitle(state: SchedulerState, cellId: CellId, title: Stri
     var working = state
     val list = working.lists[cell.parentListId] ?: return state
 
+    val isNewTask = cell.taskId == null
     val (taskId, afterAllocate) =
         if (cell.taskId != null) {
             cell.taskId to working
@@ -162,10 +178,21 @@ private fun applySetCellTitle(state: SchedulerState, cellId: CellId, title: Stri
         (previousTask ?: Task(id = taskId, title = title)).let { existing ->
             existing.copy(
                 title = title,
-                occurrences = (existing.occurrences + cellId).distinct(),
+                occurrences = SchedulerDomain.sortOccurrences(
+                    working,
+                    (existing.occurrences + cellId).distinct(),
+                ),
             )
         }
     tasks[taskId] = task
+
+    if (isNewTask) {
+        SchedulerDomain.parentTaskId(working, cellId)?.let { parentId ->
+            val linked = SchedulerDomain.linkChildUnderParent(tasks, parentId, taskId)
+            tasks.clear()
+            tasks.putAll(linked)
+        }
+    }
 
     var titleToTaskIds = working.titleToTaskIds
     if (previousTitle != null && previousTitle != title) {
@@ -215,12 +242,15 @@ private fun applySetCellTitle(state: SchedulerState, cellId: CellId, title: Stri
         lists[currentList.id] = currentList
     }
 
-    return working.copy(
-        cells = cells,
-        lists = lists,
-        tasks = tasks,
-        titleToTaskIds = titleToTaskIds,
-    )
+    var result =
+        working.copy(
+            cells = cells,
+            lists = lists,
+            tasks = tasks,
+            titleToTaskIds = titleToTaskIds,
+        )
+
+    return SchedulerDomain.purgeOrphanTasks(result)
 }
 
 private data class SetSelectionDelta(
