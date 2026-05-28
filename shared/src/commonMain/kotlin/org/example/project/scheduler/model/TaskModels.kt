@@ -4,6 +4,10 @@ data class Task(
     val id: TaskId,
     val title: String,
     val childTaskIds: List<TaskId> = emptyList(),
+    /** Cells referencing this task, ordered by shortest path (maintained on mutation). */
+    val occurrences: List<CellId> = emptyList(),
+    /** Shared sublist for all cells pointing at this task (mirrored sub-trees). */
+    val childListId: CellListId? = null,
 )
 
 /**
@@ -21,7 +25,6 @@ value class CellListId(val value: String)
 
 data class CellList(
     val id: CellListId,
-    val parentCellId: CellId?, // null for root list
+    val parentCellId: CellId?, // null for the list rendered in the viewport (main's children)
     val cellIds: List<CellId>,
 )
-

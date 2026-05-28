@@ -1,7 +1,10 @@
 package org.example.project.scheduler.state
 
-import org.example.project.scheduler.model.CellId
+import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.Cell
+import org.example.project.scheduler.model.CellId
+import org.example.project.scheduler.model.CellList
+import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 
@@ -10,18 +13,22 @@ object SchedulerReducer {
         return when (intent) {
             is SchedulerIntent.ClickCell -> reduceClick(state, intent)
             is SchedulerIntent.ToggleExpand -> commitDelta(state, ToggleExpandDelta(intent.cellId))
-            is SchedulerIntent.SetCellTitle -> commitDelta(state, SetCellTitleDelta(intent.cellId, intent.title))
+            is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
+            is SchedulerIntent.AssignTaskId -> commitDelta(state, assignTaskIdDelta(state, intent.cellId, intent.taskId))
             SchedulerIntent.Undo -> undo(state)
             SchedulerIntent.Redo -> redo(state)
         }
     }
 
     private fun reduceClick(state: SchedulerState, intent: SchedulerIntent.ClickCell): SchedulerState {
+        if (!SchedulerDomain.isSelectableCell(state, intent.cellId)) return state
+
+        val visibleOrder = intent.visibleOrder.ifEmpty { SchedulerDomain.visibleCellOrder(state) }
         val currentMain = state.selection.main
         val newSelection =
             when {
                 intent.shift && currentMain != null -> {
-                    val ids = intent.visibleOrder
+                    val ids = visibleOrder
                     val a = ids.indexOf(currentMain)
                     val b = ids.indexOf(intent.cellId)
                     if (a == -1 || b == -1) {
@@ -32,10 +39,13 @@ object SchedulerReducer {
                     }
                 }
                 intent.ctrl -> {
-                    val newSelected =
-                        if (state.selection.selected.contains(intent.cellId)) state.selection.selected - intent.cellId
-                        else state.selection.selected + intent.cellId
-                    SchedulerSelection(main = intent.cellId, selected = newSelected)
+                    val toggled =
+                        if (state.selection.selected.contains(intent.cellId)) {
+                            state.selection.selected - intent.cellId
+                        } else {
+                            state.selection.selected + intent.cellId
+                        }
+                    SchedulerSelection(main = intent.cellId, selected = toggled)
                 }
                 else -> SchedulerSelection(main = intent.cellId, selected = emptySet())
             }
@@ -45,7 +55,7 @@ object SchedulerReducer {
             SetSelectionDelta(
                 before = state.selection,
                 after = newSelection,
-            )
+            ),
         )
     }
 
@@ -85,9 +95,132 @@ object SchedulerReducer {
             history = state.history.copy(
                 pointer = state.history.pointer + 1,
                 units = newUnits,
-            )
+            ),
         )
     }
+}
+
+private fun assignTaskIdDelta(
+    state: SchedulerState,
+    cellId: CellId,
+    taskId: TaskId,
+): Delta {
+    val before = state.captureTree()
+    val after =
+        if (!SchedulerDomain.canAssignTaskId(state, cellId, taskId)) {
+            state
+        } else {
+            applyAssignTaskId(state, cellId, taskId)
+        }.captureTree()
+    return TreeMutationDelta(before = before, after = after)
+}
+
+private fun applyAssignTaskId(state: SchedulerState, cellId: CellId, taskId: TaskId): SchedulerState {
+    val cell = state.cells[cellId] ?: return state
+    val task = state.tasks[taskId] ?: return state
+
+    val cells = state.cells.toMutableMap()
+    cells[cellId] = cell.copy(taskId = taskId)
+
+    val tasks = state.tasks.toMutableMap()
+    tasks[taskId] = task.copy(occurrences = (task.occurrences + cellId).distinct())
+
+    return state.copy(cells = cells, tasks = tasks)
+}
+
+private fun setCellTitleDelta(
+    state: SchedulerState,
+    cellId: CellId,
+    title: String,
+): Delta {
+    val before = state.captureTree()
+    val after = applySetCellTitle(state, cellId, title).captureTree()
+    return TreeMutationDelta(before = before, after = after)
+}
+
+private fun applySetCellTitle(state: SchedulerState, cellId: CellId, title: String): SchedulerState {
+    if (!SchedulerDomain.isSelectableCell(state, cellId)) return state
+    val cell = state.cells[cellId] ?: return state
+
+    var working = state
+    val list = working.lists[cell.parentListId] ?: return state
+
+    val (taskId, afterAllocate) =
+        if (cell.taskId != null) {
+            cell.taskId to working
+        } else {
+            val (id, next) = working.allocateTaskId()
+            id to next
+        }
+    working = afterAllocate
+
+    val previousTask = working.tasks[taskId]
+    val previousTitle = previousTask?.title
+
+    val tasks = working.tasks.toMutableMap()
+    val task =
+        (previousTask ?: Task(id = taskId, title = title)).let { existing ->
+            existing.copy(
+                title = title,
+                occurrences = (existing.occurrences + cellId).distinct(),
+            )
+        }
+    tasks[taskId] = task
+
+    var titleToTaskIds = working.titleToTaskIds
+    if (previousTitle != null && previousTitle != title) {
+        titleToTaskIds = SchedulerDomain.removeTitleMapping(titleToTaskIds, previousTitle, taskId)
+    }
+    if (title.isNotEmpty()) {
+        titleToTaskIds = SchedulerDomain.addTitleMapping(titleToTaskIds, title, taskId)
+    }
+
+    val cells = working.cells.toMutableMap()
+    cells[cellId] = cell.copy(taskId = taskId)
+
+    var lists = working.lists.toMutableMap()
+    var currentList = lists[cell.parentListId] ?: return state
+
+    if (title.isNotEmpty() && currentList.cellIds.lastOrNull() == cellId) {
+        val updatedTask = tasks[taskId]!!
+        if (updatedTask.childListId == null) {
+            val subListId = CellListId("${taskId.value}/children")
+            val subPlaceholderId = CellId("cell/${subListId.value}/0")
+            val subPlaceholder =
+                Cell(
+                    id = subPlaceholderId,
+                    parentListId = subListId,
+                    taskId = null,
+                )
+            val subList =
+                CellList(
+                    id = subListId,
+                    parentCellId = cellId,
+                    cellIds = listOf(subPlaceholderId),
+                )
+            cells[subPlaceholderId] = subPlaceholder
+            lists[subListId] = subList
+            tasks[taskId] = updatedTask.copy(childListId = subListId)
+        }
+
+        val placeholderId = CellId("cell/${currentList.id.value}/${currentList.cellIds.size}")
+        val placeholder =
+            Cell(
+                id = placeholderId,
+                parentListId = currentList.id,
+                taskId = null,
+            )
+        cells[placeholderId] = placeholder
+        currentList = currentList.copy(cellIds = currentList.cellIds + placeholderId)
+        lists[currentList.id] = currentList
+    }
+
+    return working.copy(
+        cells = cells,
+        lists = lists,
+        tasks = tasks,
+        titleToTaskIds = titleToTaskIds,
+    )
 }
 
 private data class SetSelectionDelta(
@@ -95,6 +228,7 @@ private data class SetSelectionDelta(
     val after: SchedulerSelection,
 ) : Delta {
     override fun undo(state: SchedulerState): SchedulerState = state.copy(selection = before)
+
     override fun redo(state: SchedulerState): SchedulerState = state.copy(selection = after)
 }
 
@@ -106,6 +240,8 @@ private data class ToggleExpandDelta(
     override fun redo(state: SchedulerState): SchedulerState = applyToggle(state)
 
     private fun applyToggle(state: SchedulerState): SchedulerState {
+        val cell = state.cells[cellId] ?: return state
+        if (cell.taskId == null) return state
         val expanded =
             if (state.expanded.contains(cellId)) state.expanded - cellId
             else state.expanded + cellId
@@ -113,51 +249,11 @@ private data class ToggleExpandDelta(
     }
 }
 
-private data class SetCellTitleDelta(
-    val cellId: CellId,
-    val title: String,
+private data class TreeMutationDelta(
+    val before: TreeSnapshot,
+    val after: TreeSnapshot,
 ) : Delta {
-    override fun undo(state: SchedulerState): SchedulerState {
-        // v0.1.0: keep undo minimal (selection/expand are fully reversible; edits are not yet delta-reversible)
-        return state
-    }
+    override fun undo(state: SchedulerState): SchedulerState = state.applyTree(before)
 
-    override fun redo(state: SchedulerState): SchedulerState {
-        val cell = state.cells[cellId] ?: return state
-        val newTaskId = cell.taskId ?: TaskId("task/${state.tasks.size + 1}")
-
-        val tasks = state.tasks.toMutableMap()
-        val oldTask = tasks[newTaskId]
-        tasks[newTaskId] = (oldTask ?: Task(id = newTaskId, title = title)).copy(title = title)
-
-        val cells = state.cells.toMutableMap()
-        cells[cellId] = cell.copy(taskId = newTaskId)
-
-        // Ensure a placeholder exists at bottom of the list.
-        val list = state.lists[cell.parentListId] ?: return state
-        val lastId = list.cellIds.lastOrNull()
-        val needsPlaceholder = lastId == null || cells[lastId]?.taskId != null
-        val newList =
-            if (needsPlaceholder) {
-                val placeholder = Cell(
-                    id = CellId("${list.id.value}/${list.cellIds.size}"),
-                    parentListId = list.id,
-                    taskId = null,
-                )
-                cells[placeholder.id] = placeholder
-                list.copy(cellIds = list.cellIds + placeholder.id)
-            } else {
-                list
-            }
-
-        val lists = state.lists.toMutableMap()
-        lists[newList.id] = newList
-
-        return state.copy(
-            tasks = tasks,
-            cells = cells,
-            lists = lists,
-        )
-    }
+    override fun redo(state: SchedulerState): SchedulerState = state.applyTree(after)
 }
-
