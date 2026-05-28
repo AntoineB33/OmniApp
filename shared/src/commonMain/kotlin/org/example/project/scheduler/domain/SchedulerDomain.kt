@@ -186,11 +186,8 @@ object SchedulerDomain {
         selectedAssignTaskId: TaskId?,
     ): Int {
         if (entries.isEmpty()) return -1
-        if (selectedAssignTaskId != null) {
-            val index = entries.indexOfFirst { it.taskId == selectedAssignTaskId }
-            if (index >= 0) return index
-        }
-        return 0
+        if (selectedAssignTaskId == null) return 0
+        return entries.indexOfFirst { it.taskId == selectedAssignTaskId }
     }
 
     fun titleSimilarity(title: String, input: String): Int {

@@ -261,14 +261,13 @@ private fun EditModeMenus(
         }
 
         if (session.mode == CellEditMode.ChangeTask) {
-            val excludeDraftTask =
-                if (session.selectedAssignTaskId == null) session.newTaskDraftId else null
+            val excludeFromMenu = session.selectedAssignTaskId ?: session.newTaskDraftId
             val taskEntries =
                 SchedulerDomain.changeTaskMenuEntries(
                     state,
                     cellId,
                     draftText,
-                    excludeTaskId = excludeDraftTask,
+                    excludeTaskId = excludeFromMenu,
                 )
             if (taskEntries.size > 1) {
                 val selectedIndex =
