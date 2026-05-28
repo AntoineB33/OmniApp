@@ -271,11 +271,8 @@ private fun EditModeMenus(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 taskEntries.forEachIndexed { index, entry ->
-                    val label =
-                        if (entry.taskId == null) "Create: ${entry.label}"
-                        else entry.label
                     TaskMenuRow(
-                        label = label,
+                        label = entry.label,
                         selected = index == selectedIndex,
                         onClick = {
                             if (entry.taskId == null) {

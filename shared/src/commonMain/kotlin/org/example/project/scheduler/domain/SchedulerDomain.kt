@@ -126,7 +126,7 @@ object SchedulerDomain {
     }
 
     data class ChangeTaskMenuEntry(
-        /** `null` = create a new task from the current draft text. */
+        /** `null` = "New task" row (creates a new [TaskId] when selected or while typing). */
         val taskId: TaskId?,
         val label: String,
     )
@@ -157,7 +157,7 @@ object SchedulerDomain {
             )
     }
 
-    /** All rows in the Change Task menu; each row represents one task (or a new task from the draft). */
+    /** All rows in the Change Task menu; first row is always "New task" (PRD §4). */
     fun changeTaskMenuEntries(
         state: SchedulerState,
         cellId: CellId,
@@ -165,9 +165,7 @@ object SchedulerDomain {
     ): List<ChangeTaskMenuEntry> {
         val eligible = eligibleAssignTaskIds(state, cellId, draftText)
         return buildList {
-            if (draftText.isNotEmpty()) {
-                add(ChangeTaskMenuEntry(taskId = null, label = draftText))
-            }
+            add(ChangeTaskMenuEntry(taskId = null, label = "New task"))
             for (taskId in eligible) {
                 val pathLabel = taskPathLabel(state, taskId)
                 val childLabel = childTitlesLabel(state, taskId)

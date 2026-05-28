@@ -32,21 +32,21 @@ object SchedulerReducer {
         val cell = state.cells[intent.cellId] ?: return state
         val currentTitle = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()
         val draft = intent.initialText ?: currentTitle
+        val typingToEdit = intent.initialText != null
         val withSession =
             state.copy(
                 editSession =
                     SchedulerEditSession(
                         cellId = intent.cellId,
                         draftText = draft,
-                        selectedAssignTaskId =
-                            if (intent.initialText != null || draft != currentTitle) null
-                            else cell.taskId,
+                        selectedAssignTaskId = if (typingToEdit) null else cell.taskId,
+                        newTaskDraftId = null,
                         treeBefore = state.captureTree(),
                     ),
                 selection = SchedulerSelection(main = intent.cellId, selected = emptySet()),
             )
-        return if (intent.initialText != null || draft != currentTitle) {
-            commitDelta(withSession, editTextDelta(withSession, draft))
+        return if (typingToEdit) {
+            commitEditText(withSession, draft)
         } else {
             withSession
         }
@@ -55,16 +55,36 @@ object SchedulerReducer {
     private fun reduceUpdateEditText(state: SchedulerState, text: String): SchedulerState {
         val session = state.editSession ?: return state
         if (text == session.draftText) return state
+        val typingSwitchesToNewTask =
+            session.mode == CellEditMode.ChangeTask && text != session.draftText
         val withDraft =
             state.copy(
                 editSession =
                     session.copy(
                         draftText = text,
                         selectedAssignTaskId =
-                            if (session.mode == CellEditMode.ChangeTask) null else session.selectedAssignTaskId,
+                            if (typingSwitchesToNewTask) null else session.selectedAssignTaskId,
+                        newTaskDraftId =
+                            if (typingSwitchesToNewTask && session.selectedAssignTaskId != null) {
+                                null
+                            } else {
+                                session.newTaskDraftId
+                            },
                     ),
             )
-        return commitDelta(withDraft, editTextDelta(withDraft, text))
+        return commitEditText(withDraft, text)
+    }
+
+    private fun commitEditText(base: SchedulerState, text: String): SchedulerState {
+        val session = base.editSession ?: return base
+        val applied = applyEditText(base, session, text)
+        val withSession =
+            applied.copy(
+                editSession =
+                    applied.editSession?.copy(draftText = text)
+                        ?: session.copy(draftText = text),
+            )
+        return commitDelta(withSession, editTextDelta(base, text))
     }
 
     private fun reduceSetEditMode(state: SchedulerState, mode: CellEditMode): SchedulerState {
@@ -81,7 +101,12 @@ object SchedulerReducer {
         val assigned = commitDelta(state, assignTaskIdDelta(state, cellId, taskId))
         val withDraft =
             assigned.copy(
-                editSession = session.copy(draftText = title, selectedAssignTaskId = taskId),
+                editSession =
+                    session.copy(
+                        draftText = title,
+                        selectedAssignTaskId = taskId,
+                        newTaskDraftId = null,
+                    ),
             )
         return if (title != session.draftText) {
             commitDelta(withDraft, editTextDelta(withDraft, title))
@@ -93,7 +118,16 @@ object SchedulerReducer {
     private fun reduceSelectCreateAssignTask(state: SchedulerState): SchedulerState {
         val session = state.editSession ?: return state
         if (session.mode != CellEditMode.ChangeTask || session.selectedAssignTaskId == null) return state
-        return state.copy(editSession = session.copy(selectedAssignTaskId = null))
+        val (newTaskId, allocated) = state.allocateTaskId()
+        val withSession =
+            allocated.copy(
+                editSession =
+                    session.copy(
+                        selectedAssignTaskId = null,
+                        newTaskDraftId = newTaskId,
+                    ),
+            )
+        return commitEditText(withSession, session.draftText)
     }
 
     private fun reducePickTitleSuggestion(state: SchedulerState, title: String): SchedulerState {
@@ -108,11 +142,9 @@ object SchedulerReducer {
 
     private fun editTextDelta(state: SchedulerState, text: String): Delta {
         val session = state.editSession ?: return NoOpDelta
-        val cellId = session.cellId
-        return when (session.mode) {
-            CellEditMode.Rename -> setCellTitleDelta(state, cellId, text)
-            CellEditMode.ChangeTask -> setCellTitleDelta(state, cellId, text)
-        }
+        val before = state.captureTree()
+        val after = applyEditText(state, session, text).captureTree()
+        return TreeMutationDelta(before = before, after = after)
     }
 
     private fun endEditSession(state: SchedulerState): SchedulerState = state.copy(editSession = null)
@@ -204,6 +236,40 @@ object SchedulerReducer {
     }
 }
 
+private fun applyEditText(
+    state: SchedulerState,
+    session: SchedulerEditSession,
+    text: String,
+): SchedulerState {
+    val cellId = session.cellId
+    return when (session.mode) {
+        CellEditMode.Rename -> applySetCellTitle(state, cellId, text)
+        CellEditMode.ChangeTask ->
+            if (session.selectedAssignTaskId == null) {
+                applyChangeTaskNewDraft(state, session, text)
+            } else {
+                applySetCellTitle(state, cellId, text, forceTaskId = session.selectedAssignTaskId)
+            }
+    }
+}
+
+private fun applyChangeTaskNewDraft(
+    state: SchedulerState,
+    session: SchedulerEditSession,
+    text: String,
+): SchedulerState {
+    val cellId = session.cellId
+    val (draftTaskId, afterAlloc) =
+        session.newTaskDraftId?.let { it to state }
+            ?: state.allocateTaskId().let { (id, next) -> id to next }
+    var working = afterAlloc
+    if (working.cells[cellId]?.taskId != draftTaskId) {
+        working = applyAssignTaskId(working, cellId, draftTaskId)
+    }
+    working = applySetCellTitle(working, cellId, text, forceTaskId = draftTaskId)
+    return working.copy(editSession = session.copy(newTaskDraftId = draftTaskId))
+}
+
 private fun assignTaskIdDelta(
     state: SchedulerState,
     cellId: CellId,
@@ -256,20 +322,24 @@ private fun setCellTitleDelta(
     return TreeMutationDelta(before = before, after = after)
 }
 
-private fun applySetCellTitle(state: SchedulerState, cellId: CellId, title: String): SchedulerState {
+private fun applySetCellTitle(
+    state: SchedulerState,
+    cellId: CellId,
+    title: String,
+    forceTaskId: TaskId? = null,
+): SchedulerState {
     if (!SchedulerDomain.isSelectableCell(state, cellId)) return state
     val cell = state.cells[cellId] ?: return state
 
     var working = state
     val list = working.lists[cell.parentListId] ?: return state
 
-    val isNewTask = cell.taskId == null
+    val isNewTask = forceTaskId == null && cell.taskId == null
     val (taskId, afterAllocate) =
-        if (cell.taskId != null) {
-            cell.taskId to working
-        } else {
-            val (id, next) = working.allocateTaskId()
-            id to next
+        when {
+            forceTaskId != null -> forceTaskId to working
+            cell.taskId != null -> cell.taskId to working
+            else -> working.allocateTaskId().let { (id, next) -> id to next }
         }
     working = afterAllocate
 

@@ -12,7 +12,9 @@ data class SchedulerEditSession(
     val cellId: CellId,
     val draftText: String,
     val mode: CellEditMode = CellEditMode.ChangeTask,
-    /** `null` = the draft creates/selects a new task (top menu row). */
+    /** `null` = "New task" menu row selected. */
     val selectedAssignTaskId: TaskId? = null,
+    /** Task allocated while "New task" is selected (reused until another row is picked). */
+    val newTaskDraftId: TaskId? = null,
     val treeBefore: TreeSnapshot,
 )

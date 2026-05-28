@@ -420,11 +420,52 @@ class SchedulerReducerTest {
         var s = SchedulerState.empty()
         val cellId = s.lists[s.rootListId]!!.cellIds.first()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Alpha"))
+        val originalTaskId = s.cells[cellId]!!.taskId!!
         s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId))
-        assertEquals(s.cells[cellId]!!.taskId, s.editSession!!.selectedAssignTaskId)
+        assertEquals(originalTaskId, s.editSession!!.selectedAssignTaskId)
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText("Alphabet"))
         assertEquals(null, s.editSession!!.selectedAssignTaskId)
+        assertNotNull(s.editSession!!.newTaskDraftId)
+        assertFalse(s.cells[cellId]!!.taskId == originalTaskId)
+        assertEquals("Alphabet", s.tasks[s.cells[cellId]!!.taskId!!]!!.title)
+    }
+
+    @Test
+    fun change_task_menu_first_entry_is_new_task() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Alpha"))
+        val entries = SchedulerDomain.changeTaskMenuEntries(s, cellId, "Alpha")
+        assertEquals(null, entries.first().taskId)
+        assertEquals("New task", entries.first().label)
+    }
+
+    @Test
+    fun select_new_task_after_existing_creates_fresh_task_id() {
+        var s = SchedulerState.empty()
+        val alphaCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaCell, "Alpha"))
+        val alphaId = s.cells[alphaCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(alphaCell))
+        val alphaListId = s.tasks[alphaId]!!.childListId!!
+        val nestedCell = s.lists[alphaListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(nestedCell, "Nested"))
+
+        val betaCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(betaCell, "Beta"))
+        val betaId = s.cells[betaCell]!!.taskId!!
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(nestedCell))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PickTaskFromMenu(betaId))
+        val assignedOnPick = s.cells[nestedCell]!!.taskId!!
+        assertEquals(betaId, assignedOnPick)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SelectCreateAssignTask)
+        val afterNewTask = s.cells[nestedCell]!!.taskId!!
+        assertFalse(afterNewTask == betaId)
+        assertEquals(null, s.editSession!!.selectedAssignTaskId)
+        assertEquals(afterNewTask, s.editSession!!.newTaskDraftId)
     }
 
     @Test
