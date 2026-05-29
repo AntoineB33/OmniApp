@@ -13,7 +13,9 @@ object SchedulerReducer {
         return when (intent) {
             is SchedulerIntent.ClickCell -> reduceClick(state, intent)
             is SchedulerIntent.DragSelectCells -> reduceDragSelect(state, intent)
+            is SchedulerIntent.MoveSelectedCells -> reduceMoveSelected(state, intent)
             SchedulerIntent.ClearSelection -> reduceClearSelection(state)
+            SchedulerIntent.EmptySelectedCells -> reduceEmptySelected(state)
             is SchedulerIntent.ExitEdit -> reduceExitEdit(state, intent.navigation)
             is SchedulerIntent.ToggleExpand -> commitDelta(state, ToggleExpandDelta(intent.cellId))
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
@@ -192,7 +194,20 @@ object SchedulerReducer {
                         }
                     SchedulerSelection(main = intent.cellId, selected = toggled)
                 }
-                else -> SchedulerSelection(main = intent.cellId, selected = emptySet())
+                intent.forceClearMulti ->
+                    SchedulerSelection(main = intent.cellId, selected = emptySet())
+                else -> {
+                    // Keep a contiguous multi-selection when clicking an already-selected
+                    // cell so double-click & drag move can activate (PRD §3).
+                    val preserveRange =
+                        intent.cellId in state.selection.selected &&
+                            state.selection.selected.size > 1
+                    if (preserveRange) {
+                        SchedulerSelection(main = intent.cellId, selected = state.selection.selected)
+                    } else {
+                        SchedulerSelection(main = intent.cellId, selected = emptySet())
+                    }
+                }
             }
 
         return applySelectionChange(state, newSelection, intent.cellId)
@@ -215,6 +230,54 @@ object SchedulerReducer {
         val newSelection =
             SchedulerSelection(main = intent.anchorCellId, selected = range)
         return applySelectionChange(state, newSelection, intent.hoverCellId)
+    }
+
+    private fun reduceMoveSelected(
+        state: SchedulerState,
+        intent: SchedulerIntent.MoveSelectedCells,
+    ): SchedulerState {
+        val block =
+            SchedulerDomain.orderedActiveSelectionInList(state, state.selection)
+                ?: return state
+        val (listId, movingOrdered) = block
+        val moving = movingOrdered.toSet()
+        val list = state.lists[listId] ?: return state
+        if (intent.targetCellId !in list.cellIds) return state
+
+        val insertIndex =
+            SchedulerDomain.moveInsertIndex(
+                list.cellIds,
+                moving,
+                intent.targetCellId,
+                intent.insertBefore,
+            )
+        val before = state.captureTree()
+        val moved =
+            SchedulerDomain.applyMoveCellsInList(
+                state,
+                listId,
+                movingOrdered,
+                insertIndex,
+            )
+        val after = moved.captureTree()
+        if (before == after) return state
+        return commitDelta(moved, TreeMutationDelta(before = before, after = after))
+    }
+
+    private fun reduceEmptySelected(state: SchedulerState): SchedulerState {
+        if (state.editSession != null) return state
+        val targets =
+            SchedulerDomain.activeSelectionCells(state.selection)
+                .filter { SchedulerDomain.isSelectableCell(state, it) }
+        if (targets.isEmpty()) return state
+        val before = state.captureTree()
+        var next = state
+        for (cellId in targets) {
+            next = applySetCellTitle(next, cellId, "")
+        }
+        val after = next.captureTree()
+        if (before == after) return state
+        return commitDelta(next, TreeMutationDelta(before = before, after = after))
     }
 
     private fun reduceClearSelection(state: SchedulerState): SchedulerState {

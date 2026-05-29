@@ -18,6 +18,8 @@ sealed interface SchedulerIntent {
         val ctrl: Boolean,
         val shift: Boolean,
         val visibleOrder: List<CellId>,
+        /** Double-click on a non-movable cell clears multi-selection (PRD §3). */
+        val forceClearMulti: Boolean = false,
     ) : SchedulerIntent
 
     data class DragSelectCells(
@@ -26,7 +28,14 @@ sealed interface SchedulerIntent {
         val visibleOrder: List<CellId>,
     ) : SchedulerIntent
 
+    data class MoveSelectedCells(
+        val targetCellId: CellId,
+        val insertBefore: Boolean,
+    ) : SchedulerIntent
+
     data object ClearSelection : SchedulerIntent
+
+    data object EmptySelectedCells : SchedulerIntent
 
     data class ExitEdit(val navigation: EditExitNavigation) : SchedulerIntent
 

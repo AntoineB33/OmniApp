@@ -13,6 +13,7 @@ import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
+import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 
@@ -1153,6 +1154,139 @@ class SchedulerReducerTest {
         override fun save(data: String) {
             payload = data
         }
+    }
+
+    @Test
+    fun click_on_selected_cell_in_range_preserves_multi_selection() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[2], ctrl = false, shift = true, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[1], ctrl = false, shift = false, visibleOrder = visible),
+        )
+
+        assertEquals(visible[1], s.selection.main)
+        assertEquals(setOf(visible[0], visible[1], visible[2]), s.selection.selected)
+    }
+
+    @Test
+    fun double_click_non_move_clears_multi_selection() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[2], ctrl = false, shift = true, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(
+                cellId = visible[1],
+                ctrl = false,
+                shift = false,
+                visibleOrder = visible,
+                forceClearMulti = true,
+            ),
+        )
+
+        assertEquals(visible[1], s.selection.main)
+        assertTrue(s.selection.selected.isEmpty())
+    }
+
+    @Test
+    fun return_or_delete_empties_all_selected_cells_when_not_editing() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[1], ctrl = false, shift = true, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.EmptySelectedCells)
+
+        assertTrue(s.tasks[s.cells[visible[0]]!!.taskId!!]!!.title.isEmpty())
+        assertTrue(s.tasks[s.cells[visible[1]]!!.taskId!!]!!.title.isEmpty())
+    }
+
+    @Test
+    fun empty_selected_does_nothing_during_edit_mode() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        val cell = visible[0]
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = cell, ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cell))
+        val titleBefore = s.tasks[s.cells[cell]!!.taskId!!]!!.title
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.EmptySelectedCells)
+
+        assertEquals(titleBefore, s.tasks[s.cells[cell]!!.taskId!!]!!.title)
+    }
+
+    @Test
+    fun move_selected_cells_reorders_within_list() {
+        var s = seedThreeTasks()
+        val listId = s.rootListId
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[1], ctrl = false, shift = true, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.MoveSelectedCells(targetCellId = visible[2], insertBefore = false),
+        )
+
+        val listCells = s.lists[listId]!!.cellIds
+        assertEquals(visible[2], listCells[0])
+        assertEquals(visible[0], listCells[1])
+        assertEquals(visible[1], listCells[2])
+    }
+
+    @Test
+    fun sequential_selection_detects_contiguous_block_in_same_list() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[1], ctrl = false, shift = true, visibleOrder = visible),
+        )
+        assertTrue(SchedulerDomain.isSequentialSelectionInSameList(s, s.selection))
+
+        val listCells = s.lists[s.rootListId]!!.cellIds
+        val nonContiguous =
+            SchedulerSelection(main = listCells[2], selected = setOf(listCells[0], listCells[2]))
+        assertFalse(SchedulerDomain.isSequentialSelectionInSameList(s, nonContiguous))
     }
 
     private fun seedThreeTasks(): SchedulerState {

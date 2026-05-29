@@ -62,6 +62,7 @@ import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed as pointerShiftPressed
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
@@ -74,6 +75,7 @@ import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
+import kotlinx.coroutines.withTimeoutOrNull
 
 private object SheetColors {
     val grid = Color(0xFFDADCE0)
@@ -93,6 +95,8 @@ fun TaskSchedulerScreen(
     val visibleOrder = SchedulerDomain.visibleCellOrder(state)
     val focusRequester = remember { FocusRequester() }
     var dragAnchor by remember { mutableStateOf<CellId?>(null) }
+    var moveDragActive by remember { mutableStateOf(false) }
+    var moveDropTarget by remember { mutableStateOf<Pair<CellId, Boolean>?>(null) }
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
@@ -102,11 +106,6 @@ fun TaskSchedulerScreen(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = { vm.dispatch(SchedulerIntent.ClearSelection) },
-            )
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
@@ -117,6 +116,12 @@ fun TaskSchedulerScreen(
                         return@onPreviewKeyEvent true
                     }
                     return@onPreviewKeyEvent false
+                }
+                if (event.key == Key.Enter || event.key == Key.Delete) {
+                    if (!event.isCtrlPressed && !event.isMetaPressed) {
+                        vm.dispatch(SchedulerIntent.EmptySelectedCells)
+                        return@onPreviewKeyEvent true
+                    }
                 }
                 val main = state.selection.main ?: return@onPreviewKeyEvent false
                 if (!SchedulerDomain.isSelectableCell(state, main)) return@onPreviewKeyEvent false
@@ -138,7 +143,13 @@ fun TaskSchedulerScreen(
         Spacer(Modifier.height(12.dp))
 
         Column(
-            modifier = Modifier.verticalScroll(rememberScrollState()),
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .pointerInput(Unit) {
+                    detectTapGestures {
+                        vm.dispatch(SchedulerIntent.ClearSelection)
+                    }
+                },
         ) {
             CellListSection(
                 state = state,
@@ -146,7 +157,29 @@ fun TaskSchedulerScreen(
                 depth = 0,
                 visibleOrder = visibleOrder,
                 dragAnchor = dragAnchor,
+                moveDragActive = moveDragActive,
+                moveDropTarget = moveDropTarget,
                 onDragAnchorChange = { dragAnchor = it },
+                onMoveDragStart = {
+                    moveDragActive = true
+                    dragAnchor = null
+                },
+                onMoveDropHover = { target, insertBefore ->
+                    moveDropTarget = target to insertBefore
+                },
+                onMoveDragEnd = {
+                    val target = moveDropTarget
+                    if (moveDragActive && target != null) {
+                        vm.dispatch(
+                            SchedulerIntent.MoveSelectedCells(
+                                targetCellId = target.first,
+                                insertBefore = target.second,
+                            ),
+                        )
+                    }
+                    moveDragActive = false
+                    moveDropTarget = null
+                },
                 onIntent = vm::dispatch,
             )
         }
@@ -168,7 +201,12 @@ private fun CellListSection(
     depth: Int,
     visibleOrder: List<CellId>,
     dragAnchor: CellId?,
+    moveDragActive: Boolean,
+    moveDropTarget: Pair<CellId, Boolean>?,
     onDragAnchorChange: (CellId?) -> Unit,
+    onMoveDragStart: () -> Unit,
+    onMoveDropHover: (CellId, Boolean) -> Unit,
+    onMoveDragEnd: () -> Unit,
     onIntent: (SchedulerIntent) -> Unit,
 ) {
     val list = state.lists[listId] ?: return
@@ -185,6 +223,11 @@ private fun CellListSection(
         val hasChildren = cell.taskId?.let { state.tasks[it]?.childListId != null } == true
         val expanded = cellId in state.expanded
 
+        val isInActiveSelection = SchedulerDomain.isInActiveSelection(state.selection, cellId)
+        val canMoveFromCell =
+            isInActiveSelection &&
+                SchedulerDomain.isSequentialSelectionInSameList(state, state.selection)
+
         TaskRow(
             depth = depth,
             cellId = cellId,
@@ -195,7 +238,10 @@ private fun CellListSection(
             isEditing = isEditing,
             hasChildren = hasChildren,
             expanded = expanded,
-            onClick = { clicked, ctrl, shift ->
+            moveDropBefore = moveDropTarget?.first == cellId && moveDropTarget.second,
+            moveDropAfter = moveDropTarget?.first == cellId && !moveDropTarget.second,
+            canMoveFromCell = canMoveFromCell,
+            onClick = { clicked, ctrl, shift, forceClearMulti ->
                 if (!selectable) return@TaskRow
                 onIntent(
                     SchedulerIntent.ClickCell(
@@ -203,6 +249,7 @@ private fun CellListSection(
                         ctrl = ctrl,
                         shift = shift,
                         visibleOrder = visibleOrder,
+                        forceClearMulti = forceClearMulti,
                     ),
                 )
             },
@@ -216,7 +263,11 @@ private fun CellListSection(
                 )
             },
             dragAnchor = dragAnchor,
+            moveDragActive = moveDragActive,
             onDragAnchorChange = onDragAnchorChange,
+            onMoveDragStart = onMoveDragStart,
+            onMoveDropHover = onMoveDropHover,
+            onMoveDragEnd = onMoveDragEnd,
             onDoubleClick = {
                 if (selectable && !isEditing) {
                     onIntent(SchedulerIntent.BeginEdit(cellId))
@@ -254,7 +305,12 @@ private fun CellListSection(
                 depth = depth + 1,
                 visibleOrder = visibleOrder,
                 dragAnchor = dragAnchor,
+                moveDragActive = moveDragActive,
+                moveDropTarget = moveDropTarget,
                 onDragAnchorChange = onDragAnchorChange,
+                onMoveDragStart = onMoveDragStart,
+                onMoveDropHover = onMoveDropHover,
+                onMoveDragEnd = onMoveDragEnd,
                 onIntent = onIntent,
             )
         }
@@ -413,10 +469,17 @@ private fun TaskRow(
     isEditing: Boolean,
     hasChildren: Boolean,
     expanded: Boolean,
-    onClick: (CellId, ctrl: Boolean, shift: Boolean) -> Unit,
+    moveDropBefore: Boolean,
+    moveDropAfter: Boolean,
+    canMoveFromCell: Boolean,
+    onClick: (CellId, ctrl: Boolean, shift: Boolean, forceClearMulti: Boolean) -> Unit,
     onDragSelect: (anchor: CellId, hover: CellId) -> Unit,
     dragAnchor: CellId?,
+    moveDragActive: Boolean,
     onDragAnchorChange: (CellId?) -> Unit,
+    onMoveDragStart: () -> Unit,
+    onMoveDropHover: (CellId, Boolean) -> Unit,
+    onMoveDragEnd: () -> Unit,
     onDoubleClick: () -> Unit,
     onTextChange: (String) -> Unit,
     onExitEdit: (EditExitNavigation) -> Unit,
@@ -424,6 +487,8 @@ private fun TaskRow(
     editMenus: (@Composable () -> Unit)?,
 ) {
     val editFocusRequester = remember { FocusRequester() }
+    val density = LocalDensity.current
+    val rowHeightPx = with(density) { 28.dp.toPx() }
     LaunchedEffect(isEditing) {
         if (isEditing) editFocusRequester.requestFocus()
     }
@@ -446,32 +511,68 @@ private fun TaskRow(
     fun selectionPointerModifier(): Modifier {
         if (!selectable || isEditing) return Modifier
         return Modifier
-            .pointerInput(cellId) {
+            .pointerInput(cellId, canMoveFromCell, moveDragActive) {
+                val doubleTapTimeout = viewConfiguration.doubleTapTimeoutMillis
                 awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
                     val modifiers = currentEvent.keyboardModifiers
                     val ctrl = modifiers.pointerCtrlPressed
                     val shift = modifiers.pointerShiftPressed
-                    onClick(cellId, ctrl, shift)
-                    if (!ctrl && !shift) {
+
+                    onClick(cellId, ctrl, shift, false)
+                    if (!ctrl && !shift && !moveDragActive) {
                         onDragAnchorChange(cellId)
                     }
-                    waitForUpOrCancellation()
+
+                    val up = waitForUpOrCancellation()
+                    if (up != null && !ctrl && !shift) {
+                        val secondDown =
+                            withTimeoutOrNull(doubleTapTimeout) {
+                                awaitFirstDown(requireUnconsumed = false)
+                            }
+                        if (secondDown != null) {
+                            onDragAnchorChange(null)
+                            if (canMoveFromCell) {
+                                onMoveDragStart()
+                                do {
+                                    val event = awaitPointerEvent()
+                                    if (!event.changes.any { it.pressed }) break
+                                } while (true)
+                                onMoveDragEnd()
+                            } else {
+                                onClick(cellId, false, false, true)
+                                waitForUpOrCancellation()
+                                onDoubleClick()
+                            }
+                        }
+                    }
                     onDragAnchorChange(null)
                 }
             }
             .onPointerEvent(PointerEventType.Move) { event ->
+                if (moveDragActive && event.buttons.isPrimaryPressed) {
+                    val y = event.changes.firstOrNull()?.position?.y ?: return@onPointerEvent
+                    onMoveDropHover(cellId, y < rowHeightPx / 2f)
+                    return@onPointerEvent
+                }
                 val anchor = dragAnchor ?: return@onPointerEvent
                 if (event.buttons.isPrimaryPressed && anchor != cellId) {
                     onDragSelect(anchor, cellId)
                 }
             }
-            .pointerInput(cellId) {
-                detectTapGestures(onDoubleTap = { onDoubleClick() })
-            }
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
+        if (moveDropBefore) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = (depth * 16).dp)
+                    .height(2.dp)
+                    .background(SheetColors.activeBorder),
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -479,6 +580,7 @@ private fun TaskRow(
                 .defaultMinSize(minHeight = 28.dp)
                 .background(cellBackground)
                 .then(cellBorder)
+                .then(selectionPointerModifier())
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -486,8 +588,15 @@ private fun TaskRow(
                 modifier = Modifier
                     .size(20.dp)
                     .then(
-                        if (hasChildren) Modifier.clickable(onClick = onToggleExpand)
-                        else Modifier
+                        if (hasChildren) {
+                            Modifier.clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onToggleExpand,
+                            )
+                        } else {
+                            Modifier
+                        }
                     ),
                 contentAlignment = Alignment.Center,
             ) {
@@ -519,7 +628,6 @@ private fun TaskRow(
                         .weight(1f)
                         .fillMaxWidth()
                         .defaultMinSize(minHeight = 20.dp)
-                        .then(selectionPointerModifier())
                         .focusRequester(editFocusRequester)
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -568,12 +676,20 @@ private fun TaskRow(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .defaultMinSize(minHeight = 20.dp)
-                        .then(selectionPointerModifier()),
+                        .defaultMinSize(minHeight = 20.dp),
                     text = displayTitle.ifEmpty { " " },
                     style = textStyle,
                 )
             }
+        }
+        if (moveDropAfter) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = (depth * 16).dp)
+                    .height(2.dp)
+                    .background(SheetColors.activeBorder),
+            )
         }
         if (isEditing) {
             Box(

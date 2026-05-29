@@ -5,6 +5,7 @@ import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.WellKnownIds
+import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
 
 object SchedulerDomain {
@@ -41,6 +42,75 @@ object SchedulerDomain {
 
     fun selectableVisibleOrder(state: SchedulerState): List<CellId> =
         visibleCellOrder(state).filter { isSelectableCell(state, it) }
+
+    /** Cells highlighted for selection actions (PRD §3). */
+    fun activeSelectionCells(selection: SchedulerSelection): Set<CellId> {
+        val multi = selection.selected
+        return if (multi.isNotEmpty()) multi else setOfNotNull(selection.main)
+    }
+
+    fun isInActiveSelection(selection: SchedulerSelection, cellId: CellId): Boolean =
+        cellId == selection.main || cellId in selection.selected
+
+    /**
+     * True when every cell in the active selection shares one parent list and occupies
+     * a contiguous block of indices (PRD §3 Double Click & Drag).
+     */
+    fun isSequentialSelectionInSameList(state: SchedulerState, selection: SchedulerSelection): Boolean {
+        val cellIds = activeSelectionCells(selection).filter { isSelectableCell(state, it) }
+        if (cellIds.isEmpty()) return false
+        val parentListId = state.cells[cellIds.first()]?.parentListId ?: return false
+        if (cellIds.any { state.cells[it]?.parentListId != parentListId }) return false
+        val list = state.lists[parentListId] ?: return false
+        val indices = cellIds.map { list.cellIds.indexOf(it) }.sorted()
+        if (indices.any { it < 0 }) return false
+        return indices == (indices.first()..indices.last()).toList()
+    }
+
+    /** Active selection in list order, or `null` when not sequential in one list. */
+    fun orderedActiveSelectionInList(
+        state: SchedulerState,
+        selection: SchedulerSelection,
+    ): Pair<CellListId, List<CellId>>? {
+        if (!isSequentialSelectionInSameList(state, selection)) return null
+        val cellIds = activeSelectionCells(selection).filter { isSelectableCell(state, it) }
+        val parentListId = state.cells[cellIds.first()]!!.parentListId
+        val list = state.lists[parentListId] ?: return null
+        val ordered = list.cellIds.filter { it in cellIds }
+        return parentListId to ordered
+    }
+
+    /**
+     * Index in [listCellIds] (after removing [moving]) where the block should be inserted
+     * relative to [targetCellId].
+     */
+    fun moveInsertIndex(
+        listCellIds: List<CellId>,
+        moving: Set<CellId>,
+        targetCellId: CellId,
+        insertBefore: Boolean,
+    ): Int {
+        val without = listCellIds.filter { it !in moving }
+        val targetIdx = without.indexOf(targetCellId)
+        if (targetIdx < 0) return without.size
+        return if (insertBefore) targetIdx else targetIdx + 1
+    }
+
+    fun applyMoveCellsInList(
+        state: SchedulerState,
+        listId: CellListId,
+        movingOrdered: List<CellId>,
+        insertIndex: Int,
+    ): SchedulerState {
+        val list = state.lists[listId] ?: return state
+        val moving = movingOrdered.toSet()
+        val without = list.cellIds.filter { it !in moving }
+        val clamped = insertIndex.coerceIn(0, without.size)
+        val newIds = without.toMutableList()
+        newIds.addAll(clamped, movingOrdered)
+        val lists = state.lists + (listId to list.copy(cellIds = newIds))
+        return state.copy(lists = lists)
+    }
 
     /** Visible selectable cells from [fromCellId] through [toCellId] (inclusive). */
     fun visibleSelectionRange(

@@ -24,8 +24,10 @@ The application maintains a dual-state selection model: **Main Selection** (a si
 
 * **Root and Main Cells:** The "root" and "main" cells cannot be selected, edited, or interacted with via mouse events. The "root" cell is only conceptual.
 * **Single Click:** The clicked cell becomes the *Main Selection*. The *Selected Cells List* is cleared. When the user clicks on something that is not a cell, an option in a contextual menu of the tree, or a tree arrow, then nothing is selected.
-* **Click & Drag:** * The initial click establishes the *Main Selection*.
-  * While dragging, the *Selected Cells List* dynamically spans all visible cells from the Main Selection to the cell currently closest to the cursor.
+* **Single Click & Drag:** * The initial click establishes the *Main Selection*.
+  * While dragging without releasing the click, the *Selected Cells List* dynamically spans all visible cells from the Main Selection to the cell currently closest to the cursor.
+* **Double Click & Drag:** * If the cell the user double-clicks on is selected and all the selected cells are sequential and in the same sublist, the whole selection is moved. Otherwise, the double-click empties the *Selected Cells List* then establishes the *Main Selection*.
+  * While dragging without releasing the click, a horizontal blue line indicates where the selection will be moved if the user releases the click.
 * **Ctrl + Click:** The clicked cell becomes the *Main Selection* (standard OS `Ctrl` behavior applies for isolated multi-selection).
 * **Shift + Click / Ctrl + Shift + Click:** The *Selected Cells List* expands to include all visible cells sequentially from the current *Main Selection* to the newly clicked cell.
 * **Deletion:** When the user presses `Return` or `Delete` and no cell is in Edition Mode, all selected cells get emptied.
