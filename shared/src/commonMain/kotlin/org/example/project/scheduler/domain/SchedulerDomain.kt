@@ -143,9 +143,11 @@ object SchedulerDomain {
             .filter { it != excludeTaskId }
             .filter { task ->
                 val title = state.tasks[task]?.title.orEmpty()
-                // Empty text matches nothing: with no query there is no existing
-                // task to suggest, so only the "New task" row remains (PRD §4).
-                text.isNotEmpty() && title.contains(text, ignoreCase = true)
+                // Exact (case-insensitive) title match only: the Change Task menu offers
+                // reusing an existing task whose title IS the typed text. A partial match
+                // such as "y" against "yu" must NOT surface "yu" (PRD §4); the row only
+                // appears once the text equals the title exactly. Empty text matches nothing.
+                text.isNotEmpty() && title.equals(text, ignoreCase = true)
             }
             .sortedWith(taskIdMenuSort(state))
 

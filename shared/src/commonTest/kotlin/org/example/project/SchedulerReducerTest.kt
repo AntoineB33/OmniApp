@@ -350,20 +350,21 @@ class SchedulerReducerTest {
     @Test
     fun eligible_assign_task_ids_hide_ancestors_and_siblings() {
         var s = SchedulerState.empty()
+        // Ancestor and sibling share the exact title "dup" (PRD Constraint 3), so the
+        // query "dup" matches both and meaningfully exercises the ancestor/sibling
+        // filtering (PRD §4 Filtering) under exact-title matching.
         val parent = s.lists[s.rootListId]!!.cellIds.first()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(parent, "x Parent"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(parent, "dup"))
         val parentTask = s.cells[parent]!!.taskId!!
         s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(parent))
 
         val childListId = s.tasks[parentTask]!!.childListId!!
         val firstChild = s.lists[childListId]!!.cellIds.first()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstChild, "x First"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstChild, "dup"))
         val firstChildTask = s.cells[firstChild]!!.taskId!!
 
-        // A non-empty query ("x") matches both the ancestor and the sibling, so this
-        // meaningfully exercises the ancestor/sibling filtering (PRD §4 Filtering).
         val emptySlot = s.lists[childListId]!!.cellIds.last()
-        val eligible = SchedulerDomain.eligibleAssignTaskIds(s, emptySlot, "x")
+        val eligible = SchedulerDomain.eligibleAssignTaskIds(s, emptySlot, "dup")
         assertFalse(parentTask in eligible)
         assertFalse(firstChildTask in eligible)
     }
@@ -371,13 +372,15 @@ class SchedulerReducerTest {
     @Test
     fun eligible_assign_task_ids_sorted_by_path_length_then_label() {
         var s = SchedulerState.empty()
+        // Two distinct taskIds share the exact title "Task" at different depths
+        // (PRD Constraint 3). Exact-title matching surfaces both candidates.
         val alphaCell = s.lists[s.rootListId]!!.cellIds.first()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaCell, "Alpha Task"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaCell, "Task"))
         val alphaId = s.cells[alphaCell]!!.taskId!!
         s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(alphaCell))
         val alphaListId = s.tasks[alphaId]!!.childListId!!
         val nestedCell = s.lists[alphaListId]!!.cellIds.first()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(nestedCell, "Nested Task"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(nestedCell, "Task"))
         val nestedId = s.cells[nestedCell]!!.taskId!!
 
         val betaCell = s.lists[s.rootListId]!!.cellIds.last()
@@ -385,8 +388,8 @@ class SchedulerReducerTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(betaCell))
         val betaListId = s.tasks[s.cells[betaCell]!!.taskId!!]!!.childListId!!
 
-        // Query "Task" matches both candidates; the shallower path ("Alpha Task")
-        // must sort before the deeper one ("Nested Task") per PRD §4 Sorting.
+        // Query "Task" matches both candidates; the shallower one must sort before
+        // the deeper one per PRD §4 Sorting.
         val emptyInSublist = s.lists[betaListId]!!.cellIds.last()
         val eligible = SchedulerDomain.eligibleAssignTaskIds(s, emptyInSublist, "Task")
         val alphaIndex = eligible.indexOf(alphaId)
@@ -795,6 +798,53 @@ class SchedulerReducerTest {
 
         val suggestions = SchedulerDomain.titleSuggestions(s, "m")
         assertEquals(listOf("main"), suggestions)
+    }
+
+    @Test
+    fun partial_title_keeps_task_menu_collapsed_until_exact_match() {
+        // Anomaly repro: root list is "yu" and "g". Editing g's empty child and typing
+        // "y" must NOT surface "yu" (partial match). The "yu" row may appear only once
+        // the text equals the title exactly (PRD §4 — exact-title matching).
+        var s = SchedulerState.empty()
+        val firstCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell, "yu"))
+        val yuTaskId = s.cells[firstCell]!!.taskId!!
+
+        val secondCell = s.lists[s.rootListId]!!.cellIds[1]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(secondCell, "g"))
+        val gTaskId = s.cells[secondCell]!!.taskId!!
+        val gChild = s.lists[s.tasks[gTaskId]!!.childListId!!]!!.cellIds.first()
+
+        // "yu" is assignable to g's child (not a sibling, not an ancestor).
+        assertTrue(SchedulerDomain.canAssignTaskId(s, gChild, yuTaskId))
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(gChild))
+
+        // Typing the partial "y": the menu must stay collapsed (only "New task").
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText("y"))
+        val partialEntries =
+            SchedulerDomain.changeTaskMenuEntries(
+                s,
+                gChild,
+                s.editSession!!.draftText,
+                excludeTaskId = s.editSession!!.selectedAssignTaskId ?: s.editSession!!.newTaskDraftId,
+            )
+        assertEquals(1, partialEntries.size)
+        assertEquals("New task", partialEntries.single().label)
+        assertFalse(yuTaskId in partialEntries.mapNotNull { it.taskId })
+
+        // Typing the full "yu": the "yu" row now appears alongside "New task".
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText("yu"))
+        val exactEntries =
+            SchedulerDomain.changeTaskMenuEntries(
+                s,
+                gChild,
+                s.editSession!!.draftText,
+                excludeTaskId = s.editSession!!.selectedAssignTaskId ?: s.editSession!!.newTaskDraftId,
+            )
+        assertEquals(2, exactEntries.size)
+        assertEquals("New task", exactEntries.first().label)
+        assertTrue(yuTaskId in exactEntries.mapNotNull { it.taskId })
     }
 
     @Test
