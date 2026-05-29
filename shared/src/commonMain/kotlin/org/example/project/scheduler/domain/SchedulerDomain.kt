@@ -129,7 +129,36 @@ object SchedulerDomain {
         /** `null` = "New task" row (creates a new [TaskId] when selected or while typing). */
         val taskId: TaskId?,
         val label: String,
+        /** Always `true`: impossible IDs are now hidden from the menu (PRD §4 Filtering). */
+        val assignable: Boolean = true,
     )
+
+    private fun matchingUserTaskIds(
+        state: SchedulerState,
+        text: String,
+        excludeTaskId: TaskId? = null,
+    ): List<TaskId> =
+        state.tasks.keys
+            .filter { !isRootTask(it) && !isMainTask(it) }
+            .filter { it != excludeTaskId }
+            .filter { task ->
+                val title = state.tasks[task]?.title.orEmpty()
+                text.isEmpty() || title.contains(text, ignoreCase = true)
+            }
+            .sortedWith(taskIdMenuSort(state))
+
+    private fun taskIdMenuSort(state: SchedulerState) =
+        compareBy<TaskId>(
+            { shortestTaskTreePath(state, it).size },
+            { taskPathLabel(state, it) },
+            { childTitlesLabel(state, it) },
+        )
+
+    private fun changeTaskMenuLabel(state: SchedulerState, taskId: TaskId): String {
+        val pathLabel = taskPathLabel(state, taskId)
+        val childLabel = childTitlesLabel(state, taskId)
+        return if (childLabel.isNotEmpty()) "$pathLabel ($childLabel)" else pathLabel
+    }
 
     /**
      * Task IDs eligible for "Change Task" on [cellId] while editing [text].
@@ -143,40 +172,29 @@ object SchedulerDomain {
         excludeTaskId: TaskId? = null,
     ): List<TaskId> {
         val forbidden = siblingTaskIds(state, cellId) + ancestorTaskIds(state, cellId)
-        return state.tasks.keys
-            .filter { !isRootTask(it) && !isMainTask(it) }
-            .filter { it != excludeTaskId }
-            .filter { it !in forbidden }
-            .filter { task ->
-                val title = state.tasks[task]?.title.orEmpty()
-                text.isEmpty() || title.contains(text, ignoreCase = true)
-            }
-            .sortedWith(
-                compareBy<TaskId>(
-                    { shortestTaskTreePath(state, it).size },
-                    { taskPathLabel(state, it) },
-                    { childTitlesLabel(state, it) },
-                ),
-            )
+        return matchingUserTaskIds(state, text, excludeTaskId).filter { it !in forbidden }
     }
 
-    /** All rows in the Change Task menu; first row is always "New task" (PRD §4). */
+    /**
+     * All rows in the Change Task menu; first row is always "New task" (PRD §4).
+     * Impossible IDs (same list / ancestor path) are hidden, per PRD §4 Filtering.
+     */
     fun changeTaskMenuEntries(
         state: SchedulerState,
         cellId: CellId,
         draftText: String,
         excludeTaskId: TaskId? = null,
     ): List<ChangeTaskMenuEntry> {
-        val eligible = eligibleAssignTaskIds(state, cellId, draftText, excludeTaskId)
+        val matching = eligibleAssignTaskIds(state, cellId, draftText, excludeTaskId)
         return buildList {
             add(ChangeTaskMenuEntry(taskId = null, label = "New task"))
-            for (taskId in eligible) {
-                val pathLabel = taskPathLabel(state, taskId)
-                val childLabel = childTitlesLabel(state, taskId)
-                val label =
-                    if (childLabel.isNotEmpty()) "$pathLabel ($childLabel)"
-                    else pathLabel
-                add(ChangeTaskMenuEntry(taskId = taskId, label = label))
+            for (taskId in matching) {
+                add(
+                    ChangeTaskMenuEntry(
+                        taskId = taskId,
+                        label = changeTaskMenuLabel(state, taskId),
+                    ),
+                )
             }
         }
     }

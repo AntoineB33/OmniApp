@@ -284,6 +284,7 @@ private fun EditModeMenus(
                     TaskMenuRow(
                         label = entry.label,
                         selected = index == selectedIndex,
+                        enabled = entry.assignable,
                         onClick = {
                             if (entry.taskId == null) {
                                 onIntent(SchedulerIntent.SelectCreateAssignTask)
@@ -317,20 +318,27 @@ private fun EditModeMenus(
 private fun TaskMenuRow(
     label: String,
     selected: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     Text(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .then(
+                if (enabled) Modifier.clickable(onClick = onClick)
+                else Modifier
+            )
             .padding(vertical = 4.dp, horizontal = 8.dp),
         text = label,
         style =
             if (selected) MaterialTheme.typography.bodyMedium
             else MaterialTheme.typography.bodySmall,
         color =
-            if (selected) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurface,
+            when {
+                !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                selected -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.onSurface
+            },
     )
 }
 

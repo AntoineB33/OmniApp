@@ -533,6 +533,102 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun second_cell_matching_sibling_title_hides_unassignable_task_from_menu() {
+        var s = SchedulerState.empty()
+        val firstCell = s.lists[s.rootListId]!!.cellIds.first()
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.BeginEdit(cellId = firstCell, initialText = "g"),
+            )
+        val firstTaskId = s.cells[firstCell]!!.taskId!!
+        s = s.copy(editSession = null)
+
+        val secondCell = s.lists[s.rootListId]!!.cellIds.last()
+        assertFalse(firstCell == secondCell)
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.BeginEdit(cellId = secondCell, initialText = "g"),
+            )
+        val session = s.editSession!!
+
+        // The only candidate ("g") is a sibling in the same list, so it is hidden (PRD §4).
+        // Only the "New task" row remains, which keeps the menu collapsed.
+        val entries =
+            SchedulerDomain.changeTaskMenuEntries(
+                s,
+                secondCell,
+                session.draftText,
+                excludeTaskId = session.newTaskDraftId,
+            )
+        assertEquals(1, entries.size)
+        assertEquals("New task", entries.single().label)
+        assertFalse(firstTaskId in entries.mapNotNull { it.taskId })
+    }
+
+    @Test
+    fun reentering_empty_second_cell_keeps_task_menu_collapsed() {
+        var s = SchedulerState.empty()
+        val firstCell = s.lists[s.rootListId]!!.cellIds.first()
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.BeginEdit(cellId = firstCell, initialText = "g"),
+            )
+        s = s.copy(editSession = null)
+
+        val secondCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(secondCell))
+        val session = s.editSession!!
+        assertEquals("", session.draftText)
+
+        val entries =
+            SchedulerDomain.changeTaskMenuEntries(
+                s,
+                secondCell,
+                session.draftText,
+                excludeTaskId = session.selectedAssignTaskId ?: session.newTaskDraftId,
+            )
+        assertEquals(1, entries.size)
+        assertEquals("New task", entries.single().label)
+    }
+
+    @Test
+    fun typing_matching_title_shows_task_menu_when_task_is_in_other_branch() {
+        var s = SchedulerState.empty()
+        val alphaCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaCell, "Alpha"))
+        val alphaId = s.cells[alphaCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(alphaCell))
+        val alphaListId = s.tasks[alphaId]!!.childListId!!
+        val nestedCell = s.lists[alphaListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(nestedCell, "g"))
+        val nestedGId = s.cells[nestedCell]!!.taskId!!
+
+        val betaCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(betaCell, "Beta"))
+        s = s.copy(editSession = null)
+
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.BeginEdit(cellId = betaCell, initialText = "g"),
+            )
+        val session = s.editSession!!
+        val entries =
+            SchedulerDomain.changeTaskMenuEntries(
+                s,
+                betaCell,
+                session.draftText,
+                excludeTaskId = session.newTaskDraftId,
+            )
+        assertTrue(entries.size > 1, "Expected task menu entries, got: $entries")
+        assertEquals(null, entries.first().taskId)
+        assertTrue(nestedGId in entries.mapNotNull { it.taskId })
+    }
+
+    @Test
     fun typing_to_begin_edit_does_not_duplicate_new_task_in_change_menu() {
         var s = SchedulerState.empty()
         val cellId = s.lists[s.rootListId]!!.cellIds.first()
