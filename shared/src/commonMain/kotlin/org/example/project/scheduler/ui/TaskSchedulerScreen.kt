@@ -62,6 +62,7 @@ import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed as pointerShiftPressed
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -100,6 +101,12 @@ fun TaskSchedulerScreen(
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
+    }
+
+    LaunchedEffect(state.editSession, state.selection.main) {
+        if (state.editSession == null) {
+            focusRequester.requestFocus()
+        }
     }
 
     Column(
@@ -226,7 +233,7 @@ private fun CellListSection(
         val isInActiveSelection = SchedulerDomain.isInActiveSelection(state.selection, cellId)
         val canMoveFromCell =
             isInActiveSelection &&
-                SchedulerDomain.isSequentialSelectionInSameList(state, state.selection)
+                SchedulerDomain.canDragMoveSelection(state, state.selection)
 
         TaskRow(
             depth = depth,
@@ -532,14 +539,32 @@ private fun TaskRow(
                                 awaitFirstDown(requireUnconsumed = false)
                             }
                         if (secondDown != null) {
+                            secondDown.consume()
                             onDragAnchorChange(null)
                             if (canMoveFromCell) {
-                                onMoveDragStart()
-                                do {
+                                val touchSlop = viewConfiguration.touchSlop
+                                var traveled = 0f
+                                var moveStarted = false
+                                while (true) {
                                     val event = awaitPointerEvent()
-                                    if (!event.changes.any { it.pressed }) break
-                                } while (true)
-                                onMoveDragEnd()
+                                    if (!event.changes.any { it.pressed }) {
+                                        if (moveStarted) {
+                                            onMoveDragEnd()
+                                        } else {
+                                            onClick(cellId, false, false, true)
+                                            onDoubleClick()
+                                        }
+                                        break
+                                    }
+                                    traveled +=
+                                        event.changes.fold(0f) { acc, change ->
+                                            acc + change.positionChange().getDistance()
+                                        }
+                                    if (!moveStarted && traveled > touchSlop) {
+                                        moveStarted = true
+                                        onMoveDragStart()
+                                    }
+                                }
                             } else {
                                 onClick(cellId, false, false, true)
                                 waitForUpOrCancellation()

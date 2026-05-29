@@ -67,6 +67,12 @@ object SchedulerDomain {
         return indices == (indices.first()..indices.last()).toList()
     }
 
+    /** Multi-cell contiguous selection that can be drag-moved (PRD §3). */
+    fun canDragMoveSelection(state: SchedulerState, selection: SchedulerSelection): Boolean {
+        val cellIds = activeSelectionCells(selection).filter { isSelectableCell(state, it) }
+        return cellIds.size >= 2 && isSequentialSelectionInSameList(state, selection)
+    }
+
     /** Active selection in list order, or `null` when not sequential in one list. */
     fun orderedActiveSelectionInList(
         state: SchedulerState,
