@@ -210,6 +210,71 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun exiting_edit_removes_empty_middle_cell_but_keeps_bottom_placeholder() {
+        // Build [A, B, C, placeholder] in the root list.
+        var s = SchedulerState.empty()
+        val root = s.rootListId
+        val c0 = s.lists[root]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c0, "A"))
+        val c1 = s.lists[root]!!.cellIds[1]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c1, "B"))
+        val c2 = s.lists[root]!!.cellIds[2]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c2, "C"))
+        assertEquals(4, s.lists[root]!!.cellIds.size)
+
+        // Edit the middle cell B and empty it. The trailing placeholder is not directly
+        // below B, so the in-edit cleanup leaves B empty in the middle of the list.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(c1))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText(""))
+        assertTrue(c1 in s.lists[root]!!.cellIds)
+        assertEquals(4, s.lists[root]!!.cellIds.size)
+
+        // Exit Edit Mode by clicking another cell (PRD §4 "Forced Exit").
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.ClickCell(cellId = c0, ctrl = false, shift = false, visibleOrder = emptyList()),
+            )
+
+        // PRD §4 Post-Edit Cleanup: the empty middle cell is gone; the bottom placeholder stays.
+        assertEquals(null, s.editSession)
+        assertFalse(c1 in s.lists[root]!!.cellIds)
+        assertFalse(s.cells.containsKey(c1))
+        assertEquals(3, s.lists[root]!!.cellIds.size)
+        assertEquals(null, s.cells[s.lists[root]!!.cellIds.last()]!!.taskId)
+
+        // The cleanup is an undoable delta.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertTrue(c1 in s.lists[root]!!.cellIds)
+        assertEquals(4, s.lists[root]!!.cellIds.size)
+    }
+
+    @Test
+    fun exiting_edit_keeps_absolute_bottom_cell_of_sublist() {
+        // Parent with an expanded sublist whose only child is the empty bottom placeholder.
+        var s = SchedulerState.empty()
+        val root = s.rootListId
+        val parent = s.lists[root]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(parent, "Parent"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(parent))
+        val childListId = s.tasks[s.cells[parent]!!.taskId!!]!!.childListId!!
+        val bottomChild = s.lists[childListId]!!.cellIds.last()
+        assertEquals(null, s.cells[bottomChild]!!.taskId)
+
+        // Edit the empty bottom child, then exit without typing anything.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(bottomChild))
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.ClickCell(cellId = parent, ctrl = false, shift = false, visibleOrder = emptyList()),
+            )
+
+        // The absolute bottom cell of the sublist must be preserved (PRD §4 Post-Edit Cleanup).
+        assertEquals(null, s.editSession)
+        assertTrue(bottomChild in s.lists[childListId]!!.cellIds)
+    }
+
+    @Test
     fun rename_updates_title_index_and_shared_task_title() {
         var s = SchedulerState.empty()
         val first = s.lists[s.rootListId]!!.cellIds.first()

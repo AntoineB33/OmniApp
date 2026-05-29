@@ -147,7 +147,21 @@ object SchedulerReducer {
         return TreeMutationDelta(before = before, after = after)
     }
 
-    private fun endEditSession(state: SchedulerState): SchedulerState = state.copy(editSession = null)
+    // PRD §4 Post-Edit Tree Evaluation: exiting Edit Mode removes empty cells (except the
+    // absolute bottom cell of each sublist). The removal is committed as a TreeMutationDelta
+    // so it round-trips with undo, then the session is cleared.
+    private fun endEditSession(state: SchedulerState): SchedulerState {
+        val before = state.captureTree()
+        val cleaned = evaluatePostEditCleanup(state)
+        val after = cleaned.captureTree()
+        val committed =
+            if (after != before) {
+                commitDelta(state, TreeMutationDelta(before = before, after = after))
+            } else {
+                state
+            }
+        return committed.copy(editSession = null)
+    }
 
     private fun reduceClick(state: SchedulerState, intent: SchedulerIntent.ClickCell): SchedulerState {
         if (!SchedulerDomain.isSelectableCell(state, intent.cellId)) return state
@@ -234,6 +248,51 @@ object SchedulerReducer {
             ),
         )
     }
+}
+
+/**
+ * PRD §4 Post-Edit Tree Evaluation: drop every textually empty cell from each list, keeping
+ * only the *absolute bottom cell* of each (sub)list as the trailing placeholder. Occurrences
+ * of any removed cell are pruned and orphan tasks are purged.
+ */
+private fun evaluatePostEditCleanup(state: SchedulerState): SchedulerState {
+    val cells = state.cells.toMutableMap()
+    val lists = state.lists.toMutableMap()
+    val tasks = state.tasks.toMutableMap()
+    var changed = false
+
+    for ((listId, list) in state.lists) {
+        if (list.cellIds.size <= 1) continue
+        val lastId = list.cellIds.last()
+        val retained =
+            list.cellIds.filter { cellId ->
+                val removable = cellId != lastId && isTextuallyEmptyCell(state, cellId)
+                if (removable) {
+                    val removed = cells.remove(cellId)
+                    removed?.taskId?.let { taskId ->
+                        tasks[taskId]?.let { task ->
+                            tasks[taskId] = task.copy(occurrences = task.occurrences - cellId)
+                        }
+                    }
+                    changed = true
+                }
+                !removable
+            }
+        if (retained.size != list.cellIds.size) {
+            lists[listId] = list.copy(cellIds = retained)
+        }
+    }
+
+    if (!changed) return state
+    return SchedulerDomain.purgeOrphanTasks(
+        state.copy(cells = cells, lists = lists, tasks = tasks),
+    )
+}
+
+private fun isTextuallyEmptyCell(state: SchedulerState, cellId: CellId): Boolean {
+    val cell = state.cells[cellId] ?: return false
+    val taskId = cell.taskId ?: return true
+    return state.tasks[taskId]?.title.isNullOrEmpty()
 }
 
 private fun applyEditText(
