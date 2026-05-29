@@ -49,7 +49,7 @@ While in Edit Mode, two contextual menus remain visible until editing concludes:
 * **Rename:** Modifying the text updates the title field in the global `Tree`. *All* cells sharing this `taskId` will temporarily reflect the new text. If the mode is switched back or canceled, other cells revert to their original state.
 
 **Menu 2: Title Suggestions**
-* Displays a list of existing task titles similar to the current input (except the exact same title). The menu doesn't appear if there is only one element.
+* Displays a list of existing task titles similar to the current input (except the exact same title).
 * *Sorting:* String similarity -> alphabetical -> number of `taskIds` sharing the title -> total occurrence count.
 * *Action:* Selecting a suggestion updates the cell text, but keeps the cell in Edit Mode with menus active.
 
