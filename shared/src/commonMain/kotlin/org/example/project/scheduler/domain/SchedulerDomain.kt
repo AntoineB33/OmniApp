@@ -143,7 +143,9 @@ object SchedulerDomain {
             .filter { it != excludeTaskId }
             .filter { task ->
                 val title = state.tasks[task]?.title.orEmpty()
-                text.isEmpty() || title.contains(text, ignoreCase = true)
+                // Empty text matches nothing: with no query there is no existing
+                // task to suggest, so only the "New task" row remains (PRD §4).
+                text.isNotEmpty() && title.contains(text, ignoreCase = true)
             }
             .sortedWith(taskIdMenuSort(state))
 

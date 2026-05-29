@@ -298,7 +298,7 @@ private fun EditModeMenus(
         }
 
         val suggestions = SchedulerDomain.titleSuggestions(state, draftText)
-        if (suggestions.size > 1) {
+        if (suggestions.isNotEmpty()) {
             Text(
                 text = "Title suggestions",
                 style = MaterialTheme.typography.labelMedium,

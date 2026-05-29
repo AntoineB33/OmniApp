@@ -351,17 +351,19 @@ class SchedulerReducerTest {
     fun eligible_assign_task_ids_hide_ancestors_and_siblings() {
         var s = SchedulerState.empty()
         val parent = s.lists[s.rootListId]!!.cellIds.first()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(parent, "Parent"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(parent, "x Parent"))
         val parentTask = s.cells[parent]!!.taskId!!
         s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(parent))
 
         val childListId = s.tasks[parentTask]!!.childListId!!
         val firstChild = s.lists[childListId]!!.cellIds.first()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstChild, "First"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstChild, "x First"))
         val firstChildTask = s.cells[firstChild]!!.taskId!!
 
+        // A non-empty query ("x") matches both the ancestor and the sibling, so this
+        // meaningfully exercises the ancestor/sibling filtering (PRD §4 Filtering).
         val emptySlot = s.lists[childListId]!!.cellIds.last()
-        val eligible = SchedulerDomain.eligibleAssignTaskIds(s, emptySlot, "")
+        val eligible = SchedulerDomain.eligibleAssignTaskIds(s, emptySlot, "x")
         assertFalse(parentTask in eligible)
         assertFalse(firstChildTask in eligible)
     }
@@ -370,12 +372,12 @@ class SchedulerReducerTest {
     fun eligible_assign_task_ids_sorted_by_path_length_then_label() {
         var s = SchedulerState.empty()
         val alphaCell = s.lists[s.rootListId]!!.cellIds.first()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaCell, "Alpha"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaCell, "Alpha Task"))
         val alphaId = s.cells[alphaCell]!!.taskId!!
         s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(alphaCell))
         val alphaListId = s.tasks[alphaId]!!.childListId!!
         val nestedCell = s.lists[alphaListId]!!.cellIds.first()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(nestedCell, "Nested"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(nestedCell, "Nested Task"))
         val nestedId = s.cells[nestedCell]!!.taskId!!
 
         val betaCell = s.lists[s.rootListId]!!.cellIds.last()
@@ -383,8 +385,10 @@ class SchedulerReducerTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(betaCell))
         val betaListId = s.tasks[s.cells[betaCell]!!.taskId!!]!!.childListId!!
 
+        // Query "Task" matches both candidates; the shallower path ("Alpha Task")
+        // must sort before the deeper one ("Nested Task") per PRD §4 Sorting.
         val emptyInSublist = s.lists[betaListId]!!.cellIds.last()
-        val eligible = SchedulerDomain.eligibleAssignTaskIds(s, emptyInSublist, "")
+        val eligible = SchedulerDomain.eligibleAssignTaskIds(s, emptyInSublist, "Task")
         val alphaIndex = eligible.indexOf(alphaId)
         val nestedIndex = eligible.indexOf(nestedId)
         assertTrue(alphaIndex >= 0 && nestedIndex >= 0)
@@ -715,6 +719,137 @@ class SchedulerReducerTest {
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.Redo)
         assertEquals(taskA, s.cells[child]!!.taskId)
+    }
+
+    @Test
+    fun empty_change_task_menu_matches_no_existing_tasks() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "yu"))
+
+        // An empty query yields no existing-task matches at all (PRD §4): with no text
+        // typed there is nothing to "match", so only the implicit "New task" row exists.
+        val emptySlot = s.lists[s.rootListId]!!.cellIds.last()
+        assertTrue(SchedulerDomain.eligibleAssignTaskIds(s, emptySlot, "").isEmpty())
+    }
+
+    @Test
+    fun entering_empty_child_of_sibling_does_not_list_other_branch_task() {
+        // Anomaly repro: first cell "yu", second cell "g", then edit the empty child of "g".
+        var s = SchedulerState.empty()
+        val firstCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell, "yu"))
+        val yuTaskId = s.cells[firstCell]!!.taskId!!
+
+        val secondCell = s.lists[s.rootListId]!!.cellIds[1]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(secondCell, "g"))
+        val gTaskId = s.cells[secondCell]!!.taskId!!
+
+        val gChildListId = s.tasks[gTaskId]!!.childListId!!
+        val gChild = s.lists[gChildListId]!!.cellIds.first()
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(gChild))
+        val session = s.editSession!!
+        assertEquals("", session.draftText)
+
+        val entries =
+            SchedulerDomain.changeTaskMenuEntries(
+                s,
+                gChild,
+                session.draftText,
+                excludeTaskId = session.selectedAssignTaskId ?: session.newTaskDraftId,
+            )
+        // Only "New task" — "yu" must NOT appear even though it is otherwise assignable.
+        assertEquals(1, entries.size)
+        assertEquals("New task", entries.single().label)
+        assertFalse(yuTaskId in entries.mapNotNull { it.taskId })
+        assertTrue(SchedulerDomain.canAssignTaskId(s, gChild, yuTaskId))
+    }
+
+    @Test
+    fun typing_in_empty_child_keeps_task_menu_collapsed_and_shows_title_suggestion() {
+        // Anomaly repro continued: typing "m" must surface the "main" title suggestion
+        // and must NOT surface any existing-task row.
+        var s = SchedulerState.empty()
+        val firstCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell, "yu"))
+        val secondCell = s.lists[s.rootListId]!!.cellIds[1]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(secondCell, "g"))
+        val gTaskId = s.cells[secondCell]!!.taskId!!
+        val gChild = s.lists[s.tasks[gTaskId]!!.childListId!!]!!.cellIds.first()
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(gChild))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText("m"))
+        val session = s.editSession!!
+        assertEquals("m", session.draftText)
+
+        val entries =
+            SchedulerDomain.changeTaskMenuEntries(
+                s,
+                gChild,
+                session.draftText,
+                excludeTaskId = session.selectedAssignTaskId ?: session.newTaskDraftId,
+            )
+        assertEquals(1, entries.size)
+        assertEquals("New task", entries.single().label)
+
+        val suggestions = SchedulerDomain.titleSuggestions(s, "m")
+        assertEquals(listOf("main"), suggestions)
+    }
+
+    @Test
+    fun title_suggestions_on_empty_db_list_root_and_main() {
+        // Entering Edit Mode on a fresh DB with an empty draft must surface the existing
+        // titles ("root", "main"), sorted alphabetically (PRD §4 Menu 2).
+        val s = SchedulerState.empty()
+        assertEquals(listOf("main", "root"), SchedulerDomain.titleSuggestions(s, ""))
+    }
+
+    @Test
+    fun title_suggestions_for_empty_input_list_all_titles() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Alpha"))
+
+        assertEquals(listOf("Alpha", "main", "root"), SchedulerDomain.titleSuggestions(s, ""))
+    }
+
+    @Test
+    fun title_suggestions_show_single_match() {
+        // Single suggestion must still be returned (no "only one element" rule for Menu 2).
+        val s = SchedulerState.empty()
+        assertEquals(listOf("main"), SchedulerDomain.titleSuggestions(s, "m"))
+        assertEquals(listOf("main"), SchedulerDomain.titleSuggestions(s, "ai"))
+    }
+
+    @Test
+    fun double_clicking_existing_cell_still_lists_other_matching_tasks() {
+        // Regression guard: non-empty draft (e.g. re-editing an existing title) must
+        // still surface other matching tasks in another branch.
+        var s = SchedulerState.empty()
+        val alphaCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaCell, "Report"))
+        val alphaId = s.cells[alphaCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(alphaCell))
+        val alphaChild = s.lists[s.tasks[alphaId]!!.childListId!!]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaChild, "Report"))
+        val nestedReportId = s.cells[alphaChild]!!.taskId!!
+
+        val betaCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(betaCell, "Beta"))
+        s = s.copy(editSession = null)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(betaCell, initialText = "Report"))
+        val session = s.editSession!!
+        val entries =
+            SchedulerDomain.changeTaskMenuEntries(
+                s,
+                betaCell,
+                session.draftText,
+                excludeTaskId = session.newTaskDraftId,
+            )
+        assertTrue(entries.size > 1)
+        assertTrue(nestedReportId in entries.mapNotNull { it.taskId })
     }
 
     private fun seedThreeTasks(): SchedulerState {
