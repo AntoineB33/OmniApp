@@ -1,26 +1,30 @@
 package org.example.project.scheduler.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -36,6 +40,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -56,6 +62,14 @@ import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
+
+private object SheetColors {
+    val grid = Color(0xFFDADCE0)
+    val cellBackground = Color.White
+    val selectionFill = Color(0xFFE8F0FE)
+    val activeBorder = Color(0xFF1A73E8)
+    val nonSelectableFill = Color(0xFFF8F9FA)
+}
 
 @Composable
 fun TaskSchedulerScreen(
@@ -102,7 +116,6 @@ fun TaskSchedulerScreen(
 
         Column(
             modifier = Modifier.verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             CellListSection(
                 state = state,
@@ -136,9 +149,10 @@ private fun CellListSection(
         val cell = state.cells[cellId] ?: return@forEach
         val title = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()
         val selectable = SchedulerDomain.isSelectableCell(state, cellId)
-        val isSelected =
+        val isMainSelection = selectable && state.selection.main == cellId
+        val isInSelectionRange =
             selectable &&
-                (state.selection.main == cellId || state.selection.selected.contains(cellId))
+                (isMainSelection || state.selection.selected.contains(cellId))
         val isEditing = state.editSession?.cellId == cellId
         val editDraft = if (isEditing) state.editSession!!.draftText else title
         val hasChildren = cell.taskId?.let { state.tasks[it]?.childListId != null } == true
@@ -148,7 +162,8 @@ private fun CellListSection(
             depth = depth,
             cellId = cellId,
             displayTitle = if (isEditing) editDraft else title,
-            selected = isSelected,
+            isMainSelection = isMainSelection,
+            isInSelectionRange = isInSelectionRange,
             selectable = selectable,
             isEditing = isEditing,
             hasChildren = hasChildren,
@@ -349,7 +364,8 @@ private fun TaskRow(
     depth: Int,
     cellId: CellId,
     displayTitle: String,
-    selected: Boolean,
+    isMainSelection: Boolean,
+    isInSelectionRange: Boolean,
     selectable: Boolean,
     isEditing: Boolean,
     hasChildren: Boolean,
@@ -365,24 +381,57 @@ private fun TaskRow(
         if (isEditing) editFocusRequester.requestFocus()
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = (depth * 16).dp)
-            .background(
-                if (selected) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surfaceVariant,
-            )
-            .padding(8.dp),
-    ) {
+    val cellBackground =
+        when {
+            isInSelectionRange || isEditing -> SheetColors.selectionFill
+            !selectable -> SheetColors.nonSelectableFill
+            else -> SheetColors.cellBackground
+        }
+    val cellBorder =
+        if (isMainSelection || isEditing) {
+            Modifier.border(2.dp, SheetColors.activeBorder)
+        } else {
+            Modifier.border(1.dp, SheetColors.grid)
+        }
+    val textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface)
+
+    Column(modifier = Modifier.fillMaxWidth()) {
         Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = (depth * 16).dp)
+                .defaultMinSize(minHeight = 28.dp)
+                .background(cellBackground)
+                .then(cellBorder)
+                .then(
+                    if (selectable && !isEditing) {
+                        Modifier.combinedClickable(
+                            onClick = { onClick(cellId, false, false) },
+                            onDoubleClick = onDoubleClick,
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
+                .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(
-                onClick = onToggleExpand,
-                enabled = hasChildren,
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .then(
+                        if (hasChildren) Modifier.clickable(onClick = onToggleExpand)
+                        else Modifier
+                    ),
+                contentAlignment = Alignment.Center,
             ) {
-                Text(if (expanded) "▾" else "▸")
+                if (hasChildren) {
+                    Text(
+                        text = if (expanded) "▾" else "▸",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             if (isEditing) {
                 var textFieldValue by remember(cellId) { mutableStateOf(TextFieldValue()) }
@@ -399,37 +448,50 @@ private fun TaskRow(
                             )
                     }
                 }
-                OutlinedTextField(
+                BasicTextField(
                     modifier = Modifier
                         .weight(1f)
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 20.dp)
                         .focusRequester(editFocusRequester),
                     value = textFieldValue,
                     onValueChange = { newValue ->
                         textFieldValue = newValue
                         onTextChange(newValue.text)
                     },
-                    singleLine = false,
-                    label = { Text("Task") },
+                    textStyle = textStyle,
+                    cursorBrush = SolidColor(SheetColors.activeBorder),
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            innerTextField()
+                        }
+                    },
                 )
             } else {
                 Text(
                     modifier = Modifier
                         .weight(1f)
-                        .then(
-                            if (selectable) {
-                                Modifier.combinedClickable(
-                                    onClick = { onClick(cellId, false, false) },
-                                    onDoubleClick = onDoubleClick,
-                                )
-                            } else {
-                                Modifier
-                            },
-                        ),
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 20.dp),
                     text = displayTitle.ifEmpty { " " },
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = textStyle,
                 )
             }
         }
-        editMenus?.invoke()
+        if (isEditing) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = (depth * 16).dp)
+                    .background(SheetColors.cellBackground)
+                    .border(1.dp, SheetColors.grid)
+                    .padding(8.dp),
+            ) {
+                editMenus?.invoke()
+            }
+        }
     }
 }
