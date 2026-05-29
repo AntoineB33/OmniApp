@@ -1,4 +1,4 @@
-rootProject.name = "KotlinScheduler"
+rootProject.name = "OmniApp"
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {

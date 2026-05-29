@@ -42,6 +42,41 @@ object SchedulerDomain {
     fun selectableVisibleOrder(state: SchedulerState): List<CellId> =
         visibleCellOrder(state).filter { isSelectableCell(state, it) }
 
+    /** Visible selectable cells from [fromCellId] through [toCellId] (inclusive). */
+    fun visibleSelectionRange(
+        visibleOrder: List<CellId>,
+        fromCellId: CellId,
+        toCellId: CellId,
+    ): Set<CellId> {
+        val a = visibleOrder.indexOf(fromCellId)
+        val b = visibleOrder.indexOf(toCellId)
+        if (a == -1 || b == -1) return setOf(fromCellId)
+        val (from, to) = if (a <= b) a to b else b to a
+        return visibleOrder.subList(from, to + 1).toSet()
+    }
+
+    fun neighborSelectableCell(
+        state: SchedulerState,
+        cellId: CellId,
+        direction: Int,
+    ): CellId? {
+        val order = selectableVisibleOrder(state)
+        val index = order.indexOf(cellId)
+        if (index == -1) return null
+        val nextIndex = index + direction
+        if (nextIndex !in order.indices) return null
+        return order[nextIndex]
+    }
+
+    fun firstSelectableChild(state: SchedulerState, cellId: CellId): CellId? {
+        val cell = state.cells[cellId] ?: return null
+        val taskId = cell.taskId ?: return null
+        val childListId = state.tasks[taskId]?.childListId ?: return null
+        return state.lists[childListId]
+            ?.cellIds
+            ?.firstOrNull { isSelectableCell(state, it) }
+    }
+
     fun cellTreeDepth(state: SchedulerState, cellId: CellId): Int {
         var depth = 0
         var listId = state.cells[cellId]?.parentListId ?: return 0

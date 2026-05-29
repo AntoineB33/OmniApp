@@ -12,6 +12,9 @@ object SchedulerReducer {
     fun reduce(state: SchedulerState, intent: SchedulerIntent): SchedulerState {
         return when (intent) {
             is SchedulerIntent.ClickCell -> reduceClick(state, intent)
+            is SchedulerIntent.DragSelectCells -> reduceDragSelect(state, intent)
+            SchedulerIntent.ClearSelection -> reduceClearSelection(state)
+            is SchedulerIntent.ExitEdit -> reduceExitEdit(state, intent.navigation)
             is SchedulerIntent.ToggleExpand -> commitDelta(state, ToggleExpandDelta(intent.cellId))
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
             is SchedulerIntent.AssignTaskId -> commitDelta(state, assignTaskIdDelta(state, intent.cellId, intent.taskId))
@@ -172,15 +175,13 @@ object SchedulerReducer {
         val newSelection =
             when {
                 intent.shift && currentMain != null -> {
-                    val ids = visibleOrder
-                    val a = ids.indexOf(currentMain)
-                    val b = ids.indexOf(intent.cellId)
-                    if (a == -1 || b == -1) {
-                        SchedulerSelection(main = intent.cellId, selected = emptySet())
-                    } else {
-                        val (from, to) = if (a <= b) a to b else b to a
-                        SchedulerSelection(main = intent.cellId, selected = ids.subList(from, to + 1).toSet())
-                    }
+                    val range =
+                        SchedulerDomain.visibleSelectionRange(
+                            visibleOrder,
+                            currentMain,
+                            intent.cellId,
+                        )
+                    SchedulerSelection(main = intent.cellId, selected = range)
                 }
                 intent.ctrl -> {
                     val toggled =
@@ -194,6 +195,90 @@ object SchedulerReducer {
                 else -> SchedulerSelection(main = intent.cellId, selected = emptySet())
             }
 
+        return applySelectionChange(state, newSelection, intent.cellId)
+    }
+
+    private fun reduceDragSelect(
+        state: SchedulerState,
+        intent: SchedulerIntent.DragSelectCells,
+    ): SchedulerState {
+        if (!SchedulerDomain.isSelectableCell(state, intent.anchorCellId)) return state
+        if (!SchedulerDomain.isSelectableCell(state, intent.hoverCellId)) return state
+        val visibleOrder =
+            intent.visibleOrder.ifEmpty { SchedulerDomain.selectableVisibleOrder(state) }
+        val range =
+            SchedulerDomain.visibleSelectionRange(
+                visibleOrder,
+                intent.anchorCellId,
+                intent.hoverCellId,
+            )
+        val newSelection =
+            SchedulerSelection(main = intent.anchorCellId, selected = range)
+        return applySelectionChange(state, newSelection, intent.hoverCellId)
+    }
+
+    private fun reduceClearSelection(state: SchedulerState): SchedulerState {
+        if (state.selection.main == null &&
+            state.selection.selected.isEmpty() &&
+            state.editSession == null
+        ) {
+            return state
+        }
+        var next = state
+        if (state.editSession != null) {
+            next = endEditSession(state)
+        }
+        if (next.selection.main == null && next.selection.selected.isEmpty()) return next
+        return commitDelta(
+            next,
+            SetSelectionDelta(before = next.selection, after = SchedulerSelection()),
+        )
+    }
+
+    private fun reduceExitEdit(
+        state: SchedulerState,
+        navigation: EditExitNavigation,
+    ): SchedulerState {
+        if (state.editSession == null) return state
+        val editingCellId = state.editSession.cellId
+        var next = endEditSession(state)
+
+        val newMain =
+            when (navigation) {
+                EditExitNavigation.Down ->
+                    SchedulerDomain.neighborSelectableCell(next, editingCellId, 1) ?: editingCellId
+                EditExitNavigation.Up ->
+                    SchedulerDomain.neighborSelectableCell(next, editingCellId, -1) ?: editingCellId
+                EditExitNavigation.TabToChild -> {
+                    val cell = next.cells[editingCellId]
+                    val taskId = cell?.taskId
+                    val childListId = taskId?.let { next.tasks[it]?.childListId }
+                    if (childListId == null) {
+                        editingCellId
+                    } else {
+                        if (editingCellId !in next.expanded) {
+                            next = commitDelta(next, ToggleExpandDelta(editingCellId))
+                        }
+                        SchedulerDomain.firstSelectableChild(next, editingCellId) ?: editingCellId
+                    }
+                }
+            }
+
+        if (newMain == next.selection.main && next.selection.selected.isEmpty()) return next
+        return commitDelta(
+            next,
+            SetSelectionDelta(
+                before = next.selection,
+                after = SchedulerSelection(main = newMain, selected = emptySet()),
+            ),
+        )
+    }
+
+    private fun applySelectionChange(
+        state: SchedulerState,
+        newSelection: SchedulerSelection,
+        clickedCellId: CellId,
+    ): SchedulerState {
         var next =
             commitDelta(
                 state,
@@ -203,7 +288,7 @@ object SchedulerReducer {
                 ),
             )
         val editing = state.editSession
-        if (editing != null && intent.cellId != editing.cellId) {
+        if (editing != null && clickedCellId != editing.cellId) {
             next = endEditSession(next)
         }
         return next

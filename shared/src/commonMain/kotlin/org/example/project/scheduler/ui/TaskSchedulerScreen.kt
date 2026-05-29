@@ -3,8 +3,12 @@ package org.example.project.scheduler.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -51,6 +56,12 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isShiftPressed as pointerShiftPressed
+import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
@@ -60,6 +71,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.CellEditMode
+import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
 
@@ -80,6 +92,7 @@ fun TaskSchedulerScreen(
     val state by vm.state.collectAsState()
     val visibleOrder = SchedulerDomain.visibleCellOrder(state)
     val focusRequester = remember { FocusRequester() }
+    var dragAnchor by remember { mutableStateOf<CellId?>(null) }
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
@@ -89,6 +102,11 @@ fun TaskSchedulerScreen(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = { vm.dispatch(SchedulerIntent.ClearSelection) },
+            )
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
@@ -111,6 +129,11 @@ fun TaskSchedulerScreen(
         Text(
             text = "Task Scheduler",
             style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = { vm.dispatch(SchedulerIntent.ClearSelection) },
+            ),
         )
         Spacer(Modifier.height(12.dp))
 
@@ -122,6 +145,8 @@ fun TaskSchedulerScreen(
                 listId = state.rootListId,
                 depth = 0,
                 visibleOrder = visibleOrder,
+                dragAnchor = dragAnchor,
+                onDragAnchorChange = { dragAnchor = it },
                 onIntent = vm::dispatch,
             )
         }
@@ -142,6 +167,8 @@ private fun CellListSection(
     listId: CellListId,
     depth: Int,
     visibleOrder: List<CellId>,
+    dragAnchor: CellId?,
+    onDragAnchorChange: (CellId?) -> Unit,
     onIntent: (SchedulerIntent) -> Unit,
 ) {
     val list = state.lists[listId] ?: return
@@ -179,6 +206,17 @@ private fun CellListSection(
                     ),
                 )
             },
+            onDragSelect = { anchor, hover ->
+                onIntent(
+                    SchedulerIntent.DragSelectCells(
+                        anchorCellId = anchor,
+                        hoverCellId = hover,
+                        visibleOrder = visibleOrder,
+                    ),
+                )
+            },
+            dragAnchor = dragAnchor,
+            onDragAnchorChange = onDragAnchorChange,
             onDoubleClick = {
                 if (selectable && !isEditing) {
                     onIntent(SchedulerIntent.BeginEdit(cellId))
@@ -186,6 +224,9 @@ private fun CellListSection(
             },
             onTextChange = { newText ->
                 onIntent(SchedulerIntent.UpdateEditText(newText))
+            },
+            onExitEdit = { navigation ->
+                onIntent(SchedulerIntent.ExitEdit(navigation))
             },
             onToggleExpand = {
                 if (hasChildren) onIntent(SchedulerIntent.ToggleExpand(cellId))
@@ -212,6 +253,8 @@ private fun CellListSection(
                 listId = childListId,
                 depth = depth + 1,
                 visibleOrder = visibleOrder,
+                dragAnchor = dragAnchor,
+                onDragAnchorChange = onDragAnchorChange,
                 onIntent = onIntent,
             )
         }
@@ -371,8 +414,12 @@ private fun TaskRow(
     hasChildren: Boolean,
     expanded: Boolean,
     onClick: (CellId, ctrl: Boolean, shift: Boolean) -> Unit,
+    onDragSelect: (anchor: CellId, hover: CellId) -> Unit,
+    dragAnchor: CellId?,
+    onDragAnchorChange: (CellId?) -> Unit,
     onDoubleClick: () -> Unit,
     onTextChange: (String) -> Unit,
+    onExitEdit: (EditExitNavigation) -> Unit,
     onToggleExpand: () -> Unit,
     editMenus: (@Composable () -> Unit)?,
 ) {
@@ -395,6 +442,35 @@ private fun TaskRow(
         }
     val textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface)
 
+    @OptIn(ExperimentalComposeUiApi::class)
+    fun selectionPointerModifier(): Modifier {
+        if (!selectable || isEditing) return Modifier
+        return Modifier
+            .pointerInput(cellId) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    val modifiers = currentEvent.keyboardModifiers
+                    val ctrl = modifiers.pointerCtrlPressed
+                    val shift = modifiers.pointerShiftPressed
+                    onClick(cellId, ctrl, shift)
+                    if (!ctrl && !shift) {
+                        onDragAnchorChange(cellId)
+                    }
+                    waitForUpOrCancellation()
+                    onDragAnchorChange(null)
+                }
+            }
+            .onPointerEvent(PointerEventType.Move) { event ->
+                val anchor = dragAnchor ?: return@onPointerEvent
+                if (event.buttons.isPrimaryPressed && anchor != cellId) {
+                    onDragSelect(anchor, cellId)
+                }
+            }
+            .pointerInput(cellId) {
+                detectTapGestures(onDoubleTap = { onDoubleClick() })
+            }
+    }
+
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -403,16 +479,6 @@ private fun TaskRow(
                 .defaultMinSize(minHeight = 28.dp)
                 .background(cellBackground)
                 .then(cellBorder)
-                .then(
-                    if (selectable && !isEditing) {
-                        Modifier.combinedClickable(
-                            onClick = { onClick(cellId, false, false) },
-                            onDoubleClick = onDoubleClick,
-                        )
-                    } else {
-                        Modifier
-                    },
-                )
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -453,7 +519,34 @@ private fun TaskRow(
                         .weight(1f)
                         .fillMaxWidth()
                         .defaultMinSize(minHeight = 20.dp)
-                        .focusRequester(editFocusRequester),
+                        .then(selectionPointerModifier())
+                        .focusRequester(editFocusRequester)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            if (event.key == Key.Delete && !event.isCtrlPressed) {
+                                return@onPreviewKeyEvent false
+                            }
+                            when {
+                                event.key == Key.Enter && event.isCtrlPressed -> false
+                                event.key == Key.Enter && event.isShiftPressed -> {
+                                    onExitEdit(EditExitNavigation.Up)
+                                    true
+                                }
+                                event.key == Key.Enter -> {
+                                    onExitEdit(EditExitNavigation.Down)
+                                    true
+                                }
+                                event.key == Key.Tab && event.isShiftPressed -> {
+                                    onExitEdit(EditExitNavigation.Up)
+                                    true
+                                }
+                                event.key == Key.Tab -> {
+                                    onExitEdit(EditExitNavigation.TabToChild)
+                                    true
+                                }
+                                else -> false
+                            }
+                        },
                     value = textFieldValue,
                     onValueChange = { newValue ->
                         textFieldValue = newValue
@@ -475,7 +568,8 @@ private fun TaskRow(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .defaultMinSize(minHeight = 20.dp),
+                        .defaultMinSize(minHeight = 20.dp)
+                        .then(selectionPointerModifier()),
                     text = displayTitle.ifEmpty { " " },
                     style = textStyle,
                 )

@@ -3,6 +3,15 @@ package org.example.project.scheduler.state
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.TaskId
 
+enum class EditExitNavigation {
+    /** Enter — commit and move selection down one visible cell. */
+    Down,
+    /** Shift+Enter / Shift+Tab — commit and move selection up one visible cell. */
+    Up,
+    /** Tab — expand sublist and move selection to the first child. */
+    TabToChild,
+}
+
 sealed interface SchedulerIntent {
     data class ClickCell(
         val cellId: CellId,
@@ -10,6 +19,16 @@ sealed interface SchedulerIntent {
         val shift: Boolean,
         val visibleOrder: List<CellId>,
     ) : SchedulerIntent
+
+    data class DragSelectCells(
+        val anchorCellId: CellId,
+        val hoverCellId: CellId,
+        val visibleOrder: List<CellId>,
+    ) : SchedulerIntent
+
+    data object ClearSelection : SchedulerIntent
+
+    data class ExitEdit(val navigation: EditExitNavigation) : SchedulerIntent
 
     data class ToggleExpand(val cellId: CellId) : SchedulerIntent
 

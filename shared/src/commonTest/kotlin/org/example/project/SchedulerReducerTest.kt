@@ -10,6 +10,7 @@ import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.CellEditMode
+import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
@@ -100,6 +101,100 @@ class SchedulerReducerTest {
 
         assertEquals(visible[2], s.selection.main)
         assertEquals(setOf(visible[0], visible[1], visible[2]), s.selection.selected)
+    }
+
+    @Test
+    fun drag_select_spans_visible_range_from_anchor() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        val anchor = visible[0]
+        val hover = visible[2]
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = anchor, ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.DragSelectCells(
+                anchorCellId = anchor,
+                hoverCellId = hover,
+                visibleOrder = visible,
+            ),
+        )
+
+        assertEquals(anchor, s.selection.main)
+        assertEquals(setOf(visible[0], visible[1], visible[2]), s.selection.selected)
+    }
+
+    @Test
+    fun clear_selection_clears_main_and_multi_and_exits_edit() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        val cell = visible[1]
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = cell, ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cell))
+        assertNotNull(s.editSession)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ClearSelection)
+
+        assertEquals(null, s.selection.main)
+        assertTrue(s.selection.selected.isEmpty())
+        assertEquals(null, s.editSession)
+    }
+
+    @Test
+    fun exit_edit_enter_moves_selection_down() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        val top = visible[0]
+        val below = visible[1]
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(top))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Down))
+
+        assertEquals(null, s.editSession)
+        assertEquals(below, s.selection.main)
+        assertTrue(s.selection.selected.isEmpty())
+    }
+
+    @Test
+    fun exit_edit_shift_enter_moves_selection_up() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        val middle = visible[1]
+        val above = visible[0]
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = middle, ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(middle))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Up))
+
+        assertEquals(above, s.selection.main)
+    }
+
+    @Test
+    fun exit_edit_tab_expands_and_selects_first_child() {
+        var s = seedThreeTasks()
+        val parent = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(parent, "Parent"))
+        val childListId = s.tasks[s.cells[parent]!!.taskId!!]!!.childListId!!
+        val child = s.lists[childListId]!!.cellIds.first()
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(parent))
+        assertFalse(parent in s.expanded)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.TabToChild))
+
+        assertTrue(parent in s.expanded)
+        assertEquals(child, s.selection.main)
+        assertEquals(null, s.editSession)
     }
 
     @Test
