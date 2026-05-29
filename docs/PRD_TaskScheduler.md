@@ -62,6 +62,7 @@ While in Edit Mode, two contextual menus remain visible until editing concludes:
 * **Auto-Expansion:** When the bottom cell of a list receives text, the system automatically:
   1. Initializes a hidden sublist for it (containing one empty cell).
   2. Appends a new empty placeholder cell directly below it at the current hierarchical level.
+* **Cleanup:** When the cell before the last one in a list is populated and in Edition Mode (which means the last cell is empty) and the user empties its text content, the last cell is removed.
 
 ### Exiting Edit Mode (Keyboard Navigation)
 * `Enter`: Commits and moves *Main Selection* down one cell.
@@ -70,7 +71,7 @@ While in Edit Mode, two contextual menus remain visible until editing concludes:
 * `Shift + Tab`: Behaves identically to `Shift + Enter`.
 
 ### Post-Edit Tree Evaluation
-* **Cleanup:** Empty cells are automatically removed upon exit, *unless* it is the absolute bottom cell of a specific sublist.
+* **Cleanup:** Empty cells are automatically removed upon exit, *unless* it is the absolute bottom cell of a sublist.
 
 ## 5. State Management & Undo/Redo Engine
 

@@ -1,5 +1,7 @@
 package org.example.project.scheduler.model
 
+import kotlin.jvm.JvmInline
+
 data class Task(
     val id: TaskId,
     val title: String,

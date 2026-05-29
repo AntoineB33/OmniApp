@@ -52,6 +52,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
@@ -59,7 +60,8 @@ import org.example.project.scheduler.state.SchedulerState
 @Composable
 fun TaskSchedulerScreen(
     modifier: Modifier = Modifier,
-    vm: TaskSchedulerViewModel = viewModel { TaskSchedulerViewModel() },
+    store: SchedulerStore? = null,
+    vm: TaskSchedulerViewModel = viewModel { TaskSchedulerViewModel(store = store) },
 ) {
     val state by vm.state.collectAsState()
     val visibleOrder = SchedulerDomain.visibleCellOrder(state)

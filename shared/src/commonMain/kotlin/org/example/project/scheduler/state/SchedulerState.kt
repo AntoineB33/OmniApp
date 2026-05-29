@@ -48,7 +48,7 @@ data class SchedulerState(
     val selection: SchedulerSelection,
     val editSession: SchedulerEditSession? = null,
     val history: SchedulerHistory,
-    private val nextTaskCounter: Int = 0,
+    val nextTaskCounter: Int = 0,
 ) {
     fun captureTree(): TreeSnapshot =
         TreeSnapshot(

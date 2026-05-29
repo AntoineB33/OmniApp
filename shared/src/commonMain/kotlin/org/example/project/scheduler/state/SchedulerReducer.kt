@@ -415,6 +415,19 @@ private fun applySetCellTitle(
         lists[currentList.id] = currentList
     }
 
+    // PRD §4 Cleanup (inverse of Auto-Expansion): when the cell directly above the
+    // trailing empty placeholder is emptied while editing, drop that placeholder so the
+    // now-empty cell becomes the list's bottom cell again.
+    if (title.isEmpty()) {
+        val ids = currentList.cellIds
+        val index = ids.indexOf(cellId)
+        if (index >= 0 && index == ids.size - 2 && cells[ids.last()]?.taskId == null) {
+            cells.remove(ids.last())
+            currentList = currentList.copy(cellIds = ids.dropLast(1))
+            lists[currentList.id] = currentList
+        }
+    }
+
     var result =
         working.copy(
             cells = cells,

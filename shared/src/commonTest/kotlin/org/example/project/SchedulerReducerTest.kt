@@ -7,10 +7,13 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.WellKnownIds
+import org.example.project.scheduler.persistence.SchedulerStateCodec
+import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.ui.TaskSchedulerViewModel
 
 class SchedulerReducerTest {
     @Test
@@ -157,6 +160,52 @@ class SchedulerReducerTest {
         val subList = s.lists[task.childListId]!!
         assertEquals(1, subList.cellIds.size)
         assertEquals(null, s.cells[subList.cellIds.first()]!!.taskId)
+        assertEquals(2, s.lists[s.rootListId]!!.cellIds.size)
+    }
+
+    @Test
+    fun emptying_cell_above_trailing_placeholder_removes_placeholder() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Parent"))
+        assertEquals(2, s.lists[s.rootListId]!!.cellIds.size)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, ""))
+
+        val rootCells = s.lists[s.rootListId]!!.cellIds
+        assertEquals(1, rootCells.size)
+        assertEquals(cellId, rootCells.single())
+
+        // The cleanup is part of the title-mutation delta, so it round-trips with undo.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertEquals(2, s.lists[s.rootListId]!!.cellIds.size)
+    }
+
+    @Test
+    fun emptying_edited_cell_in_edit_mode_removes_trailing_placeholder() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId, initialText = "Parent"))
+        assertEquals(2, s.lists[s.rootListId]!!.cellIds.size)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText(""))
+
+        val rootCells = s.lists[s.rootListId]!!.cellIds
+        assertEquals(1, rootCells.size)
+        assertEquals(cellId, rootCells.single())
+    }
+
+    @Test
+    fun emptying_does_not_remove_absolute_bottom_cell() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Parent"))
+        val trailing = s.lists[s.rootListId]!!.cellIds.last()
+
+        // Emptying the trailing (already empty) bottom cell must keep it: it is the
+        // absolute bottom cell of the list (PRD §4 Post-Edit Cleanup).
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(trailing, ""))
+        assertTrue(trailing in s.lists[s.rootListId]!!.cellIds)
         assertEquals(2, s.lists[s.rootListId]!!.cellIds.size)
     }
 
@@ -900,6 +949,50 @@ class SchedulerReducerTest {
             )
         assertTrue(entries.size > 1)
         assertTrue(nestedReportId in entries.mapNotNull { it.taskId })
+    }
+
+    @Test
+    fun persistence_round_trips_durable_tree_state() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Persisted"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cellId))
+
+        val restored = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))!!
+
+        assertEquals(s.cells, restored.cells)
+        assertEquals(s.lists, restored.lists)
+        assertEquals(s.tasks, restored.tasks)
+        assertEquals(s.expanded, restored.expanded)
+        assertEquals(s.selection, restored.selection)
+        assertEquals(s.titleToTaskIds, restored.titleToTaskIds)
+        assertEquals(s.nextTaskCounter, restored.nextTaskCounter)
+    }
+
+    @Test
+    fun viewmodel_reloads_persisted_state_from_store() {
+        val store = InMemoryStore()
+
+        val first = TaskSchedulerViewModel(store = store)
+        val rootList = first.state.value.rootListId
+        val cellId = first.state.value.lists[rootList]!!.cellIds.first()
+        first.dispatch(SchedulerIntent.SetCellTitle(cellId, "Remembered"))
+        assertNotNull(store.payload)
+
+        // A fresh ViewModel (simulating an app restart) must rehydrate from the store.
+        val second = TaskSchedulerViewModel(store = store)
+        val taskId = second.state.value.cells[cellId]!!.taskId!!
+        assertEquals("Remembered", second.state.value.tasks[taskId]!!.title)
+    }
+
+    private class InMemoryStore : SchedulerStore {
+        var payload: String? = null
+
+        override fun load(): String? = payload
+
+        override fun save(data: String) {
+            payload = data
+        }
     }
 
     private fun seedThreeTasks(): SchedulerState {
