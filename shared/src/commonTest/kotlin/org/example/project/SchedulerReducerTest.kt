@@ -1131,6 +1131,49 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun switching_from_rename_to_change_task_reverts_shared_titles() {
+        var s = SchedulerState.empty()
+        val branchA = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchA, "Shared"))
+        val sharedTaskId = s.cells[branchA]!!.taskId!!
+
+        val branchB = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchB, "Branch B"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(branchB))
+        val branchBChild = s.lists[s.tasks[s.cells[branchB]!!.taskId!!]!!.childListId!!]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AssignTaskId(branchBChild, sharedTaskId))
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(branchA))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetEditMode(CellEditMode.Rename))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText("Renamed draft"))
+
+        assertEquals("Renamed draft", s.tasks[sharedTaskId]!!.title)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetEditMode(CellEditMode.ChangeTask))
+
+        assertEquals("Shared", s.tasks[sharedTaskId]!!.title)
+        assertEquals("Renamed draft", s.editSession!!.draftText)
+    }
+
+    @Test
+    fun load_cancels_interrupted_edit_session() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.BeginEdit(cellId = cellId, initialText = "Draft"),
+            )
+        val encoded = SchedulerStateCodec.encode(s)
+        val decoded = SchedulerStateCodec.decode(encoded)!!
+        assertNotNull(decoded.editSession)
+
+        val loaded = TaskSchedulerViewModel.loadInitialState(store = null, initial = decoded)
+        assertEquals(null, loaded.editSession)
+        assertEquals(null, loaded.cells[cellId]!!.taskId)
+    }
+
+    @Test
     fun viewmodel_reloads_persisted_state_from_store() {
         val store = InMemoryStore()
 

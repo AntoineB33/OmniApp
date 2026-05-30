@@ -1,11 +1,9 @@
-package org.example.project
+package org.example.project.scheduler.persistence
 
-import org.example.project.scheduler.persistence.SchedulerStore
 import java.io.File
 
 /**
- * Desktop (JVM) persistence: stores the scheduler tree as a JSON file on disk so the DB
- * survives across `:desktopApp:run` invocations (PRD §5 Persistence).
+ * JVM/desktop persistence: JSON file under the user's home directory (PRD §5).
  */
 class FileSchedulerStore(private val file: File) : SchedulerStore {
     override fun load(): String? = if (file.exists()) file.readText() else null
@@ -22,3 +20,5 @@ class FileSchedulerStore(private val file: File) : SchedulerStore {
         }
     }
 }
+
+actual fun createDefaultSchedulerStore(): SchedulerStore? = FileSchedulerStore.default()

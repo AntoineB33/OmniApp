@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import org.example.project.scheduler.persistence.SchedulerStore
+import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.ui.TaskSchedulerScreen
 
 enum class OmniPage(val label: String) {
@@ -29,7 +30,7 @@ enum class OmniPage(val label: String) {
 
 @Composable
 @Preview
-fun App(store: SchedulerStore? = null) {
+fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
     MaterialTheme {
         var page by remember { mutableStateOf(OmniPage.TaskScheduler) }
 

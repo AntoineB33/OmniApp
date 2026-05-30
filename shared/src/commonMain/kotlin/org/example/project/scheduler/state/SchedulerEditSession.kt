@@ -17,4 +17,6 @@ data class SchedulerEditSession(
     /** Task allocated while "New task" is selected (reused until another row is picked). */
     val newTaskDraftId: TaskId? = null,
     val treeBefore: TreeSnapshot,
+    /** Snapshot taken when entering Rename; used to revert shared titles when leaving Rename. */
+    val renameTreeBefore: TreeSnapshot? = null,
 )

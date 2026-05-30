@@ -93,7 +93,7 @@ fun TaskSchedulerScreen(
     vm: TaskSchedulerViewModel = viewModel { TaskSchedulerViewModel(store = store) },
 ) {
     val state by vm.state.collectAsState()
-    val visibleOrder = SchedulerDomain.visibleCellOrder(state)
+    val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
     val focusRequester = remember { FocusRequester() }
     var dragAnchor by remember { mutableStateOf<CellId?>(null) }
     var moveDragActive by remember { mutableStateOf(false) }
@@ -117,6 +117,15 @@ fun TaskSchedulerScreen(
             .focusable()
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                val mod = event.isCtrlPressed || event.isMetaPressed
+                if (mod && event.key == Key.Z) {
+                    vm.dispatch(SchedulerIntent.Undo)
+                    return@onPreviewKeyEvent true
+                }
+                if (mod && event.key == Key.Y) {
+                    vm.dispatch(SchedulerIntent.Redo)
+                    return@onPreviewKeyEvent true
+                }
                 if (state.editSession != null) {
                     if (event.key == Key.Delete && !event.isCtrlPressed) {
                         vm.dispatch(SchedulerIntent.CancelEdit)
@@ -656,11 +665,12 @@ private fun TaskRow(
                         .focusRequester(editFocusRequester)
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                            if (event.key == Key.Delete && !event.isCtrlPressed) {
+                            if (event.key == Key.Delete && !event.isCtrlPressed && !event.isMetaPressed) {
                                 return@onPreviewKeyEvent false
                             }
                             when {
-                                event.key == Key.Enter && event.isCtrlPressed -> false
+                                event.key == Key.Enter &&
+                                    (event.isCtrlPressed || event.isMetaPressed) -> false
                                 event.key == Key.Enter && event.isShiftPressed -> {
                                     onExitEdit(EditExitNavigation.Up)
                                     true

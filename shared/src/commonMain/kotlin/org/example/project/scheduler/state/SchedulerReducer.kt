@@ -95,7 +95,27 @@ object SchedulerReducer {
     private fun reduceSetEditMode(state: SchedulerState, mode: CellEditMode): SchedulerState {
         val session = state.editSession ?: return state
         if (session.mode == mode) return state
-        return state.copy(editSession = session.copy(mode = mode))
+        return when {
+            session.mode == CellEditMode.Rename && mode == CellEditMode.ChangeTask -> {
+                val baseline = session.renameTreeBefore ?: session.treeBefore
+                state.applyTree(baseline).copy(
+                    editSession =
+                        session.copy(
+                            mode = CellEditMode.ChangeTask,
+                            renameTreeBefore = null,
+                        ),
+                )
+            }
+            mode == CellEditMode.Rename ->
+                state.copy(
+                    editSession =
+                        session.copy(
+                            mode = CellEditMode.Rename,
+                            renameTreeBefore = state.captureTree(),
+                        ),
+                )
+            else -> state.copy(editSession = session.copy(mode = mode))
+        }
     }
 
     private fun reducePickTaskFromMenu(state: SchedulerState, taskId: TaskId): SchedulerState {

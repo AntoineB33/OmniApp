@@ -16,10 +16,7 @@ class TaskSchedulerViewModel(
 ) : ViewModel() {
     // PRD §5 Initialization: load from local persistence when present, otherwise start
     // from the empty DB (root → main).
-    private val _state =
-        MutableStateFlow(
-            store?.load()?.let(SchedulerStateCodec::decode) ?: initial,
-        )
+    private val _state = MutableStateFlow(loadInitialState(store, initial))
     val state: StateFlow<SchedulerState> = _state.asStateFlow()
 
     fun dispatch(intent: SchedulerIntent) {
@@ -27,6 +24,18 @@ class TaskSchedulerViewModel(
         _state.value = next
         // PRD §5 Persistence: stream every committed mutation to local storage.
         store?.save(SchedulerStateCodec.encode(next))
+    }
+
+    companion object {
+        /** PRD §5: reload persisted state; an interrupted Edit Mode session is canceled. */
+        fun loadInitialState(store: SchedulerStore?, initial: SchedulerState): SchedulerState {
+            val loaded = store?.load()?.let(SchedulerStateCodec::decode) ?: initial
+            return if (loaded.editSession != null) {
+                SchedulerReducer.reduce(loaded, SchedulerIntent.CancelEdit)
+            } else {
+                loaded
+            }
+        }
     }
 }
 
