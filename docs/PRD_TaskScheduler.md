@@ -30,7 +30,6 @@ The application maintains a dual-state selection model: **Main Selection** (a si
   * While dragging without releasing the click, a horizontal blue line indicates where the selection will be moved if the user releases the click.
 * **Ctrl + Click:** The clicked cell becomes the *Main Selection* (standard OS `Ctrl` behavior applies for isolated multi-selection).
 * **Shift + Click / Ctrl + Shift + Click:** The *Selected Cells List* expands to include all visible cells sequentially from the current *Main Selection* to the newly clicked cell.
-* **Deletion:** When the user presses `Return` or `Delete` and no cell is in Edition Mode, all selected cells get emptied.
 
 ## 4. Editing Mechanics
 
@@ -65,21 +64,23 @@ While in Edit Mode, two contextual menus remain visible until editing concludes:
 * **Auto-Expansion:** When the bottom cell of a list receives text, the system automatically:
   1. Initializes a hidden sublist for it (containing one empty cell).
   2. Appends a new empty placeholder cell directly below it at the current hierarchical level.
-* **Cleanup:** When the cell before the last one in a list is populated and in Edition Mode (which means the last cell is empty) and the user empties its text content, the last cell is removed.
 
 ### Exiting Edit Mode (Keyboard Navigation)
-* `Enter`: Commits and moves *Main Selection* down one cell.
-* `Shift + Enter`: Commits and moves *Main Selection* up one cell.
+* `Enter`: moves *Main Selection* down one cell.
+* `Shift + Enter`: moves *Main Selection* up one cell.
 * `Tab`: Opens the current cell's sublist and moves *Main Selection* to its first child.
 * `Shift + Tab`: Behaves identically to `Shift + Enter`.
 
-### Post-Edit Tree Evaluation
+### Empty cells management
 * **Cleanup:** Empty cells are automatically removed upon exit, *unless* it is the absolute bottom cell of a sublist.
+
+### Edition without Edition Mode
+* **Deletion:** When the user presses `Return` or `Delete` and no cell is in Edition Mode, all selected cells get emptied.
 
 ## 5. State Management & Undo/Redo Engine
 
 * **Data Model (MVI State):**
-  * **Cell Model (UI State):** Encapsulates `taskId`, a parent pointer (for ancestor validation), and an optional `sublist`. If expanded, the `sublist` populates from the `Map` Task Tree.
+  * **Cell Model (UI State):** Encapsulates `taskId`, a parent pointer (for ancestor validation), and an optional `sublist`. If expanded, the `sublist` populates from the `Map` Task Tree. A cell object only has final fields, and update with Task Tree. If the cell is empty, `taskId` is null and `sublist` empty.
   * **Task Tree (`Map`):** Associates a `taskId` to a domain object containing: Title, list of child `taskIds`, and an occurrence list of cells utilizing this `taskId` (sorted by shortest path).
   * **TitleToTask Tree (`Map`):** Associates a string title to a list of `taskIds` sharing that exact title.
 * **Initialization:**

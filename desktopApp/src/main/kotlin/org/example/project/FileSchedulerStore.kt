@@ -17,7 +17,7 @@ class FileSchedulerStore(private val file: File) : SchedulerStore {
 
     companion object {
         fun default(): FileSchedulerStore {
-            val dir = File(System.getProperty("user.home"), ".kotlinscheduler")
+            val dir = File(System.getProperty("user.home"), ".omniapp")
             return FileSchedulerStore(File(dir, "scheduler-state.json"))
         }
     }

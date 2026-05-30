@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		912F1FB93B81E9B07CA6A4C5 /* KotlinScheduler.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KotlinScheduler.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		912F1FB93B81E9B07CA6A4C5 /* OmniApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OmniApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -59,7 +59,7 @@
 		01D7AD79F7A72B8D3658BF0F /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				912F1FB93B81E9B07CA6A4C5 /* KotlinScheduler.app */,
+				912F1FB93B81E9B07CA6A4C5 /* OmniApp.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -87,7 +87,7 @@
 			packageProductDependencies = (
 			);
 			productName = iosApp;
-			productReference = 912F1FB93B81E9B07CA6A4C5 /* KotlinScheduler.app */;
+			productReference = 912F1FB93B81E9B07CA6A4C5 /* OmniApp.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
