@@ -431,9 +431,26 @@ object SchedulerReducer {
         for (cellId in targets) {
             next = applySetCellTitle(next, cellId, "")
         }
-        val after = next.captureTree()
-        if (before == after) return state
-        return commitDelta(next, TreeMutationDelta(before = before, after = after))
+        // PRD §4 Empty cells management: remove emptied cells except the absolute bottom
+        // cell of each sublist (same cleanup as exiting Edit Mode).
+        val cleaned = evaluatePostEditCleanup(next)
+        val after = cleaned.captureTree()
+        val selectionAfter =
+            adjustSelectionAfterRemovedCells(
+                beforeCleanup = next,
+                afterCleanup = cleaned,
+                selection = state.selection,
+            )
+        if (before == after && selectionAfter == state.selection) return state
+        return commitDelta(
+            state,
+            EmptyCellsDelta(
+                treeBefore = before,
+                treeAfter = after,
+                selectionBefore = state.selection,
+                selectionAfter = selectionAfter,
+            ),
+        )
     }
 
     private fun reduceClearSelection(state: SchedulerState): SchedulerState {
@@ -597,6 +614,34 @@ private fun insertEmptyCellAfter(
         cells = state.cells + (newCellId to newCell),
         lists = state.lists + (list.id to list.copy(cellIds = newCellIds)),
     ) to newCellId
+}
+
+/**
+ * When cleanup removes cells, keep selection on the cell that slid into the removed cell's
+ * index (typically the next sibling below), or clear it when nothing remains selectable.
+ */
+private fun adjustSelectionAfterRemovedCells(
+    beforeCleanup: SchedulerState,
+    afterCleanup: SchedulerState,
+    selection: SchedulerSelection,
+): SchedulerSelection {
+    fun resolveMain(oldMain: CellId?): CellId? {
+        if (oldMain == null) return null
+        if (oldMain in afterCleanup.cells) return oldMain
+        val cell = beforeCleanup.cells[oldMain] ?: return null
+        val list = beforeCleanup.lists[cell.parentListId] ?: return null
+        val index = list.cellIds.indexOf(oldMain)
+        if (index < 0) return null
+        val afterList = afterCleanup.lists[cell.parentListId] ?: return null
+        return afterList.cellIds
+            .getOrNull(index.coerceAtMost(afterList.cellIds.lastIndex))
+            ?.takeIf { SchedulerDomain.isSelectableCell(afterCleanup, it) }
+    }
+
+    val newSelected = selection.selected.filter { it in afterCleanup.cells }.toSet()
+    val newMain = resolveMain(selection.main)
+    val newAnchor = selection.rangeAnchor?.takeIf { it in afterCleanup.cells }
+    return SchedulerSelection(main = newMain, selected = newSelected, rangeAnchor = newAnchor)
 }
 
 private fun evaluatePostEditCleanup(state: SchedulerState): SchedulerState {
@@ -840,6 +885,19 @@ private fun applySetCellTitle(
         )
 
     return SchedulerDomain.purgeOrphanTasks(result)
+}
+
+private data class EmptyCellsDelta(
+    val treeBefore: TreeSnapshot,
+    val treeAfter: TreeSnapshot,
+    val selectionBefore: SchedulerSelection,
+    val selectionAfter: SchedulerSelection,
+) : Delta {
+    override fun undo(state: SchedulerState): SchedulerState =
+        state.applyTree(treeBefore).copy(selection = selectionBefore)
+
+    override fun redo(state: SchedulerState): SchedulerState =
+        state.applyTree(treeAfter).copy(selection = selectionAfter)
 }
 
 private data class SetSelectionDelta(

@@ -1310,8 +1310,40 @@ class SchedulerReducerTest {
         )
         s = SchedulerReducer.reduce(s, SchedulerIntent.EmptySelectedCells)
 
-        assertTrue(s.tasks[s.cells[visible[0]]!!.taskId!!]!!.title.isEmpty())
-        assertTrue(s.tasks[s.cells[visible[1]]!!.taskId!!]!!.title.isEmpty())
+        // Emptied non-bottom cells are removed; only the trailing placeholder stays empty.
+        assertFalse(visible[0] in s.cells)
+        assertFalse(visible[1] in s.cells)
+        assertTrue(visible[2] in s.cells)
+        val rootCells = s.lists[s.rootListId]!!.cellIds
+        assertEquals(2, rootCells.size)
+        assertEquals(visible[2], rootCells.first())
+        assertEquals(null, s.cells[rootCells.last()]!!.taskId)
+    }
+
+    @Test
+    fun empty_selected_first_cell_removes_it_and_keeps_bottom_placeholder() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        val first = visible[0]
+        val second = visible[1]
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = first, ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.EmptySelectedCells)
+
+        assertFalse(first in s.cells)
+        val rootCells = s.lists[s.rootListId]!!.cellIds
+        assertEquals(3, rootCells.size)
+        assertEquals(second, rootCells.first())
+        assertEquals(null, s.cells[rootCells.last()]!!.taskId)
+        assertEquals(second, s.selection.main)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertTrue(first in s.cells)
+        assertEquals(4, s.lists[s.rootListId]!!.cellIds.size)
+        assertEquals(first, s.selection.main)
     }
 
     @Test
