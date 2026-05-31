@@ -781,7 +781,7 @@ private fun applySetCellTitle(
     var lists = working.lists.toMutableMap()
     var currentList = lists[cell.parentListId] ?: return state
 
-    if (title.isNotEmpty() && currentList.cellIds.lastOrNull() == cellId) {
+    if (title.isNotEmpty()) {
         val updatedTask = tasks[taskId]!!
         if (updatedTask.childListId == null) {
             val subListId = CellListId("${taskId.value}/children")
@@ -803,16 +803,19 @@ private fun applySetCellTitle(
             tasks[taskId] = updatedTask.copy(childListId = subListId)
         }
 
-        val placeholderId = CellId("cell/${currentList.id.value}/${currentList.cellIds.size}")
-        val placeholder =
-            Cell(
-                id = placeholderId,
-                parentListId = currentList.id,
-                taskId = null,
-            )
-        cells[placeholderId] = placeholder
-        currentList = currentList.copy(cellIds = currentList.cellIds + placeholderId)
-        lists[currentList.id] = currentList
+        // PRD §4 Auto-Expansion: trailing sibling placeholder only for the list bottom cell.
+        if (currentList.cellIds.lastOrNull() == cellId) {
+            val placeholderId = CellId("cell/${currentList.id.value}/${currentList.cellIds.size}")
+            val placeholder =
+                Cell(
+                    id = placeholderId,
+                    parentListId = currentList.id,
+                    taskId = null,
+                )
+            cells[placeholderId] = placeholder
+            currentList = currentList.copy(cellIds = currentList.cellIds + placeholderId)
+            lists[currentList.id] = currentList
+        }
     }
 
     // PRD §4 Cleanup (inverse of Auto-Expansion): when the cell directly above the

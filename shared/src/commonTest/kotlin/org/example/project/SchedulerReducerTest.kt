@@ -1580,6 +1580,34 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun paste_titles_gives_each_populated_cell_an_expansion_arrow() {
+        var s = SchedulerState.empty()
+        val target = s.lists[s.rootListId]!!.cellIds.first()
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(
+                cellId = target,
+                ctrl = false,
+                shift = false,
+                visibleOrder = SchedulerDomain.selectableVisibleOrder(s),
+            ),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTitles(listOf("One", "Two", "Three")))
+
+        val populatedIds = s.lists[s.rootListId]!!.cellIds.filter { cellId ->
+            !SchedulerDomain.isTextuallyEmptyCell(s, cellId)
+        }
+        assertEquals(3, populatedIds.size)
+        populatedIds.forEach { cellId ->
+            assertTrue(
+                SchedulerDomain.hasExpandableSubTree(s, cellId),
+                "Expected expansion arrow for pasted cell $cellId",
+            )
+        }
+    }
+
+    @Test
     fun paste_is_undoable() {
         var s = seedThreeTasks()
         val visible = SchedulerDomain.selectableVisibleOrder(s)
