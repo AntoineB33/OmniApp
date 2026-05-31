@@ -18,6 +18,24 @@ object SchedulerDomain {
         return !isMainTask(cell.taskId) && !isRootTask(cell.taskId)
     }
 
+    /** True when the cell has no assigned task or its task title is blank (PRD §5). */
+    fun isTextuallyEmptyCell(state: SchedulerState, cellId: CellId): Boolean {
+        val cell = state.cells[cellId] ?: return false
+        val taskId = cell.taskId ?: return true
+        return state.tasks[taskId]?.title.isNullOrEmpty()
+    }
+
+    /**
+     * True when [cellId] should show a structural expand/collapse arrow (PRD §2):
+     * the cell is populated and has an initialized sublist (including auto-expansion placeholders).
+     */
+    fun hasExpandableSubTree(state: SchedulerState, cellId: CellId): Boolean {
+        if (isTextuallyEmptyCell(state, cellId)) return false
+        val cell = state.cells[cellId] ?: return false
+        val taskId = cell.taskId ?: return false
+        return state.tasks[taskId]?.childListId != null
+    }
+
     /**
      * Depth-first visible cell order starting at [listId].
      * Collapsed cells (not in [SchedulerState.expanded]) omit their subtree.
@@ -31,6 +49,7 @@ object SchedulerDomain {
         for (cellId in list.cellIds) {
             result += cellId
             val cell = state.cells[cellId] ?: continue
+            if (isTextuallyEmptyCell(state, cellId)) continue
             val task = cell.taskId?.let { state.tasks[it] } ?: continue
             val childListId = task.childListId ?: continue
             if (cellId in state.expanded) {

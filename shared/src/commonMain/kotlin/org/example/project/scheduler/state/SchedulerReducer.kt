@@ -588,11 +588,8 @@ private fun evaluatePostEditCleanup(state: SchedulerState): SchedulerState {
     )
 }
 
-private fun isTextuallyEmptyCell(state: SchedulerState, cellId: CellId): Boolean {
-    val cell = state.cells[cellId] ?: return false
-    val taskId = cell.taskId ?: return true
-    return state.tasks[taskId]?.title.isNullOrEmpty()
-}
+private fun isTextuallyEmptyCell(state: SchedulerState, cellId: CellId): Boolean =
+    SchedulerDomain.isTextuallyEmptyCell(state, cellId)
 
 private fun applyEditText(
     state: SchedulerState,
@@ -815,11 +812,13 @@ private data class ToggleExpandDelta(
 
     private fun applyToggle(state: SchedulerState): SchedulerState {
         val cell = state.cells[cellId] ?: return state
-        if (cell.taskId == null) return state
-        val expanded =
-            if (state.expanded.contains(cellId)) state.expanded - cellId
-            else state.expanded + cellId
-        return state.copy(expanded = expanded)
+        if (cellId in state.expanded) {
+            return state.copy(expanded = state.expanded - cellId)
+        }
+        if (cell.taskId == null || SchedulerDomain.isTextuallyEmptyCell(state, cellId)) return state
+        val childListId = state.tasks[cell.taskId]?.childListId ?: return state
+        if (state.lists[childListId] == null) return state
+        return state.copy(expanded = state.expanded + cellId)
     }
 }
 

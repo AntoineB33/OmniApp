@@ -216,8 +216,12 @@ class SchedulerReducerTest {
 
     @Test
     fun toggle_expand_is_undoable() {
-        var s = seedThreeTasks()
+        var s = SchedulerState.empty()
         val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Parent"))
+        val childListId = s.tasks[s.cells[cellId]!!.taskId!!]!!.childListId!!
+        val child = s.lists[childListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(child, "Child"))
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cellId))
         assertTrue(s.expanded.contains(cellId))
@@ -227,6 +231,28 @@ class SchedulerReducerTest {
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.Redo)
         assertTrue(s.expanded.contains(cellId))
+    }
+
+    @Test
+    fun populated_cell_with_auto_expanded_sublist_shows_expansion_arrow() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Parent"))
+
+        assertTrue(SchedulerDomain.hasExpandableSubTree(s, cellId))
+    }
+
+    @Test
+    fun emptying_cell_clears_expansion_arrow_state() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Parent"))
+
+        assertTrue(SchedulerDomain.hasExpandableSubTree(s, cellId))
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, ""))
+
+        assertFalse(SchedulerDomain.hasExpandableSubTree(s, cellId))
     }
 
     @Test

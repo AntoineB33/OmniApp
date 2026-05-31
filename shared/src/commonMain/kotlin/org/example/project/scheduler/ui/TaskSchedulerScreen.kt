@@ -288,7 +288,7 @@ private fun CellListSection(
                 (isMainSelection || state.selection.selected.contains(cellId))
         val isEditing = state.editSession?.cellId == cellId
         val editDraft = if (isEditing) state.editSession!!.draftText else title
-        val hasChildren = cell.taskId?.let { state.tasks[it]?.childListId != null } == true
+        val hasChildren = SchedulerDomain.hasExpandableSubTree(state, cellId)
         val expanded = cellId in state.expanded
 
         val isInActiveSelection = SchedulerDomain.isInActiveSelection(state.selection, cellId)
