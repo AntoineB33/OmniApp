@@ -71,6 +71,47 @@ object SchedulerDomain {
     fun isInActiveSelection(selection: SchedulerSelection, cellId: CellId): Boolean =
         cellId == selection.main || cellId in selection.selected
 
+    /** True when [cellId] lies in the mirrored subtree expanded under [via]. */
+    fun isInVisualSubtree(state: SchedulerState, cellId: CellId, via: CellId): Boolean {
+        if (cellId == via) return true
+        val childListId =
+            state.cells[via]?.taskId?.let { state.tasks[it]?.childListId } ?: return false
+        var current: CellId? = cellId
+        while (current != null) {
+            val parentListId = state.cells[current]?.parentListId ?: return false
+            if (parentListId == childListId) return true
+            current = state.lists[parentListId]?.parentCellId
+        }
+        return false
+    }
+
+    fun resolveSelectionRenderVia(
+        state: SchedulerState,
+        cellId: CellId,
+        explicitVia: CellId? = null,
+        prior: SchedulerSelection? = null,
+    ): CellId? {
+        if (explicitVia != null) return explicitVia
+        prior?.renderVia?.let { via ->
+            if (isInVisualSubtree(state, cellId, via)) return via
+        }
+        prior?.main?.let { main ->
+            if (isInVisualSubtree(state, cellId, main)) return main
+        }
+        val listId = state.cells[cellId]?.parentListId ?: return null
+        return state.lists[listId]?.parentCellId
+    }
+
+    fun shouldShowSelectionHighlight(
+        selection: SchedulerSelection,
+        cellId: CellId,
+        localRenderVia: CellId?,
+    ): Boolean {
+        if (!isInActiveSelection(selection, cellId)) return false
+        val via = selection.renderVia ?: return localRenderVia == null
+        return localRenderVia == via
+    }
+
     /**
      * True when every cell in the active selection shares one parent list and occupies
      * a contiguous block of indices (PRD §3 Double Click & Drag).

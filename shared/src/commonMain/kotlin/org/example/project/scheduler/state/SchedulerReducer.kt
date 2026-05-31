@@ -53,7 +53,7 @@ object SchedulerReducer {
                         newTaskDraftId = null,
                         treeBefore = state.captureTree(),
                     ),
-                selection = SchedulerSelection(main = intent.cellId, selected = emptySet()),
+                selection = selectionFor(state, main = intent.cellId),
             )
         return if (typingToEdit) {
             commitEditText(withSession, draft)
@@ -186,7 +186,7 @@ object SchedulerReducer {
                 state,
                 SetSelectionDelta(
                     before = state.selection,
-                    after = SchedulerSelection(main = neighbor, selected = emptySet()),
+                    after = selectionFor(state, main = neighbor),
                 ),
             )
         }
@@ -208,10 +208,12 @@ object SchedulerReducer {
             SetSelectionDelta(
                 before = state.selection,
                 after =
-                    SchedulerSelection(
+                    selectionFor(
+                        state,
                         main = neighbor,
                         selected = range,
                         rangeAnchor = anchor,
+                        prior = base,
                     ),
             ),
         )
@@ -239,6 +241,12 @@ object SchedulerReducer {
                 after =
                     state.selection.copy(
                         main = ordered[nextIndex],
+                        renderVia =
+                            SchedulerDomain.resolveSelectionRenderVia(
+                                state,
+                                ordered[nextIndex],
+                                prior = state.selection,
+                            ),
                     ),
             ),
         )
@@ -263,7 +271,7 @@ object SchedulerReducer {
             next,
             SetSelectionDelta(
                 before = next.selection,
-                after = SchedulerSelection(main = child, selected = emptySet()),
+                after = selectionFor(next, main = child, explicitVia = main),
             ),
         )
     }
@@ -325,10 +333,12 @@ object SchedulerReducer {
                             currentMain,
                             intent.cellId,
                         )
-                    SchedulerSelection(
+                    selectionFor(
+                        state,
                         main = intent.cellId,
                         selected = range,
                         rangeAnchor = currentMain,
+                        explicitVia = intent.renderVia,
                     )
                 }
                 intent.ctrl -> {
@@ -340,14 +350,15 @@ object SchedulerReducer {
                         } else {
                             base + intent.cellId
                         }
-                    SchedulerSelection(
+                    selectionFor(
+                        state,
                         main = intent.cellId,
                         selected = toggled,
-                        rangeAnchor = null,
+                        explicitVia = intent.renderVia,
                     )
                 }
                 intent.forceClearMulti ->
-                    SchedulerSelection(main = intent.cellId, selected = emptySet())
+                    selectionFor(state, main = intent.cellId, explicitVia = intent.renderVia)
                 else -> {
                     // Keep a contiguous multi-selection when clicking an already-selected
                     // cell so double-click & drag move can activate (PRD §3).
@@ -355,9 +366,15 @@ object SchedulerReducer {
                         intent.cellId in state.selection.selected &&
                             state.selection.selected.size > 1
                     if (preserveRange) {
-                        SchedulerSelection(main = intent.cellId, selected = state.selection.selected)
+                        selectionFor(
+                            state,
+                            main = intent.cellId,
+                            selected = state.selection.selected,
+                            rangeAnchor = state.selection.rangeAnchor,
+                            explicitVia = intent.renderVia ?: state.selection.renderVia,
+                        )
                     } else {
-                        SchedulerSelection(main = intent.cellId, selected = emptySet())
+                        selectionFor(state, main = intent.cellId, explicitVia = intent.renderVia)
                     }
                 }
             }
@@ -380,10 +397,12 @@ object SchedulerReducer {
                 intent.hoverCellId,
             )
         val newSelection =
-            SchedulerSelection(
+            selectionFor(
+                state,
                 main = intent.anchorCellId,
                 selected = range,
                 rangeAnchor = intent.anchorCellId,
+                explicitVia = intent.renderVia,
             )
         return applySelectionChange(state, newSelection, intent.hoverCellId)
     }
@@ -505,7 +524,7 @@ object SchedulerReducer {
             next,
             SetSelectionDelta(
                 before = next.selection,
-                after = SchedulerSelection(main = newMain, selected = emptySet()),
+                after = selectionFor(next, main = newMain, explicitVia = editingCellId),
             ),
         )
     }
@@ -641,7 +660,40 @@ private fun adjustSelectionAfterRemovedCells(
     val newSelected = selection.selected.filter { it in afterCleanup.cells }.toSet()
     val newMain = resolveMain(selection.main)
     val newAnchor = selection.rangeAnchor?.takeIf { it in afterCleanup.cells }
-    return SchedulerSelection(main = newMain, selected = newSelected, rangeAnchor = newAnchor)
+    val renderVia =
+        when {
+            newMain == null -> null
+            selection.renderVia != null &&
+                SchedulerDomain.isInVisualSubtree(afterCleanup, newMain, selection.renderVia) ->
+                selection.renderVia
+            else -> SchedulerDomain.resolveSelectionRenderVia(afterCleanup, newMain, prior = selection)
+        }
+    return SchedulerSelection(
+        main = newMain,
+        selected = newSelected,
+        rangeAnchor = newAnchor,
+        renderVia = renderVia,
+    )
+}
+
+private fun selectionFor(
+    state: SchedulerState,
+    main: CellId?,
+    selected: Set<CellId> = emptySet(),
+    rangeAnchor: CellId? = null,
+    explicitVia: CellId? = null,
+    prior: SchedulerSelection = state.selection,
+): SchedulerSelection {
+    val renderVia =
+        main?.let {
+            SchedulerDomain.resolveSelectionRenderVia(state, it, explicitVia, prior)
+        }
+    return SchedulerSelection(
+        main = main,
+        selected = selected,
+        rangeAnchor = rangeAnchor,
+        renderVia = renderVia,
+    )
 }
 
 private fun evaluatePostEditCleanup(state: SchedulerState): SchedulerState {

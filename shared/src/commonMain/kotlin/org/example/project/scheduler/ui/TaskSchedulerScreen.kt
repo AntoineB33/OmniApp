@@ -233,6 +233,7 @@ fun TaskSchedulerScreen(
             CellListSection(
                 state = state,
                 listId = state.rootListId,
+                renderVia = null,
                 depth = 0,
                 visibleOrder = visibleOrder,
                 dragAnchor = dragAnchor,
@@ -306,6 +307,7 @@ private fun Int.isValidTextCodePoint(): Boolean {
 private fun CellListSection(
     state: SchedulerState,
     listId: CellListId,
+    renderVia: CellId?,
     depth: Int,
     visibleOrder: List<CellId>,
     dragAnchor: CellId?,
@@ -322,10 +324,10 @@ private fun CellListSection(
         val cell = state.cells[cellId] ?: return@forEach
         val title = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()
         val selectable = SchedulerDomain.isSelectableCell(state, cellId)
-        val isMainSelection = selectable && state.selection.main == cellId
-        val isInSelectionRange =
-            selectable &&
-                (isMainSelection || state.selection.selected.contains(cellId))
+        val showHighlight =
+            SchedulerDomain.shouldShowSelectionHighlight(state.selection, cellId, renderVia)
+        val isMainSelection = selectable && showHighlight && state.selection.main == cellId
+        val isInSelectionRange = selectable && showHighlight
         val isEditing = state.editSession?.cellId == cellId
         val editDraft = if (isEditing) state.editSession!!.draftText else title
         val hasChildren = SchedulerDomain.hasExpandableSubTree(state, cellId)
@@ -357,6 +359,7 @@ private fun CellListSection(
                         ctrl = ctrl,
                         shift = shift,
                         visibleOrder = visibleOrder,
+                        renderVia = renderVia,
                         forceClearMulti = forceClearMulti,
                     ),
                 )
@@ -367,6 +370,7 @@ private fun CellListSection(
                         anchorCellId = anchor,
                         hoverCellId = hover,
                         visibleOrder = visibleOrder,
+                        renderVia = renderVia,
                     ),
                 )
             },
@@ -410,6 +414,7 @@ private fun CellListSection(
             CellListSection(
                 state = state,
                 listId = childListId,
+                renderVia = cellId,
                 depth = depth + 1,
                 visibleOrder = visibleOrder,
                 dragAnchor = dragAnchor,

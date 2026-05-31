@@ -604,6 +604,52 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun click_one_shared_task_occurrence_does_not_highlight_sibling_occurrence() {
+        var s = SchedulerState.empty()
+        val branchA = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchA, "Shared"))
+        val sharedTaskId = s.cells[branchA]!!.taskId!!
+
+        val branchB = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchB, "Branch B"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(branchB))
+        val branchBChild =
+            s.lists[s.tasks[s.cells[branchB]!!.taskId!!]!!.childListId!!]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AssignTaskId(branchBChild, sharedTaskId))
+
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(
+                cellId = branchA,
+                ctrl = false,
+                shift = false,
+                visibleOrder = visible,
+                renderVia = null,
+            ),
+        )
+        assertEquals(branchA, s.selection.main)
+        assertEquals(null, s.selection.renderVia)
+        assertTrue(SchedulerDomain.shouldShowSelectionHighlight(s.selection, branchA, localRenderVia = null))
+        assertFalse(SchedulerDomain.shouldShowSelectionHighlight(s.selection, branchBChild, localRenderVia = branchB))
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(
+                cellId = branchBChild,
+                ctrl = false,
+                shift = false,
+                visibleOrder = visible,
+                renderVia = branchB,
+            ),
+        )
+        assertEquals(branchBChild, s.selection.main)
+        assertEquals(branchB, s.selection.renderVia)
+        assertFalse(SchedulerDomain.shouldShowSelectionHighlight(s.selection, branchA, localRenderVia = null))
+        assertTrue(SchedulerDomain.shouldShowSelectionHighlight(s.selection, branchBChild, localRenderVia = branchB))
+    }
+
+    @Test
     fun eligible_assign_task_ids_hide_ancestors_and_siblings() {
         var s = SchedulerState.empty()
         // Ancestor and sibling share the exact title "dup" (PRD Constraint 3), so the

@@ -14,6 +14,11 @@ data class SchedulerSelection(
     val selected: Set<CellId> = emptySet(),
     /** Fixed end of a Shift+Click / Shift+Arrow range; `null` for disjoint Ctrl multi-select. */
     val rangeAnchor: CellId? = null,
+    /**
+     * Expanded occurrence that owns the current selection path for mirrored subtrees.
+     * `null` for cells rendered in the root viewport list.
+     */
+    val renderVia: CellId? = null,
 )
 
 data class SchedulerHistory(

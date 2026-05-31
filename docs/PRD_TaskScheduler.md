@@ -64,7 +64,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 ### Editor Interactions & UI
 * **Auto-Save:** Every keystroke/change is immediately committed to the state.
 * **Sublist Syncing:** Edits to a sublist immediately update all expanded instances of that `taskId` across the UI.
-* **Line Breaks:** `Ctrl + Enter` adds a new line. The cell dynamically expands horizontally and vertically to fit the content.
+* **Line Breaks:** `Ctrl + Enter` adds a new line. The cell dynamically expands horizontally and vertically to fit the content. 
 * **Up and Down:** `Up` goes to the beginning if there is no line above in the cell, and `Down` to the end if there is no line below in the cell.
 * **Cancel:** Pressing `Delete` inside Edit Mode cancels the session, reverting all affected cells to their pre edit mode text.
 * **Forced Exit:** Changing global selection via mouse click outside the cell forcibly exits Edit Mode.
@@ -85,10 +85,11 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **Deletion:** When the user presses `Return` or `Delete` and no cell is in Edition Mode, all selected cells get emptied.
 * **Copy/paste:** Ctrl + C allows the user to copy the whole selection (if it is only consecutive cells in the same sublist) or only the main selection. Ctrl + V allows to paste it in a cell (if several cells were copied, new cells are added below). The user can copy/paste cells between Google Sheets and the app.
 
+
 ## 5. State Management & Undo/Redo Engine
 
 * **Data Model (MVI State):**
-  * **Cell Model (UI State):** Encapsulates `taskId`, a parent pointer (for ancestor validation), and an optional `sublist`. If expanded, the `sublist` populates from the `Map` Task Tree. A cell object only has final fields, and update with Task Tree. If the cell is empty, `taskId` is null and `sublist` empty.
+  * **Cell Model (UI State):** Encapsulates `taskId`, a parent pointer (for ancestor validation), and an optional `sublist`. If expanded, the `sublist` populates from the `Map` Task Tree. A cell object only has final fields, and update with Task Tree. If the cell is empty, `taskId` is null and `sublist` empty. When a cell is created, its `sublist` field is null and gets populated only when the user manually expands it.
   * **Task Tree (`Map`):** Associates a `taskId` to a domain object containing: Title, list of child `taskIds`, and an occurrence list of cells utilizing this `taskId` (sorted by shortest path).
   * **TitleToTask Tree (`Map`):** Associates a string title to a list of `taskIds` sharing that exact title.
 * **Initialization:**

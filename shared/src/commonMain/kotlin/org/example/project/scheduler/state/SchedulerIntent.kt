@@ -25,6 +25,8 @@ sealed interface SchedulerIntent {
         val ctrl: Boolean,
         val shift: Boolean,
         val visibleOrder: List<CellId>,
+        /** Expanded parent occurrence for this row (mirrored subtree path). */
+        val renderVia: CellId? = null,
         /** Double-click on a non-movable cell clears multi-selection (PRD §3). */
         val forceClearMulti: Boolean = false,
     ) : SchedulerIntent
@@ -33,6 +35,7 @@ sealed interface SchedulerIntent {
         val anchorCellId: CellId,
         val hoverCellId: CellId,
         val visibleOrder: List<CellId>,
+        val renderVia: CellId? = null,
     ) : SchedulerIntent
 
     data class MoveSelectedCells(
