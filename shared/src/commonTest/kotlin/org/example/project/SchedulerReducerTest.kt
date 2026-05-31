@@ -70,6 +70,25 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun ctrl_click_includes_prior_main_in_multi_selection() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[2], ctrl = true, shift = false, visibleOrder = visible),
+        )
+
+        assertEquals(visible[2], s.selection.main)
+        assertEquals(setOf(visible[0], visible[2]), s.selection.selected)
+        assertEquals(null, s.selection.rangeAnchor)
+    }
+
+    @Test
     fun shift_click_selects_range_in_visible_order() {
         var s = seedThreeTasks()
         val visible = SchedulerDomain.selectableVisibleOrder(s)
@@ -1357,6 +1376,85 @@ class SchedulerReducerTest {
         val nonContiguous =
             SchedulerSelection(main = listCells[2], selected = setOf(listCells[0], listCells[2]))
         assertFalse(SchedulerDomain.isSequentialSelectionInSameList(s, nonContiguous))
+    }
+
+    @Test
+    fun shift_arrow_selects_range_in_visible_order() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.NavigateSelection(direction = SelectionNavigate.Next, shift = true),
+        )
+
+        assertEquals(visible[1], s.selection.main)
+        assertEquals(setOf(visible[0], visible[1]), s.selection.selected)
+        assertEquals(visible[0], s.selection.rangeAnchor)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.NavigateSelection(direction = SelectionNavigate.Next, shift = true),
+        )
+
+        assertEquals(visible[2], s.selection.main)
+        assertEquals(setOf(visible[0], visible[1], visible[2]), s.selection.selected)
+        assertEquals(visible[0], s.selection.rangeAnchor)
+    }
+
+    @Test
+    fun shift_arrow_resets_disjoint_ctrl_multi_select() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[2], ctrl = true, shift = false, visibleOrder = visible),
+        )
+        assertEquals(2, s.selection.selected.size)
+        assertEquals(null, s.selection.rangeAnchor)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.NavigateSelection(direction = SelectionNavigate.Previous, shift = true),
+        )
+
+        assertEquals(visible[1], s.selection.main)
+        assertEquals(setOf(visible[1], visible[2]), s.selection.selected)
+        assertEquals(visible[2], s.selection.rangeAnchor)
+    }
+
+    @Test
+    fun shift_click_sets_range_anchor_for_shift_arrow_extension() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[1], ctrl = false, shift = true, visibleOrder = visible),
+        )
+        assertEquals(visible[0], s.selection.rangeAnchor)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.NavigateSelection(direction = SelectionNavigate.Next, shift = true),
+        )
+
+        assertEquals(setOf(visible[0], visible[1], visible[2]), s.selection.selected)
+        assertEquals(visible[0], s.selection.rangeAnchor)
+        assertEquals(visible[2], s.selection.main)
     }
 
     @Test

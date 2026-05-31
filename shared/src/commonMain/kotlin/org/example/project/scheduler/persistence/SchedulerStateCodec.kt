@@ -64,6 +64,7 @@ object SchedulerStateCodec {
             expanded = expanded.map(CellId::value),
             selectionMain = selection.main?.value,
             selectionSelected = selection.selected.map(CellId::value),
+            selectionRangeAnchor = selection.rangeAnchor?.value,
             nextTaskCounter = nextTaskCounter,
             editSession = editSession?.toPersisted(),
         )
@@ -143,6 +144,7 @@ object SchedulerStateCodec {
                 SchedulerSelection(
                     main = selectionMain?.let(::CellId),
                     selected = selectionSelected.map(::CellId).toSet(),
+                    rangeAnchor = selectionRangeAnchor?.let(::CellId),
                 ),
             history = SchedulerHistory(),
             nextTaskCounter = nextTaskCounter,
@@ -211,6 +213,7 @@ private data class PersistedState(
     val expanded: List<String> = emptyList(),
     val selectionMain: String? = null,
     val selectionSelected: List<String> = emptyList(),
+    val selectionRangeAnchor: String? = null,
     val nextTaskCounter: Int = 0,
     val editSession: PersistedEditSession? = null,
 )

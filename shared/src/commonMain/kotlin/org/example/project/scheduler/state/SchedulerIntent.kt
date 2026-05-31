@@ -76,7 +76,11 @@ sealed interface SchedulerIntent {
 
     data object CancelEdit : SchedulerIntent
 
-    data class NavigateSelection(val direction: SelectionNavigate) : SchedulerIntent
+    data class NavigateSelection(
+        val direction: SelectionNavigate,
+        /** Shift+Direction expands a visible range from [SchedulerSelection.rangeAnchor] or main. */
+        val shift: Boolean = false,
+    ) : SchedulerIntent
 
     data class CycleMainSelection(val forward: Boolean) : SchedulerIntent
 

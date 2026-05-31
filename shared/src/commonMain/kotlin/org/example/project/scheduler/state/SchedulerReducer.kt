@@ -27,7 +27,7 @@ object SchedulerReducer {
             SchedulerIntent.SelectCreateAssignTask -> reduceSelectCreateAssignTask(state)
             is SchedulerIntent.PickTitleSuggestion -> reducePickTitleSuggestion(state, intent.title)
             SchedulerIntent.CancelEdit -> reduceCancelEdit(state)
-            is SchedulerIntent.NavigateSelection -> reduceNavigateSelection(state, intent.direction)
+            is SchedulerIntent.NavigateSelection -> reduceNavigateSelection(state, intent.direction, intent.shift)
             is SchedulerIntent.CycleMainSelection -> reduceCycleMainSelection(state, intent.forward)
             SchedulerIntent.SelectFirstChild -> reduceSelectFirstChild(state)
             SchedulerIntent.CopySelection -> reduceCopySelection(state)
@@ -173,6 +173,7 @@ object SchedulerReducer {
     private fun reduceNavigateSelection(
         state: SchedulerState,
         direction: SelectionNavigate,
+        shift: Boolean,
     ): SchedulerState {
         if (state.editSession != null) return state
         val main = state.selection.main ?: return state
@@ -180,11 +181,38 @@ object SchedulerReducer {
         val neighbor =
             SchedulerDomain.neighborSelectableCell(state, main, delta)
                 ?: return state
+        if (!shift) {
+            return commitDelta(
+                state,
+                SetSelectionDelta(
+                    before = state.selection,
+                    after = SchedulerSelection(main = neighbor, selected = emptySet()),
+                ),
+            )
+        }
+
+        // PRD §3 Shift+Direction: extend a sequential range; reset disjoint Ctrl multi-select.
+        var base = state.selection
+        if (base.selected.size > 1 && base.rangeAnchor == null) {
+            base = base.copy(selected = emptySet())
+        }
+        val anchor = base.rangeAnchor ?: main
+        val range =
+            SchedulerDomain.visibleSelectionRange(
+                SchedulerDomain.selectableVisibleOrder(state),
+                anchor,
+                neighbor,
+            )
         return commitDelta(
             state,
             SetSelectionDelta(
                 before = state.selection,
-                after = SchedulerSelection(main = neighbor, selected = emptySet()),
+                after =
+                    SchedulerSelection(
+                        main = neighbor,
+                        selected = range,
+                        rangeAnchor = anchor,
+                    ),
             ),
         )
     }
@@ -208,7 +236,10 @@ object SchedulerReducer {
             state,
             SetSelectionDelta(
                 before = state.selection,
-                after = SchedulerSelection(main = ordered[nextIndex], selected = selected),
+                after =
+                    state.selection.copy(
+                        main = ordered[nextIndex],
+                    ),
             ),
         )
     }
@@ -221,7 +252,7 @@ object SchedulerReducer {
         val taskId = cell.taskId
         val childListId = taskId?.let { state.tasks[it]?.childListId }
         if (childListId == null) {
-            return reduceNavigateSelection(state, SelectionNavigate.Next)
+            return reduceNavigateSelection(state, SelectionNavigate.Next, shift = false)
         }
         var next = state
         if (main !in next.expanded) {
@@ -294,16 +325,26 @@ object SchedulerReducer {
                             currentMain,
                             intent.cellId,
                         )
-                    SchedulerSelection(main = intent.cellId, selected = range)
+                    SchedulerSelection(
+                        main = intent.cellId,
+                        selected = range,
+                        rangeAnchor = currentMain,
+                    )
                 }
                 intent.ctrl -> {
+                    val base = state.selection.selected.toMutableSet()
+                    state.selection.main?.let { base.add(it) }
                     val toggled =
-                        if (state.selection.selected.contains(intent.cellId)) {
-                            state.selection.selected - intent.cellId
+                        if (intent.cellId in base) {
+                            base - intent.cellId
                         } else {
-                            state.selection.selected + intent.cellId
+                            base + intent.cellId
                         }
-                    SchedulerSelection(main = intent.cellId, selected = toggled)
+                    SchedulerSelection(
+                        main = intent.cellId,
+                        selected = toggled,
+                        rangeAnchor = null,
+                    )
                 }
                 intent.forceClearMulti ->
                     SchedulerSelection(main = intent.cellId, selected = emptySet())
@@ -339,7 +380,11 @@ object SchedulerReducer {
                 intent.hoverCellId,
             )
         val newSelection =
-            SchedulerSelection(main = intent.anchorCellId, selected = range)
+            SchedulerSelection(
+                main = intent.anchorCellId,
+                selected = range,
+                rangeAnchor = intent.anchorCellId,
+            )
         return applySelectionChange(state, newSelection, intent.hoverCellId)
     }
 

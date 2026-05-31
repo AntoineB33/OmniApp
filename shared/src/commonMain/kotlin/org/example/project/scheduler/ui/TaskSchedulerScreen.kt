@@ -151,11 +151,21 @@ fun TaskSchedulerScreen(
                 }
                 when (event.key) {
                     Key.DirectionUp, Key.DirectionLeft -> {
-                        vm.dispatch(SchedulerIntent.NavigateSelection(SelectionNavigate.Previous))
+                        vm.dispatch(
+                            SchedulerIntent.NavigateSelection(
+                                direction = SelectionNavigate.Previous,
+                                shift = event.isShiftPressed,
+                            ),
+                        )
                         return@onPreviewKeyEvent true
                     }
                     Key.DirectionDown, Key.DirectionRight -> {
-                        vm.dispatch(SchedulerIntent.NavigateSelection(SelectionNavigate.Next))
+                        vm.dispatch(
+                            SchedulerIntent.NavigateSelection(
+                                direction = SelectionNavigate.Next,
+                                shift = event.isShiftPressed,
+                            ),
+                        )
                         return@onPreviewKeyEvent true
                     }
                     Key.Delete -> {
@@ -191,6 +201,7 @@ fun TaskSchedulerScreen(
                     }
                     else -> Unit
                 }
+                if (event.key.isModifierKey()) return@onPreviewKeyEvent true
                 val main = state.selection.main ?: return@onPreviewKeyEvent false
                 if (!SchedulerDomain.isSelectableCell(state, main)) return@onPreviewKeyEvent false
                 val typed = event.printableChar() ?: return@onPreviewKeyEvent false
@@ -254,12 +265,41 @@ fun TaskSchedulerScreen(
     }
 }
 
+private fun androidx.compose.ui.input.key.Key.isModifierKey(): Boolean =
+    when (this) {
+        Key.ShiftLeft,
+        Key.ShiftRight,
+        Key.CtrlLeft,
+        Key.CtrlRight,
+        Key.AltLeft,
+        Key.AltRight,
+        Key.MetaLeft,
+        Key.MetaRight,
+        -> true
+        else -> false
+    }
+
 private fun androidx.compose.ui.input.key.KeyEvent.printableChar(): String? {
     if (isCtrlPressed || isMetaPressed) return null
+    if (key.isModifierKey()) return null
     if (key == Key.Enter || key == Key.Tab || key == Key.Escape || key == Key.Backspace) return null
+    if (key == Key.DirectionUp || key == Key.DirectionDown ||
+        key == Key.DirectionLeft || key == Key.DirectionRight
+    ) {
+        return null
+    }
     val codePoint = utf16CodePoint
-    if (codePoint <= 0x1F) return null
+    if (!codePoint.isValidTextCodePoint()) return null
     return Char(codePoint).toString()
+}
+
+/** Rejects control codes and Unicode non-characters (e.g. U+FFFF from bare Shift on desktop). */
+private fun Int.isValidTextCodePoint(): Boolean {
+    if (this <= 0x1F) return false
+    if (this in 0x7F..0x9F) return false
+    if (this in 0xFDD0..0xFDEF) return false
+    if ((this and 0xFFFE) == 0xFFFE) return false
+    return true
 }
 
 @Composable

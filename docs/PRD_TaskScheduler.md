@@ -30,8 +30,9 @@ The application maintains a dual-state selection model: **Main Selection** (a si
   * While dragging without releasing the click, a horizontal blue line indicates where the selection will be moved if the user releases the click.
 * **Ctrl + Click:** The clicked cell becomes the *Main Selection* (standard OS `Ctrl` behavior applies for isolated multi-selection).
 * **Shift + Click / Ctrl + Shift + Click:** The *Selected Cells List* expands to include all visible cells sequentially from the current *Main Selection* to the newly clicked cell.
-* **Up / Left:** Resets selection, and if there is a selectable cell above makes it the main selection. Doesn't work when in Editing Mode.
-* **Down / Right:** Resets selection, and if there is a selectable cell below makes it the main selection. Doesn't work when in Editing Mode.
+* **Up / Left:** Resets selection, and if there is a selectable cell above the main selection, makes it the main selection. Doesn't work when in Editing Mode.
+* **Down / Right:** Resets selection, and if there is a selectable cell below the main selection, makes it the main selection. Doesn't work when in Editing Mode.
+* **Shift + Direction:** Pressing `Shift` while navigating with the direction keyboard keys allow to select a range of cells. `Right` is `Down` and `Left`. If several cells were selected before pressing `Shift`, it is reset. 
 * **Enter or Tab:** If there are several selected cells, moves the main selection among them, from top to bottom then back on top. With `Shift` pressed, it moves backward.
 
 

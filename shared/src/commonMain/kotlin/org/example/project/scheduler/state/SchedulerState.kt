@@ -12,6 +12,8 @@ import org.example.project.scheduler.model.WellKnownIds
 data class SchedulerSelection(
     val main: CellId? = null,
     val selected: Set<CellId> = emptySet(),
+    /** Fixed end of a Shift+Click / Shift+Arrow range; `null` for disjoint Ctrl multi-select. */
+    val rangeAnchor: CellId? = null,
 )
 
 data class SchedulerHistory(
