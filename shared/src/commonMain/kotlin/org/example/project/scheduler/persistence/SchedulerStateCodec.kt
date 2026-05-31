@@ -66,6 +66,7 @@ object SchedulerStateCodec {
             selectionSelected = selection.selected.map(CellId::value),
             selectionRangeAnchor = selection.rangeAnchor?.value,
             nextTaskCounter = nextTaskCounter,
+            nextCellCounter = nextCellCounter,
             editSession = editSession?.toPersisted(),
         )
 
@@ -101,6 +102,7 @@ object SchedulerStateCodec {
                     )
                 },
             nextTaskCounter = nextTaskCounter,
+            nextCellCounter = nextCellCounter,
         )
 
     private fun PersistedState.toState(): SchedulerState {
@@ -148,6 +150,9 @@ object SchedulerStateCodec {
                 ),
             history = SchedulerHistory(),
             nextTaskCounter = nextTaskCounter,
+            nextCellCounter =
+                nextCellCounter
+                    ?: SchedulerState.deriveNextCellCounter(cells.keys),
             editSession = editSession?.toSession(),
         )
     }
@@ -188,6 +193,9 @@ object SchedulerStateCodec {
             tasks = tasks,
             titleToTaskIds = SchedulerDomain.buildTitleIndex(tasks),
             nextTaskCounter = nextTaskCounter,
+            nextCellCounter =
+                nextCellCounter
+                    ?: SchedulerState.deriveNextCellCounter(cells.keys),
         )
     }
 
@@ -215,6 +223,7 @@ private data class PersistedState(
     val selectionSelected: List<String> = emptyList(),
     val selectionRangeAnchor: String? = null,
     val nextTaskCounter: Int = 0,
+    val nextCellCounter: Int? = null,
     val editSession: PersistedEditSession? = null,
 )
 
@@ -235,6 +244,7 @@ private data class PersistedTreeSnapshot(
     val cells: List<PersistedCell>,
     val tasks: List<PersistedTask>,
     val nextTaskCounter: Int,
+    val nextCellCounter: Int? = null,
 )
 
 @Serializable

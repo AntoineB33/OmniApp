@@ -1659,6 +1659,40 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun repeated_paste_of_same_title_keeps_unique_cell_ids_and_isolated_selection() {
+        var s = SchedulerState.empty()
+        val title = "Sheet cell"
+
+        repeat(5) {
+            val visible = SchedulerDomain.selectableVisibleOrder(s)
+            val target = visible.last { SchedulerDomain.isTextuallyEmptyCell(s, it) }
+            s = SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.ClickCell(cellId = target, ctrl = false, shift = false, visibleOrder = visible),
+            )
+            s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTitles(listOf(title, title)))
+        }
+
+        val listIds = s.lists[s.rootListId]!!.cellIds
+        assertEquals(listIds.size, listIds.toSet().size)
+
+        val populated = listIds.filter { !SchedulerDomain.isTextuallyEmptyCell(s, it) }
+        populated.forEach { cellId ->
+            s = SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.ClickCell(
+                    cellId = cellId,
+                    ctrl = false,
+                    shift = false,
+                    visibleOrder = SchedulerDomain.selectableVisibleOrder(s),
+                ),
+            )
+            assertEquals(cellId, s.selection.main)
+            assertTrue(s.selection.selected.isEmpty())
+        }
+    }
+
+    @Test
     fun parse_clipboard_text_supports_newlines_and_sheet_columns() {
         assertEquals(listOf("a", "b"), SchedulerDomain.parseClipboardText("a\nb"))
         assertEquals(listOf("left"), SchedulerDomain.parseClipboardText("left\tright"))

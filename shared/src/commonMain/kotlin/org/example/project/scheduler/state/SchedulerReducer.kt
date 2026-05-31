@@ -601,7 +601,7 @@ private fun insertEmptyCellAfter(
     val index = list.cellIds.indexOf(afterCellId)
     if (index < 0) return state to afterCellId
 
-    val newCellId = CellId("cell/${list.id.value}/${state.cells.size}")
+    val (newCellId, withId) = state.allocateCellId(list.id)
     val newCell =
         Cell(
             id = newCellId,
@@ -610,9 +610,9 @@ private fun insertEmptyCellAfter(
         )
     val newCellIds = list.cellIds.toMutableList()
     newCellIds.add(index + 1, newCellId)
-    return state.copy(
-        cells = state.cells + (newCellId to newCell),
-        lists = state.lists + (list.id to list.copy(cellIds = newCellIds)),
+    return withId.copy(
+        cells = withId.cells + (newCellId to newCell),
+        lists = withId.lists + (list.id to list.copy(cellIds = newCellIds)),
     ) to newCellId
 }
 
@@ -850,7 +850,8 @@ private fun applySetCellTitle(
 
         // PRD §4 Auto-Expansion: trailing sibling placeholder only for the list bottom cell.
         if (currentList.cellIds.lastOrNull() == cellId) {
-            val placeholderId = CellId("cell/${currentList.id.value}/${currentList.cellIds.size}")
+            val (placeholderId, withPlaceholderId) = working.allocateCellId(currentList.id)
+            working = withPlaceholderId
             val placeholder =
                 Cell(
                     id = placeholderId,

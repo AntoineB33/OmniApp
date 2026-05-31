@@ -38,6 +38,7 @@ data class TreeSnapshot(
     val tasks: Map<TaskId, Task>,
     val titleToTaskIds: Map<String, List<TaskId>>,
     val nextTaskCounter: Int,
+    val nextCellCounter: Int,
 )
 
 data class SchedulerState(
@@ -51,6 +52,8 @@ data class SchedulerState(
     val editSession: SchedulerEditSession? = null,
     val history: SchedulerHistory,
     val nextTaskCounter: Int = 0,
+    /** Monotonic suffix for `cell/{listId}/{n}` ids; avoids collisions between paste inserts and auto-expansion. */
+    val nextCellCounter: Int = 1,
     /** In-memory clipboard for copy/paste (not persisted). */
     val clipboard: List<String> = emptyList(),
 ) {
@@ -61,6 +64,7 @@ data class SchedulerState(
             tasks = tasks,
             titleToTaskIds = titleToTaskIds,
             nextTaskCounter = nextTaskCounter,
+            nextCellCounter = nextCellCounter,
         )
 
     fun applyTree(snapshot: TreeSnapshot): SchedulerState =
@@ -70,6 +74,7 @@ data class SchedulerState(
             tasks = snapshot.tasks,
             titleToTaskIds = snapshot.titleToTaskIds,
             nextTaskCounter = snapshot.nextTaskCounter,
+            nextCellCounter = snapshot.nextCellCounter,
         )
 
     fun allocateTaskId(): Pair<TaskId, SchedulerState> {
@@ -77,7 +82,21 @@ data class SchedulerState(
         return id to copy(nextTaskCounter = nextTaskCounter + 1)
     }
 
+    fun allocateCellId(listId: CellListId): Pair<CellId, SchedulerState> {
+        val id = CellId("cell/${listId.value}/$nextCellCounter")
+        return id to copy(nextCellCounter = nextCellCounter + 1)
+    }
+
     companion object {
+        /** Ensures [nextCellCounter] stays above every numeric suffix already used in persisted cell ids. */
+        fun deriveNextCellCounter(cells: Collection<CellId>): Int {
+            val maxSuffix =
+                cells.maxOfOrNull { id ->
+                    id.value.substringAfterLast('/').toIntOrNull() ?: -1
+                } ?: -1
+            return maxOf(maxSuffix + 1, 1)
+        }
+
         fun empty(): SchedulerState {
             val placeholderId = CellId("cell/main/0")
             val placeholder =
