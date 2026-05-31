@@ -49,6 +49,8 @@ data class SchedulerState(
     val editSession: SchedulerEditSession? = null,
     val history: SchedulerHistory,
     val nextTaskCounter: Int = 0,
+    /** In-memory clipboard for copy/paste (not persisted). */
+    val clipboard: List<String> = emptyList(),
 ) {
     fun captureTree(): TreeSnapshot =
         TreeSnapshot(

@@ -14,7 +14,7 @@ OmniApp is a versatile, cross-platform productivity application designed to prov
 - **Framework:** Kotlin Multiplatform (KMP)
 - **UI:** Compose Multiplatform
 - **Architecture:** MVI (Model-View-Intent)
-- **Persistence:** SQLDelight (Multiplatform integration pending final selection)
+- **Persistence:** SQLDelight
 
 ## 📂 Project Structure
 

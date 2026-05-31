@@ -27,6 +27,11 @@ object SchedulerReducer {
             SchedulerIntent.SelectCreateAssignTask -> reduceSelectCreateAssignTask(state)
             is SchedulerIntent.PickTitleSuggestion -> reducePickTitleSuggestion(state, intent.title)
             SchedulerIntent.CancelEdit -> reduceCancelEdit(state)
+            is SchedulerIntent.NavigateSelection -> reduceNavigateSelection(state, intent.direction)
+            is SchedulerIntent.CycleMainSelection -> reduceCycleMainSelection(state, intent.forward)
+            SchedulerIntent.SelectFirstChild -> reduceSelectFirstChild(state)
+            SchedulerIntent.CopySelection -> reduceCopySelection(state)
+            is SchedulerIntent.PasteTitles -> reducePasteTitles(state, intent.titles)
             SchedulerIntent.Undo -> undo(state)
             SchedulerIntent.Redo -> redo(state)
         }
@@ -163,6 +168,92 @@ object SchedulerReducer {
         val session = state.editSession ?: return state
         val delta = CancelEditDelta(before = state.captureTree(), after = session.treeBefore)
         return commitDelta(state, delta).copy(editSession = null)
+    }
+
+    private fun reduceNavigateSelection(
+        state: SchedulerState,
+        direction: SelectionNavigate,
+    ): SchedulerState {
+        if (state.editSession != null) return state
+        val main = state.selection.main ?: return state
+        val delta = if (direction == SelectionNavigate.Next) 1 else -1
+        val neighbor =
+            SchedulerDomain.neighborSelectableCell(state, main, delta)
+                ?: return state
+        return commitDelta(
+            state,
+            SetSelectionDelta(
+                before = state.selection,
+                after = SchedulerSelection(main = neighbor, selected = emptySet()),
+            ),
+        )
+    }
+
+    private fun reduceCycleMainSelection(state: SchedulerState, forward: Boolean): SchedulerState {
+        if (state.editSession != null) return state
+        val selected = state.selection.selected
+        if (selected.size <= 1) return state
+        val main = state.selection.main ?: return state
+        val ordered =
+            SchedulerDomain.selectableVisibleOrder(state).filter { it in selected }
+        if (ordered.isEmpty()) return state
+        val currentIndex = ordered.indexOf(main).let { if (it < 0) 0 else it }
+        val nextIndex =
+            if (forward) {
+                (currentIndex + 1) % ordered.size
+            } else {
+                (currentIndex - 1 + ordered.size) % ordered.size
+            }
+        return commitDelta(
+            state,
+            SetSelectionDelta(
+                before = state.selection,
+                after = SchedulerSelection(main = ordered[nextIndex], selected = selected),
+            ),
+        )
+    }
+
+    private fun reduceSelectFirstChild(state: SchedulerState): SchedulerState {
+        if (state.editSession != null) return state
+        val main = state.selection.main ?: return state
+        if (!SchedulerDomain.isSelectableCell(state, main)) return state
+        val cell = state.cells[main] ?: return state
+        val taskId = cell.taskId
+        val childListId = taskId?.let { state.tasks[it]?.childListId }
+        if (childListId == null) {
+            return reduceNavigateSelection(state, SelectionNavigate.Next)
+        }
+        var next = state
+        if (main !in next.expanded) {
+            next = commitDelta(next, ToggleExpandDelta(main))
+        }
+        val child = SchedulerDomain.firstSelectableChild(next, main) ?: return next
+        return commitDelta(
+            next,
+            SetSelectionDelta(
+                before = next.selection,
+                after = SchedulerSelection(main = child, selected = emptySet()),
+            ),
+        )
+    }
+
+    private fun reduceCopySelection(state: SchedulerState): SchedulerState {
+        if (state.editSession != null) return state
+        val titles = SchedulerDomain.copyTitlesFromSelection(state, state.selection)
+        if (titles.isEmpty() && state.selection.main == null) return state
+        return state.copy(clipboard = titles)
+    }
+
+    private fun reducePasteTitles(state: SchedulerState, titles: List<String>): SchedulerState {
+        if (state.editSession != null) return state
+        if (titles.isEmpty()) return state
+        val main = state.selection.main ?: return state
+        if (!SchedulerDomain.isSelectableCell(state, main)) return state
+        val before = state.captureTree()
+        val pasted = pasteTitlesAtCell(state.copy(clipboard = titles), main, titles)
+        val after = pasted.captureTree()
+        if (before == after) return state
+        return commitDelta(pasted, TreeMutationDelta(before = before, after = after))
     }
 
     private fun editTextDelta(state: SchedulerState, text: String): Delta {
@@ -423,6 +514,46 @@ object SchedulerReducer {
  * only the *absolute bottom cell* of each (sub)list as the trailing placeholder. Occurrences
  * of any removed cell are pruned and orphan tasks are purged.
  */
+private fun pasteTitlesAtCell(
+    state: SchedulerState,
+    targetCellId: CellId,
+    titles: List<String>,
+): SchedulerState {
+    if (titles.isEmpty()) return state
+    var working = applySetCellTitle(state, targetCellId, titles.first())
+    var afterId = targetCellId
+    for (title in titles.drop(1)) {
+        val (withCell, newId) = insertEmptyCellAfter(working, afterId)
+        working = applySetCellTitle(withCell, newId, title)
+        afterId = newId
+    }
+    return working
+}
+
+private fun insertEmptyCellAfter(
+    state: SchedulerState,
+    afterCellId: CellId,
+): Pair<SchedulerState, CellId> {
+    val cell = state.cells[afterCellId] ?: return state to afterCellId
+    val list = state.lists[cell.parentListId] ?: return state to afterCellId
+    val index = list.cellIds.indexOf(afterCellId)
+    if (index < 0) return state to afterCellId
+
+    val newCellId = CellId("cell/${list.id.value}/${state.cells.size}")
+    val newCell =
+        Cell(
+            id = newCellId,
+            parentListId = list.id,
+            taskId = null,
+        )
+    val newCellIds = list.cellIds.toMutableList()
+    newCellIds.add(index + 1, newCellId)
+    return state.copy(
+        cells = state.cells + (newCellId to newCell),
+        lists = state.lists + (list.id to list.copy(cellIds = newCellIds)),
+    ) to newCellId
+}
+
 private fun evaluatePostEditCleanup(state: SchedulerState): SchedulerState {
     val cells = state.cells.toMutableMap()
     val lists = state.lists.toMutableMap()

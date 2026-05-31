@@ -402,4 +402,31 @@ object SchedulerDomain {
         }
         return byTitle.mapValues { (_, ids) -> ids.distinct() }
     }
+
+    /** Titles copied from the active selection (PRD §4 Copy). */
+    fun copyTitlesFromSelection(state: SchedulerState, selection: SchedulerSelection): List<String> {
+        val block = orderedActiveSelectionInList(state, selection)
+        val cellIds =
+            if (block != null) {
+                block.second
+            } else {
+                selection.main?.let { listOf(it) }.orEmpty()
+            }
+        return cellIds.map { cellId ->
+            val taskId = state.cells[cellId]?.taskId
+            taskId?.let { state.tasks[it]?.title }.orEmpty()
+        }
+    }
+
+    /** Parse clipboard text from Google Sheets or this app (newline rows, tab columns). */
+    fun parseClipboardText(text: String): List<String> {
+        if (text.isEmpty()) return emptyList()
+        return text
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .split('\n')
+            .map { line -> line.substringBefore('\t') }
+    }
+
+    fun formatClipboardText(titles: List<String>): String = titles.joinToString("\n")
 }

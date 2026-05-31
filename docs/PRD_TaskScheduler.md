@@ -23,7 +23,7 @@ A single task can exist in multiple cells across the tree. For example: to "find
 The application maintains a dual-state selection model: **Main Selection** (a single active cell or null) and a **Selected Cells List** (a collection of active cells). *Note: Hidden/collapsed cells are ignored during vertical traversal for selection calculations.*
 
 * **Root and Main Cells:** The "root" and "main" cells cannot be selected, edited, or interacted with via mouse events. The "root" cell is only conceptual.
-* **Single Click:** The clicked cell becomes the *Main Selection*. The *Selected Cells List* is cleared. When the user clicks on something that is not a cell, an option in a contextual menu of the tree, or a tree arrow, then nothing is selected.
+* **Single Click:** The *Selected Cells List* is reset and the clicked cell becomes the *Main Selection*.
 * **Single Click & Drag:** * The initial click establishes the *Main Selection*.
   * While dragging without releasing the click, the *Selected Cells List* dynamically spans all visible cells from the Main Selection to the cell currently closest to the cursor.
 * **Double Click & Drag:** * If the cell the user double-clicks on is selected and all the selected cells are sequential and in the same sublist, the whole selection is moved. Otherwise, the double-click empties the *Selected Cells List* then establishes the *Main Selection*.

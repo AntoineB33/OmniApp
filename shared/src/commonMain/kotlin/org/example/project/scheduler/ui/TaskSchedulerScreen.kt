@@ -72,10 +72,13 @@ import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.persistence.SchedulerStore
+import org.example.project.scheduler.platform.readSystemClipboardText
+import org.example.project.scheduler.platform.writeSystemClipboardText
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.state.SelectionNavigate
 import kotlinx.coroutines.withTimeoutOrNull
 
 private object SheetColors {
@@ -126,6 +129,19 @@ fun TaskSchedulerScreen(
                     vm.dispatch(SchedulerIntent.Redo)
                     return@onPreviewKeyEvent true
                 }
+                if (mod && event.key == Key.C) {
+                    val titles = SchedulerDomain.copyTitlesFromSelection(state, state.selection)
+                    vm.dispatch(SchedulerIntent.CopySelection)
+                    writeSystemClipboardText(SchedulerDomain.formatClipboardText(titles))
+                    return@onPreviewKeyEvent true
+                }
+                if (mod && event.key == Key.V) {
+                    val text = readSystemClipboardText() ?: return@onPreviewKeyEvent false
+                    vm.dispatch(
+                        SchedulerIntent.PasteTitles(SchedulerDomain.parseClipboardText(text)),
+                    )
+                    return@onPreviewKeyEvent true
+                }
                 if (state.editSession != null) {
                     if (event.key == Key.Delete && !event.isCtrlPressed) {
                         vm.dispatch(SchedulerIntent.CancelEdit)
@@ -133,11 +149,47 @@ fun TaskSchedulerScreen(
                     }
                     return@onPreviewKeyEvent false
                 }
-                if (event.key == Key.Enter || event.key == Key.Delete) {
-                    if (!event.isCtrlPressed && !event.isMetaPressed) {
+                when (event.key) {
+                    Key.DirectionUp, Key.DirectionLeft -> {
+                        vm.dispatch(SchedulerIntent.NavigateSelection(SelectionNavigate.Previous))
+                        return@onPreviewKeyEvent true
+                    }
+                    Key.DirectionDown, Key.DirectionRight -> {
+                        vm.dispatch(SchedulerIntent.NavigateSelection(SelectionNavigate.Next))
+                        return@onPreviewKeyEvent true
+                    }
+                    Key.Delete -> {
                         vm.dispatch(SchedulerIntent.EmptySelectedCells)
                         return@onPreviewKeyEvent true
                     }
+                    Key.Enter -> {
+                        val multi = state.selection.selected.size > 1
+                        if (multi) {
+                            vm.dispatch(
+                                SchedulerIntent.CycleMainSelection(forward = !event.isShiftPressed),
+                            )
+                        } else {
+                            val main = state.selection.main
+                            if (main != null && SchedulerDomain.isSelectableCell(state, main)) {
+                                vm.dispatch(SchedulerIntent.BeginEdit(main))
+                            }
+                        }
+                        return@onPreviewKeyEvent true
+                    }
+                    Key.Tab -> {
+                        val multi = state.selection.selected.size > 1
+                        if (multi) {
+                            vm.dispatch(
+                                SchedulerIntent.CycleMainSelection(forward = !event.isShiftPressed),
+                            )
+                        } else if (event.isShiftPressed) {
+                            vm.dispatch(SchedulerIntent.NavigateSelection(SelectionNavigate.Previous))
+                        } else {
+                            vm.dispatch(SchedulerIntent.SelectFirstChild)
+                        }
+                        return@onPreviewKeyEvent true
+                    }
+                    else -> Unit
                 }
                 val main = state.selection.main ?: return@onPreviewKeyEvent false
                 if (!SchedulerDomain.isSelectableCell(state, main)) return@onPreviewKeyEvent false
@@ -670,7 +722,49 @@ private fun TaskRow(
                             }
                             when {
                                 event.key == Key.Enter &&
-                                    (event.isCtrlPressed || event.isMetaPressed) -> false
+                                    (event.isCtrlPressed || event.isMetaPressed) -> {
+                                    val selection = textFieldValue.selection
+                                    val insertAt = selection.min
+                                    val newText =
+                                        buildString {
+                                            append(textFieldValue.text.substring(0, insertAt))
+                                            append('\n')
+                                            append(textFieldValue.text.substring(selection.max))
+                                        }
+                                    textFieldValue =
+                                        TextFieldValue(
+                                            text = newText,
+                                            selection = TextRange(insertAt + 1),
+                                        )
+                                    onTextChange(newText)
+                                    true
+                                }
+                                event.key == Key.DirectionUp -> {
+                                    val lineStart = textFieldValue.text.lastIndexOf('\n', textFieldValue.selection.min - 1)
+                                    if (lineStart < 0) {
+                                        textFieldValue =
+                                            textFieldValue.copy(
+                                                selection = TextRange(0),
+                                            )
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                                event.key == Key.DirectionDown -> {
+                                    val text = textFieldValue.text
+                                    val cursor = textFieldValue.selection.max
+                                    val nextBreak = text.indexOf('\n', cursor)
+                                    if (nextBreak < 0) {
+                                        textFieldValue =
+                                            textFieldValue.copy(
+                                                selection = TextRange(text.length),
+                                            )
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
                                 event.key == Key.Enter && event.isShiftPressed -> {
                                     onExitEdit(EditExitNavigation.Up)
                                     true

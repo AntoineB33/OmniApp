@@ -3,6 +3,13 @@ package org.example.project.scheduler.state
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.TaskId
 
+enum class SelectionNavigate {
+    /** Up / Left — previous visible selectable cell. */
+    Previous,
+    /** Down / Right — next visible selectable cell. */
+    Next,
+}
+
 enum class EditExitNavigation {
     /** Enter — commit and move selection down one visible cell. */
     Down,
@@ -68,6 +75,18 @@ sealed interface SchedulerIntent {
     data class PickTitleSuggestion(val title: String) : SchedulerIntent
 
     data object CancelEdit : SchedulerIntent
+
+    data class NavigateSelection(val direction: SelectionNavigate) : SchedulerIntent
+
+    data class CycleMainSelection(val forward: Boolean) : SchedulerIntent
+
+    /** Tab on a single selected cell: expand and focus the first child when populated. */
+    data object SelectFirstChild : SchedulerIntent
+
+    data object CopySelection : SchedulerIntent
+
+    /** Paste [titles] at the main selection (Google Sheets uses newline-separated rows). */
+    data class PasteTitles(val titles: List<String>) : SchedulerIntent
 
     data object Undo : SchedulerIntent
     data object Redo : SchedulerIntent
