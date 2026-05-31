@@ -16,7 +16,7 @@ OmniApp is a unified, multi-platform workspace application. The initial release 
 * **Responsive Layout:** While optimized for desktop, the UI must gracefully scale to mobile viewports using Compose layout constraints.
 
 ## 4. Technical Constraints & Foundations
-* **Database:** Must integrate a KMP-compatible database (SQLDelight or Room) for local data persistence. Data must be saved locally and remain fully available offline.
+* **Database:** Must integrate a SQLDelight for local data persistence. Data must be saved locally and remain fully available offline.
 * **Quality Assurance:** Behavior-Driven Development (BDD) / Test-Driven Development (TDD). No UI code is to be merged without corresponding ViewModel state tests passing.
 
 ## 5. Future Roadmap

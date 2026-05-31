@@ -4,7 +4,7 @@
 
 ## 1. Overview
 
-The Task Scheduler is a heavily interactive, infinitely nestable list of cells. It borrows interaction paradigms from spreadsheet applications (like Google Sheets) while applying them to a hierarchical tree structure. 
+The Task Scheduler is a heavily interactive, infinitely nestable list of cells. It borrows interaction paradigms from spreadsheet applications (like Google Sheets) while applying them to a hierarchical tree structure. This version targets Windows desktop, but stays cross-platform as much as possible.
 
 A single task can exist in multiple cells across the tree. For example: to "find a job," one must "practice English," and to "socialize abroad," one must also "practice English." Two cells sharing the same `taskId` will perfectly mirror the same sub-tree. 
 * **Constraint 1:** A `taskId` cannot appear multiple times within the exact same list (this would create conflicting priority values for the same parent task).
@@ -14,7 +14,7 @@ A single task can exist in multiple cells across the tree. For example: to "find
 ## 2. Structural UI & Aesthetics
 
 * **Infinite Tree View:** Cells are displayed in a vertical list. The rendered UI tree is strictly synced with the underlying `Map` Tree. 
-* **Nesting UI:** The left side of the cells features arrows and guide-lines illustrating the parent-child hierarchy. The "root" cell conceptually exists, but the viewport only renders its children.
+* **Nesting UI:** The left side of the cells features arrows (if there is a populated sub-tree) and guide-lines (if the cell is expanded) illustrating the parent-child hierarchy. The "root" cell conceptually exists, but the viewport only renders its children.
 * **Collapsibility:** Clicking structural arrows toggles the visibility of a cell's sublist.
 * **Visual Aesthetics:** Cell aesthetics strictly mirror Google Sheets. This includes standard resting states, active selection borders/highlighting, and inline editing UI.
 
@@ -30,15 +30,20 @@ The application maintains a dual-state selection model: **Main Selection** (a si
   * While dragging without releasing the click, a horizontal blue line indicates where the selection will be moved if the user releases the click.
 * **Ctrl + Click:** The clicked cell becomes the *Main Selection* (standard OS `Ctrl` behavior applies for isolated multi-selection).
 * **Shift + Click / Ctrl + Shift + Click:** The *Selected Cells List* expands to include all visible cells sequentially from the current *Main Selection* to the newly clicked cell.
+* **Up / Left:** Resets selection, and if there is a selectable cell above makes it the main selection. Doesn't work when in Editing Mode.
+* **Down / Right:** Resets selection, and if there is a selectable cell below makes it the main selection. Doesn't work when in Editing Mode.
+* **Enter or Tab:** If there are several selected cells, moves the main selection among them, from top to bottom then back on top. With `Shift` pressed, it moves backward.
+
 
 ## 4. Editing Mechanics
 
 ### Entering Edit Mode
 * **Double-click:** Enters Edit Mode on the target cell.
+* **Enter or Shift + Enter:** Enters Edit Mode on the target cell if there is only one selected cell.
 * **Typing:** If a cell is the *Main Selection* (and not the "root" or "main" cell), typing immediately enters Edit Mode and captures the keystroke.
 
 ### Active Edit Mode Behavior
-While in Edit Mode, two contextual menus remain visible until editing concludes:
+While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* and two contextual menus remain visible until editing concludes:
 
 **Menu 1: Mode Selector ("Change Task" vs. "Rename")**
 * **Change Task (Default):** A task menu displays existing `taskIds` matching the cell's current text. The menu doesn't appear if there is only one element. There is always one of the elements that is selected. 
@@ -59,6 +64,7 @@ While in Edit Mode, two contextual menus remain visible until editing concludes:
 * **Auto-Save:** Every keystroke/change is immediately committed to the state.
 * **Sublist Syncing:** Edits to a sublist immediately update all expanded instances of that `taskId` across the UI.
 * **Line Breaks:** `Ctrl + Enter` adds a new line. The cell dynamically expands horizontally and vertically to fit the content.
+* **Up and Down:** `Up` goes to the beginning if there is no line above in the cell, and `Down` to the end if there is no line below in the cell.
 * **Cancel:** Pressing `Delete` inside Edit Mode cancels the session, reverting all affected cells to their pre edit mode text.
 * **Forced Exit:** Changing global selection via mouse click outside the cell forcibly exits Edit Mode.
 * **Auto-Expansion:** When the bottom cell of a list receives text, the system automatically:
@@ -68,7 +74,7 @@ While in Edit Mode, two contextual menus remain visible until editing concludes:
 ### Exiting Edit Mode (Keyboard Navigation)
 * `Enter`: moves *Main Selection* down one cell.
 * `Shift + Enter`: moves *Main Selection* up one cell.
-* `Tab`: Opens the current cell's sublist and moves *Main Selection* to its first child.
+* `Tab`: If the current cell is populated, opens its sublist and moves *Main Selection* to its first child. Otherwise, behaves identically to `Enter`.
 * `Shift + Tab`: Behaves identically to `Shift + Enter`.
 
 ### Empty cells management
@@ -76,6 +82,7 @@ While in Edit Mode, two contextual menus remain visible until editing concludes:
 
 ### Edition without Edition Mode
 * **Deletion:** When the user presses `Return` or `Delete` and no cell is in Edition Mode, all selected cells get emptied.
+* **Copy/paste:** Ctrl + C allows the user to copy the whole selection (if it is only consecutive cells in the same sublist) or only the main selection. Ctrl + V allows to paste it in a cell (if several cells were copied, new cells are added below). The user can copy/paste cells between Google Sheets and the app.
 
 ## 5. State Management & Undo/Redo Engine
 
@@ -88,7 +95,7 @@ While in Edit Mode, two contextual menus remain visible until editing concludes:
   * *Existing DB:* Loads from local persistence. If the last history unit is an incomplete "Edit Mode" state, it evaluates as a canceled edit (`Delete` behavior).
 * **History Architecture (Deltas):**
   * Every mutation generates a History Unit containing: Exact Timestamp, Chrono-ID (for deterministic sorting of simultaneous events), and a **Delta**.
-  * **Delta Storage:** Stores *only* the minimum data required to revert the Task Tree and Selection State. (e.g., keystrokes in Edit Mode generate a Delta with cell coordinates, previous string, and current edit mode).
+  * **Delta Storage:** Stores *only* the minimum data required to revert the Task Tree and Selection State. (e.g., keystrokes in Edit Mode generate a Delta with cell coordinates, previous string, and current edit mode). There are several types: change in a list of child `taskIds` in Task Tree, selection change, expantion change and task title change.
 * **Undo (Ctrl+Z) / Redo (Ctrl+Y):**
   * **Undo:** The history pointer decrements. The Delta is applied to the state, and the Delta *inside the unit* is mathematically inverted to represent the forward-change (Redo).
   * **Branching:** If an Undo is performed followed by a *new* mutation, all forward (Redo) history units are orphaned/discarded.

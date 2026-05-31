@@ -27,7 +27,7 @@ OmniApp prioritizes Desktop interactions first.
 OmniApp is entirely offline-capable.
 * **Framework:** Local database operations utilize a multiplatform SQL wrapper (e.g., SQLDelight).
 * **Reactivity:** Database queries return asynchronous flows (via Kotlin Coroutines/Flow). The ViewModels collect these flows to maintain real-time sync between the DB and the UI State.
-* **Continuous Sync:** All mutations in the state (including Undo/Redo history units) are immediately serialized and saved to the local database, ensuring zero data loss on unexpected exits.
+* **Continuous Sync:** All mutations in the state (including Undo/Redo history units) are immediately serialized and saved to the local database with a small debounce, ensuring zero data loss on unexpected exits.
 
 ## 5. History Architecture (Undo/Redo Engine)
 The Undo/Redo mechanism operates on a **Delta-based History Graph** managed globally.
@@ -39,7 +39,9 @@ The Undo/Redo mechanism operates on a **Delta-based History Graph** managed glob
   * New Intents immediately clear all `HistoryUnits` ahead of the current pointer.
 
 ## 6. Testing Strategy (TDD)
-Behavior-Driven Development (BDD) and Test-Driven Development (TDD) are strictly enforced.
-* **ViewModel State Testing:** No UI code is merged without passing tests for the MVI Intent-to-State transitions. 
+Behavior-Driven Development (BDD) and Test-Driven Development (TDD) are strictly enforced, focusing entirely on state mechanics.
+
+* **ViewModel State Testing (Primary):** No UI code is merged without passing tests for the MVI Intent-to-State transitions. 
 * **Scope:** Tests must validate selection mechanics, tree nested logic, and history delta generation entirely in memory using Kotlin's `runTest` API.
-* **Multiplatform Testing:** Core tests reside in `shared/commonTest`.
+* **Target Execution:** Core tests reside in `shared/commonTest`. These same tests are executed across all platform targets (JVM, iOS Native, Wasm/JS) via Gradle to guarantee the state engine compiles and runs flawlessly on every architecture.
+* **UI Testing (Out of Scope for v0.1.0):** Compose Multiplatform UI testing (e.g., verifying pixel-perfect rendering or semantic nodes) is deferred. The current mandate is to test the *State*, allowing the UI to remain a simple, stateless reflection of that data.

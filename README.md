@@ -14,7 +14,7 @@ OmniApp is a versatile, cross-platform productivity application designed to prov
 - **Framework:** Kotlin Multiplatform (KMP)
 - **UI:** Compose Multiplatform
 - **Architecture:** MVI (Model-View-Intent)
-- **Persistence:** SQLDelight or Room (Multiplatform integration pending final selection)
+- **Persistence:** SQLDelight (Multiplatform integration pending final selection)
 
 ## 📂 Project Structure
 
@@ -40,16 +40,16 @@ Use the run configurations provided by the run widget in your IDE's toolbar, or 
   - JS target (slower, older browsers): `./gradlew :webApp:jsBrowserDevelopmentRun`
 - **iOS app:** Open the `iosApp` directory in Xcode and run it from there.
 
-### Running tests
+### Running Core Logic Tests
 
-Ensure state holders and view models are fully tested before touching the Compose UI.
+Ensure state holders, MVI intents, and the Undo/Redo engine are fully tested before touching the Compose UI. The following commands execute these shared business logic tests across different platform targets to ensure identical behavior across JVM, Native, and JS/Wasm compilers. **Note: These are headless state tests, not UI tests.**
 
-- **Desktop tests:** `./gradlew :shared:jvmTest`
-- **Android tests:** `./gradlew :shared:testAndroidHostTest`
-- **Web tests:**
-  - Wasm target: `./gradlew :shared:wasmJsTest`
-  - JS target: `./gradlew :shared:jsTest`
-- **iOS tests:** `./gradlew :shared:iosSimulatorArm64Test`
+- **Desktop (JVM) target tests:** `./gradlew :shared:jvmTest`
+- **Android target tests:** `./gradlew :shared:testAndroidHostTest`
+- **Web targets tests:**
+  - Wasm: `./gradlew :shared:wasmJsTest`
+  - JS: `./gradlew :shared:jsTest`
+- **iOS (Native) target tests:** `./gradlew :shared:iosSimulatorArm64Test`
 
 ---
 
