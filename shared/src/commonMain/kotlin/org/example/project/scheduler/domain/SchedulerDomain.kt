@@ -92,11 +92,14 @@ object SchedulerDomain {
         prior: SchedulerSelection? = null,
     ): CellId? {
         if (explicitVia != null) return explicitVia
+        // A render-via must be a strict ancestor occurrence the cell is mirrored under; a cell
+        // can never be rendered "via itself" (that would leave a root-viewport cell with a
+        // non-null via and break shouldShowSelectionHighlight).
         prior?.renderVia?.let { via ->
-            if (isInVisualSubtree(state, cellId, via)) return via
+            if (via != cellId && isInVisualSubtree(state, cellId, via)) return via
         }
         prior?.main?.let { main ->
-            if (isInVisualSubtree(state, cellId, main)) return main
+            if (main != cellId && isInVisualSubtree(state, cellId, main)) return main
         }
         val listId = state.cells[cellId]?.parentListId ?: return null
         return state.lists[listId]?.parentCellId

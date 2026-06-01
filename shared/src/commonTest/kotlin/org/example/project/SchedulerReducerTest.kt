@@ -184,6 +184,35 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun reclick_after_edit_on_lone_root_cell_keeps_cell_selectable() {
+        // Repro: fresh DB → click → double-click (BeginEdit) → Enter (ExitEdit) → click again.
+        // The lone root cell must stay highlightable; renderVia must never become the cell itself.
+        var s = SchedulerState.empty()
+        val cell = s.lists[s.rootListId]!!.cellIds.first()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = cell, ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cell))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Down))
+
+        // No cell below, so selection stays on the edited cell with a clean (null) renderVia.
+        assertEquals(cell, s.selection.main)
+        assertEquals(null, s.selection.renderVia)
+        assertTrue(SchedulerDomain.shouldShowSelectionHighlight(s.selection, cell, localRenderVia = null))
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = cell, ctrl = false, shift = false, visibleOrder = visible),
+        )
+        assertEquals(cell, s.selection.main)
+        assertEquals(null, s.selection.renderVia)
+        assertTrue(SchedulerDomain.shouldShowSelectionHighlight(s.selection, cell, localRenderVia = null))
+    }
+
+    @Test
     fun exit_edit_shift_enter_moves_selection_up() {
         var s = seedThreeTasks()
         val visible = SchedulerDomain.selectableVisibleOrder(s)
