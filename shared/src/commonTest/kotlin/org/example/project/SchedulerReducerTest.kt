@@ -181,6 +181,26 @@ class SchedulerReducerTest {
         assertEquals(null, s.editSession)
         assertEquals(below, s.selection.main)
         assertTrue(s.selection.selected.isEmpty())
+        // The moved selection must actually render its highlight: render-via must resolve for the
+        // new cell, not stay pinned to the cell we exited (which would hide the highlight).
+        assertEquals(null, s.selection.renderVia)
+        assertTrue(SchedulerDomain.shouldShowSelectionHighlight(s.selection, below, localRenderVia = null))
+    }
+
+    @Test
+    fun exit_edit_escape_stays_on_edited_cell_and_renders_highlight() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        val top = visible[0]
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(top))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Stay))
+
+        assertEquals(null, s.editSession)
+        assertEquals(top, s.selection.main)
+        assertTrue(s.selection.selected.isEmpty())
+        assertEquals(null, s.selection.renderVia)
+        assertTrue(SchedulerDomain.shouldShowSelectionHighlight(s.selection, top, localRenderVia = null))
     }
 
     @Test

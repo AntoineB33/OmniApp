@@ -504,6 +504,7 @@ object SchedulerReducer {
                     SchedulerDomain.neighborSelectableCell(next, editingCellId, 1) ?: editingCellId
                 EditExitNavigation.Up ->
                     SchedulerDomain.neighborSelectableCell(next, editingCellId, -1) ?: editingCellId
+                EditExitNavigation.Stay -> editingCellId
                 EditExitNavigation.TabToChild -> {
                     val cell = next.cells[editingCellId]
                     val taskId = cell?.taskId
@@ -520,11 +521,20 @@ object SchedulerReducer {
             }
 
         if (newMain == next.selection.main && next.selection.selected.isEmpty()) return next
+        // Only Tab-into-child renders the new main via the cell we were editing (its parent).
+        // Sibling moves (Up/Down) must resolve their own render-via, otherwise the highlight
+        // is pinned to the former cell and never appears on the moved selection.
+        val explicitVia =
+            if (navigation == EditExitNavigation.TabToChild && newMain != editingCellId) {
+                editingCellId
+            } else {
+                null
+            }
         return commitDelta(
             next,
             SetSelectionDelta(
                 before = next.selection,
-                after = selectionFor(next, main = newMain, explicitVia = editingCellId),
+                after = selectionFor(next, main = newMain, explicitVia = explicitVia),
             ),
         )
     }

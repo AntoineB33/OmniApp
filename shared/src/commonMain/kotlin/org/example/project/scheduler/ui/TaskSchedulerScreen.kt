@@ -818,6 +818,10 @@ private fun TaskRow(
                                     onExitEdit(EditExitNavigation.Down)
                                     true
                                 }
+                                event.key == Key.Escape -> {
+                                    onExitEdit(EditExitNavigation.Stay)
+                                    true
+                                }
                                 event.key == Key.Tab && event.isShiftPressed -> {
                                     onExitEdit(EditExitNavigation.Up)
                                     true

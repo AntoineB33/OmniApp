@@ -77,6 +77,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * `Shift + Enter`: moves *Main Selection* up one cell.
 * `Tab`: If the current cell is populated, opens its sublist and moves *Main Selection* to its first child. Otherwise, behaves identically to `Enter`.
 * `Shift + Tab`: Behaves identically to `Shift + Enter`.
+* `Escape`: Simply exits Edit Mode.
 
 ### Empty cells management
 * **Cleanup:** Empty cells are automatically removed upon exit, *unless* it is the absolute bottom cell of a sublist.

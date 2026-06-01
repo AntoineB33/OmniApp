@@ -17,6 +17,8 @@ enum class EditExitNavigation {
     Up,
     /** Tab — expand sublist and move selection to the first child. */
     TabToChild,
+    /** Escape — commit and exit edit mode, leaving the selection on the edited cell. */
+    Stay,
 }
 
 sealed interface SchedulerIntent {
