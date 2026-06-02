@@ -695,6 +695,40 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun move_priority_column_reorders_headers_and_cell_values() {
+        var s = seedThreeTasks()
+        val listId = s.rootListId
+        val first = s.lists[listId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddPriorityColumn(listId))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddPriorityColumn(listId))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityColumnWeight(listId, 0, 0.2))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityColumnWeight(listId, 1, 0.5))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityColumnWeight(listId, 2, 0.8))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(first, 0, 10.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(first, 1, 20.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(first, 2, 30.0))
+
+        // Move the first column to the end (insertion index 3 across all columns).
+        s = SchedulerReducer.reduce(s, SchedulerIntent.MovePriorityColumn(listId, from = 0, to = 3))
+        assertEquals(listOf(0.5, 0.8, 0.2), s.lists[listId]!!.weightColumns)
+        assertEquals(listOf(20.0, 30.0, 10.0), s.cells[first]!!.priorityWeights)
+    }
+
+    @Test
+    fun reset_priority_column_restores_defaults() {
+        var s = seedThreeTasks()
+        val listId = s.rootListId
+        val first = s.lists[listId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(first, 0, 9.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityColumnWeight(listId, 0, 0.3))
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ResetPriorityColumn(listId, 0))
+        // Column 0's default is 1 for both the header and every cell.
+        assertEquals(1.0, s.lists[listId]!!.weightColumns[0], 1e-9)
+        assertEquals(1.0, s.cells[first]!!.priorityWeights[0], 1e-9)
+    }
+
+    @Test
     fun mirrored_task_priority_sums_across_occurrences() {
         var s = SchedulerState.empty()
         val branchA = s.lists[s.rootListId]!!.cellIds.first()

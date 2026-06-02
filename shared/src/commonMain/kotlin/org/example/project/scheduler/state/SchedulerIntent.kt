@@ -78,15 +78,29 @@ sealed interface SchedulerIntent {
         val weight: Double,
     ) : SchedulerIntent
 
-    /** PRD §5: append a new priority weight column to a sub-list. */
+    /** PRD §5: insert a new priority weight column at [index] (default appends to the end). */
     data class AddPriorityColumn(
         val listId: CellListId,
+        val index: Int = Int.MAX_VALUE,
     ) : SchedulerIntent
 
-    /** PRD §5: delete a priority weight column from a sub-list ("Delete Column"). */
+    /** PRD §5: reset a column (header + every cell) to its default value ("Reset to default"). */
+    data class ResetPriorityColumn(
+        val listId: CellListId,
+        val column: Int,
+    ) : SchedulerIntent
+
+    /** PRD §5: delete a priority weight column from a sub-list ("Delete column"). */
     data class DeletePriorityColumn(
         val listId: CellListId,
         val column: Int,
+    ) : SchedulerIntent
+
+    /** PRD §5: reorder a priority column by dragging it to a new position. */
+    data class MovePriorityColumn(
+        val listId: CellListId,
+        val from: Int,
+        val to: Int,
     ) : SchedulerIntent
 
     /** [initialText] non-null when entering via typing (replaces cell content with first keystroke). */

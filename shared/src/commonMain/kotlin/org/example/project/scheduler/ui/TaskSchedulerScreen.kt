@@ -47,7 +47,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -64,7 +63,6 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
-import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
@@ -107,6 +105,8 @@ private object SheetColors {
     val nonSelectableFill = Color(0xFFF8F9FA)
     val guideLine = Color(0xFFC7CBD1)
     val overflowArrow = Color(0xFFD93025)
+    /** PRD §3 / §5: background of a cell or column while it is being drag-moved. */
+    val moveDragFill = Color(0xFFCFD3D8)
 }
 
 /** Indentation step (dp) per nesting level; also the spacing between hierarchy guide-lines. */
@@ -114,9 +114,6 @@ private const val INDENT_STEP_DP = 16
 
 /** Horizontal offset (dp) of a level's guide-line, aligned under that ancestor's expand arrow. */
 private const val GUIDE_LINE_OFFSET_DP = 14
-
-/** Blur radius (dp) applied to cells while they are being drag-moved (PRD §3 Double Click & Drag). */
-private val MOVE_DRAG_BLUR_DP = 2.dp
 
 /**
  * PRD §2 Priority Display: the text column before the priority percentage is sized to the widest
@@ -175,12 +172,13 @@ fun TaskSchedulerScreen(
     // percentage in that sub-list), or null when no table is shown.
     var weightTableListId by remember { mutableStateOf<CellListId?>(null) }
 
-    // PRD §5: selecting a cell outside the sub-list makes its weight table disappear.
-    LaunchedEffect(state.selection.main) {
+    // PRD §5: selecting a cell outside the sub-list — or any cell entering Edit Mode — makes the
+    // weight table disappear.
+    LaunchedEffect(state.selection.main, state.editSession) {
         val current = weightTableListId
         if (current != null) {
             val mainListId = state.selection.main?.let { state.cells[it]?.parentListId }
-            if (mainListId != current) weightTableListId = null
+            if (state.editSession != null || mainListId != current) weightTableListId = null
         }
     }
 
@@ -462,8 +460,8 @@ private fun CellListSection(
     val priorityColumnPx = with(density) { priorityColumnWidth.toPx() }
     val weightTableActive = weightTableListId == listId
 
-    // PRD §5: header row of the priority weight table — one editable column weight each (with a
-    // right-click "Delete Column" menu) plus an "add column" button — aligned above the cell rows.
+    // PRD §5: header row of the priority weight table — one editable column weight each, aligned
+    // above the cell rows, with a right-click menu and double-click-drag reordering.
     if (weightTableActive) {
         WeightTableHeader(
             depth = depth,
@@ -472,8 +470,10 @@ private fun CellListSection(
             onSetColumnWeight = { column, weight ->
                 onIntent(SchedulerIntent.SetPriorityColumnWeight(listId, column, weight))
             },
-            onAddColumn = { onIntent(SchedulerIntent.AddPriorityColumn(listId)) },
+            onAddColumn = { index -> onIntent(SchedulerIntent.AddPriorityColumn(listId, index)) },
+            onResetColumn = { column -> onIntent(SchedulerIntent.ResetPriorityColumn(listId, column)) },
             onDeleteColumn = { column -> onIntent(SchedulerIntent.DeletePriorityColumn(listId, column)) },
+            onMoveColumn = { from, to -> onIntent(SchedulerIntent.MovePriorityColumn(listId, from, to)) },
         )
     }
 
@@ -760,10 +760,16 @@ private fun TaskMenuRow(
     )
 }
 
+/** Steps [value] by [delta], clamps to [0, maxValue], and rounds off binary-float noise. */
+private fun stepWeight(value: Double, delta: Double, maxValue: Double): Double {
+    val next = (value + delta).coerceIn(0.0, maxValue)
+    return (next * 10000).roundToInt() / 10000.0
+}
+
 /**
  * PRD §5 priority weight: one weight-table cell — a number input (digits and a decimal comma) with
- * the increment/decrement buttons stacked vertically to its right. Each step adds/removes 1; the
- * value is clamped to ≥ 0 (0 is allowed).
+ * the increment/decrement buttons stacked vertically to its right. Each step adds/removes [step]
+ * (1 for cells, 0.1 for the header row); the value is clamped to `[0, maxValue]`.
  */
 @Composable
 private fun WeightInputCell(
@@ -771,6 +777,7 @@ private fun WeightInputCell(
     onSet: (Double) -> Unit,
     modifier: Modifier = Modifier,
     maxValue: Double = Double.POSITIVE_INFINITY,
+    step: Double = 1.0,
 ) {
     var text by remember(value) { mutableStateOf(formatWeight(value)) }
     Row(
@@ -796,8 +803,8 @@ private fun WeightInputCell(
                 .padding(horizontal = 4.dp, vertical = 3.dp),
         )
         Column {
-            WeightStepButton(label = "▲", onClick = { onSet((value + 1).coerceIn(0.0, maxValue)) })
-            WeightStepButton(label = "▼", onClick = { onSet((value - 1).coerceIn(0.0, maxValue)) })
+            WeightStepButton(label = "▲", onClick = { onSet(stepWeight(value, step, maxValue)) })
+            WeightStepButton(label = "▼", onClick = { onSet(stepWeight(value, -step, maxValue)) })
         }
     }
 }
@@ -822,9 +829,23 @@ private fun WeightStepButton(label: String, onClick: () -> Unit) {
     }
 }
 
+/** Vertical blue line marking where a dragged column will be dropped (PRD §5). */
+@Composable
+private fun ColumnDropLine() {
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 1.dp)
+            .width(2.dp)
+            .height(22.dp)
+            .background(SheetColors.activeBorder),
+    )
+}
+
 /**
- * PRD §5 priority weight table header: one editable column weight per column. Right-clicking a
- * column reveals a "Delete Column" menu. A trailing button appends a new column.
+ * PRD §5 priority weight table header: one editable column weight per column (header step 0.1,
+ * clamped 0..1). Right-clicking a column reveals "Add column to the right", "Reset to default" and
+ * (unless it is the only column) "Delete column". A column can be double-click-dragged to reorder:
+ * it gets a grey background and a vertical blue line shows the drop position.
  */
 @Composable
 private fun WeightTableHeader(
@@ -832,9 +853,24 @@ private fun WeightTableHeader(
     leadingWidth: Dp,
     weightColumns: List<Double>,
     onSetColumnWeight: (Int, Double) -> Unit,
-    onAddColumn: () -> Unit,
+    onAddColumn: (Int) -> Unit,
+    onResetColumn: (Int) -> Unit,
     onDeleteColumn: (Int) -> Unit,
+    onMoveColumn: (Int, Int) -> Unit,
 ) {
+    val columnBounds = remember { mutableStateMapOf<Int, ClosedFloatingPointRange<Float>>() }
+    var draggedColumn by remember { mutableStateOf<Int?>(null) }
+    var dropIndex by remember { mutableStateOf<Int?>(null) }
+
+    fun resolveDrop(windowX: Float): Int {
+        for (c in weightColumns.indices) {
+            val bounds = columnBounds[c] ?: continue
+            val mid = (bounds.start + bounds.endInclusive) / 2f
+            if (windowX < mid) return c
+        }
+        return weightColumns.size
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -843,55 +879,93 @@ private fun WeightTableHeader(
     ) {
         Spacer(Modifier.width(leadingWidth))
         weightColumns.forEachIndexed { column, weight ->
+            if (draggedColumn != null && dropIndex == column) ColumnDropLine()
             var menuOpen by remember { mutableStateOf(false) }
             Box(
-                modifier = Modifier.pointerInput(column) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            if (event.type == PointerEventType.Press &&
-                                event.buttons.isSecondaryPressed
-                            ) {
+                modifier = Modifier
+                    .onGloballyPositioned { coords ->
+                        val x = coords.positionInWindow().x
+                        columnBounds[column] = x..(x + coords.size.width)
+                    }
+                    .background(
+                        if (draggedColumn == column) SheetColors.moveDragFill else Color.Transparent,
+                    )
+                    .pointerInput(column, weightColumns.size) {
+                        val timeout = viewConfiguration.doubleTapTimeoutMillis
+                        val slop = viewConfiguration.touchSlop
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            if (currentEvent.buttons.isSecondaryPressed) {
                                 menuOpen = true
+                                return@awaitEachGesture
+                            }
+                            if (waitForUpOrCancellation() == null) return@awaitEachGesture
+                            val secondDown =
+                                withTimeoutOrNull(timeout) { awaitFirstDown(requireUnconsumed = false) }
+                                    ?: return@awaitEachGesture
+                            secondDown.consume()
+                            var started = false
+                            var traveled = 0f
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                if (!event.changes.any { it.pressed }) {
+                                    if (started) dropIndex?.let { onMoveColumn(column, it) }
+                                    draggedColumn = null
+                                    dropIndex = null
+                                    break
+                                }
+                                val change =
+                                    event.changes.firstOrNull { it.id == secondDown.id }
+                                        ?: event.changes.first()
+                                traveled += change.positionChange().getDistance()
+                                if (!started && traveled > slop) {
+                                    started = true
+                                    draggedColumn = column
+                                }
+                                if (started) {
+                                    change.consume()
+                                    val windowX = (columnBounds[column]?.start ?: 0f) + change.position.x
+                                    dropIndex = resolveDrop(windowX)
+                                }
                             }
                         }
-                    }
-                },
+                    },
             ) {
-                // PRD §5: a column header weight can only span 0..1.
+                // PRD §5: a column header weight can only span 0..1 and steps by 0.1.
                 WeightInputCell(
                     value = weight,
                     onSet = { onSetColumnWeight(column, it) },
                     maxValue = 1.0,
+                    step = 0.1,
                 )
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
-                        text = { Text("Delete Column") },
+                        text = { Text("Add column to the right") },
                         onClick = {
                             menuOpen = false
-                            onDeleteColumn(column)
+                            onAddColumn(column + 1)
                         },
                     )
+                    DropdownMenuItem(
+                        text = { Text("Reset to default") },
+                        onClick = {
+                            menuOpen = false
+                            onResetColumn(column)
+                        },
+                    )
+                    if (weightColumns.size > 1) {
+                        DropdownMenuItem(
+                            text = { Text("Delete column") },
+                            onClick = {
+                                menuOpen = false
+                                onDeleteColumn(column)
+                            },
+                        )
+                    }
                 }
             }
         }
-        Box(
-            modifier = Modifier
-                .padding(start = 4.dp)
-                .border(1.dp, SheetColors.grid)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onAddColumn,
-                )
-                .padding(horizontal = 8.dp, vertical = 3.dp),
-        ) {
-            Text(
-                text = "+ Column",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
+        if (draggedColumn != null && dropIndex == weightColumns.size) ColumnDropLine()
     }
 }
 
@@ -944,6 +1018,8 @@ private fun TaskRow(
 
     val cellBackground =
         when {
+            // PRD §3: a cell being drag-moved gets a grey background (not mirrored elsewhere).
+            isBeingMoved -> SheetColors.moveDragFill
             isInSelectionRange || isEditing -> SheetColors.selectionFill
             !selectable -> SheetColors.nonSelectableFill
             else -> SheetColors.cellBackground
@@ -1086,8 +1162,6 @@ private fun TaskRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                // PRD §3: the dragged cells are blurred while a double-click & drag move is active.
-                .then(if (isBeingMoved) Modifier.blur(MOVE_DRAG_BLUR_DP) else Modifier)
                 // PRD §2: guide-lines on the left illustrate the parent-child hierarchy. One
                 // vertical line is drawn in the indentation gutter under each expanded ancestor's
                 // arrow; they only appear beneath expanded cells (collapsed cells hide their rows).

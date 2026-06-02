@@ -25,9 +25,13 @@ object SchedulerReducer {
             is SchedulerIntent.SetPriorityColumnWeight ->
                 commitDelta(state, priorityTreeDelta(state) { applySetPriorityColumnWeight(it, intent.listId, intent.column, intent.weight) })
             is SchedulerIntent.AddPriorityColumn ->
-                commitDelta(state, priorityTreeDelta(state) { applyAddPriorityColumn(it, intent.listId) })
+                commitDelta(state, priorityTreeDelta(state) { applyAddPriorityColumn(it, intent.listId, intent.index) })
+            is SchedulerIntent.ResetPriorityColumn ->
+                commitDelta(state, priorityTreeDelta(state) { applyResetPriorityColumn(it, intent.listId, intent.column) })
             is SchedulerIntent.DeletePriorityColumn ->
                 commitDelta(state, priorityTreeDelta(state) { applyDeletePriorityColumn(it, intent.listId, intent.column) })
+            is SchedulerIntent.MovePriorityColumn ->
+                commitDelta(state, priorityTreeDelta(state) { applyMovePriorityColumn(it, intent.listId, intent.from, intent.to) })
             is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
             is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
             is SchedulerIntent.SetEditMode -> reduceSetEditMode(state, intent.mode)
@@ -983,18 +987,70 @@ private fun applySetPriorityColumnWeight(
     return state.copy(lists = state.lists + (listId to list.copy(weightColumns = columns)))
 }
 
-private fun applyAddPriorityColumn(state: SchedulerState, listId: CellListId): SchedulerState {
+private fun applyAddPriorityColumn(
+    state: SchedulerState,
+    listId: CellListId,
+    index: Int,
+): SchedulerState {
     val list = state.lists[listId] ?: return state
+    val at = index.coerceIn(0, list.weightColumns.size)
     // PRD §5: an added column has every field (header and cells) set to 0.
     val cells = state.cells.toMutableMap()
     for (cellId in list.cellIds) {
         val cell = cells[cellId] ?: continue
         val padded = normalizedWeights(cell.priorityWeights, list.weightColumns.size)
-        padded.add(0.0)
+        padded.add(at, 0.0)
         cells[cellId] = cell.copy(priorityWeights = padded)
     }
-    val lists = state.lists + (listId to list.copy(weightColumns = list.weightColumns + 0.0))
+    val columns = list.weightColumns.toMutableList().also { it.add(at, 0.0) }
+    val lists = state.lists + (listId to list.copy(weightColumns = columns))
     return state.copy(cells = cells, lists = lists)
+}
+
+private fun applyResetPriorityColumn(
+    state: SchedulerState,
+    listId: CellListId,
+    column: Int,
+): SchedulerState {
+    val list = state.lists[listId] ?: return state
+    if (column < 0 || column >= list.weightColumns.size) return state
+    val default = defaultWeightAt(column)
+    val cells = state.cells.toMutableMap()
+    for (cellId in list.cellIds) {
+        val cell = cells[cellId] ?: continue
+        val weights = normalizedWeights(cell.priorityWeights, list.weightColumns.size)
+        weights[column] = default
+        cells[cellId] = cell.copy(priorityWeights = weights)
+    }
+    val columns = list.weightColumns.toMutableList().also { it[column] = default }
+    return state.copy(cells = cells, lists = state.lists + (listId to list.copy(weightColumns = columns)))
+}
+
+private fun applyMovePriorityColumn(
+    state: SchedulerState,
+    listId: CellListId,
+    from: Int,
+    to: Int,
+): SchedulerState {
+    val list = state.lists[listId] ?: return state
+    val size = list.weightColumns.size
+    if (from < 0 || from >= size) return state
+    // [to] is an insertion index across all columns; account for removing [from] first.
+    val target = (if (to > from) to - 1 else to).coerceIn(0, size - 1)
+    if (target == from) return state
+    fun <T> reorder(items: MutableList<T>) {
+        val moved = items.removeAt(from)
+        items.add(target, moved)
+    }
+    val cells = state.cells.toMutableMap()
+    for (cellId in list.cellIds) {
+        val cell = cells[cellId] ?: continue
+        val weights = normalizedWeights(cell.priorityWeights, size)
+        reorder(weights)
+        cells[cellId] = cell.copy(priorityWeights = weights)
+    }
+    val columns = list.weightColumns.toMutableList().also { reorder(it) }
+    return state.copy(cells = cells, lists = state.lists + (listId to list.copy(weightColumns = columns)))
 }
 
 private fun applyDeletePriorityColumn(
