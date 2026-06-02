@@ -74,6 +74,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.persistence.SchedulerStore
@@ -123,6 +124,7 @@ fun TaskSchedulerScreen(
 ) {
     val state by vm.state.collectAsState()
     val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
+    val visibleOccurrences = SchedulerDomain.selectableVisibleOccurrences(state)
     val focusRequester = remember { FocusRequester() }
     var moveDragActive by remember { mutableStateOf(false) }
     var moveDropTarget by remember { mutableStateOf<MoveDropTarget?>(null) }
@@ -131,14 +133,18 @@ fun TaskSchedulerScreen(
     // only delivers move events to the row where the pointer went down (Compose retains the hit
     // path while a button is held), so the originating row resolves the cell under the cursor from
     // these shared bounds rather than relying on per-cell hover events that never fire mid-drag.
-    val rowBounds = remember { mutableStateMapOf<CellId, ClosedFloatingPointRange<Float>>() }
-    val resolveRowAt: (Float) -> Pair<CellId, Boolean>? = resolve@{ windowY ->
-        var last: Pair<CellId, Boolean>? = null
-        for (cellId in visibleOrder) {
-            val bounds = rowBounds[cellId] ?: continue
-            if (windowY < bounds.start) return@resolve last ?: (cellId to true)
+    // Keyed by occurrence (cellId + renderVia) so a cell mirrored under several expanded parents
+    // keeps a distinct band per row and the resolved drop target carries the target row's own
+    // renderVia — letting the blue line land in any layer of the tree (PRD §3).
+    val rowBounds =
+        remember { mutableStateMapOf<VisibleOccurrence, ClosedFloatingPointRange<Float>>() }
+    val resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>? = resolve@{ windowY ->
+        var last: Pair<VisibleOccurrence, Boolean>? = null
+        for (occurrence in visibleOccurrences) {
+            val bounds = rowBounds[occurrence] ?: continue
+            if (windowY < bounds.start) return@resolve last ?: (occurrence to true)
             val mid = (bounds.start + bounds.endInclusive) / 2f
-            last = cellId to (windowY < mid)
+            last = occurrence to (windowY < mid)
             if (windowY <= bounds.endInclusive) return@resolve last
         }
         last
@@ -281,7 +287,7 @@ fun TaskSchedulerScreen(
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
-                onRowBounds = { cellId, top, bottom -> rowBounds[cellId] = top..bottom },
+                onRowBounds = { occurrence, top, bottom -> rowBounds[occurrence] = top..bottom },
                 onMoveDragStart = { moveDragActive = true },
                 onMoveDropHover = { target, insertBefore, via ->
                     moveDropTarget = MoveDropTarget(target, insertBefore, via)
@@ -351,8 +357,8 @@ private fun CellListSection(
     visibleOrder: List<CellId>,
     moveDragActive: Boolean,
     moveDropTarget: MoveDropTarget?,
-    resolveRowAt: (Float) -> Pair<CellId, Boolean>?,
-    onRowBounds: (CellId, Float, Float) -> Unit,
+    resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>?,
+    onRowBounds: (VisibleOccurrence, Float, Float) -> Unit,
     onMoveDragStart: () -> Unit,
     onMoveDropHover: (CellId, Boolean, CellId?) -> Unit,
     onMoveDragEnd: () -> Unit,
@@ -386,6 +392,7 @@ private fun CellListSection(
         TaskRow(
             depth = depth,
             cellId = cellId,
+            renderVia = renderVia,
             displayTitle = if (isEditing) editDraft else title,
             isMainSelection = isMainSelection,
             isInSelectionRange = isInSelectionRange,
@@ -430,8 +437,8 @@ private fun CellListSection(
             resolveRowAt = resolveRowAt,
             onRowBounds = onRowBounds,
             onMoveDragStart = onMoveDragStart,
-            onMoveDropHover = { target, insertBefore ->
-                onMoveDropHover(target, insertBefore, renderVia)
+            onMoveDropHover = { target, insertBefore, via ->
+                onMoveDropHover(target, insertBefore, via)
             },
             onMoveDragEnd = onMoveDragEnd,
             onDoubleClick = {
@@ -629,6 +636,7 @@ private fun TaskMenuRow(
 private fun TaskRow(
     depth: Int,
     cellId: CellId,
+    renderVia: CellId?,
     displayTitle: String,
     isMainSelection: Boolean,
     isInSelectionRange: Boolean,
@@ -643,10 +651,10 @@ private fun TaskRow(
     onClick: (CellId, ctrl: Boolean, shift: Boolean, forceClearMulti: Boolean) -> Unit,
     onDragSelect: (anchor: CellId, hover: CellId) -> Unit,
     moveDragActive: Boolean,
-    resolveRowAt: (Float) -> Pair<CellId, Boolean>?,
-    onRowBounds: (CellId, Float, Float) -> Unit,
+    resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>?,
+    onRowBounds: (VisibleOccurrence, Float, Float) -> Unit,
     onMoveDragStart: () -> Unit,
-    onMoveDropHover: (CellId, Boolean) -> Unit,
+    onMoveDropHover: (CellId, Boolean, CellId?) -> Unit,
     onMoveDragEnd: () -> Unit,
     onDoubleClick: () -> Unit,
     onTextChange: (String) -> Unit,
@@ -686,7 +694,7 @@ private fun TaskRow(
             .onGloballyPositioned { coords ->
                 rowCoordinates.value = coords
                 val top = coords.positionInWindow().y
-                onRowBounds(cellId, top, top + coords.size.height)
+                onRowBounds(VisibleOccurrence(cellId, renderVia), top, top + coords.size.height)
             }
             // Keyed only by cellId so selection-driven flags (which change during the gesture's own
             // clicks) never restart and cancel an in-progress drag; freshness comes from the
@@ -728,8 +736,8 @@ private fun TaskRow(
                         if (traveled > touchSlop) {
                             dragged = true
                             change.consume()
-                            windowYOf(change)?.let { currentResolveRowAt(it) }?.let { (target, _) ->
-                                onDragSelect(cellId, target)
+                            windowYOf(change)?.let { currentResolveRowAt(it) }?.let { (occ, _) ->
+                                onDragSelect(cellId, occ.cellId)
                             }
                         }
                     }
@@ -785,7 +793,9 @@ private fun TaskRow(
                         if (moveStarted) {
                             change.consume()
                             windowYOf(change)?.let { currentResolveRowAt(it) }
-                                ?.let { (target, before) -> onMoveDropHover(target, before) }
+                                ?.let { (occ, before) ->
+                                    onMoveDropHover(occ.cellId, before, occ.renderVia)
+                                }
                         }
                     }
                 }

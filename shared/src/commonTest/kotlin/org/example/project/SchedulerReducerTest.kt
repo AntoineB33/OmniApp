@@ -1571,6 +1571,110 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun move_selected_cell_into_sibling_sublist_relocates_across_layers() {
+        var s = seedThreeTasks()
+        val root = s.rootListId
+        val a = s.lists[root]!!.cellIds[0]
+        val b = s.lists[root]!!.cellIds[1]
+        val bTask = s.cells[b]!!.taskId!!
+        val aTask = s.cells[a]!!.taskId!!
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(a))
+        val aChildList = s.tasks[aTask]!!.childListId!!
+        val aChild = s.lists[aChildList]!!.cellIds.first()
+
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = b, ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.MoveSelectedCells(targetCellId = aChild, insertBefore = true),
+        )
+
+        // B left the root list and now lives in A's child list (a different layer of the tree).
+        assertFalse(b in s.lists[root]!!.cellIds)
+        assertTrue(b in s.lists[aChildList]!!.cellIds)
+        assertEquals(aChildList, s.cells[b]!!.parentListId)
+        // The task tree is relinked: B is now a child of A, no longer of main.
+        assertTrue(bTask in s.tasks[aTask]!!.childTaskIds)
+        assertFalse(bTask in s.tasks[WellKnownIds.MAIN_TASK]!!.childTaskIds)
+
+        // The cross-list move round-trips through undo.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertTrue(b in s.lists[root]!!.cellIds)
+        assertEquals(root, s.cells[b]!!.parentListId)
+    }
+
+    @Test
+    fun move_into_mirrored_subtree_links_task_under_shared_parent() {
+        var s = SchedulerState.empty()
+        val root = s.rootListId
+        val branchA = s.lists[root]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchA, "Shared"))
+        val sharedTaskId = s.cells[branchA]!!.taskId!!
+        val sharedChildList = s.tasks[sharedTaskId]!!.childListId!!
+
+        val branchB = s.lists[root]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchB, "Branch B"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(branchB))
+        val branchBChild =
+            s.lists[s.tasks[s.cells[branchB]!!.taskId!!]!!.childListId!!]!!.cellIds.first()
+        // branchBChild now mirrors the same sub-tree as branchA (shares its taskId/childList).
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AssignTaskId(branchBChild, sharedTaskId))
+
+        // A movable cell at the root.
+        val movable = s.lists[root]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(movable, "Movable"))
+        val movableTask = s.cells[movable]!!.taskId!!
+        val placeholderInShared = s.lists[sharedChildList]!!.cellIds.first()
+
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = movable, ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.MoveSelectedCells(targetCellId = placeholderInShared, insertBefore = true),
+        )
+
+        // Inserted into the shared child list → mirrored under every occurrence of the shared task.
+        assertTrue(movable in s.lists[sharedChildList]!!.cellIds)
+        assertEquals(sharedChildList, s.cells[movable]!!.parentListId)
+        assertTrue(movableTask in s.tasks[sharedTaskId]!!.childTaskIds)
+    }
+
+    @Test
+    fun move_into_own_subtree_is_rejected() {
+        var s = SchedulerState.empty()
+        val root = s.rootListId
+        val parent = s.lists[root]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(parent, "Parent"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(parent))
+        val childList = s.tasks[s.cells[parent]!!.taskId!!]!!.childListId!!
+        val child = s.lists[childList]!!.cellIds.first()
+
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = parent, ctrl = false, shift = false, visibleOrder = visible),
+        )
+        val listsBefore = s.lists
+        val historyBefore = s.history.units.size
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.MoveSelectedCells(targetCellId = child, insertBefore = true),
+        )
+
+        // PRD constraint 2: a cell cannot move into its own sub-tree (would create a cycle).
+        assertEquals(listsBefore, s.lists)
+        assertTrue(parent in s.lists[root]!!.cellIds)
+        assertEquals(historyBefore, s.history.units.size)
+    }
+
+    @Test
     fun sequential_selection_detects_contiguous_block_in_same_list() {
         var s = seedThreeTasks()
         val visible = SchedulerDomain.selectableVisibleOrder(s)

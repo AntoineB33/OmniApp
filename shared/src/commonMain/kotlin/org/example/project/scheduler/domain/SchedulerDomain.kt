@@ -204,6 +204,120 @@ object SchedulerDomain {
         return state.copy(lists = lists)
     }
 
+    /** Parent task owning [listId] (its `childListId`); MAIN_TASK for the viewport list. */
+    fun parentTaskIdOfList(state: SchedulerState, listId: CellListId): TaskId? {
+        val list = state.lists[listId] ?: return null
+        val parentCellId = list.parentCellId ?: return WellKnownIds.MAIN_TASK
+        return state.cells[parentCellId]?.taskId
+    }
+
+    /** [taskId] together with every task reachable through its `childTaskIds` links. */
+    fun descendantTaskIds(state: SchedulerState, taskId: TaskId): Set<TaskId> {
+        val result = mutableSetOf<TaskId>()
+        val stack = ArrayDeque(listOf(taskId))
+        while (stack.isNotEmpty()) {
+            val id = stack.removeLast()
+            if (!result.add(id)) continue
+            state.tasks[id]?.childTaskIds?.forEach { stack.addLast(it) }
+        }
+        return result
+    }
+
+    /**
+     * Whether [movingTaskId] (with its whole sub-tree) may be inserted into the list owning
+     * [targetCellId] without breaking PRD constraints: 1 (a taskId cannot appear twice in one
+     * list) or 2 (a taskId cannot equal one of its ancestors — that would create an infinite
+     * mirrored cycle). [movingCells] are ignored in the duplicate check so a block move does not
+     * collide with its own members. A null task (empty placeholder) is always movable.
+     */
+    fun canMoveTaskIntoList(
+        state: SchedulerState,
+        movingTaskId: TaskId?,
+        targetListId: CellListId,
+        targetCellId: CellId,
+        movingCells: Set<CellId>,
+    ): Boolean {
+        if (movingTaskId == null) return true
+        val list = state.lists[targetListId] ?: return false
+        val existing =
+            list.cellIds
+                .filter { it !in movingCells }
+                .mapNotNull { state.cells[it]?.taskId }
+        if (movingTaskId in existing) return false
+        val newAncestors = ancestorTaskIds(state, targetCellId)
+        val subtree = descendantTaskIds(state, movingTaskId)
+        if (newAncestors.any { it in subtree }) return false
+        return true
+    }
+
+    /**
+     * Move [movingOrdered] out of [sourceListId] and into [targetListId] at [insertIndex]. When the
+     * two lists are the same this is a plain reorder. Cross-list moves re-point the cells'
+     * `parentListId`, relink the moved tasks under the destination's parent task (and unlink the
+     * ones no longer present in the source), then re-sort occurrences since depths changed.
+     *
+     * Because a task's `childListId` is shared by every cell pointing at it, inserting into (or
+     * removing from) a list automatically mirrors the change across every expanded occurrence of
+     * that list elsewhere (PRD §3 Double Click & Drag mirroring).
+     */
+    fun applyMoveCellsToList(
+        state: SchedulerState,
+        sourceListId: CellListId,
+        movingOrdered: List<CellId>,
+        targetListId: CellListId,
+        insertIndex: Int,
+    ): SchedulerState {
+        if (sourceListId == targetListId) {
+            return applyMoveCellsInList(state, sourceListId, movingOrdered, insertIndex)
+        }
+        val sourceList = state.lists[sourceListId] ?: return state
+        val targetList = state.lists[targetListId] ?: return state
+        val moving = movingOrdered.toSet()
+
+        val newSource = sourceList.cellIds.filter { it !in moving }
+        val clamped = insertIndex.coerceIn(0, targetList.cellIds.size)
+        val newTarget = targetList.cellIds.toMutableList().also { it.addAll(clamped, movingOrdered) }
+
+        val cells = state.cells.toMutableMap()
+        for (id in movingOrdered) {
+            val cell = cells[id] ?: continue
+            cells[id] = cell.copy(parentListId = targetListId)
+        }
+
+        val lists =
+            state.lists +
+                (sourceListId to sourceList.copy(cellIds = newSource)) +
+                (targetListId to targetList.copy(cellIds = newTarget))
+
+        var working = state.copy(cells = cells, lists = lists)
+
+        var tasks = working.tasks.toMutableMap()
+        parentTaskIdOfList(working, targetListId)?.let { targetParent ->
+            for (id in movingOrdered) {
+                val taskId = working.cells[id]?.taskId ?: continue
+                tasks = linkChildUnderParent(tasks, targetParent, taskId).toMutableMap()
+            }
+        }
+        parentTaskIdOfList(working, sourceListId)?.let { sourceParent ->
+            val remaining = newSource.mapNotNull { working.cells[it]?.taskId }.toSet()
+            val removed =
+                movingOrdered
+                    .mapNotNull { working.cells[it]?.taskId }
+                    .filter { it !in remaining }
+                    .toSet()
+            tasks[sourceParent]?.let { parent ->
+                tasks[sourceParent] = parent.copy(childTaskIds = parent.childTaskIds - removed)
+            }
+        }
+        working = working.copy(tasks = tasks)
+
+        val resorted =
+            working.tasks.mapValues { (_, task) ->
+                task.copy(occurrences = sortOccurrences(working, task.occurrences))
+            }
+        return purgeOrphanTasks(working.copy(tasks = resorted))
+    }
+
     /** Visible selectable cells from [fromCellId] through [toCellId] (inclusive). */
     fun visibleSelectionRange(
         visibleOrder: List<CellId>,

@@ -436,24 +436,41 @@ object SchedulerReducer {
         val block =
             SchedulerDomain.orderedActiveSelectionInList(state, state.selection)
                 ?: return state
-        val (listId, movingOrdered) = block
+        val (sourceListId, movingOrdered) = block
         val moving = movingOrdered.toSet()
-        val list = state.lists[listId] ?: return state
-        if (intent.targetCellId !in list.cellIds) return state
+        val targetListId = state.cells[intent.targetCellId]?.parentListId ?: return state
+        val targetList = state.lists[targetListId] ?: return state
+        // A cross-list drop relocates the block into another layer of the tree. Reject it up front
+        // when any moved task would break a PRD constraint at the destination (duplicate in the
+        // list, or a cycle with its new ancestors); same-list reorders never can.
+        if (targetListId != sourceListId) {
+            val valid =
+                movingOrdered.all { cellId ->
+                    SchedulerDomain.canMoveTaskIntoList(
+                        state,
+                        state.cells[cellId]?.taskId,
+                        targetListId,
+                        intent.targetCellId,
+                        moving,
+                    )
+                }
+            if (!valid) return state
+        }
 
         val insertIndex =
             SchedulerDomain.moveInsertIndex(
-                list.cellIds,
+                targetList.cellIds,
                 moving,
                 intent.targetCellId,
                 intent.insertBefore,
             )
         val before = state.captureTree()
         val moved =
-            SchedulerDomain.applyMoveCellsInList(
+            SchedulerDomain.applyMoveCellsToList(
                 state,
-                listId,
+                sourceListId,
                 movingOrdered,
+                targetListId,
                 insertIndex,
             )
         val after = moved.captureTree()
