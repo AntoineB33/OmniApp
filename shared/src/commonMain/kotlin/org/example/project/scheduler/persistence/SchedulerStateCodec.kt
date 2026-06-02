@@ -13,7 +13,6 @@ import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.SchedulerEditSession
-import org.example.project.scheduler.state.SchedulerHistory
 import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.TreeSnapshot
@@ -151,7 +150,6 @@ object SchedulerStateCodec {
                     rangeAnchor = selectionRangeAnchor?.let(::CellId),
                     renderVia = selectionRenderVia?.let(::CellId),
                 ),
-            history = SchedulerHistory(),
             nextTaskCounter = nextTaskCounter,
             nextCellCounter =
                 nextCellCounter

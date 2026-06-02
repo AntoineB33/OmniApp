@@ -97,9 +97,9 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
   * *Empty DB:* Task Tree initializes with a "root" key pointing to a "main" task (representing the user's active daily life).
   * *Existing DB:* Loads from local persistence. If the last history unit is an incomplete "Edit Mode" state, it evaluates as a canceled edit (`Delete` behavior).
 * **History Architecture (Deltas):**
-  * Every mutation generates a History Unit containing: Exact Timestamp, Chrono-ID (for deterministic sorting of simultaneous events), and a **Delta**.
-  * **Delta Storage:** Stores *only* the minimum data required to revert the Task Tree and Selection State. (e.g., keystrokes in Edit Mode generate a Delta with cell coordinates, previous string, and current edit mode). There are several types: change in a list of child `taskIds` in Task Tree, selection change, expantion change and task title change.
-* **Undo (Ctrl+Z) / Redo (Ctrl+Y):**
-  * **Undo:** The history pointer decrements. The Delta is applied to the state, and the Delta *inside the unit* is mathematically inverted to represent the forward-change (Redo).
+  * Every mutation generates a History Unit containing: Exact Timestamp, Chrono-ID (for deterministic sorting of simultaneous events), and a **Delta**. There are three categories of History Units: change in Edition Mode, change of selection state and the rest. Each category has a list of History Units and a history pointer.
+  * **Delta Storage:** Stores *only* the minimum data required to revert the Task Tree and Selection State. (e.g., keystrokes in Edit Mode generate a Delta with cell coordinates, previous string, and current edit mode). There are several types: change in a list of child `taskIds` in Task Tree, selection change, expantion change, task title change...
+* **Undo / Redo:**
+  * **Undo:** The history pointer decrements. The Delta is applied to the state, and the Delta *inside the unit* is mathematically inverted to represent the forward-change (Redo). For selection history, undo is `Alt + Left` and redo is `Alt + Right`. For the other history categories, undo is `Ctrl + C` and redo is `Ctrl + Y`.
   * **Branching:** If an Undo is performed followed by a *new* mutation, all forward (Redo) history units are orphaned/discarded.
 * **Persistence:** State changes (Tree, occurrences, parent objects, selection, and history) are continuously streamed to the local multiplatform database.

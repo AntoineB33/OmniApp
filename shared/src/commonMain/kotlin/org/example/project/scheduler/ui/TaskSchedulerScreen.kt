@@ -54,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.isShiftPressed
@@ -175,6 +176,15 @@ fun TaskSchedulerScreen(
                 }
                 if (mod && event.key == Key.Y) {
                     vm.dispatch(SchedulerIntent.Redo)
+                    return@onPreviewKeyEvent true
+                }
+                // PRD §5: selection history is undone/redone independently from content history.
+                if (event.isAltPressed && event.key == Key.DirectionLeft) {
+                    vm.dispatch(SchedulerIntent.UndoSelection)
+                    return@onPreviewKeyEvent true
+                }
+                if (event.isAltPressed && event.key == Key.DirectionRight) {
+                    vm.dispatch(SchedulerIntent.RedoSelection)
                     return@onPreviewKeyEvent true
                 }
                 if (mod && event.key == Key.C) {
