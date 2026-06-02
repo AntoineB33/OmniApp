@@ -1413,6 +1413,36 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun stale_deferred_single_click_does_not_resteal_main_selection() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        // Click cell A (its gesture's deferred forceClearMulti reset is still "pending").
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        // User clicks cell B before A's double-tap timer expires: main moves to B.
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[1], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        // A's stale timer now fires its deferred reset — it must NOT steal main back to A.
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(
+                cellId = visible[0],
+                ctrl = false,
+                shift = false,
+                visibleOrder = visible,
+                forceClearMulti = true,
+            ),
+        )
+
+        assertEquals(visible[1], s.selection.main)
+    }
+
+    @Test
     fun double_click_non_move_clears_multi_selection() {
         var s = seedThreeTasks()
         val visible = SchedulerDomain.selectableVisibleOrder(s)
@@ -1424,6 +1454,12 @@ class SchedulerReducerTest {
         s = SchedulerReducer.reduce(
             s,
             SchedulerIntent.ClickCell(cellId = visible[2], ctrl = false, shift = true, visibleOrder = visible),
+        )
+        // The gesture's first press dispatches a non-collapsing click that keeps the range intact
+        // and moves main onto the clicked cell, before the deferred forceClearMulti reset arrives.
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[1], ctrl = false, shift = false, visibleOrder = visible),
         )
         s = SchedulerReducer.reduce(
             s,

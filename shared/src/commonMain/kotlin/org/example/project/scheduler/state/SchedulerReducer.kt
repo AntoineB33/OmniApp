@@ -332,6 +332,17 @@ object SchedulerReducer {
     private fun reduceClick(state: SchedulerState, intent: SchedulerIntent.ClickCell): SchedulerState {
         if (!SchedulerDomain.isSelectableCell(state, intent.cellId)) return state
 
+        // The deferred single-click reset (forceClearMulti) fires after the double-tap timeout to
+        // collapse a still-intact multi-selection down to the clicked cell. If the user has since
+        // clicked another cell, the previous cell's timer can still be alive and fire this stale
+        // reset, momentarily re-selecting the old cell before its own deferred click re-asserts the
+        // new one. Ignore it unless the clicked cell is still the main selection.
+        if (intent.forceClearMulti && !intent.ctrl && !intent.shift &&
+            state.selection.main != intent.cellId
+        ) {
+            return state
+        }
+
         val visibleOrder =
             intent.visibleOrder.ifEmpty { SchedulerDomain.selectableVisibleOrder(state) }
         val currentMain = state.selection.main
