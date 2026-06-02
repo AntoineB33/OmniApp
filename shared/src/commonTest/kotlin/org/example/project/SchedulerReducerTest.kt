@@ -633,26 +633,60 @@ class SchedulerReducerTest {
         val b = s.cells[root[1]]!!.taskId!!
         val c = s.cells[root[2]]!!.taskId!!
 
-        // Default weights (all 1) → even thirds.
-        assertEquals(1, s.cells[first]!!.priorityWeight)
+        // Default single-column weights (all 1) → even thirds.
+        assertEquals(listOf(1.0), s.cells[first]!!.priorityWeights)
         assertEquals(1.0 / 3, SchedulerDomain.absoluteTaskPriorities(s)[a]!!, 1e-9)
 
-        // Weight the first cell to 2 → 2/(2+1+1) = 50%, others 25% each.
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(first, 2))
-        assertEquals(2, s.cells[first]!!.priorityWeight)
+        // Set the first cell's column-0 value to 2 → 2/(2+1+1) = 50%, others 25% each.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(first, 0, 2.0))
+        assertEquals(2.0, s.cells[first]!!.priorityWeights[0], 1e-9)
         val weighted = SchedulerDomain.absoluteTaskPriorities(s)
         assertEquals(0.5, weighted[a]!!, 1e-9)
         assertEquals(0.25, weighted[b]!!, 1e-9)
         assertEquals(0.25, weighted[c]!!, 1e-9)
 
-        // A weight below 1 is clamped to 1.
-        var clamped = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(first, 0))
-        assertEquals(1, clamped.cells[first]!!.priorityWeight)
+        // A negative value is clamped to 0 (0 is allowed); the cell then takes 0% priority.
+        val zeroed = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(first, 0, -5.0))
+        assertEquals(0.0, zeroed.cells[first]!!.priorityWeights[0], 1e-9)
+        assertEquals(0.0, SchedulerDomain.absoluteTaskPriorities(zeroed)[a]!!, 1e-9)
 
         // Weight change is an undoable content delta (PRD §6).
         s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
-        assertEquals(1, s.cells[first]!!.priorityWeight)
+        assertEquals(1.0, s.cells[first]!!.priorityWeights.getOrElse(0) { 1.0 }, 1e-9)
         assertEquals(1.0 / 3, SchedulerDomain.absoluteTaskPriorities(s)[a]!!, 1e-9)
+    }
+
+    @Test
+    fun column_absolute_weights_follow_remaining_fraction_rule() {
+        // header[n] * (1 - Σ preceding absolute weights): [0.5, 1.0] → [0.5, 0.5].
+        assertEquals(listOf(0.5, 0.5), SchedulerDomain.columnAbsoluteWeights(listOf(0.5, 1.0)))
+        assertEquals(listOf(1.0), SchedulerDomain.columnAbsoluteWeights(listOf(1.0)))
+    }
+
+    @Test
+    fun add_set_and_delete_priority_columns() {
+        var s = seedThreeTasks()
+        val listId = s.rootListId
+        val first = s.lists[listId]!!.cellIds.first()
+        assertEquals(listOf(1.0), s.lists[listId]!!.weightColumns)
+
+        // Adding a column extends the list header and every cell's value vector.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddPriorityColumn(listId))
+        assertEquals(2, s.lists[listId]!!.weightColumns.size)
+        assertEquals(2, s.cells[first]!!.priorityWeights.size)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityColumnWeight(listId, 0, 0.5))
+        assertEquals(0.5, s.lists[listId]!!.weightColumns[0], 1e-9)
+
+        // Deleting a column shrinks both.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.DeletePriorityColumn(listId, 1))
+        assertEquals(1, s.lists[listId]!!.weightColumns.size)
+        assertEquals(1, s.cells[first]!!.priorityWeights.size)
+
+        // The last remaining column cannot be deleted.
+        val before = s.lists[listId]!!.weightColumns
+        s = SchedulerReducer.reduce(s, SchedulerIntent.DeletePriorityColumn(listId, 0))
+        assertEquals(before, s.lists[listId]!!.weightColumns)
     }
 
     @Test

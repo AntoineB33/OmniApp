@@ -388,12 +388,12 @@ object SchedulerDomain {
      * PRD §5 Priority assignment: the absolute priority percentage of every task, as a fraction in
      * `[0,1]` (1.0 == 100%).
      *
-     * A populated cell carries `weight(cell) / Σ weights of populated cells in its list` of its
-     * parent task's absolute priority; a task's absolute priority is the sum over all cells sharing
-     * its `taskId` (so a mirrored sub-tree accumulates priority from each parent). The conceptual
-     * root holds 100%, so the MAIN task — its only child — also resolves to 100% and seeds the
-     * top-down distribution. Empty placeholder cells (no `taskId`) hold no priority and are excluded
-     * from the weight sum.
+     * A populated cell's priority weight blends its sub-list's weight columns (see
+     * [cellPriorityWeight]); its local share is `cellWeight / Σ cellWeights of the populated cells`.
+     * A task's absolute priority is the sum over all cells sharing its `taskId` (so a mirrored
+     * sub-tree accumulates priority from each parent). The conceptual root holds 100%, so the MAIN
+     * task — its only child — also resolves to 100% and seeds the top-down distribution. Empty
+     * placeholder cells (no `taskId`) hold no priority.
      */
     fun absoluteTaskPriorities(state: SchedulerState): Map<TaskId, Double> {
         val cellsByTask = HashMap<TaskId, MutableList<CellId>>()
@@ -402,11 +402,38 @@ object SchedulerDomain {
             cellsByTask.getOrPut(taskId) { mutableListOf() }.add(cell.id)
         }
 
-        fun populatedWeightSum(listId: CellListId): Int =
-            state.lists[listId]
-                ?.cellIds
-                ?.sumOf { state.cells[it]?.takeIf { c -> c.taskId != null }?.priorityWeight ?: 0 }
-                ?: 0
+        // Per-list cache of (column absolute weights, per-column populated sums).
+        val listCache = HashMap<CellListId, Pair<List<Double>, List<Double>>>()
+        fun listInfo(listId: CellListId): Pair<List<Double>, List<Double>> =
+            listCache.getOrPut(listId) {
+                val list = state.lists[listId]
+                val absW = columnAbsoluteWeights(list?.weightColumns ?: listOf(1.0))
+                val populated =
+                    list?.cellIds?.filter { state.cells[it]?.taskId != null }.orEmpty()
+                val colSums =
+                    absW.indices.map { c ->
+                        populated.sumOf { state.cells[it]!!.priorityWeights.getOrElse(c) { 1.0 } }
+                    }
+                absW to colSums
+            }
+
+        fun cellWeight(cell: org.example.project.scheduler.model.Cell): Double {
+            val (absW, colSums) = listInfo(cell.parentListId)
+            var w = 0.0
+            for (c in absW.indices) {
+                val sum = colSums[c]
+                if (sum == 0.0) continue
+                w += (cell.priorityWeights.getOrElse(c) { 1.0 } / sum) * absW[c]
+            }
+            return w
+        }
+
+        // Σ of populated cells' weights in a list collapses to Σ of the columns' absolute weights
+        // (over columns with a non-zero sum), since each column's values sum back to its own total.
+        fun listWeightSum(listId: CellListId): Double {
+            val (absW, colSums) = listInfo(listId)
+            return absW.indices.sumOf { c -> if (colSums[c] > 0.0) absW[c] else 0.0 }
+        }
 
         val memo = HashMap<TaskId, Double>()
         val visiting = HashSet<TaskId>()
@@ -418,11 +445,10 @@ object SchedulerDomain {
             var sum = 0.0
             for (cellId in cellsByTask[taskId].orEmpty()) {
                 val cell = state.cells[cellId] ?: continue
-                val listId = cell.parentListId
-                val weightSum = populatedWeightSum(listId)
-                if (weightSum == 0) continue
-                val parent = parentTaskIdOfList(state, listId) ?: continue
-                sum += absolute(parent) * (cell.priorityWeight.toDouble() / weightSum)
+                val totalWeight = listWeightSum(cell.parentListId)
+                if (totalWeight == 0.0) continue
+                val parent = parentTaskIdOfList(state, cell.parentListId) ?: continue
+                sum += absolute(parent) * (cellWeight(cell) / totalWeight)
             }
             visiting.remove(taskId)
             memo[taskId] = sum
@@ -430,6 +456,37 @@ object SchedulerDomain {
         }
 
         return cellsByTask.keys.associateWith { absolute(it) }
+    }
+
+    /**
+     * PRD §5 priority weight table: the absolute weight of each column. Column n takes its nominal
+     * header weight times the fraction of priority still unclaimed by the preceding columns:
+     * `absolute[n] = header[n] * (1 - Σ_{k<n} absolute[k])`.
+     */
+    fun columnAbsoluteWeights(headers: List<Double>): List<Double> {
+        val result = ArrayList<Double>(headers.size)
+        var preceding = 0.0
+        for (header in headers) {
+            val absolute = header * (1.0 - preceding)
+            result.add(absolute)
+            preceding += absolute
+        }
+        return result
+    }
+
+    /** Blended priority weight of [cellId] across its sub-list's weight columns (PRD §5). */
+    fun cellPriorityWeight(state: SchedulerState, cellId: CellId): Double {
+        val cell = state.cells[cellId] ?: return 0.0
+        val list = state.lists[cell.parentListId] ?: return 0.0
+        val absW = columnAbsoluteWeights(list.weightColumns)
+        val populated = list.cellIds.filter { state.cells[it]?.taskId != null }
+        var w = 0.0
+        for (c in absW.indices) {
+            val colSum = populated.sumOf { state.cells[it]!!.priorityWeights.getOrElse(c) { 1.0 } }
+            if (colSum == 0.0) continue
+            w += (cell.priorityWeights.getOrElse(c) { 1.0 } / colSum) * absW[c]
+        }
+        return w
     }
 
     fun parentTaskId(state: SchedulerState, cellId: CellId): TaskId? {

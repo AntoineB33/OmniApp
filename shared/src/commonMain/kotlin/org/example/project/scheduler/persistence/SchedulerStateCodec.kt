@@ -44,11 +44,16 @@ object SchedulerStateCodec {
             rootListId = rootListId.value,
             lists =
                 lists.values.map {
-                    PersistedList(it.id.value, it.parentCellId?.value, it.cellIds.map(CellId::value))
+                    PersistedList(
+                        it.id.value,
+                        it.parentCellId?.value,
+                        it.cellIds.map(CellId::value),
+                        it.weightColumns,
+                    )
                 },
             cells =
                 cells.values.map {
-                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeight)
+                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights)
                 },
             tasks =
                 tasks.values.map {
@@ -86,11 +91,16 @@ object SchedulerStateCodec {
         PersistedTreeSnapshot(
             lists =
                 lists.values.map {
-                    PersistedList(it.id.value, it.parentCellId?.value, it.cellIds.map(CellId::value))
+                    PersistedList(
+                        it.id.value,
+                        it.parentCellId?.value,
+                        it.cellIds.map(CellId::value),
+                        it.weightColumns,
+                    )
                 },
             cells =
                 cells.values.map {
-                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeight)
+                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights)
                 },
             tasks =
                 tasks.values.map {
@@ -125,7 +135,7 @@ object SchedulerStateCodec {
                         id = CellId(p.id),
                         parentListId = CellListId(p.parentListId),
                         taskId = p.taskId?.let(::TaskId),
-                        priorityWeight = p.priorityWeight,
+                        priorityWeights = p.priorityWeights,
                     )
             }
         val lists =
@@ -135,6 +145,7 @@ object SchedulerStateCodec {
                         id = CellListId(p.id),
                         parentCellId = p.parentCellId?.let(::CellId),
                         cellIds = p.cellIds.map(::CellId),
+                        weightColumns = p.weightColumns,
                     )
             }
         return SchedulerState(
@@ -178,7 +189,7 @@ object SchedulerStateCodec {
                         id = CellId(p.id),
                         parentListId = CellListId(p.parentListId),
                         taskId = p.taskId?.let(::TaskId),
-                        priorityWeight = p.priorityWeight,
+                        priorityWeights = p.priorityWeights,
                     )
             }
         val lists =
@@ -188,6 +199,7 @@ object SchedulerStateCodec {
                         id = CellListId(p.id),
                         parentCellId = p.parentCellId?.let(::CellId),
                         cellIds = p.cellIds.map(::CellId),
+                        weightColumns = p.weightColumns,
                     )
             }
         return TreeSnapshot(
@@ -258,6 +270,7 @@ private data class PersistedList(
     val id: String,
     val parentCellId: String?,
     val cellIds: List<String>,
+    val weightColumns: List<Double> = listOf(1.0),
 )
 
 @Serializable
@@ -265,7 +278,7 @@ private data class PersistedCell(
     val id: String,
     val parentListId: String,
     val taskId: String?,
-    val priorityWeight: Int = 1,
+    val priorityWeights: List<Double> = listOf(1.0),
 )
 
 @Serializable

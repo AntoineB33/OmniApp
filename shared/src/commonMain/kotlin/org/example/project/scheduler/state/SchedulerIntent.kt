@@ -1,6 +1,7 @@
 package org.example.project.scheduler.state
 
 import org.example.project.scheduler.model.CellId
+import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.TaskId
 
 enum class SelectionNavigate {
@@ -63,10 +64,29 @@ sealed interface SchedulerIntent {
         val taskId: TaskId,
     ) : SchedulerIntent
 
-    /** PRD §5: set a cell's priority weight (clamped to ≥ 1); recorded as a content delta. */
+    /** PRD §5: set a cell's value in a weight column (clamped to ≥ 0); recorded as a content delta. */
     data class SetPriorityWeight(
         val cellId: CellId,
-        val weight: Int,
+        val column: Int,
+        val value: Double,
+    ) : SchedulerIntent
+
+    /** PRD §5: set the nominal header weight of a sub-list's priority column (clamped to ≥ 0). */
+    data class SetPriorityColumnWeight(
+        val listId: CellListId,
+        val column: Int,
+        val weight: Double,
+    ) : SchedulerIntent
+
+    /** PRD §5: append a new priority weight column to a sub-list. */
+    data class AddPriorityColumn(
+        val listId: CellListId,
+    ) : SchedulerIntent
+
+    /** PRD §5: delete a priority weight column from a sub-list ("Delete Column"). */
+    data class DeletePriorityColumn(
+        val listId: CellListId,
+        val column: Int,
     ) : SchedulerIntent
 
     /** [initialText] non-null when entering via typing (replaces cell content with first keystroke). */

@@ -21,7 +21,13 @@ object SchedulerReducer {
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
             is SchedulerIntent.AssignTaskId -> commitDelta(state, assignTaskIdDelta(state, intent.cellId, intent.taskId))
             is SchedulerIntent.SetPriorityWeight ->
-                commitDelta(state, setPriorityWeightDelta(state, intent.cellId, intent.weight))
+                commitDelta(state, priorityTreeDelta(state) { applySetPriorityWeight(it, intent.cellId, intent.column, intent.value) })
+            is SchedulerIntent.SetPriorityColumnWeight ->
+                commitDelta(state, priorityTreeDelta(state) { applySetPriorityColumnWeight(it, intent.listId, intent.column, intent.weight) })
+            is SchedulerIntent.AddPriorityColumn ->
+                commitDelta(state, priorityTreeDelta(state) { applyAddPriorityColumn(it, intent.listId) })
+            is SchedulerIntent.DeletePriorityColumn ->
+                commitDelta(state, priorityTreeDelta(state) { applyDeletePriorityColumn(it, intent.listId, intent.column) })
             is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
             is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
             is SchedulerIntent.SetEditMode -> reduceSetEditMode(state, intent.mode)
@@ -922,25 +928,82 @@ private fun applyAssignTaskId(state: SchedulerState, cellId: CellId, taskId: Tas
     return SchedulerDomain.purgeOrphanTasks(working)
 }
 
-private fun setPriorityWeightDelta(
+/** Wraps a priority-table mutation as an undoable [TreeMutationDelta] (PRD §6). */
+private fun priorityTreeDelta(
     state: SchedulerState,
-    cellId: CellId,
-    weight: Int,
+    mutate: (SchedulerState) -> SchedulerState,
 ): Delta {
     val before = state.captureTree()
-    val after = applySetPriorityWeight(state, cellId, weight).captureTree()
+    val after = mutate(state).captureTree()
     return TreeMutationDelta(before = before, after = after)
 }
+
+/** Pad [weights] to at least [size] entries, filling missing columns with the default 1.0. */
+private fun normalizedWeights(weights: List<Double>, size: Int): MutableList<Double> =
+    MutableList(maxOf(size, weights.size)) { weights.getOrElse(it) { 1.0 } }
 
 private fun applySetPriorityWeight(
     state: SchedulerState,
     cellId: CellId,
-    weight: Int,
+    column: Int,
+    value: Double,
 ): SchedulerState {
+    if (column < 0) return state
     val cell = state.cells[cellId] ?: return state
-    val clamped = weight.coerceAtLeast(1)
-    if (cell.priorityWeight == clamped) return state
-    return state.copy(cells = state.cells + (cellId to cell.copy(priorityWeight = clamped)))
+    val clamped = value.coerceAtLeast(0.0)
+    val weights = normalizedWeights(cell.priorityWeights, column + 1)
+    if (weights[column] == clamped) return state
+    weights[column] = clamped
+    return state.copy(cells = state.cells + (cellId to cell.copy(priorityWeights = weights)))
+}
+
+private fun applySetPriorityColumnWeight(
+    state: SchedulerState,
+    listId: CellListId,
+    column: Int,
+    weight: Double,
+): SchedulerState {
+    if (column < 0) return state
+    val list = state.lists[listId] ?: return state
+    val clamped = weight.coerceAtLeast(0.0)
+    val columns = MutableList(maxOf(column + 1, list.weightColumns.size)) {
+        list.weightColumns.getOrElse(it) { 1.0 }
+    }
+    if (columns[column] == clamped) return state
+    columns[column] = clamped
+    return state.copy(lists = state.lists + (listId to list.copy(weightColumns = columns)))
+}
+
+private fun applyAddPriorityColumn(state: SchedulerState, listId: CellListId): SchedulerState {
+    val list = state.lists[listId] ?: return state
+    val newSize = list.weightColumns.size + 1
+    val cells = state.cells.toMutableMap()
+    for (cellId in list.cellIds) {
+        val cell = cells[cellId] ?: continue
+        cells[cellId] = cell.copy(priorityWeights = normalizedWeights(cell.priorityWeights, newSize))
+    }
+    val lists = state.lists + (listId to list.copy(weightColumns = list.weightColumns + 1.0))
+    return state.copy(cells = cells, lists = lists)
+}
+
+private fun applyDeletePriorityColumn(
+    state: SchedulerState,
+    listId: CellListId,
+    column: Int,
+): SchedulerState {
+    val list = state.lists[listId] ?: return state
+    // Keep at least one column so priority distribution stays well-defined.
+    if (column < 0 || column >= list.weightColumns.size || list.weightColumns.size <= 1) return state
+    val cells = state.cells.toMutableMap()
+    for (cellId in list.cellIds) {
+        val cell = cells[cellId] ?: continue
+        val padded = normalizedWeights(cell.priorityWeights, list.weightColumns.size)
+        padded.removeAt(column)
+        cells[cellId] = cell.copy(priorityWeights = padded)
+    }
+    val columns = list.weightColumns.toMutableList().also { it.removeAt(column) }
+    val lists = state.lists + (listId to list.copy(weightColumns = columns))
+    return state.copy(cells = cells, lists = lists)
 }
 
 private fun setCellTitleDelta(

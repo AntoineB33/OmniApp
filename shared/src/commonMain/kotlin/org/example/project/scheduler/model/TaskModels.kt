@@ -21,11 +21,11 @@ data class Cell(
     val parentListId: CellListId,
     val taskId: TaskId?,
     /**
-     * PRD §5 Priority assignment: this cell's share of its sub-list, as a weight relative to its
-     * siblings. A cell's local priority is its weight over the sum of weights in its list. Defaults
-     * to 1 (equal split). Always at least 1.
+     * PRD §5 Priority assignment: this cell's value in each of its sub-list's weight columns
+     * (index-aligned with [CellList.weightColumns]). A missing/short entry is treated as 1.
+     * Values may be any number ≥ 0 (0 is allowed); default 1.
      */
-    val priorityWeight: Int = 1,
+    val priorityWeights: List<Double> = listOf(1.0),
 )
 
 @JvmInline
@@ -35,4 +35,10 @@ data class CellList(
     val id: CellListId,
     val parentCellId: CellId?, // null for the list rendered in the viewport (main's children)
     val cellIds: List<CellId>,
+    /**
+     * PRD §5 priority weight table: the nominal header weight of each priority column for this
+     * sub-list. The absolute weight of column n is `header[n] * (1 - Σ preceding absolute weights)`.
+     * Defaults to a single column of weight 1 (equivalent to a plain weighted split).
+     */
+    val weightColumns: List<Double> = listOf(1.0),
 )

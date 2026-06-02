@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -63,8 +64,10 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed as pointerShiftPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -123,12 +126,24 @@ private val MOVE_DRAG_BLUR_DP = 2.dp
 private val PRIORITY_COLUMN_MIN = 56.dp
 private val PRIORITY_COLUMN_MAX = 280.dp
 
+/** Fixed width of the displayed priority percentage, so the weight table columns align per row. */
+private val PERCENT_COLUMN_WIDTH = 52.dp
+
+/** Width of one weight-table column (number field + stacked +/- buttons). */
+private val WEIGHT_COLUMN_WIDTH = 60.dp
+
 /** Renders a priority fraction (0..1) as a percentage with at most one decimal: 50%, 33.3%, 0.4%. */
 private fun formatPriorityPercent(fraction: Double): String {
     val tenths = (fraction * 1000).roundToInt()
     val whole = tenths / 10
     val decimal = tenths % 10
     return if (decimal == 0) "$whole%" else "$whole.$decimal%"
+}
+
+/** Renders a weight value with a decimal comma, dropping a redundant ",0" (PRD §5 "numbers and comma"). */
+private fun formatWeight(value: Double): String {
+    val text = if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
+    return text.replace('.', ',')
 }
 
 /**
@@ -156,9 +171,18 @@ fun TaskSchedulerScreen(
     val focusRequester = remember { FocusRequester() }
     var moveDragActive by remember { mutableStateOf(false) }
     var moveDropTarget by remember { mutableStateOf<MoveDropTarget?>(null) }
-    // PRD §5: sub-lists whose priority-weight input fields are currently revealed (toggled by
-    // clicking a percentage in that sub-list).
-    var weightEditLists by remember { mutableStateOf(emptySet<CellListId>()) }
+    // PRD §5: the sub-list whose priority-weight table is currently revealed (toggled by clicking a
+    // percentage in that sub-list), or null when no table is shown.
+    var weightTableListId by remember { mutableStateOf<CellListId?>(null) }
+
+    // PRD §5: selecting a cell outside the sub-list makes its weight table disappear.
+    LaunchedEffect(state.selection.main) {
+        val current = weightTableListId
+        if (current != null) {
+            val mainListId = state.selection.main?.let { state.cells[it]?.parentListId }
+            if (mainListId != current) weightTableListId = null
+        }
+    }
 
     // Vertical window bounds of each visible row, reported via onGloballyPositioned. A press-drag
     // only delivers move events to the row where the pointer went down (Compose retains the hit
@@ -292,11 +316,11 @@ fun TaskSchedulerScreen(
                 if (event.key.isModifierKey()) return@onPreviewKeyEvent true
                 val main = state.selection.main ?: return@onPreviewKeyEvent false
                 if (!SchedulerDomain.isSelectableCell(state, main)) return@onPreviewKeyEvent false
-                // PRD §5: when the selected cell's sub-list shows priority-weight inputs, typing is
-                // meant for the weight field — don't hijack the keystroke into Edit Mode. Let it
+                // PRD §5: when the selected cell's sub-list shows its priority-weight table, typing
+                // is meant for the weight fields — don't hijack the keystroke into Edit Mode. Let it
                 // fall through to the focused weight field.
                 val mainCell = state.cells[main]
-                if (mainCell?.taskId != null && mainCell.parentListId in weightEditLists) {
+                if (mainCell?.taskId != null && mainCell.parentListId == weightTableListId) {
                     return@onPreviewKeyEvent false
                 }
                 val typed = event.printableChar() ?: return@onPreviewKeyEvent false
@@ -332,11 +356,9 @@ fun TaskSchedulerScreen(
                 depth = 0,
                 visibleOrder = visibleOrder,
                 priorities = priorities,
-                weightEditLists = weightEditLists,
+                weightTableListId = weightTableListId,
                 onTogglePriorityWeights = { listId ->
-                    weightEditLists =
-                        if (listId in weightEditLists) weightEditLists - listId
-                        else weightEditLists + listId
+                    weightTableListId = if (weightTableListId == listId) null else listId
                 },
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
@@ -410,7 +432,7 @@ private fun CellListSection(
     depth: Int,
     visibleOrder: List<CellId>,
     priorities: Map<TaskId, Double>,
-    weightEditLists: Set<CellListId>,
+    weightTableListId: CellListId?,
     onTogglePriorityWeights: (CellListId) -> Unit,
     moveDragActive: Boolean,
     moveDropTarget: MoveDropTarget?,
@@ -437,7 +459,22 @@ private fun CellListSection(
         with(density) { (cellTextPx.values.maxOrNull() ?: 0).toDp() }
             .coerceIn(PRIORITY_COLUMN_MIN, PRIORITY_COLUMN_MAX)
     val priorityColumnPx = with(density) { priorityColumnWidth.toPx() }
-    val weightEditActive = listId in weightEditLists
+    val weightTableActive = weightTableListId == listId
+
+    // PRD §5: header row of the priority weight table — one editable column weight each (with a
+    // right-click "Delete Column" menu) plus an "add column" button — aligned above the cell rows.
+    if (weightTableActive) {
+        WeightTableHeader(
+            depth = depth,
+            leadingWidth = 20.dp + priorityColumnWidth + PERCENT_COLUMN_WIDTH,
+            weightColumns = list.weightColumns,
+            onSetColumnWeight = { column, weight ->
+                onIntent(SchedulerIntent.SetPriorityColumnWeight(listId, column, weight))
+            },
+            onAddColumn = { onIntent(SchedulerIntent.AddPriorityColumn(listId)) },
+            onDeleteColumn = { column -> onIntent(SchedulerIntent.DeletePriorityColumn(listId, column)) },
+        )
+    }
 
     list.cellIds.forEach { cellId ->
         val cell = state.cells[cellId] ?: return@forEach
@@ -489,12 +526,13 @@ private fun CellListSection(
             isBeingMoved = isBeingMoved,
             priorityLabel = priorityLabel,
             priorityColumnWidth = priorityColumnWidth,
-            priorityWeight = cell.priorityWeight,
             textOverflow = (cellTextPx[cellId] ?: 0) > priorityColumnPx,
-            weightEditActive = weightEditActive,
+            weightTableActive = weightTableActive,
+            weightColumnCount = list.weightColumns.size,
+            cellWeights = cell.priorityWeights,
             onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
-            onSetPriorityWeight = { weight ->
-                onIntent(SchedulerIntent.SetPriorityWeight(cellId, weight))
+            onSetCellWeight = { column, value ->
+                onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, value))
             },
             onClick = { clicked, ctrl, shift, forceClearMulti ->
                 if (!selectable) return@TaskRow
@@ -565,7 +603,7 @@ private fun CellListSection(
                 depth = depth + 1,
                 visibleOrder = visibleOrder,
                 priorities = priorities,
-                weightEditLists = weightEditLists,
+                weightTableListId = weightTableListId,
                 onTogglePriorityWeights = onTogglePriorityWeights,
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
@@ -722,36 +760,43 @@ private fun TaskMenuRow(
 }
 
 /**
- * PRD §5 priority weight: a numeric input (default 1) with decrement/increment buttons that add or
- * remove 1. Only digits are accepted; the value is clamped to at least 1.
+ * PRD §5 priority weight: one weight-table cell — a number input (digits and a decimal comma) with
+ * the increment/decrement buttons stacked vertically to its right. Each step adds/removes 1; the
+ * value is clamped to ≥ 0 (0 is allowed).
  */
 @Composable
-private fun PriorityWeightField(weight: Int, onSet: (Int) -> Unit) {
-    var text by remember(weight) { mutableStateOf(weight.toString()) }
+private fun WeightInputCell(
+    value: Double,
+    onSet: (Double) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var text by remember(value) { mutableStateOf(formatWeight(value)) }
     Row(
-        modifier = Modifier.padding(start = 8.dp),
+        modifier = modifier.width(WEIGHT_COLUMN_WIDTH).padding(horizontal = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        WeightStepButton(label = "−", onClick = { onSet((weight - 1).coerceAtLeast(1)) })
         BasicTextField(
             value = text,
             onValueChange = { raw ->
-                val digits = raw.filter { it.isDigit() }
-                text = digits
-                digits.toIntOrNull()?.let { onSet(it.coerceAtLeast(1)) }
+                val cleaned = raw.filter { it.isDigit() || it == ',' || it == '.' }
+                text = cleaned
+                cleaned.replace(',', '.').toDoubleOrNull()?.let { onSet(it.coerceAtLeast(0.0)) }
             },
             singleLine = true,
             textStyle = MaterialTheme.typography.bodySmall.copy(
                 color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center,
+                textAlign = TextAlign.End,
             ),
             cursorBrush = SolidColor(SheetColors.activeBorder),
             modifier = Modifier
-                .width(36.dp)
+                .weight(1f)
                 .border(1.dp, SheetColors.grid)
-                .padding(horizontal = 4.dp, vertical = 2.dp),
+                .padding(horizontal = 4.dp, vertical = 3.dp),
         )
-        WeightStepButton(label = "+", onClick = { onSet(weight + 1) })
+        Column {
+            WeightStepButton(label = "▲", onClick = { onSet(value + 1) })
+            WeightStepButton(label = "▼", onClick = { onSet((value - 1).coerceAtLeast(0.0)) })
+        }
     }
 }
 
@@ -759,7 +804,7 @@ private fun PriorityWeightField(weight: Int, onSet: (Int) -> Unit) {
 private fun WeightStepButton(label: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(20.dp)
+            .size(width = 16.dp, height = 11.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -769,9 +814,77 @@ private fun WeightStepButton(label: String, onClick: () -> Unit) {
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.primary,
         )
+    }
+}
+
+/**
+ * PRD §5 priority weight table header: one editable column weight per column. Right-clicking a
+ * column reveals a "Delete Column" menu. A trailing button appends a new column.
+ */
+@Composable
+private fun WeightTableHeader(
+    depth: Int,
+    leadingWidth: Dp,
+    weightColumns: List<Double>,
+    onSetColumnWeight: (Int, Double) -> Unit,
+    onAddColumn: () -> Unit,
+    onDeleteColumn: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = (depth * INDENT_STEP_DP).dp + 4.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Spacer(Modifier.width(leadingWidth))
+        weightColumns.forEachIndexed { column, weight ->
+            var menuOpen by remember { mutableStateOf(false) }
+            Box(
+                modifier = Modifier.pointerInput(column) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (event.type == PointerEventType.Press &&
+                                event.buttons.isSecondaryPressed
+                            ) {
+                                menuOpen = true
+                            }
+                        }
+                    }
+                },
+            ) {
+                WeightInputCell(value = weight, onSet = { onSetColumnWeight(column, it) })
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Delete Column") },
+                        onClick = {
+                            menuOpen = false
+                            onDeleteColumn(column)
+                        },
+                    )
+                }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .padding(start = 4.dp)
+                .border(1.dp, SheetColors.grid)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onAddColumn,
+                )
+                .padding(horizontal = 8.dp, vertical = 3.dp),
+        ) {
+            Text(
+                text = "+ Column",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 
@@ -793,11 +906,12 @@ private fun TaskRow(
     isBeingMoved: Boolean,
     priorityLabel: String?,
     priorityColumnWidth: Dp,
-    priorityWeight: Int,
     textOverflow: Boolean,
-    weightEditActive: Boolean,
+    weightTableActive: Boolean,
+    weightColumnCount: Int,
+    cellWeights: List<Double>,
     onTogglePriorityWeights: () -> Unit,
-    onSetPriorityWeight: (Int) -> Unit,
+    onSetCellWeight: (Int, Double) -> Unit,
     onClick: (CellId, ctrl: Boolean, shift: Boolean, forceClearMulti: Boolean) -> Unit,
     onDragSelect: (anchor: CellId, hover: CellId) -> Unit,
     moveDragActive: Boolean,
@@ -1173,22 +1287,39 @@ private fun TaskRow(
                         )
                     }
                 }
-                if (priorityLabel != null) {
-                    // PRD §5: clicking the percentage toggles the sub-list's weight inputs.
-                    Text(
-                        modifier = Modifier
-                            .padding(start = 8.dp)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = onTogglePriorityWeights,
-                            ),
-                        text = priorityLabel,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (weightEditActive) {
-                        PriorityWeightField(weight = priorityWeight, onSet = onSetPriorityWeight)
+                // PRD §5: the percentage occupies a fixed-width column (so the weight-table columns
+                // line up across rows) and clicking it toggles the sub-list's weight table.
+                Box(
+                    modifier = Modifier
+                        .width(PERCENT_COLUMN_WIDTH)
+                        .then(
+                            if (priorityLabel != null) {
+                                Modifier.clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = onTogglePriorityWeights,
+                                )
+                            } else {
+                                Modifier
+                            }
+                        )
+                        .padding(start = 8.dp),
+                ) {
+                    if (priorityLabel != null) {
+                        Text(
+                            text = priorityLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (weightTableActive && priorityLabel != null) {
+                    // PRD §5: this cell's row of the weight table — one value per column.
+                    for (column in 0 until weightColumnCount) {
+                        WeightInputCell(
+                            value = cellWeights.getOrElse(column) { 1.0 },
+                            onSet = { value -> onSetCellWeight(column, value) },
+                        )
                     }
                 }
                 Spacer(Modifier.weight(1f))
