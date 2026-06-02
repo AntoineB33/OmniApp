@@ -1657,6 +1657,65 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun arrow_down_follows_the_displayed_occurrence_of_a_mirrored_cell() {
+        // Anomaly: a cell whose task is shared by two expanded parents is rendered twice, so the
+        // same cellId appears at two positions in the visible order. "Down" must step relative to
+        // the occurrence actually selected, not the first copy in the list.
+        var s = SchedulerState.empty()
+        val branchA = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchA, "Shared"))
+        val sharedTaskId = s.cells[branchA]!!.taskId!!
+        val sharedChild = s.lists[s.tasks[sharedTaskId]!!.childListId!!]!!.cellIds.first()
+
+        // Titling branchA appended a trailing root cell — title it as the second branch.
+        val branchB = s.lists[s.rootListId]!!.cellIds[1]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchB, "Branch B"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(branchB))
+        val bList = s.tasks[s.cells[branchB]!!.taskId!!]!!.childListId!!
+        val branchBChild = s.lists[bList]!!.cellIds[0]
+        // Give branchBChild a sibling below it ("B2"), then make it share branchA's task.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchBChild, "BC"))
+        val bSibling = s.lists[bList]!!.cellIds[1]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(bSibling, "B2"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AssignTaskId(branchBChild, sharedTaskId))
+
+        // Expand both occurrences so sharedChild is mirrored under branchA and branchBChild.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(branchA))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(branchBChild))
+
+        // Sanity: sharedChild is displayed twice — once under each parent occurrence.
+        val occurrences = SchedulerDomain.selectableVisibleOccurrences(s)
+        assertEquals(
+            listOf(branchA, branchBChild),
+            occurrences.filter { it.cellId == sharedChild }.map { it.renderVia },
+        )
+
+        // Select the second occurrence (rendered under branchBChild) and press Down.
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.ClickCell(
+                    cellId = sharedChild,
+                    ctrl = false,
+                    shift = false,
+                    visibleOrder = visible,
+                    renderVia = branchBChild,
+                ),
+            )
+        assertEquals(sharedChild, s.selection.main)
+        assertEquals(branchBChild, s.selection.renderVia)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.NavigateSelection(SelectionNavigate.Next))
+
+        // Down lands on the row shown beneath that occurrence — "B2" under branchB — and NOT on
+        // branchB (the row beneath the *first* occurrence, which the first-occurrence bug picked).
+        assertEquals(bSibling, s.selection.main)
+        assertEquals(branchB, s.selection.renderVia)
+        assertNotEquals(branchB, s.selection.main)
+    }
+
+    @Test
     fun arrow_navigation_ignored_during_edit_mode() {
         var s = seedThreeTasks()
         val visible = SchedulerDomain.selectableVisibleOrder(s)

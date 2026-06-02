@@ -37,30 +37,51 @@ object SchedulerDomain {
     }
 
     /**
+     * One displayed row: a [cellId] together with the parent occurrence ([renderVia]) it is
+     * mirrored under. A cell whose task is assigned to several expanded parents is rendered once
+     * per parent, so the same [cellId] appears in multiple occurrences with distinct [renderVia].
+     * `renderVia == null` is the root-viewport occurrence. Mirrors [SchedulerSelection.renderVia].
+     */
+    data class VisibleOccurrence(val cellId: CellId, val renderVia: CellId?)
+
+    /**
+     * Depth-first visible order of displayed rows starting at [listId], each tagged with the
+     * parent occurrence ([via]) it is rendered under. Collapsed cells omit their subtree.
+     */
+    fun visibleOccurrences(
+        state: SchedulerState,
+        listId: CellListId = state.rootListId,
+        via: CellId? = null,
+    ): List<VisibleOccurrence> {
+        val list = state.lists[listId] ?: return emptyList()
+        val result = mutableListOf<VisibleOccurrence>()
+        for (cellId in list.cellIds) {
+            result += VisibleOccurrence(cellId, via)
+            val cell = state.cells[cellId] ?: continue
+            if (isTextuallyEmptyCell(state, cellId)) continue
+            val task = cell.taskId?.let { state.tasks[it] } ?: continue
+            val childListId = task.childListId ?: continue
+            if (cellId in state.expanded) {
+                result += visibleOccurrences(state, childListId, cellId)
+            }
+        }
+        return result
+    }
+
+    /**
      * Depth-first visible cell order starting at [listId].
      * Collapsed cells (not in [SchedulerState.expanded]) omit their subtree.
      */
     fun visibleCellOrder(
         state: SchedulerState,
         listId: CellListId = state.rootListId,
-    ): List<CellId> {
-        val list = state.lists[listId] ?: return emptyList()
-        val result = mutableListOf<CellId>()
-        for (cellId in list.cellIds) {
-            result += cellId
-            val cell = state.cells[cellId] ?: continue
-            if (isTextuallyEmptyCell(state, cellId)) continue
-            val task = cell.taskId?.let { state.tasks[it] } ?: continue
-            val childListId = task.childListId ?: continue
-            if (cellId in state.expanded) {
-                result += visibleCellOrder(state, childListId)
-            }
-        }
-        return result
-    }
+    ): List<CellId> = visibleOccurrences(state, listId).map { it.cellId }
 
     fun selectableVisibleOrder(state: SchedulerState): List<CellId> =
         visibleCellOrder(state).filter { isSelectableCell(state, it) }
+
+    fun selectableVisibleOccurrences(state: SchedulerState): List<VisibleOccurrence> =
+        visibleOccurrences(state).filter { isSelectableCell(state, it.cellId) }
 
     /** Cells highlighted for selection actions (PRD §3). */
     fun activeSelectionCells(selection: SchedulerSelection): Set<CellId> {
@@ -198,13 +219,26 @@ object SchedulerDomain {
         state: SchedulerState,
         cellId: CellId,
         direction: Int,
-    ): CellId? {
-        val order = selectableVisibleOrder(state)
-        val index = order.indexOf(cellId)
+    ): CellId? = neighborSelectableOccurrence(state, cellId, renderVia = null, direction)?.cellId
+
+    /**
+     * The displayed row immediately above/below the occurrence ([cellId] rendered under
+     * [renderVia]). Resolving by occurrence — not just by [cellId] — is what makes "Down" land on
+     * the row actually shown beneath the selected one when the same cell is mirrored under several
+     * expanded parents. Falls back to the first occurrence of [cellId] when [renderVia] matches no
+     * displayed row (e.g. a stale render-via).
+     */
+    fun neighborSelectableOccurrence(
+        state: SchedulerState,
+        cellId: CellId,
+        renderVia: CellId?,
+        direction: Int,
+    ): VisibleOccurrence? {
+        val order = selectableVisibleOccurrences(state)
+        val exact = order.indexOfFirst { it.cellId == cellId && it.renderVia == renderVia }
+        val index = if (exact >= 0) exact else order.indexOfFirst { it.cellId == cellId }
         if (index == -1) return null
-        val nextIndex = index + direction
-        if (nextIndex !in order.indices) return null
-        return order[nextIndex]
+        return order.getOrNull(index + direction)
     }
 
     fun firstSelectableChild(state: SchedulerState, cellId: CellId): CellId? {

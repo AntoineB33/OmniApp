@@ -180,15 +180,23 @@ object SchedulerReducer {
         if (state.editSession != null) return state
         val main = state.selection.main ?: return state
         val delta = if (direction == SelectionNavigate.Next) 1 else -1
-        val neighbor =
-            SchedulerDomain.neighborSelectableCell(state, main, delta)
+        // Resolve the neighbor by the selected *occurrence* (main + renderVia), so a mirrored
+        // cell moves relative to the row actually displayed beneath it, not its first copy.
+        val neighborOccurrence =
+            SchedulerDomain.neighborSelectableOccurrence(state, main, state.selection.renderVia, delta)
                 ?: return state
+        val neighbor = neighborOccurrence.cellId
         if (!shift) {
             return commitDelta(
                 state,
                 SetSelectionDelta(
                     before = state.selection,
-                    after = selectionFor(state, main = neighbor),
+                    // Pin the new main to the exact occurrence we stepped onto.
+                    after =
+                        SchedulerSelection(
+                            main = neighbor,
+                            renderVia = neighborOccurrence.renderVia,
+                        ),
                 ),
             )
         }
@@ -215,6 +223,7 @@ object SchedulerReducer {
                         main = neighbor,
                         selected = range,
                         rangeAnchor = anchor,
+                        explicitVia = neighborOccurrence.renderVia,
                         prior = base,
                     ),
             ),
@@ -498,14 +507,17 @@ object SchedulerReducer {
     ): SchedulerState {
         if (state.editSession == null) return state
         val editingCellId = state.editSession.cellId
+        val editingVia = state.editSession.renderVia
         var next = endEditSession(state)
 
         val newMain =
             when (navigation) {
                 EditExitNavigation.Down ->
-                    SchedulerDomain.neighborSelectableCell(next, editingCellId, 1) ?: editingCellId
+                    SchedulerDomain.neighborSelectableOccurrence(next, editingCellId, editingVia, 1)
+                        ?.cellId ?: editingCellId
                 EditExitNavigation.Up ->
-                    SchedulerDomain.neighborSelectableCell(next, editingCellId, -1) ?: editingCellId
+                    SchedulerDomain.neighborSelectableOccurrence(next, editingCellId, editingVia, -1)
+                        ?.cellId ?: editingCellId
                 EditExitNavigation.Stay -> editingCellId
                 EditExitNavigation.TabToChild -> {
                     val cell = next.cells[editingCellId]
