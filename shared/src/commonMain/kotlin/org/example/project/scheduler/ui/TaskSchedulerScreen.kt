@@ -292,6 +292,13 @@ fun TaskSchedulerScreen(
                 if (event.key.isModifierKey()) return@onPreviewKeyEvent true
                 val main = state.selection.main ?: return@onPreviewKeyEvent false
                 if (!SchedulerDomain.isSelectableCell(state, main)) return@onPreviewKeyEvent false
+                // PRD §5: when the selected cell's sub-list shows priority-weight inputs, typing is
+                // meant for the weight field — don't hijack the keystroke into Edit Mode. Let it
+                // fall through to the focused weight field.
+                val mainCell = state.cells[main]
+                if (mainCell?.taskId != null && mainCell.parentListId in weightEditLists) {
+                    return@onPreviewKeyEvent false
+                }
                 val typed = event.printableChar() ?: return@onPreviewKeyEvent false
                 vm.dispatch(SchedulerIntent.BeginEdit(main, typed))
                 true
@@ -1024,9 +1031,15 @@ private fun TaskRow(
                             )
                     }
                 }
+                // PRD §2: the same priority text column and red overflow arrow apply in Edit Mode.
+                Box(
+                    modifier = Modifier
+                        .width(priorityColumnWidth)
+                        .defaultMinSize(minHeight = 20.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
                 BasicTextField(
                     modifier = Modifier
-                        .weight(1f)
                         .fillMaxWidth()
                         .defaultMinSize(minHeight = 20.dp)
                         .focusRequester(editFocusRequester)
@@ -1119,6 +1132,18 @@ private fun TaskRow(
                         }
                     },
                 )
+                    if (textOverflow) {
+                        Text(
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .background(cellBackground),
+                            text = "▸",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SheetColors.overflowArrow,
+                        )
+                    }
+                }
+                Spacer(Modifier.weight(1f))
             } else {
                 // PRD §2 Priority Display: the text occupies a column whose width is shared by the
                 // whole sublist (so percentages line up); the percentage sits just after it. When

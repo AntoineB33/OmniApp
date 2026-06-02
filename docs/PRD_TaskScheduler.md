@@ -17,7 +17,7 @@ A single task can exist in multiple cells across the tree. For example: to "find
 * **Nesting UI:** The left side of the cells features arrows (if there is a populated sub-tree) and guide-lines (if the cell is expanded) illustrating the parent-child hierarchy. The "root" cell conceptually exists, but the viewport only renders its children.
 * **Collapsibility:** Clicking structural arrows toggles the visibility of a cell's sub-list.
 * **Visual Aesthetics:** Cell aesthetics strictly mirror Google Sheets. This includes standard resting states, active selection borders/highlighting, and inline editing UI.
-* **Priority Display:** The absolute priority percentage is displayed at the right side of the cell. In a sub-list, it is displayed at the same horizontal position. The length between the beginning of the text content and the display of the priority percentage is the maximum of the horizontal lengths of the cell text contents of the sub-list, constrained by a minimum and maximum length. If the text content is too long, the exceeding part is hidden with a little red arrow to the right.
+* **Priority Display:** The absolute priority percentage is displayed at the right side of the cell. In a sub-list, it is displayed at the same horizontal position. The length between the beginning of the text content and the display of the priority percentage is the maximum of the horizontal lengths of the cell text contents of the sub-list, constrained by a minimum and maximum length. If the text content is too long, the exceeding part is hidden with a little red arrow to the right. This happens even if the cell is in Edit Mode.
 
 ## 3. Selection Mechanics (Spreadsheet Paradigm)
 
@@ -89,7 +89,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 
 ## 5. Priority assignment
 * **priority percentage:** The priority percentage displayed at the right side of a cell is the absolute priority percentage of the `taskId`. It is the sum of the absolute priority percentage of all the cells sharing this `taskId`. The priority percentage of a cell in a list is the priority weight of the cell divided by the sum of the priority weights of this sub-list. Its absolute priority percentage is this fraction multiplied by the absolute priority of the parent cell. If the parent cell is the "root" cell, then its absolute priority percentage is 100%.
-* **priority weight:** When the user clicks on the absolute priority percentage, it toggles the display at the right of each percentage of the sub-list an input field for the priority weight. This field only accepts number and has increment and decrement buttons to add or remove 1 to the number. It is 1 by default.
+* **priority weight:** When the user clicks on the absolute priority percentage, it toggles the display at the right of each percentage of the sub-list an input field for the priority weight. This field only accepts number and has increment and decrement buttons to add or remove 1 to the number. It is 1 by default. If the priority weight field is displayed for the selected cell and the user types something, the cell doesn't enter Edit Mode (to avoid conflict with the priority weight typing).
 
 ## 6. State Management & Undo/Redo Engine
 
