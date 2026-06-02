@@ -558,14 +558,21 @@ object SchedulerReducer {
         newSelection: SchedulerSelection,
         clickedCellId: CellId,
     ): SchedulerState {
+        // Skip recording a no-op selection change so re-clicking an already-selected cell (or the
+        // single-click reset that collapses a still-intact multi-selection) doesn't push an empty
+        // undo step onto the history.
         var next =
-            commitDelta(
-                state,
-                SetSelectionDelta(
-                    before = state.selection,
-                    after = newSelection,
-                ),
-            )
+            if (newSelection == state.selection) {
+                state
+            } else {
+                commitDelta(
+                    state,
+                    SetSelectionDelta(
+                        before = state.selection,
+                        after = newSelection,
+                    ),
+                )
+            }
         val editing = state.editSession
         if (editing != null && clickedCellId != editing.cellId) {
             next = endEditSession(next)

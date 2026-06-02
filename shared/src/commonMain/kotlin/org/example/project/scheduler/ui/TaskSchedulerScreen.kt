@@ -735,14 +735,22 @@ private fun TaskRow(
                     }
                     if (dragged) return@awaitEachGesture
 
-                    // No drag: a second press within the timeout makes it a double-click.
+                    // No drag: a second press within the timeout makes it a double-click. The first
+                    // press kept any existing multi-selection intact (so a double-click & drag can
+                    // still move it); now that this resolves as a plain single click, reset the
+                    // Selected Cells List down to the clicked cell (PRD §3 Single Click).
                     val secondDown =
                         withTimeoutOrNull(doubleTapTimeout) {
                             awaitFirstDown(requireUnconsumed = false)
-                        } ?: return@awaitEachGesture
+                        }
+                    if (secondDown == null) {
+                        onClick(cellId, false, false, true)
+                        return@awaitEachGesture
+                    }
                     secondDown.consume()
 
-                    // Plain double-click on a single / non-movable cell enters Edit Mode (PRD §4).
+                    // Double-click on a non-movable selection (e.g. a disjoint Ctrl multi-select)
+                    // can't be dragged anywhere, so it just enters Edit Mode (PRD §4).
                     if (!currentCanMoveFromCell) {
                         onClick(cellId, false, false, true)
                         waitForUpOrCancellation()
@@ -750,8 +758,9 @@ private fun TaskRow(
                         return@awaitEachGesture
                     }
 
-                    // Double-click & drag on a movable selection: dragging past the slop blurs the
-                    // cells and tracks the blue drop line; release commits the move (PRD §3).
+                    // Double-click & drag on a movable selection (one cell or a contiguous block):
+                    // dragging past the slop blurs the cells and tracks the blue drop line, and
+                    // release commits the move. Without a drag it falls through to Edit Mode (PRD §3).
                     var moveStarted = false
                     var moveTraveled = 0f
                     while (true) {
