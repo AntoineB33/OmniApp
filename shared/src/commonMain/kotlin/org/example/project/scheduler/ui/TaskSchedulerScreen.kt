@@ -280,7 +280,8 @@ fun TaskSchedulerScreen(
                         )
                         return@onPreviewKeyEvent true
                     }
-                    Key.Delete -> {
+                    // PRD §4: Backspace or Delete empties the selected cells when not editing.
+                    Key.Delete, Key.Backspace -> {
                         vm.dispatch(SchedulerIntent.EmptySelectedCells)
                         return@onPreviewKeyEvent true
                     }
@@ -769,6 +770,7 @@ private fun WeightInputCell(
     value: Double,
     onSet: (Double) -> Unit,
     modifier: Modifier = Modifier,
+    maxValue: Double = Double.POSITIVE_INFINITY,
 ) {
     var text by remember(value) { mutableStateOf(formatWeight(value)) }
     Row(
@@ -780,7 +782,7 @@ private fun WeightInputCell(
             onValueChange = { raw ->
                 val cleaned = raw.filter { it.isDigit() || it == ',' || it == '.' }
                 text = cleaned
-                cleaned.replace(',', '.').toDoubleOrNull()?.let { onSet(it.coerceAtLeast(0.0)) }
+                cleaned.replace(',', '.').toDoubleOrNull()?.let { onSet(it.coerceIn(0.0, maxValue)) }
             },
             singleLine = true,
             textStyle = MaterialTheme.typography.bodySmall.copy(
@@ -794,8 +796,8 @@ private fun WeightInputCell(
                 .padding(horizontal = 4.dp, vertical = 3.dp),
         )
         Column {
-            WeightStepButton(label = "▲", onClick = { onSet(value + 1) })
-            WeightStepButton(label = "▼", onClick = { onSet((value - 1).coerceAtLeast(0.0)) })
+            WeightStepButton(label = "▲", onClick = { onSet((value + 1).coerceIn(0.0, maxValue)) })
+            WeightStepButton(label = "▼", onClick = { onSet((value - 1).coerceIn(0.0, maxValue)) })
         }
     }
 }
@@ -856,7 +858,12 @@ private fun WeightTableHeader(
                     }
                 },
             ) {
-                WeightInputCell(value = weight, onSet = { onSetColumnWeight(column, it) })
+                // PRD §5: a column header weight can only span 0..1.
+                WeightInputCell(
+                    value = weight,
+                    onSet = { onSetColumnWeight(column, it) },
+                    maxValue = 1.0,
+                )
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
                         text = { Text("Delete Column") },

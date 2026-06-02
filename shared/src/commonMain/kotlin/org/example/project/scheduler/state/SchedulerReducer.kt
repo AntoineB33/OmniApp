@@ -938,9 +938,16 @@ private fun priorityTreeDelta(
     return TreeMutationDelta(before = before, after = after)
 }
 
-/** Pad [weights] to at least [size] entries, filling missing columns with the default 1.0. */
+/**
+ * PRD §5: the default value of a weight field by column — the first column's fields default to 1,
+ * every added column's fields default to 0. Used to fill gaps when a value vector is shorter than
+ * the list's column count.
+ */
+private fun defaultWeightAt(column: Int): Double = if (column == 0) 1.0 else 0.0
+
+/** Pad [weights] to at least [size] entries, filling missing columns with their default. */
 private fun normalizedWeights(weights: List<Double>, size: Int): MutableList<Double> =
-    MutableList(maxOf(size, weights.size)) { weights.getOrElse(it) { 1.0 } }
+    MutableList(maxOf(size, weights.size)) { weights.getOrElse(it) { defaultWeightAt(it) } }
 
 private fun applySetPriorityWeight(
     state: SchedulerState,
@@ -950,6 +957,7 @@ private fun applySetPriorityWeight(
 ): SchedulerState {
     if (column < 0) return state
     val cell = state.cells[cellId] ?: return state
+    // PRD §5: cell values span 0..infinity.
     val clamped = value.coerceAtLeast(0.0)
     val weights = normalizedWeights(cell.priorityWeights, column + 1)
     if (weights[column] == clamped) return state
@@ -965,9 +973,10 @@ private fun applySetPriorityColumnWeight(
 ): SchedulerState {
     if (column < 0) return state
     val list = state.lists[listId] ?: return state
-    val clamped = weight.coerceAtLeast(0.0)
+    // PRD §5: a column's header weight can only span 0..1.
+    val clamped = weight.coerceIn(0.0, 1.0)
     val columns = MutableList(maxOf(column + 1, list.weightColumns.size)) {
-        list.weightColumns.getOrElse(it) { 1.0 }
+        list.weightColumns.getOrElse(it) { defaultWeightAt(it) }
     }
     if (columns[column] == clamped) return state
     columns[column] = clamped
@@ -976,13 +985,15 @@ private fun applySetPriorityColumnWeight(
 
 private fun applyAddPriorityColumn(state: SchedulerState, listId: CellListId): SchedulerState {
     val list = state.lists[listId] ?: return state
-    val newSize = list.weightColumns.size + 1
+    // PRD §5: an added column has every field (header and cells) set to 0.
     val cells = state.cells.toMutableMap()
     for (cellId in list.cellIds) {
         val cell = cells[cellId] ?: continue
-        cells[cellId] = cell.copy(priorityWeights = normalizedWeights(cell.priorityWeights, newSize))
+        val padded = normalizedWeights(cell.priorityWeights, list.weightColumns.size)
+        padded.add(0.0)
+        cells[cellId] = cell.copy(priorityWeights = padded)
     }
-    val lists = state.lists + (listId to list.copy(weightColumns = list.weightColumns + 1.0))
+    val lists = state.lists + (listId to list.copy(weightColumns = list.weightColumns + 0.0))
     return state.copy(cells = cells, lists = lists)
 }
 

@@ -668,17 +668,22 @@ class SchedulerReducerTest {
         var s = seedThreeTasks()
         val listId = s.rootListId
         val first = s.lists[listId]!!.cellIds.first()
+        // PRD §5: the default column has every field set to 1.
         assertEquals(listOf(1.0), s.lists[listId]!!.weightColumns)
+        assertEquals(listOf(1.0), s.cells[first]!!.priorityWeights)
 
-        // Adding a column extends the list header and every cell's value vector.
+        // PRD §5: an added column defaults every field (header + cells) to 0.
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddPriorityColumn(listId))
-        assertEquals(2, s.lists[listId]!!.weightColumns.size)
-        assertEquals(2, s.cells[first]!!.priorityWeights.size)
+        assertEquals(listOf(1.0, 0.0), s.lists[listId]!!.weightColumns)
+        assertEquals(listOf(1.0, 0.0), s.cells[first]!!.priorityWeights)
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityColumnWeight(listId, 0, 0.5))
         assertEquals(0.5, s.lists[listId]!!.weightColumns[0], 1e-9)
+        // PRD §5: a header weight is clamped to the 0..1 range.
+        val overMax = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityColumnWeight(listId, 0, 5.0))
+        assertEquals(1.0, overMax.lists[listId]!!.weightColumns[0], 1e-9)
 
-        // Deleting a column shrinks both.
+        // Deleting a column shrinks both the header and the cells.
         s = SchedulerReducer.reduce(s, SchedulerIntent.DeletePriorityColumn(listId, 1))
         assertEquals(1, s.lists[listId]!!.weightColumns.size)
         assertEquals(1, s.cells[first]!!.priorityWeights.size)

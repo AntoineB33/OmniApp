@@ -412,7 +412,7 @@ object SchedulerDomain {
                     list?.cellIds?.filter { state.cells[it]?.taskId != null }.orEmpty()
                 val colSums =
                     absW.indices.map { c ->
-                        populated.sumOf { state.cells[it]!!.priorityWeights.getOrElse(c) { 1.0 } }
+                        populated.sumOf { state.cells[it]!!.priorityWeights.getOrElse(c) { defaultWeightAt(c) } }
                     }
                 absW to colSums
             }
@@ -423,7 +423,7 @@ object SchedulerDomain {
             for (c in absW.indices) {
                 val sum = colSums[c]
                 if (sum == 0.0) continue
-                w += (cell.priorityWeights.getOrElse(c) { 1.0 } / sum) * absW[c]
+                w += (cell.priorityWeights.getOrElse(c) { defaultWeightAt(c) } / sum) * absW[c]
             }
             return w
         }
@@ -482,12 +482,15 @@ object SchedulerDomain {
         val populated = list.cellIds.filter { state.cells[it]?.taskId != null }
         var w = 0.0
         for (c in absW.indices) {
-            val colSum = populated.sumOf { state.cells[it]!!.priorityWeights.getOrElse(c) { 1.0 } }
+            val colSum = populated.sumOf { state.cells[it]!!.priorityWeights.getOrElse(c) { defaultWeightAt(c) } }
             if (colSum == 0.0) continue
-            w += (cell.priorityWeights.getOrElse(c) { 1.0 } / colSum) * absW[c]
+            w += (cell.priorityWeights.getOrElse(c) { defaultWeightAt(c) } / colSum) * absW[c]
         }
         return w
     }
+
+    /** PRD §5: default value of a weight field by column — column 0 defaults to 1, the rest to 0. */
+    private fun defaultWeightAt(column: Int): Double = if (column == 0) 1.0 else 0.0
 
     fun parentTaskId(state: SchedulerState, cellId: CellId): TaskId? {
         val cell = state.cells[cellId] ?: return null

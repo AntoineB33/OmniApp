@@ -84,12 +84,17 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **Cleanup:** Empty cells are automatically removed upon exit, *unless* it is the absolute bottom cell of a sub-list.
 
 ### Edition without Edition Mode
-* **Deletion:** When the user presses `Return` or `Delete` and no cell is in Edition Mode, all selected cells get emptied.
+* **Deletion:** When the user presses `Backspace` or `Delete` and no cell is in Edition Mode, all selected cells get emptied.
 * **Copy/paste:** Ctrl + C allows the user to copy the whole selection (if it is only consecutive cells in the same sub-list) or only the main selection. Ctrl + V allows to paste it in a cell (if several cells were copied, new cells are added below). The user can copy/paste cells between Google Sheets and the app.
 
 ## 5. Priority assignment
 * **priority percentage:** The priority percentage displayed at the right side of a cell is the absolute priority percentage of the `taskId`. It is the sum of the absolute priority percentage of all the cells sharing this `taskId`. The priority percentage of a cell in a list is the priority weight of the cell divided by the sum of the priority weights of this sub-list. Its absolute priority percentage is this fraction multiplied by the absolute priority of the parent cell. If the parent cell is the "root" cell, then its absolute priority percentage is 100%.
-* **priority weight:** When the user clicks on the absolute priority percentage, it toggles the display at the right of each percentage of the sub-list an input field for the priority weight. This field only accepts number and has increment and decrement buttons to add or remove 1 to the number. It is 1 by default. If the priority weight field is displayed for the selected cell and the user types something, the cell doesn't enter Edit Mode (to avoid conflict with the priority weight typing).
+* **priority weight table:** 
+  * When the user clicks on the absolute priority percentage, it toggles the display of the priority weight table. This table is placed at the right of the percentage, and has its rows aligned to the cells of each cells of the sub-list. It is a table of input fields that only accepts numbers and comma and has increment and decrement buttons to add or remove 1 to the number. The two buttons are placed one above the other in a vertical column at the right side of the number. The header row shows the weight of each column. The weight of each column can only span from 0 to 1 included, the others from 0 to infinity.
+  * The priority weight of each cell is calculated by dividing the cell's value by the column's total sum, and then multiplying that result by the column's absolute weight. The absolute weight of the n-th column is its nominal header weight multiplied by a factor, A, where A is one minus the sum of the absolute weights of all preceding columns.
+  * A button allows to add a column. Right-clicking on a column shows a contextual menu that has only one option for now: "Delete Column". By default, there is one column with every field set to 1. Each added column has by default every field set to 0.
+  * Selecting a cell outside of the sub-list makes the table disappear.
+* **priority weight:** If the priority weight field is displayed for the selected cell and the user types something, the cell doesn't enter Edit Mode (to avoid conflict with the priority weight typing). The priority weight can be 0.
 
 ## 6. State Management & Undo/Redo Engine
 
@@ -104,6 +109,6 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
   * Every mutation generates a History Unit containing: Exact Timestamp, Chrono-ID (for deterministic sorting of simultaneous events), and a **Delta**. There are three categories of History Units: change in Edition Mode, change of selection state and the rest. Each category has a list of History Units and a history pointer.
   * **Delta Storage:** Stores *only* the minimum data required to revert the Task Tree and Selection State. (e.g., keystrokes in Edit Mode generate a Delta with cell coordinates, previous string, and current edit mode). There are several types: change in a list of child `taskIds` in Task Tree, selection change, expansion change, task title change, priority weight change...
 * **Undo / Redo:**
-  * **Undo:** The history pointer decrements. The Delta is applied to the state, and the Delta *inside the unit* is mathematically inverted to represent the forward-change (Redo). For selection history, undo is `Alt + Left` and redo is `Alt + Right`. For the other history categories, undo is `Ctrl + C` and redo is `Ctrl + Y`.
+  * **Undo:** The history pointer decrements. The Delta is applied to the state, and the Delta *inside the unit* is mathematically inverted to represent the forward-change (Redo). For selection history, undo is `Alt + Left` and redo is `Alt + Right`. For the other history categories, undo is `Ctrl + Z` and redo is `Ctrl + Y`.
   * **Branching:** If an Undo is performed followed by a *new* mutation, all forward (Redo) history units are orphaned/discarded.
 * **Persistence:** State changes (Tree, occurrences, parent objects, selection, and history) are continuously streamed to the local multi-platform database.
