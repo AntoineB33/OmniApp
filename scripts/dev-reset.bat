@@ -13,13 +13,13 @@ REM A unique string that appears in the RUNNING app's command line.
 REM Usually your application's main-class FQN (e.g. com.example.AppKt)
 REM or the jar/module name. This is how we find the right process to
 REM kill, without touching the Gradle daemon, your IDE, or other JVMs.
-set "APP_IDENTIFIER=com.example.app.MainKt"
+set "APP_IDENTIFIER=org.example.project.MainKt"
 
 REM State folder to delete, relative to the project root.
-set "STATE_DIR=state"
+set "STATE_DIR=%USERPROFILE%\.omniapp"
 
 REM Command used to (re)launch the app, run from the project root.
-set "LAUNCH_CMD=gradlew.bat run"
+set "LAUNCH_CMD=gradlew.bat :desktopApp:run"
 REM ---------------------------------------------------------------------
 
 REM Resolve project root as the parent of this script's folder.
@@ -31,13 +31,13 @@ echo.
 
 REM ---- [1/4] Kill any running instance --------------------------------
 echo [1/4] Killing running app matching "%APP_IDENTIFIER%"...
-powershell -NoProfile -Command "@(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*%APP_IDENTIFIER%*' }) | ForEach-Object { Write-Host ('      killing PID ' + $_.ProcessId); Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+powershell -NoProfile -Command "@(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.Name -like 'java*' -and $_.CommandLine -like '*%APP_IDENTIFIER%*' }) | ForEach-Object { Write-Host ('      killing PID ' + $_.ProcessId); Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 
 REM ---- [2/4] Wait for it to fully exit --------------------------------
 echo [2/4] Waiting for the app to fully close...
 set /a _tries=0
 :waitloop
-for /f %%C in ('powershell -NoProfile -Command "@(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*%APP_IDENTIFIER%*' }).Count"') do set "_count=%%C"
+for /f %%C in ('powershell -NoProfile -Command "@(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.Name -like 'java*' -and $_.CommandLine -like '*%APP_IDENTIFIER%*' }).Count"') do set "_count=%%C"
 if "%_count%"=="" set "_count=0"
 if %_count% gtr 0 (
   set /a _tries+=1

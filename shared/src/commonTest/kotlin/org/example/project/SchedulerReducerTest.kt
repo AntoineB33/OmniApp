@@ -3,6 +3,7 @@ package org.example.project
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
@@ -1294,6 +1295,55 @@ class SchedulerReducerTest {
 
         assertEquals("Shared", s.tasks[sharedTaskId]!!.title)
         assertEquals("Renamed draft", s.editSession!!.draftText)
+    }
+
+    @Test
+    fun begin_edit_pins_to_clicked_occurrence_of_a_mirrored_cell() {
+        // Anomaly: two expanded cells share one taskId, so the same child cell is mirrored
+        // under both. Entering edit on the child via one parent must NOT mark the mirrored
+        // copy under the other parent as editing. The edit session records the occurrence
+        // (renderVia) just like the selection does.
+        var s = SchedulerState.empty()
+        val branchA = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchA, "Shared"))
+        val sharedTaskId = s.cells[branchA]!!.taskId!!
+        val sharedChild = s.lists[s.tasks[sharedTaskId]!!.childListId!!]!!.cellIds.first()
+
+        val branchB = s.lists[s.rootListId]!!.cellIds[1]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchB, "Branch B"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(branchB))
+        val branchBChild = s.lists[s.tasks[s.cells[branchB]!!.taskId!!]!!.childListId!!]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AssignTaskId(branchBChild, sharedTaskId))
+
+        // Both branchA and branchBChild now carry sharedTaskId; expand both so sharedChild
+        // is rendered under each (renderVia = branchA and renderVia = branchBChild).
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(branchA))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(branchBChild))
+
+        // Select the mirrored child via the branchBChild occurrence, then edit it.
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.ClickCell(
+                    cellId = sharedChild,
+                    ctrl = false,
+                    shift = false,
+                    visibleOrder = visible,
+                    renderVia = branchBChild,
+                ),
+            )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(sharedChild))
+
+        // The edit session pins to the branchBChild occurrence — the UI shows the editor only
+        // where the local renderVia matches, leaving the branchA copy untouched.
+        assertEquals(sharedChild, s.editSession!!.cellId)
+        assertEquals(branchBChild, s.editSession!!.renderVia)
+        assertTrue(
+            SchedulerDomain.isInVisualSubtree(s, sharedChild, branchA),
+            "sharedChild is also mirrored under branchA",
+        )
+        assertNotEquals(branchA, s.editSession!!.renderVia)
     }
 
     @Test

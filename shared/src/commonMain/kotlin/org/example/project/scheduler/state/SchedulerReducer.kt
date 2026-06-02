@@ -43,17 +43,19 @@ object SchedulerReducer {
         val currentTitle = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()
         val draft = intent.initialText ?: currentTitle
         val typingToEdit = intent.initialText != null
+        val selection = selectionFor(state, main = intent.cellId)
         val withSession =
             state.copy(
                 editSession =
                     SchedulerEditSession(
                         cellId = intent.cellId,
+                        renderVia = selection.renderVia,
                         draftText = draft,
                         selectedAssignTaskId = if (typingToEdit) null else cell.taskId,
                         newTaskDraftId = null,
                         treeBefore = state.captureTree(),
                     ),
-                selection = selectionFor(state, main = intent.cellId),
+                selection = selection,
             )
         return if (typingToEdit) {
             commitEditText(withSession, draft)

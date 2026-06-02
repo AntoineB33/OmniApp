@@ -10,6 +10,12 @@ enum class CellEditMode {
 
 data class SchedulerEditSession(
     val cellId: CellId,
+    /**
+     * Parent occurrence the edited cell is rendered under (mirrors [SchedulerSelection.renderVia]).
+     * Disambiguates which copy of a cell mirrored under multiple same-task parents is being
+     * edited, so only that occurrence shows the edit UI. `null` = the root-viewport occurrence.
+     */
+    val renderVia: CellId? = null,
     val draftText: String,
     val mode: CellEditMode = CellEditMode.ChangeTask,
     /** `null` = "New task" menu row selected. */

@@ -74,6 +74,7 @@ object SchedulerStateCodec {
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
         PersistedEditSession(
             cellId = cellId.value,
+            renderVia = renderVia?.value,
             draftText = draftText,
             mode = mode.name,
             selectedAssignTaskId = selectedAssignTaskId?.value,
@@ -204,6 +205,7 @@ object SchedulerStateCodec {
     private fun PersistedEditSession.toSession(): SchedulerEditSession =
         SchedulerEditSession(
             cellId = CellId(cellId),
+            renderVia = renderVia?.let(::CellId),
             draftText = draftText,
             mode = CellEditMode.valueOf(mode),
             selectedAssignTaskId = selectedAssignTaskId?.let(::TaskId),
@@ -233,6 +235,7 @@ private data class PersistedState(
 @Serializable
 private data class PersistedEditSession(
     val cellId: String,
+    val renderVia: String? = null,
     val draftText: String,
     val mode: String,
     val selectedAssignTaskId: String? = null,

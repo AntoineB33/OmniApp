@@ -328,7 +328,8 @@ private fun CellListSection(
             SchedulerDomain.shouldShowSelectionHighlight(state.selection, cellId, renderVia)
         val isMainSelection = selectable && showHighlight && state.selection.main == cellId
         val isInSelectionRange = selectable && showHighlight
-        val isEditing = state.editSession?.cellId == cellId
+        val isEditing =
+            state.editSession?.let { it.cellId == cellId && it.renderVia == renderVia } ?: false
         val editDraft = if (isEditing) state.editSession!!.draftText else title
         val hasChildren = SchedulerDomain.hasExpandableSubTree(state, cellId)
         val expanded = cellId in state.expanded
