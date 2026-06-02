@@ -586,6 +586,67 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun priority_splits_evenly_among_populated_top_level_cells() {
+        val s = seedThreeTasks()
+        val root = s.lists[s.rootListId]!!.cellIds
+        val a = s.cells[root[0]]!!.taskId!!
+        val b = s.cells[root[1]]!!.taskId!!
+        val c = s.cells[root[2]]!!.taskId!!
+
+        val p = SchedulerDomain.absoluteTaskPriorities(s)
+        assertEquals(1.0 / 3, p[a]!!, 1e-9)
+        assertEquals(1.0 / 3, p[b]!!, 1e-9)
+        assertEquals(1.0 / 3, p[c]!!, 1e-9)
+        // The trailing empty placeholder carries no priority; the populated cells sum to 100%.
+        assertEquals(1.0, p[a]!! + p[b]!! + p[c]!!, 1e-9)
+    }
+
+    @Test
+    fun priority_distributes_down_nested_sublists() {
+        var s = SchedulerState.empty()
+        val parentCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(parentCell, "Parent"))
+        val parentTask = s.cells[parentCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(parentCell))
+        val childList = s.tasks[parentTask]!!.childListId!!
+        val firstChild = s.lists[childList]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstChild, "C1"))
+        val c1 = s.cells[firstChild]!!.taskId!!
+        val secondChild = s.lists[childList]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(secondChild, "C2"))
+        val c2 = s.cells[secondChild]!!.taskId!!
+
+        val p = SchedulerDomain.absoluteTaskPriorities(s)
+        // Parent is the only populated top-level cell → it inherits the root's full 100%.
+        assertEquals(1.0, p[parentTask]!!, 1e-9)
+        // Two populated children split the parent's 100% evenly.
+        assertEquals(0.5, p[c1]!!, 1e-9)
+        assertEquals(0.5, p[c2]!!, 1e-9)
+    }
+
+    @Test
+    fun mirrored_task_priority_sums_across_occurrences() {
+        var s = SchedulerState.empty()
+        val branchA = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchA, "Shared"))
+        val sharedTask = s.cells[branchA]!!.taskId!!
+
+        val branchB = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(branchB, "Branch B"))
+        val branchBTask = s.cells[branchB]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(branchB))
+        val branchBChild = s.lists[s.tasks[branchBTask]!!.childListId!!]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AssignTaskId(branchBChild, sharedTask))
+
+        val p = SchedulerDomain.absoluteTaskPriorities(s)
+        // Top level holds two populated cells → 50% each.
+        assertEquals(0.5, p[branchBTask]!!, 1e-9)
+        // "Shared" is both a top-level cell (50%) and Branch B's only child (50% of 50%·1 = 50%),
+        // so its absolute priority sums to 100% across the two occurrences.
+        assertEquals(1.0, p[sharedTask]!!, 1e-9)
+    }
+
+    @Test
     fun assign_task_id_rejected_when_duplicate_in_same_list() {
         var s = seedThreeTasks()
         val listId = s.rootListId

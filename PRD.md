@@ -8,7 +8,7 @@
 OmniApp is a unified, multi-platform workspace application. The initial release (v0.1.0) focuses on establishing the application framework, navigation scaffolding, and the first core module: a hierarchical Task Scheduler featuring advanced, spreadsheet-like interaction mechanics.
 
 ## 2. Platform Strategy
-* **One Codebase:** Leverage Compose Multiplatform to write once and deploy everywhere.
+* **One Codebase:** Leverage Compose Multi-platform to write once and deploy everywhere.
 * **Desktop-First Execution:** All interaction models (mouse events, keyboard modifiers, complex selections) must be perfectly executed on Windows Desktop before adapting the UX for Web, Android, and iOS.
 
 ## 3. Global UI/UX Requirements

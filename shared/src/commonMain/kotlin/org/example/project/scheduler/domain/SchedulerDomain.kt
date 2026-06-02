@@ -384,6 +384,49 @@ object SchedulerDomain {
             compareBy({ cellTreeDepth(state, it) }, { it.value }),
         )
 
+    /**
+     * PRD §5 Priority assignment: the absolute priority percentage of every task, as a fraction in
+     * `[0,1]` (1.0 == 100%).
+     *
+     * A populated cell in a list of `N` populated cells carries `1/N` of its parent task's absolute
+     * priority; a task's absolute priority is the sum over all cells sharing its `taskId` (so a
+     * mirrored sub-tree accumulates priority from each parent). The conceptual root holds 100%, so
+     * the MAIN task — its only child — also resolves to 100% and seeds the top-down distribution.
+     * Empty placeholder cells (no `taskId`) hold no priority and are excluded from the `N` divisor.
+     */
+    fun absoluteTaskPriorities(state: SchedulerState): Map<TaskId, Double> {
+        val cellsByTask = HashMap<TaskId, MutableList<CellId>>()
+        for (cell in state.cells.values) {
+            val taskId = cell.taskId ?: continue
+            cellsByTask.getOrPut(taskId) { mutableListOf() }.add(cell.id)
+        }
+
+        fun populatedCount(listId: CellListId): Int =
+            state.lists[listId]?.cellIds?.count { state.cells[it]?.taskId != null } ?: 0
+
+        val memo = HashMap<TaskId, Double>()
+        val visiting = HashSet<TaskId>()
+
+        fun absolute(taskId: TaskId): Double {
+            if (taskId == WellKnownIds.MAIN_TASK) return 1.0
+            memo[taskId]?.let { return it }
+            if (!visiting.add(taskId)) return 0.0 // cycle guard (constraints forbid real cycles)
+            var sum = 0.0
+            for (cellId in cellsByTask[taskId].orEmpty()) {
+                val listId = state.cells[cellId]?.parentListId ?: continue
+                val n = populatedCount(listId)
+                if (n == 0) continue
+                val parent = parentTaskIdOfList(state, listId) ?: continue
+                sum += absolute(parent) / n
+            }
+            visiting.remove(taskId)
+            memo[taskId] = sum
+            return sum
+        }
+
+        return cellsByTask.keys.associateWith { absolute(it) }
+    }
+
     fun parentTaskId(state: SchedulerState, cellId: CellId): TaskId? {
         val cell = state.cells[cellId] ?: return null
         val list = state.lists[cell.parentListId] ?: return null

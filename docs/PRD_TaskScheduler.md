@@ -1,6 +1,6 @@
 # Task Scheduler Module - Product Requirements
 
-**Version:** 0.1.0
+**Version:** 1.0.0
 
 ## 1. Overview
 
@@ -15,8 +15,9 @@ A single task can exist in multiple cells across the tree. For example: to "find
 
 * **Infinite Tree View:** Cells are displayed in a vertical list. The rendered UI tree is strictly synced with the underlying `Map` Tree. 
 * **Nesting UI:** The left side of the cells features arrows (if there is a populated sub-tree) and guide-lines (if the cell is expanded) illustrating the parent-child hierarchy. The "root" cell conceptually exists, but the viewport only renders its children.
-* **Collapsibility:** Clicking structural arrows toggles the visibility of a cell's sublist.
+* **Collapsibility:** Clicking structural arrows toggles the visibility of a cell's sub-list.
 * **Visual Aesthetics:** Cell aesthetics strictly mirror Google Sheets. This includes standard resting states, active selection borders/highlighting, and inline editing UI.
+* **Priority Display:** The absolute priority percentage is displayed at the right side of the cell. In a sub-list, it is displayed at the same horizontal position. The length between the beginning of the text content and the display of the priority percentage is the maximum of the horizontal lengths of the cell text contents of the sub-list, constrained by a minimum and maximum length.
 
 ## 3. Selection Mechanics (Spreadsheet Paradigm)
 
@@ -26,7 +27,7 @@ The application maintains a dual-state selection model: **Main Selection** (a si
 * **Single Click:** The *Selected Cells List* is reset and the clicked cell becomes the *Main Selection*.
 * **Single Click & Drag:** * The initial click establishes the *Main Selection*.
   * While dragging without releasing the click, the *Selected Cells List* dynamically spans all visible cells from the Main Selection to the cell currently closest to the cursor.
-* **Double Click & Drag:** * If the cell the user double-clicks on is selected and all the selected cells are sequential and in the same sublist, the whole selection is moved. Otherwise, the double-click empties the *Selected Cells List* then establishes the *Main Selection*.
+* **Double Click & Drag:** * If the cell the user double-clicks on is selected and all the selected cells are sequential and in the same sub-list, the whole selection is moved. Otherwise, the double-click empties the *Selected Cells List* then establishes the *Main Selection*.
   * While dragging without releasing the click, the cell gets blurred and a horizontal blue line between cells indicates where the selection will be placed if the user releases the click. If the changes happen in sub-trees that are mirrored elsewhere (because of sharing `taskIds`), then the change is synced only when the move is finished (the blue line and blur aren't mirrored).
 * **Ctrl + Click:** The clicked cell becomes the *Main Selection* (standard OS `Ctrl` behavior applies for isolated multi-selection).
 * **Shift + Click / Ctrl + Shift + Click:** The *Selected Cells List* expands to include all visible cells sequentially from the current *Main Selection* to the newly clicked cell.
@@ -63,34 +64,36 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 
 ### Editor Interactions & UI
 * **Auto-Save:** Every keystroke/change is immediately committed to the state.
-* **Sublist Syncing:** Edits to a sublist immediately update all expanded instances of that `taskId` across the UI.
+* **Sub-list Syncing:** Edits to a sub-list immediately update all expanded instances of that `taskId` across the UI.
 * **Line Breaks:** `Ctrl + Enter` adds a new line. The cell dynamically expands horizontally and vertically to fit the content. 
 * **Up and Down:** `Up` goes to the beginning if there is no line above in the cell, and `Down` to the end if there is no line below in the cell.
 * **Cancel:** Pressing `Delete` inside Edit Mode cancels the session, reverting all affected cells to their pre edit mode text.
 * **Forced Exit:** Changing global selection via mouse click outside the cell forcibly exits Edit Mode.
 * **Auto-Expansion:** When the bottom cell of a list receives text, the system automatically:
-  1. Initializes a hidden sublist for it (containing one empty cell).
+  1. Initializes a hidden sub-list for it (containing one empty cell).
   2. Appends a new empty placeholder cell directly below it at the current hierarchical level.
 
 ### Exiting Edit Mode (Keyboard Navigation)
 * `Enter`: moves *Main Selection* down one cell.
 * `Shift + Enter`: moves *Main Selection* up one cell.
-* `Tab`: If the current cell is populated, opens its sublist and moves *Main Selection* to its first child. Otherwise, behaves identically to `Enter`.
+* `Tab`: If the current cell is populated, opens its sub-list and moves *Main Selection* to its first child. Otherwise, behaves identically to `Enter`.
 * `Shift + Tab`: Behaves identically to `Shift + Enter`.
 * `Escape`: Simply exits Edit Mode.
 
 ### Empty cells management
-* **Cleanup:** Empty cells are automatically removed upon exit, *unless* it is the absolute bottom cell of a sublist.
+* **Cleanup:** Empty cells are automatically removed upon exit, *unless* it is the absolute bottom cell of a sub-list.
 
 ### Edition without Edition Mode
 * **Deletion:** When the user presses `Return` or `Delete` and no cell is in Edition Mode, all selected cells get emptied.
-* **Copy/paste:** Ctrl + C allows the user to copy the whole selection (if it is only consecutive cells in the same sublist) or only the main selection. Ctrl + V allows to paste it in a cell (if several cells were copied, new cells are added below). The user can copy/paste cells between Google Sheets and the app.
+* **Copy/paste:** Ctrl + C allows the user to copy the whole selection (if it is only consecutive cells in the same sub-list) or only the main selection. Ctrl + V allows to paste it in a cell (if several cells were copied, new cells are added below). The user can copy/paste cells between Google Sheets and the app.
 
+## 5. Priority assignment
+* **priority percentage:** The priority percentage displayed at the right side of a cell is the absolute priority percentage of the `taskId`. It is the sum of the absolute priority percentage of all the cells sharing this `taskId`. The priority percentage of a cell in a list is one divided by the number of cells in this sub-list. Its absolute priority percentage is this fraction multiplied by the absolute priority of the parent cell. If the parent cell is the "root" cell, then its absolute priority percentage is 100%.
 
-## 5. State Management & Undo/Redo Engine
+## 6. State Management & Undo/Redo Engine
 
 * **Data Model (MVI State):**
-  * **Cell Model (UI State):** Encapsulates `taskId`, a parent pointer (for ancestor validation), and an optional `sublist`. If expanded, the `sublist` populates from the `Map` Task Tree. A cell object only has final fields, and update with Task Tree. If the cell is empty, `taskId` is null and `sublist` empty. When a cell is created, its `sublist` field is null and gets populated only when the user manually expands it.
+  * **Cell Model (UI State):** Encapsulates `taskId`, a parent pointer (for ancestor validation), and an optional `sub-list`. If expanded, the `sub-list` populates from the `Map` Task Tree. A cell object only has final fields, and update with Task Tree. If the cell is empty, `taskId` is null and `sub-list` empty. When a cell is created, its `sub-list` field is null and gets populated only when the user manually expands it.
   * **Task Tree (`Map`):** Associates a `taskId` to a domain object containing: Title, list of child `taskIds`, and an occurrence list of cells utilizing this `taskId` (sorted by shortest path).
   * **TitleToTask Tree (`Map`):** Associates a string title to a list of `taskIds` sharing that exact title.
 * **Initialization:**
@@ -98,8 +101,8 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
   * *Existing DB:* Loads from local persistence. If the last history unit is an incomplete "Edit Mode" state, it evaluates as a canceled edit (`Delete` behavior).
 * **History Architecture (Deltas):**
   * Every mutation generates a History Unit containing: Exact Timestamp, Chrono-ID (for deterministic sorting of simultaneous events), and a **Delta**. There are three categories of History Units: change in Edition Mode, change of selection state and the rest. Each category has a list of History Units and a history pointer.
-  * **Delta Storage:** Stores *only* the minimum data required to revert the Task Tree and Selection State. (e.g., keystrokes in Edit Mode generate a Delta with cell coordinates, previous string, and current edit mode). There are several types: change in a list of child `taskIds` in Task Tree, selection change, expantion change, task title change...
+  * **Delta Storage:** Stores *only* the minimum data required to revert the Task Tree and Selection State. (e.g., keystrokes in Edit Mode generate a Delta with cell coordinates, previous string, and current edit mode). There are several types: change in a list of child `taskIds` in Task Tree, selection change, expansion change, task title change...
 * **Undo / Redo:**
   * **Undo:** The history pointer decrements. The Delta is applied to the state, and the Delta *inside the unit* is mathematically inverted to represent the forward-change (Redo). For selection history, undo is `Alt + Left` and redo is `Alt + Right`. For the other history categories, undo is `Ctrl + C` and redo is `Ctrl + Y`.
   * **Branching:** If an Undo is performed followed by a *new* mutation, all forward (Redo) history units are orphaned/discarded.
-* **Persistence:** State changes (Tree, occurrences, parent objects, selection, and history) are continuously streamed to the local multiplatform database.
+* **Persistence:** State changes (Tree, occurrences, parent objects, selection, and history) are continuously streamed to the local multi-platform database.

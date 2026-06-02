@@ -1,6 +1,6 @@
 # OmniApp (v0.1.0)
 
-OmniApp is a versatile, cross-platform productivity application designed to provide a seamless, unified experience across Windows, macOS, Linux, Android, iOS, and Web. Built utilizing Kotlin Multiplatform (KMP) and Compose Multiplatform, OmniApp guarantees "one code for all platforms" wherever feasible.
+OmniApp is a versatile, cross-platform productivity application designed to provide a seamless, unified experience across Windows, macOS, Linux, Android, iOS, and Web. Built utilizing Kotlin Multi-platform (KMP) and Compose Multi-platform, OmniApp guarantees "one code for all platforms" wherever feasible.
 
 ## 🌟 Core Philosophy
 
@@ -11,8 +11,8 @@ OmniApp is a versatile, cross-platform productivity application designed to prov
 ## 🛠 Tech Stack
 
 - **Language:** Kotlin
-- **Framework:** Kotlin Multiplatform (KMP)
-- **UI:** Compose Multiplatform
+- **Framework:** Kotlin Multi-platform (KMP)
+- **UI:** Compose Multi-platform
 - **Architecture:** MVI (Model-View-Intent)
 - **Persistence:** SQLDelight
 
@@ -21,7 +21,7 @@ OmniApp is a versatile, cross-platform productivity application designed to prov
 This is a KMP project targeting Android, iOS, Web, and Desktop (JVM).
 
 - `/iosApp`: Contains the iOS application entry point and SwiftUI wrapper code.
-- `/shared/src`: Core shared logic and UI for the Compose Multiplatform applications.
+- `/shared/src`: Core shared logic and UI for the Compose Multi-platform applications.
   - `commonMain`: Truly platform-agnostic code (Domain, Data, MVI State Holders, and shared UI).
   - `iosMain` / `jvmMain` / `androidMain` / `wasmJsMain`: Platform-specific integrations and actualizations (e.g., specific file system APIs, platform crypto).
 
@@ -53,4 +53,4 @@ Ensure state holders, MVI intents, and the Undo/Redo engine are fully tested bef
 
 ---
 
-_For more information on Kotlin Multiplatform, visit the [official documentation](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)._
+_For more information on Kotlin Multi-platform, visit the [official documentation](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)._

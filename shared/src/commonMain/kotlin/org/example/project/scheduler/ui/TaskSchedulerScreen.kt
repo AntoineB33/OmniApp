@@ -70,14 +70,19 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.TaskId
+import kotlin.math.roundToInt
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.platform.readSystemClipboardText
 import org.example.project.scheduler.platform.writeSystemClipboardText
@@ -107,6 +112,22 @@ private const val GUIDE_LINE_OFFSET_DP = 14
 private val MOVE_DRAG_BLUR_DP = 2.dp
 
 /**
+ * PRD §2 Priority Display: the text column before the priority percentage is sized to the widest
+ * cell text of the sublist, clamped between these bounds so the percentages of one sublist all
+ * align at the same horizontal position.
+ */
+private val PRIORITY_COLUMN_MIN = 56.dp
+private val PRIORITY_COLUMN_MAX = 280.dp
+
+/** Renders a priority fraction (0..1) as a percentage with at most one decimal: 50%, 33.3%, 0.4%. */
+private fun formatPriorityPercent(fraction: Double): String {
+    val tenths = (fraction * 1000).roundToInt()
+    val whole = tenths / 10
+    val decimal = tenths % 10
+    return if (decimal == 0) "$whole%" else "$whole.$decimal%"
+}
+
+/**
  * Pending drop location during a double-click & drag move. Keyed by [renderVia] as well as
  * [cellId] so the blue drop line is shown only on the dragged occurrence and not on mirrored
  * copies of the same cell expanded elsewhere (PRD §3: "the blue line and blur aren't mirrored").
@@ -126,6 +147,8 @@ fun TaskSchedulerScreen(
     val state by vm.state.collectAsState()
     val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
     val visibleOccurrences = SchedulerDomain.selectableVisibleOccurrences(state)
+    // PRD §5: absolute priority percentage per task, displayed at the right of each populated cell.
+    val priorities = SchedulerDomain.absoluteTaskPriorities(state)
     val focusRequester = remember { FocusRequester() }
     var moveDragActive by remember { mutableStateOf(false) }
     var moveDropTarget by remember { mutableStateOf<MoveDropTarget?>(null) }
@@ -294,6 +317,7 @@ fun TaskSchedulerScreen(
                 renderVia = null,
                 depth = 0,
                 visibleOrder = visibleOrder,
+                priorities = priorities,
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -365,6 +389,7 @@ private fun CellListSection(
     renderVia: CellId?,
     depth: Int,
     visibleOrder: List<CellId>,
+    priorities: Map<TaskId, Double>,
     moveDragActive: Boolean,
     moveDropTarget: MoveDropTarget?,
     resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>?,
@@ -375,6 +400,21 @@ private fun CellListSection(
     onIntent: (SchedulerIntent) -> Unit,
 ) {
     val list = state.lists[listId] ?: return
+
+    // PRD §2 Priority Display: align this sublist's percentages at one horizontal position — the
+    // widest cell text in the list, clamped to [MIN, MAX].
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val bodyStyle = MaterialTheme.typography.bodyMedium
+    val priorityColumnWidth: Dp = run {
+        val maxTextPx =
+            list.cellIds.maxOfOrNull { id ->
+                val title = state.cells[id]?.taskId?.let { state.tasks[it]?.title }.orEmpty()
+                if (title.isEmpty()) 0 else textMeasurer.measure(title, bodyStyle).size.width
+            } ?: 0
+        with(density) { maxTextPx.toDp() }.coerceIn(PRIORITY_COLUMN_MIN, PRIORITY_COLUMN_MAX)
+    }
+
     list.cellIds.forEach { cellId ->
         val cell = state.cells[cellId] ?: return@forEach
         val title = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()
@@ -388,6 +428,9 @@ private fun CellListSection(
         val editDraft = if (isEditing) state.editSession!!.draftText else title
         val hasChildren = SchedulerDomain.hasExpandableSubTree(state, cellId)
         val expanded = cellId in state.expanded
+
+        val priorityLabel =
+            cell.taskId?.let { priorities[it] }?.let(::formatPriorityPercent)
 
         val isInActiveSelection = SchedulerDomain.isInActiveSelection(state.selection, cellId)
         val canMoveFromCell =
@@ -420,6 +463,8 @@ private fun CellListSection(
                     !moveDropTarget.insertBefore,
             canMoveFromCell = canMoveFromCell,
             isBeingMoved = isBeingMoved,
+            priorityLabel = priorityLabel,
+            priorityColumnWidth = priorityColumnWidth,
             onClick = { clicked, ctrl, shift, forceClearMulti ->
                 if (!selectable) return@TaskRow
                 onIntent(
@@ -488,6 +533,7 @@ private fun CellListSection(
                 renderVia = cellId,
                 depth = depth + 1,
                 visibleOrder = visibleOrder,
+                priorities = priorities,
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -658,6 +704,8 @@ private fun TaskRow(
     moveDropAfter: Boolean,
     canMoveFromCell: Boolean,
     isBeingMoved: Boolean,
+    priorityLabel: String?,
+    priorityColumnWidth: Dp,
     onClick: (CellId, ctrl: Boolean, shift: Boolean, forceClearMulti: Boolean) -> Unit,
     onDragSelect: (anchor: CellId, hover: CellId) -> Unit,
     moveDragActive: Boolean,
@@ -987,14 +1035,24 @@ private fun TaskRow(
                     },
                 )
             } else {
+                // PRD §2 Priority Display: the text occupies a column whose width is shared by the
+                // whole sublist (so percentages line up); the percentage sits just after it.
                 Text(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
+                        .widthIn(min = priorityColumnWidth)
                         .defaultMinSize(minHeight = 20.dp),
                     text = displayTitle.ifEmpty { " " },
                     style = textStyle,
                 )
+                if (priorityLabel != null) {
+                    Text(
+                        modifier = Modifier.padding(start = 8.dp),
+                        text = priorityLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
             }
         }
         if (moveDropAfter) {
