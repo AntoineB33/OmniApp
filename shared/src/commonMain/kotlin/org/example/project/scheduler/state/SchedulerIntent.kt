@@ -63,6 +63,12 @@ sealed interface SchedulerIntent {
         val taskId: TaskId,
     ) : SchedulerIntent
 
+    /** PRD §5: set a cell's priority weight (clamped to ≥ 1); recorded as a content delta. */
+    data class SetPriorityWeight(
+        val cellId: CellId,
+        val weight: Int,
+    ) : SchedulerIntent
+
     /** [initialText] non-null when entering via typing (replaces cell content with first keystroke). */
     data class BeginEdit(
         val cellId: CellId,

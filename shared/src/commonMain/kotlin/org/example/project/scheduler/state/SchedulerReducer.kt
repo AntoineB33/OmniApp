@@ -20,6 +20,8 @@ object SchedulerReducer {
             is SchedulerIntent.ToggleExpand -> commitDelta(state, ToggleExpandDelta(intent.cellId))
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
             is SchedulerIntent.AssignTaskId -> commitDelta(state, assignTaskIdDelta(state, intent.cellId, intent.taskId))
+            is SchedulerIntent.SetPriorityWeight ->
+                commitDelta(state, setPriorityWeightDelta(state, intent.cellId, intent.weight))
             is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
             is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
             is SchedulerIntent.SetEditMode -> reduceSetEditMode(state, intent.mode)
@@ -918,6 +920,27 @@ private fun applyAssignTaskId(state: SchedulerState, cellId: CellId, taskId: Tas
     }
 
     return SchedulerDomain.purgeOrphanTasks(working)
+}
+
+private fun setPriorityWeightDelta(
+    state: SchedulerState,
+    cellId: CellId,
+    weight: Int,
+): Delta {
+    val before = state.captureTree()
+    val after = applySetPriorityWeight(state, cellId, weight).captureTree()
+    return TreeMutationDelta(before = before, after = after)
+}
+
+private fun applySetPriorityWeight(
+    state: SchedulerState,
+    cellId: CellId,
+    weight: Int,
+): SchedulerState {
+    val cell = state.cells[cellId] ?: return state
+    val clamped = weight.coerceAtLeast(1)
+    if (cell.priorityWeight == clamped) return state
+    return state.copy(cells = state.cells + (cellId to cell.copy(priorityWeight = clamped)))
 }
 
 private fun setCellTitleDelta(

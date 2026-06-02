@@ -20,6 +20,12 @@ data class Cell(
     val id: CellId,
     val parentListId: CellListId,
     val taskId: TaskId?,
+    /**
+     * PRD §5 Priority assignment: this cell's share of its sub-list, as a weight relative to its
+     * siblings. A cell's local priority is its weight over the sum of weights in its list. Defaults
+     * to 1 (equal split). Always at least 1.
+     */
+    val priorityWeight: Int = 1,
 )
 
 @JvmInline

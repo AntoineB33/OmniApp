@@ -625,6 +625,37 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun priority_weight_changes_split_and_is_undoable() {
+        var s = seedThreeTasks()
+        val root = s.lists[s.rootListId]!!.cellIds
+        val first = root[0]
+        val a = s.cells[first]!!.taskId!!
+        val b = s.cells[root[1]]!!.taskId!!
+        val c = s.cells[root[2]]!!.taskId!!
+
+        // Default weights (all 1) → even thirds.
+        assertEquals(1, s.cells[first]!!.priorityWeight)
+        assertEquals(1.0 / 3, SchedulerDomain.absoluteTaskPriorities(s)[a]!!, 1e-9)
+
+        // Weight the first cell to 2 → 2/(2+1+1) = 50%, others 25% each.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(first, 2))
+        assertEquals(2, s.cells[first]!!.priorityWeight)
+        val weighted = SchedulerDomain.absoluteTaskPriorities(s)
+        assertEquals(0.5, weighted[a]!!, 1e-9)
+        assertEquals(0.25, weighted[b]!!, 1e-9)
+        assertEquals(0.25, weighted[c]!!, 1e-9)
+
+        // A weight below 1 is clamped to 1.
+        var clamped = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(first, 0))
+        assertEquals(1, clamped.cells[first]!!.priorityWeight)
+
+        // Weight change is an undoable content delta (PRD §6).
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertEquals(1, s.cells[first]!!.priorityWeight)
+        assertEquals(1.0 / 3, SchedulerDomain.absoluteTaskPriorities(s)[a]!!, 1e-9)
+    }
+
+    @Test
     fun mirrored_task_priority_sums_across_occurrences() {
         var s = SchedulerState.empty()
         val branchA = s.lists[s.rootListId]!!.cellIds.first()

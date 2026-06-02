@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -74,6 +75,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -100,6 +103,7 @@ private object SheetColors {
     val activeBorder = Color(0xFF1A73E8)
     val nonSelectableFill = Color(0xFFF8F9FA)
     val guideLine = Color(0xFFC7CBD1)
+    val overflowArrow = Color(0xFFD93025)
 }
 
 /** Indentation step (dp) per nesting level; also the spacing between hierarchy guide-lines. */
@@ -152,6 +156,9 @@ fun TaskSchedulerScreen(
     val focusRequester = remember { FocusRequester() }
     var moveDragActive by remember { mutableStateOf(false) }
     var moveDropTarget by remember { mutableStateOf<MoveDropTarget?>(null) }
+    // PRD §5: sub-lists whose priority-weight input fields are currently revealed (toggled by
+    // clicking a percentage in that sub-list).
+    var weightEditLists by remember { mutableStateOf(emptySet<CellListId>()) }
 
     // Vertical window bounds of each visible row, reported via onGloballyPositioned. A press-drag
     // only delivers move events to the row where the pointer went down (Compose retains the hit
@@ -318,6 +325,12 @@ fun TaskSchedulerScreen(
                 depth = 0,
                 visibleOrder = visibleOrder,
                 priorities = priorities,
+                weightEditLists = weightEditLists,
+                onTogglePriorityWeights = { listId ->
+                    weightEditLists =
+                        if (listId in weightEditLists) weightEditLists - listId
+                        else weightEditLists + listId
+                },
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -390,6 +403,8 @@ private fun CellListSection(
     depth: Int,
     visibleOrder: List<CellId>,
     priorities: Map<TaskId, Double>,
+    weightEditLists: Set<CellListId>,
+    onTogglePriorityWeights: (CellListId) -> Unit,
     moveDragActive: Boolean,
     moveDropTarget: MoveDropTarget?,
     resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>?,
@@ -406,14 +421,16 @@ private fun CellListSection(
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val bodyStyle = MaterialTheme.typography.bodyMedium
-    val priorityColumnWidth: Dp = run {
-        val maxTextPx =
-            list.cellIds.maxOfOrNull { id ->
-                val title = state.cells[id]?.taskId?.let { state.tasks[it]?.title }.orEmpty()
-                if (title.isEmpty()) 0 else textMeasurer.measure(title, bodyStyle).size.width
-            } ?: 0
-        with(density) { maxTextPx.toDp() }.coerceIn(PRIORITY_COLUMN_MIN, PRIORITY_COLUMN_MAX)
-    }
+    val cellTextPx: Map<CellId, Int> =
+        list.cellIds.associateWith { id ->
+            val title = state.cells[id]?.taskId?.let { state.tasks[it]?.title }.orEmpty()
+            if (title.isEmpty()) 0 else textMeasurer.measure(title, bodyStyle).size.width
+        }
+    val priorityColumnWidth: Dp =
+        with(density) { (cellTextPx.values.maxOrNull() ?: 0).toDp() }
+            .coerceIn(PRIORITY_COLUMN_MIN, PRIORITY_COLUMN_MAX)
+    val priorityColumnPx = with(density) { priorityColumnWidth.toPx() }
+    val weightEditActive = listId in weightEditLists
 
     list.cellIds.forEach { cellId ->
         val cell = state.cells[cellId] ?: return@forEach
@@ -465,6 +482,13 @@ private fun CellListSection(
             isBeingMoved = isBeingMoved,
             priorityLabel = priorityLabel,
             priorityColumnWidth = priorityColumnWidth,
+            priorityWeight = cell.priorityWeight,
+            textOverflow = (cellTextPx[cellId] ?: 0) > priorityColumnPx,
+            weightEditActive = weightEditActive,
+            onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
+            onSetPriorityWeight = { weight ->
+                onIntent(SchedulerIntent.SetPriorityWeight(cellId, weight))
+            },
             onClick = { clicked, ctrl, shift, forceClearMulti ->
                 if (!selectable) return@TaskRow
                 onIntent(
@@ -534,6 +558,8 @@ private fun CellListSection(
                 depth = depth + 1,
                 visibleOrder = visibleOrder,
                 priorities = priorities,
+                weightEditLists = weightEditLists,
+                onTogglePriorityWeights = onTogglePriorityWeights,
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -688,6 +714,60 @@ private fun TaskMenuRow(
     )
 }
 
+/**
+ * PRD §5 priority weight: a numeric input (default 1) with decrement/increment buttons that add or
+ * remove 1. Only digits are accepted; the value is clamped to at least 1.
+ */
+@Composable
+private fun PriorityWeightField(weight: Int, onSet: (Int) -> Unit) {
+    var text by remember(weight) { mutableStateOf(weight.toString()) }
+    Row(
+        modifier = Modifier.padding(start = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        WeightStepButton(label = "−", onClick = { onSet((weight - 1).coerceAtLeast(1)) })
+        BasicTextField(
+            value = text,
+            onValueChange = { raw ->
+                val digits = raw.filter { it.isDigit() }
+                text = digits
+                digits.toIntOrNull()?.let { onSet(it.coerceAtLeast(1)) }
+            },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodySmall.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            ),
+            cursorBrush = SolidColor(SheetColors.activeBorder),
+            modifier = Modifier
+                .width(36.dp)
+                .border(1.dp, SheetColors.grid)
+                .padding(horizontal = 4.dp, vertical = 2.dp),
+        )
+        WeightStepButton(label = "+", onClick = { onSet(weight + 1) })
+    }
+}
+
+@Composable
+private fun WeightStepButton(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(20.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
 @Composable
 private fun TaskRow(
     depth: Int,
@@ -706,6 +786,11 @@ private fun TaskRow(
     isBeingMoved: Boolean,
     priorityLabel: String?,
     priorityColumnWidth: Dp,
+    priorityWeight: Int,
+    textOverflow: Boolean,
+    weightEditActive: Boolean,
+    onTogglePriorityWeights: () -> Unit,
+    onSetPriorityWeight: (Int) -> Unit,
     onClick: (CellId, ctrl: Boolean, shift: Boolean, forceClearMulti: Boolean) -> Unit,
     onDragSelect: (anchor: CellId, hover: CellId) -> Unit,
     moveDragActive: Boolean,
@@ -1036,21 +1121,50 @@ private fun TaskRow(
                 )
             } else {
                 // PRD §2 Priority Display: the text occupies a column whose width is shared by the
-                // whole sublist (so percentages line up); the percentage sits just after it.
-                Text(
+                // whole sublist (so percentages line up); the percentage sits just after it. When
+                // the text exceeds the column it is clipped and a little red arrow marks the
+                // hidden overflow on the right.
+                Box(
                     modifier = Modifier
-                        .widthIn(min = priorityColumnWidth)
+                        .width(priorityColumnWidth)
                         .defaultMinSize(minHeight = 20.dp),
-                    text = displayTitle.ifEmpty { " " },
-                    style = textStyle,
-                )
-                if (priorityLabel != null) {
+                    contentAlignment = Alignment.CenterStart,
+                ) {
                     Text(
-                        modifier = Modifier.padding(start = 8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        text = displayTitle.ifEmpty { " " },
+                        style = textStyle,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip,
+                    )
+                    if (textOverflow) {
+                        Text(
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .background(cellBackground),
+                            text = "▸",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SheetColors.overflowArrow,
+                        )
+                    }
+                }
+                if (priorityLabel != null) {
+                    // PRD §5: clicking the percentage toggles the sub-list's weight inputs.
+                    Text(
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onTogglePriorityWeights,
+                            ),
                         text = priorityLabel,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (weightEditActive) {
+                        PriorityWeightField(weight = priorityWeight, onSet = onSetPriorityWeight)
+                    }
                 }
                 Spacer(Modifier.weight(1f))
             }

@@ -48,7 +48,7 @@ object SchedulerStateCodec {
                 },
             cells =
                 cells.values.map {
-                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value)
+                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeight)
                 },
             tasks =
                 tasks.values.map {
@@ -90,7 +90,7 @@ object SchedulerStateCodec {
                 },
             cells =
                 cells.values.map {
-                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value)
+                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeight)
                 },
             tasks =
                 tasks.values.map {
@@ -125,6 +125,7 @@ object SchedulerStateCodec {
                         id = CellId(p.id),
                         parentListId = CellListId(p.parentListId),
                         taskId = p.taskId?.let(::TaskId),
+                        priorityWeight = p.priorityWeight,
                     )
             }
         val lists =
@@ -177,6 +178,7 @@ object SchedulerStateCodec {
                         id = CellId(p.id),
                         parentListId = CellListId(p.parentListId),
                         taskId = p.taskId?.let(::TaskId),
+                        priorityWeight = p.priorityWeight,
                     )
             }
         val lists =
@@ -263,6 +265,7 @@ private data class PersistedCell(
     val id: String,
     val parentListId: String,
     val taskId: String?,
+    val priorityWeight: Int = 1,
 )
 
 @Serializable

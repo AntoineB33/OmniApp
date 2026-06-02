@@ -17,7 +17,7 @@ A single task can exist in multiple cells across the tree. For example: to "find
 * **Nesting UI:** The left side of the cells features arrows (if there is a populated sub-tree) and guide-lines (if the cell is expanded) illustrating the parent-child hierarchy. The "root" cell conceptually exists, but the viewport only renders its children.
 * **Collapsibility:** Clicking structural arrows toggles the visibility of a cell's sub-list.
 * **Visual Aesthetics:** Cell aesthetics strictly mirror Google Sheets. This includes standard resting states, active selection borders/highlighting, and inline editing UI.
-* **Priority Display:** The absolute priority percentage is displayed at the right side of the cell. In a sub-list, it is displayed at the same horizontal position. The length between the beginning of the text content and the display of the priority percentage is the maximum of the horizontal lengths of the cell text contents of the sub-list, constrained by a minimum and maximum length.
+* **Priority Display:** The absolute priority percentage is displayed at the right side of the cell. In a sub-list, it is displayed at the same horizontal position. The length between the beginning of the text content and the display of the priority percentage is the maximum of the horizontal lengths of the cell text contents of the sub-list, constrained by a minimum and maximum length. If the text content is too long, the exceeding part is hidden with a little red arrow to the right.
 
 ## 3. Selection Mechanics (Spreadsheet Paradigm)
 
@@ -88,7 +88,8 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **Copy/paste:** Ctrl + C allows the user to copy the whole selection (if it is only consecutive cells in the same sub-list) or only the main selection. Ctrl + V allows to paste it in a cell (if several cells were copied, new cells are added below). The user can copy/paste cells between Google Sheets and the app.
 
 ## 5. Priority assignment
-* **priority percentage:** The priority percentage displayed at the right side of a cell is the absolute priority percentage of the `taskId`. It is the sum of the absolute priority percentage of all the cells sharing this `taskId`. The priority percentage of a cell in a list is one divided by the number of cells in this sub-list. Its absolute priority percentage is this fraction multiplied by the absolute priority of the parent cell. If the parent cell is the "root" cell, then its absolute priority percentage is 100%.
+* **priority percentage:** The priority percentage displayed at the right side of a cell is the absolute priority percentage of the `taskId`. It is the sum of the absolute priority percentage of all the cells sharing this `taskId`. The priority percentage of a cell in a list is the priority weight of the cell divided by the sum of the priority weights of this sub-list. Its absolute priority percentage is this fraction multiplied by the absolute priority of the parent cell. If the parent cell is the "root" cell, then its absolute priority percentage is 100%.
+* **priority weight:** When the user clicks on the absolute priority percentage, it toggles the display at the right of each percentage of the sub-list an input field for the priority weight. This field only accepts number and has increment and decrement buttons to add or remove 1 to the number. It is 1 by default.
 
 ## 6. State Management & Undo/Redo Engine
 
@@ -101,7 +102,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
   * *Existing DB:* Loads from local persistence. If the last history unit is an incomplete "Edit Mode" state, it evaluates as a canceled edit (`Delete` behavior).
 * **History Architecture (Deltas):**
   * Every mutation generates a History Unit containing: Exact Timestamp, Chrono-ID (for deterministic sorting of simultaneous events), and a **Delta**. There are three categories of History Units: change in Edition Mode, change of selection state and the rest. Each category has a list of History Units and a history pointer.
-  * **Delta Storage:** Stores *only* the minimum data required to revert the Task Tree and Selection State. (e.g., keystrokes in Edit Mode generate a Delta with cell coordinates, previous string, and current edit mode). There are several types: change in a list of child `taskIds` in Task Tree, selection change, expansion change, task title change...
+  * **Delta Storage:** Stores *only* the minimum data required to revert the Task Tree and Selection State. (e.g., keystrokes in Edit Mode generate a Delta with cell coordinates, previous string, and current edit mode). There are several types: change in a list of child `taskIds` in Task Tree, selection change, expansion change, task title change, priority weight change...
 * **Undo / Redo:**
   * **Undo:** The history pointer decrements. The Delta is applied to the state, and the Delta *inside the unit* is mathematically inverted to represent the forward-change (Redo). For selection history, undo is `Alt + Left` and redo is `Alt + Right`. For the other history categories, undo is `Ctrl + C` and redo is `Ctrl + Y`.
   * **Branching:** If an Undo is performed followed by a *new* mutation, all forward (Redo) history units are orphaned/discarded.
