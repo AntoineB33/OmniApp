@@ -43,8 +43,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -87,7 +89,14 @@ private object SheetColors {
     val selectionFill = Color(0xFFE8F0FE)
     val activeBorder = Color(0xFF1A73E8)
     val nonSelectableFill = Color(0xFFF8F9FA)
+    val guideLine = Color(0xFFC7CBD1)
 }
+
+/** Indentation step (dp) per nesting level; also the spacing between hierarchy guide-lines. */
+private const val INDENT_STEP_DP = 16
+
+/** Horizontal offset (dp) of a level's guide-line, aligned under that ancestor's expand arrow. */
+private const val GUIDE_LINE_OFFSET_DP = 14
 
 @Composable
 fun TaskSchedulerScreen(
@@ -700,7 +709,7 @@ private fun TaskRow(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = (depth * 16).dp)
+                    .padding(start = (depth * INDENT_STEP_DP).dp)
                     .height(2.dp)
                     .background(SheetColors.activeBorder),
             )
@@ -708,7 +717,24 @@ private fun TaskRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = (depth * 16).dp)
+                // PRD §2: guide-lines on the left illustrate the parent-child hierarchy. One
+                // vertical line is drawn in the indentation gutter under each expanded ancestor's
+                // arrow; they only appear beneath expanded cells (collapsed cells hide their rows).
+                .drawBehind {
+                    val step = INDENT_STEP_DP.dp.toPx()
+                    val offset = GUIDE_LINE_OFFSET_DP.dp.toPx()
+                    val stroke = 1.dp.toPx()
+                    for (level in 0 until depth) {
+                        val x = level * step + offset
+                        drawLine(
+                            color = SheetColors.guideLine,
+                            start = Offset(x, 0f),
+                            end = Offset(x, size.height),
+                            strokeWidth = stroke,
+                        )
+                    }
+                }
+                .padding(start = (depth * INDENT_STEP_DP).dp)
                 .defaultMinSize(minHeight = 28.dp)
                 .background(cellBackground)
                 .then(cellBorder)
@@ -865,7 +891,7 @@ private fun TaskRow(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = (depth * 16).dp)
+                    .padding(start = (depth * INDENT_STEP_DP).dp)
                     .height(2.dp)
                     .background(SheetColors.activeBorder),
             )
@@ -874,7 +900,7 @@ private fun TaskRow(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = (depth * 16).dp)
+                    .padding(start = (depth * INDENT_STEP_DP).dp)
                     .background(SheetColors.cellBackground)
                     .border(1.dp, SheetColors.grid)
                     .padding(8.dp),
