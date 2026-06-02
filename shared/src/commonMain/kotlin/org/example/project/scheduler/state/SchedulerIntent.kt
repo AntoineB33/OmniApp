@@ -97,7 +97,12 @@ sealed interface SchedulerIntent {
     /** Paste [titles] at the main selection (Google Sheets uses newline-separated rows). */
     data class PasteTitles(val titles: List<String>) : SchedulerIntent
 
+    /** Ctrl+Z / Ctrl+Y — undo/redo the content history (Edit Mode while editing, else "the rest"). */
     data object Undo : SchedulerIntent
     data object Redo : SchedulerIntent
+
+    /** Alt+Left / Alt+Right — undo/redo the independent selection-state history (PRD §5). */
+    data object UndoSelection : SchedulerIntent
+    data object RedoSelection : SchedulerIntent
 }
 

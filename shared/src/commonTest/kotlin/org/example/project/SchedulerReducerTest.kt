@@ -504,12 +504,85 @@ class SchedulerReducerTest {
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "First"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
-        assertEquals(-1, s.history.pointer)
+        assertEquals(-1, s.histories.main.pointer)
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Second"))
-        assertEquals(0, s.history.pointer)
-        assertEquals(1, s.history.units.size)
+        assertEquals(0, s.histories.main.pointer)
+        assertEquals(1, s.histories.main.units.size)
         assertEquals("Second", s.tasks[s.cells[cellId]!!.taskId!!]!!.title)
+    }
+
+    @Test
+    fun selection_history_is_independent_from_content_history() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.NavigateSelection(SelectionNavigate.Next))
+        assertEquals(visible[1], s.selection.main)
+
+        val treeAfterSelection = s.captureTree()
+        val mainUnits = s.histories.main.units.size
+
+        // Alt+Left undoes selection only — the content tree must be untouched (PRD §5).
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UndoSelection)
+        assertEquals(visible[0], s.selection.main)
+        assertEquals(treeAfterSelection, s.captureTree())
+        assertEquals(mainUnits, s.histories.main.units.size)
+
+        // Alt+Right redoes the selection step.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.RedoSelection)
+        assertEquals(visible[1], s.selection.main)
+        assertEquals(treeAfterSelection, s.captureTree())
+    }
+
+    @Test
+    fun content_undo_does_not_disturb_selection_history() {
+        var s = SchedulerState.empty()
+        val cell = s.lists[s.rootListId]!!.cellIds.first()
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = cell, ctrl = false, shift = false, visibleOrder = emptyList()),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cell, "Hello"))
+        assertEquals(cell, s.selection.main)
+
+        // Ctrl+Z reverts the content change but leaves the selection in place (separate stacks).
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertEquals(null, s.cells[cell]!!.taskId)
+        assertEquals(cell, s.selection.main)
+    }
+
+    @Test
+    fun edit_session_collapses_into_a_single_content_history_unit() {
+        var s = SchedulerState.empty()
+        val cell = s.lists[s.rootListId]!!.cellIds.first()
+        val mainBefore = s.histories.main.units.size
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cell))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText("H"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText("He"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText("Hello"))
+
+        // Keystrokes accumulate in the ephemeral Edit Mode stack; the content stack is untouched.
+        assertTrue(s.histories.edit.units.isNotEmpty())
+        assertEquals(mainBefore, s.histories.main.units.size)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Stay))
+
+        // On exit the whole session collapses into one content unit and the Edit stack is cleared.
+        assertEquals(null, s.editSession)
+        assertTrue(s.histories.edit.units.isEmpty())
+        assertEquals(mainBefore + 1, s.histories.main.units.size)
+        assertEquals("Hello", s.tasks[s.cells[cell]!!.taskId!!]!!.title)
+
+        // A single Ctrl+Z undoes the entire edit.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertEquals(null, s.cells[cell]!!.taskId)
     }
 
     @Test
@@ -1662,7 +1735,7 @@ class SchedulerReducerTest {
             SchedulerIntent.ClickCell(cellId = parent, ctrl = false, shift = false, visibleOrder = visible),
         )
         val listsBefore = s.lists
-        val historyBefore = s.history.units.size
+        val historyBefore = s.histories.main.units.size
         s = SchedulerReducer.reduce(
             s,
             SchedulerIntent.MoveSelectedCells(targetCellId = child, insertBefore = true),
@@ -1671,7 +1744,7 @@ class SchedulerReducerTest {
         // PRD constraint 2: a cell cannot move into its own sub-tree (would create a cycle).
         assertEquals(listsBefore, s.lists)
         assertTrue(parent in s.lists[root]!!.cellIds)
-        assertEquals(historyBefore, s.history.units.size)
+        assertEquals(historyBefore, s.histories.main.units.size)
     }
 
     @Test

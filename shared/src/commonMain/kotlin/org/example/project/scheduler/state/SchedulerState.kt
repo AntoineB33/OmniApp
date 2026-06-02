@@ -26,6 +26,34 @@ data class SchedulerHistory(
     val units: List<HistoryUnit> = emptyList(),
 )
 
+/**
+ * PRD §5 History Architecture: history is split into three independent categories, each with its
+ * own list of units and pointer — changes made in Edit Mode, selection-state changes, and "the
+ * rest" (tree/expansion mutations). Selection history is undone/redone separately (Alt+Left /
+ * Alt+Right) from the content categories (Ctrl+Z / Ctrl+Y).
+ */
+enum class HistoryCategory { Edit, Selection, Main }
+
+data class SchedulerHistories(
+    val edit: SchedulerHistory = SchedulerHistory(),
+    val selection: SchedulerHistory = SchedulerHistory(),
+    val main: SchedulerHistory = SchedulerHistory(),
+) {
+    fun forCategory(category: HistoryCategory): SchedulerHistory =
+        when (category) {
+            HistoryCategory.Edit -> edit
+            HistoryCategory.Selection -> selection
+            HistoryCategory.Main -> main
+        }
+
+    fun withCategory(category: HistoryCategory, history: SchedulerHistory): SchedulerHistories =
+        when (category) {
+            HistoryCategory.Edit -> copy(edit = history)
+            HistoryCategory.Selection -> copy(selection = history)
+            HistoryCategory.Main -> copy(main = history)
+        }
+}
+
 data class HistoryUnit(
     val chronoId: Long,
     val delta: Delta,
@@ -55,7 +83,7 @@ data class SchedulerState(
     val expanded: Set<CellId>,
     val selection: SchedulerSelection,
     val editSession: SchedulerEditSession? = null,
-    val history: SchedulerHistory,
+    val histories: SchedulerHistories = SchedulerHistories(),
     val nextTaskCounter: Int = 0,
     /** Monotonic suffix for `cell/{listId}/{n}` ids; avoids collisions between paste inserts and auto-expansion. */
     val nextCellCounter: Int = 1,
@@ -137,7 +165,7 @@ data class SchedulerState(
                 titleToTaskIds = SchedulerDomain.buildTitleIndex(tasks),
                 expanded = emptySet(),
                 selection = SchedulerSelection(),
-                history = SchedulerHistory(),
+                histories = SchedulerHistories(),
             )
         }
     }

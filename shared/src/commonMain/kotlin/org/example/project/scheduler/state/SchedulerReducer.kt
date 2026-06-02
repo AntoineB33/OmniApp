@@ -32,10 +32,16 @@ object SchedulerReducer {
             SchedulerIntent.SelectFirstChild -> reduceSelectFirstChild(state)
             SchedulerIntent.CopySelection -> reduceCopySelection(state)
             is SchedulerIntent.PasteTitles -> reducePasteTitles(state, intent.titles)
-            SchedulerIntent.Undo -> undo(state)
-            SchedulerIntent.Redo -> redo(state)
+            SchedulerIntent.Undo -> undo(state, contentCategory(state))
+            SchedulerIntent.Redo -> redo(state, contentCategory(state))
+            SchedulerIntent.UndoSelection -> undo(state, HistoryCategory.Selection)
+            SchedulerIntent.RedoSelection -> redo(state, HistoryCategory.Selection)
         }
     }
+
+    /** Ctrl+Z/Y target the Edit Mode stack while editing, otherwise "the rest" (PRD §5). */
+    private fun contentCategory(state: SchedulerState): HistoryCategory =
+        if (state.editSession != null) HistoryCategory.Edit else HistoryCategory.Main
 
     private fun reduceBeginEdit(state: SchedulerState, intent: SchedulerIntent.BeginEdit): SchedulerState {
         if (!SchedulerDomain.isSelectableCell(state, intent.cellId)) return state
@@ -96,7 +102,7 @@ object SchedulerReducer {
                     applied.editSession?.copy(draftText = text)
                         ?: session.copy(draftText = text),
             )
-        return commitDelta(withSession, editTextDelta(base, text))
+        return commitDelta(withSession, editTextDelta(base, text), HistoryCategory.Edit)
     }
 
     private fun reduceSetEditMode(state: SchedulerState, mode: CellEditMode): SchedulerState {
@@ -130,7 +136,7 @@ object SchedulerReducer {
         val cellId = session.cellId
         if (!SchedulerDomain.canAssignTaskId(state, cellId, taskId)) return state
         val title = state.tasks[taskId]?.title.orEmpty()
-        val assigned = commitDelta(state, assignTaskIdDelta(state, cellId, taskId))
+        val assigned = commitDelta(state, assignTaskIdDelta(state, cellId, taskId), HistoryCategory.Edit)
         val withDraft =
             assigned.copy(
                 editSession =
@@ -141,7 +147,7 @@ object SchedulerReducer {
                     ),
             )
         return if (title != session.draftText) {
-            commitDelta(withDraft, editTextDelta(withDraft, title))
+            commitDelta(withDraft, editTextDelta(withDraft, title), HistoryCategory.Edit)
         } else {
             withDraft
         }
@@ -168,8 +174,12 @@ object SchedulerReducer {
 
     private fun reduceCancelEdit(state: SchedulerState): SchedulerState {
         val session = state.editSession ?: return state
-        val delta = CancelEditDelta(before = state.captureTree(), after = session.treeBefore)
-        return commitDelta(state, delta).copy(editSession = null)
+        // A canceled edit reverts to the pre-session tree and leaves no trace: the ephemeral Edit
+        // Mode history is discarded and no "rest" unit is recorded (PRD §4 Cancel, §5 categories).
+        return state.applyTree(session.treeBefore).copy(
+            editSession = null,
+            histories = state.histories.copy(edit = SchedulerHistory()),
+        )
     }
 
     private fun reduceNavigateSelection(
@@ -198,6 +208,7 @@ object SchedulerReducer {
                             renderVia = neighborOccurrence.renderVia,
                         ),
                 ),
+                HistoryCategory.Selection,
             )
         }
 
@@ -227,6 +238,7 @@ object SchedulerReducer {
                         prior = base,
                     ),
             ),
+            HistoryCategory.Selection,
         )
     }
 
@@ -260,6 +272,7 @@ object SchedulerReducer {
                             ),
                     ),
             ),
+            HistoryCategory.Selection,
         )
     }
 
@@ -284,6 +297,7 @@ object SchedulerReducer {
                 before = next.selection,
                 after = selectionFor(next, main = child, explicitVia = main),
             ),
+            HistoryCategory.Selection,
         )
     }
 
@@ -313,20 +327,25 @@ object SchedulerReducer {
         return TreeMutationDelta(before = before, after = after)
     }
 
-    // PRD §4 Post-Edit Tree Evaluation: exiting Edit Mode removes empty cells (except the
-    // absolute bottom cell of each sublist). The removal is committed as a TreeMutationDelta
-    // so it round-trips with undo, then the session is cleared.
+    // PRD §4 Post-Edit Tree Evaluation: exiting Edit Mode removes empty cells (except the absolute
+    // bottom cell of each sublist). PRD §5 categories: the whole session (keystrokes + cleanup) is
+    // collapsed from the pre-session tree into a single "rest" unit so post-exit Ctrl+Z undoes the
+    // edit as one step, and the ephemeral Edit Mode stack is discarded.
     private fun endEditSession(state: SchedulerState): SchedulerState {
-        val before = state.captureTree()
+        val session = state.editSession
         val cleaned = evaluatePostEditCleanup(state)
+        val before = session?.treeBefore ?: cleaned.captureTree()
         val after = cleaned.captureTree()
         val committed =
             if (after != before) {
-                commitDelta(state, TreeMutationDelta(before = before, after = after))
+                commitDelta(cleaned, TreeMutationDelta(before = before, after = after))
             } else {
-                state
+                cleaned
             }
-        return committed.copy(editSession = null)
+        return committed.copy(
+            editSession = null,
+            histories = committed.histories.copy(edit = SchedulerHistory()),
+        )
     }
 
     private fun reduceClick(state: SchedulerState, intent: SchedulerIntent.ClickCell): SchedulerState {
@@ -526,6 +545,7 @@ object SchedulerReducer {
         return commitDelta(
             next,
             SetSelectionDelta(before = next.selection, after = SchedulerSelection()),
+            HistoryCategory.Selection,
         )
     }
 
@@ -578,6 +598,7 @@ object SchedulerReducer {
                 before = next.selection,
                 after = selectionFor(next, main = newMain, explicitVia = explicitVia),
             ),
+            HistoryCategory.Selection,
         )
     }
 
@@ -599,6 +620,7 @@ object SchedulerReducer {
                         before = state.selection,
                         after = newSelection,
                     ),
+                    HistoryCategory.Selection,
                 )
             }
         val editing = state.editSession
@@ -608,43 +630,73 @@ object SchedulerReducer {
         return next
     }
 
-    private fun undo(state: SchedulerState): SchedulerState {
-        val pointer = state.history.pointer
+    private fun undo(state: SchedulerState, category: HistoryCategory): SchedulerState {
+        val history = state.histories.forCategory(category)
+        val pointer = history.pointer
         if (pointer < 0) return state
-        val unit = state.history.units[pointer]
+        val unit = history.units[pointer]
         val undone = unit.delta.undo(state)
-        return undone.copy(history = state.history.copy(pointer = pointer - 1))
+        val moved =
+            undone.copy(
+                histories = state.histories.withCategory(category, history.copy(pointer = pointer - 1)),
+            )
+        return if (category == HistoryCategory.Edit) syncEditDraft(moved) else moved
     }
 
-    private fun redo(state: SchedulerState): SchedulerState {
-        val next = state.history.pointer + 1
-        if (next >= state.history.units.size) return state
-        val unit = state.history.units[next]
+    private fun redo(state: SchedulerState, category: HistoryCategory): SchedulerState {
+        val history = state.histories.forCategory(category)
+        val next = history.pointer + 1
+        if (next >= history.units.size) return state
+        val unit = history.units[next]
         val redone = unit.delta.redo(state)
-        return redone.copy(history = state.history.copy(pointer = next))
+        val moved =
+            redone.copy(
+                histories = state.histories.withCategory(category, history.copy(pointer = next)),
+            )
+        return if (category == HistoryCategory.Edit) syncEditDraft(moved) else moved
     }
 
-    private fun commitDelta(state: SchedulerState, forward: Delta): SchedulerState {
+    /**
+     * In-session Edit Mode undo/redo replays tree deltas, so the live [SchedulerEditSession.draftText]
+     * (and therefore the text field) must be re-pulled from the edited cell's current title.
+     */
+    private fun syncEditDraft(state: SchedulerState): SchedulerState {
+        val session = state.editSession ?: return state
+        val title = state.cells[session.cellId]?.taskId?.let { state.tasks[it]?.title }.orEmpty()
+        return if (title == session.draftText) {
+            state
+        } else {
+            state.copy(editSession = session.copy(draftText = title))
+        }
+    }
+
+    private fun commitDelta(
+        state: SchedulerState,
+        forward: Delta,
+        category: HistoryCategory = HistoryCategory.Main,
+    ): SchedulerState {
         val newState = forward.redo(state)
+        val history = state.histories.forCategory(category)
 
         val newUnits =
-            if (state.history.pointer == state.history.units.lastIndex) {
-                state.history.units + HistoryUnit(
-                    chronoId = state.history.units.size.toLong(),
+            if (history.pointer == history.units.lastIndex) {
+                history.units + HistoryUnit(
+                    chronoId = history.units.size.toLong(),
                     delta = forward,
                 )
             } else {
-                state.history.units.take(state.history.pointer + 1) + HistoryUnit(
-                    chronoId = (state.history.pointer + 1).toLong(),
+                history.units.take(history.pointer + 1) + HistoryUnit(
+                    chronoId = (history.pointer + 1).toLong(),
                     delta = forward,
                 )
             }
 
         return newState.copy(
-            history = state.history.copy(
-                pointer = state.history.pointer + 1,
-                units = newUnits,
-            ),
+            histories =
+                state.histories.withCategory(
+                    category,
+                    history.copy(pointer = history.pointer + 1, units = newUnits),
+                ),
         )
     }
 }
@@ -1041,15 +1093,6 @@ private data class ToggleExpandDelta(
 }
 
 private data class TreeMutationDelta(
-    val before: TreeSnapshot,
-    val after: TreeSnapshot,
-) : Delta {
-    override fun undo(state: SchedulerState): SchedulerState = state.applyTree(before)
-
-    override fun redo(state: SchedulerState): SchedulerState = state.applyTree(after)
-}
-
-private data class CancelEditDelta(
     val before: TreeSnapshot,
     val after: TreeSnapshot,
 ) : Delta {
