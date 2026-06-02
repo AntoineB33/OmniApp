@@ -27,7 +27,7 @@ The application maintains a dual-state selection model: **Main Selection** (a si
 * **Single Click & Drag:** * The initial click establishes the *Main Selection*.
   * While dragging without releasing the click, the *Selected Cells List* dynamically spans all visible cells from the Main Selection to the cell currently closest to the cursor.
 * **Double Click & Drag:** * If the cell the user double-clicks on is selected and all the selected cells are sequential and in the same sublist, the whole selection is moved. Otherwise, the double-click empties the *Selected Cells List* then establishes the *Main Selection*.
-  * While dragging without releasing the click, a horizontal blue line indicates where the selection will be moved if the user releases the click.
+  * While dragging without releasing the click, the cell gets blurred and a horizontal blue line indicates where the selection will be placed if the user releases the click. If the changes happen in sub-trees that are mirrored elsewhere (because of sharing `taskIds`), then the change is synced only when the move is finished (the blue line and blur aren't mirrored).
 * **Ctrl + Click:** The clicked cell becomes the *Main Selection* (standard OS `Ctrl` behavior applies for isolated multi-selection).
 * **Shift + Click / Ctrl + Shift + Click:** The *Selected Cells List* expands to include all visible cells sequentially from the current *Main Selection* to the newly clicked cell.
 * **Up / Left:** Resets selection, and if there is a selectable cell above the main selection, makes it the main selection. Doesn't work when in Editing Mode.

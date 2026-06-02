@@ -37,12 +37,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -58,14 +61,14 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
-import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
-import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed as pointerShiftPressed
-import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
@@ -98,6 +101,20 @@ private const val INDENT_STEP_DP = 16
 /** Horizontal offset (dp) of a level's guide-line, aligned under that ancestor's expand arrow. */
 private const val GUIDE_LINE_OFFSET_DP = 14
 
+/** Blur radius (dp) applied to cells while they are being drag-moved (PRD §3 Double Click & Drag). */
+private val MOVE_DRAG_BLUR_DP = 2.dp
+
+/**
+ * Pending drop location during a double-click & drag move. Keyed by [renderVia] as well as
+ * [cellId] so the blue drop line is shown only on the dragged occurrence and not on mirrored
+ * copies of the same cell expanded elsewhere (PRD §3: "the blue line and blur aren't mirrored").
+ */
+private data class MoveDropTarget(
+    val cellId: CellId,
+    val insertBefore: Boolean,
+    val renderVia: CellId?,
+)
+
 @Composable
 fun TaskSchedulerScreen(
     modifier: Modifier = Modifier,
@@ -107,9 +124,25 @@ fun TaskSchedulerScreen(
     val state by vm.state.collectAsState()
     val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
     val focusRequester = remember { FocusRequester() }
-    var dragAnchor by remember { mutableStateOf<CellId?>(null) }
     var moveDragActive by remember { mutableStateOf(false) }
-    var moveDropTarget by remember { mutableStateOf<Pair<CellId, Boolean>?>(null) }
+    var moveDropTarget by remember { mutableStateOf<MoveDropTarget?>(null) }
+
+    // Vertical window bounds of each visible row, reported via onGloballyPositioned. A press-drag
+    // only delivers move events to the row where the pointer went down (Compose retains the hit
+    // path while a button is held), so the originating row resolves the cell under the cursor from
+    // these shared bounds rather than relying on per-cell hover events that never fire mid-drag.
+    val rowBounds = remember { mutableStateMapOf<CellId, ClosedFloatingPointRange<Float>>() }
+    val resolveRowAt: (Float) -> Pair<CellId, Boolean>? = resolve@{ windowY ->
+        var last: Pair<CellId, Boolean>? = null
+        for (cellId in visibleOrder) {
+            val bounds = rowBounds[cellId] ?: continue
+            if (windowY < bounds.start) return@resolve last ?: (cellId to true)
+            val mid = (bounds.start + bounds.endInclusive) / 2f
+            last = cellId to (windowY < mid)
+            if (windowY <= bounds.endInclusive) return@resolve last
+        }
+        last
+    }
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
@@ -245,24 +278,21 @@ fun TaskSchedulerScreen(
                 renderVia = null,
                 depth = 0,
                 visibleOrder = visibleOrder,
-                dragAnchor = dragAnchor,
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
-                onDragAnchorChange = { dragAnchor = it },
-                onMoveDragStart = {
-                    moveDragActive = true
-                    dragAnchor = null
-                },
-                onMoveDropHover = { target, insertBefore ->
-                    moveDropTarget = target to insertBefore
+                resolveRowAt = resolveRowAt,
+                onRowBounds = { cellId, top, bottom -> rowBounds[cellId] = top..bottom },
+                onMoveDragStart = { moveDragActive = true },
+                onMoveDropHover = { target, insertBefore, via ->
+                    moveDropTarget = MoveDropTarget(target, insertBefore, via)
                 },
                 onMoveDragEnd = {
                     val target = moveDropTarget
                     if (moveDragActive && target != null) {
                         vm.dispatch(
                             SchedulerIntent.MoveSelectedCells(
-                                targetCellId = target.first,
-                                insertBefore = target.second,
+                                targetCellId = target.cellId,
+                                insertBefore = target.insertBefore,
                             ),
                         )
                     }
@@ -319,12 +349,12 @@ private fun CellListSection(
     renderVia: CellId?,
     depth: Int,
     visibleOrder: List<CellId>,
-    dragAnchor: CellId?,
     moveDragActive: Boolean,
-    moveDropTarget: Pair<CellId, Boolean>?,
-    onDragAnchorChange: (CellId?) -> Unit,
+    moveDropTarget: MoveDropTarget?,
+    resolveRowAt: (Float) -> Pair<CellId, Boolean>?,
+    onRowBounds: (CellId, Float, Float) -> Unit,
     onMoveDragStart: () -> Unit,
-    onMoveDropHover: (CellId, Boolean) -> Unit,
+    onMoveDropHover: (CellId, Boolean, CellId?) -> Unit,
     onMoveDragEnd: () -> Unit,
     onIntent: (SchedulerIntent) -> Unit,
 ) {
@@ -347,6 +377,11 @@ private fun CellListSection(
         val canMoveFromCell =
             isInActiveSelection &&
                 SchedulerDomain.canDragMoveSelection(state, state.selection)
+        // Blur the cells being dragged. Scope it to this occurrence via the render-via–aware
+        // highlight so mirrored copies of the same cell stay sharp (PRD §3: blur isn't mirrored).
+        val isBeingMoved =
+            moveDragActive && isInSelectionRange &&
+                SchedulerDomain.canDragMoveSelection(state, state.selection)
 
         TaskRow(
             depth = depth,
@@ -358,9 +393,16 @@ private fun CellListSection(
             isEditing = isEditing,
             hasChildren = hasChildren,
             expanded = expanded,
-            moveDropBefore = moveDropTarget?.first == cellId && moveDropTarget.second,
-            moveDropAfter = moveDropTarget?.first == cellId && !moveDropTarget.second,
+            moveDropBefore =
+                moveDropTarget?.cellId == cellId &&
+                    moveDropTarget.renderVia == renderVia &&
+                    moveDropTarget.insertBefore,
+            moveDropAfter =
+                moveDropTarget?.cellId == cellId &&
+                    moveDropTarget.renderVia == renderVia &&
+                    !moveDropTarget.insertBefore,
             canMoveFromCell = canMoveFromCell,
+            isBeingMoved = isBeingMoved,
             onClick = { clicked, ctrl, shift, forceClearMulti ->
                 if (!selectable) return@TaskRow
                 onIntent(
@@ -384,11 +426,13 @@ private fun CellListSection(
                     ),
                 )
             },
-            dragAnchor = dragAnchor,
             moveDragActive = moveDragActive,
-            onDragAnchorChange = onDragAnchorChange,
+            resolveRowAt = resolveRowAt,
+            onRowBounds = onRowBounds,
             onMoveDragStart = onMoveDragStart,
-            onMoveDropHover = onMoveDropHover,
+            onMoveDropHover = { target, insertBefore ->
+                onMoveDropHover(target, insertBefore, renderVia)
+            },
             onMoveDragEnd = onMoveDragEnd,
             onDoubleClick = {
                 if (selectable && !isEditing) {
@@ -427,10 +471,10 @@ private fun CellListSection(
                 renderVia = cellId,
                 depth = depth + 1,
                 visibleOrder = visibleOrder,
-                dragAnchor = dragAnchor,
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
-                onDragAnchorChange = onDragAnchorChange,
+                resolveRowAt = resolveRowAt,
+                onRowBounds = onRowBounds,
                 onMoveDragStart = onMoveDragStart,
                 onMoveDropHover = onMoveDropHover,
                 onMoveDragEnd = onMoveDragEnd,
@@ -595,11 +639,12 @@ private fun TaskRow(
     moveDropBefore: Boolean,
     moveDropAfter: Boolean,
     canMoveFromCell: Boolean,
+    isBeingMoved: Boolean,
     onClick: (CellId, ctrl: Boolean, shift: Boolean, forceClearMulti: Boolean) -> Unit,
     onDragSelect: (anchor: CellId, hover: CellId) -> Unit,
-    dragAnchor: CellId?,
     moveDragActive: Boolean,
-    onDragAnchorChange: (CellId?) -> Unit,
+    resolveRowAt: (Float) -> Pair<CellId, Boolean>?,
+    onRowBounds: (CellId, Float, Float) -> Unit,
     onMoveDragStart: () -> Unit,
     onMoveDropHover: (CellId, Boolean) -> Unit,
     onMoveDragEnd: () -> Unit,
@@ -610,8 +655,10 @@ private fun TaskRow(
     editMenus: (@Composable () -> Unit)?,
 ) {
     val editFocusRequester = remember { FocusRequester() }
-    val density = LocalDensity.current
-    val rowHeightPx = with(density) { 28.dp.toPx() }
+    // Layout coordinates of this row, used to convert in-row pointer positions to window space so
+    // the originating row can map an ongoing drag to the cell currently under the cursor.
+    val rowCoordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val currentResolveRowAt by rememberUpdatedState(resolveRowAt)
     LaunchedEffect(isEditing) {
         if (isEditing) editFocusRequester.requestFocus()
     }
@@ -630,12 +677,29 @@ private fun TaskRow(
         }
     val textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface)
 
+    val currentCanMoveFromCell by rememberUpdatedState(canMoveFromCell)
+
     @OptIn(ExperimentalComposeUiApi::class)
     fun selectionPointerModifier(): Modifier {
         if (!selectable || isEditing) return Modifier
         return Modifier
-            .pointerInput(cellId, canMoveFromCell, moveDragActive) {
+            .onGloballyPositioned { coords ->
+                rowCoordinates.value = coords
+                val top = coords.positionInWindow().y
+                onRowBounds(cellId, top, top + coords.size.height)
+            }
+            // Keyed only by cellId so selection-driven flags (which change during the gesture's own
+            // clicks) never restart and cancel an in-progress drag; freshness comes from the
+            // rememberUpdatedState snapshots above.
+            .pointerInput(cellId) {
                 val doubleTapTimeout = viewConfiguration.doubleTapTimeoutMillis
+                val touchSlop = viewConfiguration.touchSlop
+
+                fun windowYOf(change: PointerInputChange): Float? =
+                    rowCoordinates.value
+                        ?.takeIf { it.isAttached }
+                        ?.localToWindow(change.position)?.y
+
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
@@ -644,62 +708,77 @@ private fun TaskRow(
                     val shift = modifiers.pointerShiftPressed
 
                     onClick(cellId, ctrl, shift, false)
-                    if (!ctrl && !shift && !moveDragActive) {
-                        onDragAnchorChange(cellId)
+
+                    // Ctrl / Shift clicks never begin a drag — just wait for release.
+                    if (ctrl || shift) {
+                        waitForUpOrCancellation()
+                        return@awaitEachGesture
                     }
 
-                    val up = waitForUpOrCancellation()
-                    if (up != null && !ctrl && !shift) {
-                        val secondDown =
-                            withTimeoutOrNull(doubleTapTimeout) {
-                                awaitFirstDown(requireUnconsumed = false)
-                            }
-                        if (secondDown != null) {
-                            secondDown.consume()
-                            onDragAnchorChange(null)
-                            if (canMoveFromCell) {
-                                val touchSlop = viewConfiguration.touchSlop
-                                var traveled = 0f
-                                var moveStarted = false
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    if (!event.changes.any { it.pressed }) {
-                                        if (moveStarted) {
-                                            onMoveDragEnd()
-                                        } else {
-                                            onClick(cellId, false, false, true)
-                                            onDoubleClick()
-                                        }
-                                        break
-                                    }
-                                    traveled +=
-                                        event.changes.fold(0f) { acc, change ->
-                                            acc + change.positionChange().getDistance()
-                                        }
-                                    if (!moveStarted && traveled > touchSlop) {
-                                        moveStarted = true
-                                        onMoveDragStart()
-                                    }
-                                }
-                            } else {
-                                onClick(cellId, false, false, true)
-                                waitForUpOrCancellation()
-                                onDoubleClick()
+                    // First press: dragging past the touch slop selects a range from this cell
+                    // (the anchor) to the cell under the cursor (PRD §3 Single Click & Drag).
+                    var dragged = false
+                    var traveled = 0f
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (!event.changes.any { it.pressed }) break
+                        val change =
+                            event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
+                        traveled += change.positionChange().getDistance()
+                        if (traveled > touchSlop) {
+                            dragged = true
+                            change.consume()
+                            windowYOf(change)?.let { currentResolveRowAt(it) }?.let { (target, _) ->
+                                onDragSelect(cellId, target)
                             }
                         }
                     }
-                    onDragAnchorChange(null)
-                }
-            }
-            .onPointerEvent(PointerEventType.Move) { event ->
-                if (moveDragActive && event.buttons.isPrimaryPressed) {
-                    val y = event.changes.firstOrNull()?.position?.y ?: return@onPointerEvent
-                    onMoveDropHover(cellId, y < rowHeightPx / 2f)
-                    return@onPointerEvent
-                }
-                val anchor = dragAnchor ?: return@onPointerEvent
-                if (event.buttons.isPrimaryPressed && anchor != cellId) {
-                    onDragSelect(anchor, cellId)
+                    if (dragged) return@awaitEachGesture
+
+                    // No drag: a second press within the timeout makes it a double-click.
+                    val secondDown =
+                        withTimeoutOrNull(doubleTapTimeout) {
+                            awaitFirstDown(requireUnconsumed = false)
+                        } ?: return@awaitEachGesture
+                    secondDown.consume()
+
+                    // Plain double-click on a single / non-movable cell enters Edit Mode (PRD §4).
+                    if (!currentCanMoveFromCell) {
+                        onClick(cellId, false, false, true)
+                        waitForUpOrCancellation()
+                        onDoubleClick()
+                        return@awaitEachGesture
+                    }
+
+                    // Double-click & drag on a movable selection: dragging past the slop blurs the
+                    // cells and tracks the blue drop line; release commits the move (PRD §3).
+                    var moveStarted = false
+                    var moveTraveled = 0f
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (!event.changes.any { it.pressed }) {
+                            if (moveStarted) {
+                                onMoveDragEnd()
+                            } else {
+                                onClick(cellId, false, false, true)
+                                onDoubleClick()
+                            }
+                            break
+                        }
+                        val change =
+                            event.changes.firstOrNull { it.id == secondDown.id }
+                                ?: event.changes.first()
+                        moveTraveled += change.positionChange().getDistance()
+                        if (!moveStarted && moveTraveled > touchSlop) {
+                            moveStarted = true
+                            onMoveDragStart()
+                        }
+                        if (moveStarted) {
+                            change.consume()
+                            windowYOf(change)?.let { currentResolveRowAt(it) }
+                                ?.let { (target, before) -> onMoveDropHover(target, before) }
+                        }
+                    }
                 }
             }
     }
@@ -717,6 +796,8 @@ private fun TaskRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                // PRD §3: the dragged cells are blurred while a double-click & drag move is active.
+                .then(if (isBeingMoved) Modifier.blur(MOVE_DRAG_BLUR_DP) else Modifier)
                 // PRD §2: guide-lines on the left illustrate the parent-child hierarchy. One
                 // vertical line is drawn in the indentation gutter under each expanded ancestor's
                 // arrow; they only appear beneath expanded cells (collapsed cells hide their rows).
