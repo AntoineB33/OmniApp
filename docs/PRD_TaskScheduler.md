@@ -107,8 +107,16 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
   * *Existing DB:* Loads from local persistence. If the last history unit is an incomplete "Edit Mode" state, it evaluates as a canceled edit (`Delete` behavior).
 * **History Architecture (Deltas):**
   * Every mutation generates a History Unit containing: Exact Timestamp, Chrono-ID (for deterministic sorting of simultaneous events), and a **Delta**. There are three categories of History Units: change in Edition Mode, change of selection state and the rest. Each category has a list of History Units and a history pointer.
-  * **Delta Storage:** Stores *only* the minimum data required to revert the Task Tree and Selection State. (e.g., keystrokes in Edit Mode generate a Delta with cell coordinates, previous string, and current edit mode). There are several types: change in a list of child `taskIds` in Task Tree, selection change, expansion change, task title change, priority weight change...
+  * **Delta Storage:** Stores *only* the minimum data required to revert the Task Tree and Selection State. (e.g., keystrokes in Edit Mode generate a Delta with cell coordinates, previous string, and current edit mode). There are several types: change in a list of child `taskIds` in Task Tree, selection change, expansion change, task title change, priority weight column moved, priority weight value changed...
 * **Undo / Redo:**
   * **Undo:** The history pointer decrements. The Delta is applied to the state, and the Delta *inside the unit* is mathematically inverted to represent the forward-change (Redo). For selection history, undo is `Alt + Left` and redo is `Alt + Right`. For the other history categories, undo is `Ctrl + Z` and redo is `Ctrl + Y`.
   * **Branching:** If an Undo is performed followed by a *new* mutation, all forward (Redo) history units are orphaned/discarded.
 * **Persistence:** State changes (Tree, occurrences, parent objects, selection, and history) are continuously streamed to the local multi-platform database.
+
+## 7. Lateral menu
+* **Page Navigation:** The page navigation button that is persistent through all feature pages is the first element of the left side menu (the button is at the same place in all feature pages but not necessarily in a lateral menu).
+* **Calendar:** A button allows to toggle the display of the calendar in a floating window over the tree (not over the left side menu).
+
+## 7. Calendar
+* **Current Week:** The calendar window shows the week with the same style as Google Calendar.
+* **Day Selection:** When the calendar is displayed, the lateral menu shows the days in the current month and a way to select other day and navigate to other months. This mirrors what is found in Google Calendar.

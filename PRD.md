@@ -12,7 +12,7 @@ OmniApp is a unified, multi-platform workspace application. The initial release 
 * **Desktop-First Execution:** All interaction models (mouse events, keyboard modifiers, complex selections) must be perfectly executed on Windows Desktop before adapting the UX for Web, Android, and iOS.
 
 ## 3. Global UI/UX Requirements
-* **Page Navigation:** The top right corner of the application must feature a persistent, accessible button triggering a drop-down menu. This menu serves as the primary routing mechanism to switch between different application pages (e.g., "Task Scheduler", and future modules).
+* **Page Navigation:** The top left corner of the application must feature a persistent, accessible button triggering a drop-down menu. This menu serves as the primary routing mechanism to switch between different application pages (e.g., "Task Scheduler", and future modules).
 * **Responsive Layout:** While optimized for desktop, the UI must gracefully scale to mobile viewports using Compose layout constraints.
 
 ## 4. Technical Constraints & Foundations
