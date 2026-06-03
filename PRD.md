@@ -1,7 +1,7 @@
 # Product Requirements Document (Core)
 
 **Product:** OmniApp  
-**Version:** 1.0.0  
+**Version:** 0.5.0  
 **Phase:** Core Framework & Initial Module (Task Scheduler)
 
 ## 1. Executive Summary
@@ -20,7 +20,8 @@ OmniApp is a unified, multi-platform workspace application. The initial release 
 * **Quality Assurance:** Behavior-Driven Development (BDD) / Test-Driven Development (TDD). No UI code is to be merged without corresponding ViewModel state tests passing.
 
 ## 5. Future Roadmap
-* **v1.0.0+:** Priority assignment (absolute percentage, relative percentage, hours per day).
+* **v0.5.0:** Priority assignment (absolute percentage, relative percentage, hours per day).
+* **v1.0.0+:** Automatically notifies the user when he/she need to switch to which task to satisfy the task priorities.
 * **v2.0.0+:** Additional specialized pages accessible via the top-right navigation dropdown.
 * **v3.0.0:** Cloud synchronization and real-time collaboration.
 

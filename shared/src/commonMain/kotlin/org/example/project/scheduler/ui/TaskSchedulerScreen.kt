@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
@@ -63,6 +64,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
@@ -460,8 +462,8 @@ private fun CellListSection(
     val priorityColumnPx = with(density) { priorityColumnWidth.toPx() }
     val weightTableActive = weightTableListId == listId
 
-    // PRD §5: header row of the priority weight table — one editable column weight each, aligned
-    // above the cell rows, with a right-click menu and double-click-drag reordering.
+    // PRD §5: header of the priority weight table — a row of grab handles above one editable column
+    // weight each, aligned above the cell rows. Handles drag-reorder columns and host the menu.
     if (weightTableActive) {
         WeightTableHeader(
             depth = depth,
@@ -842,10 +844,44 @@ private fun ColumnDropLine() {
 }
 
 /**
- * PRD §5 priority weight table header: one editable column weight per column (header step 0.1,
- * clamped 0..1). Right-clicking a column reveals "Add column to the right", "Reset to default" and
- * (unless it is the only column) "Delete column". A column can be double-click-dragged to reorder:
- * it gets a grey background and a vertical blue line shows the drop position.
+ * PRD §5: grab handle sitting above a weight-table column. It is a thick, raised bar with a grip
+ * pattern so the user can tell it can be grabbed (drag to reorder) and right-clicked (column menu).
+ */
+@Composable
+private fun ColumnDragHandle(active: Boolean) {
+    val accent = if (active) SheetColors.activeBorder else SheetColors.guideLine
+    Box(
+        modifier = Modifier
+            .width(WEIGHT_COLUMN_WIDTH)
+            .padding(horizontal = 2.dp)
+            .height(20.dp)
+            .background(
+                if (active) SheetColors.moveDragFill else SheetColors.nonSelectableFill,
+                RoundedCornerShape(4.dp),
+            )
+            .border(1.dp, accent, RoundedCornerShape(4.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        // Grip pattern (three short bars) — the conventional "draggable" affordance.
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            repeat(3) {
+                Box(
+                    modifier = Modifier
+                        .width(22.dp)
+                        .height(2.dp)
+                        .background(accent, RoundedCornerShape(1.dp)),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * PRD §5 priority weight table header: a row of grab handles sits right above the header row of
+ * editable column weights (each weight clamped 0..1, step 0.1). Grabbing a handle and dragging
+ * reorders that column — it gets a grey background and a vertical blue line shows the drop
+ * position, with the move committed on release. Right-clicking a handle reveals "Add column to the
+ * right", "Reset to default" and (unless it is the only column) "Delete column".
  */
 @Composable
 private fun WeightTableHeader(
@@ -871,101 +907,128 @@ private fun WeightTableHeader(
         return weightColumns.size
     }
 
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = (depth * INDENT_STEP_DP).dp + 4.dp, top = 2.dp, bottom = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Spacer(Modifier.width(leadingWidth))
-        weightColumns.forEachIndexed { column, weight ->
-            if (draggedColumn != null && dropIndex == column) ColumnDropLine()
-            var menuOpen by remember { mutableStateOf(false) }
-            Box(
-                modifier = Modifier
-                    .onGloballyPositioned { coords ->
-                        val x = coords.positionInWindow().x
-                        columnBounds[column] = x..(x + coords.size.width)
-                    }
-                    .background(
-                        if (draggedColumn == column) SheetColors.moveDragFill else Color.Transparent,
-                    )
-                    .pointerInput(column, weightColumns.size) {
-                        val timeout = viewConfiguration.doubleTapTimeoutMillis
-                        val slop = viewConfiguration.touchSlop
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            if (currentEvent.buttons.isSecondaryPressed) {
-                                menuOpen = true
-                                return@awaitEachGesture
+        // PRD §5: handle row — grab a handle to drag-reorder its column, right-click for the menu.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.width(leadingWidth))
+            weightColumns.forEachIndexed { column, _ ->
+                if (draggedColumn != null && dropIndex == column) ColumnDropLine()
+                var menuOpen by remember { mutableStateOf(false) }
+                Box(
+                    modifier = Modifier
+                        .background(
+                            if (draggedColumn == column) SheetColors.moveDragFill else Color.Transparent,
+                        )
+                        .pointerInput(column, weightColumns.size) {
+                            val slop = viewConfiguration.touchSlop
+                            awaitPointerEventScope {
+                                while (true) {
+                                    // Wait for a button press. Inspecting the Press event's
+                                    // `buttons` directly is the commonMain-safe way to tell a
+                                    // right-click from a left-click (awaitFirstDown can't).
+                                    var press = awaitPointerEvent()
+                                    while (press.type != PointerEventType.Press) {
+                                        press = awaitPointerEvent()
+                                    }
+                                    if (press.buttons.isSecondaryPressed) {
+                                        // PRD §5: right-click opens the column menu. Consume so the
+                                        // freshly opened popup isn't dismissed by the same click.
+                                        press.changes.forEach { it.consume() }
+                                        menuOpen = true
+                                        continue
+                                    }
+                                    // Left press → drag-reorder this column.
+                                    val down = press.changes.first()
+                                    down.consume()
+                                    var started = false
+                                    var traveled = 0f
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        if (!event.changes.any { it.pressed }) {
+                                            if (started) dropIndex?.let { onMoveColumn(column, it) }
+                                            draggedColumn = null
+                                            dropIndex = null
+                                            break
+                                        }
+                                        val change =
+                                            event.changes.firstOrNull { it.id == down.id }
+                                                ?: event.changes.first()
+                                        traveled += change.positionChange().getDistance()
+                                        if (!started && traveled > slop) {
+                                            started = true
+                                            draggedColumn = column
+                                        }
+                                        if (started) {
+                                            change.consume()
+                                            val windowX =
+                                                (columnBounds[column]?.start ?: 0f) + change.position.x
+                                            dropIndex = resolveDrop(windowX)
+                                        }
+                                    }
+                                }
                             }
-                            if (waitForUpOrCancellation() == null) return@awaitEachGesture
-                            val secondDown =
-                                withTimeoutOrNull(timeout) { awaitFirstDown(requireUnconsumed = false) }
-                                    ?: return@awaitEachGesture
-                            secondDown.consume()
-                            var started = false
-                            var traveled = 0f
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                if (!event.changes.any { it.pressed }) {
-                                    if (started) dropIndex?.let { onMoveColumn(column, it) }
-                                    draggedColumn = null
-                                    dropIndex = null
-                                    break
-                                }
-                                val change =
-                                    event.changes.firstOrNull { it.id == secondDown.id }
-                                        ?: event.changes.first()
-                                traveled += change.positionChange().getDistance()
-                                if (!started && traveled > slop) {
-                                    started = true
-                                    draggedColumn = column
-                                }
-                                if (started) {
-                                    change.consume()
-                                    val windowX = (columnBounds[column]?.start ?: 0f) + change.position.x
-                                    dropIndex = resolveDrop(windowX)
-                                }
-                            }
-                        }
-                    },
-            ) {
-                // PRD §5: a column header weight can only span 0..1 and steps by 0.1.
-                WeightInputCell(
-                    value = weight,
-                    onSet = { onSetColumnWeight(column, it) },
-                    maxValue = 1.0,
-                    step = 0.1,
-                )
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Add column to the right") },
-                        onClick = {
-                            menuOpen = false
-                            onAddColumn(column + 1)
                         },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Reset to default") },
-                        onClick = {
-                            menuOpen = false
-                            onResetColumn(column)
-                        },
-                    )
-                    if (weightColumns.size > 1) {
+                ) {
+                    ColumnDragHandle(active = draggedColumn == column)
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
-                            text = { Text("Delete column") },
+                            text = { Text("Add column to the right") },
                             onClick = {
                                 menuOpen = false
-                                onDeleteColumn(column)
+                                onAddColumn(column + 1)
                             },
                         )
+                        DropdownMenuItem(
+                            text = { Text("Reset to default") },
+                            onClick = {
+                                menuOpen = false
+                                onResetColumn(column)
+                            },
+                        )
+                        if (weightColumns.size > 1) {
+                            DropdownMenuItem(
+                                text = { Text("Delete column") },
+                                onClick = {
+                                    menuOpen = false
+                                    onDeleteColumn(column)
+                                },
+                            )
+                        }
                     }
                 }
             }
+            if (draggedColumn != null && dropIndex == weightColumns.size) ColumnDropLine()
         }
-        if (draggedColumn != null && dropIndex == weightColumns.size) ColumnDropLine()
+        // PRD §5: header row of editable column weights, aligned above the cell rows.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.width(leadingWidth))
+            weightColumns.forEachIndexed { column, weight ->
+                if (draggedColumn != null && dropIndex == column) ColumnDropLine()
+                Box(
+                    modifier = Modifier
+                        .onGloballyPositioned { coords ->
+                            val x = coords.positionInWindow().x
+                            columnBounds[column] = x..(x + coords.size.width)
+                        }
+                        .background(
+                            if (draggedColumn == column) SheetColors.moveDragFill else Color.Transparent,
+                        ),
+                ) {
+                    // PRD §5: a column header weight can only span 0..1 and steps by 0.1.
+                    WeightInputCell(
+                        value = weight,
+                        onSet = { onSetColumnWeight(column, it) },
+                        maxValue = 1.0,
+                        step = 0.1,
+                    )
+                }
+            }
+            if (draggedColumn != null && dropIndex == weightColumns.size) ColumnDropLine()
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 # Task Scheduler Module - Product Requirements
 
-**Version:** 1.0.0
+**Version:** 0.5.0
 
 ## 1. Overview
 
@@ -92,7 +92,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **priority weight table:** 
   * When the user clicks on the absolute priority percentage, it toggles the display of the priority weight table. This table is placed at the right of the percentage, and has its rows aligned to the cells of each cells of the sub-list. It is a table of input fields that only accepts numbers and comma and has increment and decrement buttons to add or remove 1 to the number (0.1 for the header row). The two buttons are placed one above the other in a vertical column at the right side of the number. The header row shows the weight of each column. The weight of each column can only span from 0 to 1 included, the others from 0 to infinity.
   * The priority weight of each cell is calculated by dividing the cell's value by the column's total sum, and then multiplying that result by the column's absolute weight. The absolute weight of the n-th column is its nominal header weight multiplied by a factor, A, where A is one minus the sum of the absolute weights of all preceding columns.
-  * Right-clicking on a column shows a contextual menu with three options: "Add column to the right", "Reset to default" and "Delete column". By default, there is one column with every field set to 1. Each added column has by default every field set to 0. If there is only one column the "Delete Column" option doesn't appear. The user can double-click a column and drag it to place it somewhere else in the table when the click is released. While the user drags, the column gets a grey background and a vertical blue line appears between two consecutive columns to indicate where the column will be placed when the user releases the click.
+  * Right above the header row, handles allow to grab the whole column and drag it to place it somewhere else in the table when the click is released. While the user drags, the column gets a grey background and a vertical blue line appears between two consecutive columns to indicate where the column will be placed when the user releases the click. Right-clicking the handle shows a contextual menu with three options: "Add column to the right", "Reset to default" and "Delete column". By default, there is one column with every field set to 1. Each added column has by default every field set to 0. If there is only one column the "Delete Column" option doesn't appear.
   * Selecting a cell outside of the sub-list, or any cell entering Edit Mode makes the table disappear.
 * **priority weight:** If the priority weight field is displayed for the selected cell and the user types something, the cell doesn't enter Edit Mode (to avoid conflict with the priority weight typing). The priority weight can be 0.
 
