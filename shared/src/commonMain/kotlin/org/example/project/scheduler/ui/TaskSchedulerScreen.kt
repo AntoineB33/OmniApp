@@ -15,9 +15,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -462,6 +464,12 @@ private fun CellListSection(
     val priorityColumnPx = with(density) { priorityColumnWidth.toPx() }
     val weightTableActive = weightTableListId == listId
 
+    // PRD §5: drag-reorder state is hoisted here (above both the header and the cell rows) so the
+    // whole moved column — header handle, header weight and every cell row — shows the grey
+    // background, and the blue drop line runs all the way down the column.
+    var draggedColumn by remember(listId) { mutableStateOf<Int?>(null) }
+    var columnDropIndex by remember(listId) { mutableStateOf<Int?>(null) }
+
     // PRD §5: header of the priority weight table — a row of grab handles above one editable column
     // weight each, aligned above the cell rows. Handles drag-reorder columns and host the menu.
     if (weightTableActive) {
@@ -469,6 +477,10 @@ private fun CellListSection(
             depth = depth,
             leadingWidth = 20.dp + priorityColumnWidth + PERCENT_COLUMN_WIDTH,
             weightColumns = list.weightColumns,
+            draggedColumn = draggedColumn,
+            dropIndex = columnDropIndex,
+            onDraggedColumnChange = { draggedColumn = it },
+            onDropIndexChange = { columnDropIndex = it },
             onSetColumnWeight = { column, weight ->
                 onIntent(SchedulerIntent.SetPriorityColumnWeight(listId, column, weight))
             },
@@ -533,6 +545,8 @@ private fun CellListSection(
             weightTableActive = weightTableActive,
             weightColumnCount = list.weightColumns.size,
             cellWeights = cell.priorityWeights,
+            draggedColumn = draggedColumn,
+            columnDropIndex = columnDropIndex,
             onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
             onSetCellWeight = { column, value ->
                 onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, value))
@@ -831,14 +845,19 @@ private fun WeightStepButton(label: String, onClick: () -> Unit) {
     }
 }
 
-/** Vertical blue line marking where a dragged column will be dropped (PRD §5). */
+/**
+ * Vertical blue line marking where a dragged column will be dropped (PRD §5). It fills the height
+ * of whichever row it sits in (with a minimum) so the per-row segments stack into one continuous
+ * line running all the way down the column.
+ */
 @Composable
 private fun ColumnDropLine() {
     Box(
         modifier = Modifier
             .padding(horizontal = 1.dp)
+            .fillMaxHeight()
+            .heightIn(min = 22.dp)
             .width(2.dp)
-            .height(22.dp)
             .background(SheetColors.activeBorder),
     )
 }
@@ -888,6 +907,10 @@ private fun WeightTableHeader(
     depth: Int,
     leadingWidth: Dp,
     weightColumns: List<Double>,
+    draggedColumn: Int?,
+    dropIndex: Int?,
+    onDraggedColumnChange: (Int?) -> Unit,
+    onDropIndexChange: (Int?) -> Unit,
     onSetColumnWeight: (Int, Double) -> Unit,
     onAddColumn: (Int) -> Unit,
     onResetColumn: (Int) -> Unit,
@@ -895,8 +918,6 @@ private fun WeightTableHeader(
     onMoveColumn: (Int, Int) -> Unit,
 ) {
     val columnBounds = remember { mutableStateMapOf<Int, ClosedFloatingPointRange<Float>>() }
-    var draggedColumn by remember { mutableStateOf<Int?>(null) }
-    var dropIndex by remember { mutableStateOf<Int?>(null) }
 
     fun resolveDrop(windowX: Float): Int {
         for (c in weightColumns.indices) {
@@ -941,17 +962,21 @@ private fun WeightTableHeader(
                                         menuOpen = true
                                         continue
                                     }
-                                    // Left press → drag-reorder this column.
+                                    // Left press → drag-reorder this column. Track the live drop
+                                    // target locally (the hoisted state, captured at launch, would
+                                    // be stale inside this long-running gesture) and mirror it out
+                                    // through the callbacks so the whole column re-renders.
                                     val down = press.changes.first()
                                     down.consume()
                                     var started = false
                                     var traveled = 0f
+                                    var localDrop: Int? = null
                                     while (true) {
                                         val event = awaitPointerEvent()
                                         if (!event.changes.any { it.pressed }) {
-                                            if (started) dropIndex?.let { onMoveColumn(column, it) }
-                                            draggedColumn = null
-                                            dropIndex = null
+                                            if (started) localDrop?.let { onMoveColumn(column, it) }
+                                            onDraggedColumnChange(null)
+                                            onDropIndexChange(null)
                                             break
                                         }
                                         val change =
@@ -960,13 +985,14 @@ private fun WeightTableHeader(
                                         traveled += change.positionChange().getDistance()
                                         if (!started && traveled > slop) {
                                             started = true
-                                            draggedColumn = column
+                                            onDraggedColumnChange(column)
                                         }
                                         if (started) {
                                             change.consume()
                                             val windowX =
                                                 (columnBounds[column]?.start ?: 0f) + change.position.x
-                                            dropIndex = resolveDrop(windowX)
+                                            localDrop = resolveDrop(windowX)
+                                            onDropIndexChange(localDrop)
                                         }
                                     }
                                 }
@@ -1054,6 +1080,8 @@ private fun TaskRow(
     weightTableActive: Boolean,
     weightColumnCount: Int,
     cellWeights: List<Double>,
+    draggedColumn: Int?,
+    columnDropIndex: Int?,
     onTogglePriorityWeights: () -> Unit,
     onSetCellWeight: (Int, Double) -> Unit,
     onClick: (CellId, ctrl: Boolean, shift: Boolean, forceClearMulti: Boolean) -> Unit,
@@ -1458,13 +1486,27 @@ private fun TaskRow(
                     }
                 }
                 if (weightTableActive && priorityLabel != null) {
-                    // PRD §5: this cell's row of the weight table — one value per column.
+                    // PRD §5: this cell's row of the weight table — one value per column. The moved
+                    // column is greyed and the blue drop line is drawn here too, so the highlight
+                    // and the line span the full height of the column, not just the header.
                     for (column in 0 until weightColumnCount) {
-                        WeightInputCell(
-                            value = cellWeights.getOrElse(column) { 1.0 },
-                            onSet = { value -> onSetCellWeight(column, value) },
-                        )
+                        if (draggedColumn != null && columnDropIndex == column) ColumnDropLine()
+                        Box(
+                            modifier = Modifier.background(
+                                if (draggedColumn == column) {
+                                    SheetColors.moveDragFill
+                                } else {
+                                    Color.Transparent
+                                },
+                            ),
+                        ) {
+                            WeightInputCell(
+                                value = cellWeights.getOrElse(column) { 1.0 },
+                                onSet = { value -> onSetCellWeight(column, value) },
+                            )
+                        }
                     }
+                    if (draggedColumn != null && columnDropIndex == weightColumnCount) ColumnDropLine()
                 }
                 Spacer(Modifier.weight(1f))
             }
