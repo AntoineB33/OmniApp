@@ -1,8 +1,10 @@
 package org.example.project.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,13 +35,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import kotlin.math.roundToInt
 import kotlin.time.Clock
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
@@ -300,25 +304,62 @@ private fun MiniMonthDay(
 }
 
 /**
- * PRD §7 Calendar: the popup window. Shows the week containing [selectedDate] as a Google-Calendar
- * style time grid (7 day columns × hourly rows, today highlighted, a current-time line).
+ * PRD §7 Calendar: a floating, draggable in-app window (not a modal dialog) showing the week
+ * containing [selectedDate] as a Google-Calendar style time grid. It is meant to be rendered inside
+ * the page-content area so it floats over the tree but never over the lateral menu; grab the title
+ * bar to move it around.
  */
 @Composable
-fun CalendarWeekDialog(
+fun CalendarFloatingWindow(
     selectedDate: LocalDate,
     today: LocalDate,
     onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 10.dp,
+        border = BorderStroke(1.dp, CalColors.grid),
+        modifier = modifier
+            .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
+            .size(width = 720.dp, height = 540.dp),
     ) {
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier.fillMaxWidth(0.92f).fillMaxHeight(0.9f),
-        ) {
-            WeekView(selectedDate = selectedDate, today = today)
+        Column(Modifier.fillMaxSize()) {
+            // Title bar doubles as the drag handle for moving the window.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(CalColors.menuBackground)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            offset += dragAmount
+                        }
+                    }
+                    .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Calendar",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("✕", style = MaterialTheme.typography.titleSmall, color = CalColors.muted)
+                }
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                WeekView(selectedDate = selectedDate, today = today)
+            }
         }
     }
 }

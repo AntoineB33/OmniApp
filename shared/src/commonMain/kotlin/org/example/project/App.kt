@@ -8,13 +8,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeContentPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.tooling.preview.Preview
 import kotlinx.datetime.LocalDate
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.ui.TaskSchedulerScreen
-import org.example.project.ui.CalendarWeekDialog
+import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.LateralMenu
 import org.example.project.ui.systemToday
 
@@ -54,20 +56,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     onSelectDate = { selectedDate = it },
                 )
 
-                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                // The content area is clipped so the floating calendar window can overlap the tree
+                // but never spill onto the lateral menu (PRD §7).
+                Box(modifier = Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
                     when (page) {
                         OmniPage.TaskScheduler ->
                             TaskSchedulerScreen(modifier = Modifier.fillMaxSize(), store = store)
                     }
-                }
-            }
 
-            if (calendarOpen) {
-                CalendarWeekDialog(
-                    selectedDate = selectedDate,
-                    today = today,
-                    onDismiss = { calendarOpen = false },
-                )
+                    if (calendarOpen) {
+                        CalendarFloatingWindow(
+                            selectedDate = selectedDate,
+                            today = today,
+                            onDismiss = { calendarOpen = false },
+                            modifier = Modifier.align(Alignment.Center),
+                        )
+                    }
+                }
             }
         }
     }
