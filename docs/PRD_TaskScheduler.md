@@ -1,6 +1,6 @@
 # Task Scheduler Module - Product Requirements
 
-**Version:** 0.5.0
+**Version:** 1.0.0
 
 ## 1. Overview
 
@@ -100,7 +100,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 
 * **Data Model (MVI State):**
   * **Cell Model (UI State):** Encapsulates `taskId`, a parent pointer (for ancestor validation), and an optional `sub-list`. If expanded, the `sub-list` populates from the `Map` Task Tree. A cell object only has final fields, and update with Task Tree. If the cell is empty, `taskId` is null and `sub-list` empty. When a cell is created, its `sub-list` field is null and gets populated only when the user manually expands it.
-  * **Task Tree (`Map`):** Associates a `taskId` to a domain object containing: Title, list of child `taskIds`, and an occurrence list of cells utilizing this `taskId` (sorted by shortest path).
+  * **Task Tree (`Map`):** Associates a `taskId` to a domain object containing: Title, absolute priority percentage (see section 5), task record (see section 9), minimum time for the task (see section 10), list of child `taskIds`, and an occurrence list of cells utilizing this `taskId` (sorted by shortest path).
   * **TitleToTask Tree (`Map`):** Associates a string title to a list of `taskIds` sharing that exact title.
 * **Initialization:**
   * *Empty DB:* Task Tree initializes with a "root" key pointing to a "main" task (representing the user's active daily life).
@@ -117,6 +117,17 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **Page Navigation:** The page navigation button that is persistent through all feature pages is the first element of the left side menu (the button is at the same place in all feature pages but not necessarily in a lateral menu).
 * **Calendar:** A button allows to toggle the display of the calendar in a floating window over the tree (not over the left side menu).
 
-## 7. Calendar
+## 8. Calendar
 * **Current Week:** The calendar window shows the week with the same style as Google Calendar.
 * **Day Selection:** When the calendar is displayed, the lateral menu shows the days in the current month and a way to select other day and navigate to other months. This mirrors what is found in Google Calendar.
+* **Task record:** The calendar shows the periods the user did a task, using the task record saved in `Task Tree`. The title of the `taskId` of the period in the calendar shows on hover. Task record is not saved in the history state.
+
+## 9. Scheduler
+* **next task:** The app finds the most suitable task to do as soon as the dead-line of the last one is reached, or anytime there is no task to do at this moment. At that time, the time-weighted percentage of each task is calculated. The task with the time-weighted percentage the furthest from its absolute priority percentage is the next task.
+* **time-weighted percentage:** Let's say Task $i$ has a set of $N$ time ranges. To get the total weighted score for Task $i$ (let's call it $W_i$), you sum the integrals of all its individual time ranges:  
+ $$W_i = \sum_{j=1}^{N} \left[ \frac{1}{k} \left( e^{-k(t_{now} - t_{j, end})} - e^{-k(t_{now} - t_{j, start})} \right) \right]$$
+Here, $k$ is the decay constant. It dictates how aggressively older tasks are penalized. A larger $k$ means older tasks lose their weight very quickly; a smaller $k$ means they retain their weight for longer.  
+
+## 10. Minimum time for a task
+* **Purpose:** When the app schedules a task to do, the allocated time can't be shorter than the minimum time associated to the `taskId`. It is 45 minutes by default.
+* **Display:** The minimum time of the task is shown at the right side of the priority weight display. When the user clicks on it, it behaves similarly to the absoluate priority display. It becomes an input field with increment and decrement arrows on its right side. When selecting other cells, it gets back to a simple display. When in input field mode, typing won't enter Edit Mode. When the priority weight table shows up, the minimum time is moved to let place. It moves as well when the number of weight columns changes. 

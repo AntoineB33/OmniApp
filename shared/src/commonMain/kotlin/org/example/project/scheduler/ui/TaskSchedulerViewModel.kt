@@ -20,7 +20,11 @@ class TaskSchedulerViewModel(
     val state: StateFlow<SchedulerState> = _state.asStateFlow()
 
     fun dispatch(intent: SchedulerIntent) {
-        val next = SchedulerReducer.reduce(_state.value, intent)
+        val current = _state.value
+        val next = SchedulerReducer.reduce(current, intent)
+        // No-op intents (e.g. a RefreshSchedule tick still within the deadline) return the same
+        // instance; skip the state push and persist so the timer doesn't churn storage.
+        if (next === current) return
         _state.value = next
         // PRD §5 Persistence: stream every committed mutation to local storage.
         store?.save(SchedulerStateCodec.encode(next))

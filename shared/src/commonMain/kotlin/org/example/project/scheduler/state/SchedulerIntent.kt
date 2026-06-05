@@ -103,6 +103,20 @@ sealed interface SchedulerIntent {
         val to: Int,
     ) : SchedulerIntent
 
+    /** PRD §10: set a task's minimum time in minutes (clamped to ≥ 0); recorded as a content delta. */
+    data class SetTaskMinimumTime(
+        val taskId: TaskId,
+        val minutes: Int,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §9: recompute "the task to do now" against [nowMillis]. Dispatched on app start and on a
+     * timer; a no-op while the current allocation's deadline is still in the future. Not undoable.
+     */
+    data class RefreshSchedule(
+        val nowMillis: Long,
+    ) : SchedulerIntent
+
     /** [initialText] non-null when entering via typing (replaces cell content with first keystroke). */
     data class BeginEdit(
         val cellId: CellId,

@@ -9,8 +9,11 @@ import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
+import org.example.project.scheduler.model.ScheduledTask
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.SchedulerEditSession
 import org.example.project.scheduler.state.SchedulerSelection
@@ -63,6 +66,8 @@ object SchedulerStateCodec {
                         childTaskIds = it.childTaskIds.map(TaskId::value),
                         occurrences = it.occurrences.map(CellId::value),
                         childListId = it.childListId?.value,
+                        minimumMinutes = it.minimumMinutes,
+                        record = it.record.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
                     )
                 },
             expanded = expanded.map(CellId::value),
@@ -73,6 +78,10 @@ object SchedulerStateCodec {
             nextTaskCounter = nextTaskCounter,
             nextCellCounter = nextCellCounter,
             editSession = editSession?.toPersisted(),
+            scheduled =
+                scheduled?.let {
+                    PersistedScheduled(it.taskId.value, it.startEpochMillis, it.deadlineEpochMillis)
+                },
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -110,6 +119,8 @@ object SchedulerStateCodec {
                         childTaskIds = it.childTaskIds.map(TaskId::value),
                         occurrences = it.occurrences.map(CellId::value),
                         childListId = it.childListId?.value,
+                        minimumMinutes = it.minimumMinutes,
+                        record = it.record.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
                     )
                 },
             nextTaskCounter = nextTaskCounter,
@@ -126,6 +137,8 @@ object SchedulerStateCodec {
                         childTaskIds = p.childTaskIds.map(::TaskId),
                         occurrences = p.occurrences.map(::CellId),
                         childListId = p.childListId?.let(::CellListId),
+                        minimumMinutes = p.minimumMinutes,
+                        record = p.record.map { TaskTimeRange(it.start, it.end) },
                     )
             }
         val cells =
@@ -167,6 +180,10 @@ object SchedulerStateCodec {
                 nextCellCounter
                     ?: SchedulerState.deriveNextCellCounter(cells.keys),
             editSession = editSession?.toSession(),
+            scheduled =
+                scheduled?.let {
+                    ScheduledTask(TaskId(it.taskId), it.start, it.deadline)
+                },
         )
     }
 
@@ -180,6 +197,8 @@ object SchedulerStateCodec {
                         childTaskIds = p.childTaskIds.map(::TaskId),
                         occurrences = p.occurrences.map(::CellId),
                         childListId = p.childListId?.let(::CellListId),
+                        minimumMinutes = p.minimumMinutes,
+                        record = p.record.map { TaskTimeRange(it.start, it.end) },
                     )
             }
         val cells =
@@ -242,6 +261,15 @@ private data class PersistedState(
     val nextTaskCounter: Int = 0,
     val nextCellCounter: Int? = null,
     val editSession: PersistedEditSession? = null,
+    // PRD §9: default null keeps payloads written before the scheduler existed loadable.
+    val scheduled: PersistedScheduled? = null,
+)
+
+@Serializable
+private data class PersistedScheduled(
+    val taskId: String,
+    val start: Long,
+    val deadline: Long,
 )
 
 @Serializable
@@ -288,4 +316,14 @@ private data class PersistedTask(
     val childTaskIds: List<String> = emptyList(),
     val occurrences: List<String> = emptyList(),
     val childListId: String? = null,
+    // PRD §10 / §8: defaults keep payloads written before these fields existed loadable. A missing
+    // minimum time decodes to the §10 default (45 min), matching a freshly created task.
+    val minimumMinutes: Int = DEFAULT_MINIMUM_MINUTES,
+    val record: List<PersistedTimeRange> = emptyList(),
+)
+
+@Serializable
+private data class PersistedTimeRange(
+    val start: Long,
+    val end: Long,
 )

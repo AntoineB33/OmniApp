@@ -32,6 +32,9 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state) { applyDeletePriorityColumn(it, intent.listId, intent.column) })
             is SchedulerIntent.MovePriorityColumn ->
                 commitDelta(state, priorityTreeDelta(state) { applyMovePriorityColumn(it, intent.listId, intent.from, intent.to) })
+            is SchedulerIntent.SetTaskMinimumTime ->
+                commitDelta(state, priorityTreeDelta(state) { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
+            is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
             is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
             is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
             is SchedulerIntent.SetEditMode -> reduceSetEditMode(state, intent.mode)
@@ -967,6 +970,28 @@ private fun applySetPriorityWeight(
     if (weights[column] == clamped) return state
     weights[column] = clamped
     return state.copy(cells = state.cells + (cellId to cell.copy(priorityWeights = weights)))
+}
+
+/**
+ * PRD §9: recompute the scheduled "task to do now". Returns the same instance when nothing changes
+ * (still within the current deadline) so the view-model can skip a redundant persist. Not undoable:
+ * [SchedulerState.scheduled] lives outside [TreeSnapshot].
+ */
+private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
+    val next = SchedulerDomain.computeSchedule(state, nowMillis)
+    return if (next == state.scheduled) state else state.copy(scheduled = next)
+}
+
+private fun applySetTaskMinimumTime(
+    state: SchedulerState,
+    taskId: TaskId,
+    minutes: Int,
+): SchedulerState {
+    val task = state.tasks[taskId] ?: return state
+    // PRD §10: minimum time can't be negative.
+    val clamped = minutes.coerceAtLeast(0)
+    if (task.minimumMinutes == clamped) return state
+    return state.copy(tasks = state.tasks + (taskId to task.copy(minimumMinutes = clamped)))
 }
 
 private fun applySetPriorityColumnWeight(

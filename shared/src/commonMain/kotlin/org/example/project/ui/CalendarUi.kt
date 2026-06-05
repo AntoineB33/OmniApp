@@ -24,10 +24,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -45,6 +52,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -58,6 +66,7 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.todayIn
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.OmniPage
+import org.example.project.scheduler.model.TaskTimeRange
 
 /** PRD §7: visual language shared by the lateral menu and the calendar. */
 private object CalColors {
@@ -67,6 +76,8 @@ private object CalColors {
     val grid = Color(0xFFDADCE0)
     val menuBackground = Color(0xFFF8F9FA)
     val muted = Color(0xFF5F6368)
+    val record = Color(0xFF34A853) // Google-green "done" period block (PRD §8 task record)
+    val scheduled = Color(0xFF1A73E8) // Google-blue "to do now" block (PRD §9 scheduled task)
 }
 
 private val WEEKDAY_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -77,6 +88,42 @@ fun systemToday(): LocalDate = Clock.System.todayIn(TimeZone.currentSystemDefaul
 
 private fun nowLocalTime(): LocalTime =
     Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).time
+
+/**
+ * PRD §8 Task record / §9 scheduled task: one calendar period tagged with the task [title] (shown on
+ * hover). [scheduled] is false for a period the user already did (§8 record, green) and true for the
+ * scheduler's current "task to do now" (§9, drawn the same way in a distinct colour). Built from the
+ * Task Tree and passed down from [App].
+ */
+data class CalendarRecord(val title: String, val range: TaskTimeRange, val scheduled: Boolean = false)
+
+/** A [CalendarRecord] clipped to a single day, as start/end hour-of-day fractions in `[0, 24]`. */
+data class PlacedRecord(
+    val title: String,
+    val startHour: Float,
+    val endHour: Float,
+    val scheduled: Boolean,
+)
+
+/**
+ * PRD §8: the portions of [records] that fall on [day] (in [tz]), each clipped to that day so a
+ * period spanning midnight renders as one block per day it covers. Pure for unit-testing the
+ * day/time math independently of Compose.
+ */
+fun recordsForDay(
+    records: List<CalendarRecord>,
+    day: LocalDate,
+    tz: TimeZone,
+): List<PlacedRecord> =
+    records.mapNotNull { record ->
+        val start = Instant.fromEpochMilliseconds(record.range.startEpochMillis).toLocalDateTime(tz)
+        val end = Instant.fromEpochMilliseconds(record.range.endEpochMillis).toLocalDateTime(tz)
+        if (start.date > day || end.date < day) return@mapNotNull null
+        val startHour = if (start.date < day) 0f else start.hour + start.minute / 60f
+        val endHour = if (end.date > day) 24f else end.hour + end.minute / 60f
+        if (endHour <= startHour) return@mapNotNull null
+        PlacedRecord(record.title, startHour.coerceIn(0f, 24f), endHour.coerceIn(0f, 24f), record.scheduled)
+    }
 
 /** Monday of the week containing [date] (PRD §7 week view starts on Monday, like the mock-up). */
 private fun startOfWeek(date: LocalDate): LocalDate =
@@ -315,6 +362,7 @@ fun CalendarFloatingWindow(
     today: LocalDate,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    records: List<CalendarRecord> = emptyList(),
 ) {
     var offset by remember { mutableStateOf(Offset.Zero) }
     Surface(
@@ -358,19 +406,34 @@ fun CalendarFloatingWindow(
             }
             Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                WeekView(selectedDate = selectedDate, today = today)
+                WeekView(selectedDate = selectedDate, today = today, records = records)
             }
         }
     }
 }
 
 @Composable
-private fun WeekView(selectedDate: LocalDate, today: LocalDate) {
+private fun WeekView(
+    selectedDate: LocalDate,
+    today: LocalDate,
+    records: List<CalendarRecord>,
+) {
     val weekStart = startOfWeek(selectedDate)
     val days = (0..6).map { weekStart.plus(it, DateTimeUnit.DAY) }
     val now = remember { nowLocalTime() }
+    val tz = remember { TimeZone.currentSystemDefault() }
     val hourHeight = 48.dp
     val gutterWidth = 56.dp
+
+    // PRD §8 (Google-Calendar style): open scrolled to the current time so today's "task to do now"
+    // block (which starts at the present hour) is visible without manual scrolling. Show one hour of
+    // lead context above it.
+    val scrollState = rememberScrollState()
+    val density = LocalDensity.current
+    LaunchedEffect(Unit) {
+        val target = with(density) { (hourHeight * (now.hour - 1)).toPx() }
+        scrollState.scrollTo(target.roundToInt().coerceAtLeast(0))
+    }
 
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Text(
@@ -395,7 +458,7 @@ private fun WeekView(selectedDate: LocalDate, today: LocalDate) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(scrollState),
         ) {
             Row(Modifier.fillMaxWidth().height(hourHeight * 24)) {
                 // Hour labels gutter.
@@ -417,6 +480,7 @@ private fun WeekView(selectedDate: LocalDate, today: LocalDate) {
                         isToday = day == today,
                         hourHeight = hourHeight,
                         now = if (day == today) now else null,
+                        records = recordsForDay(records, day, tz),
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -463,6 +527,7 @@ private fun DayColumn(
     isToday: Boolean,
     hourHeight: Dp,
     now: LocalTime?,
+    records: List<PlacedRecord>,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -482,6 +547,11 @@ private fun DayColumn(
                 )
             }
         }
+        // PRD §8 Task record: each done-period as a green block at its time range; the task title
+        // shows on hover.
+        records.forEach { record ->
+            RecordBlock(record = record, hourHeight = hourHeight)
+        }
         // Current-time indicator (only on today's column).
         if (now != null) {
             val offsetY = hourHeight * (now.hour + now.minute / 60f)
@@ -500,5 +570,36 @@ private fun DayColumn(
                     .background(CalColors.now),
             )
         }
+    }
+}
+
+/**
+ * PRD §8 Task record / §9 scheduled task block: a bar spanning the period's clipped time range within
+ * its day column. Green for a done record, blue for the scheduler's "task to do now". Hovering it
+ * reveals the task title (the bar itself shows no text, per the PRD's "title ... shows on hover").
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RecordBlock(record: PlacedRecord, hourHeight: Dp) {
+    val offsetY = hourHeight * record.startHour
+    val height = (hourHeight * (record.endHour - record.startHour)).coerceAtLeast(2.dp)
+    val color = if (record.scheduled) CalColors.scheduled else CalColors.record
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(record.title.ifEmpty { "(untitled)" }) } },
+        state = rememberTooltipState(),
+        modifier = Modifier
+            .offset(y = offsetY)
+            .fillMaxWidth()
+            .height(height)
+            .padding(horizontal = 1.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(3.dp))
+                .background(color.copy(alpha = 0.30f))
+                .border(1.dp, color, RoundedCornerShape(3.dp)),
+        )
     }
 }

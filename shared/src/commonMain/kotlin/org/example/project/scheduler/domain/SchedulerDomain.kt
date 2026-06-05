@@ -1,9 +1,12 @@
 package org.example.project.scheduler.domain
 
+import kotlin.math.exp
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.ScheduledTask
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
@@ -456,6 +459,111 @@ object SchedulerDomain {
         }
 
         return cellsByTask.keys.associateWith { absolute(it) }
+    }
+
+    // ----- PRD §9 Scheduler -------------------------------------------------------------------
+
+    /**
+     * PRD §9 decay constant `k`, expressed per hour. It dictates how aggressively older record
+     * periods are penalized: a larger `k` makes old periods lose weight faster. The PRD leaves the
+     * value open; this is a sensible default (≈ a multi-day memory) and the single tunable point.
+     */
+    const val DEFAULT_DECAY_PER_HOUR: Double = 0.02
+
+    private const val MILLIS_PER_HOUR: Double = 3_600_000.0
+
+    /**
+     * PRD §9 time-weighted score `Wᵢ` for a single task's record at instant [nowMillis]:
+     *
+     * `Wᵢ = Σ_j (1/k)·( e^{-k(t_now − t_end)} − e^{-k(t_now − t_start)} )`
+     *
+     * Each range contributes the integral of `e^{-k·age}` over the period, so more recent (and
+     * longer) periods weigh more. Time differences are taken in hours to match [k]'s unit. Returns
+     * 0 for an empty record or a non-positive [k].
+     */
+    fun timeWeightedScore(
+        record: List<TaskTimeRange>,
+        nowMillis: Long,
+        k: Double = DEFAULT_DECAY_PER_HOUR,
+    ): Double {
+        if (k <= 0.0 || record.isEmpty()) return 0.0
+        var sum = 0.0
+        for (range in record) {
+            val ageEndHours = (nowMillis - range.endEpochMillis) / MILLIS_PER_HOUR
+            val ageStartHours = (nowMillis - range.startEpochMillis) / MILLIS_PER_HOUR
+            sum += (exp(-k * ageEndHours) - exp(-k * ageStartHours)) / k
+        }
+        return sum
+    }
+
+    /**
+     * PRD §9 time-weighted percentage of every (real) task: its [timeWeightedScore] normalized by
+     * the total score across all tasks, as a fraction in `[0,1]`. When no task has any record the
+     * total is 0 and every percentage is 0.
+     */
+    fun timeWeightedPercentages(
+        state: SchedulerState,
+        nowMillis: Long,
+        k: Double = DEFAULT_DECAY_PER_HOUR,
+    ): Map<TaskId, Double> {
+        val scores =
+            state.tasks
+                .filterKeys { !isRootTask(it) && !isMainTask(it) }
+                .mapValues { (_, task) -> timeWeightedScore(task.record, nowMillis, k) }
+        val total = scores.values.sum()
+        if (total <= 0.0) return scores.mapValues { 0.0 }
+        return scores.mapValues { (_, score) -> score / total }
+    }
+
+    /**
+     * PRD §9 next task: the most under-served task at [nowMillis] — the one whose time-weighted
+     * percentage is furthest *below* its absolute priority percentage (`argmax(absolute − weighted)`).
+     * Empty placeholders and the root/main tasks are excluded. Returns null when there are no real
+     * tasks. (Minimum time, PRD §10, constrains the allocated duration, not which task is chosen.)
+     */
+    fun nextTask(
+        state: SchedulerState,
+        nowMillis: Long,
+        k: Double = DEFAULT_DECAY_PER_HOUR,
+    ): TaskId? {
+        val absolute = absoluteTaskPriorities(state)
+        val weighted = timeWeightedPercentages(state, nowMillis, k)
+        val candidates =
+            state.tasks.keys.filter { !isRootTask(it) && !isMainTask(it) }
+        return candidates.maxByOrNull { taskId ->
+            (absolute[taskId] ?: 0.0) - (weighted[taskId] ?: 0.0)
+        }
+    }
+
+    private const val MILLIS_PER_MINUTE: Long = 60_000L
+
+    /**
+     * PRD §9 the task to do now. Keeps the current allocation while its deadline is still in the
+     * future and its task still exists; otherwise — i.e. the deadline has been reached, or there is
+     * nothing scheduled (e.g. at app start) — picks a fresh [nextTask] starting at [nowMillis]. Per
+     * PRD §10 the allocated duration is the task's minimum time, so `deadline = now + minimumMinutes`
+     * (minimum time defaults to 45 minutes, so the slot is non-empty unless the user zeroes it).
+     * Returns null when there are no real tasks to schedule.
+     */
+    fun computeSchedule(
+        state: SchedulerState,
+        nowMillis: Long,
+        k: Double = DEFAULT_DECAY_PER_HOUR,
+    ): ScheduledTask? {
+        val current = state.scheduled
+        if (current != null &&
+            nowMillis < current.deadlineEpochMillis &&
+            state.tasks.containsKey(current.taskId)
+        ) {
+            return current
+        }
+        val taskId = nextTask(state, nowMillis, k) ?: return null
+        val minutes = state.tasks[taskId]?.minimumMinutes ?: 0
+        return ScheduledTask(
+            taskId = taskId,
+            startEpochMillis = nowMillis,
+            deadlineEpochMillis = nowMillis + minutes * MILLIS_PER_MINUTE,
+        )
     }
 
     /**

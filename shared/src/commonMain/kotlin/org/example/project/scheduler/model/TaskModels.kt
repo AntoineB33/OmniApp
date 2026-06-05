@@ -2,6 +2,9 @@ package org.example.project.scheduler.model
 
 import kotlin.jvm.JvmInline
 
+/** PRD §10: a task's minimum time defaults to 45 minutes. */
+const val DEFAULT_MINIMUM_MINUTES: Int = 45
+
 data class Task(
     val id: TaskId,
     val title: String,
@@ -10,6 +13,39 @@ data class Task(
     val occurrences: List<CellId> = emptyList(),
     /** Shared sublist for all cells pointing at this task (mirrored sub-trees). */
     val childListId: CellListId? = null,
+    /**
+     * PRD §10 Minimum time for a task: the smallest duration (in minutes) the scheduler may allocate
+     * to this task. Stored on the task object; edited via the per-row min-time input field. Defaults
+     * to [DEFAULT_MINIMUM_MINUTES] (45 min) so a freshly created task already has a usable slot.
+     */
+    val minimumMinutes: Int = DEFAULT_MINIMUM_MINUTES,
+    /**
+     * PRD §8/§9 Task record: the periods during which the user did this task, used by the calendar
+     * (visualization) and the scheduler (time-weighted percentage). Per PRD §8 this is intentionally
+     * excluded from the Undo/Redo history state (see [org.example.project.scheduler.state.SchedulerState]).
+     */
+    val record: List<TaskTimeRange> = emptyList(),
+)
+
+/**
+ * PRD §9 Task record entry: a single period `[start, end]` the user spent on a task, as epoch
+ * milliseconds (stored as primitives so it serializes without a custom time serializer).
+ */
+data class TaskTimeRange(
+    val startEpochMillis: Long,
+    val endEpochMillis: Long,
+)
+
+/**
+ * PRD §9 "the task to do now": the scheduler's current allocation — which task to do and until when.
+ * The deadline is the start plus the task's minimum time (PRD §10, used here as the allocated
+ * duration). Persisted so a restart can tell whether there is still a task to do at this moment, but
+ * — like the task record — kept outside the Undo/Redo history.
+ */
+data class ScheduledTask(
+    val taskId: TaskId,
+    val startEpochMillis: Long,
+    val deadlineEpochMillis: Long,
 )
 
 /**

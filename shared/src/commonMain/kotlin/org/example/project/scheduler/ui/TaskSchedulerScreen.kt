@@ -133,6 +133,9 @@ private val PERCENT_COLUMN_WIDTH = 52.dp
 /** Width of one weight-table column (number field + stacked +/- buttons). */
 private val WEIGHT_COLUMN_WIDTH = 60.dp
 
+/** PRD §10: width of the per-task minimum-time field (minutes input + stacked +/- buttons + unit). */
+private val MIN_TIME_COLUMN_WIDTH = 72.dp
+
 /** Renders a priority fraction (0..1) as a percentage with at most one decimal: 50%, 33.3%, 0.4%. */
 private fun formatPriorityPercent(fraction: Double): String {
     val tenths = (fraction * 1000).roundToInt()
@@ -175,6 +178,9 @@ fun TaskSchedulerScreen(
     // PRD §5: the sub-list whose priority-weight table is currently revealed (toggled by clicking a
     // percentage in that sub-list), or null when no table is shown.
     var weightTableListId by remember { mutableStateOf<CellListId?>(null) }
+    // PRD §10: the cell whose minimum-time field is currently expanded into an input (clicking its
+    // simple display opens it), or null when every min-time field shows as a plain label.
+    var minTimeEditCellId by remember { mutableStateOf<CellId?>(null) }
 
     // PRD §5: selecting a cell outside the sub-list — or any cell entering Edit Mode — makes the
     // weight table disappear.
@@ -183,6 +189,15 @@ fun TaskSchedulerScreen(
         if (current != null) {
             val mainListId = state.selection.main?.let { state.cells[it]?.parentListId }
             if (state.editSession != null || mainListId != current) weightTableListId = null
+        }
+    }
+
+    // PRD §10: the min-time input reverts to a simple display when another cell is selected or any
+    // cell enters Edit Mode (mirroring the weight table).
+    LaunchedEffect(state.selection.main, state.editSession) {
+        val current = minTimeEditCellId
+        if (current != null && (state.editSession != null || state.selection.main != current)) {
+            minTimeEditCellId = null
         }
     }
 
@@ -326,6 +341,11 @@ fun TaskSchedulerScreen(
                 if (mainCell?.taskId != null && mainCell.parentListId == weightTableListId) {
                     return@onPreviewKeyEvent false
                 }
+                // PRD §10: while the selected cell's min-time input is open, typing belongs to it —
+                // don't hijack the keystroke into Edit Mode.
+                if (main == minTimeEditCellId) {
+                    return@onPreviewKeyEvent false
+                }
                 val typed = event.printableChar() ?: return@onPreviewKeyEvent false
                 vm.dispatch(SchedulerIntent.BeginEdit(main, typed))
                 true
@@ -362,6 +382,10 @@ fun TaskSchedulerScreen(
                 weightTableListId = weightTableListId,
                 onTogglePriorityWeights = { listId ->
                     weightTableListId = if (weightTableListId == listId) null else listId
+                },
+                minTimeEditCellId = minTimeEditCellId,
+                onToggleMinTimeEdit = { cellId ->
+                    minTimeEditCellId = if (minTimeEditCellId == cellId) null else cellId
                 },
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
@@ -437,6 +461,8 @@ private fun CellListSection(
     priorities: Map<TaskId, Double>,
     weightTableListId: CellListId?,
     onTogglePriorityWeights: (CellListId) -> Unit,
+    minTimeEditCellId: CellId?,
+    onToggleMinTimeEdit: (CellId) -> Unit,
     moveDragActive: Boolean,
     moveDropTarget: MoveDropTarget?,
     resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>?,
@@ -547,9 +573,29 @@ private fun CellListSection(
             cellWeights = cell.priorityWeights,
             draggedColumn = draggedColumn,
             columnDropIndex = columnDropIndex,
+            minMinutes = cell.taskId?.let { state.tasks[it]?.minimumMinutes } ?: 0,
+            minTimeEditing = minTimeEditCellId == cellId,
             onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
             onSetCellWeight = { column, value ->
                 onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, value))
+            },
+            onSetMinTime = { minutes ->
+                cell.taskId?.let { onIntent(SchedulerIntent.SetTaskMinimumTime(it, minutes)) }
+            },
+            onActivateMinTime = {
+                // Select this cell so the input persists (PRD §10: it reverts when another cell is
+                // selected) and typing is routed to the field instead of entering Edit Mode.
+                onIntent(
+                    SchedulerIntent.ClickCell(
+                        cellId = cellId,
+                        ctrl = false,
+                        shift = false,
+                        visibleOrder = visibleOrder,
+                        renderVia = renderVia,
+                        forceClearMulti = true,
+                    ),
+                )
+                onToggleMinTimeEdit(cellId)
             },
             onClick = { clicked, ctrl, shift, forceClearMulti ->
                 if (!selectable) return@TaskRow
@@ -622,6 +668,8 @@ private fun CellListSection(
                 priorities = priorities,
                 weightTableListId = weightTableListId,
                 onTogglePriorityWeights = onTogglePriorityWeights,
+                minTimeEditCellId = minTimeEditCellId,
+                onToggleMinTimeEdit = onToggleMinTimeEdit,
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -841,6 +889,85 @@ private fun WeightStepButton(label: String, onClick: () -> Unit) {
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
+/**
+ * PRD §10 Minimum time: a task's minimum time (in minutes) shown to the right of the priority-weight
+ * display — and to the right of the weight table when it is open, so it shifts as columns change. An
+ * integer input field with the increment/decrement buttons stacked to its right, mirroring the weight
+ * fields; the value is clamped to ≥ 0.
+ */
+@Composable
+private fun MinTimeInputCell(
+    minutes: Int,
+    onSet: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var text by remember(minutes) { mutableStateOf(minutes.toString()) }
+    Row(
+        modifier = modifier.width(MIN_TIME_COLUMN_WIDTH).padding(horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicTextField(
+            value = text,
+            onValueChange = { raw ->
+                val cleaned = raw.filter { it.isDigit() }
+                text = cleaned
+                onSet(cleaned.toIntOrNull()?.coerceAtLeast(0) ?: 0)
+            },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodySmall.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.End,
+            ),
+            cursorBrush = SolidColor(SheetColors.activeBorder),
+            modifier = Modifier
+                .weight(1f)
+                .border(1.dp, SheetColors.grid)
+                .padding(horizontal = 4.dp, vertical = 3.dp),
+        )
+        Text(
+            text = "m",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 2.dp),
+        )
+        Column {
+            WeightStepButton(label = "▲", onClick = { onSet(minutes + 1) })
+            WeightStepButton(label = "▼", onClick = { onSet((minutes - 1).coerceAtLeast(0)) })
+        }
+    }
+}
+
+/**
+ * PRD §10 Minimum time (resting state): a plain "{n}m" label occupying the same column as
+ * [MinTimeInputCell]. Clicking it expands the field into the editable input (mirroring how clicking
+ * the absolute-priority percentage reveals the weight table).
+ */
+@Composable
+private fun MinTimeDisplayCell(
+    minutes: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .width(MIN_TIME_COLUMN_WIDTH)
+            .padding(horizontal = 2.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 4.dp, vertical = 3.dp),
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        Text(
+            text = "${minutes}m",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -1082,8 +1209,12 @@ private fun TaskRow(
     cellWeights: List<Double>,
     draggedColumn: Int?,
     columnDropIndex: Int?,
+    minMinutes: Int,
+    minTimeEditing: Boolean,
     onTogglePriorityWeights: () -> Unit,
     onSetCellWeight: (Int, Double) -> Unit,
+    onSetMinTime: (Int) -> Unit,
+    onActivateMinTime: () -> Unit,
     onClick: (CellId, ctrl: Boolean, shift: Boolean, forceClearMulti: Boolean) -> Unit,
     onDragSelect: (anchor: CellId, hover: CellId) -> Unit,
     moveDragActive: Boolean,
@@ -1507,6 +1638,17 @@ private fun TaskRow(
                         }
                     }
                     if (draggedColumn != null && columnDropIndex == weightColumnCount) ColumnDropLine()
+                }
+                // PRD §10: the task's minimum-time field sits to the right of the priority-weight
+                // display — after the weight columns when the table is open (so it shifts as columns
+                // are added/removed), otherwise just after the percentage. It shows as a plain label
+                // until clicked, then expands into an input field with increment/decrement arrows.
+                if (priorityLabel != null) {
+                    if (minTimeEditing) {
+                        MinTimeInputCell(minutes = minMinutes, onSet = onSetMinTime)
+                    } else {
+                        MinTimeDisplayCell(minutes = minMinutes, onClick = onActivateMinTime)
+                    }
                 }
                 Spacer(Modifier.weight(1f))
             }

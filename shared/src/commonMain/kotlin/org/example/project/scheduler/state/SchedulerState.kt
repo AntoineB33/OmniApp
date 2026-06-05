@@ -5,6 +5,7 @@ import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.ScheduledTask
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.WellKnownIds
@@ -89,12 +90,21 @@ data class SchedulerState(
     val nextCellCounter: Int = 1,
     /** In-memory clipboard for copy/paste (not persisted). */
     val clipboard: List<String> = emptyList(),
+    /**
+     * PRD §9 the task to do now (and until when), recomputed on app start and when its deadline is
+     * reached. Like the task record it is persisted but lives outside [TreeSnapshot], so Undo/Redo
+     * never touches it.
+     */
+    val scheduled: ScheduledTask? = null,
 ) {
+    // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots
+    // (capture) and re-attached from the live tasks on restore (applyTree). Undo/Redo therefore
+    // never reverts records, even though they live on the Task object.
     fun captureTree(): TreeSnapshot =
         TreeSnapshot(
             cells = cells,
             lists = lists,
-            tasks = tasks,
+            tasks = tasks.mapValues { (_, task) -> task.copy(record = emptyList()) },
             titleToTaskIds = titleToTaskIds,
             nextTaskCounter = nextTaskCounter,
             nextCellCounter = nextCellCounter,
@@ -104,7 +114,10 @@ data class SchedulerState(
         copy(
             cells = snapshot.cells,
             lists = snapshot.lists,
-            tasks = snapshot.tasks,
+            tasks =
+                snapshot.tasks.mapValues { (id, task) ->
+                    task.copy(record = tasks[id]?.record ?: emptyList())
+                },
             titleToTaskIds = snapshot.titleToTaskIds,
             nextTaskCounter = snapshot.nextTaskCounter,
             nextCellCounter = snapshot.nextCellCounter,
