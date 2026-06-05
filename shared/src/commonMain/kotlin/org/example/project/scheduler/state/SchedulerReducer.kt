@@ -7,6 +7,7 @@ import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskTimeRange
 
 object SchedulerReducer {
     fun reduce(state: SchedulerState, intent: SchedulerIntent): SchedulerState {
@@ -975,11 +976,28 @@ private fun applySetPriorityWeight(
 /**
  * PRD §9: recompute the scheduled "task to do now". Returns the same instance when nothing changes
  * (still within the current deadline) so the view-model can skip a redundant persist. Not undoable:
- * [SchedulerState.scheduled] lives outside [TreeSnapshot].
+ * [SchedulerState.scheduled] and the task record both live outside [TreeSnapshot].
+ *
+ * PRD §8/§9: once the current period's deadline is reached, its `[start, deadline]` span is appended
+ * to the task's record *before* the next task is picked — so the calendar keeps showing the period
+ * (now a green record instead of the blue "to do now" block) and the time-weighting reflects the
+ * completed work when choosing what to do next.
  */
 private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
-    val next = SchedulerDomain.computeSchedule(state, nowMillis)
-    return if (next == state.scheduled) state else state.copy(scheduled = next)
+    val previous = state.scheduled
+    val afterRecord =
+        if (previous != null &&
+            nowMillis >= previous.deadlineEpochMillis &&
+            state.tasks.containsKey(previous.taskId)
+        ) {
+            val task = state.tasks.getValue(previous.taskId)
+            val period = TaskTimeRange(previous.startEpochMillis, previous.deadlineEpochMillis)
+            state.copy(tasks = state.tasks + (previous.taskId to task.copy(record = task.record + period)))
+        } else {
+            state
+        }
+    val next = SchedulerDomain.computeSchedule(afterRecord, nowMillis)
+    return if (next == previous && afterRecord === state) state else afterRecord.copy(scheduled = next)
 }
 
 private fun applySetTaskMinimumTime(

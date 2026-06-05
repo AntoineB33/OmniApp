@@ -158,6 +158,63 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun refresh_schedule_records_the_completed_period_when_deadline_reached() {
+        val (s0, a, b) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // `a` was scheduled for a period whose deadline is now in the past.
+        val finished = ScheduledTask(a, now - 30 * 60_000L, now - 60_000L)
+        val s = s0.copy(scheduled = finished)
+
+        val refreshed = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now))
+
+        // PRD §8: the elapsed [start, deadline] span is logged as a record on `a` (so the calendar
+        // keeps showing it as a green block instead of dropping the vanished blue one).
+        val record = refreshed.tasks[a]!!.record
+        assertEquals(1, record.size)
+        assertEquals(finished.startEpochMillis, record[0].startEpochMillis)
+        assertEquals(finished.deadlineEpochMillis, record[0].endEpochMillis)
+        // The just-recorded task is now over-served, so the next pick is the other one, from `now`.
+        assertNotNull(refreshed.scheduled)
+        assertEquals(b, refreshed.scheduled!!.taskId)
+        assertEquals(now, refreshed.scheduled!!.startEpochMillis)
+    }
+
+    @Test
+    fun refresh_schedule_does_not_record_while_within_deadline() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val ongoing = ScheduledTask(a, now - 5 * 60_000L, now + 25 * 60_000L)
+        val s = s0.copy(scheduled = ongoing)
+        val refreshed = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now))
+        assertTrue(refreshed.tasks[a]!!.record.isEmpty())
+    }
+
+    @Test
+    fun sole_task_reschedules_a_fresh_full_period_each_time_its_deadline_is_reached() {
+        // Empty database with a single task.
+        var s = SchedulerState.empty()
+        val c0 = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c0, "Solo"))
+        val a = s.tasks.keys.first { s.tasks[it]!!.title == "Solo" }
+
+        val t0 = 1_000_000_000_000L
+        s = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(t0))
+        val first = s.scheduled!!
+        assertEquals(a, first.taskId)
+        assertEquals(t0 + 45 * 60_000L, first.deadlineEpochMillis)
+
+        // Reach the deadline: the period is recorded AND the sole task is rescheduled for a fresh
+        // full 45 min (it "extends" rather than collapsing to a zero-length block).
+        val t1 = first.deadlineEpochMillis
+        s = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(t1))
+        assertEquals(1, s.tasks[a]!!.record.size)
+        val second = s.scheduled!!
+        assertEquals(a, second.taskId)
+        assertEquals(t1, second.startEpochMillis)
+        assertEquals(t1 + 45 * 60_000L, second.deadlineEpochMillis)
+    }
+
+    @Test
     fun codec_round_trip_preserves_scheduled_task() {
         val (s, _, _) = stateWithTwoTasks()
         val prepared = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(1_000_000_000_000L))
@@ -200,6 +257,18 @@ class SchedulerSchedulerTest {
         val task = s0.tasks[a]!!.copy(minimumMinutes = 30, record = listOf(r1, r2))
         assertEquals(50L, SchedulerDomain.recentContiguousRecordMinutes(task.record, now))
         assertEquals(30L, SchedulerDomain.scheduledSpanMinutes(task, now)) // 30 - 50 < 0 → full minimum
+    }
+
+    @Test
+    fun scheduled_span_is_a_fresh_full_minimum_when_recent_effort_exactly_meets_it() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // A 45-min effort ending right now exactly meets the 45-min minimum → schedule a fresh full
+        // 45 min (not a zero-length slot), so e.g. a sole task keeps extending period after period.
+        val exactly = TaskTimeRange(now - 45 * 60_000L, now)
+        val task = s0.tasks[a]!!.copy(minimumMinutes = 45, record = listOf(exactly))
+        assertEquals(45L, SchedulerDomain.recentContiguousRecordMinutes(task.record, now))
+        assertEquals(45L, SchedulerDomain.scheduledSpanMinutes(task, now)) // 45 - 45 = 0 → full minimum
     }
 
     @Test

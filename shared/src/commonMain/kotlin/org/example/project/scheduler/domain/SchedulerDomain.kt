@@ -565,14 +565,16 @@ object SchedulerDomain {
 
     /**
      * PRD §10: how long to schedule [task] for at [nowMillis] — its minimum time minus the time it
-     * has already been done in the current continuous effort ([recentContiguousRecordMinutes]). If
-     * that remainder is negative (the effort already exceeded the minimum) the task is scheduled for
-     * a fresh full minimum instead. Minimum time defaults to 45 minutes.
+     * has already been done in the current continuous effort ([recentContiguousRecordMinutes]). Once
+     * that effort has met or exceeded the minimum (remainder ≤ 0) the task is scheduled for a fresh
+     * full minimum instead — so e.g. a sole task keeps extending by a full period each time, rather
+     * than collapsing to a zero-length slot when the just-completed period exactly equals the
+     * minimum. Minimum time defaults to 45 minutes.
      */
     fun scheduledSpanMinutes(task: Task, nowMillis: Long): Long {
         val minimum = task.minimumMinutes.toLong()
         val span = minimum - recentContiguousRecordMinutes(task.record, nowMillis)
-        return if (span < 0) minimum else span
+        return if (span <= 0) minimum else span
     }
 
     /**
