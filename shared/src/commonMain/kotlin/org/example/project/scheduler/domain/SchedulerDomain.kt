@@ -1,6 +1,7 @@
 package org.example.project.scheduler.domain
 
 import kotlin.math.exp
+import kotlin.math.ln
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ScheduledTask
@@ -463,12 +464,14 @@ object SchedulerDomain {
 
     // ----- PRD §9 Scheduler -------------------------------------------------------------------
 
+    /** PRD §9: the time-weighted score decays with a fixed half-life of 7 days. */
+    const val RECORD_HALF_LIFE_HOURS: Double = 7.0 * 24.0
+
     /**
-     * PRD §9 decay constant `k`, expressed per hour. It dictates how aggressively older record
-     * periods are penalized: a larger `k` makes old periods lose weight faster. The PRD leaves the
-     * value open; this is a sensible default (≈ a multi-day memory) and the single tunable point.
+     * PRD §9 decay constant `k`, per hour, derived from the fixed 7-day half-life: a record period's
+     * weight halves every [RECORD_HALF_LIFE_HOURS], so `k = ln 2 / t½`.
      */
-    const val DEFAULT_DECAY_PER_HOUR: Double = 0.02
+    val DEFAULT_DECAY_PER_HOUR: Double = ln(2.0) / RECORD_HALF_LIFE_HOURS
 
     private const val MILLIS_PER_HOUR: Double = 3_600_000.0
 
@@ -537,13 +540,48 @@ object SchedulerDomain {
 
     private const val MILLIS_PER_MINUTE: Long = 60_000L
 
+    /** PRD §10: recorded sessions less than this many minutes apart count as one continuous effort. */
+    const val SESSION_GAP_MINUTES: Int = 10
+
     /**
-     * PRD §9 the task to do now. Keeps the current allocation while its deadline is still in the
-     * future and its task still exists; otherwise — i.e. the deadline has been reached, or there is
-     * nothing scheduled (e.g. at app start) — picks a fresh [nextTask] starting at [nowMillis]. Per
-     * PRD §10 the allocated duration is the task's minimum time, so `deadline = now + minimumMinutes`
-     * (minimum time defaults to 45 minutes, so the slot is non-empty unless the user zeroes it).
-     * Returns null when there are no real tasks to schedule.
+     * PRD §10: minutes of the task's most recent *continuous* effort at [nowMillis] — walking back
+     * from `now`, summing recorded sessions while each successive gap (the `now → latest session`
+     * gap included) stays under [SESSION_GAP_MINUTES]. Returns 0 once a ≥10-minute gap breaks the
+     * streak, so an effort that ended a while ago doesn't shorten the next allocation.
+     */
+    fun recentContiguousRecordMinutes(record: List<TaskTimeRange>, nowMillis: Long): Long {
+        if (record.isEmpty()) return 0
+        val gapMillis = SESSION_GAP_MINUTES * MILLIS_PER_MINUTE
+        var accumulatedMillis = 0L
+        // The start of the more-recent neighbour already counted (or `now` for the latest session).
+        var nextBoundary = nowMillis
+        for (range in record.sortedByDescending { it.endEpochMillis }) {
+            if (nextBoundary - range.endEpochMillis >= gapMillis) break
+            accumulatedMillis += (range.endEpochMillis - range.startEpochMillis).coerceAtLeast(0)
+            nextBoundary = range.startEpochMillis
+        }
+        return accumulatedMillis / MILLIS_PER_MINUTE
+    }
+
+    /**
+     * PRD §10: how long to schedule [task] for at [nowMillis] — its minimum time minus the time it
+     * has already been done in the current continuous effort ([recentContiguousRecordMinutes]). If
+     * that remainder is negative (the effort already exceeded the minimum) the task is scheduled for
+     * a fresh full minimum instead. Minimum time defaults to 45 minutes.
+     */
+    fun scheduledSpanMinutes(task: Task, nowMillis: Long): Long {
+        val minimum = task.minimumMinutes.toLong()
+        val span = minimum - recentContiguousRecordMinutes(task.record, nowMillis)
+        return if (span < 0) minimum else span
+    }
+
+    /**
+     * PRD §9 the task to do now. While a task is still scheduled for this moment and it still exists,
+     * its period is kept (same task and start) but its deadline is refreshed from the current
+     * [scheduledSpanMinutes] — so editing the tree (e.g. its minimum time) updates the scheduled
+     * period; this is a no-op when nothing changed. Once that period is over, or there was nothing
+     * scheduled (e.g. at app start), a fresh [nextTask] is picked and scheduled from [nowMillis] for
+     * its span. Returns null when there are no real tasks to schedule.
      */
     fun computeSchedule(
         state: SchedulerState,
@@ -551,18 +589,21 @@ object SchedulerDomain {
         k: Double = DEFAULT_DECAY_PER_HOUR,
     ): ScheduledTask? {
         val current = state.scheduled
-        if (current != null &&
-            nowMillis < current.deadlineEpochMillis &&
-            state.tasks.containsKey(current.taskId)
-        ) {
-            return current
+        val currentTask = current?.let { state.tasks[it.taskId] }
+        if (current != null && currentTask != null) {
+            val deadline = current.startEpochMillis + scheduledSpanMinutes(currentTask, nowMillis) * MILLIS_PER_MINUTE
+            if (nowMillis < deadline) {
+                return if (deadline == current.deadlineEpochMillis) current
+                else current.copy(deadlineEpochMillis = deadline)
+            }
+            // The current task's time is up → fall through and pick the next task.
         }
         val taskId = nextTask(state, nowMillis, k) ?: return null
-        val minutes = state.tasks[taskId]?.minimumMinutes ?: 0
+        val task = state.tasks[taskId] ?: return null
         return ScheduledTask(
             taskId = taskId,
             startEpochMillis = nowMillis,
-            deadlineEpochMillis = nowMillis + minutes * MILLIS_PER_MINUTE,
+            deadlineEpochMillis = nowMillis + scheduledSpanMinutes(task, nowMillis) * MILLIS_PER_MINUTE,
         )
     }
 

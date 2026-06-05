@@ -86,9 +86,6 @@ private val WEEKDAY_INITIAL = listOf("M", "T", "W", "T", "F", "S", "S")
 /** Today in the user's local zone (PRD §7 calendar anchor). */
 fun systemToday(): LocalDate = Clock.System.todayIn(TimeZone.currentSystemDefault())
 
-private fun nowLocalTime(): LocalTime =
-    Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).time
-
 /**
  * PRD §8 Task record / §9 scheduled task: one calendar period tagged with the task [title] (shown on
  * hover). [scheduled] is false for a period the user already did (§8 record, green) and true for the
@@ -360,6 +357,7 @@ private fun MiniMonthDay(
 fun CalendarFloatingWindow(
     selectedDate: LocalDate,
     today: LocalDate,
+    nowMillis: Long,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     records: List<CalendarRecord> = emptyList(),
@@ -406,7 +404,7 @@ fun CalendarFloatingWindow(
             }
             Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                WeekView(selectedDate = selectedDate, today = today, records = records)
+                WeekView(selectedDate = selectedDate, today = today, nowMillis = nowMillis, records = records)
             }
         }
     }
@@ -416,12 +414,14 @@ fun CalendarFloatingWindow(
 private fun WeekView(
     selectedDate: LocalDate,
     today: LocalDate,
+    nowMillis: Long,
     records: List<CalendarRecord>,
 ) {
     val weekStart = startOfWeek(selectedDate)
     val days = (0..6).map { weekStart.plus(it, DateTimeUnit.DAY) }
-    val now = remember { nowLocalTime() }
     val tz = remember { TimeZone.currentSystemDefault() }
+    // Follows the (possibly simulated) clock so the now-line moves as accelerated time advances.
+    val now = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz).time
     val hourHeight = 48.dp
     val gutterWidth = 56.dp
 

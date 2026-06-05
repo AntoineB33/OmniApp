@@ -10,6 +10,7 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.ScheduledTask
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStateCodec
@@ -41,6 +42,13 @@ class SchedulerSchedulerTest {
     }
 
     // ----- §9 time-weighted score / next task -------------------------------------------------
+
+    @Test
+    fun default_decay_constant_has_a_seven_day_half_life() {
+        // PRD §9: a record period's weight halves every 7 days (168 h).
+        val k = SchedulerDomain.DEFAULT_DECAY_PER_HOUR
+        assertEquals(0.5, exp(-k * 7 * 24.0), 1e-12)
+    }
 
     @Test
     fun time_weighted_score_matches_closed_form_integral() {
@@ -104,8 +112,10 @@ class SchedulerSchedulerTest {
 
     @Test
     fun compute_schedule_keeps_current_allocation_until_deadline_then_recomputes() {
-        val (s, a, _) = stateWithTwoTasks()
+        val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
+        // A 10-minute minimum so the constructed deadline matches the recomputed span (no record).
+        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(minimumMinutes = 10)))
         val current = org.example.project.scheduler.model.ScheduledTask(a, now, now + 10 * 60_000L)
         val withCurrent = s.copy(scheduled = current)
         // Still within the deadline → unchanged.
@@ -115,6 +125,25 @@ class SchedulerSchedulerTest {
         val next = SchedulerDomain.computeSchedule(withCurrent, after)
         assertNotNull(next)
         assertEquals(after, next.startEpochMillis)
+    }
+
+    @Test
+    fun compute_schedule_updates_current_period_when_minimum_time_changes() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val start = now - 5 * 60_000L
+        // PRD §9 update: the task is still scheduled (started 5 min ago) and still exists; raising its
+        // minimum to 30 min must stretch the scheduled period to start + 30 min, same task and start.
+        val current = ScheduledTask(a, start, start + 20 * 60_000L)
+        val s = s0.copy(
+            tasks = s0.tasks + (a to s0.tasks[a]!!.copy(minimumMinutes = 30)),
+            scheduled = current,
+        )
+        val updated = SchedulerDomain.computeSchedule(s, now)
+        assertNotNull(updated)
+        assertEquals(a, updated.taskId)
+        assertEquals(start, updated.startEpochMillis)
+        assertEquals(start + 30 * 60_000L, updated.deadlineEpochMillis)
     }
 
     @Test
@@ -138,6 +167,40 @@ class SchedulerSchedulerTest {
     }
 
     // ----- §10 minimum time ------------------------------------------------------------------
+
+    @Test
+    fun scheduled_span_subtracts_recent_contiguous_effort() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // A 20-min session ending 5 min ago is within the 10-min streak window → span = 60 - 20.
+        val recent = TaskTimeRange(now - 25 * 60_000L, now - 5 * 60_000L)
+        val task = s0.tasks[a]!!.copy(minimumMinutes = 60, record = listOf(recent))
+        assertEquals(20L, SchedulerDomain.recentContiguousRecordMinutes(task.record, now))
+        assertEquals(40L, SchedulerDomain.scheduledSpanMinutes(task, now))
+    }
+
+    @Test
+    fun scheduled_span_ignores_effort_whose_streak_already_broke() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // The same 20-min session, but it ended 15 min ago → the >10-min gap breaks the streak.
+        val stale = TaskTimeRange(now - 35 * 60_000L, now - 15 * 60_000L)
+        val task = s0.tasks[a]!!.copy(minimumMinutes = 60, record = listOf(stale))
+        assertEquals(0L, SchedulerDomain.recentContiguousRecordMinutes(task.record, now))
+        assertEquals(60L, SchedulerDomain.scheduledSpanMinutes(task, now))
+    }
+
+    @Test
+    fun scheduled_span_falls_back_to_full_minimum_when_recent_effort_exceeds_it() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // Two sessions 5 min apart (last ends 5 min ago) chain into one 50-min effort > 30-min min.
+        val r1 = TaskTimeRange(now - 60 * 60_000L, now - 35 * 60_000L) // 25 min
+        val r2 = TaskTimeRange(now - 30 * 60_000L, now - 5 * 60_000L) // 25 min, 5-min gap from r1
+        val task = s0.tasks[a]!!.copy(minimumMinutes = 30, record = listOf(r1, r2))
+        assertEquals(50L, SchedulerDomain.recentContiguousRecordMinutes(task.record, now))
+        assertEquals(30L, SchedulerDomain.scheduledSpanMinutes(task, now)) // 30 - 50 < 0 → full minimum
+    }
 
     @Test
     fun new_task_defaults_to_45_minute_minimum_and_schedules_a_non_empty_slot() {
