@@ -41,6 +41,8 @@ object SchedulerReducer {
             is SchedulerIntent.UpdateManualCalendarEntry -> reduceUpdateManualEntry(state, intent)
             is SchedulerIntent.MoveManualCalendarEntry -> reduceMoveManualEntry(state, intent)
             is SchedulerIntent.ResizeManualCalendarEntry -> reduceResizeManualEntry(state, intent)
+            is SchedulerIntent.PinScheduledAsManual -> reducePinScheduled(state, intent)
+            is SchedulerIntent.PinRecordAsManual -> reducePinRecord(state, intent)
             is SchedulerIntent.SetCalendarFocus -> state.copy(calendarFocused = intent.focused)
             is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
             is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
@@ -672,10 +674,21 @@ object SchedulerReducer {
         return commitDelta(state, ManualEntryDelta(before, after), HistoryCategory.Calendar)
     }
 
-    /** The other entries (everything except [id]) as plain time ranges, for collision checks. */
-    private fun otherRanges(state: SchedulerState, id: String): List<TaskTimeRange> =
-        state.manualEntries.filter { it.id != id }
-            .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+    /**
+     * PRD §8 "there must not be overlaps": every other period shown on the calendar — task records,
+     * the scheduled "to do now", and the other manual entries — that a dragged/resized entry [id]
+     * must not overlap.
+     */
+    private fun otherRanges(state: SchedulerState, id: String): List<TaskTimeRange> {
+        val records = state.tasks.values.flatMap { it.record }
+        val scheduled =
+            state.scheduled?.let { listOf(TaskTimeRange(it.startEpochMillis, it.deadlineEpochMillis)) }
+                ?: emptyList()
+        val manual =
+            state.manualEntries.filter { it.id != id }
+                .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        return records + scheduled + manual
+    }
 
     private fun reduceAddManualEntry(state: SchedulerState, startMillis: Long): SchedulerState {
         // PRD §8 Manual add: highest-absolute-priority task (alphabetical tie-break), spanning its
@@ -733,6 +746,47 @@ object SchedulerReducer {
         val moved =
             current.copy(startEpochMillis = placed.startEpochMillis, endEpochMillis = placed.endEpochMillis)
         return commitManualEntries(state, entries.toMutableList().also { it[index] = moved })
+    }
+
+    /** PRD §8 (uniform blocks): pin the scheduled "to do now" as a manual entry; clear the schedule. */
+    private fun reducePinScheduled(
+        state: SchedulerState,
+        intent: SchedulerIntent.PinScheduledAsManual,
+    ): SchedulerState {
+        val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
+        val (entryId, allocated) = state.copy(scheduled = null).allocateManualEntryId()
+        val entry =
+            ManualCalendarEntry(
+                id = entryId,
+                taskId = intent.taskId,
+                title = intent.title,
+                startEpochMillis = intent.startEpochMillis,
+                endEpochMillis = end,
+            )
+        return commitManualEntries(allocated, allocated.manualEntries + entry)
+    }
+
+    /** PRD §8 (uniform blocks): pin a task-record period as a manual entry; drop it from the record. */
+    private fun reducePinRecord(
+        state: SchedulerState,
+        intent: SchedulerIntent.PinRecordAsManual,
+    ): SchedulerState {
+        val sourceTask = state.tasks[intent.recordTaskId] ?: return state
+        val sourceRange = TaskTimeRange(intent.recordStartEpochMillis, intent.recordEndEpochMillis)
+        // Record lives outside history; removing it here is a side effect (undo won't restore it).
+        val trimmedTasks =
+            state.tasks + (intent.recordTaskId to sourceTask.copy(record = sourceTask.record - sourceRange))
+        val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
+        val (entryId, allocated) = state.copy(tasks = trimmedTasks).allocateManualEntryId()
+        val entry =
+            ManualCalendarEntry(
+                id = entryId,
+                taskId = intent.taskId,
+                title = intent.title,
+                startEpochMillis = intent.startEpochMillis,
+                endEpochMillis = end,
+            )
+        return commitManualEntries(allocated, allocated.manualEntries + entry)
     }
 
     private fun reduceResizeManualEntry(

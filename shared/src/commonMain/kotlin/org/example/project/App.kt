@@ -21,6 +21,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
@@ -34,6 +35,7 @@ import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.LateralMenu
 import org.example.project.ui.ManualEntryEditWindow
+import org.example.project.ui.PlacedRecord
 import org.example.project.ui.TimeSimPanel
 
 enum class OmniPage(val label: String) {
@@ -83,7 +85,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // blue) — both drawn the same way in the calendar. PRD §8 manual entries are drawn too.
         val calendarRecords =
             schedulerState.tasks.values.flatMap { task ->
-                task.record.map { CalendarRecord(title = task.title, range = it) }
+                task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
             } +
                 (schedulerState.scheduled?.let { sch ->
                     schedulerState.tasks[sch.taskId]?.let { task ->
@@ -91,6 +93,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             title = task.title,
                             range = TaskTimeRange(sch.startEpochMillis, sch.deadlineEpochMillis),
                             scheduled = true,
+                            taskId = sch.taskId,
                         )
                     }
                 }?.let(::listOf) ?: emptyList()) +
@@ -110,8 +113,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         var calendarOpen by remember { mutableStateOf(false) }
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
-        // PRD §8 edit window: id of the manual entry currently being edited (null = closed).
-        var editingEntryId by remember { mutableStateOf<String?>(null) }
+        // PRD §8 edit window: the calendar block currently being edited (null = closed).
+        var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
 
         Box(
             modifier = Modifier
@@ -151,39 +154,29 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             onAddTaskAt = { startMillis ->
                                 vm.dispatch(SchedulerIntent.AddManualCalendarEntry(startMillis))
                             },
-                            onMoveEntry = { id, startMillis ->
-                                vm.dispatch(SchedulerIntent.MoveManualCalendarEntry(id, startMillis))
+                            // PRD §8 (uniform blocks): committing a drag/resize either updates the
+                            // manual entry or pins the auto block (record/scheduled) into one.
+                            onCommitBounds = { block, newStart, newEnd ->
+                                commitBoundsIntent(block, block.taskId, block.title, newStart, newEnd)
+                                    ?.let(vm::dispatch)
                             },
-                            onResizeEntry = { id, edge, millis ->
-                                vm.dispatch(SchedulerIntent.ResizeManualCalendarEntry(id, edge, millis))
-                            },
-                            onEditEntry = { id -> editingEntryId = id },
+                            onEditEntry = { block -> editingBlock = block },
                         )
 
                         // PRD §8 edit window, drawn over the calendar window and the tree.
-                        val editing = editingEntryId?.let { id ->
-                            schedulerState.manualEntries.firstOrNull { it.id == id }
-                        }
-                        if (editing != null) {
+                        editingBlock?.let { block ->
                             ManualEntryEditWindow(
-                                initialTitle = editing.title,
-                                startMillis = editing.startEpochMillis,
-                                endMillis = editing.endEpochMillis,
+                                initialTitle = block.title,
+                                startMillis = block.fullStartMillis,
+                                endMillis = block.fullEndMillis,
                                 tz = tz,
                                 titleSuggestions = { SchedulerDomain.titleSuggestions(schedulerState, it) },
                                 taskIdForTitle = { schedulerState.titleToTaskIds[it]?.firstOrNull() },
-                                onDismiss = { editingEntryId = null },
+                                onDismiss = { editingBlock = null },
                                 onSave = { taskId, title, startMillis, endMillis ->
-                                    vm.dispatch(
-                                        SchedulerIntent.UpdateManualCalendarEntry(
-                                            id = editing.id,
-                                            taskId = taskId,
-                                            title = title,
-                                            startEpochMillis = startMillis,
-                                            endEpochMillis = endMillis,
-                                        ),
-                                    )
-                                    editingEntryId = null
+                                    commitBoundsIntent(block, taskId, title, startMillis, endMillis)
+                                        ?.let(vm::dispatch)
+                                    editingBlock = null
                                 },
                             )
                         }
@@ -201,4 +194,33 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             }
         }
     }
+}
+
+/**
+ * PRD §8 (uniform blocks): the intent that commits new bounds/title for any calendar [block].
+ * A manual entry is updated in place; an auto block (scheduled or task record) is pinned into a new
+ * manual entry. Returns null when the block has no usable identity (defensive).
+ */
+private fun commitBoundsIntent(
+    block: PlacedRecord,
+    taskId: TaskId?,
+    title: String,
+    startMillis: Long,
+    endMillis: Long,
+): SchedulerIntent? = when {
+    block.entryId != null ->
+        SchedulerIntent.UpdateManualCalendarEntry(block.entryId, taskId, title, startMillis, endMillis)
+    block.scheduled ->
+        SchedulerIntent.PinScheduledAsManual(taskId, title, startMillis, endMillis)
+    block.taskId != null ->
+        SchedulerIntent.PinRecordAsManual(
+            recordTaskId = block.taskId,
+            recordStartEpochMillis = block.fullStartMillis,
+            recordEndEpochMillis = block.fullEndMillis,
+            taskId = taskId,
+            title = title,
+            startEpochMillis = startMillis,
+            endEpochMillis = endMillis,
+        )
+    else -> null
 }

@@ -196,6 +196,32 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §8 (uniform blocks): "pin" the auto scheduled "to do now" block as a manual entry with the
+     * given task/title/bounds, so it becomes editable like any other. Clears [SchedulerState.scheduled].
+     */
+    data class PinScheduledAsManual(
+        val taskId: TaskId?,
+        val title: String,
+        val startEpochMillis: Long,
+        val endEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §8 (uniform blocks): "pin" an auto task-record period as a manual entry. Removes the
+     * `[recordStartEpochMillis, recordEndEpochMillis]` range from [recordTaskId]'s record and adds a
+     * manual entry with the given task/title/bounds.
+     */
+    data class PinRecordAsManual(
+        val recordTaskId: TaskId,
+        val recordStartEpochMillis: Long,
+        val recordEndEpochMillis: Long,
+        val taskId: TaskId?,
+        val title: String,
+        val startEpochMillis: Long,
+        val endEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
      * PRD §5: mark the calendar focused/unfocused so Ctrl+Z/Y route to (or away from) the calendar
      * history. Not undoable.
      */

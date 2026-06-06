@@ -80,6 +80,7 @@ import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.coroutines.withTimeoutOrNull
 import org.example.project.OmniPage
+import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.state.CalendarEdge
@@ -92,9 +93,9 @@ private object CalColors {
     val grid = Color(0xFFDADCE0)
     val menuBackground = Color(0xFFF8F9FA)
     val muted = Color(0xFF5F6368)
-    val record = Color(0xFF34A853) // Google-green "done" period block (PRD §8 task record)
-    val scheduled = Color(0xFF1A73E8) // Google-blue "to do now" block (PRD §9 scheduled task)
-    val manual = Color(0xFF8430CE) // Purple manually-placed block (PRD §8 manual entry)
+    // PRD §8 (uniform blocks): every calendar period — record, scheduled, or manual — is drawn in this
+    // single colour, with no visual distinction between auto-calculated and manually-added tasks.
+    val event = Color(0xFF1A73E8) // Google-blue calendar event
 }
 
 private val WEEKDAY_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -163,6 +164,25 @@ fun recordsForDay(
             fullEndMillis = record.range.endEpochMillis,
         )
     }
+
+/**
+ * Stable identity for a calendar block across the [CalendarRecord] (full) and [PlacedRecord]
+ * (per-day) representations, so a dragged block can exclude itself from the overlap set. Manual
+ * entries key on their id; auto blocks (records / scheduled) key on their source + range.
+ */
+private fun calendarBlockKey(
+    entryId: String?,
+    scheduled: Boolean,
+    taskId: TaskId?,
+    startMillis: Long,
+    endMillis: Long,
+): String = entryId ?: "auto/${if (scheduled) "s" else "r"}/${taskId?.value}/$startMillis/$endMillis"
+
+private fun calendarBlockKey(r: CalendarRecord): String =
+    calendarBlockKey(r.entryId, r.scheduled, r.taskId, r.range.startEpochMillis, r.range.endEpochMillis)
+
+private fun calendarBlockKey(r: PlacedRecord): String =
+    calendarBlockKey(r.entryId, r.scheduled, r.taskId, r.fullStartMillis, r.fullEndMillis)
 
 /** Monday of the week containing [date] (PRD §7 week view starts on Monday, like the mock-up). */
 private fun startOfWeek(date: LocalDate): LocalDate =
@@ -405,12 +425,10 @@ fun CalendarFloatingWindow(
     records: List<CalendarRecord> = emptyList(),
     /** PRD §8 Manual add: invoked with the epoch-millis at a right-click position in the calendar. */
     onAddTaskAt: (Long) -> Unit = {},
-    /** PRD §8 Manual drag (move): an entry was dropped; its start should move near these millis. */
-    onMoveEntry: (String, Long) -> Unit = { _, _ -> },
-    /** PRD §8 extend/shorten: an entry's [CalendarEdge] was dragged to these millis. */
-    onResizeEntry: (String, CalendarEdge, Long) -> Unit = { _, _, _ -> },
-    /** PRD §8 edit window: a double-click (without a drag) requests editing this entry. */
-    onEditEntry: (String) -> Unit = {},
+    /** PRD §8 drag/resize commit: the block and its new (already snapped) start/end millis. */
+    onCommitBounds: (PlacedRecord, Long, Long) -> Unit = { _, _, _ -> },
+    /** PRD §8 edit window: a double-click (without a drag) requests editing this block. */
+    onEditEntry: (PlacedRecord) -> Unit = {},
 ) {
     var offset by remember { mutableStateOf(Offset.Zero) }
     Surface(
@@ -460,8 +478,7 @@ fun CalendarFloatingWindow(
                     nowMillis = nowMillis,
                     records = records,
                     onAddTaskAt = onAddTaskAt,
-                    onMoveEntry = onMoveEntry,
-                    onResizeEntry = onResizeEntry,
+                    onCommitBounds = onCommitBounds,
                     onEditEntry = onEditEntry,
                 )
             }
@@ -476,9 +493,8 @@ private fun WeekView(
     nowMillis: Long,
     records: List<CalendarRecord>,
     onAddTaskAt: (Long) -> Unit,
-    onMoveEntry: (String, Long) -> Unit,
-    onResizeEntry: (String, CalendarEdge, Long) -> Unit,
-    onEditEntry: (String) -> Unit,
+    onCommitBounds: (PlacedRecord, Long, Long) -> Unit,
+    onEditEntry: (PlacedRecord) -> Unit,
 ) {
     val weekStart = startOfWeek(selectedDate)
     val days = (0..6).map { weekStart.plus(it, DateTimeUnit.DAY) }
@@ -501,6 +517,10 @@ private fun WeekView(
     // PRD §8: while a block is being dragged/resized, lock the grid's vertical scroll so it doesn't
     // compete with the block's own drag gesture.
     var scrollLocked by remember { mutableStateOf(false) }
+
+    // PRD §8 "there must not be overlaps": every block on the calendar (records, scheduled, manual)
+    // as (key, range), so a dragged block snaps around ALL of them live — matching the reducer.
+    val allBlocks = records.map { calendarBlockKey(it) to it.range }
 
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Text(
@@ -551,10 +571,10 @@ private fun WeekView(
                         now = if (day == today) now else null,
                         records = recordsForDay(records, day, tz),
                         onAddTaskAt = onAddTaskAt,
-                        onMoveEntry = onMoveEntry,
-                        onResizeEntry = onResizeEntry,
+                        onCommitBounds = onCommitBounds,
                         onEditEntry = onEditEntry,
                         onLockScroll = { scrollLocked = it },
+                        allBlocks = allBlocks,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -606,10 +626,10 @@ private fun DayColumn(
     now: LocalTime?,
     records: List<PlacedRecord>,
     onAddTaskAt: (Long) -> Unit,
-    onMoveEntry: (String, Long) -> Unit,
-    onResizeEntry: (String, CalendarEdge, Long) -> Unit,
-    onEditEntry: (String) -> Unit,
+    onCommitBounds: (PlacedRecord, Long, Long) -> Unit,
+    onEditEntry: (PlacedRecord) -> Unit,
     onLockScroll: (Boolean) -> Unit,
+    allBlocks: List<Pair<String, TaskTimeRange>>,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -674,22 +694,23 @@ private fun DayColumn(
                 },
             )
         }
-        // PRD §8 Task record: each done-period as a green block at its time range; the task title
-        // shows on hover. Manual entries are interactive (double-click to edit, double-click+drag to
-        // move, grab an edge to resize); records and the scheduled block are static.
+        // PRD §8 (uniform blocks): every period — task record, scheduled "to do now", or manual entry
+        // — renders as the same interactive block (double-click to edit, double-click+drag to move,
+        // grab an edge to resize). Auto blocks convert to a manual entry on first edit (handled by the
+        // callbacks in App), so there is no visible or behavioural difference between them.
         records.forEach { record ->
-            if (record.manual && record.entryId != null) {
-                ManualEntryBlock(
-                    record = record,
-                    hourHeight = hourHeight,
-                    onMove = onMoveEntry,
-                    onResize = onResizeEntry,
-                    onEdit = onEditEntry,
-                    onLockScroll = onLockScroll,
-                )
-            } else {
-                RecordBlock(record = record, hourHeight = hourHeight)
-            }
+            val key = calendarBlockKey(record)
+            CalendarBlock(
+                record = record,
+                hourHeight = hourHeight,
+                day = day,
+                tz = tz,
+                // Every other block — everything but itself — so a drag/resize never overlaps.
+                others = allBlocks.filter { it.first != key }.map { it.second },
+                onCommitBounds = onCommitBounds,
+                onEdit = onEditEntry,
+                onLockScroll = onLockScroll,
+            )
         }
         // Current-time indicator (only on today's column).
         if (now != null) {
@@ -713,94 +734,80 @@ private fun DayColumn(
 }
 
 /**
- * PRD §8 Task record / §9 scheduled task block: a bar spanning the period's clipped time range within
- * its day column. Green for a done record, blue for the scheduler's "task to do now". Hovering it
- * reveals the task title (the bar itself shows no text, per the PRD's "title ... shows on hover").
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun RecordBlock(record: PlacedRecord, hourHeight: Dp) {
-    val offsetY = hourHeight * record.startHour
-    val height = (hourHeight * (record.endHour - record.startHour)).coerceAtLeast(2.dp)
-    val color = when {
-        record.manual -> CalColors.manual
-        record.scheduled -> CalColors.scheduled
-        else -> CalColors.record
-    }
-    TooltipBox(
-        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-        tooltip = { PlainTooltip { Text(record.title.ifEmpty { "(untitled)" }) } },
-        state = rememberTooltipState(),
-        modifier = Modifier
-            .offset(y = offsetY)
-            .fillMaxWidth()
-            .height(height)
-            .padding(horizontal = 1.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(3.dp))
-                .background(color.copy(alpha = 0.30f))
-                .border(1.dp, color, RoundedCornerShape(3.dp)),
-        )
-    }
-}
-
-/**
- * PRD §8 manual calendar entry block: like [RecordBlock] but interactive.
+ * PRD §8 calendar block — one interactive component for EVERY period (task record, scheduled "to do
+ * now", or manual entry), drawn identically (same colour) with the same behaviour:
  *  - Double-click then release (no drag) → [onEdit] (the edit window).
- *  - Double-click then drag while holding → [onMove] (committed once, on release).
- *  - Grab the top/bottom edge and drag → [onResize] the start/end edge.
- * A live offset/height preview follows the cursor during the gesture; the reducer applies the
- * no-overlap snapping/clamping when the gesture commits.
+ *  - Double-click then drag while holding → move; committed once, on release, via [onCommitBounds].
+ *  - Grab the top/bottom edge and drag → resize that edge, also committed via [onCommitBounds].
+ * The live preview applies the SAME no-overlap snapping/clamping the reducer commits with, so a block
+ * never visually overlaps another. Auto blocks (records/scheduled) are pinned into manual entries by
+ * the callback when edited, so afterwards they are indistinguishable. The title shows on hover.
  */
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
-private fun ManualEntryBlock(
+private fun CalendarBlock(
     record: PlacedRecord,
     hourHeight: Dp,
-    onMove: (String, Long) -> Unit,
-    onResize: (String, CalendarEdge, Long) -> Unit,
-    onEdit: (String) -> Unit,
+    day: LocalDate,
+    tz: TimeZone,
+    others: List<TaskTimeRange>,
+    onCommitBounds: (PlacedRecord, Long, Long) -> Unit,
+    onEdit: (PlacedRecord) -> Unit,
     onLockScroll: (Boolean) -> Unit,
 ) {
-    val id = record.entryId ?: return
+    val key = calendarBlockKey(record)
     val density = LocalDensity.current
+    val hourHeightPx = with(density) { hourHeight.toPx() }
+    val minPx = with(density) { 2.dp.toPx() }
     val baseOffsetY = with(density) { (hourHeight * record.startHour).toPx() }
-    val baseHeight = with(density) { (hourHeight * (record.endHour - record.startHour)).toPx() }
-        .coerceAtLeast(with(density) { 2.dp.toPx() })
+    val baseHeight = (with(density) { (hourHeight * (record.endHour - record.startHour)).toPx() })
+        .coerceAtLeast(minPx)
+
+    // Pixel <-> epoch-millis mapping for this day (linear; midnight of [day] is the column origin).
+    val midnightMillis = LocalDateTime(day.year, day.month, day.day, 0, 0)
+        .toInstant(tz).toEpochMilliseconds()
+    val pxPerMs = hourHeightPx / 3_600_000f
+    val entry = TaskTimeRange(record.fullStartMillis, record.fullEndMillis)
+    val duration = record.fullEndMillis - record.fullStartMillis
 
     // Live gesture preview, in this column's pixels.
-    var dragPx by remember(id) { mutableStateOf(0f) }
-    var moving by remember(id) { mutableStateOf(false) }
-    var resizing by remember(id) { mutableStateOf<CalendarEdge?>(null) }
+    var dragPx by remember(key) { mutableStateOf(0f) }
+    var moving by remember(key) { mutableStateOf(false) }
+    var resizing by remember(key) { mutableStateOf<CalendarEdge?>(null) }
 
-    fun millisDelta(px: Float): Long {
-        val hourHeightPx = with(density) { hourHeight.toPx() }
-        return ((px / hourHeightPx) * 3_600_000f).toLong()
+    fun millisDelta(px: Float): Long = ((px / hourHeightPx) * 3_600_000f).toLong()
+
+    // The snapped/clamped bounds for the current gesture (also what gets committed on release).
+    fun movedBounds(): TaskTimeRange =
+        SchedulerDomain.placeDraggedEntry(others, record.fullStartMillis + millisDelta(dragPx), duration)
+    fun resizedBounds(edge: CalendarEdge): TaskTimeRange {
+        val base = if (edge == CalendarEdge.Start) record.fullStartMillis else record.fullEndMillis
+        return SchedulerDomain.clampResize(others, entry, edge, base + millisDelta(dragPx))
     }
 
-    // Apply the preview: moving shifts the whole block; a Start-edge resize shifts the top and
-    // shrinks the height; an End-edge resize only grows/shrinks the height.
-    val previewOffsetPx = baseOffsetY + if (moving || resizing == CalendarEdge.Start) dragPx else 0f
-    val previewHeightPx = (
-        baseHeight + when (resizing) {
-            CalendarEdge.End -> dragPx
-            CalendarEdge.Start -> -dragPx
-            else -> 0f
-        }
-        ).coerceAtLeast(with(density) { 2.dp.toPx() })
+    val preview: TaskTimeRange? = when {
+        moving -> movedBounds()
+        resizing != null -> resizedBounds(resizing!!)
+        else -> null
+    }
+    val previewOffsetPx =
+        if (preview != null) (preview.startEpochMillis - midnightMillis) * pxPerMs else baseOffsetY
+    val previewHeightPx =
+        if (preview != null) ((preview.endEpochMillis - preview.startEpochMillis) * pxPerMs) else baseHeight
+    val previewHeightCoerced = previewHeightPx.coerceAtLeast(minPx)
 
-    val color = CalColors.manual
+    val color = CalColors.event
 
     Box(
         modifier = Modifier
             .offset { IntOffset(0, previewOffsetPx.roundToInt()) }
             .fillMaxWidth()
-            .height(with(density) { previewHeightPx.toDp() })
+            .height(with(density) { previewHeightCoerced.toDp() })
             .padding(horizontal = 1.dp)
-            .pointerInput(id) {
+            // Re-key on the entry's position so the gesture closure re-captures fresh values after a
+            // commit — otherwise a second drag would compute from the stale original position and the
+            // block would not land where released.
+            .pointerInput(key, record.fullStartMillis, record.fullEndMillis) {
                 val touchSlop = viewConfiguration.touchSlop
                 val doubleTapTimeout = viewConfiguration.doubleTapTimeoutMillis
                 // Cap the resize edge zone at a third of the block so a short entry still has a
@@ -827,8 +834,8 @@ private fun ManualEntryBlock(
                                 val event = awaitPointerEvent()
                                 if (!event.changes.any { it.pressed }) {
                                     if (started) {
-                                        val base = if (edge == CalendarEdge.Start) record.fullStartMillis else record.fullEndMillis
-                                        onResize(id, edge, base + millisDelta(dragPx))
+                                        val b = resizedBounds(edge)
+                                        onCommitBounds(record, b.startEpochMillis, b.endEpochMillis)
                                     }
                                     break
                                 }
@@ -878,9 +885,10 @@ private fun ManualEntryBlock(
                             val event = awaitPointerEvent()
                             if (!event.changes.any { it.pressed }) {
                                 if (moveStarted) {
-                                    onMove(id, record.fullStartMillis + millisDelta(dragPx))
+                                    val b = movedBounds()
+                                    onCommitBounds(record, b.startEpochMillis, b.endEpochMillis)
                                 } else {
-                                    onEdit(id)
+                                    onEdit(record)
                                 }
                                 break
                             }
@@ -902,13 +910,19 @@ private fun ManualEntryBlock(
                 }
             },
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(3.dp))
-                .background(color.copy(alpha = 0.30f))
-                .border(1.dp, color, RoundedCornerShape(3.dp)),
-        )
+        TooltipBox(
+            positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+            tooltip = { PlainTooltip { Text(record.title.ifEmpty { "(untitled)" }) } },
+            state = rememberTooltipState(),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(color.copy(alpha = 0.30f))
+                    .border(1.dp, color, RoundedCornerShape(3.dp)),
+            )
+        }
     }
 }
 

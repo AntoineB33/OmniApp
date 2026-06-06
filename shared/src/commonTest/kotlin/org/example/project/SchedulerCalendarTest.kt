@@ -230,6 +230,58 @@ class SchedulerCalendarTest {
         assertEquals(before, undone.manualEntries[0])
     }
 
+    // ----- §8 uniform blocks: pinning auto blocks into manual entries -------------------------
+
+    @Test
+    fun pinning_the_scheduled_block_makes_a_manual_entry_and_clears_the_schedule() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.RefreshSchedule(now))
+        assertNotNull(s.scheduled)
+        val sch = s.scheduled!!
+
+        val pinned =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.PinScheduledAsManual(
+                    taskId = sch.taskId,
+                    title = s.tasks[sch.taskId]!!.title,
+                    startEpochMillis = sch.startEpochMillis + 30 * MIN,
+                    endEpochMillis = sch.deadlineEpochMillis + 30 * MIN,
+                ),
+            )
+        assertNull(pinned.scheduled) // schedule cleared
+        assertEquals(1, pinned.manualEntries.size)
+        assertEquals(sch.taskId, pinned.manualEntries[0].taskId)
+        assertEquals(sch.startEpochMillis + 30 * MIN, pinned.manualEntries[0].startEpochMillis)
+    }
+
+    @Test
+    fun pinning_a_record_period_moves_it_out_of_the_record_into_a_manual_entry() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val recorded = TaskTimeRange(10_000_000L, 10_000_000L + 45 * MIN)
+        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(record = listOf(recorded))))
+
+        val pinned =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.PinRecordAsManual(
+                    recordTaskId = a,
+                    recordStartEpochMillis = recorded.startEpochMillis,
+                    recordEndEpochMillis = recorded.endEpochMillis,
+                    taskId = a,
+                    title = s.tasks[a]!!.title,
+                    startEpochMillis = recorded.startEpochMillis + 60 * MIN,
+                    endEpochMillis = recorded.endEpochMillis + 60 * MIN,
+                ),
+            )
+        // The period left the record and became a manual entry at the new position.
+        assertTrue(pinned.tasks[a]!!.record.isEmpty())
+        assertEquals(1, pinned.manualEntries.size)
+        assertEquals(a, pinned.manualEntries[0].taskId)
+        assertEquals(recorded.startEpochMillis + 60 * MIN, pinned.manualEntries[0].startEpochMillis)
+    }
+
     // ----- §10 New Task overlap avoidance -----------------------------------------------------
 
     @Test
