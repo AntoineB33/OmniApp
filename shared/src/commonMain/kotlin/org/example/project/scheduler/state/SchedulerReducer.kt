@@ -985,19 +985,42 @@ private fun applySetPriorityWeight(
  */
 private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
     val previous = state.scheduled
-    val afterRecord =
-        if (previous != null &&
-            nowMillis >= previous.deadlineEpochMillis &&
-            state.tasks.containsKey(previous.taskId)
-        ) {
-            val task = state.tasks.getValue(previous.taskId)
-            val period = TaskTimeRange(previous.startEpochMillis, previous.deadlineEpochMillis)
-            state.copy(tasks = state.tasks + (previous.taskId to task.copy(record = task.record + period)))
-        } else {
-            state
+    val previousTask = previous?.let { state.tasks[it.taskId] }
+
+    // Close out the previous period (if any) and decide where the *next* period should start. The
+    // next task always begins exactly at the previous period's end — not at `nowMillis` — so a late
+    // recalculation never shifts the schedule (PRD §9).
+    var working = state
+    var startMillis = nowMillis
+    if (previous != null && previousTask != null) {
+        if (!SchedulerDomain.taskHasCells(state, previous.taskId)) {
+            // PRD §9: the scheduled task was deleted from the tree → cut its period to the moment it
+            // disappeared (≈ now, capped at its deadline) and record it. The record keeps the task
+            // alive (PRD §4) so the calendar still shows the cut period.
+            val end = nowMillis.coerceIn(previous.startEpochMillis, previous.deadlineEpochMillis)
+            working = appendRecord(state, previous.taskId, previous.startEpochMillis, end).copy(scheduled = null)
+            startMillis = end
+        } else if (nowMillis >= previous.deadlineEpochMillis) {
+            // PRD §8/§9: the period elapsed → record [start, deadline]; the next task starts there.
+            working = appendRecord(state, previous.taskId, previous.startEpochMillis, previous.deadlineEpochMillis)
+                .copy(scheduled = null)
+            startMillis = previous.deadlineEpochMillis
         }
-    val next = SchedulerDomain.computeSchedule(afterRecord, nowMillis)
-    return if (next == previous && afterRecord === state) state else afterRecord.copy(scheduled = next)
+    }
+    val next = SchedulerDomain.computeSchedule(working, nowMillis, startMillis)
+    return if (next == previous && working === state) state else working.copy(scheduled = next)
+}
+
+/** Appends a `[start, end]` period to [taskId]'s record (PRD §8; lives outside Undo/Redo history). */
+private fun appendRecord(
+    state: SchedulerState,
+    taskId: TaskId,
+    startMillis: Long,
+    endMillis: Long,
+): SchedulerState {
+    val task = state.tasks[taskId] ?: return state
+    val period = TaskTimeRange(startMillis, endMillis)
+    return state.copy(tasks = state.tasks + (taskId to task.copy(record = task.record + period)))
 }
 
 private fun applySetTaskMinimumTime(

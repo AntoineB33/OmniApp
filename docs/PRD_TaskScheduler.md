@@ -54,7 +54,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
   * *Creation:* Typing dynamically creates a *new* `taskId` and the cell gets assigned to it. If another element than the first one (labelled "New task") is selected in the task menu, then selecting the first one creates a new `taskId`.
   * *Default selection:* When entering Edit Mode, the default selection is the current task of the cell. This means that typing automatically selects the first element (labelled "New task").
   * *Sorting:* Shortest to longest path length -> alphabetical by path -> alphabetical by child titles.
-  * *Cleanup:* If a task with no children loses all cell pointers, it is purged from the Task Tree.
+  * *Cleanup:* If a task with no children loses all cell pointers and has no task record (section 8), it is purged from the Task Tree.
 * **Rename:** Modifying the text updates the title field in the global `Tree`. *All* cells sharing this `taskId` will temporarily reflect the new text. If the mode is switched back or canceled, other cells revert to their original state.
 
 **Menu 2: Title Suggestions**
@@ -123,7 +123,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **Task record:** The calendar shows the periods the user did a task, using the task record saved in `Task Tree`. The title of the `taskId` of the period in the calendar shows on hover. Task record is not saved in the history state.
 
 ## 9. Scheduler
-* **update:** The app finds the most suitable task to do as soon as there is no task to do at this moment. If the tree changes while a task is scheduled for this moment and that the task still exists in the tree, then the scheduled period for the current task updates for the new minimum time.
+* **update:** The app finds the most suitable task to do as soon as there is no task to do at this moment. If the tree changes while a task is scheduled for this moment and that the task still exists in the tree, then the scheduled period for the current task updates for the new minimum time. If the task doesn't exist anymore the task is cut to the point in time where the task disappeared from the tree. The beginning and end of a new task is not influenced by the spanning time of the calculations (e.g: after a task that ends at 10:00 AM, the next task starts at 10:00 AM exactly, even if the calculations was done at 10:00:10 AM).
 * **next task:** At that time, the time-weighted percentage of each task is calculated with a half-life of 7 days (a fixed value). The task with the time-weighted percentage the furthest from its absolute priority percentage is the next task. It is then scheduled in the calendar with the minimum time of the task (see section 10).
 * **time-weighted percentage:** Let's say Task $i$ has a set of $N$ time ranges. To get the total weighted score for Task $i$ (let's call it $W_i$), you sum the integrals of all its individual time ranges:  
  $$W_i = \sum_{j=1}^{N} \left[ \frac{1}{k} \left( e^{-k(t_{now} - t_{j, end})} - e^{-k(t_{now} - t_{j, start})} \right) \right]$$

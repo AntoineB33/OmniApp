@@ -518,11 +518,16 @@ object SchedulerDomain {
         return scores.mapValues { (_, score) -> score / total }
     }
 
+    /** Whether any cell in the tree currently points at [taskId] (i.e. the task is still in the tree). */
+    fun taskHasCells(state: SchedulerState, taskId: TaskId): Boolean =
+        state.cells.values.any { it.taskId == taskId }
+
     /**
      * PRD §9 next task: the most under-served task at [nowMillis] — the one whose time-weighted
      * percentage is furthest *below* its absolute priority percentage (`argmax(absolute − weighted)`).
-     * Empty placeholders and the root/main tasks are excluded. Returns null when there are no real
-     * tasks. (Minimum time, PRD §10, constrains the allocated duration, not which task is chosen.)
+     * Empty placeholders, the root/main tasks, and tasks no longer in the tree (kept only for their
+     * record, PRD §4/§8) are excluded. Returns null when there are no real tasks. (Minimum time, PRD
+     * §10, constrains the allocated duration, not which task is chosen.)
      */
     fun nextTask(
         state: SchedulerState,
@@ -532,7 +537,7 @@ object SchedulerDomain {
         val absolute = absoluteTaskPriorities(state)
         val weighted = timeWeightedPercentages(state, nowMillis, k)
         val candidates =
-            state.tasks.keys.filter { !isRootTask(it) && !isMainTask(it) }
+            state.tasks.keys.filter { !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) }
         return candidates.maxByOrNull { taskId ->
             (absolute[taskId] ?: 0.0) - (weighted[taskId] ?: 0.0)
         }
@@ -582,12 +587,15 @@ object SchedulerDomain {
      * its period is kept (same task and start) but its deadline is refreshed from the current
      * [scheduledSpanMinutes] — so editing the tree (e.g. its minimum time) updates the scheduled
      * period; this is a no-op when nothing changed. Once that period is over, or there was nothing
-     * scheduled (e.g. at app start), a fresh [nextTask] is picked and scheduled from [nowMillis] for
-     * its span. Returns null when there are no real tasks to schedule.
+     * scheduled (e.g. at app start), a fresh [nextTask] is picked and scheduled for its span, starting
+     * at [startMillis] — which the caller sets to the *end of the previous period* so consecutive
+     * tasks are contiguous regardless of how late this recalculation runs (PRD §9). Returns null when
+     * there are no real tasks to schedule.
      */
     fun computeSchedule(
         state: SchedulerState,
         nowMillis: Long,
+        startMillis: Long = nowMillis,
         k: Double = DEFAULT_DECAY_PER_HOUR,
     ): ScheduledTask? {
         val current = state.scheduled
@@ -604,8 +612,8 @@ object SchedulerDomain {
         val task = state.tasks[taskId] ?: return null
         return ScheduledTask(
             taskId = taskId,
-            startEpochMillis = nowMillis,
-            deadlineEpochMillis = nowMillis + scheduledSpanMinutes(task, nowMillis) * MILLIS_PER_MINUTE,
+            startEpochMillis = startMillis,
+            deadlineEpochMillis = startMillis + scheduledSpanMinutes(task, startMillis) * MILLIS_PER_MINUTE,
         )
     }
 
@@ -854,9 +862,15 @@ object SchedulerDomain {
     }
 
     fun purgeOrphanTasks(state: SchedulerState): SchedulerState {
+        // PRD §4: a childless task that loses all its cell pointers is purged *unless* it has a task
+        // record (§8) — such tasks linger only to keep showing their recorded periods in the calendar.
+        // The currently scheduled task is also kept, so a scheduled task deleted from the tree
+        // survives until the next refresh cuts and records its in-progress period (§9).
         val referenced =
             state.cells.values.mapNotNull { it.taskId }.toSet() +
-                setOf(WellKnownIds.ROOT_TASK, WellKnownIds.MAIN_TASK)
+                setOf(WellKnownIds.ROOT_TASK, WellKnownIds.MAIN_TASK) +
+                state.tasks.filterValues { it.record.isNotEmpty() }.keys +
+                listOfNotNull(state.scheduled?.taskId)
         val tasks =
             state.tasks
                 .filterKeys { it in referenced }

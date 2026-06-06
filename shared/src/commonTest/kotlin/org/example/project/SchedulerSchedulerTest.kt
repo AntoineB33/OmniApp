@@ -173,10 +173,11 @@ class SchedulerSchedulerTest {
         assertEquals(1, record.size)
         assertEquals(finished.startEpochMillis, record[0].startEpochMillis)
         assertEquals(finished.deadlineEpochMillis, record[0].endEpochMillis)
-        // The just-recorded task is now over-served, so the next pick is the other one, from `now`.
+        // The just-recorded task is now over-served, so the next pick is the other one — starting
+        // exactly at the finished period's end (PRD §9: contiguous, not anchored to `now`).
         assertNotNull(refreshed.scheduled)
         assertEquals(b, refreshed.scheduled!!.taskId)
-        assertEquals(now, refreshed.scheduled!!.startEpochMillis)
+        assertEquals(finished.deadlineEpochMillis, refreshed.scheduled!!.startEpochMillis)
     }
 
     @Test
@@ -187,6 +188,43 @@ class SchedulerSchedulerTest {
         val s = s0.copy(scheduled = ongoing)
         val refreshed = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now))
         assertTrue(refreshed.tasks[a]!!.record.isEmpty())
+    }
+
+    @Test
+    fun refresh_schedule_cuts_and_records_a_scheduled_task_deleted_from_the_tree() {
+        val (s0, a, b) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // `a` is scheduled mid-period, but it has just been removed from the tree (no cell points at
+        // it any more) — the task object is kept (purge keeps the scheduled task).
+        val scheduledA = ScheduledTask(a, now - 10 * 60_000L, now + 20 * 60_000L)
+        val s = s0.copy(cells = s0.cells.filterValues { it.taskId != a }, scheduled = scheduledA)
+
+        val refreshed = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now))
+
+        // PRD §9: the period is cut to the disappearance point (`now`) and recorded on `a`…
+        val record = refreshed.tasks[a]!!.record
+        assertEquals(1, record.size)
+        assertEquals(scheduledA.startEpochMillis, record[0].startEpochMillis)
+        assertEquals(now, record[0].endEpochMillis)
+        // …and the scheduler moves to a task still in the tree, starting at that cut point.
+        assertEquals(b, refreshed.scheduled!!.taskId)
+        assertEquals(now, refreshed.scheduled!!.startEpochMillis)
+    }
+
+    @Test
+    fun purge_keeps_tasks_that_have_a_record_or_are_currently_scheduled() {
+        val (s0, a, b) = stateWithTwoTasks()
+        // Orphan every real task (drop all cell→task pointers).
+        val orphaned = s0.copy(cells = s0.cells.mapValues { (_, c) -> c.copy(taskId = null) })
+        val withState =
+            orphaned.copy(
+                tasks = orphaned.tasks + (a to orphaned.tasks[a]!!.copy(record = listOf(TaskTimeRange(1L, 2L)))),
+                scheduled = ScheduledTask(b, 0L, 1L),
+            )
+        val purged = SchedulerDomain.purgeOrphanTasks(withState)
+        // PRD §4: `a` survives because it has a record; `b` survives because it is scheduled.
+        assertTrue(purged.tasks.containsKey(a))
+        assertTrue(purged.tasks.containsKey(b))
     }
 
     @Test

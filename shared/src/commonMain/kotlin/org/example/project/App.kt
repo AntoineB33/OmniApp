@@ -69,10 +69,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         }
 
         // PRD §9: recompute as soon as the task tree changes — so the first task created on an empty
-        // database is scheduled immediately (not only on the next tick), and editing the tree (e.g.
-        // the scheduled task's minimum time) updates its scheduled period right away. A no-op when the
-        // recomputed allocation matches the current one.
-        LaunchedEffect(schedulerState.tasks) {
+        // database is scheduled immediately (not only on the next tick), editing the tree (e.g. the
+        // scheduled task's minimum time) updates its scheduled period right away, and deleting the
+        // scheduled task's cell cuts its period at that instant. Keyed on cells too, since a deletion
+        // changes `cells` while the task object is briefly kept. A no-op when nothing relevant changed.
+        LaunchedEffect(schedulerState.tasks, schedulerState.cells) {
             vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
         }
 
