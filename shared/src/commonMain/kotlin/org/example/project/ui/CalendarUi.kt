@@ -53,6 +53,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -497,6 +498,10 @@ private fun WeekView(
         scrollState.scrollTo(target.roundToInt().coerceAtLeast(0))
     }
 
+    // PRD §8: while a block is being dragged/resized, lock the grid's vertical scroll so it doesn't
+    // compete with the block's own drag gesture.
+    var scrollLocked by remember { mutableStateOf(false) }
+
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Text(
             text = monthLabel(weekStart),
@@ -520,7 +525,7 @@ private fun WeekView(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(scrollState),
+                .verticalScroll(scrollState, enabled = !scrollLocked),
         ) {
             Row(Modifier.fillMaxWidth().height(hourHeight * 24)) {
                 // Hour labels gutter.
@@ -549,6 +554,7 @@ private fun WeekView(
                         onMoveEntry = onMoveEntry,
                         onResizeEntry = onResizeEntry,
                         onEditEntry = onEditEntry,
+                        onLockScroll = { scrollLocked = it },
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -603,6 +609,7 @@ private fun DayColumn(
     onMoveEntry: (String, Long) -> Unit,
     onResizeEntry: (String, CalendarEdge, Long) -> Unit,
     onEditEntry: (String) -> Unit,
+    onLockScroll: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -678,6 +685,7 @@ private fun DayColumn(
                     onMove = onMoveEntry,
                     onResize = onResizeEntry,
                     onEdit = onEditEntry,
+                    onLockScroll = onLockScroll,
                 )
             } else {
                 RecordBlock(record = record, hourHeight = hourHeight)
@@ -755,6 +763,7 @@ private fun ManualEntryBlock(
     onMove: (String, Long) -> Unit,
     onResize: (String, CalendarEdge, Long) -> Unit,
     onEdit: (String) -> Unit,
+    onLockScroll: (Boolean) -> Unit,
 ) {
     val id = record.entryId ?: return
     val density = LocalDensity.current
@@ -812,28 +821,32 @@ private fun ManualEntryBlock(
                         val edge = if (nearTop) CalendarEdge.Start else CalendarEdge.End
                         var started = false
                         var traveled = 0f
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            if (!event.changes.any { it.pressed }) {
-                                if (started) {
-                                    val base = if (edge == CalendarEdge.Start) record.fullStartMillis else record.fullEndMillis
-                                    onResize(id, edge, base + millisDelta(dragPx))
+                        onLockScroll(true)
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                if (!event.changes.any { it.pressed }) {
+                                    if (started) {
+                                        val base = if (edge == CalendarEdge.Start) record.fullStartMillis else record.fullEndMillis
+                                        onResize(id, edge, base + millisDelta(dragPx))
+                                    }
+                                    break
                                 }
-                                break
-                            }
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
-                            traveled += change.positionChange().getDistance()
-                            if (!started && traveled > touchSlop) {
-                                started = true
-                                resizing = edge
-                            }
-                            if (started) {
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
+                                val delta = change.positionChangeIgnoreConsumed()
+                                traveled += delta.getDistance()
+                                if (!started && traveled > touchSlop) {
+                                    started = true
+                                    resizing = edge
+                                }
                                 change.consume()
-                                dragPx += change.positionChange().y
+                                if (started) dragPx += delta.y
                             }
+                        } finally {
+                            onLockScroll(false)
+                            resizing = null
+                            dragPx = 0f
                         }
-                        resizing = null
-                        dragPx = 0f
                         return@awaitEachGesture
                     }
 
@@ -856,31 +869,36 @@ private fun ManualEntryBlock(
                     second.consume()
 
                     // Double-click then drag = move (commit on release); release with no drag = edit.
+                    // Lock the grid scroll for the whole second press so a held drag can't scroll it.
                     var moveStarted = false
                     var mt = 0f
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        if (!event.changes.any { it.pressed }) {
-                            if (moveStarted) {
-                                onMove(id, record.fullStartMillis + millisDelta(dragPx))
-                            } else {
-                                onEdit(id)
+                    onLockScroll(true)
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (!event.changes.any { it.pressed }) {
+                                if (moveStarted) {
+                                    onMove(id, record.fullStartMillis + millisDelta(dragPx))
+                                } else {
+                                    onEdit(id)
+                                }
+                                break
                             }
-                            break
-                        }
-                        val change = event.changes.firstOrNull { it.id == second.id } ?: event.changes.first()
-                        mt += change.positionChange().getDistance()
-                        if (!moveStarted && mt > touchSlop) {
-                            moveStarted = true
-                            moving = true
-                        }
-                        if (moveStarted) {
+                            val change = event.changes.firstOrNull { it.id == second.id } ?: event.changes.first()
+                            val delta = change.positionChangeIgnoreConsumed()
+                            mt += delta.getDistance()
+                            if (!moveStarted && mt > touchSlop) {
+                                moveStarted = true
+                                moving = true
+                            }
                             change.consume()
-                            dragPx += change.positionChange().y
+                            if (moveStarted) dragPx += delta.y
                         }
+                    } finally {
+                        onLockScroll(false)
+                        moving = false
+                        dragPx = 0f
                     }
-                    moving = false
-                    dragPx = 0f
                 }
             },
     ) {
