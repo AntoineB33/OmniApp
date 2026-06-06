@@ -196,6 +196,32 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §8 task contextual menu ("Remove"): delete a manual calendar entry. Recorded as a calendar
+     * delta so it can be undone while the calendar is focused.
+     */
+    data class RemoveManualCalendarEntry(
+        val id: String,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §8 task contextual menu ("Remove") on an auto task-record block: drop the
+     * `[startEpochMillis, endEpochMillis]` period from [taskId]'s record. The record lives outside the
+     * Undo/Redo history (PRD §8), so this is a side effect, not an undoable delta.
+     */
+    data class RemoveRecordPeriod(
+        val taskId: TaskId,
+        val startEpochMillis: Long,
+        val endEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §8 task contextual menu ("Remove") on the auto scheduled "to do now" block: clear the
+     * current allocation. Like [RefreshSchedule] this touches the history-excluded schedule only; the
+     * scheduler will pick a new task on the next refresh.
+     */
+    data object RemoveScheduledNow : SchedulerIntent
+
+    /**
      * PRD §8 (uniform blocks): "pin" the auto scheduled "to do now" block as a manual entry with the
      * given task/title/bounds, so it becomes editable like any other. Clears [SchedulerState.scheduled].
      */

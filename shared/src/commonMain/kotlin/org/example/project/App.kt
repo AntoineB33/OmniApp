@@ -25,6 +25,7 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
+import org.example.project.scheduler.platform.sendSystemNotification
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.ui.TaskSchedulerScreen
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
@@ -79,6 +80,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // changes `cells` while the task object is briefly kept. A no-op when nothing relevant changed.
         LaunchedEffect(schedulerState.tasks, schedulerState.cells) {
             vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
+        }
+
+        // PRD §11 Notifications: whenever "the task to do now" changes to a (new) task, post a system
+        // notification naming it. Keyed on the scheduled task id so it fires once per switch — not on
+        // every tick that merely refreshes the same task's deadline. Clearing the schedule (id → null)
+        // sends nothing.
+        LaunchedEffect(schedulerState.scheduled?.taskId) {
+            val taskId = schedulerState.scheduled?.taskId ?: return@LaunchedEffect
+            val title = schedulerState.tasks[taskId]?.title?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+            sendSystemNotification("Task to do now", title)
         }
 
         // Done periods (PRD §8 task record, green) plus the scheduler's current task to do (PRD §9,
@@ -161,6 +172,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                     ?.let(vm::dispatch)
                             },
                             onEditEntry = { block -> editingBlock = block },
+                            // PRD §8 task contextual menu "Remove": delete the block by its source.
+                            onRemoveEntry = { block -> removeBlockIntent(block)?.let(vm::dispatch) },
                         )
 
                         // PRD §8 edit window, drawn over the calendar window and the tree.
@@ -227,5 +240,19 @@ private fun commitBoundsIntent(
             startEpochMillis = startMillis,
             endEpochMillis = endMillis,
         )
+    else -> null
+}
+
+/**
+ * PRD §8 task contextual menu "Remove": the intent that deletes a calendar [block] from its source —
+ * a manual entry is removed, an auto record period is dropped from the task record, and the auto
+ * scheduled "to do now" block clears the current allocation. Returns null when the block has no
+ * removable identity (defensive).
+ */
+private fun removeBlockIntent(block: PlacedRecord): SchedulerIntent? = when {
+    block.entryId != null -> SchedulerIntent.RemoveManualCalendarEntry(block.entryId)
+    block.scheduled -> SchedulerIntent.RemoveScheduledNow
+    block.taskId != null ->
+        SchedulerIntent.RemoveRecordPeriod(block.taskId, block.fullStartMillis, block.fullEndMillis)
     else -> null
 }

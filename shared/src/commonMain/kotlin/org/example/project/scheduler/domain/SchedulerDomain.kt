@@ -544,11 +544,30 @@ object SchedulerDomain {
         state.cells.values.any { it.taskId == taskId }
 
     /**
-     * PRD §9 next task: the most under-served task at [nowMillis] — the one whose time-weighted
+     * PRD §9: a task is *schedulable* only when it has no child task — the scheduler picks the leaves
+     * of the tree (a parent task is just a grouping; its actual work lives in its children).
+     *
+     * "Has a child task" is decided structurally: does the task's shared child list hold any populated
+     * cell? This is the source of truth — note every *titled* task is given a `childListId` (with an
+     * empty placeholder) on creation, so `childListId != null` does NOT mean it has children, and the
+     * denormalized [Task.childTaskIds] is only updated for freshly-typed children (not for every way a
+     * child can appear), so it can be stale. The [Task.childTaskIds] check is kept as a fast path.
+     */
+    fun isLeafTask(state: SchedulerState, taskId: TaskId): Boolean {
+        val task = state.tasks[taskId] ?: return true
+        if (task.childTaskIds.isNotEmpty()) return false
+        val childListId = task.childListId ?: return true
+        val list = state.lists[childListId] ?: return true
+        return list.cellIds.none { state.cells[it]?.taskId != null }
+    }
+
+    /**
+     * PRD §9 next task: the most under-served *leaf* task at [nowMillis] — the one whose time-weighted
      * percentage is furthest *below* its absolute priority percentage (`argmax(absolute − weighted)`).
-     * Empty placeholders, the root/main tasks, and tasks no longer in the tree (kept only for their
-     * record, PRD §4/§8) are excluded. Returns null when there are no real tasks. (Minimum time, PRD
-     * §10, constrains the allocated duration, not which task is chosen.)
+     * Empty placeholders, the root/main tasks, tasks with child tasks (PRD §9), and tasks no longer in
+     * the tree (kept only for their record, PRD §4/§8) are excluded. Returns null when there are no
+     * real leaf tasks. (Minimum time, PRD §10, constrains the allocated duration, not which task is
+     * chosen.)
      */
     fun nextTask(
         state: SchedulerState,
@@ -558,7 +577,9 @@ object SchedulerDomain {
         val absolute = absoluteTaskPriorities(state)
         val weighted = timeWeightedPercentages(state, nowMillis, k)
         val candidates =
-            state.tasks.keys.filter { !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) }
+            state.tasks.keys.filter {
+                !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) && isLeafTask(state, it)
+            }
         return candidates.maxByOrNull { taskId ->
             (absolute[taskId] ?: 0.0) - (weighted[taskId] ?: 0.0)
         }

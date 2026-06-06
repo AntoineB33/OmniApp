@@ -2,11 +2,14 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.Cell
+import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.ManualCalendarEntry
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
@@ -357,6 +360,74 @@ class SchedulerCalendarTest {
         assertEquals(2, periods.size)
         assertTrue(periods.any { it == range(now - 2 * HOUR, now - HOUR) }) // the record
         assertTrue(periods.any { it == range(now - 30 * MIN, now) }) // clipped manual entry
+    }
+
+    // ----- §9 next task is leaf-only (no child task) ------------------------------------------
+
+    @Test
+    fun next_task_excludes_tasks_that_have_child_tasks() {
+        val (s0, a, b) = stateWithTwoTasks()
+        // Make A a parent of B → A now has a child task, so it is not schedulable (PRD §9).
+        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(childTaskIds = listOf(b))))
+        assertFalse(SchedulerDomain.isLeafTask(s, a))
+        assertTrue(SchedulerDomain.isLeafTask(s, b))
+        // Only the leaf B may be picked, even though A and B tie on absolute priority.
+        assertEquals(b, SchedulerDomain.nextTask(s, 1_000_000_000_000L))
+    }
+
+    @Test
+    fun next_task_excludes_a_parent_detected_structurally_when_childTaskIds_is_stale() {
+        val (s0, a, b) = stateWithTwoTasks()
+        // Put a populated cell into A's (always-present) child list, but leave A.childTaskIds empty —
+        // i.e. the denormalized cache is out of sync, which is the real-world anomaly cause.
+        val childListId = s0.tasks[a]!!.childListId!!
+        val childCellId = CellId("a-child")
+        val list = s0.lists[childListId]!!
+        val s =
+            s0.copy(
+                cells = s0.cells + (childCellId to Cell(childCellId, childListId, taskId = b)),
+                lists = s0.lists + (childListId to list.copy(cellIds = list.cellIds + childCellId)),
+            )
+        assertTrue(s.tasks[a]!!.childTaskIds.isEmpty()) // stale cache
+        assertFalse(SchedulerDomain.isLeafTask(s, a)) // but structurally A has a child
+        assertEquals(b, SchedulerDomain.nextTask(s, 1_000_000_000_000L))
+    }
+
+    // ----- §8 task contextual menu "Remove" ---------------------------------------------------
+
+    @Test
+    fun removing_a_manual_entry_deletes_it_and_can_be_undone_when_focused() {
+        val (s, _, _) = stateWithTwoTasks()
+        val withEntry = SchedulerReducer.reduce(s, SchedulerIntent.AddManualCalendarEntry(1_000_000L))
+        val id = withEntry.manualEntries[0].id
+        val removed = SchedulerReducer.reduce(withEntry, SchedulerIntent.RemoveManualCalendarEntry(id))
+        assertTrue(removed.manualEntries.isEmpty())
+        // Calendar delta → undoable while the calendar is focused.
+        val focused = SchedulerReducer.reduce(removed, SchedulerIntent.SetCalendarFocus(true))
+        val undone = SchedulerReducer.reduce(focused, SchedulerIntent.Undo)
+        assertEquals(1, undone.manualEntries.size)
+    }
+
+    @Test
+    fun removing_a_record_period_drops_it_from_the_task_record() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val recorded = range(10_000_000L, 10_000_000L + 45 * MIN)
+        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(record = listOf(recorded))))
+        val removed =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.RemoveRecordPeriod(a, recorded.startEpochMillis, recorded.endEpochMillis),
+            )
+        assertTrue(removed.tasks[a]!!.record.isEmpty())
+    }
+
+    @Test
+    fun removing_the_scheduled_block_clears_the_current_allocation() {
+        val (s0, _, _) = stateWithTwoTasks()
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.RefreshSchedule(1_000_000_000_000L))
+        assertNotNull(s.scheduled)
+        val cleared = SchedulerReducer.reduce(s, SchedulerIntent.RemoveScheduledNow)
+        assertNull(cleared.scheduled)
     }
 
     // ----- persistence -------------------------------------------------------------------------

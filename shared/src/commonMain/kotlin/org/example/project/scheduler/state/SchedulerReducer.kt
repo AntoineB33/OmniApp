@@ -43,6 +43,9 @@ object SchedulerReducer {
             is SchedulerIntent.ResizeManualCalendarEntry -> reduceResizeManualEntry(state, intent)
             is SchedulerIntent.PinScheduledAsManual -> reducePinScheduled(state, intent)
             is SchedulerIntent.PinRecordAsManual -> reducePinRecord(state, intent)
+            is SchedulerIntent.RemoveManualCalendarEntry -> reduceRemoveManualEntry(state, intent.id)
+            is SchedulerIntent.RemoveRecordPeriod -> reduceRemoveRecordPeriod(state, intent)
+            SchedulerIntent.RemoveScheduledNow -> if (state.scheduled == null) state else state.copy(scheduled = null)
             is SchedulerIntent.SetCalendarFocus -> state.copy(calendarFocused = intent.focused)
             is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
             is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
@@ -787,6 +790,24 @@ object SchedulerReducer {
                 endEpochMillis = end,
             )
         return commitManualEntries(allocated, allocated.manualEntries + entry)
+    }
+
+    /** PRD §8 "Remove": delete a manual entry (undoable calendar delta). */
+    private fun reduceRemoveManualEntry(state: SchedulerState, id: String): SchedulerState {
+        val entries = state.manualEntries
+        if (entries.none { it.id == id }) return state
+        return commitManualEntries(state, entries.filterNot { it.id == id })
+    }
+
+    /** PRD §8 "Remove" on a record block: drop the period from the task's record (history-excluded). */
+    private fun reduceRemoveRecordPeriod(
+        state: SchedulerState,
+        intent: SchedulerIntent.RemoveRecordPeriod,
+    ): SchedulerState {
+        val task = state.tasks[intent.taskId] ?: return state
+        val range = TaskTimeRange(intent.startEpochMillis, intent.endEpochMillis)
+        if (range !in task.record) return state
+        return state.copy(tasks = state.tasks + (intent.taskId to task.copy(record = task.record - range)))
     }
 
     private fun reduceResizeManualEntry(

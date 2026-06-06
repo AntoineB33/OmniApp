@@ -42,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -52,7 +53,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -78,7 +78,6 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.todayIn
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
-import kotlinx.coroutines.withTimeoutOrNull
 import org.example.project.OmniPage
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
@@ -427,8 +426,10 @@ fun CalendarFloatingWindow(
     onAddTaskAt: (Long) -> Unit = {},
     /** PRD §8 drag/resize commit: the block and its new (already snapped) start/end millis. */
     onCommitBounds: (PlacedRecord, Long, Long) -> Unit = { _, _, _ -> },
-    /** PRD §8 edit window: a double-click (without a drag) requests editing this block. */
+    /** PRD §8 task contextual menu "Edit": requests opening the edit window for this block. */
     onEditEntry: (PlacedRecord) -> Unit = {},
+    /** PRD §8 task contextual menu "Remove": requests deleting this block. */
+    onRemoveEntry: (PlacedRecord) -> Unit = {},
 ) {
     var offset by remember { mutableStateOf(Offset.Zero) }
     Surface(
@@ -480,6 +481,7 @@ fun CalendarFloatingWindow(
                     onAddTaskAt = onAddTaskAt,
                     onCommitBounds = onCommitBounds,
                     onEditEntry = onEditEntry,
+                    onRemoveEntry = onRemoveEntry,
                 )
             }
         }
@@ -495,6 +497,7 @@ private fun WeekView(
     onAddTaskAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
+    onRemoveEntry: (PlacedRecord) -> Unit,
 ) {
     val weekStart = startOfWeek(selectedDate)
     val days = (0..6).map { weekStart.plus(it, DateTimeUnit.DAY) }
@@ -573,6 +576,7 @@ private fun WeekView(
                         onAddTaskAt = onAddTaskAt,
                         onCommitBounds = onCommitBounds,
                         onEditEntry = onEditEntry,
+                        onRemoveEntry = onRemoveEntry,
                         onLockScroll = { scrollLocked = it },
                         allBlocks = allBlocks,
                         modifier = Modifier.weight(1f),
@@ -628,14 +632,19 @@ private fun DayColumn(
     onAddTaskAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
+    onRemoveEntry: (PlacedRecord) -> Unit,
     onLockScroll: (Boolean) -> Unit,
     allBlocks: List<Pair<String, TaskTimeRange>>,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    // PRD §8 Manual add: the right-click position (in this column's local pixels) that anchors the
-    // contextual menu; null when no menu is open.
+    // The right-click position (in this column's local pixels) that anchors the contextual menu; null
+    // when no menu is open. [menuTarget] is the block the click landed on (null = empty space).
     var menuOffset by remember { mutableStateOf<Offset?>(null) }
+    var menuTarget by remember { mutableStateOf<PlacedRecord?>(null) }
+    // Latest records, so the right-click hit-test closure never reads a stale list (records change
+    // every scheduler tick) without restarting the long-lived gesture coroutine.
+    val currentRecords by rememberUpdatedState(records)
 
     // Epoch millis at a vertical pixel offset within this 24-hour column.
     fun millisAt(offsetY: Float): Long {
@@ -648,12 +657,22 @@ private fun DayColumn(
             .toEpochMilliseconds()
     }
 
+    // PRD §8: the block whose vertical span contains [offsetY], if any (topmost wins).
+    fun blockAt(offsetY: Float): PlacedRecord? {
+        val hourHeightPx = with(density) { hourHeight.toPx() }
+        return currentRecords.lastOrNull {
+            offsetY >= it.startHour * hourHeightPx && offsetY <= it.endHour * hourHeightPx
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxHeight()
             .background(if (isToday) CalColors.today.copy(alpha = 0.4f) else Color.Transparent)
             .border(width = 0.5.dp, color = CalColors.grid)
-            // PRD §8: right-click anywhere on the day opens the "add a task" contextual menu.
+            // PRD §8: right-click opens a contextual menu. On a task block it offers "Edit"/"Remove";
+            // on empty space it offers "add a task". The whole column owns this so the menu choice is
+            // a reliable hit-test (no fragile cross-node pointer-consumption ordering).
             .pointerInput(day) {
                 awaitPointerEventScope {
                     while (true) {
@@ -661,6 +680,7 @@ private fun DayColumn(
                         if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
                             val change = event.changes.firstOrNull() ?: continue
                             change.consume()
+                            menuTarget = blockAt(change.position.y)
                             menuOffset = change.position
                         }
                     }
@@ -679,25 +699,39 @@ private fun DayColumn(
             }
         }
 
-        // PRD §8 Manual add: the contextual menu, anchored at the right-click position.
+        // PRD §8 contextual menu, anchored at the right-click position. Edit/Remove for a block,
+        // else "add a task".
         val anchor = menuOffset
+        fun closeMenu() { menuOffset = null; menuTarget = null }
         DropdownMenu(
             expanded = anchor != null,
-            onDismissRequest = { menuOffset = null },
+            onDismissRequest = { closeMenu() },
             offset = anchor?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
         ) {
-            DropdownMenuItem(
-                text = { Text("add a task") },
-                onClick = {
-                    anchor?.let { onAddTaskAt(millisAt(it.y)) }
-                    menuOffset = null
-                },
-            )
+            val target = menuTarget
+            if (target == null) {
+                DropdownMenuItem(
+                    text = { Text("add a task") },
+                    onClick = {
+                        anchor?.let { onAddTaskAt(millisAt(it.y)) }
+                        closeMenu()
+                    },
+                )
+            } else {
+                DropdownMenuItem(
+                    text = { Text("Edit") },
+                    onClick = { closeMenu(); onEditEntry(target) },
+                )
+                DropdownMenuItem(
+                    text = { Text("Remove") },
+                    onClick = { closeMenu(); onRemoveEntry(target) },
+                )
+            }
         }
         // PRD §8 (uniform blocks): every period — task record, scheduled "to do now", or manual entry
-        // — renders as the same interactive block (double-click to edit, double-click+drag to move,
-        // grab an edge to resize). Auto blocks convert to a manual entry on first edit (handled by the
-        // callbacks in App), so there is no visible or behavioural difference between them.
+        // — renders as the same interactive block (click+drag to move, grab an edge to resize). The
+        // right-click Edit/Remove menu is owned by the day column (above). Auto blocks convert to a
+        // manual entry on first edit (handled by the callbacks in App), so there is no difference.
         records.forEach { record ->
             val key = calendarBlockKey(record)
             CalendarBlock(
@@ -708,7 +742,6 @@ private fun DayColumn(
                 // Every other block — everything but itself — so a drag/resize never overlaps.
                 others = allBlocks.filter { it.first != key }.map { it.second },
                 onCommitBounds = onCommitBounds,
-                onEdit = onEditEntry,
                 onLockScroll = onLockScroll,
             )
         }
@@ -736,12 +769,13 @@ private fun DayColumn(
 /**
  * PRD §8 calendar block — one interactive component for EVERY period (task record, scheduled "to do
  * now", or manual entry), drawn identically (same colour) with the same behaviour:
- *  - Double-click then release (no drag) → [onEdit] (the edit window).
- *  - Double-click then drag while holding → move; committed once, on release, via [onCommitBounds].
+ *  - Click and drag while holding → move; committed once, on release, via [onCommitBounds].
  *  - Grab the top/bottom edge and drag → resize that edge, also committed via [onCommitBounds].
- * The live preview applies the SAME no-overlap snapping/clamping the reducer commits with, so a block
- * never visually overlaps another. Auto blocks (records/scheduled) are pinned into manual entries by
- * the callback when edited, so afterwards they are indistinguishable. The title shows on hover.
+ * Right-click (the Edit/Remove menu) is handled by the enclosing day column, so a secondary press is
+ * left unconsumed here for it to pick up. The live preview applies the SAME no-overlap snapping/
+ * clamping the reducer commits with, so a block never visually overlaps another. Auto blocks
+ * (records/scheduled) are pinned into manual entries when edited, so afterwards they are
+ * indistinguishable. The title shows on hover.
  */
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -752,7 +786,6 @@ private fun CalendarBlock(
     tz: TimeZone,
     others: List<TaskTimeRange>,
     onCommitBounds: (PlacedRecord, Long, Long) -> Unit,
-    onEdit: (PlacedRecord) -> Unit,
     onLockScroll: (Boolean) -> Unit,
 ) {
     val key = calendarBlockKey(record)
@@ -809,102 +842,55 @@ private fun CalendarBlock(
             // block would not land where released.
             .pointerInput(key, record.fullStartMillis, record.fullEndMillis) {
                 val touchSlop = viewConfiguration.touchSlop
-                val doubleTapTimeout = viewConfiguration.doubleTapTimeoutMillis
                 // Cap the resize edge zone at a third of the block so a short entry still has a
-                // central "move / edit" region the double-click can land in.
+                // central "move" region the press can land in.
                 val edgePx = minOf(with(density) { 6.dp.toPx() }, baseHeight / 3f)
 
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    // Right-clicks fall through to the day column's "add a task" menu.
+
+                    // Right-click → leave it unconsumed so the enclosing day column shows the
+                    // Edit/Remove contextual menu for this block (PRD §8).
                     if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
+
+                    // Primary press: grab an edge to resize, else drag the body to move. A press with
+                    // no drag does nothing (editing is via the right-click menu now, PRD §8).
                     val localY = down.position.y
-                    val nearTop = localY <= edgePx
-                    val nearBottom = localY >= baseHeight - edgePx
+                    val edge = when {
+                        localY <= edgePx -> CalendarEdge.Start
+                        localY >= baseHeight - edgePx -> CalendarEdge.End
+                        else -> null
+                    }
                     down.consume()
 
-                    // Direct edge grab → resize that edge (PRD §8 extend/shorten).
-                    if (nearTop || nearBottom) {
-                        val edge = if (nearTop) CalendarEdge.Start else CalendarEdge.End
-                        var started = false
-                        var traveled = 0f
-                        onLockScroll(true)
-                        try {
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                if (!event.changes.any { it.pressed }) {
-                                    if (started) {
-                                        val b = resizedBounds(edge)
-                                        onCommitBounds(record, b.startEpochMillis, b.endEpochMillis)
-                                    }
-                                    break
-                                }
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
-                                val delta = change.positionChangeIgnoreConsumed()
-                                traveled += delta.getDistance()
-                                if (!started && traveled > touchSlop) {
-                                    started = true
-                                    resizing = edge
-                                }
-                                change.consume()
-                                if (started) dragPx += delta.y
-                            }
-                        } finally {
-                            onLockScroll(false)
-                            resizing = null
-                            dragPx = 0f
-                        }
-                        return@awaitEachGesture
-                    }
-
-                    // First press elsewhere: a plain drag does nothing; just wait for release.
-                    var firstDragged = false
-                    var t = 0f
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        if (!event.changes.any { it.pressed }) break
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
-                        t += change.positionChange().getDistance()
-                        if (t > touchSlop) firstDragged = true
-                    }
-                    if (firstDragged) return@awaitEachGesture
-
-                    // A second press within the timeout makes it a double-click.
-                    val second = withTimeoutOrNull(doubleTapTimeout) {
-                        awaitFirstDown(requireUnconsumed = false)
-                    } ?: return@awaitEachGesture
-                    second.consume()
-
-                    // Double-click then drag = move (commit on release); release with no drag = edit.
-                    // Lock the grid scroll for the whole second press so a held drag can't scroll it.
-                    var moveStarted = false
-                    var mt = 0f
+                    var started = false
+                    var traveled = 0f
+                    // Lock the grid scroll for the whole press so a held drag can't scroll it.
                     onLockScroll(true)
                     try {
                         while (true) {
                             val event = awaitPointerEvent()
                             if (!event.changes.any { it.pressed }) {
-                                if (moveStarted) {
-                                    val b = movedBounds()
+                                if (started) {
+                                    val b = if (edge != null) resizedBounds(edge) else movedBounds()
                                     onCommitBounds(record, b.startEpochMillis, b.endEpochMillis)
-                                } else {
-                                    onEdit(record)
                                 }
                                 break
                             }
-                            val change = event.changes.firstOrNull { it.id == second.id } ?: event.changes.first()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
                             val delta = change.positionChangeIgnoreConsumed()
-                            mt += delta.getDistance()
-                            if (!moveStarted && mt > touchSlop) {
-                                moveStarted = true
-                                moving = true
+                            traveled += delta.getDistance()
+                            if (!started && traveled > touchSlop) {
+                                started = true
+                                if (edge != null) resizing = edge else moving = true
                             }
                             change.consume()
-                            if (moveStarted) dragPx += delta.y
+                            if (started) dragPx += delta.y
                         }
                     } finally {
                         onLockScroll(false)
                         moving = false
+                        resizing = null
                         dragPx = 0f
                     }
                 }
