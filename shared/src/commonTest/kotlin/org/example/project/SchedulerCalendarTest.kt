@@ -317,6 +317,48 @@ class SchedulerCalendarTest {
         assertEquals(now + 30 * MIN, sched.deadlineEpochMillis)
     }
 
+    // ----- §8/§9 manual past entries count as time done (uniform blocks) ----------------------
+
+    private fun manualFor(id: String, taskId: TaskId, start: Long, end: Long) =
+        ManualCalendarEntry(id, taskId = taskId, title = id, startEpochMillis = start, endEpochMillis = end)
+
+    @Test
+    fun past_manual_entries_count_toward_time_weighting_so_an_over_served_task_is_not_re_picked() {
+        val (s0, a, b) = stateWithTwoTasks() // A and B tie on absolute priority (50% each)
+        val now = 1_000_000_000_000L
+        // Task A was worked a lot in the past — but only via *manual* calendar entries (no record).
+        val s =
+            s0.copy(
+                manualEntries =
+                    listOf(
+                        manualFor("e1", a, now - 5 * HOUR, now - 4 * HOUR),
+                        manualFor("e2", a, now - 3 * HOUR, now - 2 * HOUR),
+                        manualFor("e3", a, now - 90 * MIN, now - 30 * MIN),
+                    ),
+            )
+        // A is now over-served relative to its 50% share, so the next task must be B.
+        assertEquals(b, SchedulerDomain.nextTask(s, now))
+    }
+
+    @Test
+    fun past_periods_for_task_clips_to_now_and_merges_records_and_manual_entries() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000L
+        val s =
+            s0.copy(
+                tasks = s0.tasks + (a to s0.tasks[a]!!.copy(record = listOf(range(now - 2 * HOUR, now - HOUR)))),
+                manualEntries =
+                    listOf(
+                        manualFor("past", a, now - 30 * MIN, now + 30 * MIN), // straddles now → clipped
+                        manualFor("future", a, now + HOUR, now + 2 * HOUR), // entirely future → dropped
+                    ),
+            )
+        val periods = SchedulerDomain.pastPeriodsForTask(s, a, now)
+        assertEquals(2, periods.size)
+        assertTrue(periods.any { it == range(now - 2 * HOUR, now - HOUR) }) // the record
+        assertTrue(periods.any { it == range(now - 30 * MIN, now) }) // clipped manual entry
+    }
+
     // ----- persistence -------------------------------------------------------------------------
 
     @Test

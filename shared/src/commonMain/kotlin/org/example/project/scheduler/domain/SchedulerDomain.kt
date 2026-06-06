@@ -501,9 +501,29 @@ object SchedulerDomain {
     }
 
     /**
+     * The task's *done* periods at [nowMillis] for scheduling purposes: its recorded sessions plus
+     * any manual calendar entries assigned to it (PRD §8 uniform blocks — a manually-placed block in
+     * the past counts as time spent, exactly like a record). Each period is clipped to end at
+     * [nowMillis] and only periods that started before `now` are kept, so a future/ongoing block
+     * contributes only its elapsed part. This is what makes a task that was over-served via manual
+     * past blocks no longer be re-picked (PRD §9).
+     */
+    fun pastPeriodsForTask(state: SchedulerState, taskId: TaskId, nowMillis: Long): List<TaskTimeRange> {
+        val recorded = state.tasks[taskId]?.record.orEmpty().asSequence()
+        val manual = state.manualEntries.asSequence()
+            .filter { it.taskId == taskId }
+            .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        return (recorded + manual)
+            .filter { it.startEpochMillis < nowMillis }
+            .map { TaskTimeRange(it.startEpochMillis, minOf(it.endEpochMillis, nowMillis)) }
+            .toList()
+    }
+
+    /**
      * PRD §9 time-weighted percentage of every (real) task: its [timeWeightedScore] normalized by
-     * the total score across all tasks, as a fraction in `[0,1]`. When no task has any record the
-     * total is 0 and every percentage is 0.
+     * the total score across all tasks, as a fraction in `[0,1]`. The score is computed over the
+     * task's [pastPeriodsForTask] (records + assigned manual entries). When no task has any past
+     * period the total is 0 and every percentage is 0.
      */
     fun timeWeightedPercentages(
         state: SchedulerState,
@@ -513,7 +533,7 @@ object SchedulerDomain {
         val scores =
             state.tasks
                 .filterKeys { !isRootTask(it) && !isMainTask(it) }
-                .mapValues { (_, task) -> timeWeightedScore(task.record, nowMillis, k) }
+                .mapValues { (id, _) -> timeWeightedScore(pastPeriodsForTask(state, id, nowMillis), nowMillis, k) }
         val total = scores.values.sum()
         if (total <= 0.0) return scores.mapValues { 0.0 }
         return scores.mapValues { (_, score) -> score / total }
@@ -711,6 +731,19 @@ object SchedulerDomain {
     }
 
     /**
+     * PRD §8/§10 state-aware overload of [scheduledSpanMinutes]: the continuous-effort credit counts
+     * the task's manual calendar entries in the past too (via [pastPeriodsForTask]), not just its
+     * record — so a manually-placed block that just ended shortens the next allocation exactly like a
+     * record would. Falls back to a fresh full minimum once the effort already met it.
+     */
+    fun scheduledSpanMinutes(state: SchedulerState, taskId: TaskId, nowMillis: Long): Long {
+        val task = state.tasks[taskId] ?: return 0
+        val minimum = task.minimumMinutes.toLong()
+        val span = minimum - recentContiguousRecordMinutes(pastPeriodsForTask(state, taskId, nowMillis), nowMillis)
+        return if (span <= 0) minimum else span
+    }
+
+    /**
      * PRD §9 the task to do now. While a task is still scheduled for this moment and it still exists,
      * its period is kept (same task and start) but its deadline is refreshed from the current
      * [scheduledSpanMinutes] — so editing the tree (e.g. its minimum time) updates the scheduled
@@ -729,7 +762,7 @@ object SchedulerDomain {
         val current = state.scheduled
         val currentTask = current?.let { state.tasks[it.taskId] }
         if (current != null && currentTask != null) {
-            val deadline = current.startEpochMillis + scheduledSpanMinutes(currentTask, nowMillis) * MILLIS_PER_MINUTE
+            val deadline = current.startEpochMillis + scheduledSpanMinutes(state, current.taskId, nowMillis) * MILLIS_PER_MINUTE
             if (nowMillis < deadline) {
                 return if (deadline == current.deadlineEpochMillis) current
                 else current.copy(deadlineEpochMillis = deadline)
@@ -738,7 +771,7 @@ object SchedulerDomain {
         }
         val taskId = nextTask(state, nowMillis, k) ?: return null
         val task = state.tasks[taskId] ?: return null
-        val deadline = startMillis + scheduledSpanMinutes(task, startMillis) * MILLIS_PER_MINUTE
+        val deadline = startMillis + scheduledSpanMinutes(state, taskId, startMillis) * MILLIS_PER_MINUTE
         return ScheduledTask(
             taskId = taskId,
             startEpochMillis = startMillis,
@@ -920,6 +953,27 @@ object SchedulerDomain {
                         label = changeTaskMenuLabel(state, taskId),
                     ),
                 )
+            }
+        }
+    }
+
+    /**
+     * PRD §8 calendar edit window — the same two-menu structure as the tree's Change Task menu, but
+     * without a cell: there is no sibling/ancestor list to forbid, so it offers "New task" (first
+     * row) plus every existing user task whose title exactly matches [draftText]. [excludeTaskId] is
+     * the task already represented by the current draft/selection. This lets the calendar window
+     * create a task (taskId left null) or reuse an existing one, exactly like Edit Mode in the tree.
+     */
+    fun calendarTaskMenuEntries(
+        state: SchedulerState,
+        draftText: String,
+        excludeTaskId: TaskId? = null,
+    ): List<ChangeTaskMenuEntry> {
+        val matching = matchingUserTaskIds(state, draftText, excludeTaskId)
+        return buildList {
+            add(ChangeTaskMenuEntry(taskId = null, label = "New task"))
+            for (taskId in matching) {
+                add(ChangeTaskMenuEntry(taskId = taskId, label = changeTaskMenuLabel(state, taskId)))
             }
         }
     }

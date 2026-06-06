@@ -167,11 +167,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                         editingBlock?.let { block ->
                             ManualEntryEditWindow(
                                 initialTitle = block.title,
+                                initialTaskId = block.taskId,
                                 startMillis = block.fullStartMillis,
                                 endMillis = block.fullEndMillis,
                                 tz = tz,
+                                taskMenuEntries = { draft, exclude ->
+                                    SchedulerDomain.calendarTaskMenuEntries(schedulerState, draft, exclude)
+                                },
                                 titleSuggestions = { SchedulerDomain.titleSuggestions(schedulerState, it) },
                                 taskIdForTitle = { schedulerState.titleToTaskIds[it]?.firstOrNull() },
+                                titleForTaskId = { schedulerState.tasks[it]?.title },
                                 onDismiss = { editingBlock = null },
                                 onSave = { taskId, title, startMillis, endMillis ->
                                     commitBoundsIntent(block, taskId, title, startMillis, endMillis)

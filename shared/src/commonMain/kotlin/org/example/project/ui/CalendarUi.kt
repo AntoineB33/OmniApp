@@ -945,29 +945,33 @@ private fun parseHmOnDateOf(text: String, refMillis: Long, tz: TimeZone): Long? 
 }
 
 /**
- * PRD §8 edit window: a floating editor for a manual calendar entry. The title field behaves like the
- * tree's `Change Task` mode — typing keeps it a calendar-only "New task" (default), while picking an
- * existing title from the suggestion menu links that task. Two fields edit the begin/end times.
- * Rendered by [org.example.project.App] over the calendar window and the tree.
+ * PRD §8 edit window: a floating editor for a calendar block that mirrors the tree's Edit Mode in
+ * "Change Task" (the only relevant mode here — a calendar block always changes/assigns its task):
+ *  - a **Tasks** menu whose first row is always "New task" (so the user can create a brand-new
+ *    calendar task, [TaskId] left null) followed by existing tasks whose title matches what's typed
+ *    (or the title currently picked from the suggestions);
+ *  - a **Title suggestions** menu reusing an existing task's title.
+ * Two fields edit the begin/end times. Rendered by [org.example.project.App] over everything.
  */
 @Composable
 fun ManualEntryEditWindow(
     initialTitle: String,
+    initialTaskId: TaskId?,
     startMillis: Long,
     endMillis: Long,
     tz: TimeZone,
+    taskMenuEntries: (draftText: String, excludeTaskId: TaskId?) -> List<SchedulerDomain.ChangeTaskMenuEntry>,
     titleSuggestions: (String) -> List<String>,
     taskIdForTitle: (String) -> TaskId?,
+    titleForTaskId: (TaskId) -> String?,
     onSave: (taskId: TaskId?, title: String, startMillis: Long, endMillis: Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var title by remember { mutableStateOf(initialTitle) }
-    // Null = calendar-only "New task" (the default); set when an existing title is picked.
-    var pickedTaskId by remember { mutableStateOf<TaskId?>(taskIdForTitle(initialTitle)) }
+    // Null = calendar-only "New task" (the default); set when an existing task/title is picked.
+    var selectedTaskId by remember { mutableStateOf(initialTaskId) }
     var startText by remember { mutableStateOf(formatHm(startMillis, tz)) }
     var endText by remember { mutableStateOf(formatHm(endMillis, tz)) }
-    var showSuggestions by remember { mutableStateOf(false) }
-    val suggestions = remember(title) { titleSuggestions(title).take(6) }
 
     // Full-screen scrim; clicking outside dismisses (PRD §8 floating window over everything).
     Box(
@@ -992,34 +996,57 @@ fun ManualEntryEditWindow(
                     value = title,
                     onValueChange = {
                         title = it
-                        pickedTaskId = null // typing → "New task" (PRD §8)
-                        showSuggestions = true
+                        selectedTaskId = null // typing → "New task" (mirrors the tree's Edit Mode)
                     },
                     label = { Text("Task") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                // PRD §4/§8 title suggestion menu.
-                if (showSuggestions && suggestions.isNotEmpty()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, CalColors.grid, RoundedCornerShape(6.dp)),
-                    ) {
-                        suggestions.forEach { suggestion ->
-                            Text(
-                                text = suggestion,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        title = suggestion
-                                        pickedTaskId = taskIdForTitle(suggestion)
-                                        showSuggestions = false
-                                    }
-                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                            )
-                        }
+
+                // --- Tasks menu: New task + existing matches. Pass no exclusion so the matching
+                // task shows (and highlights) even when it was picked from the suggestions below,
+                // not just while typing. ---
+                val taskEntries = taskMenuEntries(title, null)
+                if (taskEntries.size > 1) {
+                    val selectedIndex =
+                        SchedulerDomain.changeTaskMenuSelectedIndex(taskEntries, selectedTaskId)
+                    Text(
+                        text = "Tasks",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    taskEntries.forEachIndexed { index, entry ->
+                        CalendarMenuRow(
+                            label = entry.label,
+                            selected = index == selectedIndex,
+                            onClick = {
+                                if (entry.taskId == null) {
+                                    selectedTaskId = null // "New task" → calendar-only
+                                } else {
+                                    selectedTaskId = entry.taskId
+                                    titleForTaskId(entry.taskId)?.let { title = it }
+                                }
+                            },
+                        )
+                    }
+                }
+
+                // --- Title suggestions menu ---
+                val suggestions = titleSuggestions(title).take(8)
+                if (suggestions.isNotEmpty()) {
+                    Text(
+                        text = "Title suggestions",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    suggestions.forEach { suggestion ->
+                        CalendarMenuRow(
+                            label = suggestion,
+                            onClick = {
+                                title = suggestion
+                                selectedTaskId = taskIdForTitle(suggestion)
+                            },
+                        )
                     }
                 }
 
@@ -1050,11 +1077,33 @@ fun ManualEntryEditWindow(
                         onClick = {
                             val start = parseHmOnDateOf(startText, startMillis, tz) ?: startMillis
                             val end = parseHmOnDateOf(endText, endMillis, tz) ?: endMillis
-                            onSave(pickedTaskId, title, start, end)
+                            onSave(selectedTaskId, title, start, end)
                         },
                     ) { Text("Save") }
                 }
             }
         }
     }
+}
+
+/** A clickable menu row matching the tree's `TaskMenuRow` (selected = current pick). */
+@Composable
+private fun CalendarMenuRow(
+    label: String,
+    selected: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Text(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp, horizontal = 8.dp),
+        text = label,
+        style =
+            if (selected) MaterialTheme.typography.bodyMedium
+            else MaterialTheme.typography.bodySmall,
+        color =
+            if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurface,
+    )
 }
