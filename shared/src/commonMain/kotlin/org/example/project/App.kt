@@ -20,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
@@ -32,6 +33,7 @@ import org.example.project.time.SystemAppClock
 import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.LateralMenu
+import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.TimeSimPanel
 
 enum class OmniPage(val label: String) {
@@ -78,7 +80,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         }
 
         // Done periods (PRD §8 task record, green) plus the scheduler's current task to do (PRD §9,
-        // blue) — both drawn the same way in the calendar.
+        // blue) — both drawn the same way in the calendar. PRD §8 manual entries are drawn too.
         val calendarRecords =
             schedulerState.tasks.values.flatMap { task ->
                 task.record.map { CalendarRecord(title = task.title, range = it) }
@@ -91,7 +93,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             scheduled = true,
                         )
                     }
-                }?.let(::listOf) ?: emptyList())
+                }?.let(::listOf) ?: emptyList()) +
+                schedulerState.manualEntries.map {
+                    CalendarRecord(
+                        title = it.title,
+                        range = TaskTimeRange(it.startEpochMillis, it.endEpochMillis),
+                        manual = true,
+                        entryId = it.id,
+                        taskId = it.taskId,
+                    )
+                }
 
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
@@ -99,6 +110,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         var calendarOpen by remember { mutableStateOf(false) }
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
+        // PRD §8 edit window: id of the manual entry currently being edited (null = closed).
+        var editingEntryId by remember { mutableStateOf<String?>(null) }
 
         Box(
             modifier = Modifier
@@ -135,7 +148,45 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             onDismiss = { calendarOpen = false },
                             modifier = Modifier.align(Alignment.Center),
                             records = calendarRecords,
+                            onAddTaskAt = { startMillis ->
+                                vm.dispatch(SchedulerIntent.AddManualCalendarEntry(startMillis))
+                            },
+                            onMoveEntry = { id, startMillis ->
+                                vm.dispatch(SchedulerIntent.MoveManualCalendarEntry(id, startMillis))
+                            },
+                            onResizeEntry = { id, edge, millis ->
+                                vm.dispatch(SchedulerIntent.ResizeManualCalendarEntry(id, edge, millis))
+                            },
+                            onEditEntry = { id -> editingEntryId = id },
                         )
+
+                        // PRD §8 edit window, drawn over the calendar window and the tree.
+                        val editing = editingEntryId?.let { id ->
+                            schedulerState.manualEntries.firstOrNull { it.id == id }
+                        }
+                        if (editing != null) {
+                            ManualEntryEditWindow(
+                                initialTitle = editing.title,
+                                startMillis = editing.startEpochMillis,
+                                endMillis = editing.endEpochMillis,
+                                tz = tz,
+                                titleSuggestions = { SchedulerDomain.titleSuggestions(schedulerState, it) },
+                                taskIdForTitle = { schedulerState.titleToTaskIds[it]?.firstOrNull() },
+                                onDismiss = { editingEntryId = null },
+                                onSave = { taskId, title, startMillis, endMillis ->
+                                    vm.dispatch(
+                                        SchedulerIntent.UpdateManualCalendarEntry(
+                                            id = editing.id,
+                                            taskId = taskId,
+                                            title = title,
+                                            startEpochMillis = startMillis,
+                                            endEpochMillis = endMillis,
+                                        ),
+                                    )
+                                    editingEntryId = null
+                                },
+                            )
+                        }
                     }
 
                     // Debug-only time-acceleration control (gated by DebugFlags.TIME_SIMULATION).

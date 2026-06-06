@@ -5,6 +5,7 @@ import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.ManualCalendarEntry
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
@@ -36,6 +37,11 @@ object SchedulerReducer {
             is SchedulerIntent.SetTaskMinimumTime ->
                 commitDelta(state, priorityTreeDelta(state) { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
             is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
+            is SchedulerIntent.AddManualCalendarEntry -> reduceAddManualEntry(state, intent.startEpochMillis)
+            is SchedulerIntent.UpdateManualCalendarEntry -> reduceUpdateManualEntry(state, intent)
+            is SchedulerIntent.MoveManualCalendarEntry -> reduceMoveManualEntry(state, intent)
+            is SchedulerIntent.ResizeManualCalendarEntry -> reduceResizeManualEntry(state, intent)
+            is SchedulerIntent.SetCalendarFocus -> state.copy(calendarFocused = intent.focused)
             is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
             is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
             is SchedulerIntent.SetEditMode -> reduceSetEditMode(state, intent.mode)
@@ -55,9 +61,17 @@ object SchedulerReducer {
         }
     }
 
-    /** Ctrl+Z/Y target the Edit Mode stack while editing, otherwise "the rest" (PRD §5). */
+    /**
+     * PRD §5 context-aware pointer: Ctrl+Z/Y target the Edit Mode stack while editing, the calendar
+     * stack while the calendar is focused, otherwise "the rest". Each stack's pointer only walks its
+     * own units, so the active context skips every history unit that does not belong to it.
+     */
     private fun contentCategory(state: SchedulerState): HistoryCategory =
-        if (state.editSession != null) HistoryCategory.Edit else HistoryCategory.Main
+        when {
+            state.editSession != null -> HistoryCategory.Edit
+            state.calendarFocused -> HistoryCategory.Calendar
+            else -> HistoryCategory.Main
+        }
 
     private fun reduceBeginEdit(state: SchedulerState, intent: SchedulerIntent.BeginEdit): SchedulerState {
         if (!SchedulerDomain.isSelectableCell(state, intent.cellId)) return state
@@ -644,6 +658,105 @@ object SchedulerReducer {
             next = endEditSession(next)
         }
         return next
+    }
+
+    // ----- PRD §8 manual calendar entries (recorded in the Calendar history category) -----------
+
+    /** Commit a manual-entry list change as a calendar delta (a no-op change pushes nothing). */
+    private fun commitManualEntries(
+        state: SchedulerState,
+        after: List<ManualCalendarEntry>,
+    ): SchedulerState {
+        val before = state.manualEntries
+        if (before == after) return state
+        return commitDelta(state, ManualEntryDelta(before, after), HistoryCategory.Calendar)
+    }
+
+    /** The other entries (everything except [id]) as plain time ranges, for collision checks. */
+    private fun otherRanges(state: SchedulerState, id: String): List<TaskTimeRange> =
+        state.manualEntries.filter { it.id != id }
+            .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+
+    private fun reduceAddManualEntry(state: SchedulerState, startMillis: Long): SchedulerState {
+        // PRD §8 Manual add: highest-absolute-priority task (alphabetical tie-break), spanning its
+        // minimum time.
+        val taskId = SchedulerDomain.manualAddTaskId(state) ?: return state
+        val task = state.tasks[taskId] ?: return state
+        val (entryId, allocated) = state.allocateManualEntryId()
+        val entry =
+            ManualCalendarEntry(
+                id = entryId,
+                taskId = taskId,
+                title = task.title,
+                startEpochMillis = startMillis,
+                endEpochMillis = startMillis + task.minimumMinutes.toLong() * 60_000L,
+            )
+        return commitManualEntries(allocated, allocated.manualEntries + entry)
+    }
+
+    private fun reduceUpdateManualEntry(
+        state: SchedulerState,
+        intent: SchedulerIntent.UpdateManualCalendarEntry,
+    ): SchedulerState {
+        val entries = state.manualEntries
+        val index = entries.indexOfFirst { it.id == intent.id }
+        if (index < 0) return state
+        // Keep end strictly after start so an edited entry never collapses to a zero-length block.
+        val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
+        val updated =
+            entries[index].copy(
+                taskId = intent.taskId,
+                title = intent.title,
+                startEpochMillis = intent.startEpochMillis,
+                endEpochMillis = end,
+            )
+        return commitManualEntries(state, entries.toMutableList().also { it[index] = updated })
+    }
+
+    private fun reduceMoveManualEntry(
+        state: SchedulerState,
+        intent: SchedulerIntent.MoveManualCalendarEntry,
+    ): SchedulerState {
+        val entries = state.manualEntries
+        val index = entries.indexOfFirst { it.id == intent.id }
+        if (index < 0) return state
+        val current = entries[index]
+        val duration = current.endEpochMillis - current.startEpochMillis
+        // PRD §8: snap to avoid overlaps (stick to a group, jump before it past the midpoint) and
+        // shrink to fit a too-narrow gap.
+        val placed =
+            SchedulerDomain.placeDraggedEntry(
+                otherRanges(state, intent.id),
+                intent.desiredStartEpochMillis,
+                duration,
+            )
+        val moved =
+            current.copy(startEpochMillis = placed.startEpochMillis, endEpochMillis = placed.endEpochMillis)
+        return commitManualEntries(state, entries.toMutableList().also { it[index] = moved })
+    }
+
+    private fun reduceResizeManualEntry(
+        state: SchedulerState,
+        intent: SchedulerIntent.ResizeManualCalendarEntry,
+    ): SchedulerState {
+        val entries = state.manualEntries
+        val index = entries.indexOfFirst { it.id == intent.id }
+        if (index < 0) return state
+        val current = entries[index]
+        // PRD §8 extend/shorten: clamp the grabbed edge so it cannot cross a neighbour.
+        val resized =
+            SchedulerDomain.clampResize(
+                otherRanges(state, intent.id),
+                TaskTimeRange(current.startEpochMillis, current.endEpochMillis),
+                intent.edge,
+                intent.valueEpochMillis,
+            )
+        val updated =
+            current.copy(
+                startEpochMillis = resized.startEpochMillis,
+                endEpochMillis = resized.endEpochMillis,
+            )
+        return commitManualEntries(state, entries.toMutableList().also { it[index] = updated })
     }
 
     private fun undo(state: SchedulerState, category: HistoryCategory): SchedulerState {
@@ -1290,6 +1403,20 @@ private data class SetSelectionDelta(
     override fun undo(state: SchedulerState): SchedulerState = state.copy(selection = before)
 
     override fun redo(state: SchedulerState): SchedulerState = state.copy(selection = after)
+}
+
+/**
+ * PRD §5 "manual calendar record edition": the whole manual-entry list before/after a calendar add,
+ * edit, move or resize. Lives in the [HistoryCategory.Calendar] stack so it is undone/redone only
+ * while the calendar is focused (PRD §8).
+ */
+private data class ManualEntryDelta(
+    val before: List<ManualCalendarEntry>,
+    val after: List<ManualCalendarEntry>,
+) : Delta {
+    override fun undo(state: SchedulerState): SchedulerState = state.copy(manualEntries = before)
+
+    override fun redo(state: SchedulerState): SchedulerState = state.copy(manualEntries = after)
 }
 
 private data class ToggleExpandDelta(

@@ -10,6 +10,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
+import org.example.project.scheduler.model.ManualCalendarEntry
 import org.example.project.scheduler.model.ScheduledTask
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
@@ -82,6 +83,17 @@ object SchedulerStateCodec {
                 scheduled?.let {
                     PersistedScheduled(it.taskId.value, it.startEpochMillis, it.deadlineEpochMillis)
                 },
+            manualEntries =
+                manualEntries.map {
+                    PersistedManualEntry(
+                        id = it.id,
+                        taskId = it.taskId?.value,
+                        title = it.title,
+                        start = it.startEpochMillis,
+                        end = it.endEpochMillis,
+                    )
+                },
+            nextManualEntryCounter = nextManualEntryCounter,
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -184,6 +196,17 @@ object SchedulerStateCodec {
                 scheduled?.let {
                     ScheduledTask(TaskId(it.taskId), it.start, it.deadline)
                 },
+            manualEntries =
+                manualEntries.map {
+                    ManualCalendarEntry(
+                        id = it.id,
+                        taskId = it.taskId?.let(::TaskId),
+                        title = it.title,
+                        startEpochMillis = it.start,
+                        endEpochMillis = it.end,
+                    )
+                },
+            nextManualEntryCounter = nextManualEntryCounter,
         )
     }
 
@@ -263,6 +286,9 @@ private data class PersistedState(
     val editSession: PersistedEditSession? = null,
     // PRD §9: default null keeps payloads written before the scheduler existed loadable.
     val scheduled: PersistedScheduled? = null,
+    // PRD §8: defaults keep payloads written before manual calendar entries existed loadable.
+    val manualEntries: List<PersistedManualEntry> = emptyList(),
+    val nextManualEntryCounter: Int = 0,
 )
 
 @Serializable
@@ -270,6 +296,15 @@ private data class PersistedScheduled(
     val taskId: String,
     val start: Long,
     val deadline: Long,
+)
+
+@Serializable
+private data class PersistedManualEntry(
+    val id: String,
+    val taskId: String? = null,
+    val title: String,
+    val start: Long,
+    val end: Long,
 )
 
 @Serializable

@@ -5,6 +5,7 @@ import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.ManualCalendarEntry
 import org.example.project.scheduler.model.ScheduledTask
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
@@ -28,22 +29,29 @@ data class SchedulerHistory(
 )
 
 /**
- * PRD §5 History Architecture: history is split into three independent categories, each with its
- * own list of units and pointer — changes made in Edit Mode, selection-state changes, and "the
- * rest" (tree/expansion mutations). Selection history is undone/redone separately (Alt+Left /
+ * PRD §5 History Architecture: history is split into independent categories, each with its own list
+ * of units and pointer — changes made in Edit Mode, selection-state changes, calendar edits, and
+ * "the rest" (tree/expansion mutations). Selection history is undone/redone separately (Alt+Left /
  * Alt+Right) from the content categories (Ctrl+Z / Ctrl+Y).
+ *
+ * The content categories implement PRD §5's "pointer navigates by context": Ctrl+Z/Y target [Edit]
+ * while an Edit-Mode session is open (so it only touches that session's text changes, skipping every
+ * other unit), [Calendar] while the calendar is focused (skipping non-calendar units — and non-focus
+ * Ctrl+Z skips calendar units), and otherwise [Main].
  */
-enum class HistoryCategory { Edit, Selection, Main }
+enum class HistoryCategory { Edit, Selection, Calendar, Main }
 
 data class SchedulerHistories(
     val edit: SchedulerHistory = SchedulerHistory(),
     val selection: SchedulerHistory = SchedulerHistory(),
+    val calendar: SchedulerHistory = SchedulerHistory(),
     val main: SchedulerHistory = SchedulerHistory(),
 ) {
     fun forCategory(category: HistoryCategory): SchedulerHistory =
         when (category) {
             HistoryCategory.Edit -> edit
             HistoryCategory.Selection -> selection
+            HistoryCategory.Calendar -> calendar
             HistoryCategory.Main -> main
         }
 
@@ -51,6 +59,7 @@ data class SchedulerHistories(
         when (category) {
             HistoryCategory.Edit -> copy(edit = history)
             HistoryCategory.Selection -> copy(selection = history)
+            HistoryCategory.Calendar -> copy(calendar = history)
             HistoryCategory.Main -> copy(main = history)
         }
 }
@@ -96,6 +105,19 @@ data class SchedulerState(
      * never touches it.
      */
     val scheduled: ScheduledTask? = null,
+    /**
+     * PRD §8 manual calendar entries (add / edit window / drag-resize). Persisted user data that
+     * lives outside [TreeSnapshot]: Undo/Redo of these goes through the [HistoryCategory.Calendar]
+     * stack, not the tree snapshot.
+     */
+    val manualEntries: List<ManualCalendarEntry> = emptyList(),
+    /** Monotonic suffix for `manual/{n}` entry ids; never reused, so undo need not roll it back. */
+    val nextManualEntryCounter: Int = 0,
+    /**
+     * PRD §5 whether the calendar window currently has focus, which routes Ctrl+Z/Y to the calendar
+     * history (and away from it when unfocused). Transient session state, not persisted.
+     */
+    val calendarFocused: Boolean = false,
 ) {
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots
     // (capture) and re-attached from the live tasks on restore (applyTree). Undo/Redo therefore
@@ -131,6 +153,11 @@ data class SchedulerState(
     fun allocateCellId(listId: CellListId): Pair<CellId, SchedulerState> {
         val id = CellId("cell/${listId.value}/$nextCellCounter")
         return id to copy(nextCellCounter = nextCellCounter + 1)
+    }
+
+    fun allocateManualEntryId(): Pair<String, SchedulerState> {
+        val id = "manual/$nextManualEntryCounter"
+        return id to copy(nextManualEntryCounter = nextManualEntryCounter + 1)
     }
 
     companion object {

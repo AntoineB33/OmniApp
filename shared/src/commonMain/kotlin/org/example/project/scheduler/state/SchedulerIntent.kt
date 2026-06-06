@@ -4,6 +4,9 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.TaskId
 
+/** PRD §8 extend/shorten: which edge of a calendar block the user grabbed. */
+enum class CalendarEdge { Start, End }
+
 enum class SelectionNavigate {
     /** Up / Left — previous visible selectable cell. */
     Previous,
@@ -150,6 +153,53 @@ sealed interface SchedulerIntent {
 
     /** Paste [titles] at the main selection (Google Sheets uses newline-separated rows). */
     data class PasteTitles(val titles: List<String>) : SchedulerIntent
+
+    /**
+     * PRD §8 Manual add: place a calendar entry at [startEpochMillis] for the highest-absolute-priority
+     * task (alphabetical tie-break), spanning that task's minimum time. Recorded as a calendar delta.
+     */
+    data class AddManualCalendarEntry(
+        val startEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §8 edit window: replace an entry's task/title and start/end times. [taskId] is null for a
+     * calendar-only "New task". Recorded as a calendar delta.
+     */
+    data class UpdateManualCalendarEntry(
+        val id: String,
+        val taskId: TaskId?,
+        val title: String,
+        val startEpochMillis: Long,
+        val endEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §8 manual drag (move): drop an entry so its start is near [desiredStartEpochMillis], keeping
+     * its duration. The reducer snaps it to avoid overlaps (sticking to a group's end, jumping before
+     * the group past its midpoint) and shrinks it to fit a too-narrow gap. Dispatched once, on release,
+     * so the whole drag is a single history unit.
+     */
+    data class MoveManualCalendarEntry(
+        val id: String,
+        val desiredStartEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §8 extend/shorten: grab an entry's start or end edge and drag it to [valueEpochMillis]. The
+     * reducer clamps it so it cannot cross a neighbouring entry (or invert below a minimum length).
+     */
+    data class ResizeManualCalendarEntry(
+        val id: String,
+        val edge: CalendarEdge,
+        val valueEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §5: mark the calendar focused/unfocused so Ctrl+Z/Y route to (or away from) the calendar
+     * history. Not undoable.
+     */
+    data class SetCalendarFocus(val focused: Boolean) : SchedulerIntent
 
     /** Ctrl+Z / Ctrl+Y — undo/redo the content history (Edit Mode while editing, else "the rest"). */
     data object Undo : SchedulerIntent

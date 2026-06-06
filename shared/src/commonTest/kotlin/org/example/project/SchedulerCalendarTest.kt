@@ -1,0 +1,293 @@
+package org.example.project
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.ManualCalendarEntry
+import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.scheduler.persistence.SchedulerStateCodec
+import org.example.project.scheduler.state.CalendarEdge
+import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.state.SchedulerReducer
+import org.example.project.scheduler.state.SchedulerState
+
+/**
+ * Tests for the v1.1.0 PRD additions (logic layer): §8 manual calendar entries (add / edit window /
+ * drag-move with no-overlap snapping / extend-shorten with neighbour clamping), §5 calendar-focus-
+ * aware Undo/Redo routing, and §10 New Task overlap-avoidance with a manually-placed future task.
+ */
+class SchedulerCalendarTest {
+
+    private val MIN = 60_000L
+    private val HOUR = 3_600_000L
+
+    private fun manual(id: String, start: Long, end: Long) =
+        ManualCalendarEntry(id, taskId = null, title = id, startEpochMillis = start, endEpochMillis = end)
+
+    private fun range(start: Long, end: Long) = TaskTimeRange(start, end)
+
+    /** Two equal-priority sibling tasks A and B under "main". */
+    private fun stateWithTwoTasks(): Triple<SchedulerState, TaskId, TaskId> {
+        var s = SchedulerState.empty()
+        val root = s.rootListId
+        val c0 = s.lists[root]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c0, "A"))
+        val c1 = s.lists[root]!!.cellIds[1]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c1, "B"))
+        val a = s.tasks.keys.first { s.tasks[it]!!.title == "A" }
+        val b = s.tasks.keys.first { s.tasks[it]!!.title == "B" }
+        return Triple(s, a, b)
+    }
+
+    // ----- §8 manual add ----------------------------------------------------------------------
+
+    @Test
+    fun manual_add_picks_highest_priority_task_breaking_ties_alphabetically() {
+        val (s, a, _) = stateWithTwoTasks()
+        assertEquals(a, SchedulerDomain.manualAddTaskId(s)) // A and B tie → "A" wins
+    }
+
+    @Test
+    fun manual_add_returns_null_when_there_is_no_real_task() {
+        assertNull(SchedulerDomain.manualAddTaskId(SchedulerState.empty()))
+    }
+
+    @Test
+    fun add_manual_entry_spans_the_tasks_minimum_time_from_the_click_position() {
+        val (s, a, _) = stateWithTwoTasks()
+        val start = 5_000_000L
+        val withEntry = SchedulerReducer.reduce(s, SchedulerIntent.AddManualCalendarEntry(start))
+        assertEquals(1, withEntry.manualEntries.size)
+        val entry = withEntry.manualEntries[0]
+        assertEquals(a, entry.taskId)
+        assertEquals(start, entry.startEpochMillis)
+        assertEquals(start + 45 * MIN, entry.endEpochMillis) // default 45-min minimum span
+    }
+
+    @Test
+    fun add_manual_entry_on_empty_database_is_a_no_op() {
+        val after = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddManualCalendarEntry(1_000L))
+        assertTrue(after.manualEntries.isEmpty())
+    }
+
+    // ----- §8 edit window ---------------------------------------------------------------------
+
+    @Test
+    fun update_manual_entry_can_make_it_a_calendar_only_new_task() {
+        val (s, _, _) = stateWithTwoTasks()
+        val withEntry = SchedulerReducer.reduce(s, SchedulerIntent.AddManualCalendarEntry(1_000_000L))
+        val id = withEntry.manualEntries[0].id
+        val updated =
+            SchedulerReducer.reduce(
+                withEntry,
+                SchedulerIntent.UpdateManualCalendarEntry(
+                    id = id,
+                    taskId = null,
+                    title = "Brand new",
+                    startEpochMillis = 2_000_000L,
+                    endEpochMillis = 2_000_000L + 30 * MIN,
+                ),
+            )
+        val entry = updated.manualEntries[0]
+        assertNull(entry.taskId)
+        assertEquals("Brand new", entry.title)
+        // §8: creating a calendar "new task" does NOT add a task to the tree.
+        assertEquals(s.tasks.keys, updated.tasks.keys)
+    }
+
+    // ----- §8 manual drag: no-overlap snapping (placeDraggedEntry / mergeOccupied) -------------
+
+    @Test
+    fun merge_occupied_fuses_touching_and_overlapping_blocks() {
+        val merged =
+            SchedulerDomain.mergeOccupied(listOf(range(0, 10), range(10, 20), range(30, 40), range(35, 50)))
+        assertEquals(listOf(range(0, 20), range(30, 50)), merged)
+    }
+
+    @Test
+    fun drag_into_free_space_lands_exactly_at_the_desired_position() {
+        val placed = SchedulerDomain.placeDraggedEntry(emptyList(), desiredStart = 50, duration = 40)
+        assertEquals(range(50, 90), placed)
+    }
+
+    @Test
+    fun drag_sticks_to_the_end_of_a_group_when_past_its_midpoint() {
+        // Drop [160,200) over the group [100,200): centre 180 > midpoint 150 → after the group.
+        val placed = SchedulerDomain.placeDraggedEntry(listOf(range(100, 200)), desiredStart = 160, duration = 40)
+        assertEquals(range(200, 240), placed)
+    }
+
+    @Test
+    fun drag_jumps_before_a_group_when_nearer_its_start() {
+        // Drop [90,130) over the group [100,200): centre 110 < midpoint 150 → before the group.
+        val placed = SchedulerDomain.placeDraggedEntry(listOf(range(100, 200)), desiredStart = 90, duration = 40)
+        assertEquals(range(60, 100), placed)
+    }
+
+    @Test
+    fun drag_shrinks_to_fit_a_narrow_gap_before_a_group() {
+        // Gap between [0,70) and [100,200) is only 30 wide; a 40-wide drag before the group shrinks.
+        val placed =
+            SchedulerDomain.placeDraggedEntry(listOf(range(0, 70), range(100, 200)), desiredStart = 90, duration = 40)
+        assertEquals(range(70, 100), placed)
+    }
+
+    @Test
+    fun drag_shrinks_to_fit_a_narrow_gap_after_a_group() {
+        // Gap between [100,200) and [210,300) is only 10 wide; a 40-wide drag after the group shrinks.
+        val placed =
+            SchedulerDomain.placeDraggedEntry(listOf(range(100, 200), range(210, 300)), desiredStart = 160, duration = 40)
+        assertEquals(range(200, 210), placed)
+    }
+
+    @Test
+    fun move_intent_snaps_a_dragged_entry_before_an_occupied_block() {
+        val s = SchedulerState.empty().copy(manualEntries = listOf(manual("m1", 100 * MIN, 200 * MIN), manual("m2", 0, 40 * MIN)))
+        // Drag m2 (40-min wide) so it overlaps m1 nearer m1's start → it lands just before m1.
+        val moved = SchedulerReducer.reduce(s, SchedulerIntent.MoveManualCalendarEntry("m2", 90 * MIN))
+        val m2 = moved.manualEntries.first { it.id == "m2" }
+        assertEquals(60 * MIN, m2.startEpochMillis)
+        assertEquals(100 * MIN, m2.endEpochMillis)
+    }
+
+    // ----- §8 extend / shorten (clampResize) --------------------------------------------------
+
+    @Test
+    fun resize_end_cannot_cross_the_next_neighbour() {
+        val entry = range(100, 150)
+        val clamped =
+            SchedulerDomain.clampResize(listOf(range(200, 250)), entry, CalendarEdge.End, value = 300, minLength = 1)
+        assertEquals(range(100, 200), clamped) // clamped to the neighbour's start
+    }
+
+    @Test
+    fun resize_start_cannot_cross_the_previous_neighbour() {
+        val entry = range(100, 150)
+        val clamped =
+            SchedulerDomain.clampResize(listOf(range(0, 60)), entry, CalendarEdge.Start, value = 10, minLength = 1)
+        assertEquals(range(60, 150), clamped) // clamped to the neighbour's end
+    }
+
+    @Test
+    fun resize_never_shrinks_below_the_minimum_length() {
+        val entry = range(0, 45 * MIN)
+        // Pull the end far below the start: clamped up to start + minimum length.
+        val clamped = SchedulerDomain.clampResize(emptyList(), entry, CalendarEdge.End, value = -5 * MIN)
+        assertEquals(range(0, SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS), clamped)
+    }
+
+    @Test
+    fun resize_intent_clamps_the_end_at_the_neighbour() {
+        val s = SchedulerState.empty().copy(manualEntries = listOf(manual("m1", 0, 30 * MIN), manual("m2", 60 * MIN, 90 * MIN)))
+        val resized = SchedulerReducer.reduce(s, SchedulerIntent.ResizeManualCalendarEntry("m1", CalendarEdge.End, 200 * MIN))
+        assertEquals(60 * MIN, resized.manualEntries.first { it.id == "m1" }.endEpochMillis)
+    }
+
+    // ----- §5 calendar-focus-aware Undo/Redo --------------------------------------------------
+
+    @Test
+    fun calendar_edits_are_undone_only_while_the_calendar_is_focused() {
+        val (s, _, _) = stateWithTwoTasks()
+        val withEntry = SchedulerReducer.reduce(s, SchedulerIntent.AddManualCalendarEntry(1_000_000L))
+        val focused = SchedulerReducer.reduce(withEntry, SchedulerIntent.SetCalendarFocus(true))
+
+        val undone = SchedulerReducer.reduce(focused, SchedulerIntent.Undo)
+        assertTrue(undone.manualEntries.isEmpty())
+        assertEquals(withEntry.cells, undone.cells) // tree untouched
+
+        // A further Ctrl+Z while focused finds the calendar stack empty → skips everything else.
+        val undoneAgain = SchedulerReducer.reduce(undone, SchedulerIntent.Undo)
+        assertEquals(undone.cells, undoneAgain.cells)
+        assertTrue(undoneAgain.manualEntries.isEmpty())
+
+        val redone = SchedulerReducer.reduce(undone, SchedulerIntent.Redo)
+        assertEquals(1, redone.manualEntries.size)
+    }
+
+    @Test
+    fun unfocused_undo_skips_calendar_units_and_undoes_the_tree() {
+        val (s, _, _) = stateWithTwoTasks()
+        val withEntry = SchedulerReducer.reduce(s, SchedulerIntent.AddManualCalendarEntry(1_000_000L))
+        val undone = SchedulerReducer.reduce(withEntry, SchedulerIntent.Undo)
+        assertEquals(1, undone.manualEntries.size) // calendar entry preserved
+        assertNotEquals(withEntry.cells, undone.cells) // a tree mutation was reverted
+    }
+
+    @Test
+    fun undo_restores_a_moved_entry_to_its_prior_position() {
+        val s =
+            SchedulerState.empty().copy(manualEntries = listOf(manual("m1", 0, 40 * MIN)), nextManualEntryCounter = 1)
+        val before = s.manualEntries[0]
+        val moved = SchedulerReducer.reduce(s, SchedulerIntent.MoveManualCalendarEntry("m1", 10 * MIN))
+        assertNotEquals(before, moved.manualEntries[0])
+        val focused = SchedulerReducer.reduce(moved, SchedulerIntent.SetCalendarFocus(true))
+        val undone = SchedulerReducer.reduce(focused, SchedulerIntent.Undo)
+        assertEquals(before, undone.manualEntries[0])
+    }
+
+    // ----- §10 New Task overlap avoidance -----------------------------------------------------
+
+    @Test
+    fun clamp_deadline_reduces_span_to_the_next_future_manual_entry() {
+        val withEntry = SchedulerState.empty().copy(manualEntries = listOf(manual("m0", 100L, 200L)))
+        assertEquals(100L, SchedulerDomain.clampDeadlineToManualEntries(withEntry, 0L, 150L))
+        assertEquals(80L, SchedulerDomain.clampDeadlineToManualEntries(withEntry, 0L, 80L)) // no overlap
+    }
+
+    @Test
+    fun clamp_deadline_ignores_entries_that_already_started() {
+        val started = SchedulerState.empty().copy(manualEntries = listOf(manual("m0", -10L, 50L)))
+        assertEquals(150L, SchedulerDomain.clampDeadlineToManualEntries(started, 0L, 150L))
+    }
+
+    @Test
+    fun compute_schedule_shortens_a_new_task_to_avoid_a_future_manual_entry() {
+        val (s0, a, b) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val s =
+            s0.copy(
+                tasks =
+                    s0.tasks +
+                        (a to s0.tasks[a]!!.copy(record = listOf(range(now - HOUR, now)))) +
+                        (b to s0.tasks[b]!!.copy(minimumMinutes = 60)),
+            )
+        assertEquals(now + 60 * MIN, SchedulerDomain.computeSchedule(s, now)!!.deadlineEpochMillis)
+
+        val withManual = s.copy(manualEntries = listOf(manual("m0", now + 30 * MIN, now + 90 * MIN)))
+        val sched = SchedulerDomain.computeSchedule(withManual, now)
+        assertNotNull(sched)
+        assertEquals(b, sched.taskId)
+        assertEquals(now + 30 * MIN, sched.deadlineEpochMillis)
+    }
+
+    // ----- persistence -------------------------------------------------------------------------
+
+    @Test
+    fun codec_round_trip_preserves_manual_entries_and_counter() {
+        val (s, _, _) = stateWithTwoTasks()
+        val prepared = SchedulerReducer.reduce(s, SchedulerIntent.AddManualCalendarEntry(123_000L))
+        val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(prepared))
+        assertNotNull(decoded)
+        assertEquals(prepared.manualEntries, decoded.manualEntries)
+        assertEquals(prepared.nextManualEntryCounter, decoded.nextManualEntryCounter)
+    }
+
+    @Test
+    fun codec_decodes_old_payload_without_manual_entries() {
+        val json =
+            """
+            {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
+             "cells":[{"id":"c0","parentListId":"L","taskId":null}],
+             "tasks":[{"id":"t0","title":"X"}]}
+            """.trimIndent()
+        val decoded = SchedulerStateCodec.decode(json)
+        assertNotNull(decoded)
+        assertTrue(decoded.manualEntries.isEmpty())
+        assertEquals(0, decoded.nextManualEntryCounter)
+    }
+}

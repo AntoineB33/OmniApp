@@ -9,6 +9,7 @@ import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.model.WellKnownIds
+import org.example.project.scheduler.state.CalendarEdge
 import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
 
@@ -545,6 +546,133 @@ object SchedulerDomain {
 
     private const val MILLIS_PER_MINUTE: Long = 60_000L
 
+    // ----- PRD §8 manual calendar entries -----------------------------------------------------
+
+    /** PRD §8: a manually dragged/resized calendar block never collapses below this length. */
+    const val MIN_MANUAL_ENTRY_MILLIS: Long = 60_000L
+
+    /**
+     * PRD §8 Manual add: the task chosen by the calendar's right-click "add a task" action — the one
+     * with the biggest absolute priority percentage, breaking ties alphabetically by title (the
+     * first in alphabetic order wins). Excludes the root/main tasks and tasks no longer in the tree.
+     * Returns null when there is no real task to add.
+     */
+    fun manualAddTaskId(state: SchedulerState): TaskId? {
+        val absolute = absoluteTaskPriorities(state)
+        val candidates =
+            state.tasks.keys.filter { !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) }
+        if (candidates.isEmpty()) return null
+        // minWith over (priority desc, title asc): the minimum is the highest priority, and on a tie
+        // the alphabetically-first title.
+        return candidates.minWith(
+            compareByDescending<TaskId> { absolute[it] ?: 0.0 }
+                .thenBy { state.tasks[it]?.title.orEmpty() },
+        )
+    }
+
+    /**
+     * PRD §10 New Task: clamp a freshly computed `[startMillis, deadline]` so it does not overlap the
+     * next manually-placed calendar entry that starts in the future (after [startMillis]). The new
+     * task's span is reduced so it ends exactly when that entry begins; entries already started (or
+     * starting at [startMillis]) do not constrain it. A no-op when no future manual entry sits inside
+     * the window.
+     */
+    fun clampDeadlineToManualEntries(
+        state: SchedulerState,
+        startMillis: Long,
+        deadline: Long,
+    ): Long {
+        val nextManualStart =
+            state.manualEntries
+                .map { it.startEpochMillis }
+                .filter { it > startMillis }
+                .minOrNull() ?: return deadline
+        return minOf(deadline, nextManualStart)
+    }
+
+    /** Merge [ranges] into sorted, disjoint occupied blocks; touching or overlapping ranges fuse. */
+    fun mergeOccupied(ranges: List<TaskTimeRange>): List<TaskTimeRange> {
+        if (ranges.isEmpty()) return emptyList()
+        val sorted = ranges.sortedBy { it.startEpochMillis }
+        val merged = mutableListOf(sorted.first())
+        for (range in sorted.drop(1)) {
+            val last = merged.last()
+            if (range.startEpochMillis <= last.endEpochMillis) {
+                // Touching/overlapping → extend the current block (PRD §8 "consecutive tasks" group).
+                merged[merged.lastIndex] =
+                    last.copy(endEpochMillis = maxOf(last.endEpochMillis, range.endEpochMillis))
+            } else {
+                merged.add(range)
+            }
+        }
+        return merged
+    }
+
+    /**
+     * PRD §8 Manual drag (move): where a block of [duration] dropped near [desiredStart] settles
+     * given the [others] already on the calendar, never overlapping them:
+     *  - in free space it sits exactly at [desiredStart];
+     *  - over a group of consecutive entries it sticks to the group's end, unless the drag's centre is
+     *    nearer the group's start than its end, in which case it jumps before the group;
+     *  - if the gap it lands in is narrower than [duration] it shrinks to fit (the caller keeps the
+     *    original [duration] to restore it in a wider gap, PRD §8 "remembers its original size").
+     */
+    fun placeDraggedEntry(
+        others: List<TaskTimeRange>,
+        desiredStart: Long,
+        duration: Long,
+    ): TaskTimeRange {
+        val blocks = mergeOccupied(others)
+        val desiredEnd = desiredStart + duration
+        val hit = blocks.firstOrNull { it.startEpochMillis < desiredEnd && desiredStart < it.endEpochMillis }
+            ?: return TaskTimeRange(desiredStart, desiredEnd)
+
+        val mid = (hit.startEpochMillis + hit.endEpochMillis) / 2
+        val dragCentre = desiredStart + duration / 2
+        return if (dragCentre < mid) {
+            // Before the group, shrinking to the gap left of it.
+            val prevEnd = blocks.filter { it.endEpochMillis <= hit.startEpochMillis }
+                .maxOfOrNull { it.endEpochMillis } ?: Long.MIN_VALUE
+            val end = hit.startEpochMillis
+            val start = maxOf(end - duration, prevEnd)
+            TaskTimeRange(start, end)
+        } else {
+            // After the group, shrinking to the gap right of it.
+            val nextStart = blocks.filter { it.startEpochMillis >= hit.endEpochMillis }
+                .minOfOrNull { it.startEpochMillis } ?: Long.MAX_VALUE
+            val start = hit.endEpochMillis
+            val end = minOf(start + duration, nextStart)
+            TaskTimeRange(start, end)
+        }
+    }
+
+    /**
+     * PRD §8 extend/shorten: the new bounds when the [edge] of [entry] is dragged to [value], clamped
+     * so the edge cannot cross a neighbouring entry in [others] ("it can't be dragged any further")
+     * nor shrink the block below [MIN_MANUAL_ENTRY_MILLIS].
+     */
+    fun clampResize(
+        others: List<TaskTimeRange>,
+        entry: TaskTimeRange,
+        edge: CalendarEdge,
+        value: Long,
+        minLength: Long = MIN_MANUAL_ENTRY_MILLIS,
+    ): TaskTimeRange =
+        when (edge) {
+            CalendarEdge.Start -> {
+                val floor = others.filter { it.endEpochMillis <= entry.startEpochMillis }
+                    .maxOfOrNull { it.endEpochMillis } ?: Long.MIN_VALUE
+                val start = value.coerceIn(floor, entry.endEpochMillis - minLength)
+                entry.copy(startEpochMillis = start)
+            }
+            CalendarEdge.End -> {
+                val ceil = others.filter { it.startEpochMillis >= entry.endEpochMillis }
+                    .minOfOrNull { it.startEpochMillis } ?: Long.MAX_VALUE
+                val end = value.coerceIn(entry.startEpochMillis + minLength, ceil)
+                entry.copy(endEpochMillis = end)
+            }
+        }
+
     /** PRD §10: recorded sessions less than this many minutes apart count as one continuous effort. */
     const val SESSION_GAP_MINUTES: Int = 10
 
@@ -610,10 +738,12 @@ object SchedulerDomain {
         }
         val taskId = nextTask(state, nowMillis, k) ?: return null
         val task = state.tasks[taskId] ?: return null
+        val deadline = startMillis + scheduledSpanMinutes(task, startMillis) * MILLIS_PER_MINUTE
         return ScheduledTask(
             taskId = taskId,
             startEpochMillis = startMillis,
-            deadlineEpochMillis = startMillis + scheduledSpanMinutes(task, startMillis) * MILLIS_PER_MINUTE,
+            // PRD §10 New Task: shorten the span so it does not overlap a manually-placed future task.
+            deadlineEpochMillis = clampDeadlineToManualEntries(state, startMillis, deadline),
         )
     }
 

@@ -37,6 +37,24 @@ data class TaskTimeRange(
 )
 
 /**
+ * PRD §8 Manual calendar entry: a period the user placed or edited directly on the calendar — via
+ * the right-click "add a task" action, the double-click edit window, or by dragging/resizing a block.
+ * Unlike a [Task.record] (auto-logged done periods, history-excluded) or the auto [ScheduledTask],
+ * it is user-authored and *does* live in the Undo/Redo history (the "manual calendar record edition"
+ * delta, PRD §5). [taskId] is null for a calendar-only "New task" — creating one here intentionally
+ * does NOT create a task in the tree (PRD §8); [title] is the shown label in either case. A
+ * manually-placed entry whose start is still in the future constrains the auto-scheduler so the next
+ * computed task does not overlap it (PRD §10 New Task).
+ */
+data class ManualCalendarEntry(
+    val id: String,
+    val taskId: TaskId?,
+    val title: String,
+    val startEpochMillis: Long,
+    val endEpochMillis: Long,
+)
+
+/**
  * PRD §9 "the task to do now": the scheduler's current allocation — which task to do and until when.
  * The deadline is the start plus the task's minimum time (PRD §10, used here as the allocated
  * duration). Persisted so a restart can tell whether there is still a task to do at this moment, but
