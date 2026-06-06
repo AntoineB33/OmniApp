@@ -11,6 +11,7 @@ import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.ManualCalendarEntry
+import org.example.project.scheduler.model.ScheduledTask
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStateCodec
@@ -391,6 +392,29 @@ class SchedulerCalendarTest {
         assertTrue(s.tasks[a]!!.childTaskIds.isEmpty()) // stale cache
         assertFalse(SchedulerDomain.isLeafTask(s, a)) // but structurally A has a child
         assertEquals(b, SchedulerDomain.nextTask(s, 1_000_000_000_000L))
+    }
+
+    @Test
+    fun a_scheduled_task_that_gains_a_child_is_cut_and_recorded_then_replaced() {
+        val (s0, a, b) = stateWithTwoTasks()
+        val now0 = 1_000_000_000_000L
+        // A is the task to do now, mid-period.
+        val s1 = s0.copy(scheduled = ScheduledTask(a, now0, now0 + 45 * MIN))
+        // A gains a child (a populated cell pointing at B in A's child list) → A is no longer a leaf.
+        val childListId = s0.tasks[a]!!.childListId!!
+        val childCellId = CellId("a-child")
+        val list = s0.lists[childListId]!!
+        val s2 =
+            s1.copy(
+                cells = s1.cells + (childCellId to Cell(childCellId, childListId, taskId = b)),
+                lists = s1.lists + (childListId to list.copy(cellIds = list.cellIds + childCellId)),
+            )
+        // Refresh BEFORE A's deadline: A must be cut at `now`, recorded, and replaced by a leaf.
+        val now1 = now0 + 10 * MIN
+        val after = SchedulerReducer.reduce(s2, SchedulerIntent.RefreshSchedule(now1))
+        assertTrue(range(now0, now1) in after.tasks[a]!!.record) // cut [start, now] recorded
+        assertEquals(b, after.scheduled?.taskId) // A excluded; the leaf B is scheduled now
+        assertEquals(now1, after.scheduled?.startEpochMillis) // next period starts where A was cut
     }
 
     // ----- §8 task contextual menu "Remove" ---------------------------------------------------

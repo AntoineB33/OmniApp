@@ -1181,10 +1181,14 @@ private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long): Sched
     var working = state
     var startMillis = nowMillis
     if (previous != null && previousTask != null) {
-        if (!SchedulerDomain.taskHasCells(state, previous.taskId)) {
-            // PRD §9: the scheduled task was deleted from the tree → cut its period to the moment it
-            // disappeared (≈ now, capped at its deadline) and record it. The record keeps the task
-            // alive (PRD §4) so the calendar still shows the cut period.
+        val noLongerSchedulable =
+            !SchedulerDomain.taskHasCells(state, previous.taskId) ||
+                !SchedulerDomain.isLeafTask(state, previous.taskId)
+        if (noLongerSchedulable) {
+            // PRD §9: the scheduled task was deleted from the tree OR gained a child task (so it is no
+            // longer a schedulable leaf) → cut its period to the moment that happened (≈ now, capped at
+            // its deadline) and record it. The record keeps a deleted task alive (PRD §4) so the
+            // calendar still shows the cut period.
             val end = nowMillis.coerceIn(previous.startEpochMillis, previous.deadlineEpochMillis)
             working = appendRecord(state, previous.taskId, previous.startEpochMillis, end).copy(scheduled = null)
             startMillis = end
