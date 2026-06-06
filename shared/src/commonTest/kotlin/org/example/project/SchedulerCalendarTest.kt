@@ -321,6 +321,24 @@ class SchedulerCalendarTest {
         assertEquals(now + 30 * MIN, sched.deadlineEpochMillis)
     }
 
+    @Test
+    fun refreshing_keeps_an_already_scheduled_task_from_overlapping_a_future_manual_entry() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // A is already scheduled for a full 45-min minimum, but a manual entry starts in 20 min.
+        val s =
+            s0.copy(
+                scheduled = ScheduledTask(a, now, now + 45 * MIN),
+                manualEntries = listOf(manual("m", now + 20 * MIN, now + 80 * MIN)),
+            )
+        // A refresh a moment later must NOT re-extend A's deadline over the manual entry — it stays
+        // clamped to the entry's start (the §10 overlap rule must hold on every refresh, not just at
+        // first scheduling).
+        val after = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now + 1_000))
+        assertEquals(a, after.scheduled?.taskId)
+        assertEquals(now + 20 * MIN, after.scheduled?.deadlineEpochMillis)
+    }
+
     // ----- §8/§9 manual past entries count as time done (uniform blocks) ----------------------
 
     private fun manualFor(id: String, taskId: TaskId, start: Long, end: Long) =

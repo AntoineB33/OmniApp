@@ -783,7 +783,10 @@ object SchedulerDomain {
         val current = state.scheduled
         val currentTask = current?.let { state.tasks[it.taskId] }
         if (current != null && currentTask != null) {
-            val deadline = current.startEpochMillis + scheduledSpanMinutes(state, current.taskId, nowMillis) * MILLIS_PER_MINUTE
+            val rawDeadline = current.startEpochMillis + scheduledSpanMinutes(state, current.taskId, nowMillis) * MILLIS_PER_MINUTE
+            // PRD §10: keep the deadline from overlapping a manually-placed future entry on EVERY
+            // refresh — otherwise the next tick re-extends the just-clamped span back over the entry.
+            val deadline = clampDeadlineToManualEntries(state, current.startEpochMillis, rawDeadline)
             if (nowMillis < deadline) {
                 return if (deadline == current.deadlineEpochMillis) current
                 else current.copy(deadlineEpochMillis = deadline)
