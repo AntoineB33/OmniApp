@@ -882,7 +882,7 @@ object SchedulerReducer {
         val newState = forward.redo(state)
         val history = state.histories.forCategory(category)
 
-        val newUnits =
+        val appendedUnits =
             if (history.pointer == history.units.lastIndex) {
                 history.units + HistoryUnit(
                     chronoId = history.units.size.toLong(),
@@ -894,15 +894,25 @@ object SchedulerReducer {
                     delta = forward,
                 )
             }
+        val appendedPointer = history.pointer + 1
+
+        // PRD §5: each category's history list is capped — drop the oldest units once it exceeds
+        // [MAX_HISTORY_UNITS], shifting the pointer back by however many were removed.
+        val overflow = (appendedUnits.size - MAX_HISTORY_UNITS).coerceAtLeast(0)
+        val cappedUnits = if (overflow > 0) appendedUnits.drop(overflow) else appendedUnits
+        val cappedPointer = appendedPointer - overflow
 
         return newState.copy(
             histories =
                 state.histories.withCategory(
                     category,
-                    history.copy(pointer = history.pointer + 1, units = newUnits),
+                    history.copy(pointer = cappedPointer, units = cappedUnits),
                 ),
         )
     }
+
+    /** PRD §5: the maximum number of History Units retained per category (oldest dropped beyond this). */
+    private const val MAX_HISTORY_UNITS = 1000
 }
 
 /**

@@ -82,13 +82,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
         }
 
-        // PRD §11 Notifications: whenever "the task to do now" changes to a (new) task, post a system
-        // notification naming it. Keyed on the scheduled task id so it fires once per switch — not on
-        // every tick that merely refreshes the same task's deadline. Clearing the schedule (id → null)
-        // sends nothing.
+        // PRD §11 Notifications: whenever "the task to do now" changes to a DIFFERENT task, post a
+        // system notification naming it. We track the last task we notified about (not just the
+        // scheduled id) so transient id changes that resolve back to the same task don't re-notify —
+        // e.g. moving the current block pins it (id → null) and the scheduler immediately re-picks the
+        // same task (null → same id), which must stay silent. Clearing the schedule keeps the last
+        // value so re-scheduling the same task later is still silent.
+        var lastNotifiedTaskId by remember { mutableStateOf<TaskId?>(null) }
         LaunchedEffect(schedulerState.scheduled?.taskId) {
             val taskId = schedulerState.scheduled?.taskId ?: return@LaunchedEffect
+            if (taskId == lastNotifiedTaskId) return@LaunchedEffect
             val title = schedulerState.tasks[taskId]?.title?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+            lastNotifiedTaskId = taskId
             sendSystemNotification("Task to do now", title)
         }
 

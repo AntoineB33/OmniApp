@@ -513,6 +513,17 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun history_units_are_capped_at_1000_dropping_the_oldest() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        // Each ToggleExpand commits one Main-category history unit.
+        repeat(1005) { s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cellId)) }
+        // PRD §5: the list is capped — oldest units dropped — and the pointer stays on the newest.
+        assertEquals(1000, s.histories.main.units.size)
+        assertEquals(999, s.histories.main.pointer)
+    }
+
+    @Test
     fun selection_history_is_independent_from_content_history() {
         var s = seedThreeTasks()
         val visible = SchedulerDomain.selectableVisibleOrder(s)
