@@ -783,18 +783,22 @@ object SchedulerDomain {
     /**
      * PRD §9 Scheduling: regenerate the auto schedule. Keeps every **pinned** panel, the single panel
      * currently covering [nowMillis], and every panel entirely **outside** the scheduling window —
-     * past (`end ≤ now`) or beyond the horizon (`start ≥ now + 24h`). Scheduling only regenerates the
-     * window `[firstFree, now+24h]`, so a non-pinned user panel the user dragged before `now` or added
-     * more than 24h out is left untouched. Drops the other (in-window, non-pinned) panels and refills
-     * the window from [firstFreeMoment] out past
+     * past (`end ≤ now`) or strictly beyond the horizon (`start > now + 24h`). Scheduling only
+     * regenerates the window `[firstFree, now+24h]`, so a non-pinned user panel the user dragged before
+     * `now` or added more than 24h out is left untouched. Drops the other (in-window, non-pinned)
+     * panels and refills the window from [firstFreeMoment] out past
      * `now + ` [SCHEDULE_HORIZON_MILLIS] with a contiguous chain of auto panels. Each panel's task is
      * chosen by [nextTask] **at that panel's start time** (PRD §9 "task choice"); because each panel
      * just laid down counts as a past period for the next iteration (via [pastPeriodsForTask], clipped
      * to the moving cursor), the chain rotates across tasks by priority. A panel is shortened so it
-     * never overlaps the next pinned panel (PRD §10). The trailing panel runs its full span past the
-     * horizon (rather than being clipped to the moving `now+24h`), so the result is stable between
-     * panel boundaries and a no-change tick produces an identical list. Auto panels get deterministic
-     * `auto/{i}` ids (regenerated each run); pinned/user panels keep their persistent `panel/{n}` ids.
+     * never overlaps the next pinned panel (PRD §10).
+     *
+     * PRD §9 trailing edge: when `now + 24h` falls inside a pre-existing non-pinned panel that extends
+     * past it, that panel's beyond-horizon extension is removed **unless** the new last task is the SAME
+     * task — in which case it is preserved by extending the new fill's last panel to that panel's end,
+     * keeping the trailing edge unchanged (e.g. honouring a manual stretch). For a DIFFERENT last task
+     * the new fill runs its own span past the horizon, replacing the old extension. Auto panels get
+     * deterministic `auto/{i}` ids (regenerated each run); pinned/user panels keep their `panel/{n}` ids.
      */
     fun fillSchedule(
         state: SchedulerState,
@@ -804,11 +808,13 @@ object SchedulerDomain {
         val current = panelAt(state.panels, nowMillis)
         val horizon = nowMillis + SCHEDULE_HORIZON_MILLIS
         // Scheduling regenerates ONLY the window [firstFree, now+24h]. Keep pinned panels, the
-        // in-progress one, and any panel entirely OUTSIDE the window — past (end ≤ now) or beyond the
-        // horizon (start ≥ now+24h) — so a user panel there (incl. non-pinned) is never wiped (PRD §9
-        // scope: a panel dragged before `now`, or added more than 24h out, must survive a reschedule).
+        // in-progress one, and any panel entirely OUTSIDE the window — past (end ≤ now) or STRICTLY
+        // beyond the horizon (start > now+24h) — so a user panel there (incl. non-pinned) is never
+        // wiped (a panel dragged before `now`, or added >24h out, survives). The `> horizon` is strict
+        // so a panel starting exactly at the horizon (e.g. a preserved `auto/tail`, below) is handled
+        // by the trailing-edge logic, not double-kept here.
         val kept = state.panels.filter {
-            it.pinned || it === current || it.endEpochMillis <= nowMillis || it.startEpochMillis >= horizon
+            it.pinned || it === current || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon
         }
         var working = state.copy(panels = kept)
         val generated = mutableListOf<TaskPanel>()
@@ -844,6 +850,21 @@ object SchedulerDomain {
             working = working.copy(panels = kept + generated)
             cursor = end
             index++
+        }
+
+        // PRD §9 trailing edge: if `now+24h` was inside a pre-existing (non-pinned) panel that extends
+        // further, its beyond-horizon extension is removed UNLESS the new last panel is the SAME task —
+        // then it is preserved by extending the new last panel to keep that trailing edge unchanged
+        // (e.g. honouring a manual stretch of the trailing panel). A DIFFERENT last task lets the new
+        // fill replace it (its own span runs past the horizon). The straddler is read from the original
+        // panels (it is in-window, so it was dropped from `kept` and regenerated).
+        val straddler = state.panels.firstOrNull {
+            !it.pinned && it !== current &&
+                it.startEpochMillis <= horizon && horizon < it.endEpochMillis
+        }
+        val lastGen = generated.lastOrNull()
+        if (straddler != null && lastGen != null && lastGen.taskId == straddler.taskId) {
+            generated[generated.lastIndex] = lastGen.copy(endEpochMillis = straddler.endEpochMillis)
         }
         return (kept + generated).sortedBy { it.startEpochMillis }
     }

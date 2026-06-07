@@ -49,6 +49,16 @@ class SchedulerSchedulerTest {
     private fun pinned(id: String, taskId: TaskId, start: Long, end: Long) =
         TaskPanel(id, taskId, "x", start, end, pinned = true, auto = false)
 
+    /** A single task "Solo" with the given minimum time (minutes). */
+    private fun stateWithOneTask(minMinutes: Int): Pair<SchedulerState, TaskId> {
+        var s = SchedulerState.empty()
+        val c0 = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c0, "Solo"))
+        val solo = s.tasks.keys.first { s.tasks[it]!!.title == "Solo" }
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(solo, minMinutes))
+        return s to solo
+    }
+
     // ----- §9 time-weighted score / next task -------------------------------------------------
 
     @Test
@@ -140,6 +150,39 @@ class SchedulerSchedulerTest {
         // The current panel is preserved unchanged and the fill resumes after it.
         assertTrue(current in panels)
         assertTrue(panels.any { it.startEpochMillis == current.endEpochMillis })
+    }
+
+    @Test
+    fun fill_preserves_a_straddling_panel_extension_when_the_new_last_task_matches() {
+        val (s0, solo) = stateWithOneTask(1500) // one 25h panel (> the 24h horizon)
+        val now = 1_000_000_000_000L
+        // A pre-existing SAME-task panel straddles `now+24h` and extends to now+30h (e.g. a manual
+        // stretch of the trailing panel). Same task → the extension must be preserved (PRD §9).
+        val straddler = TaskPanel("auto/9", solo, "Solo", now + 20 * HOUR_MS, now + 30 * HOUR_MS, false, auto = true)
+        val s = s0.copy(panels = listOf(straddler))
+
+        val panels = SchedulerDomain.fillSchedule(s, now)
+
+        // The trailing edge stays at the straddler's end (now+30h), not the auto span (now+25h).
+        assertEquals(solo, panels.last().taskId)
+        assertEquals(now + 30 * HOUR_MS, panels.last().endEpochMillis)
+    }
+
+    @Test
+    fun fill_removes_a_straddling_panel_extension_when_the_new_last_task_differs() {
+        val (s0, solo) = stateWithOneTask(1500)
+        val now = 1_000_000_000_000L
+        val other = TaskId("task/other")
+        // A pre-existing DIFFERENT-task panel straddles the horizon → its extension is removed (PRD §9).
+        val straddler = TaskPanel("auto/9", other, "Other", now + 20 * HOUR_MS, now + 30 * HOUR_MS, false, auto = true)
+        val s = s0.copy(panels = listOf(straddler))
+
+        val panels = SchedulerDomain.fillSchedule(s, now)
+
+        // The new (Solo) panel runs its own span past the horizon (to now+25h); the old tail is gone.
+        assertEquals(solo, panels.last().taskId)
+        assertEquals(now + 25 * HOUR_MS, panels.last().endEpochMillis)
+        assertTrue(panels.none { it.taskId == other })
     }
 
     // ----- §9 RefreshSchedule (calculation event) --------------------------------------------

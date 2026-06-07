@@ -133,7 +133,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **Two Calculation Events:** 
   * Every time the calendar changes, with a 1 second debounce, the calculation event is placed 24 hours before the first moment free of task.
   * Every time the task tree changes, with a 1 second debounce
-* **Scheduling:** From the first point in time there is no scheduled task to 24 hours from now, all the not pinned task panels are removed and replaced by a new calculated schedule. Each scheduling is saved in a History Unit.
+* **Scheduling:** From the first point in time there is no scheduled task to 24 hours from now, all the not pinned task panels are removed and replaced by a new calculated schedule. If 24 hours from now is in a task panel that extends further, then the extension is also removed unless the last task panel added by the new scheduling is the same task. Each scheduling is saved in a History Unit.
 * **task choice:** At the starting time of the new task to schedule, the time-weighted percentage of each task is calculated with a half-life of 7 days (a fixed value). The task with no child task with the time-weighted percentage the furthest from its absolute priority percentage is the next task. It is then scheduled in the calendar with the minimum time of the task (see section 10).
 * **time-weighted percentage:** Let's say Task $i$ has a set of $N$ time ranges. To get the total weighted score for Task $i$ (let's call it $W_i$), you sum the integrals of all its individual time ranges:  
  $$W_i = \sum_{j=1}^{N} \left[ \frac{1}{k} \left( e^{-k(t_{now} - t_{j, end})} - e^{-k(t_{now} - t_{j, start})} \right) \right]$$

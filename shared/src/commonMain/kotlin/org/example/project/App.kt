@@ -89,16 +89,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             }
         }
 
+        // PRD §7: while "Auto schedule" is off, the §9 calculation events that come due are deferred —
+        // they coalesce into a SINGLE reschedule that fires once the switch is turned back on. Merely
+        // toggling the switch (with nothing pending) must NOT reschedule. The calc events below are
+        // deliberately NOT keyed on `automaticSchedule`, so flipping it does not relaunch them; instead
+        // they read the live switch when they come due and either dispatch or mark this flag.
+        var pendingReschedule by remember { mutableStateOf(false) }
+
         // PRD §9 calculation event #2 (tree change): recompute on a 1-second debounce after the task
         // tree changes — so the first task on an empty database is scheduled, editing a task's minimum
         // time reshapes the schedule, and deleting a scheduled task's cell refills around the cut.
-        // Keyed on cells too (a deletion changes `cells` while the task object is briefly kept). Gated
-        // by §7: skipped while auto-scheduling is off (re-runs when it turns back on). The LaunchedEffect
-        // restart-on-change cancels the prior delay, giving the debounce.
-        LaunchedEffect(schedulerState.tasks, schedulerState.cells, schedulerState.automaticSchedule, clock) {
-            if (!schedulerState.automaticSchedule) return@LaunchedEffect
+        // Keyed on cells too (a deletion changes `cells` while the task object is briefly kept). The
+        // LaunchedEffect restart-on-change cancels the prior delay, giving the debounce.
+        LaunchedEffect(schedulerState.tasks, schedulerState.cells, clock) {
             delay(1_000)
-            vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
+            if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
+            else pendingReschedule = true // §7: defer until the switch is on
         }
 
         // PRD §9 calculation event #1 (calendar change / rolling horizon): after the panels change, the
@@ -106,9 +112,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // `now` reaches `firstFreeMoment − 24h`, then refills so the window stays ~24h ahead. On an empty
         // schedule the target is in the past, so it fills immediately; after a fill the target moves to
         // the new horizon and the effect re-arms. Polls the (possibly simulated) clock so accelerated
-        // time is honoured. Gated by §7.
-        LaunchedEffect(schedulerState.panels, schedulerState.automaticSchedule, clock) {
-            if (!schedulerState.automaticSchedule) return@LaunchedEffect
+        // time is honoured. The wait runs regardless of the switch (toggling while merely waiting is a
+        // no-op); only when the event comes DUE does §7 gate it (dispatch if on, else defer).
+        LaunchedEffect(schedulerState.panels, clock) {
             val target =
                 SchedulerDomain.firstFreeMoment(schedulerState.panels, clock.nowMillis()) -
                     SchedulerDomain.SCHEDULE_HORIZON_MILLIS
@@ -116,7 +122,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             while (clock.nowMillis() < target) {
                 delay(pollInterval)
             }
-            vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
+            if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
+            else pendingReschedule = true // §7: defer until the switch is on
+        }
+
+        // PRD §7: when the switch is turned on, fire the single deferred reschedule (if any §9 event
+        // came due while it was off). With nothing pending this does nothing — so toggling the switch
+        // off and on, by itself, never reschedules.
+        LaunchedEffect(schedulerState.automaticSchedule) {
+            if (schedulerState.automaticSchedule && pendingReschedule) {
+                pendingReschedule = false
+                vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
+            }
         }
 
         // PRD §11 Notifications: whenever "the task to do now" changes to a DIFFERENT task, post a
