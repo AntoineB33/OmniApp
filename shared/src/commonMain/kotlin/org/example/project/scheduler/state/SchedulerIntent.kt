@@ -120,6 +120,19 @@ sealed interface SchedulerIntent {
         val nowMillis: Long,
     ) : SchedulerIntent
 
+    /**
+     * PRD §12 Device sleep: the device was asleep for `[sleepStartEpochMillis, sleepEndEpochMillis]`
+     * (detected on wake as a tick gap far larger than the cadence), so the user was NOT doing the
+     * scheduled task during it. Cuts the in-progress scheduled period at the sleep start (recording
+     * only the pre-sleep work) and clears the schedule; the following [RefreshSchedule] (at wake time)
+     * re-picks a task starting after the sleep, leaving the sleep window as a hole in the calendar
+     * panel. Not undoable (touches the history-excluded schedule/record only).
+     */
+    data class ReportDeviceSleep(
+        val sleepStartEpochMillis: Long,
+        val sleepEndEpochMillis: Long,
+    ) : SchedulerIntent
+
     /** [initialText] non-null when entering via typing (replaces cell content with first keystroke). */
     data class BeginEdit(
         val cellId: CellId,

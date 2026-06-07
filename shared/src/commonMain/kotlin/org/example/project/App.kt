@@ -66,10 +66,26 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // production 30s cadence.
         var nowMillis by remember { mutableStateOf(clock.nowMillis()) }
         LaunchedEffect(clock) {
+            val interval: Long = if (DebugFlags.TIME_SIMULATION) 1_000 else 30_000
+            // PRD §12 Device sleep is detected from *real* elapsed time, not the active clock's: a tick
+            // gap far larger than the cadence in wall-clock seconds means the process was suspended.
+            // Using the sim clock here would misread fast-forwarded time (e.g. 300×) as constant sleep
+            // and keep cutting the current panel's past portion.
+            var lastRealTick = SystemAppClock.nowMillis()
+            var lastClockTick = clock.nowMillis()
             while (true) {
-                nowMillis = clock.nowMillis()
-                vm.dispatch(SchedulerIntent.RefreshSchedule(nowMillis))
-                delay(if (DebugFlags.TIME_SIMULATION) 1_000 else 30_000)
+                val realNow = SystemAppClock.nowMillis()
+                val now = clock.nowMillis()
+                if (realNow - lastRealTick > interval * 3) {
+                    // Report the gap in the active clock's domain (sim time when accelerated), so the
+                    // hole lands where the panel actually is on the calendar.
+                    vm.dispatch(SchedulerIntent.ReportDeviceSleep(lastClockTick, now))
+                }
+                lastRealTick = realNow
+                lastClockTick = now
+                nowMillis = now
+                vm.dispatch(SchedulerIntent.RefreshSchedule(now))
+                delay(interval)
             }
         }
 

@@ -37,6 +37,8 @@ object SchedulerReducer {
             is SchedulerIntent.SetTaskMinimumTime ->
                 commitDelta(state, priorityTreeDelta(state) { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
             is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
+            is SchedulerIntent.ReportDeviceSleep ->
+                reduceReportDeviceSleep(state, intent.sleepStartEpochMillis, intent.sleepEndEpochMillis)
             is SchedulerIntent.AddManualCalendarEntry -> reduceAddManualEntry(state, intent.startEpochMillis)
             is SchedulerIntent.UpdateManualCalendarEntry -> reduceUpdateManualEntry(state, intent)
             is SchedulerIntent.MoveManualCalendarEntry -> reduceMoveManualEntry(state, intent)
@@ -1223,6 +1225,29 @@ private fun appendRecord(
     val task = state.tasks[taskId] ?: return state
     val period = TaskTimeRange(startMillis, endMillis)
     return state.copy(tasks = state.tasks + (taskId to task.copy(record = task.record + period)))
+}
+
+/**
+ * PRD §12 Device sleep: cut the in-progress scheduled period at [sleepStart]. The pre-sleep stretch
+ * `[scheduled.start, sleepStart]` was real work → record it; the sleep window itself is left as a hole
+ * (no record) and the schedule is cleared so the next [reduceRefreshSchedule] (at wake time) starts a
+ * fresh period after the sleep. A no-op when nothing is scheduled. [sleepEnd] is unused here (the
+ * caller's wake-time refresh defines where the next period begins) but kept for clarity/symmetry.
+ */
+private fun reduceReportDeviceSleep(
+    state: SchedulerState,
+    sleepStart: Long,
+    @Suppress("UNUSED_PARAMETER") sleepEnd: Long,
+): SchedulerState {
+    val previous = state.scheduled ?: return state
+    val end = sleepStart.coerceIn(previous.startEpochMillis, previous.deadlineEpochMillis)
+    val working =
+        if (end > previous.startEpochMillis) {
+            appendRecord(state, previous.taskId, previous.startEpochMillis, end)
+        } else {
+            state
+        }
+    return working.copy(scheduled = null)
 }
 
 private fun applySetTaskMinimumTime(

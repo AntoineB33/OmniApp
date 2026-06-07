@@ -141,3 +141,6 @@ Here, $k$ is the decay constant. It dictates how aggressively older tasks are pe
 
 ## 11. Notifications
 * **Task switches:** As soon as the current task to do changes, a notification is sent with a written message telling what is the new task
+
+## 12. Device sleep
+* **When The Device Wakes Up:** The app checks the time periods where the device was sleeping, which means the user wasn't doing the scheduled task during those periods. The task panel on the calendar then gets the holes corresponding to the sleeping periods.

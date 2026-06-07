@@ -472,6 +472,37 @@ class SchedulerCalendarTest {
         assertNull(cleared.scheduled)
     }
 
+    // ----- §12 device sleep ------------------------------------------------------------------
+
+    @Test
+    fun device_sleep_cuts_the_scheduled_panel_leaving_a_hole_for_the_sleep_period() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val start = 1_000_000_000_000L
+        val sleepStart = start + 15 * MIN
+        val wake = start + 90 * MIN
+        // A is the task to do now, started at `start` for a 45-min minimum.
+        val s = s0.copy(scheduled = ScheduledTask(a, start, start + 45 * MIN))
+
+        // On wake the app reports the sleep window, then refreshes at wake time.
+        val slept = SchedulerReducer.reduce(s, SchedulerIntent.ReportDeviceSleep(sleepStart, wake))
+        assertNull(slept.scheduled) // the in-progress period was cut
+        assertTrue(range(start, sleepStart) in slept.tasks[a]!!.record) // only pre-sleep work recorded
+        // No recorded period covers any part of the sleep window → it's a hole.
+        assertTrue(slept.tasks[a]!!.record.none { it.endEpochMillis > sleepStart && it.startEpochMillis < wake })
+
+        val after = SchedulerReducer.reduce(slept, SchedulerIntent.RefreshSchedule(wake))
+        // The fresh panel starts after the sleep, so [sleepStart, wake] stays a hole on the calendar.
+        assertEquals(wake, after.scheduled?.startEpochMillis)
+    }
+
+    @Test
+    fun device_sleep_with_nothing_scheduled_is_a_no_op() {
+        val (s0, _, _) = stateWithTwoTasks()
+        val after = SchedulerReducer.reduce(s0, SchedulerIntent.ReportDeviceSleep(1_000L, 2_000L))
+        assertNull(after.scheduled)
+        assertEquals(s0.tasks, after.tasks)
+    }
+
     // ----- persistence -------------------------------------------------------------------------
 
     @Test
