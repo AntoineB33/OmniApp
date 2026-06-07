@@ -37,33 +37,30 @@ data class TaskTimeRange(
 )
 
 /**
- * PRD §8 Manual calendar entry: a period the user placed or edited directly on the calendar — via
- * the right-click "add a task" action, the double-click edit window, or by dragging/resizing a block.
- * Unlike a [Task.record] (auto-logged done periods, history-excluded) or the auto [ScheduledTask],
- * it is user-authored and *does* live in the Undo/Redo history (the "manual calendar record edition"
- * delta, PRD §5). [taskId] is null for a calendar-only "New task" — creating one here intentionally
- * does NOT create a task in the tree (PRD §8); [title] is the shown label in either case. A
- * manually-placed entry whose start is still in the future constrains the auto-scheduler so the next
- * computed task does not overlap it (PRD §10 New Task).
+ * PRD §8/§9 task panel: one block on the calendar in the schedulable window. A panel is either
+ * **auto** (scheduler-generated, [auto] = true — the §9 "task to do now" and the panels that follow
+ * it out to +24h) or **user-authored** ([auto] = false — placed via the right-click "add a task"
+ * action / edit window, or produced by pinning a record). Orthogonally, a panel is **pinned**
+ * ([pinned] = true) when the user has locked it in the edit window: pinned panels survive a
+ * reschedule and constrain it (the auto fill flows around them, PRD §9/§10), whereas non-pinned
+ * panels are wiped and regenerated on every scheduling run.
+ *
+ * [taskId] is null for a calendar-only "New task" — creating one here intentionally does NOT create a
+ * task in the tree (PRD §8); [title] is the shown label in either case. Like the task record, panels
+ * are persisted user/scheduler data that lives outside the [org.example.project.scheduler.state.TreeSnapshot];
+ * panel-list changes (manual edits *and* each scheduling run) go through the
+ * [org.example.project.scheduler.state.HistoryCategory.Calendar] stack (PRD §5/§9).
  */
-data class ManualCalendarEntry(
+data class TaskPanel(
     val id: String,
     val taskId: TaskId?,
     val title: String,
     val startEpochMillis: Long,
     val endEpochMillis: Long,
-)
-
-/**
- * PRD §9 "the task to do now": the scheduler's current allocation — which task to do and until when.
- * The deadline is the start plus the task's minimum time (PRD §10, used here as the allocated
- * duration). Persisted so a restart can tell whether there is still a task to do at this moment, but
- * — like the task record — kept outside the Undo/Redo history.
- */
-data class ScheduledTask(
-    val taskId: TaskId,
-    val startEpochMillis: Long,
-    val deadlineEpochMillis: Long,
+    /** PRD §9: locked by the user (edit-window toggle); survives + constrains a reschedule. */
+    val pinned: Boolean = false,
+    /** True for scheduler-generated panels (the §9 auto fill); false for user-authored ones. */
+    val auto: Boolean = false,
 )
 
 /**

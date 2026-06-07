@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TooltipBox
@@ -113,11 +114,13 @@ data class CalendarRecord(
     val title: String,
     val range: TaskTimeRange,
     val scheduled: Boolean = false,
-    /** PRD §8 manually-placed entry (add / edit window / drag) — drawn in a distinct colour. */
+    /** PRD §8 a calendar panel (auto or user-authored), as opposed to a green task-record block. */
     val manual: Boolean = false,
-    /** Identity of the backing [org.example.project.scheduler.model.ManualCalendarEntry] (manual only). */
+    /** Identity of the backing [org.example.project.scheduler.model.TaskPanel] (panels only). */
     val entryId: String? = null,
     val taskId: TaskId? = null,
+    /** PRD §9 whether the backing panel is pinned (seeds the edit-window pin toggle). */
+    val pinned: Boolean = false,
 )
 
 /** A [CalendarRecord] clipped to a single day, as start/end hour-of-day fractions in `[0, 24]`. */
@@ -129,6 +132,7 @@ data class PlacedRecord(
     val manual: Boolean = false,
     val entryId: String? = null,
     val taskId: TaskId? = null,
+    val pinned: Boolean = false,
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
     val fullEndMillis: Long = 0L,
@@ -159,6 +163,7 @@ fun recordsForDay(
             manual = record.manual,
             entryId = record.entryId,
             taskId = record.taskId,
+            pinned = record.pinned,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
         )
@@ -218,6 +223,9 @@ fun LateralMenu(
     selectedDate: LocalDate,
     today: LocalDate,
     onSelectDate: (LocalDate) -> Unit,
+    /** PRD §7 Automatic Schedule Switch: current state + toggle callback. */
+    automaticSchedule: Boolean = true,
+    onToggleAutomaticSchedule: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -237,6 +245,22 @@ fun LateralMenu(
             active = calendarOpen,
             onClick = onToggleCalendar,
         )
+
+        // PRD §7 Automatic Schedule Switch: while off, the §9 scheduling events wait.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Auto schedule",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = automaticSchedule,
+                onCheckedChange = onToggleAutomaticSchedule,
+            )
+        }
 
         // PRD §7 Calendar: the month grid only appears while the calendar is displayed.
         if (calendarOpen) {
@@ -950,14 +974,18 @@ fun ManualEntryEditWindow(
     titleSuggestions: (String) -> List<String>,
     taskIdForTitle: (String) -> TaskId?,
     titleForTaskId: (TaskId) -> String?,
-    onSave: (taskId: TaskId?, title: String, startMillis: Long, endMillis: Long) -> Unit,
+    onSave: (taskId: TaskId?, title: String, startMillis: Long, endMillis: Long, pinned: Boolean) -> Unit,
     onDismiss: () -> Unit,
+    /** PRD §8/§9: the panel's current pinned state, toggled by the "Pin" button in this window. */
+    initialPinned: Boolean = false,
 ) {
     var title by remember { mutableStateOf(initialTitle) }
     // Null = calendar-only "New task" (the default); set when an existing task/title is picked.
     var selectedTaskId by remember { mutableStateOf(initialTaskId) }
     var startText by remember { mutableStateOf(formatHm(startMillis, tz)) }
     var endText by remember { mutableStateOf(formatHm(endMillis, tz)) }
+    // PRD §9: pinned panels survive a reschedule; toggled here.
+    var pinned by remember { mutableStateOf(initialPinned) }
 
     // Full-screen scrim; clicking outside dismisses (PRD §8 floating window over everything).
     Box(
@@ -1053,6 +1081,19 @@ fun ManualEntryEditWindow(
                     )
                 }
 
+                // PRD §8/§9 "pin" button: toggle whether this panel survives a reschedule.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Pin",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(checked = pinned, onCheckedChange = { pinned = it })
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
@@ -1063,7 +1104,7 @@ fun ManualEntryEditWindow(
                         onClick = {
                             val start = parseHmOnDateOf(startText, startMillis, tz) ?: startMillis
                             val end = parseHmOnDateOf(endText, endMillis, tz) ?: endMillis
-                            onSave(selectedTaskId, title, start, end)
+                            onSave(selectedTaskId, title, start, end, pinned)
                         },
                     ) { Text("Save") }
                 }

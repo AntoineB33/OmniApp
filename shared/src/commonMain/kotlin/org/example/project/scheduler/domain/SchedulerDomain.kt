@@ -4,9 +4,9 @@ import kotlin.math.exp
 import kotlin.math.ln
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
-import org.example.project.scheduler.model.ScheduledTask
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.state.CalendarEdge
@@ -510,10 +510,10 @@ object SchedulerDomain {
      */
     fun pastPeriodsForTask(state: SchedulerState, taskId: TaskId, nowMillis: Long): List<TaskTimeRange> {
         val recorded = state.tasks[taskId]?.record.orEmpty().asSequence()
-        val manual = state.manualEntries.asSequence()
+        val panels = state.panels.asSequence()
             .filter { it.taskId == taskId }
             .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
-        return (recorded + manual)
+        return (recorded + panels)
             .filter { it.startEpochMillis < nowMillis }
             .map { TaskTimeRange(it.startEpochMillis, minOf(it.endEpochMillis, nowMillis)) }
             .toList()
@@ -612,24 +612,14 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §10 New Task: clamp a freshly computed `[startMillis, deadline]` so it does not overlap the
-     * next manually-placed calendar entry that starts in the future (after [startMillis]). The new
-     * task's span is reduced so it ends exactly when that entry begins; entries already started (or
-     * starting at [startMillis]) do not constrain it. A no-op when no future manual entry sits inside
-     * the window.
+     * PRD §10 New Task: the earliest **pinned** panel that starts strictly after [cursor], or null
+     * when none. A freshly scheduled auto panel is reduced so it ends no later than this, so it never
+     * overlaps a pinned panel (only pinned panels constrain the auto fill, per §9/§10).
      */
-    fun clampDeadlineToManualEntries(
-        state: SchedulerState,
-        startMillis: Long,
-        deadline: Long,
-    ): Long {
-        val nextManualStart =
-            state.manualEntries
-                .map { it.startEpochMillis }
-                .filter { it > startMillis }
-                .minOrNull() ?: return deadline
-        return minOf(deadline, nextManualStart)
-    }
+    fun nextPinnedStartAfter(panels: List<TaskPanel>, cursor: Long): Long? =
+        panels.asSequence()
+            .filter { it.pinned && it.startEpochMillis > cursor }
+            .minOfOrNull { it.startEpochMillis }
 
     /** Merge [ranges] into sorted, disjoint occupied blocks; touching or overlapping ranges fuse. */
     fun mergeOccupied(ranges: List<TaskTimeRange>): List<TaskTimeRange> {
@@ -764,45 +754,93 @@ object SchedulerDomain {
         return if (span <= 0) minimum else span
     }
 
+    /** PRD §9 Scheduling: the auto fill materializes panels out to this far ahead of `now` (24 hours). */
+    const val SCHEDULE_HORIZON_MILLIS: Long = 24L * 60 * 60 * 1000
+
+    /** The panel whose `[start, end)` contains [nowMillis] (the "task to do now"), or null. */
+    fun panelAt(panels: List<TaskPanel>, nowMillis: Long): TaskPanel? =
+        panels.firstOrNull { it.startEpochMillis <= nowMillis && nowMillis < it.endEpochMillis }
+
+    /** PRD §11: the panel covering [nowMillis] (pinned or auto) — what to notify as the current task. */
+    fun currentPanel(state: SchedulerState, nowMillis: Long): TaskPanel? =
+        panelAt(state.panels, nowMillis)
+
     /**
-     * PRD §9 the task to do now. While a task is still scheduled for this moment and it still exists,
-     * its period is kept (same task and start) but its deadline is refreshed from the current
-     * [scheduledSpanMinutes] — so editing the tree (e.g. its minimum time) updates the scheduled
-     * period; this is a no-op when nothing changed. Once that period is over, or there was nothing
-     * scheduled (e.g. at app start), a fresh [nextTask] is picked and scheduled for its span, starting
-     * at [startMillis] — which the caller sets to the *end of the previous period* so consecutive
-     * tasks are contiguous regardless of how late this recalculation runs (PRD §9). Returns null when
-     * there are no real tasks to schedule.
+     * PRD §9 "the first point in time there is no scheduled task": walking forward from [nowMillis]
+     * over the contiguous chain of [panels] that cover it, the first instant left uncovered. With only
+     * the kept panels (pinned + the current in-progress one) this is where the auto fill must resume.
      */
-    fun computeSchedule(
+    fun firstFreeMoment(panels: List<TaskPanel>, nowMillis: Long): Long {
+        var cursor = nowMillis
+        while (true) {
+            val covering = panelAt(panels, cursor) ?: break
+            if (covering.endEpochMillis <= cursor) break // guard against a zero/negative-length panel
+            cursor = covering.endEpochMillis
+        }
+        return cursor
+    }
+
+    /**
+     * PRD §9 Scheduling: regenerate the auto schedule. Keeps every **pinned** panel and the single
+     * panel currently covering [nowMillis] (so the in-progress "task to do now" is stable across a
+     * reschedule), drops all other panels, and refills the window from [firstFreeMoment] out past
+     * `now + ` [SCHEDULE_HORIZON_MILLIS] with a contiguous chain of auto panels. Each panel's task is
+     * chosen by [nextTask] **at that panel's start time** (PRD §9 "task choice"); because each panel
+     * just laid down counts as a past period for the next iteration (via [pastPeriodsForTask], clipped
+     * to the moving cursor), the chain rotates across tasks by priority. A panel is shortened so it
+     * never overlaps the next pinned panel (PRD §10). The trailing panel runs its full span past the
+     * horizon (rather than being clipped to the moving `now+24h`), so the result is stable between
+     * panel boundaries and a no-change tick produces an identical list. Auto panels get deterministic
+     * `auto/{i}` ids (regenerated each run); pinned/user panels keep their persistent `panel/{n}` ids.
+     */
+    fun fillSchedule(
         state: SchedulerState,
         nowMillis: Long,
-        startMillis: Long = nowMillis,
         k: Double = DEFAULT_DECAY_PER_HOUR,
-    ): ScheduledTask? {
-        val current = state.scheduled
-        val currentTask = current?.let { state.tasks[it.taskId] }
-        if (current != null && currentTask != null) {
-            val rawDeadline = current.startEpochMillis + scheduledSpanMinutes(state, current.taskId, nowMillis) * MILLIS_PER_MINUTE
-            // PRD §10: keep the deadline from overlapping a manually-placed future entry on EVERY
-            // refresh — otherwise the next tick re-extends the just-clamped span back over the entry.
-            val deadline = clampDeadlineToManualEntries(state, current.startEpochMillis, rawDeadline)
-            if (nowMillis < deadline) {
-                return if (deadline == current.deadlineEpochMillis) current
-                else current.copy(deadlineEpochMillis = deadline)
+    ): List<TaskPanel> {
+        val current = panelAt(state.panels, nowMillis)
+        val kept = state.panels.filter { it.pinned || it === current }
+        val horizon = nowMillis + SCHEDULE_HORIZON_MILLIS
+        var working = state.copy(panels = kept)
+        val generated = mutableListOf<TaskPanel>()
+        var cursor = firstFreeMoment(kept, nowMillis)
+        var index = 0
+        // Bound the loop defensively: with positive spans this can't run away, but a degenerate zero
+        // span (only possible if minima are clamped to 0) would otherwise spin.
+        while (cursor < horizon && index < MAX_SCHEDULE_PANELS) {
+            val pinnedCovering = kept.firstOrNull {
+                it.pinned && it.startEpochMillis <= cursor && cursor < it.endEpochMillis
             }
-            // The current task's time is up → fall through and pick the next task.
+            if (pinnedCovering != null) {
+                cursor = pinnedCovering.endEpochMillis
+                continue
+            }
+            val taskId = nextTask(working, cursor, k) ?: break
+            val task = working.tasks[taskId] ?: break
+            var end = cursor + scheduledSpanMinutes(working, taskId, cursor) * MILLIS_PER_MINUTE
+            nextPinnedStartAfter(kept, cursor)?.let { end = minOf(end, it) }
+            if (end <= cursor) break
+            val panel = TaskPanel(
+                id = "auto/$index",
+                taskId = taskId,
+                title = task.title,
+                startEpochMillis = cursor,
+                endEpochMillis = end,
+                pinned = false,
+                auto = true,
+            )
+            generated += panel
+            // Fold the just-placed panel into the working state so it counts as a past period at the
+            // next cursor (PRD §9 task choice rotates by priority).
+            working = working.copy(panels = kept + generated)
+            cursor = end
+            index++
         }
-        val taskId = nextTask(state, nowMillis, k) ?: return null
-        val task = state.tasks[taskId] ?: return null
-        val deadline = startMillis + scheduledSpanMinutes(state, taskId, startMillis) * MILLIS_PER_MINUTE
-        return ScheduledTask(
-            taskId = taskId,
-            startEpochMillis = startMillis,
-            // PRD §10 New Task: shorten the span so it does not overlap a manually-placed future task.
-            deadlineEpochMillis = clampDeadlineToManualEntries(state, startMillis, deadline),
-        )
+        return (kept + generated).sortedBy { it.startEpochMillis }
     }
+
+    /** Safety cap on the number of auto panels one fill can lay down (≈ 24h / shortest sane span). */
+    private const val MAX_SCHEDULE_PANELS = 2_000
 
     /**
      * PRD §5 priority weight table: the absolute weight of each column. Column n takes its nominal
@@ -1072,13 +1110,13 @@ object SchedulerDomain {
     fun purgeOrphanTasks(state: SchedulerState): SchedulerState {
         // PRD §4: a childless task that loses all its cell pointers is purged *unless* it has a task
         // record (§8) — such tasks linger only to keep showing their recorded periods in the calendar.
-        // The currently scheduled task is also kept, so a scheduled task deleted from the tree
+        // A task referenced by a calendar panel is also kept, so a scheduled task deleted from the tree
         // survives until the next refresh cuts and records its in-progress period (§9).
         val referenced =
             state.cells.values.mapNotNull { it.taskId }.toSet() +
                 setOf(WellKnownIds.ROOT_TASK, WellKnownIds.MAIN_TASK) +
                 state.tasks.filterValues { it.record.isNotEmpty() }.keys +
-                listOfNotNull(state.scheduled?.taskId)
+                state.panels.mapNotNull { it.taskId }
         val tasks =
             state.tasks
                 .filterKeys { it in referenced }

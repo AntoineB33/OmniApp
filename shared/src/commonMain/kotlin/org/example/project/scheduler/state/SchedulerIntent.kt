@@ -113,11 +113,29 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §9: recompute "the task to do now" against [nowMillis]. Dispatched on app start and on a
-     * timer; a no-op while the current allocation's deadline is still in the future. Not undoable.
+     * PRD §9 calculation event: regenerate the schedule against [nowMillis] — advance past any
+     * completed panel, then refill the non-pinned panels out to +24h ([SchedulerDomain.fillSchedule]).
+     * Dispatched by the debounced tree-change event and the deferred calendar timer. Gated by PRD §7:
+     * a no-op while [SchedulerState.automaticSchedule] is off (the event waits for it to turn on). The
+     * refill is committed as a Calendar History Unit (PRD §9); the record side effects are not undoable.
      */
     data class RefreshSchedule(
         val nowMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §9: the frequent tick — advance the schedule to [nowMillis] without refilling. Records the
+     * elapsed period of any completed auto panel (and cuts the current one if its task was deleted or
+     * gained a child), so the calendar stays truthful even while §7 auto-scheduling is off. Touches
+     * only the history-excluded record / panel-progress state, so it is not undoable.
+     */
+    data class AdvanceSchedule(
+        val nowMillis: Long,
+    ) : SchedulerIntent
+
+    /** PRD §7 Automatic Schedule Switch: enable/disable auto-scheduling. Persisted; not undoable. */
+    data class SetAutomaticSchedule(
+        val enabled: Boolean,
     ) : SchedulerIntent
 
     /**
@@ -168,51 +186,59 @@ sealed interface SchedulerIntent {
     data class PasteTitles(val titles: List<String>) : SchedulerIntent
 
     /**
-     * PRD §8 Manual add: place a calendar entry at [startEpochMillis] for the highest-absolute-priority
-     * task (alphabetical tie-break), spanning that task's minimum time. Recorded as a calendar delta.
+     * PRD §8 Manual add / edit window "save": add a user-authored panel (`auto = false`) with the
+     * given task/title/bounds. [taskId] is null for a calendar-only "New task" (does NOT create a tree
+     * task). [pinned] reflects the edit-window pin toggle. Recorded as a calendar delta.
      */
-    data class AddManualCalendarEntry(
+    data class AddTaskPanel(
+        val taskId: TaskId?,
+        val title: String,
         val startEpochMillis: Long,
+        val endEpochMillis: Long,
+        val pinned: Boolean,
     ) : SchedulerIntent
 
     /**
-     * PRD §8 edit window: replace an entry's task/title and start/end times. [taskId] is null for a
-     * calendar-only "New task". Recorded as a calendar delta.
+     * PRD §8 edit window / drag / resize commit: replace a panel's task/title/bounds and [pinned] state
+     * (the edit-window pin toggle). Editing turns an auto panel into a user-authored one (re-id'd into
+     * the persistent `panel/{n}` namespace). [taskId] is null for a calendar-only "New task". Recorded
+     * as a calendar delta.
      */
-    data class UpdateManualCalendarEntry(
+    data class UpdateTaskPanel(
         val id: String,
         val taskId: TaskId?,
         val title: String,
         val startEpochMillis: Long,
         val endEpochMillis: Long,
+        val pinned: Boolean,
     ) : SchedulerIntent
 
     /**
-     * PRD §8 manual drag (move): drop an entry so its start is near [desiredStartEpochMillis], keeping
+     * PRD §8 manual drag (move): drop a panel so its start is near [desiredStartEpochMillis], keeping
      * its duration. The reducer snaps it to avoid overlaps (sticking to a group's end, jumping before
      * the group past its midpoint) and shrinks it to fit a too-narrow gap. Dispatched once, on release,
      * so the whole drag is a single history unit.
      */
-    data class MoveManualCalendarEntry(
+    data class MoveTaskPanel(
         val id: String,
         val desiredStartEpochMillis: Long,
     ) : SchedulerIntent
 
     /**
-     * PRD §8 extend/shorten: grab an entry's start or end edge and drag it to [valueEpochMillis]. The
-     * reducer clamps it so it cannot cross a neighbouring entry (or invert below a minimum length).
+     * PRD §8 extend/shorten: grab a panel's start or end edge and drag it to [valueEpochMillis]. The
+     * reducer clamps it so it cannot cross a neighbouring panel (or invert below a minimum length).
      */
-    data class ResizeManualCalendarEntry(
+    data class ResizeTaskPanel(
         val id: String,
         val edge: CalendarEdge,
         val valueEpochMillis: Long,
     ) : SchedulerIntent
 
     /**
-     * PRD §8 task contextual menu ("Remove"): delete a manual calendar entry. Recorded as a calendar
-     * delta so it can be undone while the calendar is focused.
+     * PRD §8 task contextual menu ("Remove"): delete a panel. Recorded as a calendar delta so it can
+     * be undone while the calendar is focused.
      */
-    data class RemoveManualCalendarEntry(
+    data class RemoveTaskPanel(
         val id: String,
     ) : SchedulerIntent
 
@@ -228,29 +254,11 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §8 task contextual menu ("Remove") on the auto scheduled "to do now" block: clear the
-     * current allocation. Like [RefreshSchedule] this touches the history-excluded schedule only; the
-     * scheduler will pick a new task on the next refresh.
+     * PRD §8 (uniform blocks): convert an auto task-record period into a user-authored panel. Removes
+     * the `[recordStartEpochMillis, recordEndEpochMillis]` range from [recordTaskId]'s record and adds
+     * a panel with the given task/title/bounds and [pinned] state.
      */
-    data object RemoveScheduledNow : SchedulerIntent
-
-    /**
-     * PRD §8 (uniform blocks): "pin" the auto scheduled "to do now" block as a manual entry with the
-     * given task/title/bounds, so it becomes editable like any other. Clears [SchedulerState.scheduled].
-     */
-    data class PinScheduledAsManual(
-        val taskId: TaskId?,
-        val title: String,
-        val startEpochMillis: Long,
-        val endEpochMillis: Long,
-    ) : SchedulerIntent
-
-    /**
-     * PRD §8 (uniform blocks): "pin" an auto task-record period as a manual entry. Removes the
-     * `[recordStartEpochMillis, recordEndEpochMillis]` range from [recordTaskId]'s record and adds a
-     * manual entry with the given task/title/bounds.
-     */
-    data class PinRecordAsManual(
+    data class PinRecordAsPanel(
         val recordTaskId: TaskId,
         val recordStartEpochMillis: Long,
         val recordEndEpochMillis: Long,
@@ -258,6 +266,7 @@ sealed interface SchedulerIntent {
         val title: String,
         val startEpochMillis: Long,
         val endEpochMillis: Long,
+        val pinned: Boolean,
     ) : SchedulerIntent
 
     /**

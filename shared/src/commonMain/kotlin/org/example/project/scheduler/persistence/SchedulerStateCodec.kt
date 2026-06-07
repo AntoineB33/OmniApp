@@ -10,10 +10,9 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
-import org.example.project.scheduler.model.ManualCalendarEntry
-import org.example.project.scheduler.model.ScheduledTask
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.SchedulerEditSession
@@ -79,21 +78,20 @@ object SchedulerStateCodec {
             nextTaskCounter = nextTaskCounter,
             nextCellCounter = nextCellCounter,
             editSession = editSession?.toPersisted(),
-            scheduled =
-                scheduled?.let {
-                    PersistedScheduled(it.taskId.value, it.startEpochMillis, it.deadlineEpochMillis)
-                },
-            manualEntries =
-                manualEntries.map {
-                    PersistedManualEntry(
+            panels =
+                panels.map {
+                    PersistedPanel(
                         id = it.id,
                         taskId = it.taskId?.value,
                         title = it.title,
                         start = it.startEpochMillis,
                         end = it.endEpochMillis,
+                        pinned = it.pinned,
+                        auto = it.auto,
                     )
                 },
-            nextManualEntryCounter = nextManualEntryCounter,
+            nextPanelCounter = nextPanelCounter,
+            automaticSchedule = automaticSchedule,
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -192,21 +190,20 @@ object SchedulerStateCodec {
                 nextCellCounter
                     ?: SchedulerState.deriveNextCellCounter(cells.keys),
             editSession = editSession?.toSession(),
-            scheduled =
-                scheduled?.let {
-                    ScheduledTask(TaskId(it.taskId), it.start, it.deadline)
-                },
-            manualEntries =
-                manualEntries.map {
-                    ManualCalendarEntry(
+            panels =
+                panels.map {
+                    TaskPanel(
                         id = it.id,
                         taskId = it.taskId?.let(::TaskId),
                         title = it.title,
                         startEpochMillis = it.start,
                         endEpochMillis = it.end,
+                        pinned = it.pinned,
+                        auto = it.auto,
                     )
                 },
-            nextManualEntryCounter = nextManualEntryCounter,
+            nextPanelCounter = nextPanelCounter,
+            automaticSchedule = automaticSchedule,
         )
     }
 
@@ -284,27 +281,23 @@ private data class PersistedState(
     val nextTaskCounter: Int = 0,
     val nextCellCounter: Int? = null,
     val editSession: PersistedEditSession? = null,
-    // PRD §9: default null keeps payloads written before the scheduler existed loadable.
-    val scheduled: PersistedScheduled? = null,
-    // PRD §8: defaults keep payloads written before manual calendar entries existed loadable.
-    val manualEntries: List<PersistedManualEntry> = emptyList(),
-    val nextManualEntryCounter: Int = 0,
+    // PRD §8/§9: defaults keep payloads written before task panels existed loadable. (A pre-1.2.0
+    // payload's `scheduled`/`manualEntries` fields are ignored on load; the next refresh refills.)
+    val panels: List<PersistedPanel> = emptyList(),
+    val nextPanelCounter: Int = 0,
+    // PRD §7: default on keeps auto-scheduling running for payloads written before the switch existed.
+    val automaticSchedule: Boolean = true,
 )
 
 @Serializable
-private data class PersistedScheduled(
-    val taskId: String,
-    val start: Long,
-    val deadline: Long,
-)
-
-@Serializable
-private data class PersistedManualEntry(
+private data class PersistedPanel(
     val id: String,
     val taskId: String? = null,
     val title: String,
     val start: Long,
     val end: Long,
+    val pinned: Boolean = false,
+    val auto: Boolean = false,
 )
 
 @Serializable

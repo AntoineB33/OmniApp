@@ -5,9 +5,9 @@ import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
-import org.example.project.scheduler.model.ManualCalendarEntry
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 
 object SchedulerReducer {
@@ -37,17 +37,19 @@ object SchedulerReducer {
             is SchedulerIntent.SetTaskMinimumTime ->
                 commitDelta(state, priorityTreeDelta(state) { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
             is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
+            is SchedulerIntent.AdvanceSchedule -> advanceSchedule(state, intent.nowMillis)
+            is SchedulerIntent.SetAutomaticSchedule ->
+                if (state.automaticSchedule == intent.enabled) state
+                else state.copy(automaticSchedule = intent.enabled)
             is SchedulerIntent.ReportDeviceSleep ->
                 reduceReportDeviceSleep(state, intent.sleepStartEpochMillis, intent.sleepEndEpochMillis)
-            is SchedulerIntent.AddManualCalendarEntry -> reduceAddManualEntry(state, intent.startEpochMillis)
-            is SchedulerIntent.UpdateManualCalendarEntry -> reduceUpdateManualEntry(state, intent)
-            is SchedulerIntent.MoveManualCalendarEntry -> reduceMoveManualEntry(state, intent)
-            is SchedulerIntent.ResizeManualCalendarEntry -> reduceResizeManualEntry(state, intent)
-            is SchedulerIntent.PinScheduledAsManual -> reducePinScheduled(state, intent)
-            is SchedulerIntent.PinRecordAsManual -> reducePinRecord(state, intent)
-            is SchedulerIntent.RemoveManualCalendarEntry -> reduceRemoveManualEntry(state, intent.id)
+            is SchedulerIntent.AddTaskPanel -> reduceAddTaskPanel(state, intent)
+            is SchedulerIntent.UpdateTaskPanel -> reduceUpdateTaskPanel(state, intent)
+            is SchedulerIntent.MoveTaskPanel -> reduceMoveTaskPanel(state, intent)
+            is SchedulerIntent.ResizeTaskPanel -> reduceResizeTaskPanel(state, intent)
+            is SchedulerIntent.PinRecordAsPanel -> reducePinRecord(state, intent)
+            is SchedulerIntent.RemoveTaskPanel -> reduceRemoveTaskPanel(state, intent.id)
             is SchedulerIntent.RemoveRecordPeriod -> reduceRemoveRecordPeriod(state, intent)
-            SchedulerIntent.RemoveScheduledNow -> if (state.scheduled == null) state else state.copy(scheduled = null)
             is SchedulerIntent.SetCalendarFocus -> state.copy(calendarFocused = intent.focused)
             is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
             is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
@@ -667,81 +669,87 @@ object SchedulerReducer {
         return next
     }
 
-    // ----- PRD §8 manual calendar entries (recorded in the Calendar history category) -----------
+    // ----- PRD §8/§9 task panels (recorded in the Calendar history category) --------------------
 
-    /** Commit a manual-entry list change as a calendar delta (a no-op change pushes nothing). */
-    private fun commitManualEntries(
+    /** Commit a panel-list change as a calendar delta (a no-op change pushes nothing). */
+    private fun commitPanels(
         state: SchedulerState,
-        after: List<ManualCalendarEntry>,
+        after: List<TaskPanel>,
     ): SchedulerState {
-        val before = state.manualEntries
+        val before = state.panels
         if (before == after) return state
-        return commitDelta(state, ManualEntryDelta(before, after), HistoryCategory.Calendar)
+        return commitDelta(state, PanelDelta(before, after), HistoryCategory.Calendar)
     }
 
     /**
-     * PRD §8 "there must not be overlaps": every other period shown on the calendar — task records,
-     * the scheduled "to do now", and the other manual entries — that a dragged/resized entry [id]
-     * must not overlap.
+     * PRD §8 "there must not be overlaps": every other period shown on the calendar — task records and
+     * the other panels — that a dragged/resized panel [id] must not overlap.
      */
     private fun otherRanges(state: SchedulerState, id: String): List<TaskTimeRange> {
         val records = state.tasks.values.flatMap { it.record }
-        val scheduled =
-            state.scheduled?.let { listOf(TaskTimeRange(it.startEpochMillis, it.deadlineEpochMillis)) }
-                ?: emptyList()
-        val manual =
-            state.manualEntries.filter { it.id != id }
+        val panels =
+            state.panels.filter { it.id != id }
                 .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
-        return records + scheduled + manual
+        return records + panels
     }
 
-    private fun reduceAddManualEntry(state: SchedulerState, startMillis: Long): SchedulerState {
-        // PRD §8 Manual add: highest-absolute-priority task (alphabetical tie-break), spanning its
-        // minimum time.
-        val taskId = SchedulerDomain.manualAddTaskId(state) ?: return state
-        val task = state.tasks[taskId] ?: return state
-        val (entryId, allocated) = state.allocateManualEntryId()
-        val entry =
-            ManualCalendarEntry(
-                id = entryId,
-                taskId = taskId,
-                title = task.title,
-                startEpochMillis = startMillis,
-                endEpochMillis = startMillis + task.minimumMinutes.toLong() * 60_000L,
-            )
-        return commitManualEntries(allocated, allocated.manualEntries + entry)
-    }
-
-    private fun reduceUpdateManualEntry(
+    private fun reduceAddTaskPanel(
         state: SchedulerState,
-        intent: SchedulerIntent.UpdateManualCalendarEntry,
+        intent: SchedulerIntent.AddTaskPanel,
     ): SchedulerState {
-        val entries = state.manualEntries
-        val index = entries.indexOfFirst { it.id == intent.id }
-        if (index < 0) return state
-        // Keep end strictly after start so an edited entry never collapses to a zero-length block.
+        // Keep end strictly after start so a placed panel never collapses to a zero-length block.
         val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
-        val updated =
-            entries[index].copy(
+        val (panelId, allocated) = state.allocatePanelId()
+        val panel =
+            TaskPanel(
+                id = panelId,
                 taskId = intent.taskId,
                 title = intent.title,
                 startEpochMillis = intent.startEpochMillis,
                 endEpochMillis = end,
+                pinned = intent.pinned,
+                auto = false,
             )
-        return commitManualEntries(state, entries.toMutableList().also { it[index] = updated })
+        return commitPanels(allocated, allocated.panels + panel)
     }
 
-    private fun reduceMoveManualEntry(
+    private fun reduceUpdateTaskPanel(
         state: SchedulerState,
-        intent: SchedulerIntent.MoveManualCalendarEntry,
+        intent: SchedulerIntent.UpdateTaskPanel,
     ): SchedulerState {
-        val entries = state.manualEntries
-        val index = entries.indexOfFirst { it.id == intent.id }
+        val panels = state.panels
+        val index = panels.indexOfFirst { it.id == intent.id }
         if (index < 0) return state
-        val current = entries[index]
+        val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
+        // Editing an auto panel makes it user-authored; re-id it out of the ephemeral `auto/` namespace
+        // so the next reschedule's regenerated auto panels can't collide with the kept (pinned) one.
+        val existing = panels[index]
+        val (panelId, allocated) =
+            if (existing.auto) state.allocatePanelId() else intent.id to state
+        val updated =
+            existing.copy(
+                id = panelId,
+                taskId = intent.taskId,
+                title = intent.title,
+                startEpochMillis = intent.startEpochMillis,
+                endEpochMillis = end,
+                pinned = intent.pinned,
+                auto = false,
+            )
+        return commitPanels(allocated, allocated.panels.toMutableList().also { it[index] = updated })
+    }
+
+    private fun reduceMoveTaskPanel(
+        state: SchedulerState,
+        intent: SchedulerIntent.MoveTaskPanel,
+    ): SchedulerState {
+        val panels = state.panels
+        val index = panels.indexOfFirst { it.id == intent.id }
+        if (index < 0) return state
+        val current = panels[index]
         val duration = current.endEpochMillis - current.startEpochMillis
         // PRD §8: snap to avoid overlaps (stick to a group, jump before it past the midpoint) and
-        // shrink to fit a too-narrow gap.
+        // shrink to fit a too-narrow gap. A dragged panel becomes user-authored (no longer auto).
         val placed =
             SchedulerDomain.placeDraggedEntry(
                 otherRanges(state, intent.id),
@@ -749,32 +757,18 @@ object SchedulerReducer {
                 duration,
             )
         val moved =
-            current.copy(startEpochMillis = placed.startEpochMillis, endEpochMillis = placed.endEpochMillis)
-        return commitManualEntries(state, entries.toMutableList().also { it[index] = moved })
-    }
-
-    /** PRD §8 (uniform blocks): pin the scheduled "to do now" as a manual entry; clear the schedule. */
-    private fun reducePinScheduled(
-        state: SchedulerState,
-        intent: SchedulerIntent.PinScheduledAsManual,
-    ): SchedulerState {
-        val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
-        val (entryId, allocated) = state.copy(scheduled = null).allocateManualEntryId()
-        val entry =
-            ManualCalendarEntry(
-                id = entryId,
-                taskId = intent.taskId,
-                title = intent.title,
-                startEpochMillis = intent.startEpochMillis,
-                endEpochMillis = end,
+            current.copy(
+                startEpochMillis = placed.startEpochMillis,
+                endEpochMillis = placed.endEpochMillis,
+                auto = false,
             )
-        return commitManualEntries(allocated, allocated.manualEntries + entry)
+        return commitPanels(state, panels.toMutableList().also { it[index] = moved })
     }
 
-    /** PRD §8 (uniform blocks): pin a task-record period as a manual entry; drop it from the record. */
+    /** PRD §8 (uniform blocks): convert a task-record period into a user panel; drop it from the record. */
     private fun reducePinRecord(
         state: SchedulerState,
-        intent: SchedulerIntent.PinRecordAsManual,
+        intent: SchedulerIntent.PinRecordAsPanel,
     ): SchedulerState {
         val sourceTask = state.tasks[intent.recordTaskId] ?: return state
         val sourceRange = TaskTimeRange(intent.recordStartEpochMillis, intent.recordEndEpochMillis)
@@ -782,23 +776,43 @@ object SchedulerReducer {
         val trimmedTasks =
             state.tasks + (intent.recordTaskId to sourceTask.copy(record = sourceTask.record - sourceRange))
         val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
-        val (entryId, allocated) = state.copy(tasks = trimmedTasks).allocateManualEntryId()
-        val entry =
-            ManualCalendarEntry(
-                id = entryId,
+        val (panelId, allocated) = state.copy(tasks = trimmedTasks).allocatePanelId()
+        val panel =
+            TaskPanel(
+                id = panelId,
                 taskId = intent.taskId,
                 title = intent.title,
                 startEpochMillis = intent.startEpochMillis,
                 endEpochMillis = end,
+                pinned = intent.pinned,
+                auto = false,
             )
-        return commitManualEntries(allocated, allocated.manualEntries + entry)
+        return commitPanels(allocated, allocated.panels + panel)
     }
 
-    /** PRD §8 "Remove": delete a manual entry (undoable calendar delta). */
-    private fun reduceRemoveManualEntry(state: SchedulerState, id: String): SchedulerState {
-        val entries = state.manualEntries
-        if (entries.none { it.id == id }) return state
-        return commitManualEntries(state, entries.filterNot { it.id == id })
+    /** PRD §8 "Remove": delete a panel (undoable calendar delta). */
+    private fun reduceRemoveTaskPanel(state: SchedulerState, id: String): SchedulerState {
+        val panels = state.panels
+        if (panels.none { it.id == id }) return state
+        return commitPanels(state, panels.filterNot { it.id == id })
+    }
+
+    /**
+     * PRD §9 calculation event: [advanceSchedule] then refill the non-pinned panels out to +24h with
+     * [SchedulerDomain.fillSchedule]. Gated by PRD §7: while [SchedulerState.automaticSchedule] is off
+     * the refill is skipped (the event waits) — but the advance still runs so completed work is
+     * recorded. The refill is committed as a Calendar History Unit (PRD §9 "each scheduling is saved in
+     * a History Unit"); the advance's record side effects stay outside the history. A no-op tick
+     * returns the same instance.
+     */
+    private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
+        val advanced = advanceSchedule(state, nowMillis)
+        if (!advanced.automaticSchedule) return advanced
+        val filled = SchedulerDomain.fillSchedule(advanced, nowMillis)
+        if (filled == advanced.panels) return advanced
+        // commitDelta applies PanelDelta.redo (panels = filled); the advance's task/record changes are
+        // already in `advanced` and are not part of the delta, so undo restores panels but not records.
+        return commitDelta(advanced, PanelDelta(advanced.panels, filled), HistoryCategory.Calendar)
     }
 
     /** PRD §8 "Remove" on a record block: drop the period from the task's record (history-excluded). */
@@ -812,14 +826,14 @@ object SchedulerReducer {
         return state.copy(tasks = state.tasks + (intent.taskId to task.copy(record = task.record - range)))
     }
 
-    private fun reduceResizeManualEntry(
+    private fun reduceResizeTaskPanel(
         state: SchedulerState,
-        intent: SchedulerIntent.ResizeManualCalendarEntry,
+        intent: SchedulerIntent.ResizeTaskPanel,
     ): SchedulerState {
-        val entries = state.manualEntries
-        val index = entries.indexOfFirst { it.id == intent.id }
+        val panels = state.panels
+        val index = panels.indexOfFirst { it.id == intent.id }
         if (index < 0) return state
-        val current = entries[index]
+        val current = panels[index]
         // PRD §8 extend/shorten: clamp the grabbed edge so it cannot cross a neighbour.
         val resized =
             SchedulerDomain.clampResize(
@@ -832,8 +846,9 @@ object SchedulerReducer {
             current.copy(
                 startEpochMillis = resized.startEpochMillis,
                 endEpochMillis = resized.endEpochMillis,
+                auto = false,
             )
-        return commitManualEntries(state, entries.toMutableList().also { it[index] = updated })
+        return commitPanels(state, panels.toMutableList().also { it[index] = updated })
     }
 
     private fun undo(state: SchedulerState, category: HistoryCategory): SchedulerState {
@@ -1174,80 +1189,82 @@ private fun applySetPriorityWeight(
 }
 
 /**
- * PRD §9: recompute the scheduled "task to do now". Returns the same instance when nothing changes
- * (still within the current deadline) so the view-model can skip a redundant persist. Not undoable:
- * [SchedulerState.scheduled] and the task record both live outside [TreeSnapshot].
- *
- * PRD §8/§9: once the current period's deadline is reached, its `[start, deadline]` span is appended
- * to the task's record *before* the next task is picked — so the calendar keeps showing the period
- * (now a green record instead of the blue "to do now" block) and the time-weighting reflects the
- * completed work when choosing what to do next.
+ * PRD §9 the frequent tick: advance the schedule to [nowMillis] without refilling. Any non-pinned
+ * auto panel that has fully elapsed (`end ≤ now`) is recorded as a completed period and dropped; the
+ * in-progress auto panel covering `now` whose task was deleted or gained a child task is cut at `now`,
+ * recorded, and dropped (PRD §9). The task record lives outside the Undo/Redo history, so this is a
+ * non-undoable side effect; it returns the same instance when nothing changed. Future panels are left
+ * untouched (the §9 refill, [reduceRefreshSchedule], regenerates them).
  */
-private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
-    val previous = state.scheduled
-    val previousTask = previous?.let { state.tasks[it.taskId] }
-
-    // Close out the previous period (if any) and decide where the *next* period should start. The
-    // next task always begins exactly at the previous period's end — not at `nowMillis` — so a late
-    // recalculation never shifts the schedule (PRD §9).
-    var working = state
-    var startMillis = nowMillis
-    if (previous != null && previousTask != null) {
-        val noLongerSchedulable =
-            !SchedulerDomain.taskHasCells(state, previous.taskId) ||
-                !SchedulerDomain.isLeafTask(state, previous.taskId)
-        if (noLongerSchedulable) {
-            // PRD §9: the scheduled task was deleted from the tree OR gained a child task (so it is no
-            // longer a schedulable leaf) → cut its period to the moment that happened (≈ now, capped at
-            // its deadline) and record it. The record keeps a deleted task alive (PRD §4) so the
-            // calendar still shows the cut period.
-            val end = nowMillis.coerceIn(previous.startEpochMillis, previous.deadlineEpochMillis)
-            working = appendRecord(state, previous.taskId, previous.startEpochMillis, end).copy(scheduled = null)
-            startMillis = end
-        } else if (nowMillis >= previous.deadlineEpochMillis) {
-            // PRD §8/§9: the period elapsed → record [start, deadline]; the next task starts there.
-            working = appendRecord(state, previous.taskId, previous.startEpochMillis, previous.deadlineEpochMillis)
-                .copy(scheduled = null)
-            startMillis = previous.deadlineEpochMillis
+private fun advanceSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
+    var tasks = state.tasks
+    val remaining = ArrayList<TaskPanel>(state.panels.size)
+    var changed = false
+    for (panel in state.panels) {
+        if (panel.pinned || !panel.auto) {
+            remaining += panel
+            continue
+        }
+        when {
+            // Elapsed auto panel → record [start, end] as completed work, drop the panel.
+            panel.endEpochMillis <= nowMillis -> {
+                tasks = appendRecordMap(tasks, panel.taskId, panel.startEpochMillis, panel.endEpochMillis)
+                changed = true
+            }
+            // In-progress auto panel covering `now`: keep it unless its task is no longer schedulable
+            // (deleted from the tree or gained a child) — then cut at `now`, record, and drop it.
+            panel.startEpochMillis <= nowMillis -> {
+                val schedulable =
+                    panel.taskId != null &&
+                        SchedulerDomain.taskHasCells(state, panel.taskId) &&
+                        SchedulerDomain.isLeafTask(state, panel.taskId)
+                if (schedulable) {
+                    remaining += panel
+                } else {
+                    tasks = appendRecordMap(tasks, panel.taskId, panel.startEpochMillis, nowMillis)
+                    changed = true
+                }
+            }
+            else -> remaining += panel // future auto panel
         }
     }
-    val next = SchedulerDomain.computeSchedule(working, nowMillis, startMillis)
-    return if (next == previous && working === state) state else working.copy(scheduled = next)
+    if (!changed) return state
+    return state.copy(tasks = tasks, panels = remaining)
 }
 
-/** Appends a `[start, end]` period to [taskId]'s record (PRD §8; lives outside Undo/Redo history). */
-private fun appendRecord(
-    state: SchedulerState,
-    taskId: TaskId,
+/** Appends a `[start, end]` period to [taskId]'s record in a task map (PRD §8; outside Undo/Redo). */
+private fun appendRecordMap(
+    tasks: Map<TaskId, Task>,
+    taskId: TaskId?,
     startMillis: Long,
     endMillis: Long,
-): SchedulerState {
-    val task = state.tasks[taskId] ?: return state
-    val period = TaskTimeRange(startMillis, endMillis)
-    return state.copy(tasks = state.tasks + (taskId to task.copy(record = task.record + period)))
+): Map<TaskId, Task> {
+    if (taskId == null || endMillis <= startMillis) return tasks
+    val task = tasks[taskId] ?: return tasks
+    return tasks + (taskId to task.copy(record = task.record + TaskTimeRange(startMillis, endMillis)))
 }
 
 /**
- * PRD §12 Device sleep: cut the in-progress scheduled period at [sleepStart]. The pre-sleep stretch
- * `[scheduled.start, sleepStart]` was real work → record it; the sleep window itself is left as a hole
- * (no record) and the schedule is cleared so the next [reduceRefreshSchedule] (at wake time) starts a
- * fresh period after the sleep. A no-op when nothing is scheduled. [sleepEnd] is unused here (the
- * caller's wake-time refresh defines where the next period begins) but kept for clarity/symmetry.
+ * PRD §12 Device sleep: cut the in-progress auto panel covering [sleepStart] there. The pre-sleep
+ * stretch `[panel.start, sleepStart]` was real work → record it; the sleep window itself is left as a
+ * hole (no record). All non-pinned auto panels (the cut one plus any tentative future ones) are
+ * dropped so the wake-time [reduceRefreshSchedule] starts a fresh schedule after the sleep. Pinned and
+ * user-authored panels are untouched. A no-op when no auto panel covers [sleepStart]. [sleepEnd] is
+ * unused (the caller's wake-time refresh defines where the next period begins).
  */
 private fun reduceReportDeviceSleep(
     state: SchedulerState,
     sleepStart: Long,
     @Suppress("UNUSED_PARAMETER") sleepEnd: Long,
 ): SchedulerState {
-    val previous = state.scheduled ?: return state
-    val end = sleepStart.coerceIn(previous.startEpochMillis, previous.deadlineEpochMillis)
-    val working =
-        if (end > previous.startEpochMillis) {
-            appendRecord(state, previous.taskId, previous.startEpochMillis, end)
-        } else {
-            state
-        }
-    return working.copy(scheduled = null)
+    val current =
+        state.panels.firstOrNull {
+            it.auto && !it.pinned &&
+                it.startEpochMillis <= sleepStart && sleepStart < it.endEpochMillis
+        } ?: return state
+    val tasks = appendRecordMap(state.tasks, current.taskId, current.startEpochMillis, sleepStart)
+    val remaining = state.panels.filter { it.pinned || !it.auto }
+    return state.copy(tasks = tasks, panels = remaining)
 }
 
 private fun applySetTaskMinimumTime(
@@ -1520,17 +1537,17 @@ private data class SetSelectionDelta(
 }
 
 /**
- * PRD §5 "manual calendar record edition": the whole manual-entry list before/after a calendar add,
- * edit, move or resize. Lives in the [HistoryCategory.Calendar] stack so it is undone/redone only
- * while the calendar is focused (PRD §8).
+ * PRD §5/§9: the whole panel list before/after a calendar add, edit, move, resize, *or a scheduling
+ * run* (PRD §9 "each scheduling is saved in a History Unit"). Lives in the [HistoryCategory.Calendar]
+ * stack so it is undone/redone only while the calendar is focused (PRD §8).
  */
-private data class ManualEntryDelta(
-    val before: List<ManualCalendarEntry>,
-    val after: List<ManualCalendarEntry>,
+private data class PanelDelta(
+    val before: List<TaskPanel>,
+    val after: List<TaskPanel>,
 ) : Delta {
-    override fun undo(state: SchedulerState): SchedulerState = state.copy(manualEntries = before)
+    override fun undo(state: SchedulerState): SchedulerState = state.copy(panels = before)
 
-    override fun redo(state: SchedulerState): SchedulerState = state.copy(manualEntries = after)
+    override fun redo(state: SchedulerState): SchedulerState = state.copy(panels = after)
 }
 
 private data class ToggleExpandDelta(

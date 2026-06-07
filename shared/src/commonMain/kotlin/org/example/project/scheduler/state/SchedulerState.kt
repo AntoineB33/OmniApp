@@ -5,9 +5,8 @@ import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
-import org.example.project.scheduler.model.ManualCalendarEntry
-import org.example.project.scheduler.model.ScheduledTask
 import org.example.project.scheduler.model.Task
+import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.WellKnownIds
 
@@ -100,19 +99,20 @@ data class SchedulerState(
     /** In-memory clipboard for copy/paste (not persisted). */
     val clipboard: List<String> = emptyList(),
     /**
-     * PRD §9 the task to do now (and until when), recomputed on app start and when its deadline is
-     * reached. Like the task record it is persisted but lives outside [TreeSnapshot], so Undo/Redo
-     * never touches it.
-     */
-    val scheduled: ScheduledTask? = null,
-    /**
-     * PRD §8 manual calendar entries (add / edit window / drag-resize). Persisted user data that
-     * lives outside [TreeSnapshot]: Undo/Redo of these goes through the [HistoryCategory.Calendar]
+     * PRD §8/§9 task panels: the calendar blocks in the schedulable window — both scheduler-generated
+     * (`auto`) panels and user-authored ones, with `pinned` panels surviving a reschedule (see
+     * [TaskPanel]). Persisted user/scheduler data that lives outside [TreeSnapshot]: panel-list
+     * changes (manual edits and each scheduling run, PRD §9) go through the [HistoryCategory.Calendar]
      * stack, not the tree snapshot.
      */
-    val manualEntries: List<ManualCalendarEntry> = emptyList(),
-    /** Monotonic suffix for `manual/{n}` entry ids; never reused, so undo need not roll it back. */
-    val nextManualEntryCounter: Int = 0,
+    val panels: List<TaskPanel> = emptyList(),
+    /** Monotonic suffix for `panel/{n}` ids; never reused, so undo need not roll it back. */
+    val nextPanelCounter: Int = 0,
+    /**
+     * PRD §7 Automatic Schedule Switch: while off, the §9 calculation events that update the schedule
+     * are deferred until it is turned back on. Persisted (defaults on). Toggling it is not undoable.
+     */
+    val automaticSchedule: Boolean = true,
     /**
      * PRD §5 whether the calendar window currently has focus, which routes Ctrl+Z/Y to the calendar
      * history (and away from it when unfocused). Transient session state, not persisted.
@@ -155,9 +155,9 @@ data class SchedulerState(
         return id to copy(nextCellCounter = nextCellCounter + 1)
     }
 
-    fun allocateManualEntryId(): Pair<String, SchedulerState> {
-        val id = "manual/$nextManualEntryCounter"
-        return id to copy(nextManualEntryCounter = nextManualEntryCounter + 1)
+    fun allocatePanelId(): Pair<String, SchedulerState> {
+        val id = "panel/$nextPanelCounter"
+        return id to copy(nextPanelCounter = nextPanelCounter + 1)
     }
 
     companion object {

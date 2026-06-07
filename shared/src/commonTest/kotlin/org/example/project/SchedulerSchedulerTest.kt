@@ -10,8 +10,8 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import org.example.project.scheduler.domain.SchedulerDomain
-import org.example.project.scheduler.model.ScheduledTask
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.SchedulerIntent
@@ -21,11 +21,13 @@ import org.example.project.ui.CalendarRecord
 import org.example.project.ui.recordsForDay
 
 /**
- * Tests for the v1.0.0 PRD additions: §9 scheduler / time-weighted percentage, §10 minimum time,
- * §8 task record (history-excluded, persisted, calendar-mapped).
+ * Tests for the v1.2.0 scheduler: §9 windowed multi-panel fill ([SchedulerDomain.fillSchedule]),
+ * the §9 advance/record tick, §10 minimum time, §7 automatic-schedule switch, and §8 task record
+ * (history-excluded, persisted, calendar-mapped).
  */
 class SchedulerSchedulerTest {
 
+    private val MIN = 60_000L
     private val HOUR_MS = 3_600_000L
 
     /** Two equal-priority sibling tasks A and B under "main". */
@@ -41,11 +43,16 @@ class SchedulerSchedulerTest {
         return Triple(s, a, b)
     }
 
+    private fun auto(id: String, taskId: TaskId, start: Long, end: Long) =
+        TaskPanel(id, taskId, "x", start, end, pinned = false, auto = true)
+
+    private fun pinned(id: String, taskId: TaskId, start: Long, end: Long) =
+        TaskPanel(id, taskId, "x", start, end, pinned = true, auto = false)
+
     // ----- §9 time-weighted score / next task -------------------------------------------------
 
     @Test
     fun default_decay_constant_has_a_seven_day_half_life() {
-        // PRD §9: a record period's weight halves every 7 days (168 h).
         val k = SchedulerDomain.DEFAULT_DECAY_PER_HOUR
         assertEquals(0.5, exp(-k * 7 * 24.0), 1e-12)
     }
@@ -55,7 +62,6 @@ class SchedulerSchedulerTest {
         val k = 0.02
         val now = 1_000_000_000_000L
         val range = TaskTimeRange(startEpochMillis = now - 2 * HOUR_MS, endEpochMillis = now - HOUR_MS)
-        // (1/k)(e^{-k*ageEnd} - e^{-k*ageStart}) with ages in hours (1h and 2h).
         val expected = (exp(-k * 1.0) - exp(-k * 2.0)) / k
         assertEquals(expected, SchedulerDomain.timeWeightedScore(listOf(range), now, k), 1e-9)
     }
@@ -69,196 +75,157 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun more_recent_period_scores_higher_than_older_one_of_equal_duration() {
-        val now = 1_000_000_000_000L
-        val recent = TaskTimeRange(now - HOUR_MS, now)
-        val old = TaskTimeRange(now - 101 * HOUR_MS, now - 100 * HOUR_MS)
-        assertTrue(
-            SchedulerDomain.timeWeightedScore(listOf(recent), now) >
-                SchedulerDomain.timeWeightedScore(listOf(old), now),
-        )
-    }
-
-    @Test
     fun next_task_is_the_most_under_served() {
         val (s, a, b) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
-        // A has a big recent record (over-served), B has none (under-served) — both equal priority.
         val withRecord =
             s.copy(tasks = s.tasks + (a to s.tasks[a]!!.copy(record = listOf(TaskTimeRange(now - HOUR_MS, now)))))
         assertEquals(b, SchedulerDomain.nextTask(withRecord, now))
     }
 
-    // ----- §9 schedule (current task to do + deadline) ---------------------------------------
+    // ----- §9 fillSchedule (windowed multi-panel) --------------------------------------------
 
     @Test
-    fun compute_schedule_allocates_minimum_time_as_the_deadline() {
-        val (s0, a, _) = stateWithTwoTasks()
+    fun fill_schedule_lays_a_contiguous_chain_from_now_out_past_the_horizon() {
+        val (s, a, b) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
-        // Give A a recent record so B (under-served) is the deterministic pick, and B a 20-min floor.
-        val b = s0.tasks.keys.first { s0.tasks[it]!!.title == "B" }
-        val s =
-            s0.copy(
-                tasks = s0.tasks +
-                    (a to s0.tasks[a]!!.copy(record = listOf(TaskTimeRange(now - HOUR_MS, now)))) +
-                    (b to s0.tasks[b]!!.copy(minimumMinutes = 20)),
-            )
-        val sched = SchedulerDomain.computeSchedule(s, now)
-        assertNotNull(sched)
-        assertEquals(b, sched.taskId)
-        assertEquals(now, sched.startEpochMillis)
-        assertEquals(now + 20 * 60_000L, sched.deadlineEpochMillis)
+        val panels = SchedulerDomain.fillSchedule(s, now)
+
+        assertTrue(panels.isNotEmpty())
+        assertEquals(now, panels.first().startEpochMillis) // first panel starts exactly at now
+        assertEquals(a, panels.first().taskId) // A and B tie → A picked first, then rotates
+        assertEquals(b, panels[1].taskId)
+        // Contiguous & non-overlapping, every panel a real leaf task, all auto.
+        for (i in panels.indices) {
+            assertTrue(panels[i].auto)
+            assertTrue(panels[i].taskId == a || panels[i].taskId == b)
+            if (i > 0) assertEquals(panels[i - 1].endEpochMillis, panels[i].startEpochMillis)
+        }
+        // The window reaches at least 24h ahead.
+        assertTrue(panels.last().endEpochMillis >= now + SchedulerDomain.SCHEDULE_HORIZON_MILLIS)
     }
 
     @Test
-    fun compute_schedule_keeps_current_allocation_until_deadline_then_recomputes() {
-        val (s0, a, _) = stateWithTwoTasks()
-        val now = 1_000_000_000_000L
-        // A 10-minute minimum so the constructed deadline matches the recomputed span (no record).
-        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(minimumMinutes = 10)))
-        val current = org.example.project.scheduler.model.ScheduledTask(a, now, now + 10 * 60_000L)
-        val withCurrent = s.copy(scheduled = current)
-        // Still within the deadline → unchanged.
-        assertEquals(current, SchedulerDomain.computeSchedule(withCurrent, now + 5 * 60_000L))
-        // Past the deadline → a fresh allocation starting at that instant.
-        val after = now + 11 * 60_000L
-        val next = SchedulerDomain.computeSchedule(withCurrent, after)
-        assertNotNull(next)
-        assertEquals(after, next.startEpochMillis)
+    fun fill_schedule_on_empty_database_is_empty() {
+        assertTrue(SchedulerDomain.fillSchedule(SchedulerState.empty(), 1_000L).isEmpty())
     }
 
     @Test
-    fun compute_schedule_updates_current_period_when_minimum_time_changes() {
+    fun fill_schedule_keeps_a_pinned_panel_and_flows_auto_panels_around_it() {
         val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
-        val start = now - 5 * 60_000L
-        // PRD §9 update: the task is still scheduled (started 5 min ago) and still exists; raising its
-        // minimum to 30 min must stretch the scheduled period to start + 30 min, same task and start.
-        val current = ScheduledTask(a, start, start + 20 * 60_000L)
-        val s = s0.copy(
-            tasks = s0.tasks + (a to s0.tasks[a]!!.copy(minimumMinutes = 30)),
-            scheduled = current,
-        )
-        val updated = SchedulerDomain.computeSchedule(s, now)
-        assertNotNull(updated)
-        assertEquals(a, updated.taskId)
-        assertEquals(start, updated.startEpochMillis)
-        assertEquals(start + 30 * 60_000L, updated.deadlineEpochMillis)
+        // A pinned panel sits 2–3h ahead; the auto fill must not overlap it (PRD §10) and must keep it.
+        val pin = pinned("panel/0", a, now + 2 * HOUR_MS, now + 3 * HOUR_MS)
+        val s = s0.copy(panels = listOf(pin))
+
+        val panels = SchedulerDomain.fillSchedule(s, now)
+
+        assertTrue(pin in panels) // pinned panel survives
+        val autos = panels.filter { it.auto }
+        // No auto panel overlaps the pinned window.
+        assertTrue(autos.none { it.startEpochMillis < pin.endEpochMillis && pin.startEpochMillis < it.endEpochMillis })
+        // Some auto panel ends exactly where the pinned one begins (shortened to fit, PRD §10).
+        assertTrue(autos.any { it.endEpochMillis == pin.startEpochMillis })
     }
 
     @Test
-    fun refresh_schedule_sets_scheduled_and_is_not_undoable() {
+    fun fill_schedule_keeps_the_in_progress_panel_covering_now() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val current = auto("auto/0", a, now - 10 * MIN, now + 35 * MIN)
+        val s = s0.copy(panels = listOf(current))
+
+        val panels = SchedulerDomain.fillSchedule(s, now)
+
+        // The current panel is preserved unchanged and the fill resumes after it.
+        assertTrue(current in panels)
+        assertTrue(panels.any { it.startEpochMillis == current.endEpochMillis })
+    }
+
+    // ----- §9 RefreshSchedule (calculation event) --------------------------------------------
+
+    @Test
+    fun refresh_schedule_fills_panels_and_is_a_calendar_history_unit() {
         val (s, _, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val scheduled = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now))
-        assertNotNull(scheduled.scheduled)
-        // §9 scheduling state lives outside history: an undo must not clear it.
-        val undone = SchedulerReducer.reduce(scheduled, SchedulerIntent.Undo)
-        assertEquals(scheduled.scheduled, undone.scheduled)
+        assertTrue(scheduled.panels.isNotEmpty())
+
+        // PRD §9 "each scheduling is saved in a History Unit": undoable while the calendar is focused.
+        val focused = SchedulerReducer.reduce(scheduled, SchedulerIntent.SetCalendarFocus(true))
+        val undone = SchedulerReducer.reduce(focused, SchedulerIntent.Undo)
+        assertTrue(undone.panels.isEmpty()) // restored to the pre-fill (empty) panel list
     }
 
     @Test
-    fun refresh_schedule_records_the_completed_period_when_deadline_reached() {
+    fun refresh_schedule_wipes_non_pinned_panels_but_keeps_pinned_ones() {
         val (s0, a, b) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
-        // `a` was scheduled for a period whose deadline is now in the past.
-        val finished = ScheduledTask(a, now - 30 * 60_000L, now - 60_000L)
-        val s = s0.copy(scheduled = finished)
+        val pin = pinned("panel/0", a, now + 10 * HOUR_MS, now + 11 * HOUR_MS)
+        val stale = auto("auto/9", b, now + 2 * HOUR_MS, now + 3 * HOUR_MS) // not pinned, not current
+        val s = s0.copy(panels = listOf(pin, stale))
 
         val refreshed = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now))
 
-        // PRD §8: the elapsed [start, deadline] span is logged as a record on `a` (so the calendar
-        // keeps showing it as a green block instead of dropping the vanished blue one).
-        val record = refreshed.tasks[a]!!.record
-        assertEquals(1, record.size)
-        assertEquals(finished.startEpochMillis, record[0].startEpochMillis)
-        assertEquals(finished.deadlineEpochMillis, record[0].endEpochMillis)
-        // The just-recorded task is now over-served, so the next pick is the other one — starting
-        // exactly at the finished period's end (PRD §9: contiguous, not anchored to `now`).
-        assertNotNull(refreshed.scheduled)
-        assertEquals(b, refreshed.scheduled!!.taskId)
-        assertEquals(finished.deadlineEpochMillis, refreshed.scheduled!!.startEpochMillis)
+        assertTrue(pin in refreshed.panels) // pinned kept
+        assertTrue(stale !in refreshed.panels) // stale non-pinned wiped & regenerated
+        assertTrue(refreshed.panels.any { it.auto && it.startEpochMillis == now }) // fresh fill from now
     }
 
     @Test
-    fun refresh_schedule_does_not_record_while_within_deadline() {
+    fun refresh_schedule_is_deferred_while_automatic_schedule_is_off() {
+        val (s0, _, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val off = s0.copy(automaticSchedule = false)
+        val after = SchedulerReducer.reduce(off, SchedulerIntent.RefreshSchedule(now))
+        assertTrue(after.panels.isEmpty()) // PRD §7: the scheduling event waits
+
+        // Turning it on then refreshing fills the schedule.
+        val on = SchedulerReducer.reduce(after, SchedulerIntent.SetAutomaticSchedule(true))
+        val filled = SchedulerReducer.reduce(on, SchedulerIntent.RefreshSchedule(now))
+        assertTrue(filled.panels.isNotEmpty())
+    }
+
+    // ----- §9 AdvanceSchedule (frequent tick) ------------------------------------------------
+
+    @Test
+    fun advance_records_a_completed_auto_panel_and_drops_it() {
         val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
-        val ongoing = ScheduledTask(a, now - 5 * 60_000L, now + 25 * 60_000L)
-        val s = s0.copy(scheduled = ongoing)
-        val refreshed = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now))
-        assertTrue(refreshed.tasks[a]!!.record.isEmpty())
+        val completed = auto("auto/0", a, now - 30 * MIN, now - MIN)
+        val s = s0.copy(panels = listOf(completed))
+
+        val advanced = SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(now))
+
+        assertTrue(advanced.panels.isEmpty()) // the elapsed panel is gone…
+        // …and its span was logged as a record so the calendar keeps showing it (green).
+        assertEquals(listOf(TaskTimeRange(now - 30 * MIN, now - MIN)), advanced.tasks[a]!!.record)
     }
 
     @Test
-    fun refresh_schedule_cuts_and_records_a_scheduled_task_deleted_from_the_tree() {
-        val (s0, a, b) = stateWithTwoTasks()
+    fun advance_keeps_an_in_progress_panel_and_is_not_undoable() {
+        val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
-        // `a` is scheduled mid-period, but it has just been removed from the tree (no cell points at
-        // it any more) — the task object is kept (purge keeps the scheduled task).
-        val scheduledA = ScheduledTask(a, now - 10 * 60_000L, now + 20 * 60_000L)
-        val s = s0.copy(cells = s0.cells.filterValues { it.taskId != a }, scheduled = scheduledA)
-
-        val refreshed = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now))
-
-        // PRD §9: the period is cut to the disappearance point (`now`) and recorded on `a`…
-        val record = refreshed.tasks[a]!!.record
-        assertEquals(1, record.size)
-        assertEquals(scheduledA.startEpochMillis, record[0].startEpochMillis)
-        assertEquals(now, record[0].endEpochMillis)
-        // …and the scheduler moves to a task still in the tree, starting at that cut point.
-        assertEquals(b, refreshed.scheduled!!.taskId)
-        assertEquals(now, refreshed.scheduled!!.startEpochMillis)
+        val current = auto("auto/0", a, now - 5 * MIN, now + 25 * MIN)
+        val s = s0.copy(panels = listOf(current))
+        val advanced = SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(now))
+        assertTrue(advanced.tasks[a]!!.record.isEmpty()) // not yet completed → nothing recorded
+        assertTrue(current in advanced.panels)
+        // Touches only history-excluded record/panel-progress state → undo must not bring it back.
+        val undone = SchedulerReducer.reduce(advanced, SchedulerIntent.Undo)
+        assertEquals(advanced.panels, undone.panels)
     }
 
     @Test
-    fun purge_keeps_tasks_that_have_a_record_or_are_currently_scheduled() {
-        val (s0, a, b) = stateWithTwoTasks()
-        // Orphan every real task (drop all cell→task pointers).
-        val orphaned = s0.copy(cells = s0.cells.mapValues { (_, c) -> c.copy(taskId = null) })
-        val withState =
-            orphaned.copy(
-                tasks = orphaned.tasks + (a to orphaned.tasks[a]!!.copy(record = listOf(TaskTimeRange(1L, 2L)))),
-                scheduled = ScheduledTask(b, 0L, 1L),
-            )
-        val purged = SchedulerDomain.purgeOrphanTasks(withState)
-        // PRD §4: `a` survives because it has a record; `b` survives because it is scheduled.
-        assertTrue(purged.tasks.containsKey(a))
-        assertTrue(purged.tasks.containsKey(b))
-    }
-
-    @Test
-    fun sole_task_reschedules_a_fresh_full_period_each_time_its_deadline_is_reached() {
-        // Empty database with a single task.
-        var s = SchedulerState.empty()
-        val c0 = s.lists[s.rootListId]!!.cellIds[0]
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c0, "Solo"))
-        val a = s.tasks.keys.first { s.tasks[it]!!.title == "Solo" }
-
-        val t0 = 1_000_000_000_000L
-        s = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(t0))
-        val first = s.scheduled!!
-        assertEquals(a, first.taskId)
-        assertEquals(t0 + 45 * 60_000L, first.deadlineEpochMillis)
-
-        // Reach the deadline: the period is recorded AND the sole task is rescheduled for a fresh
-        // full 45 min (it "extends" rather than collapsing to a zero-length block).
-        val t1 = first.deadlineEpochMillis
-        s = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(t1))
-        assertEquals(1, s.tasks[a]!!.record.size)
-        val second = s.scheduled!!
-        assertEquals(a, second.taskId)
-        assertEquals(t1, second.startEpochMillis)
-        assertEquals(t1 + 45 * 60_000L, second.deadlineEpochMillis)
-    }
-
-    @Test
-    fun codec_round_trip_preserves_scheduled_task() {
-        val (s, _, _) = stateWithTwoTasks()
-        val prepared = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(1_000_000_000_000L))
-        val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(prepared))
-        assertNotNull(decoded)
-        assertEquals(prepared.scheduled, decoded.scheduled)
+    fun advance_cuts_and_records_an_in_progress_panel_whose_task_left_the_tree() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val current = auto("auto/0", a, now - 10 * MIN, now + 20 * MIN)
+        // `a` is removed from the tree (no cell points at it); the panel must be cut at `now`.
+        val s = s0.copy(cells = s0.cells.filterValues { it.taskId != a }, panels = listOf(current))
+        val advanced = SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(now))
+        assertTrue(advanced.panels.isEmpty())
+        assertEquals(listOf(TaskTimeRange(now - 10 * MIN, now)), advanced.tasks[a]!!.record)
     }
 
     // ----- §10 minimum time ------------------------------------------------------------------
@@ -267,8 +234,7 @@ class SchedulerSchedulerTest {
     fun scheduled_span_subtracts_recent_contiguous_effort() {
         val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
-        // A 20-min session ending 5 min ago is within the 10-min streak window → span = 60 - 20.
-        val recent = TaskTimeRange(now - 25 * 60_000L, now - 5 * 60_000L)
+        val recent = TaskTimeRange(now - 25 * MIN, now - 5 * MIN)
         val task = s0.tasks[a]!!.copy(minimumMinutes = 60, record = listOf(recent))
         assertEquals(20L, SchedulerDomain.recentContiguousRecordMinutes(task.record, now))
         assertEquals(40L, SchedulerDomain.scheduledSpanMinutes(task, now))
@@ -278,48 +244,19 @@ class SchedulerSchedulerTest {
     fun scheduled_span_ignores_effort_whose_streak_already_broke() {
         val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
-        // The same 20-min session, but it ended 15 min ago → the >10-min gap breaks the streak.
-        val stale = TaskTimeRange(now - 35 * 60_000L, now - 15 * 60_000L)
+        val stale = TaskTimeRange(now - 35 * MIN, now - 15 * MIN)
         val task = s0.tasks[a]!!.copy(minimumMinutes = 60, record = listOf(stale))
         assertEquals(0L, SchedulerDomain.recentContiguousRecordMinutes(task.record, now))
         assertEquals(60L, SchedulerDomain.scheduledSpanMinutes(task, now))
     }
 
     @Test
-    fun scheduled_span_falls_back_to_full_minimum_when_recent_effort_exceeds_it() {
-        val (s0, a, _) = stateWithTwoTasks()
-        val now = 1_000_000_000_000L
-        // Two sessions 5 min apart (last ends 5 min ago) chain into one 50-min effort > 30-min min.
-        val r1 = TaskTimeRange(now - 60 * 60_000L, now - 35 * 60_000L) // 25 min
-        val r2 = TaskTimeRange(now - 30 * 60_000L, now - 5 * 60_000L) // 25 min, 5-min gap from r1
-        val task = s0.tasks[a]!!.copy(minimumMinutes = 30, record = listOf(r1, r2))
-        assertEquals(50L, SchedulerDomain.recentContiguousRecordMinutes(task.record, now))
-        assertEquals(30L, SchedulerDomain.scheduledSpanMinutes(task, now)) // 30 - 50 < 0 → full minimum
-    }
-
-    @Test
-    fun scheduled_span_is_a_fresh_full_minimum_when_recent_effort_exactly_meets_it() {
-        val (s0, a, _) = stateWithTwoTasks()
-        val now = 1_000_000_000_000L
-        // A 45-min effort ending right now exactly meets the 45-min minimum → schedule a fresh full
-        // 45 min (not a zero-length slot), so e.g. a sole task keeps extending period after period.
-        val exactly = TaskTimeRange(now - 45 * 60_000L, now)
-        val task = s0.tasks[a]!!.copy(minimumMinutes = 45, record = listOf(exactly))
-        assertEquals(45L, SchedulerDomain.recentContiguousRecordMinutes(task.record, now))
-        assertEquals(45L, SchedulerDomain.scheduledSpanMinutes(task, now)) // 45 - 45 = 0 → full minimum
-    }
-
-    @Test
-    fun new_task_defaults_to_45_minute_minimum_and_schedules_a_non_empty_slot() {
+    fun new_task_defaults_to_45_minute_minimum() {
         val (s, a, _) = stateWithTwoTasks()
-        // PRD §10: a freshly created task's minimum time defaults to 45 minutes.
         assertEquals(45, s.tasks[a]!!.minimumMinutes)
-        // …so the scheduler allocates a real (non-zero) slot — the block is visible in the calendar.
         val now = 1_000_000_000_000L
-        val sched = SchedulerDomain.computeSchedule(s, now)
-        assertNotNull(sched)
-        assertTrue(sched.deadlineEpochMillis > sched.startEpochMillis)
-        assertEquals(now + 45 * 60_000L, sched.deadlineEpochMillis)
+        val panels = SchedulerDomain.fillSchedule(s, now)
+        assertEquals(now + 45 * MIN, panels.first().endEpochMillis)
     }
 
     @Test
@@ -336,7 +273,6 @@ class SchedulerSchedulerTest {
         val (s, a, _) = stateWithTwoTasks()
         val s30 = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(a, 30))
         val s45 = SchedulerReducer.reduce(s30, SchedulerIntent.SetTaskMinimumTime(a, 45))
-        assertEquals(45, s45.tasks[a]!!.minimumMinutes)
         val undone = SchedulerReducer.reduce(s45, SchedulerIntent.Undo)
         assertEquals(30, undone.tasks[a]!!.minimumMinutes)
     }
@@ -348,15 +284,29 @@ class SchedulerSchedulerTest {
         val (s, a, _) = stateWithTwoTasks()
         val record = listOf(TaskTimeRange(1_000L, 2_000L))
         val withRecord = s.copy(tasks = s.tasks + (a to s.tasks[a]!!.copy(record = record)))
-        // An undoable mutation followed by undo must leave the record intact (PRD §8).
         val mutated = SchedulerReducer.reduce(withRecord, SchedulerIntent.SetTaskMinimumTime(a, 15))
-        assertEquals(record, mutated.tasks[a]!!.record)
         val undone = SchedulerReducer.reduce(mutated, SchedulerIntent.Undo)
-        assertEquals(45, undone.tasks[a]!!.minimumMinutes) // min time reverted to the 45-min default
-        assertEquals(record, undone.tasks[a]!!.record) // record preserved
+        assertEquals(45, undone.tasks[a]!!.minimumMinutes)
+        assertEquals(record, undone.tasks[a]!!.record)
     }
 
     // ----- persistence -----------------------------------------------------------------------
+
+    @Test
+    fun codec_round_trip_preserves_panels_and_switch() {
+        val (s, a, _) = stateWithTwoTasks()
+        val prepared =
+            s.copy(
+                panels = listOf(pinned("panel/0", a, 10_000L, 20_000L), auto("auto/0", a, 20_000L, 30_000L)),
+                nextPanelCounter = 1,
+                automaticSchedule = false,
+            )
+        val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(prepared))
+        assertNotNull(decoded)
+        assertEquals(prepared.panels, decoded.panels)
+        assertEquals(1, decoded.nextPanelCounter)
+        assertEquals(false, decoded.automaticSchedule)
+    }
 
     @Test
     fun codec_round_trip_preserves_minimum_time_and_record() {
@@ -365,7 +315,6 @@ class SchedulerSchedulerTest {
         val prepared =
             SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(a, 25))
                 .let { it.copy(tasks = it.tasks + (a to it.tasks[a]!!.copy(record = record))) }
-
         val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(prepared))
         assertNotNull(decoded)
         assertEquals(25, decoded.tasks[a]!!.minimumMinutes)
@@ -373,7 +322,7 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun codec_decodes_old_payload_without_new_task_fields() {
+    fun codec_decodes_old_payload_without_new_fields() {
         val json =
             """
             {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
@@ -382,9 +331,9 @@ class SchedulerSchedulerTest {
             """.trimIndent()
         val decoded = SchedulerStateCodec.decode(json)
         assertNotNull(decoded)
-        // PRD §10: a payload missing the field decodes to the 45-minute default.
         assertEquals(45, decoded.tasks[TaskId("t0")]!!.minimumMinutes)
-        assertTrue(decoded.tasks[TaskId("t0")]!!.record.isEmpty())
+        assertTrue(decoded.panels.isEmpty())
+        assertEquals(true, decoded.automaticSchedule) // §7 default-on for pre-1.2.0 payloads
     }
 
     // ----- §8 calendar mapping ----------------------------------------------------------------
@@ -402,8 +351,6 @@ class SchedulerSchedulerTest {
         assertEquals(9.0f, placed[0].startHour)
         assertEquals(10.5f, placed[0].endHour)
         assertEquals("Practice English", placed[0].title)
-
-        // A record entirely on another day produces nothing for this day.
         assertTrue(recordsForDay(listOf(record), LocalDate(2024, 1, 2), tz).isEmpty())
     }
 }

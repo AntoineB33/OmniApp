@@ -60,10 +60,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         val clock: AppClock = if (DebugFlags.TIME_SIMULATION) simClock else SystemAppClock
         val tz = remember { TimeZone.currentSystemDefault() }
 
-        // PRD §9: the single time tick — advance "now" and recompute "the task to do now", so a task
-        // is re-picked as soon as the last one's deadline is reached (a no-op while still within it).
-        // Ticks every second under time simulation so accelerated time shows promptly; otherwise the
-        // production 30s cadence.
+        // PRD §9: the frequent tick — advance "now" and the schedule, recording any completed panel so
+        // the next panel becomes the current "task to do now". This does NOT refill the window (that is
+        // the §9 calculation events below); it only advances. Ticks every second under time simulation
+        // so accelerated time shows promptly; otherwise the production 30s cadence.
         var nowMillis by remember { mutableStateOf(clock.nowMillis()) }
         LaunchedEffect(clock) {
             val interval: Long = if (DebugFlags.TIME_SIMULATION) 1_000 else 30_000
@@ -84,17 +84,38 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                 lastRealTick = realNow
                 lastClockTick = now
                 nowMillis = now
-                vm.dispatch(SchedulerIntent.RefreshSchedule(now))
+                vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
                 delay(interval)
             }
         }
 
-        // PRD §9: recompute as soon as the task tree changes — so the first task created on an empty
-        // database is scheduled immediately (not only on the next tick), editing the tree (e.g. the
-        // scheduled task's minimum time) updates its scheduled period right away, and deleting the
-        // scheduled task's cell cuts its period at that instant. Keyed on cells too, since a deletion
-        // changes `cells` while the task object is briefly kept. A no-op when nothing relevant changed.
-        LaunchedEffect(schedulerState.tasks, schedulerState.cells) {
+        // PRD §9 calculation event #2 (tree change): recompute on a 1-second debounce after the task
+        // tree changes — so the first task on an empty database is scheduled, editing a task's minimum
+        // time reshapes the schedule, and deleting a scheduled task's cell refills around the cut.
+        // Keyed on cells too (a deletion changes `cells` while the task object is briefly kept). Gated
+        // by §7: skipped while auto-scheduling is off (re-runs when it turns back on). The LaunchedEffect
+        // restart-on-change cancels the prior delay, giving the debounce.
+        LaunchedEffect(schedulerState.tasks, schedulerState.cells, schedulerState.automaticSchedule, clock) {
+            if (!schedulerState.automaticSchedule) return@LaunchedEffect
+            delay(1_000)
+            vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
+        }
+
+        // PRD §9 calculation event #1 (calendar change / rolling horizon): after the panels change, the
+        // next scheduling is placed 24 hours before the first moment free of task — i.e. it waits until
+        // `now` reaches `firstFreeMoment − 24h`, then refills so the window stays ~24h ahead. On an empty
+        // schedule the target is in the past, so it fills immediately; after a fill the target moves to
+        // the new horizon and the effect re-arms. Polls the (possibly simulated) clock so accelerated
+        // time is honoured. Gated by §7.
+        LaunchedEffect(schedulerState.panels, schedulerState.automaticSchedule, clock) {
+            if (!schedulerState.automaticSchedule) return@LaunchedEffect
+            val target =
+                SchedulerDomain.firstFreeMoment(schedulerState.panels, clock.nowMillis()) -
+                    SchedulerDomain.SCHEDULE_HORIZON_MILLIS
+            val pollInterval: Long = if (DebugFlags.TIME_SIMULATION) 1_000 else 30_000
+            while (clock.nowMillis() < target) {
+                delay(pollInterval)
+            }
             vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
         }
 
@@ -105,37 +126,29 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // same task (null → same id), which must stay silent. Clearing the schedule keeps the last
         // value so re-scheduling the same task later is still silent.
         var lastNotifiedTaskId by remember { mutableStateOf<TaskId?>(null) }
-        LaunchedEffect(schedulerState.scheduled?.taskId) {
-            val taskId = schedulerState.scheduled?.taskId ?: return@LaunchedEffect
+        val currentTaskId = SchedulerDomain.currentPanel(schedulerState, nowMillis)?.taskId
+        LaunchedEffect(currentTaskId) {
+            val taskId = currentTaskId ?: return@LaunchedEffect
             if (taskId == lastNotifiedTaskId) return@LaunchedEffect
             val title = schedulerState.tasks[taskId]?.title?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
             lastNotifiedTaskId = taskId
             sendSystemNotification("Task to do now", title)
         }
 
-        // Done periods (PRD §8 task record, green) plus the scheduler's current task to do (PRD §9,
-        // blue) — both drawn the same way in the calendar. PRD §8 manual entries are drawn too.
+        // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
+        // user-authored, uniform blocks) drawn the same way.
         val calendarRecords =
             schedulerState.tasks.values.flatMap { task ->
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
             } +
-                (schedulerState.scheduled?.let { sch ->
-                    schedulerState.tasks[sch.taskId]?.let { task ->
-                        CalendarRecord(
-                            title = task.title,
-                            range = TaskTimeRange(sch.startEpochMillis, sch.deadlineEpochMillis),
-                            scheduled = true,
-                            taskId = sch.taskId,
-                        )
-                    }
-                }?.let(::listOf) ?: emptyList()) +
-                schedulerState.manualEntries.map {
+                schedulerState.panels.map {
                     CalendarRecord(
                         title = it.title,
                         range = TaskTimeRange(it.startEpochMillis, it.endEpochMillis),
                         manual = true,
                         entryId = it.id,
                         taskId = it.taskId,
+                        pinned = it.pinned,
                     )
                 }
 
@@ -147,6 +160,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
         var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
+        // PRD §8 Manual add: a not-yet-committed default panel shown in the edit window with a Save
+        // button (null = not adding). Distinct from [editingBlock] so Save knows to add vs. update.
+        var addingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
 
         Box(
             modifier = Modifier
@@ -165,6 +181,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     selectedDate = selectedDate,
                     today = today,
                     onSelectDate = { selectedDate = it },
+                    automaticSchedule = schedulerState.automaticSchedule,
+                    onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
                 )
 
                 // The content area is clipped so the floating calendar window can overlap the tree
@@ -183,13 +201,29 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             onDismiss = { calendarOpen = false },
                             modifier = Modifier.align(Alignment.Center),
                             records = calendarRecords,
+                            // PRD §8 Manual add: open the edit window pre-filled with the default task
+                            // (highest absolute priority, min-time span) and a Save button.
                             onAddTaskAt = { startMillis ->
-                                vm.dispatch(SchedulerIntent.AddManualCalendarEntry(startMillis))
+                                val taskId = SchedulerDomain.manualAddTaskId(schedulerState)
+                                val task = taskId?.let { schedulerState.tasks[it] }
+                                val span = (task?.minimumMinutes?.toLong() ?: 45L) * 60_000L
+                                addingBlock = PlacedRecord(
+                                    title = task?.title.orEmpty(),
+                                    startHour = 0f,
+                                    endHour = 0f,
+                                    scheduled = false,
+                                    manual = true,
+                                    entryId = null,
+                                    taskId = taskId,
+                                    pinned = false,
+                                    fullStartMillis = startMillis,
+                                    fullEndMillis = startMillis + span,
+                                )
                             },
-                            // PRD §8 (uniform blocks): committing a drag/resize either updates the
-                            // manual entry or pins the auto block (record/scheduled) into one.
+                            // PRD §8 (uniform blocks): committing a drag/resize updates the panel
+                            // (auto blocks become user-authored), or pins a record into a panel.
                             onCommitBounds = { block, newStart, newEnd ->
-                                commitBoundsIntent(block, block.taskId, block.title, newStart, newEnd)
+                                commitBoundsIntent(block, block.taskId, block.title, newStart, newEnd, block.pinned)
                                     ?.let(vm::dispatch)
                             },
                             onEditEntry = { block -> editingBlock = block },
@@ -197,8 +231,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             onRemoveEntry = { block -> removeBlockIntent(block)?.let(vm::dispatch) },
                         )
 
-                        // PRD §8 edit window, drawn over the calendar window and the tree.
-                        editingBlock?.let { block ->
+                        // PRD §8 edit window, drawn over the calendar window and the tree — used for
+                        // both editing an existing block and the Manual-add default panel.
+                        (editingBlock ?: addingBlock)?.let { block ->
+                            val isNew = editingBlock == null
                             ManualEntryEditWindow(
                                 initialTitle = block.title,
                                 initialTaskId = block.taskId,
@@ -211,11 +247,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                 titleSuggestions = { SchedulerDomain.titleSuggestions(schedulerState, it) },
                                 taskIdForTitle = { schedulerState.titleToTaskIds[it]?.firstOrNull() },
                                 titleForTaskId = { schedulerState.tasks[it]?.title },
-                                onDismiss = { editingBlock = null },
-                                onSave = { taskId, title, startMillis, endMillis ->
-                                    commitBoundsIntent(block, taskId, title, startMillis, endMillis)
-                                        ?.let(vm::dispatch)
+                                initialPinned = block.pinned,
+                                onDismiss = { editingBlock = null; addingBlock = null },
+                                onSave = { taskId, title, startMillis, endMillis, pinned ->
+                                    val intent =
+                                        if (isNew) {
+                                            SchedulerIntent.AddTaskPanel(taskId, title, startMillis, endMillis, pinned)
+                                        } else {
+                                            commitBoundsIntent(block, taskId, title, startMillis, endMillis, pinned)
+                                        }
+                                    intent?.let(vm::dispatch)
                                     editingBlock = null
+                                    addingBlock = null
                                 },
                             )
                         }
@@ -236,9 +279,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
 }
 
 /**
- * PRD §8 (uniform blocks): the intent that commits new bounds/title for any calendar [block].
- * A manual entry is updated in place; an auto block (scheduled or task record) is pinned into a new
- * manual entry. Returns null when the block has no usable identity (defensive).
+ * PRD §8 (uniform blocks): the intent that commits new bounds/title/pinned for any calendar [block].
+ * A panel (it has an [PlacedRecord.entryId]) is updated in place; a green task-record block is pinned
+ * into a new panel. Returns null when the block has no usable identity (defensive).
  */
 private fun commitBoundsIntent(
     block: PlacedRecord,
@@ -246,13 +289,12 @@ private fun commitBoundsIntent(
     title: String,
     startMillis: Long,
     endMillis: Long,
+    pinned: Boolean,
 ): SchedulerIntent? = when {
     block.entryId != null ->
-        SchedulerIntent.UpdateManualCalendarEntry(block.entryId, taskId, title, startMillis, endMillis)
-    block.scheduled ->
-        SchedulerIntent.PinScheduledAsManual(taskId, title, startMillis, endMillis)
+        SchedulerIntent.UpdateTaskPanel(block.entryId, taskId, title, startMillis, endMillis, pinned)
     block.taskId != null ->
-        SchedulerIntent.PinRecordAsManual(
+        SchedulerIntent.PinRecordAsPanel(
             recordTaskId = block.taskId,
             recordStartEpochMillis = block.fullStartMillis,
             recordEndEpochMillis = block.fullEndMillis,
@@ -260,19 +302,18 @@ private fun commitBoundsIntent(
             title = title,
             startEpochMillis = startMillis,
             endEpochMillis = endMillis,
+            pinned = pinned,
         )
     else -> null
 }
 
 /**
  * PRD §8 task contextual menu "Remove": the intent that deletes a calendar [block] from its source —
- * a manual entry is removed, an auto record period is dropped from the task record, and the auto
- * scheduled "to do now" block clears the current allocation. Returns null when the block has no
- * removable identity (defensive).
+ * a panel is removed, a green task-record period is dropped from the task record. Returns null when
+ * the block has no removable identity (defensive).
  */
 private fun removeBlockIntent(block: PlacedRecord): SchedulerIntent? = when {
-    block.entryId != null -> SchedulerIntent.RemoveManualCalendarEntry(block.entryId)
-    block.scheduled -> SchedulerIntent.RemoveScheduledNow
+    block.entryId != null -> SchedulerIntent.RemoveTaskPanel(block.entryId)
     block.taskId != null ->
         SchedulerIntent.RemoveRecordPeriod(block.taskId, block.fullStartMillis, block.fullEndMillis)
     else -> null
