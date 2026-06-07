@@ -781,9 +781,12 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §9 Scheduling: regenerate the auto schedule. Keeps every **pinned** panel and the single
-     * panel currently covering [nowMillis] (so the in-progress "task to do now" is stable across a
-     * reschedule), drops all other panels, and refills the window from [firstFreeMoment] out past
+     * PRD §9 Scheduling: regenerate the auto schedule. Keeps every **pinned** panel, the single panel
+     * currently covering [nowMillis], and every panel entirely **outside** the scheduling window —
+     * past (`end ≤ now`) or beyond the horizon (`start ≥ now + 24h`). Scheduling only regenerates the
+     * window `[firstFree, now+24h]`, so a non-pinned user panel the user dragged before `now` or added
+     * more than 24h out is left untouched. Drops the other (in-window, non-pinned) panels and refills
+     * the window from [firstFreeMoment] out past
      * `now + ` [SCHEDULE_HORIZON_MILLIS] with a contiguous chain of auto panels. Each panel's task is
      * chosen by [nextTask] **at that panel's start time** (PRD §9 "task choice"); because each panel
      * just laid down counts as a past period for the next iteration (via [pastPeriodsForTask], clipped
@@ -799,8 +802,14 @@ object SchedulerDomain {
         k: Double = DEFAULT_DECAY_PER_HOUR,
     ): List<TaskPanel> {
         val current = panelAt(state.panels, nowMillis)
-        val kept = state.panels.filter { it.pinned || it === current }
         val horizon = nowMillis + SCHEDULE_HORIZON_MILLIS
+        // Scheduling regenerates ONLY the window [firstFree, now+24h]. Keep pinned panels, the
+        // in-progress one, and any panel entirely OUTSIDE the window — past (end ≤ now) or beyond the
+        // horizon (start ≥ now+24h) — so a user panel there (incl. non-pinned) is never wiped (PRD §9
+        // scope: a panel dragged before `now`, or added more than 24h out, must survive a reschedule).
+        val kept = state.panels.filter {
+            it.pinned || it === current || it.endEpochMillis <= nowMillis || it.startEpochMillis >= horizon
+        }
         var working = state.copy(panels = kept)
         val generated = mutableListOf<TaskPanel>()
         var cursor = firstFreeMoment(kept, nowMillis)

@@ -173,6 +173,35 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun refresh_schedule_keeps_a_non_pinned_panel_that_is_in_the_past() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // A non-pinned user panel sitting just before now — e.g. dragged from just-after to just-before
+        // the current time. Scheduling regenerates only the future, so it must NOT be wiped.
+        val past = TaskPanel("panel/0", a, "A", now - 30 * MIN, now - MIN, pinned = false, auto = false)
+        val s = s0.copy(panels = listOf(past), nextPanelCounter = 1)
+
+        val refreshed = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now))
+
+        assertTrue(past in refreshed.panels) // PRD §9: past panels are history, not removed
+        assertTrue(refreshed.panels.any { it.auto && it.startEpochMillis == now }) // future still filled
+    }
+
+    @Test
+    fun refresh_schedule_keeps_a_non_pinned_panel_beyond_the_24h_horizon() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // A non-pinned user panel added more than 24h out is outside the scheduling window, so toggling
+        // the auto-schedule switch (which reschedules) must not wipe it.
+        val far = TaskPanel("panel/0", a, "A", now + 30 * HOUR_MS, now + 31 * HOUR_MS, pinned = false, auto = false)
+        val s = s0.copy(panels = listOf(far), nextPanelCounter = 1)
+
+        val refreshed = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now))
+
+        assertTrue(far in refreshed.panels) // PRD §9: panels beyond the horizon are outside scope
+    }
+
+    @Test
     fun refresh_schedule_is_deferred_while_automatic_schedule_is_off() {
         val (s0, _, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
