@@ -243,6 +243,29 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §8 "Remove" on a *merged* calendar block (consecutive same-task panels shown as one): delete
+     * every backing panel at once, as a single undoable calendar delta.
+     */
+    data class RemoveTaskPanels(
+        val ids: List<String>,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §8 edit / drag / resize commit on a *merged* calendar block (consecutive same-task panels
+     * shown as one): drop all of [removeIds] and lay down a single user-authored panel with the given
+     * task/title/bounds/[pinned] — so interacting with the merged block treats the whole visible span as
+     * one decision. The result is normalized with the same-task merge on commit. Recorded as one delta.
+     */
+    data class ReplaceTaskPanels(
+        val removeIds: List<String>,
+        val taskId: TaskId?,
+        val title: String,
+        val startEpochMillis: Long,
+        val endEpochMillis: Long,
+        val pinned: Boolean,
+    ) : SchedulerIntent
+
+    /**
      * PRD §8 task contextual menu ("Remove") on an auto task-record block: drop the
      * `[startEpochMillis, endEpochMillis]` period from [taskId]'s record. The record lives outside the
      * Undo/Redo history (PRD §8), so this is a side effect, not an undoable delta.

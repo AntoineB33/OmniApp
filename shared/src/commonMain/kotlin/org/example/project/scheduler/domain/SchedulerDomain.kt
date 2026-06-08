@@ -564,10 +564,11 @@ object SchedulerDomain {
     /**
      * PRD §9 next task: the most under-served *leaf* task at [nowMillis] — the one whose time-weighted
      * percentage is furthest *below* its absolute priority percentage (`argmax(absolute − weighted)`).
-     * Empty placeholders, the root/main tasks, tasks with child tasks (PRD §9), and tasks no longer in
-     * the tree (kept only for their record, PRD §4/§8) are excluded. Returns null when there are no
-     * real leaf tasks. (Minimum time, PRD §10, constrains the allocated duration, not which task is
-     * chosen.)
+     * Empty placeholders, the root/main tasks, tasks with child tasks (PRD §9), tasks no longer in
+     * the tree (kept only for their record, PRD §4/§8), and **blank-titled tasks** (a cell emptied to
+     * "delete" the task keeps its id and lingers while panels/records still point at it) are excluded.
+     * Returns null when there are no real leaf tasks. (Minimum time, PRD §10, constrains the allocated
+     * duration, not which task is chosen.)
      */
     fun nextTask(
         state: SchedulerState,
@@ -578,7 +579,8 @@ object SchedulerDomain {
         val weighted = timeWeightedPercentages(state, nowMillis, k)
         val candidates =
             state.tasks.keys.filter {
-                !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) && isLeafTask(state, it)
+                !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) && isLeafTask(state, it) &&
+                    state.tasks[it]?.title?.isNotBlank() == true
             }
         return candidates.maxByOrNull { taskId ->
             (absolute[taskId] ?: 0.0) - (weighted[taskId] ?: 0.0)
@@ -595,13 +597,16 @@ object SchedulerDomain {
     /**
      * PRD §8 Manual add: the task chosen by the calendar's right-click "add a task" action — the one
      * with the biggest absolute priority percentage, breaking ties alphabetically by title (the
-     * first in alphabetic order wins). Excludes the root/main tasks and tasks no longer in the tree.
-     * Returns null when there is no real task to add.
+     * first in alphabetic order wins). Excludes the root/main tasks, tasks no longer in the tree, and
+     * blank-titled (emptied) tasks. Returns null when there is no real task to add.
      */
     fun manualAddTaskId(state: SchedulerState): TaskId? {
         val absolute = absoluteTaskPriorities(state)
         val candidates =
-            state.tasks.keys.filter { !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) }
+            state.tasks.keys.filter {
+                !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) &&
+                    state.tasks[it]?.title?.isNotBlank() == true
+            }
         if (candidates.isEmpty()) return null
         // minWith over (priority desc, title asc): the minimum is the highest priority, and on a tie
         // the alphabetically-first title.
@@ -674,6 +679,31 @@ object SchedulerDomain {
             }
         }
         return if (changed) result else panels
+    }
+
+    /**
+     * PRD §8 same-task merge (display grouping): the runs the calendar shows as single blocks. Walking
+     * the [panels] in start order, consecutive panels of the same (non-null) task with the same
+     * [TaskPanel.pinned] flag that touch or overlap are grouped together; a different task, a pin-state
+     * change, a null taskId, or a gap starts a new group. Unlike [mergeSameTaskPanels] this keeps the
+     * individual panels (so callers can still act on each backing panel) rather than fusing them — the
+     * UI fuses each returned run into one block while the stored panels stay separate.
+     */
+    fun groupSameTaskPanelsForDisplay(panels: List<TaskPanel>): List<List<TaskPanel>> {
+        if (panels.isEmpty()) return emptyList()
+        val sorted = panels.sortedBy { it.startEpochMillis }
+        val groups = mutableListOf<MutableList<TaskPanel>>()
+        for (panel in sorted) {
+            val group = groups.lastOrNull()
+            val head = group?.first()
+            val frontier = group?.maxOf { it.endEpochMillis } ?: Long.MIN_VALUE
+            val mergeable = head != null &&
+                panel.taskId != null && head.taskId == panel.taskId &&
+                head.pinned == panel.pinned &&
+                panel.startEpochMillis <= frontier
+            if (mergeable) group!!.add(panel) else groups.add(mutableListOf(panel))
+        }
+        return groups
     }
 
     /**
@@ -903,9 +933,13 @@ object SchedulerDomain {
         if (straddler != null && lastGen != null && lastGen.taskId == straddler.taskId) {
             generated[generated.lastIndex] = lastGen.copy(endEpochMillis = straddler.endEpochMillis)
         }
-        // PRD §8: collapse any consecutive same-task panels the fill laid down (e.g. one dominant task)
-        // into a single block.
-        return mergeSameTaskPanels((kept + generated).sortedBy { it.startEpochMillis })
+        // NB: auto panels are deliberately NOT run through [mergeSameTaskPanels] here. Each auto panel is
+        // a distinct scheduling *session*; the reschedule keeps only the in-progress one (the panel
+        // covering `now`) and refills the rest. Fusing a sole task's consecutive sessions into one block
+        // would make that block span the whole horizon, so the kept "current" panel would swallow the
+        // entire window and a newly added task could never be scheduled (firstFreeMoment → now+24h).
+        // Same-task merging is a property of persistent user/pinned panels, applied on commit (PRD §8).
+        return (kept + generated).sortedBy { it.startEpochMillis }
     }
 
     /** Safety cap on the number of auto panels one fill can lay down (≈ 24h / shortest sane span). */

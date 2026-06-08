@@ -22,6 +22,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
@@ -157,17 +158,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         val calendarRecords =
             schedulerState.tasks.values.flatMap { task ->
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
-            } +
-                schedulerState.panels.map {
-                    CalendarRecord(
-                        title = it.title,
-                        range = TaskTimeRange(it.startEpochMillis, it.endEpochMillis),
-                        manual = true,
-                        entryId = it.id,
-                        taskId = it.taskId,
-                        pinned = it.pinned,
-                    )
-                }
+            } + mergePanelsForDisplay(schedulerState.panels)
 
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
@@ -308,6 +299,9 @@ private fun commitBoundsIntent(
     endMillis: Long,
     pinned: Boolean,
 ): SchedulerIntent? = when {
+    // A merged block (several same-task panels shown as one): replace the whole group with one panel.
+    block.entryIds.size > 1 ->
+        SchedulerIntent.ReplaceTaskPanels(block.entryIds, taskId, title, startMillis, endMillis, pinned)
     block.entryId != null ->
         SchedulerIntent.UpdateTaskPanel(block.entryId, taskId, title, startMillis, endMillis, pinned)
     block.taskId != null ->
@@ -330,8 +324,31 @@ private fun commitBoundsIntent(
  * the block has no removable identity (defensive).
  */
 private fun removeBlockIntent(block: PlacedRecord): SchedulerIntent? = when {
+    block.entryIds.size > 1 -> SchedulerIntent.RemoveTaskPanels(block.entryIds)
     block.entryId != null -> SchedulerIntent.RemoveTaskPanel(block.entryId)
     block.taskId != null ->
         SchedulerIntent.RemoveRecordPeriod(block.taskId, block.fullStartMillis, block.fullEndMillis)
     else -> null
 }
+
+/**
+ * PRD §8 same-task merge (display): collapse the schedulable [panels] into the blocks the calendar
+ * shows — consecutive panels of the same (non-null) task with the same pin state, that touch or
+ * overlap, render as one block spanning the run. Each block carries every backing panel id (see
+ * [CalendarRecord.entryIds]) so an edit/drag/resize/remove acts on the whole group. The underlying
+ * panels stay separate in state — auto panels are distinct scheduling sessions the reschedule must be
+ * able to reshape — so this fusing is purely visual. A null-task ("New task") panel never merges.
+ */
+private fun mergePanelsForDisplay(panels: List<TaskPanel>): List<CalendarRecord> =
+    SchedulerDomain.groupSameTaskPanelsForDisplay(panels).map { group ->
+        val head = group.first()
+        CalendarRecord(
+            title = head.title,
+            range = TaskTimeRange(head.startEpochMillis, group.maxOf { it.endEpochMillis }),
+            manual = true,
+            entryId = head.id,
+            entryIds = group.map { it.id },
+            taskId = head.taskId,
+            pinned = head.pinned,
+        )
+    }

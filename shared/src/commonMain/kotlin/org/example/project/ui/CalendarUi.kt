@@ -119,6 +119,12 @@ data class CalendarRecord(
     val manual: Boolean = false,
     /** Identity of the backing [org.example.project.scheduler.model.TaskPanel] (panels only). */
     val entryId: String? = null,
+    /**
+     * PRD §8 same-task merge: the ids of every panel fused into this displayed block (consecutive
+     * same-task, same-pin panels are shown as one). Holds one id for an unmerged panel and is empty for
+     * a green task-record block. Interactions on a merged block act on all of these at once.
+     */
+    val entryIds: List<String> = emptyList(),
     val taskId: TaskId? = null,
     /** PRD §9 whether the backing panel is pinned (seeds the edit-window pin toggle). */
     val pinned: Boolean = false,
@@ -132,6 +138,8 @@ data class PlacedRecord(
     val scheduled: Boolean,
     val manual: Boolean = false,
     val entryId: String? = null,
+    /** PRD §8 same-task merge: every backing panel id of this (possibly merged) block. See [CalendarRecord.entryIds]. */
+    val entryIds: List<String> = emptyList(),
     val taskId: TaskId? = null,
     val pinned: Boolean = false,
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
@@ -163,6 +171,7 @@ fun recordsForDay(
             scheduled = record.scheduled,
             manual = record.manual,
             entryId = record.entryId,
+            entryIds = record.entryIds,
             taskId = record.taskId,
             pinned = record.pinned,
             fullStartMillis = record.range.startEpochMillis,

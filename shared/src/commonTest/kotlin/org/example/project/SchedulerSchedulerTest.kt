@@ -216,6 +216,50 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun adding_a_second_task_after_a_full_schedule_reschedules_to_include_it() {
+        // Regression: scheduling a sole task filled 24h with its (consecutive, same-task) auto sessions.
+        // These must stay SEPARATE sessions — if they were fused into one block it would become the
+        // kept in-progress panel spanning the whole horizon, and a newly added task could never enter
+        // the schedule (firstFreeMoment → now+24h, the fill loop never runs).
+        val (s0, solo) = stateWithOneTask(45)
+        val now = 1_000_000_000_000L
+        val scheduled = SchedulerReducer.reduce(s0, SchedulerIntent.RefreshSchedule(now))
+        assertTrue(scheduled.panels.all { it.taskId == solo }) // only the sole task so far
+
+        // Add a second sibling task in the same sublist (the auto-appended placeholder cell).
+        val placeholder = scheduled.lists[scheduled.rootListId]!!.cellIds[1]
+        val withSecond = SchedulerReducer.reduce(scheduled, SchedulerIntent.SetCellTitle(placeholder, "Two"))
+        val two = withSecond.tasks.keys.first { withSecond.tasks[it]!!.title == "Two" }
+
+        val refreshed = SchedulerReducer.reduce(withSecond, SchedulerIntent.RefreshSchedule(now))
+
+        assertTrue(refreshed.panels.any { it.taskId == two }) // the new task is now scheduled
+        assertTrue(refreshed.panels.any { it.taskId == solo }) // and the original still appears
+    }
+
+    @Test
+    fun deleting_a_task_by_emptying_its_cell_drops_it_from_the_schedule() {
+        // Regression: "deleting" a task clears its cell title but the cell keeps its id and the task
+        // lingers (its panels/records still reference it). A blank-titled task must NOT be scheduled —
+        // otherwise the refill alternates the survivor with "(untitled)" blocks.
+        val (s0, a, b) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val scheduled = SchedulerReducer.reduce(s0, SchedulerIntent.RefreshSchedule(now))
+        assertTrue(scheduled.panels.any { it.taskId == a } && scheduled.panels.any { it.taskId == b })
+
+        // Delete task B by emptying the cell that titled it.
+        val bCell = scheduled.tasks[b]!!.occurrences.first()
+        val deleted = SchedulerReducer.reduce(scheduled, SchedulerIntent.SetCellTitle(bCell, ""))
+
+        val refreshed = SchedulerReducer.reduce(deleted, SchedulerIntent.RefreshSchedule(now))
+
+        assertTrue(SchedulerDomain.nextTask(refreshed, now) != b) // the emptied task is never chosen
+        assertTrue(refreshed.panels.any { it.taskId == a }) // the survivor fills the window
+        assertTrue(refreshed.panels.none { it.taskId == b }) // no blank "(untitled)" B panels
+        assertTrue(refreshed.panels.none { it.title.isBlank() }) // nothing renders as "(untitled)"
+    }
+
+    @Test
     fun refresh_schedule_keeps_a_non_pinned_panel_that_is_in_the_past() {
         val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L

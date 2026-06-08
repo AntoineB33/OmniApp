@@ -49,6 +49,8 @@ object SchedulerReducer {
             is SchedulerIntent.ResizeTaskPanel -> reduceResizeTaskPanel(state, intent)
             is SchedulerIntent.PinRecordAsPanel -> reducePinRecord(state, intent)
             is SchedulerIntent.RemoveTaskPanel -> reduceRemoveTaskPanel(state, intent.id)
+            is SchedulerIntent.RemoveTaskPanels -> reduceRemoveTaskPanels(state, intent.ids)
+            is SchedulerIntent.ReplaceTaskPanels -> reduceReplaceTaskPanels(state, intent)
             is SchedulerIntent.RemoveRecordPeriod -> reduceRemoveRecordPeriod(state, intent)
             is SchedulerIntent.SetCalendarFocus -> state.copy(calendarFocused = intent.focused)
             is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
@@ -798,6 +800,40 @@ object SchedulerReducer {
         val panels = state.panels
         if (panels.none { it.id == id }) return state
         return commitPanels(state, panels.filterNot { it.id == id })
+    }
+
+    /** PRD §8 "Remove" on a merged block: delete all its backing panels in one delta. */
+    private fun reduceRemoveTaskPanels(state: SchedulerState, ids: List<String>): SchedulerState {
+        val idSet = ids.toSet()
+        if (state.panels.none { it.id in idSet }) return state
+        return commitPanels(state, state.panels.filterNot { it.id in idSet })
+    }
+
+    /**
+     * PRD §8 edit/drag/resize commit on a merged block: drop [intent.removeIds] and add one
+     * user-authored panel over the committed bounds. The bounds arrive already overlap-snapped from the
+     * calendar block's live preview (against the other, non-merged blocks), so they are used as-is — as
+     * with [reduceAddTaskPanel]. [commitPanels] then re-merges if the result abuts a same-task panel.
+     */
+    private fun reduceReplaceTaskPanels(
+        state: SchedulerState,
+        intent: SchedulerIntent.ReplaceTaskPanels,
+    ): SchedulerState {
+        val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
+        val idSet = intent.removeIds.toSet()
+        val remaining = state.panels.filterNot { it.id in idSet }
+        val (panelId, allocated) = state.copy(panels = remaining).allocatePanelId()
+        val panel =
+            TaskPanel(
+                id = panelId,
+                taskId = intent.taskId,
+                title = intent.title,
+                startEpochMillis = intent.startEpochMillis,
+                endEpochMillis = end,
+                pinned = intent.pinned,
+                auto = false,
+            )
+        return commitPanels(allocated, allocated.panels + panel)
     }
 
     /**

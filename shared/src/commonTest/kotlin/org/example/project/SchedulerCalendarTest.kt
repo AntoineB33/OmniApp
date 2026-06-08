@@ -197,6 +197,86 @@ class SchedulerCalendarTest {
         assertTrue(added.panels[0].pinned)
     }
 
+    // ----- §8 same-task display grouping (auto sessions shown as one block) --------------------
+
+    @Test
+    fun display_grouping_fuses_consecutive_same_task_sessions_keeping_their_ids() {
+        val a = TaskId("t/a")
+        // Three back-to-back auto sessions of the same task — what a sole-task 24h fill produces.
+        val groups = SchedulerDomain.groupSameTaskPanelsForDisplay(
+            listOf(
+                autoPanel("auto/0", a, 0, 45 * MIN),
+                autoPanel("auto/1", a, 45 * MIN, 90 * MIN),
+                autoPanel("auto/2", a, 90 * MIN, 135 * MIN),
+            ),
+        )
+        assertEquals(1, groups.size) // shown as a single block
+        assertEquals(listOf("auto/0", "auto/1", "auto/2"), groups[0].map { it.id }) // all backing ids kept
+    }
+
+    @Test
+    fun display_grouping_splits_on_task_change_pin_change_and_gaps() {
+        val a = TaskId("t/a")
+        val b = TaskId("t/b")
+        val groups = SchedulerDomain.groupSameTaskPanelsForDisplay(
+            listOf(
+                autoPanel("auto/0", a, 0, 45 * MIN),
+                autoPanel("auto/1", b, 45 * MIN, 90 * MIN), // different task → new block
+                TaskPanel("p2", a, "A", 90 * MIN, 135 * MIN, pinned = true, auto = false),
+                TaskPanel("p3", a, "A", 135 * MIN, 180 * MIN, pinned = false, auto = false), // pin differs → new block
+                autoPanel("auto/4", a, 240 * MIN, 300 * MIN), // gap before it → new block
+            ),
+        )
+        assertEquals(listOf(listOf("auto/0"), listOf("auto/1"), listOf("p2"), listOf("p3"), listOf("auto/4")),
+            groups.map { g -> g.map { it.id } })
+    }
+
+    @Test
+    fun display_grouping_never_groups_calendar_only_panels() {
+        val groups = SchedulerDomain.groupSameTaskPanelsForDisplay(
+            listOf(
+                TaskPanel("p0", null, "new", 0, 45 * MIN, pinned = false, auto = false),
+                TaskPanel("p1", null, "new", 45 * MIN, 90 * MIN, pinned = false, auto = false),
+            ),
+        )
+        assertEquals(2, groups.size) // null taskId is not "the same task"
+    }
+
+    @Test
+    fun remove_task_panels_deletes_every_backing_panel_in_one_delta() {
+        val a = TaskId("t/a")
+        val s = SchedulerState.empty().copy(
+            panels = listOf(autoPanel("auto/0", a, 0, 45 * MIN), autoPanel("auto/1", a, 45 * MIN, 90 * MIN)),
+        )
+        val removed = SchedulerReducer.reduce(s, SchedulerIntent.RemoveTaskPanels(listOf("auto/0", "auto/1")))
+        assertTrue(removed.panels.isEmpty())
+    }
+
+    @Test
+    fun replace_task_panels_swaps_a_merged_run_for_one_user_panel() {
+        val a = TaskId("t/a")
+        val b = TaskId("t/b")
+        val s = SchedulerState.empty().copy(
+            panels = listOf(
+                autoPanel("auto/0", a, 0, 45 * MIN),
+                autoPanel("auto/1", a, 45 * MIN, 90 * MIN),
+                autoPanel("auto/2", b, 90 * MIN, 135 * MIN), // a different-task block left untouched
+            ),
+        )
+        val replaced = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ReplaceTaskPanels(listOf("auto/0", "auto/1"), a, "A", 0, 90 * MIN, pinned = true),
+        )
+        // The two A sessions are gone, replaced by one pinned user panel; the B block stays.
+        assertTrue(replaced.panels.none { it.id == "auto/0" || it.id == "auto/1" })
+        val newPanel = replaced.panels.first { it.taskId == a }
+        assertEquals(0, newPanel.startEpochMillis)
+        assertEquals(90 * MIN, newPanel.endEpochMillis)
+        assertTrue(newPanel.pinned)
+        assertFalse(newPanel.auto)
+        assertTrue(replaced.panels.any { it.id == "auto/2" }) // untouched
+    }
+
     @Test
     fun drag_sticks_to_the_end_of_a_group_when_past_its_midpoint() {
         val placed = SchedulerDomain.placeDraggedEntry(listOf(range(100, 200)), desiredStart = 160, duration = 40)
