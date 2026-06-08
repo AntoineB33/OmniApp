@@ -159,6 +159,46 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun refill_keeping_the_in_progress_panel_gives_every_panel_a_unique_id() {
+        // Regression: a re-fill (e.g. the second of §9's two calculation events) keeps the panel
+        // covering `now` with its old "auto/i" id while numbering the freshly generated panels from
+        // "auto/0" — so the kept current and the first generated panel collided on "auto/0". The
+        // calendar keys overlap layout by id, drawing the next task stretched over the current one.
+        val (s0, a, b) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // First fill, then feed it back and refill at the SAME now: A's first panel covers now and is
+        // kept; the rest of the window is regenerated.
+        val firstFill = SchedulerDomain.fillSchedule(s0, now)
+        val refilled = SchedulerDomain.fillSchedule(s0.copy(panels = firstFill), now)
+
+        val ids = refilled.map { it.id }
+        assertEquals(ids.size, ids.toSet().size, "panel ids must be unique, got $ids")
+        // No two panels overlap in time (the visual symptom of the collision).
+        val sorted = refilled.sortedBy { it.startEpochMillis }
+        for (i in 1 until sorted.size) {
+            assertTrue(
+                sorted[i].startEpochMillis >= sorted[i - 1].endEpochMillis,
+                "panels overlap: ${sorted[i - 1]} vs ${sorted[i]}",
+            )
+        }
+        // Sanity: the in-progress A panel is preserved and the rotation still reads A, B, A, …
+        assertEquals(a, sorted.first().taskId)
+        assertEquals(b, sorted[1].taskId)
+    }
+
+    @Test
+    fun steady_state_refill_at_the_same_now_is_a_no_op() {
+        // The id normalization must stay deterministic: refilling the kept schedule at the same instant
+        // must reproduce the identical panels, so reduceRefreshSchedule's `filled == panels` short-circuit
+        // still fires (no spurious calendar history unit on every tick).
+        val (s0, _, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val firstFill = SchedulerDomain.fillSchedule(s0, now)
+        val refilled = SchedulerDomain.fillSchedule(s0.copy(panels = firstFill), now)
+        assertEquals(firstFill, refilled)
+    }
+
+    @Test
     fun fill_schedule_keeps_a_pinned_panel_and_flows_auto_panels_around_it() {
         val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L

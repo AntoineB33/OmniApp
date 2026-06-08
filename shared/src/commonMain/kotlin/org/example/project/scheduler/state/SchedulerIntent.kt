@@ -113,6 +113,17 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §13 Schedule Unit "Save": replace a task's schedule unit with [entries] (empty clears it).
+     * Recorded as a content delta so it is part of the Undo/Redo history (PRD §6). The caller (the edit
+     * window) only enables Save when [SchedulerDomain.canSaveScheduleUnit] holds, but the reducer also
+     * defends against an over-budget sum so it can never persist an invalid unit.
+     */
+    data class SetScheduleUnit(
+        val taskId: TaskId,
+        val entries: List<org.example.project.scheduler.model.ScheduleUnitEntry>,
+    ) : SchedulerIntent
+
+    /**
      * PRD §9 calculation event: regenerate the schedule against [nowMillis] — advance past any
      * completed panel, then refill the non-pinned panels out to +24h ([SchedulerDomain.fillSchedule]).
      * Dispatched by the debounced tree-change event and the deferred calendar timer. Gated by PRD §7:

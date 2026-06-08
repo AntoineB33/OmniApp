@@ -36,6 +36,8 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state) { applyMovePriorityColumn(it, intent.listId, intent.from, intent.to) })
             is SchedulerIntent.SetTaskMinimumTime ->
                 commitDelta(state, priorityTreeDelta(state) { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
+            is SchedulerIntent.SetScheduleUnit ->
+                commitDelta(state, priorityTreeDelta(state) { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
             is SchedulerIntent.AdvanceSchedule -> advanceSchedule(state, intent.nowMillis)
             is SchedulerIntent.SetAutomaticSchedule ->
@@ -1415,6 +1417,19 @@ private fun applySetTaskMinimumTime(
     val clamped = minutes.coerceAtLeast(0)
     if (task.minimumMinutes == clamped) return state
     return state.copy(tasks = state.tasks + (taskId to task.copy(minimumMinutes = clamped)))
+}
+
+private fun applySetScheduleUnit(
+    state: SchedulerState,
+    taskId: TaskId,
+    entries: List<org.example.project.scheduler.model.ScheduleUnitEntry>,
+): SchedulerState {
+    val task = state.tasks[taskId] ?: return state
+    // PRD §13: never persist a unit whose spanning times exceed the task's minimum time (the Save
+    // button is meant to be disabled in that case — this is the reducer's matching guard).
+    if (!SchedulerDomain.canSaveScheduleUnit(entries, task.minimumMinutes)) return state
+    if (task.scheduleUnit == entries) return state
+    return state.copy(tasks = state.tasks + (taskId to task.copy(scheduleUnit = entries)))
 }
 
 private fun applySetPriorityColumnWeight(

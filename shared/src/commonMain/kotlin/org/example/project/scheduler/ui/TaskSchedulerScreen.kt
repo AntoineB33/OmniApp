@@ -1,5 +1,6 @@
 package org.example.project.scheduler.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,7 +37,9 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -89,6 +92,7 @@ import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.TaskId
 import kotlin.math.roundToInt
 import org.example.project.scheduler.persistence.SchedulerStore
@@ -182,6 +186,9 @@ fun TaskSchedulerScreen(
     // PRD §10: the cell whose minimum-time field is currently expanded into an input (clicking its
     // simple display opens it), or null when every min-time field shows as a plain label.
     var minTimeEditCellId by remember { mutableStateOf<CellId?>(null) }
+    // PRD §13: the leaf task whose "define schedule unit" floating edit window is open, or null when
+    // it is closed. Opened from a cell's right-click contextual menu.
+    var scheduleUnitTaskId by remember { mutableStateOf<TaskId?>(null) }
 
     // PRD §5: selecting a cell outside the sub-list — or any cell entering Edit Mode — makes the
     // weight table disappear.
@@ -233,8 +240,9 @@ fun TaskSchedulerScreen(
         }
     }
 
+    Box(modifier = modifier.fillMaxSize()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface)
             .focusRequester(focusRequester)
@@ -408,6 +416,7 @@ fun TaskSchedulerScreen(
                 onToggleMinTimeEdit = { cellId ->
                     minTimeEditCellId = if (minTimeEditCellId == cellId) null else cellId
                 },
+                onOpenScheduleUnit = { taskId -> scheduleUnitTaskId = taskId },
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -441,6 +450,25 @@ fun TaskSchedulerScreen(
                     vm.dispatch(intent)
                 },
             )
+        }
+    }
+
+        // PRD §13: the floating "define schedule unit" window, overlaying the tree.
+        scheduleUnitTaskId?.let { taskId ->
+            val task = state.tasks[taskId]
+            if (task == null) {
+                scheduleUnitTaskId = null
+            } else {
+                ScheduleUnitEditWindow(
+                    initialEntries = task.scheduleUnit,
+                    minimumMinutes = task.minimumMinutes,
+                    onSave = { entries ->
+                        vm.dispatch(SchedulerIntent.SetScheduleUnit(taskId, entries))
+                        scheduleUnitTaskId = null
+                    },
+                    onDismiss = { scheduleUnitTaskId = null },
+                )
+            }
         }
     }
 }
@@ -494,6 +522,7 @@ private fun CellListSection(
     onTogglePriorityWeights: (CellListId) -> Unit,
     minTimeEditCellId: CellId?,
     onToggleMinTimeEdit: (CellId) -> Unit,
+    onOpenScheduleUnit: (TaskId) -> Unit,
     moveDragActive: Boolean,
     moveDropTarget: MoveDropTarget?,
     resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>?,
@@ -606,6 +635,12 @@ private fun CellListSection(
             columnDropIndex = columnDropIndex,
             minMinutes = cell.taskId?.let { state.tasks[it]?.minimumMinutes } ?: 0,
             minTimeEditing = minTimeEditCellId == cellId,
+            // PRD §13: the "define schedule unit" menu only appears for a populated leaf cell (a task
+            // with no child task); null hides it (empty cells, the root/main, and parent tasks).
+            onDefineScheduleUnit =
+                cell.taskId
+                    ?.takeIf { selectable && SchedulerDomain.isLeafTask(state, it) }
+                    ?.let { taskId -> { onOpenScheduleUnit(taskId) } },
             onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
             onSetCellWeight = { column, value ->
                 onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, value))
@@ -701,6 +736,7 @@ private fun CellListSection(
                 onTogglePriorityWeights = onTogglePriorityWeights,
                 minTimeEditCellId = minTimeEditCellId,
                 onToggleMinTimeEdit = onToggleMinTimeEdit,
+                onOpenScheduleUnit = onOpenScheduleUnit,
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -1242,6 +1278,8 @@ private fun TaskRow(
     columnDropIndex: Int?,
     minMinutes: Int,
     minTimeEditing: Boolean,
+    /** PRD §13: non-null only for a leaf cell — opens its "define schedule unit" window via right-click. */
+    onDefineScheduleUnit: (() -> Unit)?,
     onTogglePriorityWeights: () -> Unit,
     onSetCellWeight: (Int, Double) -> Unit,
     onSetMinTime: (Int) -> Unit,
@@ -1261,6 +1299,8 @@ private fun TaskRow(
     editMenus: (@Composable () -> Unit)?,
 ) {
     val editFocusRequester = remember { FocusRequester() }
+    // PRD §13: whether this cell's right-click "define schedule unit" menu is showing.
+    var scheduleUnitMenuOpen by remember(cellId) { mutableStateOf(false) }
     // Layout coordinates of this row, used to convert in-row pointer positions to window space so
     // the originating row can map an ongoing drag to the cell currently under the cursor.
     val rowCoordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
@@ -1437,9 +1477,25 @@ private fun TaskRow(
                 .background(cellBackground)
                 .then(cellBorder)
                 .then(selectionPointerModifier())
+                .then(scheduleUnitContextMenuModifier(onDefineScheduleUnit) { scheduleUnitMenuOpen = true })
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // PRD §13: right-click contextual menu on a leaf cell with the "define schedule unit" option.
+            if (onDefineScheduleUnit != null) {
+                DropdownMenu(
+                    expanded = scheduleUnitMenuOpen,
+                    onDismissRequest = { scheduleUnitMenuOpen = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("define schedule unit") },
+                        onClick = {
+                            scheduleUnitMenuOpen = false
+                            onDefineScheduleUnit()
+                        },
+                    )
+                }
+            }
             Box(
                 modifier = Modifier
                     .size(20.dp)
@@ -1699,6 +1755,154 @@ private fun TaskRow(
                     .padding(8.dp),
             ) {
                 editMenus?.invoke()
+            }
+        }
+    }
+}
+
+/**
+ * PRD §13: a right-click (secondary button) on a leaf cell opens its "define schedule unit" menu.
+ * Returns a no-op modifier when [onDefineScheduleUnit] is null (non-leaf / empty / root-main cells),
+ * so only eligible cells react. [onOpen] flips the row's local menu-visible flag.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+private fun scheduleUnitContextMenuModifier(
+    onDefineScheduleUnit: (() -> Unit)?,
+    onOpen: () -> Unit,
+): Modifier {
+    if (onDefineScheduleUnit == null) return Modifier
+    return Modifier.pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                var press = awaitPointerEvent()
+                while (press.type != PointerEventType.Press) {
+                    press = awaitPointerEvent()
+                }
+                if (press.buttons.isSecondaryPressed) {
+                    // Consume so the freshly opened menu isn't dismissed by this same click.
+                    press.changes.forEach { it.consume() }
+                    onOpen()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * PRD §13 Edition Window: the floating "define schedule unit" editor. Lists the entries vertically —
+ * each a title field plus a spanning-time field with increment/decrement buttons, a bin (remove) and a
+ * plus (insert above); a single trailing plus appends. The Save button is disabled while the summed
+ * spanning times exceed [minimumMinutes] ([SchedulerDomain.canSaveScheduleUnit]).
+ */
+@Composable
+private fun ScheduleUnitEditWindow(
+    initialEntries: List<ScheduleUnitEntry>,
+    minimumMinutes: Int,
+    onSave: (List<ScheduleUnitEntry>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var entries by remember { mutableStateOf(initialEntries) }
+    val sum = SchedulerDomain.scheduleUnitSumMinutes(entries)
+    val canSave = SchedulerDomain.canSaveScheduleUnit(entries, minimumMinutes)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.25f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 12.dp,
+            border = BorderStroke(1.dp, SheetColors.grid),
+            // Swallow clicks so they don't reach the dismissing scrim.
+            modifier = Modifier.width(360.dp).clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                enabled = false,
+                onClick = {},
+            ),
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Define schedule unit", style = MaterialTheme.typography.titleSmall)
+
+                entries.forEachIndexed { index, entry ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = entry.title,
+                            onValueChange = { newTitle ->
+                                entries = entries.toMutableList().also {
+                                    it[index] = entry.copy(title = newTitle)
+                                }
+                            },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = entry.spanMinutes.toString(),
+                            onValueChange = { raw ->
+                                val parsed = raw.filter { it.isDigit() }.toIntOrNull() ?: 0
+                                entries = entries.toMutableList().also {
+                                    it[index] = entry.copy(spanMinutes = parsed)
+                                }
+                            },
+                            singleLine = true,
+                            modifier = Modifier.width(72.dp),
+                        )
+                        Column {
+                            WeightStepButton("+") {
+                                entries = entries.toMutableList().also {
+                                    it[index] = entry.copy(spanMinutes = entry.spanMinutes + 1)
+                                }
+                            }
+                            WeightStepButton("−") {
+                                entries = entries.toMutableList().also {
+                                    it[index] = entry.copy(spanMinutes = (entry.spanMinutes - 1).coerceAtLeast(0))
+                                }
+                            }
+                        }
+                        // Bin: remove this pair.
+                        TextButton(onClick = {
+                            entries = entries.toMutableList().also { it.removeAt(index) }
+                        }) { Text("🗑") }
+                        // Plus: insert a new pair above this one.
+                        TextButton(onClick = {
+                            entries = entries.toMutableList().also { it.add(index, ScheduleUnitEntry("", 0)) }
+                        }) { Text("+") }
+                    }
+                }
+
+                // Trailing single plus: append a new pair at the end of the list.
+                TextButton(onClick = { entries = entries + ScheduleUnitEntry("", 0) }) {
+                    Text("+ add step")
+                }
+
+                Text(
+                    text = "Total: $sum min (max $minimumMinutes)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color =
+                        if (canSave) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.error,
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    // PRD §13: Save is not clickable while the spans exceed the task's minimum time.
+                    TextButton(enabled = canSave, onClick = { onSave(entries) }) { Text("Save") }
+                }
             }
         }
     }

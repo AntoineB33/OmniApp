@@ -10,6 +10,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
+import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
@@ -68,6 +69,7 @@ object SchedulerStateCodec {
                         childListId = it.childListId?.value,
                         minimumMinutes = it.minimumMinutes,
                         record = it.record.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
+                        scheduleUnit = it.scheduleUnit.map { e -> PersistedScheduleUnitEntry(e.title, e.spanMinutes) },
                     )
                 },
             expanded = expanded.map(CellId::value),
@@ -132,6 +134,7 @@ object SchedulerStateCodec {
                         childListId = it.childListId?.value,
                         minimumMinutes = it.minimumMinutes,
                         record = it.record.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
+                        scheduleUnit = it.scheduleUnit.map { e -> PersistedScheduleUnitEntry(e.title, e.spanMinutes) },
                     )
                 },
             nextTaskCounter = nextTaskCounter,
@@ -150,6 +153,7 @@ object SchedulerStateCodec {
                         childListId = p.childListId?.let(::CellListId),
                         minimumMinutes = p.minimumMinutes,
                         record = p.record.map { TaskTimeRange(it.start, it.end) },
+                        scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
                     )
             }
         val cells =
@@ -221,6 +225,7 @@ object SchedulerStateCodec {
                         childListId = p.childListId?.let(::CellListId),
                         minimumMinutes = p.minimumMinutes,
                         record = p.record.map { TaskTimeRange(it.start, it.end) },
+                        scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
                     )
             }
         val cells =
@@ -351,6 +356,14 @@ private data class PersistedTask(
     // minimum time decodes to the §10 default (45 min), matching a freshly created task.
     val minimumMinutes: Int = DEFAULT_MINIMUM_MINUTES,
     val record: List<PersistedTimeRange> = emptyList(),
+    // PRD §13: a missing schedule unit decodes to empty (a task with no schedule unit).
+    val scheduleUnit: List<PersistedScheduleUnitEntry> = emptyList(),
+)
+
+@Serializable
+private data class PersistedScheduleUnitEntry(
+    val title: String,
+    val spanMinutes: Int,
 )
 
 @Serializable

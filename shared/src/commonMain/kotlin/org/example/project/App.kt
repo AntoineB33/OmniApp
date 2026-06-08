@@ -18,6 +18,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.time.Instant
 import kotlinx.coroutines.delay
 import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.SchedulerDomain
@@ -143,14 +144,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // e.g. moving the current block pins it (id → null) and the scheduler immediately re-picks the
         // same task (null → same id), which must stay silent. Clearing the schedule keeps the last
         // value so re-scheduling the same task later is still silent.
+        // PRD §13 Notification: when the new task carries a schedule unit, the message also lists each
+        // step's deadline, computed from the start of the task's current slot ([currentPanel] start).
         var lastNotifiedTaskId by remember { mutableStateOf<TaskId?>(null) }
-        val currentTaskId = SchedulerDomain.currentPanel(schedulerState, nowMillis)?.taskId
+        val currentPanel = SchedulerDomain.currentPanel(schedulerState, nowMillis)
+        val currentTaskId = currentPanel?.taskId
         LaunchedEffect(currentTaskId) {
             val taskId = currentTaskId ?: return@LaunchedEffect
             if (taskId == lastNotifiedTaskId) return@LaunchedEffect
-            val title = schedulerState.tasks[taskId]?.title?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+            val message =
+                SchedulerDomain.taskSwitchNotificationMessage(
+                    state = schedulerState,
+                    taskId = taskId,
+                    startMillis = currentPanel.startEpochMillis,
+                ) { deadline -> formatClockTime(Instant.fromEpochMilliseconds(deadline).toLocalDateTime(tz)) }
+                    ?: return@LaunchedEffect
             lastNotifiedTaskId = taskId
-            sendSystemNotification("Task to do now", title)
+            sendSystemNotification("Task to do now", message)
         }
 
         // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
@@ -363,6 +373,13 @@ private fun removeBlockIntent(block: PlacedRecord): SchedulerIntent? = when {
  * panels stay separate in state — auto panels are distinct scheduling sessions the reschedule must be
  * able to reshape — so this fusing is purely visual. A null-task ("New task") panel never merges.
  */
+/** PRD §13: a compact `HH:MM` label for a schedule-unit step deadline in the task-switch notification. */
+private fun formatClockTime(dateTime: LocalDateTime): String {
+    val hh = dateTime.hour.toString().padStart(2, '0')
+    val mm = dateTime.minute.toString().padStart(2, '0')
+    return "$hh:$mm"
+}
+
 private fun mergePanelsForDisplay(panels: List<TaskPanel>): List<CalendarRecord> =
     SchedulerDomain.groupSameTaskPanelsForDisplay(panels).map { group ->
         val head = group.first()

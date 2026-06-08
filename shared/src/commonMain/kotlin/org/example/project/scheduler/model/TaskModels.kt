@@ -25,6 +25,24 @@ data class Task(
      * excluded from the Undo/Redo history state (see [org.example.project.scheduler.state.SchedulerState]).
      */
     val record: List<TaskTimeRange> = emptyList(),
+    /**
+     * PRD §13 Schedule Unit: an ordered list of named sub-steps (each with its own spanning time) that
+     * subdivide this task's allotted slot. Empty when the task has no schedule unit. Only meaningful for
+     * leaf tasks (PRD §13 exposes the "define schedule unit" menu only when the task has no child task).
+     * Part of the Task Tree domain object (PRD §6), so edits go through the content Undo/Redo history.
+     */
+    val scheduleUnit: List<ScheduleUnitEntry> = emptyList(),
+)
+
+/**
+ * PRD §13 Schedule Unit element: one sequential sub-step of a task, with a [title] and a [spanMinutes]
+ * spanning time (minutes, matching [Task.minimumMinutes]). The running sum of an entry's span and all
+ * preceding ones gives its deadline offset from the task's start (see
+ * [org.example.project.scheduler.domain.SchedulerDomain.scheduleUnitDeadlines]).
+ */
+data class ScheduleUnitEntry(
+    val title: String,
+    val spanMinutes: Int,
 )
 
 /**

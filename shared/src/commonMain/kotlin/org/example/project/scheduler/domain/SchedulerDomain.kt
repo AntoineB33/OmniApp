@@ -4,6 +4,7 @@ import kotlin.math.exp
 import kotlin.math.ln
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
@@ -858,6 +859,59 @@ object SchedulerDomain {
     fun currentPanel(state: SchedulerState, nowMillis: Long): TaskPanel? =
         panelAt(state.panels, nowMillis)
 
+    // ----- §13 Schedule Unit ------------------------------------------------------------------
+
+    /** PRD §13: total spanning time (minutes) of a schedule unit's entries. */
+    fun scheduleUnitSumMinutes(entries: List<ScheduleUnitEntry>): Int =
+        entries.sumOf { it.spanMinutes }
+
+    /**
+     * PRD §13 "Save button is not clickable" rule: the edit window may be saved only when the sum of
+     * the schedule unit's spanning times does **not exceed** the task's minimum time. An empty unit
+     * (the user cleared every step) is always saveable — it simply removes the schedule unit.
+     */
+    fun canSaveScheduleUnit(entries: List<ScheduleUnitEntry>, minimumMinutes: Int): Boolean =
+        scheduleUnitSumMinutes(entries) <= minimumMinutes
+
+    /**
+     * PRD §13 Notification: the deadline of each schedule unit element, as `(title, deadlineEpochMillis)`
+     * pairs. Walking the entries in order, each deadline is [startMillis] plus the running sum of this
+     * entry's span and every preceding one (so the last entry's deadline is the task's end if the spans
+     * fill the slot). Empty when the task has no schedule unit.
+     */
+    fun scheduleUnitDeadlines(
+        entries: List<ScheduleUnitEntry>,
+        startMillis: Long,
+    ): List<Pair<String, Long>> {
+        var cursor = startMillis
+        return entries.map { entry ->
+            cursor += entry.spanMinutes.toLong() * 60_000L
+            entry.title to cursor
+        }
+    }
+
+    /**
+     * PRD §11/§13 Notification body for "the task to do now". Names the [taskId] (its title) and, when
+     * the task carries a schedule unit (PRD §13), appends each element's deadline computed from
+     * [startMillis] via [formatDeadline]. Returns null when the task is missing or blank-titled (nothing
+     * worth notifying about). [formatDeadline] turns an epoch-millis deadline into a human label.
+     */
+    fun taskSwitchNotificationMessage(
+        state: SchedulerState,
+        taskId: TaskId,
+        startMillis: Long,
+        formatDeadline: (Long) -> String,
+    ): String? {
+        val title = state.tasks[taskId]?.title?.takeIf { it.isNotBlank() } ?: return null
+        val unit = state.tasks[taskId]?.scheduleUnit.orEmpty()
+        if (unit.isEmpty()) return title
+        val lines =
+            scheduleUnitDeadlines(unit, startMillis).joinToString("\n") { (stepTitle, deadline) ->
+                "• $stepTitle — ${formatDeadline(deadline)}"
+            }
+        return "$title\n$lines"
+    }
+
     /**
      * PRD §9 "the first point in time there is no scheduled task": walking forward from [nowMillis]
      * over the contiguous chain of [panels] that cover it, the first instant left uncovered. With only
@@ -906,13 +960,27 @@ object SchedulerDomain {
         // wiped (a panel dragged before `now`, or added >24h out, survives). The `> horizon` is strict
         // so a panel starting exactly at the horizon (e.g. a preserved `auto/tail`, below) is handled
         // by the trailing-edge logic, not double-kept here.
-        val kept = state.panels.filter {
+        val keptRaw = state.panels.filter {
             it.pinned || it === current || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon
         }
+        // The kept in-progress auto panel keeps its old `auto/i` id, which the freshly numbered
+        // generated panels (also `auto/i`, from 0) would otherwise reuse. The calendar keys its overlap
+        // layout by panel id (a panel's `entryId`), so two different-task panels sharing one id render
+        // as a single stretched block (the next task drawn over the in-progress one). Normalize the kept
+        // current auto panel to a stable `auto/0` and number the generated panels around the kept ids
+        // (so a steady-state refill still reproduces identical ids — the no-op `filled == panels` check).
+        val kept =
+            keptRaw.map { if (it === current && it.auto && !it.pinned) it.copy(id = "auto/0") else it }
+        val keptIds = kept.mapTo(HashSet()) { it.id }
         var working = state.copy(panels = kept)
         val generated = mutableListOf<TaskPanel>()
         var cursor = firstFreeMoment(kept, nowMillis)
         var index = 0
+        var idCounter = 0
+        fun nextAutoId(): String {
+            while ("auto/$idCounter" in keptIds) idCounter++
+            return "auto/${idCounter++}"
+        }
         // Bound the loop defensively: with positive spans this can't run away, but a degenerate zero
         // span (only possible if minima are clamped to 0) would otherwise spin.
         while (cursor < horizon && index < MAX_SCHEDULE_PANELS) {
@@ -929,7 +997,7 @@ object SchedulerDomain {
             nextPinnedStartAfter(kept, cursor)?.let { end = minOf(end, it) }
             if (end <= cursor) break
             val panel = TaskPanel(
-                id = "auto/$index",
+                id = nextAutoId(),
                 taskId = taskId,
                 title = task.title,
                 startEpochMillis = cursor,

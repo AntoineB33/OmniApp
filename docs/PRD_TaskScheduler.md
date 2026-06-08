@@ -102,7 +102,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 
 * **Data Model (MVI State):**
   * **Cell Model (UI State):** Encapsulates `taskId`, a parent pointer (for ancestor validation), and an optional `sub-list`. If expanded, the `sub-list` populates from the `Map` Task Tree. A cell object only has final fields, and update with Task Tree. If the cell is empty, `taskId` is null and `sub-list` empty. When a cell is created, its `sub-list` field is null and gets populated only when the user manually expands it.
-  * **Task Tree (`Map`):** Associates a `taskId` to a domain object containing: Title, absolute priority percentage (see section 5), period ranges of tasks done and scheduled (see section 9), minimum time for the task (see section 10), list of child `taskIds`, and an occurrence list of cells utilizing this `taskId` (sorted by shortest path).
+  * **Task Tree (`Map`):** Associates a `taskId` to a domain object containing: Title, absolute priority percentage (see section 5), period ranges of tasks done and scheduled (see section 9), minimum time for the task (see section 10), a schedule unit (section 13), list of child `taskIds`, and an occurrence list of cells utilizing this `taskId` (sorted by shortest path).
   * **TitleToTask Tree (`Map`):** Associates a string title to a list of `taskIds` sharing that exact title.
 * **Initialization:**
   * *Empty DB:* Task Tree initializes with a "root" key pointing to a "main" task (representing the user's active daily life).
@@ -153,3 +153,9 @@ Here, $k$ is the decay constant. It dictates how aggressively older tasks are pe
 
 ## 12. Device sleep
 * **When The Device Wakes Up:** The app checks the time periods where the device was sleeping, which means the user wasn't doing the scheduled task during those periods. The task panel on the calendar then gets the holes corresponding to the sleeping periods.
+
+## 13. Schedule Unit
+* **Schedule:** A task can have an sequential list of objects containing a title and a spanning time.
+* **Notification:** If the task has a schedule unit, then the notification that tells the user to switch to this task must also tell him the deadlines of each elements of the schedule unit.
+* **Cell Contextual Menu:** If the task has no child task, right-clicking a cell in the task tree shows a contextual menu with the option "define schedule unit".
+* **Edition Window:** "define schedule unit" opens a floating edition window showing the list vertically. The titles are input fields and the spanning time are also input fields but with increment and decrement buttons. At the right of a pair, a bin button (to remove the pair) and a plus button (to insert a pair above). At the end of the list, a single plus button. At the bottom right, a Cancel and a Save buttons. If the sum of the spanning times is higher than the minimum time of the task, the Save button is not clickable.
