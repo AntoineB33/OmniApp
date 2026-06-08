@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.WellKnownIds
@@ -610,6 +611,30 @@ class SchedulerReducerTest {
         assertEquals(1.0 / 3, p[c]!!, 1e-9)
         // The trailing empty placeholder carries no priority; the populated cells sum to 100%.
         assertEquals(1.0, p[a]!! + p[b]!! + p[c]!!, 1e-9)
+    }
+
+    @Test
+    fun emptied_sibling_cell_drops_out_of_the_priority_split() {
+        // Regression: "deleting" a task clears its cell title but the cell keeps its taskId and the
+        // task lingers blank. Such a cell must not count toward the priority divisor, otherwise two
+        // siblings stay at 50% each after one is emptied.
+        val s = seedThreeTasks()
+        val root = s.lists[s.rootListId]!!.cellIds
+        val aCell = root[0]
+        val a = s.cells[aCell]!!.taskId!!
+        val bCell = root[1]
+        val b = s.cells[bCell]!!.taskId!!
+        val cCell = root[2]
+        val c = s.cells[cCell]!!.taskId!!
+
+        // Empty B and C, leaving A the only real task.
+        var deleted = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(bCell, ""))
+        deleted = SchedulerReducer.reduce(deleted, SchedulerIntent.SetCellTitle(cCell, ""))
+
+        val p = SchedulerDomain.absoluteTaskPriorities(deleted)
+        assertEquals(1.0, p[a]!!, 1e-9) // A now holds the full 100%
+        assertNull(p[b]) // emptied cells carry no priority and show no percentage
+        assertNull(p[c])
     }
 
     @Test

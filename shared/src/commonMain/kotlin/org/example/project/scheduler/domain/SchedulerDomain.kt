@@ -400,10 +400,22 @@ object SchedulerDomain {
      * task — its only child — also resolves to 100% and seeds the top-down distribution. Empty
      * placeholder cells (no `taskId`) hold no priority.
      */
+    /**
+     * Whether [cellId] holds a real task for priority purposes: it points at a task whose title is not
+     * blank. An empty placeholder (no `taskId`) holds none; so does a cell whose task was "deleted" by
+     * clearing its title — the cell keeps its id and the task lingers blank (kept alive by its
+     * panels/records), but it must not count toward a sub-list's priority divisor nor show a percentage.
+     */
+    private fun isPopulatedCell(state: SchedulerState, cellId: CellId): Boolean {
+        val taskId = state.cells[cellId]?.taskId ?: return false
+        return state.tasks[taskId]?.title?.isNotBlank() == true
+    }
+
     fun absoluteTaskPriorities(state: SchedulerState): Map<TaskId, Double> {
         val cellsByTask = HashMap<TaskId, MutableList<CellId>>()
         for (cell in state.cells.values) {
             val taskId = cell.taskId ?: continue
+            if (!isPopulatedCell(state, cell.id)) continue
             cellsByTask.getOrPut(taskId) { mutableListOf() }.add(cell.id)
         }
 
@@ -414,7 +426,7 @@ object SchedulerDomain {
                 val list = state.lists[listId]
                 val absW = columnAbsoluteWeights(list?.weightColumns ?: listOf(1.0))
                 val populated =
-                    list?.cellIds?.filter { state.cells[it]?.taskId != null }.orEmpty()
+                    list?.cellIds?.filter { isPopulatedCell(state, it) }.orEmpty()
                 val colSums =
                     absW.indices.map { c ->
                         populated.sumOf { state.cells[it]!!.priorityWeights.getOrElse(c) { defaultWeightAt(c) } }
@@ -966,7 +978,7 @@ object SchedulerDomain {
         val cell = state.cells[cellId] ?: return 0.0
         val list = state.lists[cell.parentListId] ?: return 0.0
         val absW = columnAbsoluteWeights(list.weightColumns)
-        val populated = list.cellIds.filter { state.cells[it]?.taskId != null }
+        val populated = list.cellIds.filter { isPopulatedCell(state, it) }
         var w = 0.0
         for (c in absW.indices) {
             val colSum = populated.sumOf { state.cells[it]!!.priorityWeights.getOrElse(c) { defaultWeightAt(c) } }
