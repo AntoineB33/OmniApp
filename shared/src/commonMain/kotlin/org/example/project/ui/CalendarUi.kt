@@ -58,6 +58,7 @@ import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
@@ -105,8 +106,8 @@ private val WEEKDAY_INITIAL = listOf("M", "T", "W", "T", "F", "S", "S")
 fun systemToday(): LocalDate = Clock.System.todayIn(TimeZone.currentSystemDefault())
 
 /**
- * PRD §8 Task record / §9 scheduled task: one calendar period tagged with the task [title] (shown on
- * hover). [scheduled] is false for a period the user already did (§8 record, green) and true for the
+ * PRD §8 Task record / §9 scheduled task: one calendar period tagged with the task [title] (written
+ * on the panel and shown on hover). [scheduled] is false for a period the user already did (§8 record, green) and true for the
  * scheduler's current "task to do now" (§9, drawn the same way in a distinct colour). Built from the
  * Task Tree and passed down from [App].
  */
@@ -799,7 +800,7 @@ private fun DayColumn(
  * left unconsumed here for it to pick up. The live preview applies the SAME no-overlap snapping/
  * clamping the reducer commits with, so a block never visually overlaps another. Auto blocks
  * (records/scheduled) are pinned into manual entries when edited, so afterwards they are
- * indistinguishable. The title shows on hover.
+ * indistinguishable. The title is written on the block and also shows on hover (PRD §8).
  */
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -931,7 +932,19 @@ private fun CalendarBlock(
                     .clip(RoundedCornerShape(3.dp))
                     .background(color.copy(alpha = 0.30f))
                     .border(1.dp, color, RoundedCornerShape(3.dp)),
-            )
+            ) {
+                // PRD §8: the task title is written on the panel itself; the hover tooltip above
+                // remains as a fallback when the panel is too short to show the full title.
+                Text(
+                    text = record.title.ifEmpty { "(untitled)" },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CalColors.event,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 3.dp, vertical = 1.dp),
+                )
+            }
         }
     }
 }
