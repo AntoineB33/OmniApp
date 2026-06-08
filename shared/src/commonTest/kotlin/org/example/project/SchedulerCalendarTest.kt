@@ -303,6 +303,29 @@ class SchedulerCalendarTest {
     }
 
     @Test
+    fun overlap_commit_keeps_overlapping_bounds() {
+        val a = TaskId("t/a")
+        val b = TaskId("t/b")
+        val s = SchedulerState.empty().copy(
+            panels = listOf(
+                userPanel("pA", 0, 2 * HOUR, a, pinned = true),
+                userPanel("pB", 3 * HOUR, 5 * HOUR, b, pinned = true),
+            ),
+            nextPanelCounter = 2,
+        )
+        val moved = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.UpdateTaskPanel("pB", b, "B", 1 * HOUR, 3 * HOUR, pinned = true, allowOverlap = true),
+        )
+        val pA = moved.panels.first { it.id == "pA" }
+        val pB = moved.panels.first { it.id == "pB" }
+        assertTrue(
+            pB.startEpochMillis < pA.endEpochMillis && pA.startEpochMillis < pB.endEpochMillis,
+            "overlap-armed commit should keep overlapping bounds: A=$pA B=$pB",
+        )
+    }
+
+    @Test
     fun update_without_allow_overlap_preserves_existing_weight() {
         val a = TaskId("t/a")
         val s = SchedulerState.empty().copy(

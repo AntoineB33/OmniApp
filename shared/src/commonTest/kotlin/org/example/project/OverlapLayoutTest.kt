@@ -2,9 +2,18 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
+import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.ui.CalendarRecord
 import org.example.project.ui.PanelSlice
 import org.example.project.ui.PlacedRecord
 import org.example.project.ui.overlapLayout
+import org.example.project.ui.recordsForDay
 
 /**
  * PRD §8 Overlap Mode: unit tests for the pure [overlapLayout] horizontal-slicing algorithm — no
@@ -76,6 +85,29 @@ class OverlapLayoutTest {
         val layout = overlapLayout(listOf(block("a", 0f, 4f, weight = 3.0), block("b", 0f, 4f, weight = 1.0)))
         assertSlice(slices(layout, "a").single(), 0f, 4f, 0f, 0.75f)
         assertSlice(slices(layout, "b").single(), 0f, 4f, 0.75f, 0.25f)
+    }
+
+    @Test
+    fun overlappingPanelsFromTheDisplayPipelineAreSliced() {
+        val tz = TimeZone.UTC
+        val day = LocalDate(2024, 1, 1)
+        fun ms(hour: Int) = LocalDateTime(2024, 1, 1, hour, 0).toInstant(tz).toEpochMilliseconds()
+        // Two DIFFERENT-task panels overlapping in [1h, 2h], as App.mergePanelsForDisplay would emit.
+        val recA = CalendarRecord(
+            title = "A", range = TaskTimeRange(ms(0), ms(2)), manual = true,
+            entryId = "pA", entryIds = listOf("pA"), taskId = TaskId("t/a"), pinned = true,
+        )
+        val recB = CalendarRecord(
+            title = "B", range = TaskTimeRange(ms(1), ms(3)), manual = true,
+            entryId = "pB", entryIds = listOf("pB"), taskId = TaskId("t/b"), pinned = true,
+        )
+        val placed = recordsForDay(listOf(recA, recB), day, tz)
+        val layout = overlapLayout(placed)
+        assertTrue(layout.containsKey("pA"), "pA missing from layout: ${layout.keys}")
+        assertTrue(layout.containsKey("pB"), "pB missing from layout: ${layout.keys}")
+        // In the overlap each panel must be ~half width and offset to opposite sides.
+        assertTrue(layout.getValue("pA").any { it.widthFraction in 0.4f..0.6f }, "A not narrowed: ${layout["pA"]}")
+        assertTrue(layout.getValue("pB").any { it.widthFraction in 0.4f..0.6f }, "B not narrowed: ${layout["pB"]}")
     }
 
     @Test

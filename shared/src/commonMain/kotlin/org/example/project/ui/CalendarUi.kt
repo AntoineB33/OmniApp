@@ -915,6 +915,28 @@ private fun DayColumn(
             records.map { r -> r.entryIds.firstNotNullOfOrNull { wd[it] }?.let { r.copy(layoutWeight = it) } ?: r }
         } ?: records
 
+    // PRD §8 Overlap Mode: live move/resize preview. The block being moved reports its in-progress bounds
+    // here; [liveRecords] places it there so the shared (sliced) layout is recomputed and drawn as an
+    // overlay — the panels narrow and sit side by side live instead of one literally covering another. The
+    // resting slices keep their committed positions (so the drag gesture node never changes and is never
+    // cancelled); they are hidden while the overlay shows.
+    var dragPreview by remember { mutableStateOf<Pair<String, TaskTimeRange>?>(null) }
+    val previewActive = dragPreview != null
+    val midnightMillis = LocalDateTime(day.year, day.month, day.day, 0, 0)
+        .toInstant(tz).toEpochMilliseconds()
+    val liveRecords =
+        dragPreview?.let { (dragKey, range) ->
+            val startHour = ((range.startEpochMillis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
+            val endHour = ((range.endEpochMillis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
+            if (endHour <= startHour) {
+                effRecords
+            } else {
+                effRecords.map {
+                    if (calendarBlockKey(it) == dragKey) it.copy(startHour = startHour, endHour = endHour) else it
+                }
+            }
+        } ?: effRecords
+
     // Epoch millis at a vertical pixel offset within this 24-hour column.
     fun millisAt(offsetY: Float): Long {
         val hourHeightPx = with(density) { hourHeight.toPx() }
@@ -1013,11 +1035,12 @@ private fun DayColumn(
                     PanelSlice(record.startHour, record.endHour, xFraction = 0f, widthFraction = 1f),
                 ),
                 hourHeight = hourHeight,
-                day = day,
-                tz = tz,
                 // Every other block — everything but itself — so a non-overlap drag/resize snaps around them.
                 others = allBlocks.filter { it.first != key }.map { it.second },
                 overlapArmed = overlapArmed,
+                // Hide the resting (gesture-holding) slices while any move/resize preview overlay shows.
+                previewActive = previewActive,
+                onPreviewChange = { range -> dragPreview = range?.let { key to it } },
                 onCommitBounds = onCommitBounds,
                 onLockScroll = onLockScroll,
             )
@@ -1027,7 +1050,7 @@ private fun DayColumn(
         // Overlaid above the slices at each shared boundary; a horizontal drag moves weight between the
         // two adjacent panels (the others' shares stay fixed), committed on release.
         val handles = weightHandles(effRecords)
-        if (handles.isNotEmpty()) {
+        if (handles.isNotEmpty() && !previewActive) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val colWidth = maxWidth
                 val colWidthPx = with(density) { colWidth.toPx() }
@@ -1074,6 +1097,32 @@ private fun DayColumn(
             }
         }
 
+        // PRD §8 Overlap Mode: live move/resize preview overlay — the panels at their in-progress layout
+        // (the dragged one substituted to its preview position), sliced so overlaps share width side by
+        // side as the drag happens. Purely visual; the resting slices underneath hold the gesture.
+        if (previewActive) {
+            val liveLayout = overlapLayout(liveRecords)
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val colWidth = maxWidth
+                liveRecords.forEach { rec ->
+                    val recKey = calendarBlockKey(rec)
+                    val recSlices = liveLayout[recKey]
+                        ?: listOf(PanelSlice(rec.startHour, rec.endHour, xFraction = 0f, widthFraction = 1f))
+                    recSlices.forEachIndexed { idx, slice ->
+                        Box(
+                            modifier = Modifier
+                                .offset(x = colWidth * slice.xFraction, y = hourHeight * slice.topHour)
+                                .width(colWidth * slice.widthFraction)
+                                .height(hourHeight * (slice.bottomHour - slice.topHour))
+                                .padding(horizontal = 1.dp),
+                        ) {
+                            CalendarBlockBody(CalColors.event, rec.title, showTitle = idx == 0)
+                        }
+                    }
+                }
+            }
+        }
+
         // Current-time indicator (only on today's column).
         if (now != null) {
             val offsetY = hourHeight * (now.hour + now.minute / 60f)
@@ -1112,10 +1161,12 @@ private fun CalendarBlock(
     record: PlacedRecord,
     slices: List<PanelSlice>,
     hourHeight: Dp,
-    day: LocalDate,
-    tz: TimeZone,
     others: List<TaskTimeRange>,
     overlapArmed: Boolean,
+    /** True while a move/resize preview overlay is showing — hide these (gesture-only) resting slices. */
+    previewActive: Boolean,
+    /** Reports the in-progress drag bounds (null when not dragging) so the column can draw the live overlay. */
+    onPreviewChange: (TaskTimeRange?) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onLockScroll: (Boolean) -> Unit,
 ) {
@@ -1125,22 +1176,12 @@ private fun CalendarBlock(
     val density = LocalDensity.current
     val hourHeightPx = with(density) { hourHeight.toPx() }
     val minPx = with(density) { 2.dp.toPx() }
-    val baseOffsetY = with(density) { (hourHeight * record.startHour).toPx() }
-    val baseHeight = (with(density) { (hourHeight * (record.endHour - record.startHour)).toPx() })
-        .coerceAtLeast(minPx)
-
-    // Pixel <-> epoch-millis mapping for this day (linear; midnight of [day] is the column origin).
-    val midnightMillis = LocalDateTime(day.year, day.month, day.day, 0, 0)
-        .toInstant(tz).toEpochMilliseconds()
-    val pxPerMs = hourHeightPx / 3_600_000f
     val entry = TaskTimeRange(record.fullStartMillis, record.fullEndMillis)
     val duration = record.fullEndMillis - record.fullStartMillis
 
-    // Live gesture preview, in this column's pixels.
+    // Accumulated drag distance (px) for the active gesture; reset after each commit. The live position
+    // is reported via [onPreviewChange] and drawn by the column's overlay, not from local preview state.
     var dragPx by remember(key) { mutableStateOf(0f) }
-    var moving by remember(key) { mutableStateOf(false) }
-    var resizing by remember(key) { mutableStateOf<CalendarEdge?>(null) }
-    val dragging = moving || resizing != null
 
     fun millisDelta(px: Float): Long = ((px / hourHeightPx) * 3_600_000f).toLong()
 
@@ -1166,17 +1207,6 @@ private fun CalendarBlock(
         }
     }
 
-    val preview: TaskTimeRange? = when {
-        moving -> movedBounds()
-        resizing != null -> resizedBounds(resizing!!)
-        else -> null
-    }
-    val previewOffsetPx =
-        if (preview != null) (preview.startEpochMillis - midnightMillis) * pxPerMs else baseOffsetY
-    val previewHeightPx =
-        if (preview != null) ((preview.endEpochMillis - preview.startEpochMillis) * pxPerMs) else baseHeight
-    val previewHeightCoerced = previewHeightPx.coerceAtLeast(minPx)
-
     val color = CalColors.event
 
     // PRD §8 Overlap Mode: a transparent full-column layer (no pointer handler of its own, so it never
@@ -1197,9 +1227,10 @@ private fun CalendarBlock(
                     .offset(x = colWidth * slice.xFraction, y = sliceTop)
                     .width(colWidth * slice.widthFraction)
                     .height(sliceHeight)
-                    // Kept mounted but invisible while dragging — the single preview box below shows the
-                    // live position; this slice only needs to survive to keep the gesture alive.
-                    .alpha(if (dragging) 0f else 1f)
+                    // These resting slices (at committed positions) hold the move/resize gesture. While a
+                    // preview overlay shows they are hidden — but stay mounted so the gesture is never
+                    // cancelled — and the column's live overlay draws the in-progress shared layout.
+                    .alpha(if (previewActive) 0f else 1f)
                     .padding(horizontal = 1.dp)
                     // Re-key on the entry's position so the gesture closure re-captures fresh values after
                     // a commit; on slice role so edge zones recompute when the layout changes.
@@ -1245,44 +1276,30 @@ private fun CalendarBlock(
                                     traveled += delta.getDistance()
                                     if (!started && traveled > touchSlop) {
                                         started = true
-                                        if (edge != null) resizing = edge else moving = true
                                     }
                                     change.consume()
-                                    if (started) dragPx += delta.y
+                                    if (started) {
+                                        dragPx += delta.y
+                                        // Report the live bounds so the column draws the shared preview overlay.
+                                        onPreviewChange(if (edge != null) resizedBounds(edge) else movedBounds())
+                                    }
                                 }
                             } finally {
                                 onLockScroll(false)
-                                moving = false
-                                resizing = null
                                 dragPx = 0f
+                                onPreviewChange(null)
                             }
                         }
                     },
             ) {
-                if (!dragging) {
-                    TooltipBox(
-                        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-                        tooltip = { PlainTooltip { Text(record.title.ifEmpty { "(untitled)" }) } },
-                        state = rememberTooltipState(),
-                    ) {
-                        // The title is written only on the topmost slice so a stepped block reads as one.
-                        CalendarBlockBody(color, record.title, showTitle = isFirst)
-                    }
+                TooltipBox(
+                    positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+                    tooltip = { PlainTooltip { Text(record.title.ifEmpty { "(untitled)" }) } },
+                    state = rememberTooltipState(),
+                ) {
+                    // The title is written only on the topmost slice so a stepped block reads as one.
+                    CalendarBlockBody(color, record.title, showTitle = isFirst)
                 }
-            }
-        }
-
-        // Single full-width live preview while dragging (PRD §8 v1: the side-by-side narrowing settles on
-        // release). Drawn over the (now-invisible) slices; purely visual, no gesture of its own.
-        if (dragging) {
-            Box(
-                modifier = Modifier
-                    .offset { IntOffset(0, previewOffsetPx.roundToInt()) }
-                    .fillMaxWidth()
-                    .height(with(density) { previewHeightCoerced.toDp() })
-                    .padding(horizontal = 1.dp),
-            ) {
-                CalendarBlockBody(color, record.title, showTitle = true)
             }
         }
     }
