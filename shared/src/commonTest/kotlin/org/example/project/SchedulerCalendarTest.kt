@@ -117,6 +117,86 @@ class SchedulerCalendarTest {
         assertEquals(listOf(range(0, 20), range(30, 50)), merged)
     }
 
+    // ----- §8 same-task auto-merge ------------------------------------------------------------
+
+    @Test
+    fun merge_same_task_panels_fuses_touching_same_task_blocks() {
+        val a = TaskId("t/a")
+        val merged = SchedulerDomain.mergeSameTaskPanels(
+            listOf(
+                TaskPanel("p0", a, "A", 0, 10 * MIN, pinned = false, auto = false),
+                TaskPanel("p1", a, "A", 10 * MIN, 25 * MIN, pinned = false, auto = false),
+            ),
+        )
+        assertEquals(1, merged.size)
+        assertEquals("p0", merged[0].id) // earlier panel survives
+        assertEquals(0, merged[0].startEpochMillis)
+        assertEquals(25 * MIN, merged[0].endEpochMillis)
+    }
+
+    @Test
+    fun merge_same_task_panels_does_not_fuse_when_pin_state_differs() {
+        val a = TaskId("t/a")
+        val panels = listOf(
+            TaskPanel("p0", a, "A", 0, 10 * MIN, pinned = true, auto = false),
+            TaskPanel("p1", a, "A", 10 * MIN, 25 * MIN, pinned = false, auto = false),
+        )
+        assertEquals(panels, SchedulerDomain.mergeSameTaskPanels(panels)) // one pinned, one not → kept apart
+    }
+
+    @Test
+    fun merge_same_task_panels_leaves_different_tasks_and_calendar_only_panels_alone() {
+        val a = TaskId("t/a")
+        val b = TaskId("t/b")
+        val panels = listOf(
+            TaskPanel("p0", a, "A", 0, 10 * MIN, pinned = false, auto = false),
+            TaskPanel("p1", b, "B", 10 * MIN, 20 * MIN, pinned = false, auto = false),
+            TaskPanel("p2", null, "new", 20 * MIN, 30 * MIN, pinned = false, auto = false),
+            TaskPanel("p3", null, "new", 30 * MIN, 40 * MIN, pinned = false, auto = false),
+        )
+        assertEquals(panels, SchedulerDomain.mergeSameTaskPanels(panels)) // distinct tasks / null taskId never merge
+    }
+
+    @Test
+    fun merge_same_task_panels_does_not_fuse_across_a_gap() {
+        val a = TaskId("t/a")
+        val panels = listOf(
+            TaskPanel("p0", a, "A", 0, 10 * MIN, pinned = false, auto = false),
+            TaskPanel("p1", a, "A", 20 * MIN, 30 * MIN, pinned = false, auto = false), // not touching p0
+        )
+        assertEquals(panels, SchedulerDomain.mergeSameTaskPanels(panels))
+    }
+
+    @Test
+    fun merged_panel_stays_auto_only_when_both_were_auto() {
+        val a = TaskId("t/a")
+        val twoAuto = SchedulerDomain.mergeSameTaskPanels(
+            listOf(autoPanel("auto/0", a, 0, 10 * MIN), autoPanel("auto/1", a, 10 * MIN, 20 * MIN)),
+        )
+        assertTrue(twoAuto.single().auto)
+        val autoPlusUser = SchedulerDomain.mergeSameTaskPanels(
+            listOf(
+                autoPanel("auto/0", a, 0, 10 * MIN),
+                TaskPanel("p1", a, "A", 10 * MIN, 20 * MIN, pinned = false, auto = false),
+            ),
+        )
+        assertFalse(autoPlusUser.single().auto) // a user-authored half makes the result user-authored
+    }
+
+    @Test
+    fun adding_a_panel_touching_a_same_task_panel_merges_them() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val s = s0.copy(
+            panels = listOf(TaskPanel("panel/0", a, "A", 0, 30 * MIN, pinned = true, auto = false)),
+            nextPanelCounter = 1,
+        )
+        val added = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(a, "A", 30 * MIN, 60 * MIN, pinned = true))
+        assertEquals(1, added.panels.size)
+        assertEquals(0, added.panels[0].startEpochMillis)
+        assertEquals(60 * MIN, added.panels[0].endEpochMillis)
+        assertTrue(added.panels[0].pinned)
+    }
+
     @Test
     fun drag_sticks_to_the_end_of_a_group_when_past_its_midpoint() {
         val placed = SchedulerDomain.placeDraggedEntry(listOf(range(100, 200)), desiredStart = 160, duration = 40)

@@ -677,8 +677,11 @@ object SchedulerReducer {
         after: List<TaskPanel>,
     ): SchedulerState {
         val before = state.panels
-        if (before == after) return state
-        return commitDelta(state, PanelDelta(before, after), HistoryCategory.Calendar)
+        // PRD §8: same-task panels auto-merge (unless their pin state differs) the moment an add / edit
+        // / move / resize / pin makes them touch or overlap.
+        val normalized = SchedulerDomain.mergeSameTaskPanels(after)
+        if (before == normalized) return state
+        return commitDelta(state, PanelDelta(before, normalized), HistoryCategory.Calendar)
     }
 
     /**

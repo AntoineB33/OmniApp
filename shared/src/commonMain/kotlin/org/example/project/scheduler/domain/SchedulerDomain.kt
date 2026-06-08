@@ -640,6 +640,43 @@ object SchedulerDomain {
     }
 
     /**
+     * PRD §8 "Two task panels with the same task are automatically merged unless one is pinned and the
+     * other not pinned": fuse touching/overlapping panels that share a (non-null) [TaskPanel.taskId]
+     * **and** the same [TaskPanel.pinned] flag into one panel spanning both. A null taskId (a calendar-
+     * only "New task") is never "the same task" as anything, so it is left alone. The surviving panel
+     * keeps the earlier one's id/title/pin and stays `auto` only when both fused panels were auto (a
+     * user-authored panel makes the result user-authored). Panels whose pin state differs are never
+     * fused, so a pinned and a non-pinned panel of the same task can sit side by side. Returns the
+     * input unchanged (same order, same instance content) when nothing merges.
+     */
+    fun mergeSameTaskPanels(panels: List<TaskPanel>): List<TaskPanel> {
+        if (panels.size < 2) return panels
+        val sorted = panels.sortedBy { it.startEpochMillis }
+        val result = mutableListOf<TaskPanel>()
+        var changed = false
+        for (panel in sorted) {
+            // Fuse into an already-kept panel of the same task + pin that this one touches/overlaps.
+            // Sorted by start, so a different-task panel in between leaves a gap (no overlap, PRD §8)
+            // and breaks the adjacency, preventing a merge across it.
+            val into = result.indexOfLast {
+                it.taskId != null && it.taskId == panel.taskId && it.pinned == panel.pinned &&
+                    panel.startEpochMillis <= it.endEpochMillis
+            }
+            if (into >= 0) {
+                val keep = result[into]
+                result[into] = keep.copy(
+                    endEpochMillis = maxOf(keep.endEpochMillis, panel.endEpochMillis),
+                    auto = keep.auto && panel.auto,
+                )
+                changed = true
+            } else {
+                result.add(panel)
+            }
+        }
+        return if (changed) result else panels
+    }
+
+    /**
      * PRD §8 Manual drag (move): where a block of [duration] dropped near [desiredStart] settles
      * given the [others] already on the calendar, never overlapping them:
      *  - in free space it sits exactly at [desiredStart];
@@ -866,7 +903,9 @@ object SchedulerDomain {
         if (straddler != null && lastGen != null && lastGen.taskId == straddler.taskId) {
             generated[generated.lastIndex] = lastGen.copy(endEpochMillis = straddler.endEpochMillis)
         }
-        return (kept + generated).sortedBy { it.startEpochMillis }
+        // PRD §8: collapse any consecutive same-task panels the fill laid down (e.g. one dominant task)
+        // into a single block.
+        return mergeSameTaskPanels((kept + generated).sortedBy { it.startEpochMillis })
     }
 
     /** Safety cap on the number of auto panels one fill can lay down (≈ 24h / shortest sane span). */
