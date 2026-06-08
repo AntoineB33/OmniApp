@@ -35,6 +35,7 @@ The application maintains a dual-state selection model: **Main Selection** (a si
 * **Down / Right:** Resets selection, and if there is a selectable cell below the main selection, makes it the main selection. Doesn't work when in Editing Mode.
 * **Shift + Direction:** Pressing `Shift` while navigating with the direction keyboard keys allow to select a range of cells. `Right` is `Down` and `Left`. If several cells were selected before pressing `Shift`, it is reset. 
 * **Enter or Tab:** If there are several selected cells, moves the main selection among them, from top to bottom then back on top. With `Shift` pressed, it moves backward.
+* **Ctrl + A:** Ctrl + A selects all visible cells.
 
 
 ## 4. Editing Mechanics
@@ -86,7 +87,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 
 ### Edition without Edition Mode
 * **Deletion:** When the user presses `Backspace` or `Delete` and no cell is in Edition Mode, all selected cells get emptied.
-* **Copy/paste:** Ctrl + C allows the user to copy the whole selection (if it is only consecutive cells in the same sub-list) or only the main selection. Ctrl + V allows to paste it in a cell (if several cells were copied, new cells are added below). The user can copy/paste cells between Google Sheets and the app.
+* **Copy/paste:** If the selection is consecutive cells, then Ctrl + C copy the selection. It convert the tree structure of the selection and everything under the selected cells into a text. Ctrl + V with a single cell selected allows to paste the copied tree structure only if the text has the right format. In Edit Mode, Ctrl + C and Ctrl + V have the usual behavior.
 
 ## 5. Priority assignment
 * **priority percentage:** The priority percentage displayed at the right side of a cell is the absolute priority percentage of the `taskId`. It is the sum of the absolute priority percentage of all the cells sharing this `taskId`. The priority percentage of a cell in a list is the priority weight of the cell divided by the sum of the priority weights of this sub-list. Its absolute priority percentage is this fraction multiplied by the absolute priority of the parent cell. If the parent cell is the "root" cell, then its absolute priority percentage is 100%.

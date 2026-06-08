@@ -1288,30 +1288,115 @@ object SchedulerDomain {
         return byTitle.mapValues { (_, ids) -> ids.distinct() }
     }
 
-    /** Titles copied from the active selection (PRD §4 Copy). */
-    fun copyTitlesFromSelection(state: SchedulerState, selection: SchedulerSelection): List<String> {
-        val block = orderedActiveSelectionInList(state, selection)
-        val cellIds =
-            if (block != null) {
-                block.second
-            } else {
-                selection.main?.let { listOf(it) }.orEmpty()
+    // ----- PRD §4 tree copy / paste serialization --------------------------------------------
+
+    /** A copied cell: its title and the (populated) subtree beneath it. */
+    data class CopiedNode(val title: String, val children: List<CopiedNode>)
+
+    /** True when the cell points at a task with a non-blank title (a real, copyable cell). */
+    private fun isPopulated(state: SchedulerState, cellId: CellId): Boolean {
+        val taskId = state.cells[cellId]?.taskId ?: return false
+        return state.tasks[taskId]?.title?.isNotBlank() == true
+    }
+
+    /** Build the copied subtree rooted at [cellId] from the task's shared child list (populated cells). */
+    private fun copiedSubtree(state: SchedulerState, cellId: CellId): CopiedNode {
+        val taskId = state.cells[cellId]?.taskId
+        val title = taskId?.let { state.tasks[it]?.title }.orEmpty()
+        val childListId = taskId?.let { state.tasks[it]?.childListId }
+        val children =
+            childListId?.let { state.lists[it]?.cellIds }.orEmpty()
+                .filter { isPopulated(state, it) }
+                .map { copiedSubtree(state, it) }
+        return CopiedNode(title, children)
+    }
+
+    /**
+     * PRD §4 Copy: the selected cells' subtrees serialized to the app's tab-indented text (depth =
+     * leading tabs; each title escaped so its own tabs/newlines don't corrupt the structure). Uses the
+     * consecutive selection block when there is one, otherwise the main selection. Empty when nothing
+     * populated is selected.
+     */
+    fun copyTreeText(state: SchedulerState, selection: SchedulerSelection): String {
+        val roots =
+            orderedActiveSelectionInList(state, selection)?.second
+                ?: selection.main?.let { listOf(it) }.orEmpty()
+        val nodes = roots.filter { isPopulated(state, it) }.map { copiedSubtree(state, it) }
+        if (nodes.isEmpty()) return ""
+        val sb = StringBuilder()
+        fun render(ns: List<CopiedNode>, depth: Int) {
+            for (n in ns) {
+                repeat(depth) { sb.append('\t') }
+                sb.append(escapeTitle(n.title))
+                sb.append('\n')
+                render(n.children, depth + 1)
             }
-        return cellIds.map { cellId ->
-            val taskId = state.cells[cellId]?.taskId
-            taskId?.let { state.tasks[it]?.title }.orEmpty()
         }
+        render(nodes, 0)
+        return sb.toString().removeSuffix("\n")
     }
 
-    /** Parse clipboard text from Google Sheets or this app (newline rows, tab columns). */
-    fun parseClipboardText(text: String): List<String> {
-        if (text.isEmpty()) return emptyList()
-        return text
-            .replace("\r\n", "\n")
-            .replace('\r', '\n')
-            .split('\n')
-            .map { line -> line.substringBefore('\t') }
+    /**
+     * PRD §4 Paste: parse the app's tab-indented tree text into a forest, or null when [text] is not in
+     * that format (a content tab, an indentation jump of more than one level, or nothing populated). The
+     * strictness is what makes paste a no-op for arbitrary clipboard text.
+     */
+    fun parseTreeText(text: String): List<CopiedNode>? {
+        if (text.isBlank()) return null
+        val entries = ArrayList<Pair<Int, String>>()
+        for (line in text.replace("\r\n", "\n").replace('\r', '\n').split('\n')) {
+            var depth = 0
+            while (depth < line.length && line[depth] == '\t') depth++
+            val rest = line.substring(depth)
+            if (rest.isBlank()) continue
+            if (rest.contains('\t')) return null // a real tab in content → not our format
+            entries.add(depth to unescapeTitle(rest))
+        }
+        if (entries.isEmpty()) return null
+
+        val roots = ArrayList<MutableCopiedNode>()
+        val ancestors = ArrayList<MutableCopiedNode>() // ancestors[d] = current node at depth d
+        for ((depth, title) in entries) {
+            if (depth > ancestors.size) return null // indentation jumped more than one level
+            val node = MutableCopiedNode(title)
+            if (depth == 0) roots.add(node) else ancestors[depth - 1].children.add(node)
+            while (ancestors.size > depth) ancestors.removeAt(ancestors.size - 1)
+            ancestors.add(node)
+        }
+        return roots.map { it.toImmutable() }
     }
 
-    fun formatClipboardText(titles: List<String>): String = titles.joinToString("\n")
+    private class MutableCopiedNode(val title: String, val children: MutableList<MutableCopiedNode> = mutableListOf()) {
+        fun toImmutable(): CopiedNode = CopiedNode(title, children.map { it.toImmutable() })
+    }
+
+    private fun escapeTitle(s: String): String =
+        buildString {
+            for (c in s) when (c) {
+                '\\' -> append("\\\\")
+                '\n' -> append("\\n")
+                '\t' -> append("\\t")
+                else -> append(c)
+            }
+        }
+
+    private fun unescapeTitle(s: String): String =
+        buildString {
+            var i = 0
+            while (i < s.length) {
+                val c = s[i]
+                if (c == '\\' && i + 1 < s.length) {
+                    when (s[i + 1]) {
+                        'n' -> append('\n')
+                        't' -> append('\t')
+                        '\\' -> append('\\')
+                        else -> append(s[i + 1])
+                    }
+                    i += 2
+                } else {
+                    append(c)
+                    i++
+                }
+            }
+        }
 }

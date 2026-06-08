@@ -65,8 +65,9 @@ object SchedulerReducer {
             is SchedulerIntent.NavigateSelection -> reduceNavigateSelection(state, intent.direction, intent.shift)
             is SchedulerIntent.CycleMainSelection -> reduceCycleMainSelection(state, intent.forward)
             SchedulerIntent.SelectFirstChild -> reduceSelectFirstChild(state)
+            SchedulerIntent.SelectAllVisibleCells -> reduceSelectAllVisible(state)
             SchedulerIntent.CopySelection -> reduceCopySelection(state)
-            is SchedulerIntent.PasteTitles -> reducePasteTitles(state, intent.titles)
+            is SchedulerIntent.PasteTree -> reducePasteTree(state, intent.text)
             SchedulerIntent.Undo -> undo(state, contentCategory(state))
             SchedulerIntent.Redo -> redo(state, contentCategory(state))
             SchedulerIntent.UndoSelection -> undo(state, HistoryCategory.Selection)
@@ -344,20 +345,42 @@ object SchedulerReducer {
         )
     }
 
-    private fun reduceCopySelection(state: SchedulerState): SchedulerState {
+    /** PRD §3: select every selectable visible cell, anchored on the first with the main on the last. */
+    private fun reduceSelectAllVisible(state: SchedulerState): SchedulerState {
         if (state.editSession != null) return state
-        val titles = SchedulerDomain.copyTitlesFromSelection(state, state.selection)
-        if (titles.isEmpty() && state.selection.main == null) return state
-        return state.copy(clipboard = titles)
+        val order = SchedulerDomain.selectableVisibleOrder(state)
+        if (order.isEmpty()) return state
+        val after =
+            SchedulerSelection(
+                main = order.last(),
+                selected = order.toSet(),
+                rangeAnchor = order.first(),
+            )
+        if (after == state.selection) return state
+        return commitDelta(
+            state,
+            SetSelectionDelta(before = state.selection, after = after),
+            HistoryCategory.Selection,
+        )
     }
 
-    private fun reducePasteTitles(state: SchedulerState, titles: List<String>): SchedulerState {
+    private fun reduceCopySelection(state: SchedulerState): SchedulerState {
         if (state.editSession != null) return state
-        if (titles.isEmpty()) return state
+        val text = SchedulerDomain.copyTreeText(state, state.selection)
+        if (text.isEmpty()) return state
+        return state.copy(clipboard = text.split('\n'))
+    }
+
+    private fun reducePasteTree(state: SchedulerState, text: String): SchedulerState {
+        if (state.editSession != null) return state
+        // PRD §4 Paste: only the app's tab-indented tree format is accepted, onto a single selected cell.
+        val nodes = SchedulerDomain.parseTreeText(text) ?: return state
+        if (nodes.isEmpty()) return state
         val main = state.selection.main ?: return state
+        if (state.selection.selected.size > 1) return state
         if (!SchedulerDomain.isSelectableCell(state, main)) return state
         val before = state.captureTree()
-        val pasted = pasteTitlesAtCell(state.copy(clipboard = titles), main, titles)
+        val pasted = pasteTreeAtCell(state.copy(clipboard = text.split('\n')), main, nodes)
         val after = pasted.captureTree()
         if (before == after) return state
         return commitDelta(pasted, TreeMutationDelta(before = before, after = after))
@@ -1016,21 +1039,45 @@ object SchedulerReducer {
 }
 
 /**
- * PRD §4 Post-Edit Tree Evaluation: drop every textually empty cell from each list, keeping
- * only the *absolute bottom cell* of each (sub)list as the trailing placeholder. Occurrences
- * of any removed cell are pruned and orphan tasks are purged.
+ * PRD §4 Paste: rebuild a copied subtree forest at [targetCellId]. The first root populates the target
+ * cell (and its descendants); each further root is added as a sibling below. Recurses into each node's
+ * children, which become a populated child sub-list — each pasted cell gets a freshly allocated `taskId`
+ * (via [applySetCellTitle] on an empty cell), so the constraints (no duplicate id in a list, no ancestor
+ * cycle) hold by construction.
  */
-private fun pasteTitlesAtCell(
+private fun pasteTreeAtCell(
     state: SchedulerState,
     targetCellId: CellId,
-    titles: List<String>,
+    nodes: List<SchedulerDomain.CopiedNode>,
 ): SchedulerState {
-    if (titles.isEmpty()) return state
-    var working = applySetCellTitle(state, targetCellId, titles.first())
+    if (nodes.isEmpty()) return state
+    var working = pasteNodeInto(state, targetCellId, nodes.first())
     var afterId = targetCellId
-    for (title in titles.drop(1)) {
+    for (node in nodes.drop(1)) {
         val (withCell, newId) = insertEmptyCellAfter(working, afterId)
-        working = applySetCellTitle(withCell, newId, title)
+        working = pasteNodeInto(withCell, newId, node)
+        afterId = newId
+    }
+    return working
+}
+
+/** Set [cellId]'s title to [node]'s and rebuild [node]'s children under it (recursively). */
+private fun pasteNodeInto(
+    state: SchedulerState,
+    cellId: CellId,
+    node: SchedulerDomain.CopiedNode,
+): SchedulerState {
+    var working = applySetCellTitle(state, cellId, node.title)
+    if (node.children.isEmpty()) return working
+    val taskId = working.cells[cellId]?.taskId ?: return working
+    // A non-blank title gives the cell a child sub-list with one empty placeholder (applySetCellTitle).
+    val childListId = working.tasks[taskId]?.childListId ?: return working
+    val placeholder = working.lists[childListId]?.cellIds?.firstOrNull() ?: return working
+    working = pasteNodeInto(working, placeholder, node.children.first())
+    var afterId = placeholder
+    for (child in node.children.drop(1)) {
+        val (withCell, newId) = insertEmptyCellAfter(working, afterId)
+        working = pasteNodeInto(withCell, newId, child)
         afterId = newId
     }
     return working

@@ -2221,7 +2221,7 @@ class SchedulerReducerTest {
             s,
             SchedulerIntent.ClickCell(cellId = target, ctrl = false, shift = false, visibleOrder = visible),
         )
-        s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTitles(listOf("X", "Y", "Z")))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTree("X\nY\nZ"))
 
         val listCells = s.lists[s.rootListId]!!.cellIds
         assertEquals("X", s.tasks[s.cells[target]!!.taskId!!]!!.title)
@@ -2243,7 +2243,7 @@ class SchedulerReducerTest {
                 visibleOrder = SchedulerDomain.selectableVisibleOrder(s),
             ),
         )
-        s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTitles(listOf("One", "Two", "Three")))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTree("One\nTwo\nThree"))
 
         val populatedIds = s.lists[s.rootListId]!!.cellIds.filter { cellId ->
             !SchedulerDomain.isTextuallyEmptyCell(s, cellId)
@@ -2268,7 +2268,7 @@ class SchedulerReducerTest {
             SchedulerIntent.ClickCell(cellId = target, ctrl = false, shift = false, visibleOrder = visible),
         )
         val beforeCount = s.lists[s.rootListId]!!.cellIds.size
-        s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTitles(listOf("One", "Two")))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTree("One\nTwo"))
         assertTrue(s.lists[s.rootListId]!!.cellIds.size > beforeCount)
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
@@ -2288,7 +2288,7 @@ class SchedulerReducerTest {
                 s,
                 SchedulerIntent.ClickCell(cellId = target, ctrl = false, shift = false, visibleOrder = visible),
             )
-            s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTitles(listOf(title, title)))
+            s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTree("$title\n$title"))
         }
 
         val listIds = s.lists[s.rootListId]!!.cellIds
@@ -2311,9 +2311,88 @@ class SchedulerReducerTest {
     }
 
     @Test
-    fun parse_clipboard_text_supports_newlines_and_sheet_columns() {
-        assertEquals(listOf("a", "b"), SchedulerDomain.parseClipboardText("a\nb"))
-        assertEquals(listOf("left"), SchedulerDomain.parseClipboardText("left\tright"))
+    fun copy_serializes_selected_cell_subtree_as_indented_text() {
+        // Build A with a child A1 (which has A1a), and a sibling B; then copy [A, B].
+        var s = SchedulerState.empty()
+        val root = s.rootListId
+        val cA = s.lists[root]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cA, "A"))
+        val cB = s.lists[root]!!.cellIds[1]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cB, "B"))
+        val aChildList = s.tasks[s.cells[cA]!!.taskId!!]!!.childListId!!
+        val cA1 = s.lists[aChildList]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cA1, "A1"))
+        val a1ChildList = s.tasks[s.cells[cA1]!!.taskId!!]!!.childListId!!
+        val cA1a = s.lists[a1ChildList]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cA1a, "A1a"))
+
+        val text = SchedulerDomain.copyTreeText(
+            s,
+            org.example.project.scheduler.state.SchedulerSelection(main = cA, selected = setOf(cA, cB)),
+        )
+        assertEquals("A\n\tA1\n\t\tA1a\nB", text)
+    }
+
+    @Test
+    fun paste_rebuilds_the_serialized_subtree_under_the_target_cell() {
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        val target = visible[0]
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = target, ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTree("P\n\tC1\n\tC2"))
+
+        // Target becomes "P"; its child list holds the populated children C1 and C2.
+        assertEquals("P", s.tasks[s.cells[target]!!.taskId!!]!!.title)
+        val childListId = s.tasks[s.cells[target]!!.taskId!!]!!.childListId!!
+        val childTitles = s.lists[childListId]!!.cellIds
+            .mapNotNull { s.cells[it]!!.taskId?.let { id -> s.tasks[id]!!.title } }
+            .filter { it.isNotBlank() }
+        assertEquals(listOf("C1", "C2"), childTitles)
+    }
+
+    @Test
+    fun paste_rejects_text_that_is_not_the_tree_format() {
+        // An indentation jump of more than one level → invalid → null → no paste.
+        assertEquals(null, SchedulerDomain.parseTreeText("A\n\t\tBadJump"))
+        // A real tab inside content (e.g. a Google-Sheets row) → not our format.
+        assertEquals(null, SchedulerDomain.parseTreeText("left\tright"))
+        assertEquals(null, SchedulerDomain.parseTreeText(""))
+
+        var s = seedThreeTasks()
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = visible[0], ctrl = false, shift = false, visibleOrder = visible),
+        )
+        val before = s.lists[s.rootListId]!!.cellIds.size
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTree("A\n\t\tBadJump"))
+        assertEquals(before, s.lists[s.rootListId]!!.cellIds.size) // unchanged
+    }
+
+    @Test
+    fun copy_paste_round_trips_titles_with_tabs_and_newlines() {
+        // A title containing a newline (Ctrl+Enter) and a tab must survive serialization.
+        var s = SchedulerState.empty()
+        val c = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c, "line1\nline2\tx"))
+        val text = SchedulerDomain.copyTreeText(
+            s,
+            org.example.project.scheduler.state.SchedulerSelection(main = c, selected = setOf(c)),
+        )
+        val nodes = SchedulerDomain.parseTreeText(text)
+        assertEquals(listOf("line1\nline2\tx"), nodes!!.map { it.title })
+    }
+
+    @Test
+    fun select_all_visible_selects_every_visible_cell() {
+        val s0 = seedThreeTasks()
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.SelectAllVisibleCells)
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        assertEquals(visible.toSet(), s.selection.selected)
+        assertEquals(visible.last(), s.selection.main)
     }
 
     private fun seedThreeTasks(): SchedulerState {

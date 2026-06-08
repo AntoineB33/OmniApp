@@ -259,28 +259,33 @@ fun TaskSchedulerScreen(
                     vm.dispatch(SchedulerIntent.RedoSelection)
                     return@onPreviewKeyEvent true
                 }
-                if (mod && event.key == Key.C) {
-                    val titles = SchedulerDomain.copyTitlesFromSelection(state, state.selection)
-                    vm.dispatch(SchedulerIntent.CopySelection)
-                    writeSystemClipboardText(SchedulerDomain.formatClipboardText(titles))
-                    return@onPreviewKeyEvent true
-                }
-                if (mod && event.key == Key.V) {
-                    val text = readSystemClipboardText() ?: return@onPreviewKeyEvent false
-                    vm.dispatch(
-                        SchedulerIntent.PasteTitles(SchedulerDomain.parseClipboardText(text)),
-                    )
-                    return@onPreviewKeyEvent true
-                }
                 if (state.editSession != null) {
                     // PRD §4 Cancel: Escape abandons the session, reverting affected cells to their
-                    // pre-edit text. Everything else (incl. Delete = forward-delete) falls through to
-                    // the edit field.
+                    // pre-edit text. Everything else — including Delete (forward-delete) and Ctrl+C/V/A
+                    // (the field's usual copy/paste/select-all, PRD §4) — falls through to the edit field.
                     if (event.key == Key.Escape) {
                         vm.dispatch(SchedulerIntent.CancelEdit)
                         return@onPreviewKeyEvent true
                     }
                     return@onPreviewKeyEvent false
+                }
+                // PRD §3/§4 (not in Edit Mode): select-all and tree copy/paste.
+                if (mod && event.key == Key.A) {
+                    vm.dispatch(SchedulerIntent.SelectAllVisibleCells)
+                    return@onPreviewKeyEvent true
+                }
+                if (mod && event.key == Key.C) {
+                    val text = SchedulerDomain.copyTreeText(state, state.selection)
+                    if (text.isNotEmpty()) {
+                        vm.dispatch(SchedulerIntent.CopySelection)
+                        writeSystemClipboardText(text)
+                    }
+                    return@onPreviewKeyEvent true
+                }
+                if (mod && event.key == Key.V) {
+                    val text = readSystemClipboardText() ?: return@onPreviewKeyEvent false
+                    vm.dispatch(SchedulerIntent.PasteTree(text))
+                    return@onPreviewKeyEvent true
                 }
                 when (event.key) {
                     Key.DirectionUp, Key.DirectionLeft -> {

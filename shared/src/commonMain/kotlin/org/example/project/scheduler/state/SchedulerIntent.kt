@@ -180,10 +180,17 @@ sealed interface SchedulerIntent {
     /** Tab on a single selected cell: expand and focus the first child when populated. */
     data object SelectFirstChild : SchedulerIntent
 
+    /** PRD §3: Ctrl+A selects every visible (selectable) cell. */
+    data object SelectAllVisibleCells : SchedulerIntent
+
+    /** PRD §4 Copy: serialize the selected cells' subtrees to the (system) clipboard. */
     data object CopySelection : SchedulerIntent
 
-    /** Paste [titles] at the main selection (Google Sheets uses newline-separated rows). */
-    data class PasteTitles(val titles: List<String>) : SchedulerIntent
+    /**
+     * PRD §4 Paste: rebuild the tree structure serialized in [text] at the single selected cell — a
+     * no-op unless [text] is in the app's tab-indented format.
+     */
+    data class PasteTree(val text: String) : SchedulerIntent
 
     /**
      * PRD §8 Manual add / edit window "save": add a user-authored panel (`auto = false`) with the
