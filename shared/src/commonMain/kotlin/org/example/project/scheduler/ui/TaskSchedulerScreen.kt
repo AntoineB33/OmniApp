@@ -92,6 +92,7 @@ import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.TaskId
 import kotlin.math.roundToInt
 import org.example.project.scheduler.persistence.SchedulerStore
+import org.example.project.scheduler.platform.isDeadKey
 import org.example.project.scheduler.platform.readSystemClipboardText
 import org.example.project.scheduler.platform.writeSystemClipboardText
 import org.example.project.scheduler.state.CellEditMode
@@ -272,7 +273,9 @@ fun TaskSchedulerScreen(
                     return@onPreviewKeyEvent true
                 }
                 if (state.editSession != null) {
-                    if (event.key == Key.Delete && !event.isCtrlPressed) {
+                    // PRD §4 Cancel: Delete and Escape both abandon the session, reverting affected
+                    // cells to their pre-edit text. Everything else falls through to the edit field.
+                    if ((event.key == Key.Delete || event.key == Key.Escape) && !event.isCtrlPressed) {
                         vm.dispatch(SchedulerIntent.CancelEdit)
                         return@onPreviewKeyEvent true
                     }
@@ -346,7 +349,16 @@ fun TaskSchedulerScreen(
                 if (main == minTimeEditCellId) {
                     return@onPreviewKeyEvent false
                 }
-                val typed = event.printableChar() ?: return@onPreviewKeyEvent false
+                // A dead key (^, ¨, ~ …) carries no character of its own — the composed letter is
+                // only delivered to a focused field. So open Edit Mode immediately with empty text;
+                // the cell becomes the focused field and the following letter composes into it (e.g.
+                // ^ then e → ê), instead of the bare letter being swallowed into a fresh edit.
+                val typed =
+                    if (event.isDeadKey()) {
+                        ""
+                    } else {
+                        event.printableChar() ?: return@onPreviewKeyEvent false
+                    }
                 // PRD §8 focus: while the calendar is in focus, the tree must not hijack letter typing
                 // into Edit Mode — the calendar (and its edit window) owns the keyboard then.
                 if (state.calendarFocused) return@onPreviewKeyEvent false
@@ -1529,10 +1541,6 @@ private fun TaskRow(
                                 }
                                 event.key == Key.Enter -> {
                                     onExitEdit(EditExitNavigation.Down)
-                                    true
-                                }
-                                event.key == Key.Escape -> {
-                                    onExitEdit(EditExitNavigation.Stay)
                                     true
                                 }
                                 event.key == Key.Tab && event.isShiftPressed -> {

@@ -43,6 +43,7 @@ The application maintains a dual-state selection model: **Main Selection** (a si
 * **Double-click:** Enters Edit Mode on the target cell.
 * **Enter or Shift + Enter:** Enters Edit Mode on the target cell if there is only one selected cell.
 * **Typing:** If a cell is the *Main Selection* (and not the "root" or "main" cell), typing immediately enters Edit Mode and captures the keystroke.
+  * *Dead keys:* A dead key (accent composition such as `^`, `¨`, `~`) enters Edit Mode on an empty cell so the following letter composes into it (e.g. `^` then `e` yields `ê`).
 
 ### Active Edit Mode Behavior
 While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* and two contextual menus remain visible until editing concludes:
@@ -67,7 +68,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **Sub-list Syncing:** Edits to a sub-list immediately update all expanded instances of that `taskId` across the UI.
 * **Line Breaks:** `Ctrl + Enter` adds a new line. The cell dynamically expands horizontally and vertically to fit the content. 
 * **Up and Down:** `Up` goes to the beginning if there is no line above in the cell, and `Down` to the end if there is no line below in the cell.
-* **Cancel:** Pressing `Delete` inside Edit Mode cancels the session, reverting all affected cells to their pre edit mode text.
+* **Cancel:** Pressing `Delete` or `Escape` inside Edit Mode cancels the session, reverting all affected cells to their pre edit mode text.
 * **Forced Exit:** Changing global selection via mouse click outside the cell forcibly exits Edit Mode.
 * **Auto-Expansion:** When the bottom cell of a list receives text, the system automatically:
   1. Initializes a hidden sub-list for it (containing one empty cell).
@@ -78,7 +79,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * `Shift + Enter`: moves *Main Selection* up one cell.
 * `Tab`: If the current cell is populated, opens its sub-list and moves *Main Selection* to its first child. Otherwise, behaves identically to `Enter`.
 * `Shift + Tab`: Behaves identically to `Shift + Enter`.
-* `Escape`: Simply exits Edit Mode.
+* `Escape`: Cancels the session, reverting all affected cells to their pre edit mode text (see **Cancel**).
 
 ### Empty cells management
 * **Cleanup:** Empty cells are automatically removed upon exit, *unless* it is the absolute bottom cell of a sub-list.
