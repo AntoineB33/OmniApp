@@ -243,13 +243,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             },
                             // PRD §8 (uniform blocks): committing a drag/resize updates the panel
                             // (auto blocks become user-authored), or pins a record into a panel.
-                            onCommitBounds = { block, newStart, newEnd ->
-                                commitBoundsIntent(block, block.taskId, block.title, newStart, newEnd, block.pinned)
-                                    ?.let(vm::dispatch)
+                            onCommitBounds = { block, newStart, newEnd, allowOverlap ->
+                                commitBoundsIntent(
+                                    block, block.taskId, block.title, newStart, newEnd, block.pinned, allowOverlap,
+                                )?.let(vm::dispatch)
                             },
                             onEditEntry = { block -> editingBlock = block },
                             // PRD §8 task contextual menu "Remove": delete the block by its source.
                             onRemoveEntry = { block -> removeBlockIntent(block)?.let(vm::dispatch) },
+                            // PRD §8 Overlap Mode: commit re-divided panel widths from a dragged edge.
+                            onAdjustWeights = { weights ->
+                                if (weights.isNotEmpty()) vm.dispatch(SchedulerIntent.SetPanelWeights(weights))
+                            },
+                            overlapArmed = schedulerState.overlapArmed,
+                            onToggleOverlap = { vm.dispatch(SchedulerIntent.ToggleCalendarOverlap) },
+                            onUndo = { vm.dispatch(SchedulerIntent.Undo) },
+                            onRedo = { vm.dispatch(SchedulerIntent.Redo) },
                         )
 
                         // PRD §8 edit window, drawn over the calendar window and the tree — used for
@@ -265,8 +274,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                 taskMenuEntries = { draft, exclude ->
                                     SchedulerDomain.calendarTaskMenuEntries(schedulerState, draft, exclude)
                                 },
-                                titleSuggestions = { SchedulerDomain.titleSuggestions(schedulerState, it) },
-                                taskIdForTitle = { schedulerState.titleToTaskIds[it]?.firstOrNull() },
+                                titleSuggestions = { SchedulerDomain.calendarTitleSuggestions(schedulerState, it) },
+                                taskIdForTitle = { SchedulerDomain.calendarTaskIdForTitle(schedulerState, it) },
                                 titleForTaskId = { schedulerState.tasks[it]?.title },
                                 initialPinned = block.pinned,
                                 onDismiss = { editingBlock = null; addingBlock = null },
@@ -311,12 +320,13 @@ private fun commitBoundsIntent(
     startMillis: Long,
     endMillis: Long,
     pinned: Boolean,
+    allowOverlap: Boolean = false,
 ): SchedulerIntent? = when {
     // A merged block (several same-task panels shown as one): replace the whole group with one panel.
     block.entryIds.size > 1 ->
-        SchedulerIntent.ReplaceTaskPanels(block.entryIds, taskId, title, startMillis, endMillis, pinned)
+        SchedulerIntent.ReplaceTaskPanels(block.entryIds, taskId, title, startMillis, endMillis, pinned, allowOverlap)
     block.entryId != null ->
-        SchedulerIntent.UpdateTaskPanel(block.entryId, taskId, title, startMillis, endMillis, pinned)
+        SchedulerIntent.UpdateTaskPanel(block.entryId, taskId, title, startMillis, endMillis, pinned, allowOverlap)
     block.taskId != null ->
         SchedulerIntent.PinRecordAsPanel(
             recordTaskId = block.taskId,
@@ -327,6 +337,7 @@ private fun commitBoundsIntent(
             startEpochMillis = startMillis,
             endEpochMillis = endMillis,
             pinned = pinned,
+            allowOverlap = allowOverlap,
         )
     else -> null
 }
@@ -363,5 +374,6 @@ private fun mergePanelsForDisplay(panels: List<TaskPanel>): List<CalendarRecord>
             entryIds = group.map { it.id },
             taskId = head.taskId,
             pinned = head.pinned,
+            layoutWeight = head.layoutWeight,
         )
     }

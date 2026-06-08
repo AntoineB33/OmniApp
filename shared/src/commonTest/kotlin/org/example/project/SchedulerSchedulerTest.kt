@@ -93,6 +93,44 @@ class SchedulerSchedulerTest {
         assertEquals(b, SchedulerDomain.nextTask(withRecord, now))
     }
 
+    @Test
+    fun removed_task_is_not_scheduled() {
+        val (s0, a, b) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val c0 = s0.lists[s0.rootListId]!!.cellIds[0]
+        // "Remove" A from the tree by emptying its cell.
+        val s1 = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(c0, ""))
+        val next = SchedulerDomain.nextTask(s1, now)
+        val priorities = SchedulerDomain.absoluteTaskPriorities(s1)
+        val panels = SchedulerDomain.fillSchedule(s1, now)
+        assertEquals(b, next, "nextTask should pick B, not removed A. priorities=$priorities")
+        assertTrue(panels.none { it.taskId == a }, "removed A still scheduled: ${panels.map { it.taskId }}")
+    }
+
+    @Test
+    fun advance_tick_drops_a_removed_tasks_lingering_panels() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // A schedule already laid down with A panels; auto-scheduling OFF, so no refill runs and only
+        // the frequent advance tick can clean up after the task is removed (PRD §7/§9).
+        val scheduled = s0.copy(
+            panels = SchedulerDomain.fillSchedule(s0, now),
+            automaticSchedule = false,
+        )
+        assertTrue(scheduled.panels.any { it.taskId == a })
+        // Remove A via the Delete-key flow (select A's cell, EmptySelectedCells).
+        val cA = scheduled.lists[scheduled.rootListId]!!.cellIds[0]
+        val withSel = scheduled.copy(
+            selection = org.example.project.scheduler.state.SchedulerSelection(main = cA, selected = setOf(cA)),
+        )
+        val removed = SchedulerReducer.reduce(withSel, SchedulerIntent.EmptySelectedCells)
+        val ticked = SchedulerReducer.reduce(removed, SchedulerIntent.AdvanceSchedule(now))
+        assertTrue(
+            ticked.panels.none { it.taskId == a },
+            "removed A lingers in the schedule: ${ticked.panels.map { it.taskId }}",
+        )
+    }
+
     // ----- §9 fillSchedule (windowed multi-panel) --------------------------------------------
 
     @Test

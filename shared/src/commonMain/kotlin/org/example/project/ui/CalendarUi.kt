@@ -6,9 +6,12 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -48,9 +51,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
@@ -129,6 +142,8 @@ data class CalendarRecord(
     val taskId: TaskId? = null,
     /** PRD §9 whether the backing panel is pinned (seeds the edit-window pin toggle). */
     val pinned: Boolean = false,
+    /** PRD §8 Overlap Mode: horizontal weight of the backing panel (head panel for a merged block). */
+    val layoutWeight: Double = 1.0,
 )
 
 /** A [CalendarRecord] clipped to a single day, as start/end hour-of-day fractions in `[0, 24]`. */
@@ -143,6 +158,8 @@ data class PlacedRecord(
     val entryIds: List<String> = emptyList(),
     val taskId: TaskId? = null,
     val pinned: Boolean = false,
+    /** PRD §8 Overlap Mode: horizontal weight of the backing panel; drives [overlapLayout] widths. */
+    val layoutWeight: Double = 1.0,
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
     val fullEndMillis: Long = 0L,
@@ -175,6 +192,7 @@ fun recordsForDay(
             entryIds = record.entryIds,
             taskId = record.taskId,
             pinned = record.pinned,
+            layoutWeight = record.layoutWeight,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
         )
@@ -198,6 +216,138 @@ private fun calendarBlockKey(r: CalendarRecord): String =
 
 private fun calendarBlockKey(r: PlacedRecord): String =
     calendarBlockKey(r.entryId, r.scheduled, r.taskId, r.fullStartMillis, r.fullEndMillis)
+
+/**
+ * PRD §8 Overlap Mode: one horizontal slice of a panel's render. A panel that never overlaps yields a
+ * single full-width slice (`xFraction = 0`, `widthFraction = 1`) spanning its whole height; where it
+ * overlaps others it yields a narrower slice for that sub-range only (a stepped, variable-width shape).
+ */
+data class PanelSlice(
+    val topHour: Float,
+    val bottomHour: Float,
+    val xFraction: Float,
+    val widthFraction: Float,
+)
+
+private fun approxEq(a: Float, b: Float): Boolean = kotlin.math.abs(a - b) < 1e-4f
+
+/**
+ * PRD §8 Overlap Mode horizontal layout. Splits the day at every block start/end boundary; within each
+ * resulting `[a, b)` time slice the panels active there are ordered left→right by `(startHour, key)` and
+ * share the column width in proportion to [PlacedRecord.layoutWeight] (equal weights ⇒ each `1/n`).
+ * Vertically adjacent slices of the same block with the same x/width are coalesced, so a non-overlapping
+ * panel collapses back to one full-width slice. Pure, for unit testing independently of Compose. Keyed
+ * by [calendarBlockKey].
+ */
+fun overlapLayout(blocks: List<PlacedRecord>): Map<String, List<PanelSlice>> {
+    if (blocks.isEmpty()) return emptyMap()
+    val boundaries = sortedSetOf<Float>()
+    for (b in blocks) {
+        boundaries.add(b.startHour)
+        boundaries.add(b.endHour)
+    }
+    val bounds = boundaries.toList()
+    val raw = HashMap<String, MutableList<PanelSlice>>()
+    for (i in 0 until bounds.size - 1) {
+        val a = bounds[i]
+        val b = bounds[i + 1]
+        if (b <= a) continue
+        val active = blocks
+            .filter { it.startHour <= a && it.endHour >= b }
+            .sortedWith(compareBy({ it.startHour }, { calendarBlockKey(it) }))
+        if (active.isEmpty()) continue
+        val total = active.sumOf { it.layoutWeight }.let { if (it <= 0.0) active.size.toDouble() else it }
+        var x = 0f
+        for (block in active) {
+            val w = (block.layoutWeight / total).toFloat()
+            raw.getOrPut(calendarBlockKey(block)) { mutableListOf() }
+                .add(PanelSlice(topHour = a, bottomHour = b, xFraction = x, widthFraction = w))
+            x += w
+        }
+    }
+    return coalesceSlices(raw)
+}
+
+/** PRD §8 Overlap Mode: a draggable boundary between two horizontally-adjacent panels in one time slice. */
+data class WeightHandle(
+    val topHour: Float,
+    val bottomHour: Float,
+    /** Current split position as a fraction of the column width (where the boundary sits). */
+    val boundaryFraction: Float,
+    /** Backing panel ids of the panel left / right of the boundary (every id of a merged block). */
+    val leftIds: List<String>,
+    val rightIds: List<String>,
+    /** Weight of the panels left of this pair in the slice, the slice total, and the pair's combined weight. */
+    val leftSumWeight: Double,
+    val totalWeight: Double,
+    val pairWeight: Double,
+)
+
+/**
+ * PRD §8 Overlap Mode: the vertical edges the user can drag to re-divide shared width. One handle per
+ * adjacent panel pair within each overlap time slice (only between panels — a green record block has no
+ * weight to adjust). The geometry ([leftSumWeight]/[totalWeight]/[pairWeight]) lets a drag map a pointer
+ * x to new weights while the other panels' shares stay fixed.
+ */
+fun weightHandles(blocks: List<PlacedRecord>): List<WeightHandle> {
+    if (blocks.size < 2) return emptyList()
+    val boundaries = sortedSetOf<Float>()
+    for (b in blocks) {
+        boundaries.add(b.startHour)
+        boundaries.add(b.endHour)
+    }
+    val bounds = boundaries.toList()
+    val out = mutableListOf<WeightHandle>()
+    for (i in 0 until bounds.size - 1) {
+        val a = bounds[i]
+        val b = bounds[i + 1]
+        if (b <= a) continue
+        val active = blocks
+            .filter { it.startHour <= a && it.endHour >= b }
+            .sortedWith(compareBy({ it.startHour }, { calendarBlockKey(it) }))
+        if (active.size < 2) continue
+        val total = active.sumOf { it.layoutWeight }.let { if (it <= 0.0) active.size.toDouble() else it }
+        var leftSum = 0.0
+        for (j in active.indices) {
+            val w = active[j].layoutWeight
+            val right = active.getOrNull(j + 1)
+            if (right != null && active[j].entryIds.isNotEmpty() && right.entryIds.isNotEmpty()) {
+                out.add(
+                    WeightHandle(
+                        topHour = a,
+                        bottomHour = b,
+                        boundaryFraction = ((leftSum + w) / total).toFloat(),
+                        leftIds = active[j].entryIds,
+                        rightIds = right.entryIds,
+                        leftSumWeight = leftSum,
+                        totalWeight = total,
+                        pairWeight = w + right.layoutWeight,
+                    ),
+                )
+            }
+            leftSum += w
+        }
+    }
+    return out
+}
+
+private fun coalesceSlices(raw: Map<String, MutableList<PanelSlice>>): Map<String, List<PanelSlice>> {
+    // Coalesce vertically adjacent slices with matching x/width (the common no-overlap case → 1 slice).
+    return raw.mapValues { (_, slices) ->
+        val merged = mutableListOf<PanelSlice>()
+        for (s in slices) {
+            val last = merged.lastOrNull()
+            if (last != null && approxEq(last.bottomHour, s.topHour) &&
+                approxEq(last.xFraction, s.xFraction) && approxEq(last.widthFraction, s.widthFraction)
+            ) {
+                merged[merged.lastIndex] = last.copy(bottomHour = s.bottomHour)
+            } else {
+                merged.add(s)
+            }
+        }
+        merged
+    }
+}
 
 /** Monday of the week containing [date] (PRD §7 week view starts on Monday, like the mock-up). */
 private fun startOfWeek(date: LocalDate): LocalDate =
@@ -461,14 +611,31 @@ fun CalendarFloatingWindow(
     onFocus: () -> Unit = {},
     /** PRD §8 Manual add: invoked with the epoch-millis at a right-click position in the calendar. */
     onAddTaskAt: (Long) -> Unit = {},
-    /** PRD §8 drag/resize commit: the block and its new (already snapped) start/end millis. */
-    onCommitBounds: (PlacedRecord, Long, Long) -> Unit = { _, _, _ -> },
+    /**
+     * PRD §8 drag/resize commit: the block, its new start/end millis, and whether Overlap Mode was armed
+     * (the bounds are raw/overlapping when armed, else already no-overlap snapped).
+     */
+    onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit = { _, _, _, _ -> },
     /** PRD §8 task contextual menu "Edit": requests opening the edit window for this block. */
     onEditEntry: (PlacedRecord) -> Unit = {},
     /** PRD §8 task contextual menu "Remove": requests deleting this block. */
     onRemoveEntry: (PlacedRecord) -> Unit = {},
+    /** PRD §8 Overlap Mode: new horizontal weights for panels whose shared-width edge was dragged. */
+    onAdjustWeights: (Map<String, Double>) -> Unit = {},
+    /** PRD §8 Overlap Mode: whether overlap is currently armed (toggled by `O` while the calendar is focused). */
+    overlapArmed: Boolean = false,
+    /** PRD §8 Overlap Mode: `O` toggles "allow overlap" for the next move/resize. */
+    onToggleOverlap: () -> Unit = {},
+    /** PRD §8/§9 calendar history: Ctrl+Z / Ctrl+Y while the calendar holds keyboard focus. */
+    onUndo: () -> Unit = {},
+    onRedo: () -> Unit = {},
 ) {
     var offset by remember { mutableStateOf(Offset.Zero) }
+    // PRD §8: the calendar owns the keyboard while it is the active surface, so its own shortcuts (O to
+    // toggle overlap, Ctrl+Z/Y to undo/redo the calendar history) work even though the tree normally
+    // holds focus. Focus is (re)claimed when the window opens and on every press inside it.
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -477,14 +644,39 @@ fun CalendarFloatingWindow(
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
             .size(width = 720.dp, height = 540.dp)
+            .focusRequester(focusRequester)
+            .focusable()
+            // PRD §8: calendar-owned keyboard shortcuts while it is the focused surface.
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                val mod = event.isCtrlPressed || event.isMetaPressed
+                when {
+                    event.key == Key.O && !mod -> {
+                        onToggleOverlap()
+                        true
+                    }
+                    mod && event.key == Key.Z -> {
+                        onUndo()
+                        true
+                    }
+                    mod && event.key == Key.Y -> {
+                        onRedo()
+                        true
+                    }
+                    else -> false
+                }
+            }
             // PRD §8 focus: observe presses on the Initial pass (without consuming, so the week view /
-            // blocks still get them) to mark the calendar as the focused surface — so clicking back
-            // into the calendar after the tree re-engages "calendar in focus".
+            // blocks still get them) to mark the calendar as the focused surface — and reclaim the
+            // keyboard so its shortcuts fire — so clicking back into the calendar re-engages focus.
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.type == PointerEventType.Press) onFocus()
+                        if (event.type == PointerEventType.Press) {
+                            onFocus()
+                            runCatching { focusRequester.requestFocus() }
+                        }
                     }
                 }
             },
@@ -530,6 +722,8 @@ fun CalendarFloatingWindow(
                     onCommitBounds = onCommitBounds,
                     onEditEntry = onEditEntry,
                     onRemoveEntry = onRemoveEntry,
+                    onAdjustWeights = onAdjustWeights,
+                    overlapArmed = overlapArmed,
                 )
             }
         }
@@ -543,9 +737,11 @@ private fun WeekView(
     nowMillis: Long,
     records: List<CalendarRecord>,
     onAddTaskAt: (Long) -> Unit,
-    onCommitBounds: (PlacedRecord, Long, Long) -> Unit,
+    onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
+    onAdjustWeights: (Map<String, Double>) -> Unit,
+    overlapArmed: Boolean,
 ) {
     val weekStart = startOfWeek(selectedDate)
     val days = (0..6).map { weekStart.plus(it, DateTimeUnit.DAY) }
@@ -569,16 +765,28 @@ private fun WeekView(
     // compete with the block's own drag gesture.
     var scrollLocked by remember { mutableStateOf(false) }
 
-    // PRD §8 "there must not be overlaps": every block on the calendar (records, scheduled, manual)
-    // as (key, range), so a dragged block snaps around ALL of them live — matching the reducer.
+    // PRD §8 "there must not be overlaps" (default mode): every block on the calendar (records,
+    // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live.
     val allBlocks = records.map { calendarBlockKey(it) to it.range }
 
     Column(Modifier.fillMaxSize().padding(12.dp)) {
-        Text(
-            text = monthLabel(weekStart),
-            style = MaterialTheme.typography.titleMedium,
+        Row(
             modifier = Modifier.padding(bottom = 8.dp),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = monthLabel(weekStart),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            if (overlapArmed) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Overlap mode (O)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CalColors.accent,
+                )
+            }
+        }
 
         // Day-of-week + date headers, aligned over their columns.
         Row(Modifier.fillMaxWidth()) {
@@ -626,7 +834,9 @@ private fun WeekView(
                         onEditEntry = onEditEntry,
                         onRemoveEntry = onRemoveEntry,
                         onLockScroll = { scrollLocked = it },
+                        onAdjustWeights = onAdjustWeights,
                         allBlocks = allBlocks,
+                        overlapArmed = overlapArmed,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -678,11 +888,13 @@ private fun DayColumn(
     now: LocalTime?,
     records: List<PlacedRecord>,
     onAddTaskAt: (Long) -> Unit,
-    onCommitBounds: (PlacedRecord, Long, Long) -> Unit,
+    onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
     onLockScroll: (Boolean) -> Unit,
+    onAdjustWeights: (Map<String, Double>) -> Unit,
     allBlocks: List<Pair<String, TaskTimeRange>>,
+    overlapArmed: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -693,6 +905,15 @@ private fun DayColumn(
     // Latest records, so the right-click hit-test closure never reads a stale list (records change
     // every scheduler tick) without restarting the long-lived gesture coroutine.
     val currentRecords by rememberUpdatedState(records)
+
+    // PRD §8 Overlap Mode: live width-edge drag. While a weight handle is held this maps panel ids to
+    // their in-progress weights so the layout (and the handle position) follow the drag; on release the
+    // weights are committed via [onAdjustWeights] and this clears.
+    var weightDrag by remember { mutableStateOf<Map<String, Double>?>(null) }
+    val effRecords =
+        weightDrag?.let { wd ->
+            records.map { r -> r.entryIds.firstNotNullOfOrNull { wd[it] }?.let { r.copy(layoutWeight = it) } ?: r }
+        } ?: records
 
     // Epoch millis at a vertical pixel offset within this 24-hour column.
     fun millisAt(offsetY: Float): Long {
@@ -780,19 +1001,79 @@ private fun DayColumn(
         // — renders as the same interactive block (click+drag to move, grab an edge to resize). The
         // right-click Edit/Remove menu is owned by the day column (above). Auto blocks convert to a
         // manual entry on first edit (handled by the callbacks in App), so there is no difference.
-        records.forEach { record ->
+        // PRD §8 Overlap Mode: split each block into horizontal slices so overlapping panels share the
+        // column width (only over the overlapping sub-range). A non-overlapping block yields one
+        // full-width slice = the original look.
+        val layout = overlapLayout(effRecords)
+        effRecords.forEach { record ->
             val key = calendarBlockKey(record)
             CalendarBlock(
                 record = record,
+                slices = layout[key] ?: listOf(
+                    PanelSlice(record.startHour, record.endHour, xFraction = 0f, widthFraction = 1f),
+                ),
                 hourHeight = hourHeight,
                 day = day,
                 tz = tz,
-                // Every other block — everything but itself — so a drag/resize never overlaps.
+                // Every other block — everything but itself — so a non-overlap drag/resize snaps around them.
                 others = allBlocks.filter { it.first != key }.map { it.second },
+                overlapArmed = overlapArmed,
                 onCommitBounds = onCommitBounds,
                 onLockScroll = onLockScroll,
             )
         }
+
+        // PRD §8 Overlap Mode: draggable vertical edges between overlapping panels (re-divide width).
+        // Overlaid above the slices at each shared boundary; a horizontal drag moves weight between the
+        // two adjacent panels (the others' shares stay fixed), committed on release.
+        val handles = weightHandles(effRecords)
+        if (handles.isNotEmpty()) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val colWidth = maxWidth
+                val colWidthPx = with(density) { colWidth.toPx() }
+                val handleWidth = 10.dp
+                handles.forEach { handle ->
+                    Box(
+                        modifier = Modifier
+                            .offset(
+                                x = colWidth * handle.boundaryFraction - handleWidth / 2,
+                                y = hourHeight * handle.topHour,
+                            )
+                            .width(handleWidth)
+                            .height(hourHeight * (handle.bottomHour - handle.topHour))
+                            .pointerInput(handle.leftIds, handle.rightIds, handle.topHour) {
+                                var accumX = 0f
+                                detectHorizontalDragGestures(
+                                    onDragStart = { onLockScroll(true) },
+                                    onDragEnd = {
+                                        weightDrag?.let(onAdjustWeights)
+                                        weightDrag = null
+                                        onLockScroll(false)
+                                    },
+                                    onDragCancel = {
+                                        weightDrag = null
+                                        onLockScroll(false)
+                                    },
+                                ) { change, dragAmount ->
+                                    change.consume()
+                                    accumX += dragAmount
+                                    val newFraction = handle.boundaryFraction + (if (colWidthPx > 0f) accumX / colWidthPx else 0f)
+                                    val eps = handle.pairWeight * 0.05
+                                    val wLeft = (newFraction * handle.totalWeight - handle.leftSumWeight)
+                                        .coerceIn(eps, handle.pairWeight - eps)
+                                    val wRight = handle.pairWeight - wLeft
+                                    weightDrag =
+                                        buildMap {
+                                            handle.leftIds.forEach { put(it, wLeft) }
+                                            handle.rightIds.forEach { put(it, wRight) }
+                                        }
+                                }
+                            },
+                    )
+                }
+            }
+        }
+
         // Current-time indicator (only on today's column).
         if (now != null) {
             val offsetY = hourHeight * (now.hour + now.minute / 60f)
@@ -829,14 +1110,18 @@ private fun DayColumn(
 @Composable
 private fun CalendarBlock(
     record: PlacedRecord,
+    slices: List<PanelSlice>,
     hourHeight: Dp,
     day: LocalDate,
     tz: TimeZone,
     others: List<TaskTimeRange>,
-    onCommitBounds: (PlacedRecord, Long, Long) -> Unit,
+    overlapArmed: Boolean,
+    onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onLockScroll: (Boolean) -> Unit,
 ) {
     val key = calendarBlockKey(record)
+    // Read inside the long-lived gesture closure so a mid-drag `O` toggle is picked up immediately.
+    val armed = rememberUpdatedState(overlapArmed)
     val density = LocalDensity.current
     val hourHeightPx = with(density) { hourHeight.toPx() }
     val minPx = with(density) { 2.dp.toPx() }
@@ -855,15 +1140,30 @@ private fun CalendarBlock(
     var dragPx by remember(key) { mutableStateOf(0f) }
     var moving by remember(key) { mutableStateOf(false) }
     var resizing by remember(key) { mutableStateOf<CalendarEdge?>(null) }
+    val dragging = moving || resizing != null
 
     fun millisDelta(px: Float): Long = ((px / hourHeightPx) * 3_600_000f).toLong()
 
-    // The snapped/clamped bounds for the current gesture (also what gets committed on release).
-    fun movedBounds(): TaskTimeRange =
-        SchedulerDomain.placeDraggedEntry(others, record.fullStartMillis + millisDelta(dragPx), duration)
+    // The bounds for the current gesture (also what gets committed on release). In the default mode they
+    // are snapped/clamped to never overlap; while Overlap Mode is armed they are the raw dragged bounds
+    // (only kept from collapsing below the minimum length), so the panel can overlap others (PRD §8).
+    val minLen = SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS
+    fun movedBounds(): TaskTimeRange {
+        val rawStart = record.fullStartMillis + millisDelta(dragPx)
+        return if (armed.value) {
+            TaskTimeRange(rawStart, rawStart + duration)
+        } else {
+            SchedulerDomain.placeDraggedEntry(others, rawStart, duration)
+        }
+    }
     fun resizedBounds(edge: CalendarEdge): TaskTimeRange {
         val base = if (edge == CalendarEdge.Start) record.fullStartMillis else record.fullEndMillis
-        return SchedulerDomain.clampResize(others, entry, edge, base + millisDelta(dragPx))
+        val target = base + millisDelta(dragPx)
+        if (!armed.value) return SchedulerDomain.clampResize(others, entry, edge, target)
+        return when (edge) {
+            CalendarEdge.Start -> entry.copy(startEpochMillis = minOf(target, entry.endEpochMillis - minLen))
+            CalendarEdge.End -> entry.copy(endEpochMillis = maxOf(target, entry.startEpochMillis + minLen))
+        }
     }
 
     val preview: TaskTimeRange? = when {
@@ -879,95 +1179,135 @@ private fun CalendarBlock(
 
     val color = CalColors.event
 
-    Box(
-        modifier = Modifier
-            .offset { IntOffset(0, previewOffsetPx.roundToInt()) }
-            .fillMaxWidth()
-            .height(with(density) { previewHeightCoerced.toDp() })
-            .padding(horizontal = 1.dp)
-            // Re-key on the entry's position so the gesture closure re-captures fresh values after a
-            // commit — otherwise a second drag would compute from the stale original position and the
-            // block would not land where released.
-            .pointerInput(key, record.fullStartMillis, record.fullEndMillis) {
-                val touchSlop = viewConfiguration.touchSlop
-                // Cap the resize edge zone at a third of the block so a short entry still has a
-                // central "move" region the press can land in.
-                val edgePx = minOf(with(density) { 6.dp.toPx() }, baseHeight / 3f)
-
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-
-                    // Right-click → leave it unconsumed so the enclosing day column shows the
-                    // Edit/Remove contextual menu for this block (PRD §8).
-                    if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
-
-                    // Primary press: grab an edge to resize, else drag the body to move. A press with
-                    // no drag does nothing (editing is via the right-click menu now, PRD §8).
-                    val localY = down.position.y
-                    val edge = when {
-                        localY <= edgePx -> CalendarEdge.Start
-                        localY >= baseHeight - edgePx -> CalendarEdge.End
-                        else -> null
-                    }
-                    down.consume()
-
-                    var started = false
-                    var traveled = 0f
-                    // Lock the grid scroll for the whole press so a held drag can't scroll it.
-                    onLockScroll(true)
-                    try {
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            if (!event.changes.any { it.pressed }) {
-                                if (started) {
-                                    val b = if (edge != null) resizedBounds(edge) else movedBounds()
-                                    onCommitBounds(record, b.startEpochMillis, b.endEpochMillis)
-                                }
-                                break
-                            }
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
-                            val delta = change.positionChangeIgnoreConsumed()
-                            traveled += delta.getDistance()
-                            if (!started && traveled > touchSlop) {
-                                started = true
-                                if (edge != null) resizing = edge else moving = true
-                            }
-                            change.consume()
-                            if (started) dragPx += delta.y
-                        }
-                    } finally {
-                        onLockScroll(false)
-                        moving = false
-                        resizing = null
-                        dragPx = 0f
-                    }
-                }
-            },
-    ) {
-        TooltipBox(
-            positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-            tooltip = { PlainTooltip { Text(record.title.ifEmpty { "(untitled)" }) } },
-            state = rememberTooltipState(),
-        ) {
+    // PRD §8 Overlap Mode: a transparent full-column layer (no pointer handler of its own, so it never
+    // steals clicks) that positions this block's horizontal slices absolutely. A non-overlapping block
+    // has a single full-width slice = the original block. Each slice carries the shared move/resize
+    // gesture; because every slice stays mounted for the whole drag, the gesture that began on one slice
+    // is never cancelled by the rest↔drag visual switch.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val colWidth = maxWidth
+        slices.forEachIndexed { index, slice ->
+            val isFirst = index == 0
+            val isLast = index == slices.lastIndex
+            val sliceTop = hourHeight * slice.topHour
+            val sliceHeight = hourHeight * (slice.bottomHour - slice.topHour)
+            val sliceHeightPx = with(density) { sliceHeight.toPx() }.coerceAtLeast(minPx)
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(color.copy(alpha = 0.30f))
-                    .border(1.dp, color, RoundedCornerShape(3.dp)),
+                    .offset(x = colWidth * slice.xFraction, y = sliceTop)
+                    .width(colWidth * slice.widthFraction)
+                    .height(sliceHeight)
+                    // Kept mounted but invisible while dragging — the single preview box below shows the
+                    // live position; this slice only needs to survive to keep the gesture alive.
+                    .alpha(if (dragging) 0f else 1f)
+                    .padding(horizontal = 1.dp)
+                    // Re-key on the entry's position so the gesture closure re-captures fresh values after
+                    // a commit; on slice role so edge zones recompute when the layout changes.
+                    .pointerInput(key, record.fullStartMillis, record.fullEndMillis, isFirst, isLast) {
+                        val touchSlop = viewConfiguration.touchSlop
+                        // Cap the resize edge zone at a third of the slice so a short slice still has a
+                        // central "move" region the press can land in.
+                        val edgePx = minOf(with(density) { 6.dp.toPx() }, sliceHeightPx / 3f)
+
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+
+                            // Right-click → leave it unconsumed so the enclosing day column shows the
+                            // Edit/Remove contextual menu for this block (PRD §8).
+                            if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
+
+                            // Resize only on the block's true top (first slice) / bottom (last slice);
+                            // an interior slice edge is just a slice boundary, so it moves the block.
+                            val localY = down.position.y
+                            val edge = when {
+                                isFirst && localY <= edgePx -> CalendarEdge.Start
+                                isLast && localY >= sliceHeightPx - edgePx -> CalendarEdge.End
+                                else -> null
+                            }
+                            down.consume()
+
+                            var started = false
+                            var traveled = 0f
+                            // Lock the grid scroll for the whole press so a held drag can't scroll it.
+                            onLockScroll(true)
+                            try {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    if (!event.changes.any { it.pressed }) {
+                                        if (started) {
+                                            val b = if (edge != null) resizedBounds(edge) else movedBounds()
+                                            onCommitBounds(record, b.startEpochMillis, b.endEpochMillis, armed.value)
+                                        }
+                                        break
+                                    }
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
+                                    val delta = change.positionChangeIgnoreConsumed()
+                                    traveled += delta.getDistance()
+                                    if (!started && traveled > touchSlop) {
+                                        started = true
+                                        if (edge != null) resizing = edge else moving = true
+                                    }
+                                    change.consume()
+                                    if (started) dragPx += delta.y
+                                }
+                            } finally {
+                                onLockScroll(false)
+                                moving = false
+                                resizing = null
+                                dragPx = 0f
+                            }
+                        }
+                    },
             ) {
-                // PRD §8: the task title is written on the panel itself; the hover tooltip above
-                // remains as a fallback when the panel is too short to show the full title.
-                Text(
-                    text = record.title.ifEmpty { "(untitled)" },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = CalColors.event,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 3.dp, vertical = 1.dp),
-                )
+                if (!dragging) {
+                    TooltipBox(
+                        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+                        tooltip = { PlainTooltip { Text(record.title.ifEmpty { "(untitled)" }) } },
+                        state = rememberTooltipState(),
+                    ) {
+                        // The title is written only on the topmost slice so a stepped block reads as one.
+                        CalendarBlockBody(color, record.title, showTitle = isFirst)
+                    }
+                }
             }
+        }
+
+        // Single full-width live preview while dragging (PRD §8 v1: the side-by-side narrowing settles on
+        // release). Drawn over the (now-invisible) slices; purely visual, no gesture of its own.
+        if (dragging) {
+            Box(
+                modifier = Modifier
+                    .offset { IntOffset(0, previewOffsetPx.roundToInt()) }
+                    .fillMaxWidth()
+                    .height(with(density) { previewHeightCoerced.toDp() })
+                    .padding(horizontal = 1.dp),
+            ) {
+                CalendarBlockBody(color, record.title, showTitle = true)
+            }
+        }
+    }
+}
+
+/** PRD §8: the coloured body + title of a calendar block (or one of its overlap slices). */
+@Composable
+private fun CalendarBlockBody(color: Color, title: String, showTitle: Boolean) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(3.dp))
+            .background(color.copy(alpha = 0.30f))
+            .border(1.dp, color, RoundedCornerShape(3.dp)),
+    ) {
+        if (showTitle) {
+            Text(
+                text = title.ifEmpty { "(untitled)" },
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.event,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 3.dp, vertical = 1.dp),
+            )
         }
     }
 }
@@ -1016,8 +1356,12 @@ fun ManualEntryEditWindow(
     initialPinned: Boolean = false,
 ) {
     var title by remember { mutableStateOf(initialTitle) }
-    // Null = calendar-only "New task" (the default); set when an existing task/title is picked.
+    // The explicitly-picked existing task, if any. PRD §8: unlike the tree, the calendar does NOT
+    // default to "New task" — the first real task of the menu is pre-selected. [newTaskChosen] records
+    // when the user explicitly picks the "New task" row instead, so a fresh window / typing reverts to
+    // the first-task default.
     var selectedTaskId by remember { mutableStateOf(initialTaskId) }
+    var newTaskChosen by remember { mutableStateOf(false) }
     var startText by remember { mutableStateOf(formatHm(startMillis, tz)) }
     var endText by remember { mutableStateOf(formatHm(endMillis, tz)) }
     // PRD §9: pinned panels survive a reschedule; toggled here.
@@ -1046,20 +1390,30 @@ fun ManualEntryEditWindow(
                     value = title,
                     onValueChange = {
                         title = it
-                        selectedTaskId = null // typing → "New task" (mirrors the tree's Edit Mode)
+                        // Typing reverts to the default (first task of the menu), not "New task".
+                        selectedTaskId = null
+                        newTaskChosen = false
                     },
                     label = { Text("Task") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
 
-                // --- Tasks menu: New task + existing matches. Pass no exclusion so the matching
-                // task shows (and highlights) even when it was picked from the suggestions below,
-                // not just while typing. ---
+                // --- Tasks menu: New task + existing leaf matches. Pass no exclusion so the matching
+                // task shows (and highlights) even when it was picked from the suggestions below. PRD §8:
+                // the first real task is selected by default; "New task" only when explicitly chosen. ---
                 val taskEntries = taskMenuEntries(title, null)
+                // The effective task this window will save: the explicit pick, else (unless the user
+                // chose "New task") the first real task of the menu.
+                val effectiveTaskId =
+                    when {
+                        newTaskChosen -> null
+                        selectedTaskId != null && taskEntries.any { it.taskId == selectedTaskId } -> selectedTaskId
+                        else -> SchedulerDomain.calendarDefaultMenuTaskId(taskEntries)
+                    }
                 if (taskEntries.size > 1) {
                     val selectedIndex =
-                        SchedulerDomain.changeTaskMenuSelectedIndex(taskEntries, selectedTaskId)
+                        SchedulerDomain.changeTaskMenuSelectedIndex(taskEntries, effectiveTaskId)
                     Text(
                         text = "Tasks",
                         style = MaterialTheme.typography.labelMedium,
@@ -1072,8 +1426,10 @@ fun ManualEntryEditWindow(
                             onClick = {
                                 if (entry.taskId == null) {
                                     selectedTaskId = null // "New task" → calendar-only
+                                    newTaskChosen = true
                                 } else {
                                     selectedTaskId = entry.taskId
+                                    newTaskChosen = false
                                     titleForTaskId(entry.taskId)?.let { title = it }
                                 }
                             },
@@ -1095,6 +1451,7 @@ fun ManualEntryEditWindow(
                             onClick = {
                                 title = suggestion
                                 selectedTaskId = taskIdForTitle(suggestion)
+                                newTaskChosen = false
                             },
                         )
                     }
@@ -1140,7 +1497,7 @@ fun ManualEntryEditWindow(
                         onClick = {
                             val start = parseHmOnDateOf(startText, startMillis, tz) ?: startMillis
                             val end = parseHmOnDateOf(endText, endMillis, tz) ?: endMillis
-                            onSave(selectedTaskId, title, start, end, pinned)
+                            onSave(effectiveTaskId, title, start, end, pinned)
                         },
                     ) { Text("Save") }
                 }

@@ -49,10 +49,12 @@ object SchedulerReducer {
             is SchedulerIntent.ResizeTaskPanel -> reduceResizeTaskPanel(state, intent)
             is SchedulerIntent.PinRecordAsPanel -> reducePinRecord(state, intent)
             is SchedulerIntent.RemoveTaskPanel -> reduceRemoveTaskPanel(state, intent.id)
+            is SchedulerIntent.SetPanelWeights -> reduceSetPanelWeights(state, intent)
             is SchedulerIntent.RemoveTaskPanels -> reduceRemoveTaskPanels(state, intent.ids)
             is SchedulerIntent.ReplaceTaskPanels -> reduceReplaceTaskPanels(state, intent)
             is SchedulerIntent.RemoveRecordPeriod -> reduceRemoveRecordPeriod(state, intent)
             is SchedulerIntent.SetCalendarFocus -> state.copy(calendarFocused = intent.focused)
+            SchedulerIntent.ToggleCalendarOverlap -> state.copy(overlapArmed = !state.overlapArmed)
             is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
             is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
             is SchedulerIntent.SetEditMode -> reduceSetEditMode(state, intent.mode)
@@ -731,6 +733,14 @@ object SchedulerReducer {
         val existing = panels[index]
         val (panelId, allocated) =
             if (existing.auto) state.allocatePanelId() else intent.id to state
+        // PRD §8 Overlap Mode: an armed drag keeps the raw overlapping bounds and re-seeds this panel's
+        // width to 1/n; otherwise its existing width (and the no-overlap snapped bounds) carry over.
+        val weight =
+            if (intent.allowOverlap) {
+                SchedulerDomain.seedOverlapWeight(panels.filter { it.id != intent.id }, intent.startEpochMillis, end)
+            } else {
+                existing.layoutWeight
+            }
         val updated =
             existing.copy(
                 id = panelId,
@@ -740,6 +750,7 @@ object SchedulerReducer {
                 endEpochMillis = end,
                 pinned = intent.pinned,
                 auto = false,
+                layoutWeight = weight,
             )
         return commitPanels(allocated, allocated.panels.toMutableList().also { it[index] = updated })
     }
@@ -782,6 +793,12 @@ object SchedulerReducer {
             state.tasks + (intent.recordTaskId to sourceTask.copy(record = sourceTask.record - sourceRange))
         val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
         val (panelId, allocated) = state.copy(tasks = trimmedTasks).allocatePanelId()
+        val weight =
+            if (intent.allowOverlap) {
+                SchedulerDomain.seedOverlapWeight(allocated.panels, intent.startEpochMillis, end)
+            } else {
+                1.0
+            }
         val panel =
             TaskPanel(
                 id = panelId,
@@ -791,6 +808,7 @@ object SchedulerReducer {
                 endEpochMillis = end,
                 pinned = intent.pinned,
                 auto = false,
+                layoutWeight = weight,
             )
         return commitPanels(allocated, allocated.panels + panel)
     }
@@ -800,6 +818,25 @@ object SchedulerReducer {
         val panels = state.panels
         if (panels.none { it.id == id }) return state
         return commitPanels(state, panels.filterNot { it.id == id })
+    }
+
+    /** PRD §8 Overlap Mode: re-divide shared width by setting the [layoutWeight] of the given panels. */
+    private fun reduceSetPanelWeights(
+        state: SchedulerState,
+        intent: SchedulerIntent.SetPanelWeights,
+    ): SchedulerState {
+        if (intent.weights.isEmpty()) return state
+        var changed = false
+        val updated = state.panels.map { panel ->
+            val w = intent.weights[panel.id]
+            if (w != null && w != panel.layoutWeight) {
+                changed = true
+                panel.copy(layoutWeight = w)
+            } else {
+                panel
+            }
+        }
+        return if (changed) commitPanels(state, updated) else state
     }
 
     /** PRD §8 "Remove" on a merged block: delete all its backing panels in one delta. */
@@ -823,6 +860,12 @@ object SchedulerReducer {
         val idSet = intent.removeIds.toSet()
         val remaining = state.panels.filterNot { it.id in idSet }
         val (panelId, allocated) = state.copy(panels = remaining).allocatePanelId()
+        val weight =
+            if (intent.allowOverlap) {
+                SchedulerDomain.seedOverlapWeight(remaining, intent.startEpochMillis, end)
+            } else {
+                1.0
+            }
         val panel =
             TaskPanel(
                 id = panelId,
@@ -832,6 +875,7 @@ object SchedulerReducer {
                 endEpochMillis = end,
                 pinned = intent.pinned,
                 auto = false,
+                layoutWeight = weight,
             )
         return commitPanels(allocated, allocated.panels + panel)
     }
@@ -1244,6 +1288,12 @@ private fun advanceSchedule(state: SchedulerState, nowMillis: Long): SchedulerSt
             remaining += panel
             continue
         }
+        // A panel's task is schedulable only while it is still a leaf task present in the tree; a task
+        // deleted from the tree (or one that gained a child) is no longer scheduled.
+        val schedulable =
+            panel.taskId != null &&
+                SchedulerDomain.taskHasCells(state, panel.taskId) &&
+                SchedulerDomain.isLeafTask(state, panel.taskId)
         when {
             // Elapsed auto panel → record [start, end] as completed work, drop the panel.
             panel.endEpochMillis <= nowMillis -> {
@@ -1253,10 +1303,6 @@ private fun advanceSchedule(state: SchedulerState, nowMillis: Long): SchedulerSt
             // In-progress auto panel covering `now`: keep it unless its task is no longer schedulable
             // (deleted from the tree or gained a child) — then cut at `now`, record, and drop it.
             panel.startEpochMillis <= nowMillis -> {
-                val schedulable =
-                    panel.taskId != null &&
-                        SchedulerDomain.taskHasCells(state, panel.taskId) &&
-                        SchedulerDomain.isLeafTask(state, panel.taskId)
                 if (schedulable) {
                     remaining += panel
                 } else {
@@ -1264,7 +1310,13 @@ private fun advanceSchedule(state: SchedulerState, nowMillis: Long): SchedulerSt
                     changed = true
                 }
             }
-            else -> remaining += panel // future auto panel
+            // Future auto panel: keep it only while its task is still schedulable. A task removed from
+            // the tree must not linger in the automatic schedule (PRD §9) — its tentative future panels
+            // are dropped (no work done yet, so nothing to record). Without this they would persist
+            // whenever no refill runs (e.g. auto-scheduling off, PRD §7), still showing the removed task.
+            else -> {
+                if (schedulable) remaining += panel else changed = true
+            }
         }
     }
     if (!changed) return state

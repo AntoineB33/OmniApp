@@ -609,14 +609,15 @@ object SchedulerDomain {
     /**
      * PRD §8 Manual add: the task chosen by the calendar's right-click "add a task" action — the one
      * with the biggest absolute priority percentage, breaking ties alphabetically by title (the
-     * first in alphabetic order wins). Excludes the root/main tasks, tasks no longer in the tree, and
-     * blank-titled (emptied) tasks. Returns null when there is no real task to add.
+     * first in alphabetic order wins). Excludes the root/main tasks, tasks no longer in the tree,
+     * blank-titled (emptied) tasks, and non-leaf tasks (the calendar schedules only leaves, PRD §8).
+     * Returns null when there is no real task to add.
      */
     fun manualAddTaskId(state: SchedulerState): TaskId? {
         val absolute = absoluteTaskPriorities(state)
         val candidates =
             state.tasks.keys.filter {
-                !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) &&
+                !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) && isLeafTask(state, it) &&
                     state.tasks[it]?.title?.isNotBlank() == true
             }
         if (candidates.isEmpty()) return null
@@ -782,6 +783,19 @@ object SchedulerDomain {
                 entry.copy(endEpochMillis = end)
             }
         }
+
+    /**
+     * PRD §8 Overlap Mode default split: the horizontal weight to give a panel just dropped over
+     * `[start, end)` so it ends up occupying `1/n` of the shared width while the [others] keep their
+     * existing ratios — `n = 1 + (the number of others it overlaps)`. With a dropped panel of weight `w`
+     * against others summing to `S` over `k = n - 1` panels, `w / (w + S) = 1/n` solves to `w = S / k`.
+     * Returns 1.0 when it overlaps nothing (so a non-overlapping drop stays full width).
+     */
+    fun seedOverlapWeight(others: List<TaskPanel>, start: Long, end: Long): Double {
+        val overlapping = others.filter { it.startEpochMillis < end && start < it.endEpochMillis }
+        if (overlapping.isEmpty()) return 1.0
+        return overlapping.sumOf { it.layoutWeight } / overlapping.size
+    }
 
     /** PRD §10: recorded sessions less than this many minutes apart count as one continuous effort. */
     const val SESSION_GAP_MINUTES: Int = 10
@@ -1146,7 +1160,9 @@ object SchedulerDomain {
         draftText: String,
         excludeTaskId: TaskId? = null,
     ): List<ChangeTaskMenuEntry> {
-        val matching = matchingUserTaskIds(state, draftText, excludeTaskId)
+        // PRD §8 calendar edit window: only leaf tasks (no child tasks) are offered — the calendar
+        // schedules leaves, so a parent task is never a valid panel target.
+        val matching = matchingUserTaskIds(state, draftText, excludeTaskId).filter { isLeafTask(state, it) }
         return buildList {
             add(ChangeTaskMenuEntry(taskId = null, label = "New task"))
             for (taskId in matching) {
@@ -1154,6 +1170,28 @@ object SchedulerDomain {
             }
         }
     }
+
+    /**
+     * PRD §8 calendar edit window default selection: unlike the tree (where "New task" is the default),
+     * the calendar pre-selects the **first actual task** of the menu — so a panel reuses an existing
+     * leaf task by default and only creates a new one when the user explicitly picks the "New task" row.
+     * Returns that task's id, or null when the menu offers no real task (only "New task").
+     */
+    fun calendarDefaultMenuTaskId(entries: List<ChangeTaskMenuEntry>): TaskId? =
+        entries.firstOrNull { it.taskId != null }?.taskId
+
+    /**
+     * PRD §8 calendar edit window: title suggestions restricted to titles that have at least one leaf
+     * task (a parent task is never a valid panel target). Same ordering as [titleSuggestions].
+     */
+    fun calendarTitleSuggestions(state: SchedulerState, input: String): List<String> =
+        titleSuggestions(state, input).filter { title ->
+            state.titleToTaskIds[title].orEmpty().any { isLeafTask(state, it) }
+        }
+
+    /** PRD §8 calendar edit window: the leaf task to assign when a title suggestion is chosen, if any. */
+    fun calendarTaskIdForTitle(state: SchedulerState, title: String): TaskId? =
+        state.titleToTaskIds[title].orEmpty().firstOrNull { isLeafTask(state, it) }
 
     fun changeTaskMenuSelectedIndex(
         entries: List<ChangeTaskMenuEntry>,

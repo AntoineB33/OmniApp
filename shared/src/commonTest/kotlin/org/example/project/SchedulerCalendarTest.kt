@@ -12,6 +12,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.CalendarEdge
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -277,6 +278,99 @@ class SchedulerCalendarTest {
         assertTrue(replaced.panels.any { it.id == "auto/2" }) // untouched
     }
 
+    // ----- §8 Overlap Mode (allowOverlap weight seeding) --------------------------------------
+
+    @Test
+    fun update_with_allow_overlap_keeps_raw_bounds_and_seeds_one_over_n_weight() {
+        val a = TaskId("t/a")
+        val b = TaskId("t/b")
+        val s = SchedulerState.empty().copy(
+            panels = listOf(
+                userPanel("B", 0, HOUR, b, pinned = true),
+                userPanel("A", 2 * HOUR, 3 * HOUR, a, pinned = true),
+            ),
+            nextPanelCounter = 2,
+        )
+        // Drop A onto B with overlap armed: bounds stay raw (overlapping), width seeded to 1/2.
+        val updated = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.UpdateTaskPanel("A", a, "A", 0, HOUR, pinned = true, allowOverlap = true),
+        )
+        val pa = updated.panels.first { it.id == "A" }
+        assertEquals(0, pa.startEpochMillis)
+        assertEquals(HOUR, pa.endEpochMillis)
+        assertEquals(1.0, pa.layoutWeight, 1e-9) // one other of weight 1 ⇒ w = S/k = 1 ⇒ fraction 1/2
+    }
+
+    @Test
+    fun update_without_allow_overlap_preserves_existing_weight() {
+        val a = TaskId("t/a")
+        val s = SchedulerState.empty().copy(
+            panels = listOf(TaskPanel("A", a, "A", 0, HOUR, pinned = true, auto = false, layoutWeight = 5.0)),
+            nextPanelCounter = 1,
+        )
+        val updated = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.UpdateTaskPanel("A", a, "A2", 0, 2 * HOUR, pinned = true),
+        )
+        assertEquals(5.0, updated.panels.first { it.id == "A" }.layoutWeight, 1e-9)
+    }
+
+    @Test
+    fun allow_overlap_seed_honours_other_panels_weight_ratios() {
+        val a = TaskId("t/a")
+        val b = TaskId("t/b")
+        val c = TaskId("t/c")
+        val s = SchedulerState.empty().copy(
+            panels = listOf(
+                TaskPanel("B", b, "B", 0, HOUR, pinned = true, auto = false, layoutWeight = 2.0),
+                TaskPanel("C", c, "C", 0, HOUR, pinned = true, auto = false, layoutWeight = 4.0),
+                userPanel("A", 5 * HOUR, 6 * HOUR, a, pinned = true),
+            ),
+            nextPanelCounter = 3,
+        )
+        val updated = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.UpdateTaskPanel("A", a, "A", 0, HOUR, pinned = true, allowOverlap = true),
+        )
+        // Overlaps B(2) + C(4): S = 6, k = 2 ⇒ w = 3.0 (fraction 3/9 = 1/3 = 1/n).
+        assertEquals(3.0, updated.panels.first { it.id == "A" }.layoutWeight, 1e-9)
+    }
+
+    @Test
+    fun set_panel_weights_updates_and_is_undoable() {
+        val a = TaskId("t/a")
+        val b = TaskId("t/b")
+        val s = SchedulerState.empty().copy(
+            panels = listOf(
+                userPanel("A", 0, HOUR, a, pinned = true),
+                userPanel("B", 0, HOUR, b, pinned = true),
+            ),
+            nextPanelCounter = 2,
+        ).copy(calendarFocused = true)
+        val adjusted = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.SetPanelWeights(mapOf("A" to 3.0, "B" to 1.0)),
+        )
+        assertEquals(3.0, adjusted.panels.first { it.id == "A" }.layoutWeight, 1e-9)
+        assertEquals(1.0, adjusted.panels.first { it.id == "B" }.layoutWeight, 1e-9)
+        // Recorded in the calendar history (PRD §8) → Ctrl+Z restores the prior widths.
+        val undone = SchedulerReducer.reduce(adjusted, SchedulerIntent.Undo)
+        assertEquals(1.0, undone.panels.first { it.id == "A" }.layoutWeight, 1e-9)
+        assertEquals(1.0, undone.panels.first { it.id == "B" }.layoutWeight, 1e-9)
+    }
+
+    @Test
+    fun codec_round_trips_panel_layout_weight() {
+        val a = TaskId("t/a")
+        val s = SchedulerState.empty().copy(
+            panels = listOf(TaskPanel("A", a, "A", 0, HOUR, pinned = true, auto = false, layoutWeight = 2.5)),
+            nextPanelCounter = 1,
+        )
+        val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))
+        assertEquals(2.5, decoded!!.panels.first { it.id == "A" }.layoutWeight, 1e-9)
+    }
+
     @Test
     fun drag_sticks_to_the_end_of_a_group_when_past_its_midpoint() {
         val placed = SchedulerDomain.placeDraggedEntry(listOf(range(100, 200)), desiredStart = 160, duration = 40)
@@ -434,6 +528,42 @@ class SchedulerCalendarTest {
         assertFalse(SchedulerDomain.isLeafTask(s, a))
         assertTrue(SchedulerDomain.isLeafTask(s, b))
         assertEquals(b, SchedulerDomain.nextTask(s, 1_000_000_000_000L))
+    }
+
+    // ----- §8 calendar edit window: leaf-only menus + first-task default ----------------------
+
+    @Test
+    fun calendar_task_menu_only_offers_leaf_tasks() {
+        val (s0, a, b) = stateWithTwoTasks()
+        // A gains a child → A is a parent (non-leaf); B stays a leaf.
+        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(childTaskIds = listOf(b))))
+        // The parent A must not appear in the calendar menu, even though its title matches exactly.
+        val entriesA = SchedulerDomain.calendarTaskMenuEntries(s, "A")
+        assertTrue(entriesA.none { it.taskId == a }, "parent A leaked into the calendar menu")
+        assertEquals(null, SchedulerDomain.calendarDefaultMenuTaskId(entriesA)) // only "New task"
+        // The leaf B appears and is the menu's default selection (not "New task").
+        val entriesB = SchedulerDomain.calendarTaskMenuEntries(s, "B")
+        assertTrue(entriesB.any { it.taskId == b })
+        assertEquals(b, SchedulerDomain.calendarDefaultMenuTaskId(entriesB))
+    }
+
+    @Test
+    fun calendar_title_suggestions_and_lookup_are_leaf_only() {
+        val (s0, a, b) = stateWithTwoTasks()
+        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(childTaskIds = listOf(b))))
+        val suggestions = SchedulerDomain.calendarTitleSuggestions(s, "")
+        assertTrue("B" in suggestions, "leaf B should be suggested")
+        assertFalse("A" in suggestions, "parent A should not be suggested")
+        assertEquals(b, SchedulerDomain.calendarTaskIdForTitle(s, "B"))
+        assertEquals(null, SchedulerDomain.calendarTaskIdForTitle(s, "A"))
+    }
+
+    @Test
+    fun manual_add_default_task_is_a_leaf() {
+        val (s0, a, b) = stateWithTwoTasks()
+        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(childTaskIds = listOf(b))))
+        // A is the higher-priority candidate but is now a parent, so the leaf B is chosen instead.
+        assertEquals(b, SchedulerDomain.manualAddTaskId(s))
     }
 
     @Test

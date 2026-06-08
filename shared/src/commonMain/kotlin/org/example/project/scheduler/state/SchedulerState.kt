@@ -118,6 +118,11 @@ data class SchedulerState(
      * history (and away from it when unfocused). Transient session state, not persisted.
      */
     val calendarFocused: Boolean = false,
+    /**
+     * PRD §8 Overlap Mode: whether `O` has armed "allow overlap" for the next calendar move/resize.
+     * Transient session state, not persisted and not undoable.
+     */
+    val overlapArmed: Boolean = false,
 ) {
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots
     // (capture) and re-attached from the live tasks on restore (applyTree). Undo/Redo therefore

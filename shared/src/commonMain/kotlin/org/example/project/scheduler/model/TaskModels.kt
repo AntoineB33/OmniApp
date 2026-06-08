@@ -61,6 +61,13 @@ data class TaskPanel(
     val pinned: Boolean = false,
     /** True for scheduler-generated panels (the §9 auto fill); false for user-authored ones. */
     val auto: Boolean = false,
+    /**
+     * PRD §8 Overlap Mode: this panel's relative horizontal weight within any time slice it shares with
+     * other panels. Within a slice each active panel's width is `weight / Σ weights`, so equal weights
+     * give every panel `1/n`. Only meaningful where panels overlap; a panel that is alone always fills
+     * the column. Default 1.0.
+     */
+    val layoutWeight: Double = 1.0,
 )
 
 /**

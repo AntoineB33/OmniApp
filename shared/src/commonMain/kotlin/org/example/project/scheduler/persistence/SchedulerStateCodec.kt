@@ -88,6 +88,7 @@ object SchedulerStateCodec {
                         end = it.endEpochMillis,
                         pinned = it.pinned,
                         auto = it.auto,
+                        layoutWeight = it.layoutWeight,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -200,6 +201,7 @@ object SchedulerStateCodec {
                         endEpochMillis = it.end,
                         pinned = it.pinned,
                         auto = it.auto,
+                        layoutWeight = it.layoutWeight,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -298,6 +300,7 @@ private data class PersistedPanel(
     val end: Long,
     val pinned: Boolean = false,
     val auto: Boolean = false,
+    val layoutWeight: Double = 1.0,
 )
 
 @Serializable

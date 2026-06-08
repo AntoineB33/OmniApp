@@ -211,6 +211,8 @@ sealed interface SchedulerIntent {
         val startEpochMillis: Long,
         val endEpochMillis: Long,
         val pinned: Boolean,
+        /** PRD §8 Overlap Mode: keep the raw (possibly overlapping) bounds and seed the panel to 1/n. */
+        val allowOverlap: Boolean = false,
     ) : SchedulerIntent
 
     /**
@@ -263,7 +265,16 @@ sealed interface SchedulerIntent {
         val startEpochMillis: Long,
         val endEpochMillis: Long,
         val pinned: Boolean,
+        /** PRD §8 Overlap Mode: keep the raw (possibly overlapping) bounds and seed the panel to 1/n. */
+        val allowOverlap: Boolean = false,
     ) : SchedulerIntent
+
+    /**
+     * PRD §8 Overlap Mode: set the horizontal [TaskPanel.layoutWeight] of one or more panels (by id) —
+     * dispatched when the user drags a vertical edge between two overlapping panels to re-divide their
+     * shared width. Recorded as a calendar delta so it is undoable.
+     */
+    data class SetPanelWeights(val weights: Map<String, Double>) : SchedulerIntent
 
     /**
      * PRD §8 task contextual menu ("Remove") on an auto task-record block: drop the
@@ -290,6 +301,8 @@ sealed interface SchedulerIntent {
         val startEpochMillis: Long,
         val endEpochMillis: Long,
         val pinned: Boolean,
+        /** PRD §8 Overlap Mode: keep the raw (possibly overlapping) bounds and seed the panel to 1/n. */
+        val allowOverlap: Boolean = false,
     ) : SchedulerIntent
 
     /**
@@ -297,6 +310,12 @@ sealed interface SchedulerIntent {
      * history. Not undoable.
      */
     data class SetCalendarFocus(val focused: Boolean) : SchedulerIntent
+
+    /**
+     * PRD §8 Overlap Mode: toggle "allow overlap" for the next calendar move/resize (pressing `O` while
+     * the calendar is focused). Transient — not undoable.
+     */
+    data object ToggleCalendarOverlap : SchedulerIntent
 
     /** Ctrl+Z / Ctrl+Y — undo/redo the content history (Edit Mode while editing, else "the rest"). */
     data object Undo : SchedulerIntent

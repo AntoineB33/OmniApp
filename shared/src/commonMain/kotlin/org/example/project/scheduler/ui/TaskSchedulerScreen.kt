@@ -273,9 +273,10 @@ fun TaskSchedulerScreen(
                     return@onPreviewKeyEvent true
                 }
                 if (state.editSession != null) {
-                    // PRD §4 Cancel: Delete and Escape both abandon the session, reverting affected
-                    // cells to their pre-edit text. Everything else falls through to the edit field.
-                    if ((event.key == Key.Delete || event.key == Key.Escape) && !event.isCtrlPressed) {
+                    // PRD §4 Cancel: Escape abandons the session, reverting affected cells to their
+                    // pre-edit text. Everything else (incl. Delete = forward-delete) falls through to
+                    // the edit field.
+                    if (event.key == Key.Escape) {
                         vm.dispatch(SchedulerIntent.CancelEdit)
                         return@onPreviewKeyEvent true
                     }
