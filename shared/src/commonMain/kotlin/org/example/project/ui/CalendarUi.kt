@@ -51,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
@@ -456,6 +457,8 @@ fun CalendarFloatingWindow(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     records: List<CalendarRecord> = emptyList(),
+    /** PRD §8 focus: a press anywhere in the window makes the calendar the focused surface again. */
+    onFocus: () -> Unit = {},
     /** PRD §8 Manual add: invoked with the epoch-millis at a right-click position in the calendar. */
     onAddTaskAt: (Long) -> Unit = {},
     /** PRD §8 drag/resize commit: the block and its new (already snapped) start/end millis. */
@@ -473,7 +476,18 @@ fun CalendarFloatingWindow(
         border = BorderStroke(1.dp, CalColors.grid),
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            .size(width = 720.dp, height = 540.dp),
+            .size(width = 720.dp, height = 540.dp)
+            // PRD §8 focus: observe presses on the Initial pass (without consuming, so the week view /
+            // blocks still get them) to mark the calendar as the focused surface — so clicking back
+            // into the calendar after the tree re-engages "calendar in focus".
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type == PointerEventType.Press) onFocus()
+                    }
+                }
+            },
     ) {
         Column(Modifier.fillMaxSize()) {
             // Title bar doubles as the drag handle for moving the window.

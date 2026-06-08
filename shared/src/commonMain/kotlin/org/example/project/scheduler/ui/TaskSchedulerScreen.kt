@@ -347,6 +347,9 @@ fun TaskSchedulerScreen(
                     return@onPreviewKeyEvent false
                 }
                 val typed = event.printableChar() ?: return@onPreviewKeyEvent false
+                // PRD §8 focus: while the calendar is in focus, the tree must not hijack letter typing
+                // into Edit Mode — the calendar (and its edit window) owns the keyboard then.
+                if (state.calendarFocused) return@onPreviewKeyEvent false
                 vm.dispatch(SchedulerIntent.BeginEdit(main, typed))
                 true
             }
@@ -408,7 +411,17 @@ fun TaskSchedulerScreen(
                     moveDragActive = false
                     moveDropTarget = null
                 },
-                onIntent = vm::dispatch,
+                onIntent = { intent ->
+                    // PRD §8 focus: a click into the tree hands focus back from the calendar, so typing
+                    // resumes entering Edit Mode — even on an already-selected cell (whose selection
+                    // doesn't change, so the selection-keyed refocus effect wouldn't fire) and even
+                    // while the calendar window stays open.
+                    if (intent is SchedulerIntent.ClickCell) {
+                        focusRequester.requestFocus()
+                        if (state.calendarFocused) vm.dispatch(SchedulerIntent.SetCalendarFocus(false))
+                    }
+                    vm.dispatch(intent)
+                },
             )
         }
     }

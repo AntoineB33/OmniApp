@@ -128,6 +128,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **Manual drags:** The user can drag a task in the calendar by clicking on it and dragging while still holding the click. When dragging the task over other task periods, there must not be overlaps, so as the mouse come over consecutive tasks, the dragged task stay stick to the end of this group, and as soon as the mouse gets closer to the start of the group than its end, the dragged task appears before the group. When it appears in gaps that are shorter than the dragged task, the dragged task shorten to fit, but remembers its original side for when it appears in wider gaps. The calendar is considered to have changed and the move is saved in a history unit only when the user releases the click.
 * **extend or shorten:** The user can also grab the beginning or the end of the task to extend or shorten it. When it is going to overlaps with other tasks, it can't be dragged any further.
 * **undo:** The user can undo and redo (Ctrl + Z and Ctrl + Y) the state of the calendar when the calendar is in focus. Every changes in the calendar is stored at the same place as the other history units. 
+* **focus:** When the calendar is in focus, the task tree doesn't catch letter typing (the main selection doesn't enter Edit Mode).
 
 ## 9. Scheduler
 * **Two Calculation Events:** 

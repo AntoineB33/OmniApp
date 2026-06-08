@@ -172,6 +172,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // button (null = not adding). Distinct from [editingBlock] so Save knows to add vs. update.
         var addingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
 
+        // PRD §8 focus: the floating calendar window is the focused surface while it is open — so the
+        // tree stops hijacking letter typing into Edit Mode and Ctrl+Z/Y route to the calendar history.
+        LaunchedEffect(calendarOpen) {
+            vm.dispatch(SchedulerIntent.SetCalendarFocus(calendarOpen))
+        }
+
         Box(
             modifier = Modifier
                 .background(MaterialTheme.colorScheme.background)
@@ -209,6 +215,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             onDismiss = { calendarOpen = false },
                             modifier = Modifier.align(Alignment.Center),
                             records = calendarRecords,
+                            // PRD §8 focus: pressing in the calendar makes it the focused surface again
+                            // (e.g. after a click into the tree had handed focus back).
+                            onFocus = {
+                                if (!schedulerState.calendarFocused) {
+                                    vm.dispatch(SchedulerIntent.SetCalendarFocus(true))
+                                }
+                            },
                             // PRD §8 Manual add: open the edit window pre-filled with the default task
                             // (highest absolute priority, min-time span) and a Save button.
                             onAddTaskAt = { startMillis ->
