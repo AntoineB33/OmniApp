@@ -1,6 +1,5 @@
 package org.example.project
 
-import kotlin.math.exp
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -59,29 +58,80 @@ class SchedulerSchedulerTest {
         return s to solo
     }
 
-    // ----- §9 time-weighted score / next task -------------------------------------------------
+    // ----- §9 task score / next task ----------------------------------------------------------
 
     @Test
-    fun default_decay_constant_has_a_seven_day_half_life() {
-        val k = SchedulerDomain.DEFAULT_DECAY_PER_HOUR
-        assertEquals(0.5, exp(-k * 7 * 24.0), 1e-12)
+    fun task_score_is_absolute_priority_minus_recent_share() {
+        // PRD §9 score `s = absolute − f`. A and B split MAIN evenly (absolute 0.5 each).
+        val (s0, a, b) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // A did exactly its 45-min minimum, and it is the only work in that window → t1 = now-45,
+        // f = 45/45 = 1, so s_A = 0.5 − 1.
+        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(record = listOf(TaskTimeRange(now - 45 * MIN, now)))))
+        assertEquals(0.5 - 1.0, SchedulerDomain.taskScore(s, a, now), 1e-9)
+        // B has no past time at all → recent share 0 → score is just its absolute priority.
+        assertEquals(0.5, SchedulerDomain.taskScore(s, b, now), 1e-9)
     }
 
     @Test
-    fun time_weighted_score_matches_closed_form_integral() {
-        val k = 0.02
+    fun task_score_is_priority_when_t1_does_not_exist() {
+        // PRD §9: "If t1 doesn't exist, f is 0." A has done only 20 min — less than its 45-min minimum —
+        // so no past window holds a full minimum of A; t1 doesn't exist, f = 0, and the score is just its
+        // priority (an under-served task is never penalized for the bit it did do).
+        val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
-        val range = TaskTimeRange(startEpochMillis = now - 2 * HOUR_MS, endEpochMillis = now - HOUR_MS)
-        val expected = (exp(-k * 1.0) - exp(-k * 2.0)) / k
-        assertEquals(expected, SchedulerDomain.timeWeightedScore(listOf(range), now, k), 1e-9)
+        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(record = listOf(TaskTimeRange(now - 20 * MIN, now)))))
+        assertEquals(0.5, SchedulerDomain.taskScore(s, a, now), 1e-9)
     }
 
     @Test
-    fun time_weighted_score_is_zero_for_empty_record_or_nonpositive_k() {
+    fun task_score_working_time_excludes_idle_gaps() {
+        // PRD §9 "working time = periods where at least one task is scheduled". A 30-min session that
+        // ended 60 min ago: walking back its minimum (30) is reached at t1 = now-90, but the 60-min idle
+        // gap after it is NOT working time, so f = 30/30 = 1 (not 30/90 wall-clock).
+        val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
-        assertEquals(0.0, SchedulerDomain.timeWeightedScore(emptyList(), now, 0.02))
-        val range = TaskTimeRange(now - HOUR_MS, now)
-        assertEquals(0.0, SchedulerDomain.timeWeightedScore(listOf(range), now, 0.0))
+        val s = s0.copy(
+            tasks = s0.tasks + (a to s0.tasks[a]!!.copy(
+                minimumMinutes = 30,
+                record = listOf(TaskTimeRange(now - 90 * MIN, now - 60 * MIN)),
+            )),
+        )
+        assertEquals(0.5 - 1.0, SchedulerDomain.taskScore(s, a, now), 1e-9)
+    }
+
+    @Test
+    fun task_score_counts_other_tasks_work_within_the_window() {
+        // A's minimum (30) is reached over [now-60, now]; in that window A worked 30 min and B worked the
+        // other 30 (contiguous), so working time = 60 and f = 30/60 = 0.5 → s_A = 0.5 − 0.5 = 0.
+        val (s0, a, b) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val s = s0.copy(
+            tasks = s0.tasks +
+                (a to s0.tasks[a]!!.copy(minimumMinutes = 30, record = listOf(TaskTimeRange(now - 60 * MIN, now - 30 * MIN)))) +
+                (b to s0.tasks[b]!!.copy(record = listOf(TaskTimeRange(now - 30 * MIN, now)))),
+        )
+        assertEquals(0.0, SchedulerDomain.taskScore(s, a, now), 1e-9)
+    }
+
+    @Test
+    fun working_periods_merge_all_tasks_done_time_and_clip_to_now() {
+        val (s0, a, b) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val s = s0.copy(
+            tasks = s0.tasks +
+                (a to s0.tasks[a]!!.copy(record = listOf(TaskTimeRange(now - 2 * HOUR_MS, now - HOUR_MS)))) +
+                // B touches A's range (fuses) and straddles `now` (clipped); a future-only range is dropped.
+                (b to s0.tasks[b]!!.copy(record = listOf(TaskTimeRange(now - HOUR_MS, now + HOUR_MS), TaskTimeRange(now + 2 * HOUR_MS, now + 3 * HOUR_MS)))),
+        )
+        assertEquals(listOf(TaskTimeRange(now - 2 * HOUR_MS, now)), SchedulerDomain.workingPeriods(s, now))
+    }
+
+    @Test
+    fun next_task_breaks_ties_alphabetically() {
+        // Fresh state: A and B both have score 0.5 (no past) → the alphabetically-first title wins.
+        val (s, a, _) = stateWithTwoTasks()
+        assertEquals(a, SchedulerDomain.nextTask(s, 1_000_000_000_000L))
     }
 
     @Test

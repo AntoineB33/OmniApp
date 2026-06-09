@@ -21,7 +21,7 @@ data class Task(
     val minimumMinutes: Int = DEFAULT_MINIMUM_MINUTES,
     /**
      * PRD §8/§9 Task record: the periods during which the user did this task, used by the calendar
-     * (visualization) and the scheduler (time-weighted percentage). Per PRD §8 this is intentionally
+     * (visualization) and the scheduler (the §9 task score's recent-share term). Per PRD §8 this is intentionally
      * excluded from the Undo/Redo history state (see [org.example.project.scheduler.state.SchedulerState]).
      */
     val record: List<TaskTimeRange> = emptyList(),

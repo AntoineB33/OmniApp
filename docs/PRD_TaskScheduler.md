@@ -1,6 +1,6 @@
 # Task Scheduler Module - Product Requirements
 
-**Version:** 1.3.0
+**Version:** 1.4.0
 
 ## 1. Overview
 
@@ -138,10 +138,8 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
   * Every time the calendar changes, with a 1 second debounce, the calculation event is placed 24 hours before the first moment free of task.
   * Every time the task tree changes, with a 1 second debounce
 * **Scheduling:** From the first point in time there is no scheduled task to 24 hours from now, all the not pinned task panels are removed and replaced by a new calculated schedule. If 24 hours from now is in a task panel that extends further, then the extension is also removed unless the last task panel added by the new scheduling is the same task. Each scheduling is saved in a History Unit.
-* **task choice:** At the starting time of the new task to schedule, the time-weighted percentage of each task is calculated with a half-life of 7 days (a fixed value). The task with no child task with the time-weighted percentage the furthest from its absolute priority percentage is the next task. It is then scheduled in the calendar with the minimum time of the task (see section 10).
-* **time-weighted percentage:** Let's say Task $i$ has a set of $N$ time ranges. To get the total weighted score for Task $i$ (let's call it $W_i$), you sum the integrals of all its individual time ranges:  
- $$W_i = \sum_{j=1}^{N} \left[ \frac{1}{k} \left( e^{-k(t_{now} - t_{j, end})} - e^{-k(t_{now} - t_{j, start})} \right) \right]$$
-Here, $k$ is the decay constant. It dictates how aggressively older tasks are penalized. A larger $k$ means older tasks lose their weight very quickly; a smaller $k$ means they retain their weight for longer. $k = \frac{\ln(2)}{t_{1/2}}$, where $t_{1/2} = 7 \text{ days}$.
+* **task choice:** When the app must find a task to add at a time t, it calculates a score for every task with no children. The task with the highest score is chosen. It is then scheduled in the calendar with the minimum time of the task (see section 10), or less to not overlap with a pinned task panel.
+* **score:** t is the time where a new task must be added and start from there. For a task i, t1 is the closest time in the past such as i has a spanning time equal to its minimum time between t1 and t. The fraction f is this minimum time divided by the working time between t1 and t. If t1 doesn't exist, f is 0. The working time is the periods where at least one task is scheduled. The score s is the absolute priority percentage of i minus f.
 
 ## 10. Minimum time for a task
 * **Definition:** Every task has a minimum time defined. It is 45 minutes by default.

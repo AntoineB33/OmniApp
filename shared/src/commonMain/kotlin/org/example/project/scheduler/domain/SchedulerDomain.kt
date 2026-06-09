@@ -1,7 +1,5 @@
 package org.example.project.scheduler.domain
 
-import kotlin.math.exp
-import kotlin.math.ln
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ScheduleUnitEntry
@@ -478,41 +476,6 @@ object SchedulerDomain {
 
     // ----- PRD §9 Scheduler -------------------------------------------------------------------
 
-    /** PRD §9: the time-weighted score decays with a fixed half-life of 7 days. */
-    const val RECORD_HALF_LIFE_HOURS: Double = 7.0 * 24.0
-
-    /**
-     * PRD §9 decay constant `k`, per hour, derived from the fixed 7-day half-life: a record period's
-     * weight halves every [RECORD_HALF_LIFE_HOURS], so `k = ln 2 / t½`.
-     */
-    val DEFAULT_DECAY_PER_HOUR: Double = ln(2.0) / RECORD_HALF_LIFE_HOURS
-
-    private const val MILLIS_PER_HOUR: Double = 3_600_000.0
-
-    /**
-     * PRD §9 time-weighted score `Wᵢ` for a single task's record at instant [nowMillis]:
-     *
-     * `Wᵢ = Σ_j (1/k)·( e^{-k(t_now − t_end)} − e^{-k(t_now − t_start)} )`
-     *
-     * Each range contributes the integral of `e^{-k·age}` over the period, so more recent (and
-     * longer) periods weigh more. Time differences are taken in hours to match [k]'s unit. Returns
-     * 0 for an empty record or a non-positive [k].
-     */
-    fun timeWeightedScore(
-        record: List<TaskTimeRange>,
-        nowMillis: Long,
-        k: Double = DEFAULT_DECAY_PER_HOUR,
-    ): Double {
-        if (k <= 0.0 || record.isEmpty()) return 0.0
-        var sum = 0.0
-        for (range in record) {
-            val ageEndHours = (nowMillis - range.endEpochMillis) / MILLIS_PER_HOUR
-            val ageStartHours = (nowMillis - range.startEpochMillis) / MILLIS_PER_HOUR
-            sum += (exp(-k * ageEndHours) - exp(-k * ageStartHours)) / k
-        }
-        return sum
-    }
-
     /**
      * The task's *done* periods at [nowMillis] for scheduling purposes: its recorded sessions plus
      * any manual calendar entries assigned to it (PRD §8 uniform blocks — a manually-placed block in
@@ -533,23 +496,74 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §9 time-weighted percentage of every (real) task: its [timeWeightedScore] normalized by
-     * the total score across all tasks, as a fraction in `[0,1]`. The score is computed over the
-     * task's [pastPeriodsForTask] (records + assigned manual entries). When no task has any past
-     * period the total is 0 and every percentage is 0.
+     * PRD §9 "working time": the past moments where **at least one task was scheduled/done** — the
+     * merged union of every task's record plus every panel (auto/user/pinned), clipped to [nowMillis].
+     * Used as the denominator of a task's recent share ([taskScore]) so idle gaps don't dilute it.
      */
-    fun timeWeightedPercentages(
+    fun workingPeriods(state: SchedulerState, nowMillis: Long): List<TaskTimeRange> {
+        val recorded = state.tasks.values.asSequence().flatMap { it.record.asSequence() }
+        val panels = state.panels.asSequence().map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        val clipped = (recorded + panels)
+            .filter { it.startEpochMillis < nowMillis }
+            .map { TaskTimeRange(it.startEpochMillis, minOf(it.endEpochMillis, nowMillis)) }
+            .toList()
+        return mergeOccupied(clipped)
+    }
+
+    /** Total length of [periods] overlapping the half-open window `[from, to)`. */
+    private fun spanWithin(periods: List<TaskTimeRange>, from: Long, to: Long): Long {
+        if (to <= from) return 0L
+        var sum = 0L
+        for (p in periods) {
+            val lo = maxOf(p.startEpochMillis, from)
+            val hi = minOf(p.endEpochMillis, to)
+            if (hi > lo) sum += hi - lo
+        }
+        return sum
+    }
+
+    /**
+     * PRD §9 score of leaf task [taskId] for being scheduled at instant [nowMillis]: `s = absolute − f`.
+     *
+     * Walking back from `now` over the task's [pastPeriodsForTask], `t1` is the closest past instant at
+     * which the task has accumulated exactly its minimum time (PRD §10). `f = minimumTime / workingTime`
+     * over `[t1, now]` — the fraction of recent working time that was this task. A freshly over-served
+     * task gets `f → 1` and a low score; the higher the score, the more under-served relative to its
+     * absolute priority percentage.
+     *
+     * PRD §9 "If t1 doesn't exist, f is 0": when the task has been done **less than its minimum** in its
+     * whole history (or never), no `[t1, now]` window holds a full minimum of it, so `f = 0` and the
+     * score is just its [absolutePriority] — an under-served task is not penalized. [working] and
+     * [absolutePriority] default to fresh computations but are supplied by [nextTask] so they are
+     * computed once per instant rather than per candidate.
+     */
+    fun taskScore(
         state: SchedulerState,
+        taskId: TaskId,
         nowMillis: Long,
-        k: Double = DEFAULT_DECAY_PER_HOUR,
-    ): Map<TaskId, Double> {
-        val scores =
-            state.tasks
-                .filterKeys { !isRootTask(it) && !isMainTask(it) }
-                .mapValues { (id, _) -> timeWeightedScore(pastPeriodsForTask(state, id, nowMillis), nowMillis, k) }
-        val total = scores.values.sum()
-        if (total <= 0.0) return scores.mapValues { 0.0 }
-        return scores.mapValues { (_, score) -> score / total }
+        absolutePriority: Double = absoluteTaskPriorities(state)[taskId] ?: 0.0,
+        working: List<TaskTimeRange> = workingPeriods(state, nowMillis),
+    ): Double {
+        val minMillis = (state.tasks[taskId]?.minimumMinutes ?: 0).toLong() * MILLIS_PER_MINUTE
+        if (minMillis <= 0L) return absolutePriority
+        val periods = pastPeriodsForTask(state, taskId, nowMillis).sortedByDescending { it.endEpochMillis }
+        // Walk back accumulating the task's own time until the running total reaches minMillis: that
+        // instant is t1. If the task's whole history is shorter than its minimum, t1 doesn't exist.
+        var acc = 0L
+        var t1 = nowMillis
+        for (p in periods) {
+            val dur = (p.endEpochMillis - p.startEpochMillis).coerceAtLeast(0L)
+            if (acc + dur >= minMillis) {
+                t1 = p.endEpochMillis - (minMillis - acc)
+                acc = minMillis
+                break
+            }
+            acc += dur
+        }
+        if (acc < minMillis) return absolutePriority // PRD §9: t1 doesn't exist → f = 0
+        val workTime = spanWithin(working, t1, nowMillis)
+        val f = if (workTime > 0L) minMillis.toDouble() / workTime.toDouble() else 0.0
+        return absolutePriority - f
     }
 
     /** Whether any cell in the tree currently points at [taskId] (i.e. the task is still in the tree). */
@@ -575,10 +589,10 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §9 next task: the most under-served *leaf* task at [nowMillis] — the one whose time-weighted
-     * percentage is furthest *below* its absolute priority percentage (`argmax(absolute − weighted)`).
-     * Empty placeholders, the root/main tasks, tasks with child tasks (PRD §9), tasks no longer in
-     * the tree (kept only for their record, PRD §4/§8), and **blank-titled tasks** (a cell emptied to
+     * PRD §9 task choice: the *leaf* task with the highest [taskScore] at [nowMillis] — the one most
+     * under-served relative to its priority. Ties break alphabetically by title (matching §8 manual add).
+     * Empty placeholders, the root/main tasks, tasks with child tasks (PRD §9), tasks no longer in the
+     * tree (kept only for their record, PRD §4/§8), and **blank-titled tasks** (a cell emptied to
      * "delete" the task keeps its id and lingers while panels/records still point at it) are excluded.
      * Returns null when there are no real leaf tasks. (Minimum time, PRD §10, constrains the allocated
      * duration, not which task is chosen.)
@@ -586,18 +600,20 @@ object SchedulerDomain {
     fun nextTask(
         state: SchedulerState,
         nowMillis: Long,
-        k: Double = DEFAULT_DECAY_PER_HOUR,
     ): TaskId? {
         val absolute = absoluteTaskPriorities(state)
-        val weighted = timeWeightedPercentages(state, nowMillis, k)
+        val working = workingPeriods(state, nowMillis)
         val candidates =
             state.tasks.keys.filter {
                 !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) && isLeafTask(state, it) &&
                     state.tasks[it]?.title?.isNotBlank() == true
             }
-        return candidates.maxByOrNull { taskId ->
-            (absolute[taskId] ?: 0.0) - (weighted[taskId] ?: 0.0)
-        }
+        if (candidates.isEmpty()) return null
+        // minWith over (score desc, title asc): the highest score wins, ties broken alphabetically.
+        return candidates.minWith(
+            compareByDescending<TaskId> { taskScore(state, it, nowMillis, absolute[it] ?: 0.0, working) }
+                .thenBy { state.tasks[it]?.title.orEmpty() },
+        )
     }
 
     private const val MILLIS_PER_MINUTE: Long = 60_000L
@@ -950,7 +966,6 @@ object SchedulerDomain {
     fun fillSchedule(
         state: SchedulerState,
         nowMillis: Long,
-        k: Double = DEFAULT_DECAY_PER_HOUR,
     ): List<TaskPanel> {
         val current = panelAt(state.panels, nowMillis)
         val horizon = nowMillis + SCHEDULE_HORIZON_MILLIS
@@ -991,7 +1006,7 @@ object SchedulerDomain {
                 cursor = pinnedCovering.endEpochMillis
                 continue
             }
-            val taskId = nextTask(working, cursor, k) ?: break
+            val taskId = nextTask(working, cursor) ?: break
             val task = working.tasks[taskId] ?: break
             var end = cursor + scheduledSpanMinutes(working, taskId, cursor) * MILLIS_PER_MINUTE
             nextPinnedStartAfter(kept, cursor)?.let { end = minOf(end, it) }
