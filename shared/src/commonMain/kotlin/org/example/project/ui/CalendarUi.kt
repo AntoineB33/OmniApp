@@ -68,6 +68,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.platform.LocalDensity
@@ -464,14 +465,16 @@ fun ChoresManagerWindow(
     modifier: Modifier = Modifier,
 ) {
     var offset by remember { mutableStateOf(Offset.Zero) }
-    // Per-row editable text (so an in-progress "3." isn't reformatted to "3.0" each keystroke). Seeded
-    // once from the incoming chores; live edits drive both this local text and the pushed-up list.
+    // Per-row editable text (title, days, time-of-day) so an in-progress "3." / "9:" isn't reformatted
+    // each keystroke. Seeded once from the incoming chores; live edits drive both this and the pushed list.
     val rows = remember {
-        mutableStateListOf<Pair<String, String>>().apply {
-            addAll(chores.map { it.title to formatDays(it.spanDays) })
+        mutableStateListOf<ChoreRow>().apply {
+            addAll(chores.map { ChoreRow(it.title, formatDays(it.spanDays), formatTimeOfDay(it.timeOfDayMinutes)) })
         }
     }
-    fun push() = onChange(rows.map { ChoreEntry(it.first, it.second.toDoubleOrNull() ?: 0.0) })
+    fun push() = onChange(
+        rows.map { ChoreEntry(it.title, it.daysText.toDoubleOrNull() ?: 0.0, parseTimeOfDay(it.timeText)) },
+    )
 
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -522,40 +525,47 @@ fun ChoresManagerWindow(
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                rows.forEachIndexed { index, (title, spanText) ->
+                rows.forEachIndexed { index, row ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         OutlinedTextField(
-                            value = title,
-                            onValueChange = { rows[index] = it to rows[index].second; push() },
+                            value = row.title,
+                            onValueChange = { rows[index] = row.copy(title = it); push() },
                             singleLine = true,
                             label = { Text("Chore") },
                             modifier = Modifier.weight(1f),
                         )
                         OutlinedTextField(
-                            value = spanText,
-                            onValueChange = { raw ->
-                                rows[index] = rows[index].first to sanitizeDecimal(raw)
-                                push()
-                            },
+                            value = row.daysText,
+                            onValueChange = { rows[index] = row.copy(daysText = sanitizeDecimal(it)); push() },
                             singleLine = true,
                             label = { Text("Days") },
-                            modifier = Modifier.width(96.dp),
+                            modifier = Modifier.width(72.dp),
+                        )
+                        OutlinedTextField(
+                            value = row.timeText,
+                            onValueChange = { rows[index] = row.copy(timeText = sanitizeTimeOfDay(it)); push() },
+                            singleLine = true,
+                            label = { Text("Time") },
+                            modifier = Modifier.width(80.dp),
                         )
                         // Bin: remove this row.
                         TextButton(onClick = { rows.removeAt(index); push() }) { Text("🗑") }
                         // Plus: insert a new row above this one.
-                        TextButton(onClick = { rows.add(index, "" to ""); push() }) { Text("+") }
+                        TextButton(onClick = { rows.add(index, ChoreRow()); push() }) { Text("+") }
                     }
                 }
                 // Trailing single plus: append a new row at the end of the list.
-                TextButton(onClick = { rows.add("" to ""); push() }) { Text("+ add chore") }
+                TextButton(onClick = { rows.add(ChoreRow()); push() }) { Text("+ add chore") }
             }
         }
     }
 }
+
+/** One editable chores row: title, day-span text, and time-of-day text (kept as raw strings while typing). */
+private data class ChoreRow(val title: String = "", val daysText: String = "", val timeText: String = "")
 
 /** Render a day span without a forced ".0" tail for whole numbers (e.g. 7.0 → "7", 3.5 → "3.5"). */
 private fun formatDays(days: Double): String =
@@ -572,6 +582,34 @@ private fun sanitizeDecimal(raw: String): String {
         }
     }
     return sb.toString()
+}
+
+/** PRD §14 "time in the day": render minutes-since-midnight as `HH:MM`. */
+private fun formatTimeOfDay(minutes: Int): String {
+    val m = minutes.coerceIn(0, 24 * 60 - 1)
+    return (m / 60).toString().padStart(2, '0') + ":" + (m % 60).toString().padStart(2, '0')
+}
+
+/** Keep only digits and a single colon so the "Time" field stays an `HH:MM`-shaped value while typing. */
+private fun sanitizeTimeOfDay(raw: String): String {
+    val sb = StringBuilder()
+    var colonSeen = false
+    for (c in raw) {
+        when {
+            c.isDigit() -> sb.append(c)
+            c == ':' && !colonSeen -> { sb.append(':'); colonSeen = true }
+        }
+    }
+    return sb.toString()
+}
+
+/** Parse an `HH:MM` (or bare-hour / bare-minutes) field into minutes since midnight, clamped to a day. */
+private fun parseTimeOfDay(text: String): Int {
+    if (text.isEmpty()) return 0
+    val parts = text.split(':')
+    val hours = parts.getOrNull(0)?.toIntOrNull() ?: 0
+    val mins = parts.getOrNull(1)?.toIntOrNull() ?: 0
+    return (hours * 60 + mins).coerceIn(0, 24 * 60 - 1)
 }
 
 @Composable
@@ -1436,6 +1474,20 @@ private fun CalendarBlock(
                 ) {
                     // The title is written only on the topmost slice so a stepped block reads as one.
                     CalendarBlockBody(color, record.title, showTitle = isFirst)
+                }
+                // PRD §8 extend/shorten: a thin hover zone on the block's true top/bottom edge shows the
+                // standard resize cursor, indicating the user can grab the edge to resize.
+                if (isFirst) {
+                    Box(
+                        Modifier.align(Alignment.TopCenter).fillMaxWidth().height(6.dp)
+                            .pointerHoverIcon(verticalResizePointerIcon()),
+                    )
+                }
+                if (isLast) {
+                    Box(
+                        Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(6.dp)
+                            .pointerHoverIcon(verticalResizePointerIcon()),
+                    )
                 }
             }
         }

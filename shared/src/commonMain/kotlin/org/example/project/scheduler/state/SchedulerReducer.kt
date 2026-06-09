@@ -38,8 +38,7 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state) { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state) { applySetScheduleUnit(it, intent.taskId, intent.entries) })
-            is SchedulerIntent.SetChores ->
-                if (state.chores == intent.entries) state else state.copy(chores = intent.entries)
+            is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis)
             is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
             is SchedulerIntent.AdvanceSchedule -> advanceSchedule(state, intent.nowMillis)
             is SchedulerIntent.SetAutomaticSchedule ->
@@ -366,6 +365,21 @@ object SchedulerReducer {
             SetSelectionDelta(before = state.selection, after = after),
             HistoryCategory.Selection,
         )
+    }
+
+    /**
+     * PRD §14: store the chores list and regenerate its calendar panels (anchored at [todayStartMillis]),
+     * keeping any pinned chore panel. Not routed through history (chores/panels here are session/persisted
+     * state, like the §7 switch and the §9 advance tick), so it is not undoable.
+     */
+    private fun reduceSetChores(
+        state: SchedulerState,
+        entries: List<org.example.project.scheduler.model.ChoreEntry>,
+        todayStartMillis: Long,
+    ): SchedulerState {
+        val panels = SchedulerDomain.regenerateChorePanels(state.panels, entries, todayStartMillis)
+        if (state.chores == entries && state.panels == panels) return state
+        return state.copy(chores = entries, panels = panels)
     }
 
     private fun reduceCopySelection(state: SchedulerState): SchedulerState {

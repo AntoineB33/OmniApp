@@ -92,11 +92,12 @@ object SchedulerStateCodec {
                         pinned = it.pinned,
                         auto = it.auto,
                         layoutWeight = it.layoutWeight,
+                        chore = it.chore,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
-            chores = chores.map { PersistedChoreEntry(it.title, it.spanDays) },
+            chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes) },
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -208,11 +209,12 @@ object SchedulerStateCodec {
                         pinned = it.pinned,
                         auto = it.auto,
                         layoutWeight = it.layoutWeight,
+                        chore = it.chore,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
-            chores = chores.map { ChoreEntry(it.title, it.spanDays) },
+            chores = chores.map { ChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes) },
         )
     }
 
@@ -305,6 +307,8 @@ private data class PersistedState(
 private data class PersistedChoreEntry(
     val title: String,
     val spanDays: Double,
+    // PRD §14: a missing time-of-day decodes to midnight (payloads written before the field existed).
+    val timeOfDayMinutes: Int = 0,
 )
 
 @Serializable
@@ -317,6 +321,8 @@ private data class PersistedPanel(
     val pinned: Boolean = false,
     val auto: Boolean = false,
     val layoutWeight: Double = 1.0,
+    // PRD §14: a missing chore flag decodes to false (payloads written before chore panels existed).
+    val chore: Boolean = false,
 )
 
 @Serializable

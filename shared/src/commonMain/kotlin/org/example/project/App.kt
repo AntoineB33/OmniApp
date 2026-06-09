@@ -20,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
@@ -252,7 +253,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                     manual = true,
                                     entryId = null,
                                     taskId = taskId,
-                                    pinned = false,
+                                    pinned = true, // PRD §8: the "pin" button is on by default for a new panel
                                     fullStartMillis = startMillis,
                                     fullEndMillis = startMillis + span,
                                 )
@@ -312,9 +313,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
 
                     // PRD §14 Chores Manager: floating window over the tree (not the lateral menu).
                     if (choresManagerOpen) {
+                        // PRD §14: anchor the chore scheduler at local midnight of today, in the user's tz.
+                        val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
                         ChoresManagerWindow(
                             chores = schedulerState.chores,
-                            onChange = { vm.dispatch(SchedulerIntent.SetChores(it)) },
+                            onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis)) },
                             onDismiss = { choresManagerOpen = false },
                             modifier = Modifier.align(Alignment.Center),
                         )

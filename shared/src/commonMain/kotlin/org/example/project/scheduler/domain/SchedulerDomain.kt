@@ -1,7 +1,9 @@
 package org.example.project.scheduler.domain
 
+import kotlin.math.roundToInt
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.Task
@@ -648,13 +650,19 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §10 New Task: the earliest **pinned** panel that starts strictly after [cursor], or null
-     * when none. A freshly scheduled auto panel is reduced so it ends no later than this, so it never
-     * overlaps a pinned panel (only pinned panels constrain the auto fill, per §9/§10).
+     * PRD §9/§14: a panel the §9 auto fill must treat as a fixed obstacle — a user-pinned panel or a
+     * chore panel (a chore panel "behaves like a pinned task panel in relation to the task scheduler").
+     */
+    fun isSchedulerFixed(panel: TaskPanel): Boolean = panel.pinned || panel.chore
+
+    /**
+     * PRD §10 New Task: the earliest **fixed** panel (pinned or chore, [isSchedulerFixed]) that starts
+     * strictly after [cursor], or null when none. A freshly scheduled auto panel is reduced so it ends no
+     * later than this, so it never overlaps a fixed panel (only fixed panels constrain the auto fill).
      */
     fun nextPinnedStartAfter(panels: List<TaskPanel>, cursor: Long): Long? =
         panels.asSequence()
-            .filter { it.pinned && it.startEpochMillis > cursor }
+            .filter { isSchedulerFixed(it) && it.startEpochMillis > cursor }
             .minOfOrNull { it.startEpochMillis }
 
     /** Merge [ranges] into sorted, disjoint occupied blocks; touching or overlapping ranges fuse. */
@@ -977,7 +985,7 @@ object SchedulerDomain {
         // so a panel starting exactly at the horizon (e.g. a preserved `auto/tail`, below) is handled
         // by the trailing-edge logic, not double-kept here.
         val keptRaw = state.panels.filter {
-            it.pinned || it === current || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon
+            isSchedulerFixed(it) || it === current || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon
         }
         // The kept in-progress auto panel keeps its old `auto/i` id, which the freshly numbered
         // generated panels (also `auto/i`, from 0) would otherwise reuse. The calendar keys its overlap
@@ -1001,7 +1009,7 @@ object SchedulerDomain {
         // span (only possible if minima are clamped to 0) would otherwise spin.
         while (cursor < horizon && index < MAX_SCHEDULE_PANELS) {
             val pinnedCovering = kept.firstOrNull {
-                it.pinned && it.startEpochMillis <= cursor && cursor < it.endEpochMillis
+                isSchedulerFixed(it) && it.startEpochMillis <= cursor && cursor < it.endEpochMillis
             }
             if (pinnedCovering != null) {
                 cursor = pinnedCovering.endEpochMillis
@@ -1036,7 +1044,7 @@ object SchedulerDomain {
         // fill replace it (its own span runs past the horizon). The straddler is read from the original
         // panels (it is in-window, so it was dropped from `kept` and regenerated).
         val straddler = state.panels.firstOrNull {
-            !it.pinned && it !== current &&
+            !isSchedulerFixed(it) && it !== current &&
                 it.startEpochMillis <= horizon && horizon < it.endEpochMillis
         }
         val lastGen = generated.lastOrNull()
@@ -1054,6 +1062,93 @@ object SchedulerDomain {
 
     /** Safety cap on the number of auto panels one fill can lay down (≈ 24h / shortest sane span). */
     private const val MAX_SCHEDULE_PANELS = 2_000
+
+    // ----- PRD §14 Chores Manager scheduler ---------------------------------------------------
+
+    /** PRD §14: each chore occurrence is a fixed 5-minute panel. */
+    const val CHORE_PANEL_MILLIS: Long = 5L * 60_000L
+
+    /** PRD §14: chore panels are generated this far ahead of the anchor day (a fixed 4-week horizon). */
+    const val CHORE_HORIZON_DAYS: Int = 28
+
+    private const val MILLIS_PER_DAY: Long = 24L * 60 * 60 * 1000
+
+    /**
+     * PRD §14: the day offsets (from the anchor, day 0 = today) on which a chore recurring every
+     * [spanDays] lands, out to [horizonDays]. The accumulated counter starts at today (offset 0 is always
+     * included); each subsequent iteration adds [spanDays] and the closest integer to the running sum is
+     * the chosen day, so a fractional cadence does not drift (e.g. 2.5 → 0, 2/3, 5, 8, 10, …, ties to
+     * even per [roundToInt]). Returns just `[0]` when [spanDays] is not a valid cadence (≤ 1, per §14).
+     */
+    fun choreOccurrenceDayOffsets(spanDays: Double, horizonDays: Int = CHORE_HORIZON_DAYS): List<Int> {
+        val offsets = mutableListOf(0)
+        if (spanDays <= 1.0) return offsets
+        var k = 1
+        while (k <= horizonDays + 1) {
+            val day = (k * spanDays).roundToInt()
+            if (day > horizonDays) break
+            if (day != offsets.last()) offsets.add(day)
+            k++
+        }
+        return offsets
+    }
+
+    /**
+     * PRD §14 chore scheduler: turn [chores] into recurring 5-minute calendar panels anchored at
+     * [todayStartMillis] (local midnight of "today", supplied by the caller which knows the time zone).
+     * Each chore is placed at its [ChoreEntry.timeOfDayMinutes] on every [choreOccurrenceDayOffsets] day
+     * out to [CHORE_HORIZON_DAYS]. Blank-titled chores and non-cadences (spanDays ≤ 1) are skipped.
+     * Panels carry [TaskPanel.chore] = true and a null taskId, with deterministic `chore/{index}/{offset}`
+     * ids so a steady regeneration reproduces them. Overlapping chores keep the default layout weight, so
+     * the calendar splits their shared width evenly (PRD §14).
+     */
+    fun choreScheduledPanels(
+        chores: List<ChoreEntry>,
+        todayStartMillis: Long,
+        horizonDays: Int = CHORE_HORIZON_DAYS,
+    ): List<TaskPanel> {
+        val result = mutableListOf<TaskPanel>()
+        chores.forEachIndexed { index, chore ->
+            if (chore.title.isBlank() || chore.spanDays <= 1.0) return@forEachIndexed
+            val timeOfDay = chore.timeOfDayMinutes.coerceIn(0, 24 * 60 - 1) * MILLIS_PER_MINUTE
+            for (offset in choreOccurrenceDayOffsets(chore.spanDays, horizonDays)) {
+                val start = todayStartMillis + offset * MILLIS_PER_DAY + timeOfDay
+                result.add(
+                    TaskPanel(
+                        id = "chore/$index/$offset",
+                        taskId = null,
+                        title = chore.title,
+                        startEpochMillis = start,
+                        endEpochMillis = start + CHORE_PANEL_MILLIS,
+                        pinned = false,
+                        auto = false,
+                        chore = true,
+                    ),
+                )
+            }
+        }
+        return result
+    }
+
+    /**
+     * PRD §14 "the calendar updates each time the chores manager window changes": rebuild the chore
+     * panels in [panels] from [chores] (anchored at [todayStartMillis]), keeping every chore panel the
+     * user pinned (the chore pin system: pinned chore panels survive a regeneration) and leaving all
+     * non-chore panels untouched. A freshly generated panel whose id collides with a kept pinned one is
+     * dropped in favour of the pinned panel.
+     */
+    fun regenerateChorePanels(
+        panels: List<TaskPanel>,
+        chores: List<ChoreEntry>,
+        todayStartMillis: Long,
+        horizonDays: Int = CHORE_HORIZON_DAYS,
+    ): List<TaskPanel> {
+        val keptPinnedChores = panels.filter { it.chore && it.pinned }
+        val keptIds = keptPinnedChores.mapTo(HashSet()) { it.id }
+        val nonChore = panels.filter { !it.chore }
+        val generated = choreScheduledPanels(chores, todayStartMillis, horizonDays).filter { it.id !in keptIds }
+        return nonChore + keptPinnedChores + generated
+    }
 
     /**
      * PRD §5 priority weight table: the absolute weight of each column. Column n takes its nominal

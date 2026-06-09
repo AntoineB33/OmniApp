@@ -125,10 +125,13 @@ sealed interface SchedulerIntent {
 
     /**
      * PRD §14 Chores Manager: replace the whole chores list with [entries] (rows are edited live in the
-     * floating window). Persisted but not part of the tree Undo/Redo history (see [SchedulerState.chores]).
+     * floating window) and regenerate the chore calendar panels anchored at [todayStartMillis] (local
+     * midnight of today, supplied by the caller which knows the time zone). Persisted but not part of the
+     * tree Undo/Redo history (see [SchedulerState.chores]); pinned chore panels survive the regeneration.
      */
     data class SetChores(
         val entries: List<org.example.project.scheduler.model.ChoreEntry>,
+        val todayStartMillis: Long = 0L,
     ) : SchedulerIntent
 
     /**
