@@ -36,6 +36,7 @@ import org.example.project.time.SimAppClock
 import org.example.project.time.SystemAppClock
 import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.CalendarRecord
+import org.example.project.ui.ChoresManagerWindow
 import org.example.project.ui.LateralMenu
 import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.PlacedRecord
@@ -174,6 +175,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
         val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz).date
         var calendarOpen by remember { mutableStateOf(false) }
+        // PRD §7/§14 Chores Manager: whether the floating chores window is open (local UI state, like the
+        // calendar window; the chores data itself lives in the persisted scheduler state).
+        var choresManagerOpen by remember { mutableStateOf(false) }
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
@@ -207,6 +211,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     onSelectDate = { selectedDate = it },
                     automaticSchedule = schedulerState.automaticSchedule,
                     onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
+                    choresManagerOpen = choresManagerOpen,
+                    onToggleChoresManager = { choresManagerOpen = !choresManagerOpen },
                 )
 
                 // The content area is clipped so the floating calendar window can overlap the tree
@@ -302,6 +308,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                 },
                             )
                         }
+                    }
+
+                    // PRD §14 Chores Manager: floating window over the tree (not the lateral menu).
+                    if (choresManagerOpen) {
+                        ChoresManagerWindow(
+                            chores = schedulerState.chores,
+                            onChange = { vm.dispatch(SchedulerIntent.SetChores(it)) },
+                            onDismiss = { choresManagerOpen = false },
+                            modifier = Modifier.align(Alignment.Center),
+                        )
                     }
 
                     // Debug-only time-acceleration control (gated by DebugFlags.TIME_SIMULATION).

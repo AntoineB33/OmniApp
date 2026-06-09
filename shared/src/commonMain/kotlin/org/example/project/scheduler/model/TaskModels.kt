@@ -46,6 +46,16 @@ data class ScheduleUnitEntry(
 )
 
 /**
+ * PRD §14 Chores Manager entry: one row of the standalone chores list — a [title] and its recurrence
+ * [spanDays] (the "spanning time", in days; a floating-point number). Independent of the task tree: the
+ * chores list is its own top-level state, not a per-task field.
+ */
+data class ChoreEntry(
+    val title: String,
+    val spanDays: Double,
+)
+
+/**
  * PRD §9 Task record entry: a single period `[start, end]` the user spent on a task, as epoch
  * milliseconds (stored as primitives so it serializes without a custom time serializer).
  */

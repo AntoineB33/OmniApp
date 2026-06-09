@@ -38,6 +38,8 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state) { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state) { applySetScheduleUnit(it, intent.taskId, intent.entries) })
+            is SchedulerIntent.SetChores ->
+                if (state.chores == intent.entries) state else state.copy(chores = intent.entries)
             is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
             is SchedulerIntent.AdvanceSchedule -> advanceSchedule(state, intent.nowMillis)
             is SchedulerIntent.SetAutomaticSchedule ->

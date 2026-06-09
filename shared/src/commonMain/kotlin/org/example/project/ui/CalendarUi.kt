@@ -44,6 +44,7 @@ import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -96,6 +97,7 @@ import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.OmniPage
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.state.CalendarEdge
@@ -387,6 +389,9 @@ fun LateralMenu(
     /** PRD §7 Automatic Schedule Switch: current state + toggle callback. */
     automaticSchedule: Boolean = true,
     onToggleAutomaticSchedule: (Boolean) -> Unit = {},
+    /** PRD §7 Chores Manager: whether the chores window is open + toggle callback. */
+    choresManagerOpen: Boolean = false,
+    onToggleChoresManager: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -423,6 +428,13 @@ fun LateralMenu(
             )
         }
 
+        // PRD §7 Chores Manager: toggles the floating chores window over the tree.
+        MenuButton(
+            label = "Chores Manager",
+            active = choresManagerOpen,
+            onClick = onToggleChoresManager,
+        )
+
         // PRD §7 Calendar: the month grid only appears while the calendar is displayed.
         if (calendarOpen) {
             Spacer(Modifier.height(4.dp))
@@ -435,6 +447,131 @@ fun LateralMenu(
             )
         }
     }
+}
+
+/**
+ * PRD §14 Chores Manager: a floating, draggable in-app window (not a modal dialog) holding a vertical
+ * list of rows, each a pair of input fields — a title and a spanning time in **days** (a floating-point
+ * number). Like the §7 calendar window it floats over the tree, not the lateral menu; grab the title bar
+ * to move it. Rows are edited live: every change pushes the parsed list up via [onChange]. Each row has a
+ * bin button (remove) and a `+` (insert above); a trailing `+` appends a row.
+ */
+@Composable
+fun ChoresManagerWindow(
+    chores: List<ChoreEntry>,
+    onChange: (List<ChoreEntry>) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    // Per-row editable text (so an in-progress "3." isn't reformatted to "3.0" each keystroke). Seeded
+    // once from the incoming chores; live edits drive both this local text and the pushed-up list.
+    val rows = remember {
+        mutableStateListOf<Pair<String, String>>().apply {
+            addAll(chores.map { it.title to formatDays(it.spanDays) })
+        }
+    }
+    fun push() = onChange(rows.map { ChoreEntry(it.first, it.second.toDoubleOrNull() ?: 0.0) })
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 10.dp,
+        border = BorderStroke(1.dp, CalColors.grid),
+        modifier = modifier
+            .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
+            .size(width = 420.dp, height = 480.dp),
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            // Title bar doubles as the drag handle for moving the window.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(CalColors.menuBackground)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            offset += dragAmount
+                        }
+                    }
+                    .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Chores Manager",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("✕", style = MaterialTheme.typography.titleSmall, color = CalColors.muted)
+                }
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                rows.forEachIndexed { index, (title, spanText) ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = title,
+                            onValueChange = { rows[index] = it to rows[index].second; push() },
+                            singleLine = true,
+                            label = { Text("Chore") },
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = spanText,
+                            onValueChange = { raw ->
+                                rows[index] = rows[index].first to sanitizeDecimal(raw)
+                                push()
+                            },
+                            singleLine = true,
+                            label = { Text("Days") },
+                            modifier = Modifier.width(96.dp),
+                        )
+                        // Bin: remove this row.
+                        TextButton(onClick = { rows.removeAt(index); push() }) { Text("🗑") }
+                        // Plus: insert a new row above this one.
+                        TextButton(onClick = { rows.add(index, "" to ""); push() }) { Text("+") }
+                    }
+                }
+                // Trailing single plus: append a new row at the end of the list.
+                TextButton(onClick = { rows.add("" to ""); push() }) { Text("+ add chore") }
+            }
+        }
+    }
+}
+
+/** Render a day span without a forced ".0" tail for whole numbers (e.g. 7.0 → "7", 3.5 → "3.5"). */
+private fun formatDays(days: Double): String =
+    if (days == days.toLong().toDouble()) days.toLong().toString() else days.toString()
+
+/** Keep only digits and a single decimal point so the "Days" field stays a parseable number. */
+private fun sanitizeDecimal(raw: String): String {
+    val sb = StringBuilder()
+    var dotSeen = false
+    for (c in raw) {
+        when {
+            c.isDigit() -> sb.append(c)
+            (c == '.' || c == ',') && !dotSeen -> { sb.append('.'); dotSeen = true }
+        }
+    }
+    return sb.toString()
 }
 
 @Composable

@@ -5,6 +5,7 @@ import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskId
@@ -123,6 +124,12 @@ data class SchedulerState(
      * Transient session state, not persisted and not undoable.
      */
     val overlapArmed: Boolean = false,
+    /**
+     * PRD §14 Chores Manager: the standalone list of chores (title + spanning time in days). Persisted
+     * (survives sessions) but, like the panels/switch, lives outside the [TreeSnapshot] — editing it is
+     * not routed through the Undo/Redo tree history.
+     */
+    val chores: List<ChoreEntry> = emptyList(),
 ) {
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots
     // (capture) and re-attached from the live tasks on restore (applyTree). Undo/Redo therefore

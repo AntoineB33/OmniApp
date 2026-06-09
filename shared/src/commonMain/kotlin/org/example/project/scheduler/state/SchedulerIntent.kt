@@ -124,6 +124,14 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §14 Chores Manager: replace the whole chores list with [entries] (rows are edited live in the
+     * floating window). Persisted but not part of the tree Undo/Redo history (see [SchedulerState.chores]).
+     */
+    data class SetChores(
+        val entries: List<org.example.project.scheduler.model.ChoreEntry>,
+    ) : SchedulerIntent
+
+    /**
      * PRD §9 calculation event: regenerate the schedule against [nowMillis] — advance past any
      * completed panel, then refill the non-pinned panels out to +24h ([SchedulerDomain.fillSchedule]).
      * Dispatched by the debounced tree-change event and the deferred calendar timer. Gated by PRD §7:

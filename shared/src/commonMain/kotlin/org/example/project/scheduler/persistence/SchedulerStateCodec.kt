@@ -9,6 +9,7 @@ import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.Task
@@ -95,6 +96,7 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
+            chores = chores.map { PersistedChoreEntry(it.title, it.spanDays) },
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -210,6 +212,7 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
+            chores = chores.map { ChoreEntry(it.title, it.spanDays) },
         )
     }
 
@@ -294,6 +297,14 @@ private data class PersistedState(
     val nextPanelCounter: Int = 0,
     // PRD §7: default on keeps auto-scheduling running for payloads written before the switch existed.
     val automaticSchedule: Boolean = true,
+    // PRD §14: a missing chores list decodes to empty (payloads written before the chores manager existed).
+    val chores: List<PersistedChoreEntry> = emptyList(),
+)
+
+@Serializable
+private data class PersistedChoreEntry(
+    val title: String,
+    val spanDays: Double,
 )
 
 @Serializable

@@ -119,6 +119,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **Page Navigation:** The page navigation button that is persistent through all feature pages is the first element of the left side menu (the button is at the same place in all feature pages but not necessarily in a lateral menu).
 * **Calendar:** A button allows to toggle the display of the calendar in a floating window over the tree (not over the left side menu).
 * **Automatic Schedule Switch:** If the switch is set to off, the triggered events to update the schedule (section 9) wait for when the switch is set to on. On by default, and persists between sessions.
+* **Chores Manager:** A button allows to toggle the display of the chores manager in a floating window over the tree (not over the left side menu).
 
 ## 8. Calendar
 * **Current Week:** The calendar window shows the week with the same style as Google Calendar.
@@ -157,3 +158,6 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **Notification:** If the task has a schedule unit, then the notification that tells the user to switch to this task must also tell him the deadlines of each elements of the schedule unit.
 * **Cell Contextual Menu:** If the task has no child task, right-clicking a cell in the task tree shows a contextual menu with the option "define schedule unit".
 * **Edition Window:** "define schedule unit" opens a floating edition window showing the list vertically. The titles are input fields and the spanning time are also input fields but with increment and decrement buttons. At the right of a pair, a bin button (to remove the pair) and a plus button (to insert a pair above). At the end of the list, a single plus button. At the bottom right, a Cancel and a Save buttons. If the sum of the spanning times is higher than the minimum time of the task, the Save button is not clickable.
+
+## 14. Chores Manager
+* **Window:** The window is a vertical list of pairs: a title and a spanning time. Both elements of a row is an input field, and the spanning time has days as a unit (but can be a floating point number).
