@@ -1063,17 +1063,39 @@ private fun pasteTreeAtCell(
     return working
 }
 
-/** Set [cellId]'s title to [node]'s and rebuild [node]'s children under it (recursively). */
+/**
+ * Set [cellId]'s title to [node]'s and rebuild [node]'s children under it (recursively). PRD §4: also
+ * restores the copied priority-weight values — the cell's own weight row, the minimum time of its task,
+ * and (before recursing) the header of the sub-list it parents. Pasted cells always get freshly
+ * allocated tasks/lists, so writing these never clobbers a pre-existing task.
+ */
 private fun pasteNodeInto(
     state: SchedulerState,
     cellId: CellId,
     node: SchedulerDomain.CopiedNode,
 ): SchedulerState {
     var working = applySetCellTitle(state, cellId, node.title)
+    // Restore this cell's priority-weight row (PRD §4/§5).
+    working.cells[cellId]?.let { c ->
+        working = working.copy(cells = working.cells + (cellId to c.copy(priorityWeights = node.rowWeights)))
+    }
+    // Restore this task's minimum time (PRD §4/§10), when the clipboard carried one.
+    val pastedTaskId = working.cells[cellId]?.taskId
+    if (pastedTaskId != null && node.minMinutes != null) {
+        working.tasks[pastedTaskId]?.let { t ->
+            working = working.copy(
+                tasks = working.tasks + (pastedTaskId to t.copy(minimumMinutes = node.minMinutes.coerceAtLeast(0))),
+            )
+        }
+    }
     if (node.children.isEmpty()) return working
     val taskId = working.cells[cellId]?.taskId ?: return working
     // A non-blank title gives the cell a child sub-list with one empty placeholder (applySetCellTitle).
     val childListId = working.tasks[taskId]?.childListId ?: return working
+    // Restore the child sub-list's weight-column header (PRD §4/§5).
+    working.lists[childListId]?.let { l ->
+        working = working.copy(lists = working.lists + (childListId to l.copy(weightColumns = node.childHeader)))
+    }
     val placeholder = working.lists[childListId]?.cellIds?.firstOrNull() ?: return working
     working = pasteNodeInto(working, placeholder, node.children.first())
     var afterId = placeholder

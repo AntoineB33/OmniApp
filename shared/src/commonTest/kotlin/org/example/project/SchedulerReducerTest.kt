@@ -2201,14 +2201,16 @@ class SchedulerReducerTest {
             SchedulerIntent.ClickCell(cellId = visible[1], ctrl = false, shift = true, visibleOrder = visible),
         )
         s = SchedulerReducer.reduce(s, SchedulerIntent.CopySelection)
-        assertEquals(listOf("A", "B"), s.clipboard)
+        // PRD §4: tree lines, then the section separator, then the min-time appendix (one per task).
+        val sep = SchedulerDomain.COPY_SECTION_SEPARATOR
+        assertEquals(listOf("A", "B", sep, "A\t45", "B\t45"), s.clipboard)
 
         s = SchedulerReducer.reduce(
             s,
             SchedulerIntent.ClickCell(cellId = visible[2], ctrl = false, shift = false, visibleOrder = visible),
         )
         s = SchedulerReducer.reduce(s, SchedulerIntent.CopySelection)
-        assertEquals(listOf("C"), s.clipboard)
+        assertEquals(listOf("C", sep, "C\t45"), s.clipboard)
     }
 
     @Test
@@ -2330,7 +2332,9 @@ class SchedulerReducerTest {
             s,
             org.example.project.scheduler.state.SchedulerSelection(main = cA, selected = setOf(cA, cB)),
         )
-        assertEquals("A\n\tA1\n\t\tA1a\nB", text)
+        // Tree section (unchanged for all-default weights) + separator + min-time appendix (PRD §4).
+        val sep = SchedulerDomain.COPY_SECTION_SEPARATOR
+        assertEquals("A\n\tA1\n\t\tA1a\nB\n$sep\nA\t45\nA1\t45\nA1a\t45\nB\t45", text)
     }
 
     @Test
@@ -2384,6 +2388,109 @@ class SchedulerReducerTest {
         )
         val nodes = SchedulerDomain.parseTreeText(text)
         assertEquals(listOf("line1\nline2\tx"), nodes!!.map { it.title })
+    }
+
+    // ----- PRD §4 copy includes weight-table values + trailing min-time appendix --------------
+
+    @Test
+    fun copy_includes_priority_weight_values_and_column_headers() {
+        // Parent P with a 2-column weight table; child C1 has a non-default value row.
+        var s = SchedulerState.empty()
+        val cP = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cP, "P"))
+        val pTask = s.cells[cP]!!.taskId!!
+        val childList = s.tasks[pTask]!!.childListId!!
+        val cC1 = s.lists[childList]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cC1, "C1"))
+        // Give the child sub-list a second column (header 0.0 by default), set its header to 0.3, and
+        // give C1 the value row [2.0, 5.0].
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddPriorityColumn(childList))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityColumnWeight(childList, 1, 0.3))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cC1, 0, 2.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cC1, 1, 5.0))
+
+        val text = SchedulerDomain.copyTreeText(
+            s,
+            org.example.project.scheduler.state.SchedulerSelection(main = cP, selected = setOf(cP)),
+        )
+        val lines = text.split('\n')
+        // P parents the sub-list whose header is [1.0, 0.3] → emitted as an `h=` field on P's line.
+        assertEquals("P\th=1.0,0.3", lines[0])
+        // C1's own value row [2.0, 5.0] → emitted as a `w=` field.
+        assertEquals("\tC1\tw=2.0,5.0", lines[1])
+    }
+
+    @Test
+    fun copy_appends_minimum_time_of_each_task_at_the_end() {
+        // P (min 30) with child C1 (min 90); the appendix lists both, after the separator (PRD §4).
+        var s = SchedulerState.empty()
+        val cP = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cP, "P"))
+        val pTask = s.cells[cP]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(pTask, 30))
+        val childList = s.tasks[pTask]!!.childListId!!
+        val cC1 = s.lists[childList]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cC1, "C1"))
+        val c1Task = s.cells[cC1]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(c1Task, 90))
+
+        val text = SchedulerDomain.copyTreeText(
+            s,
+            org.example.project.scheduler.state.SchedulerSelection(main = cP, selected = setOf(cP)),
+        )
+        val sep = SchedulerDomain.COPY_SECTION_SEPARATOR
+        val appendix = text.substringAfter("$sep\n")
+        assertEquals("P\t30\nC1\t90", appendix)
+    }
+
+    @Test
+    fun copy_paste_round_trips_weights_columns_and_minimum_times() {
+        // Build P{min30, child-header [1.0,0.3]} → C1{min90, row [2.0,5.0]}, copy it, paste into a fresh
+        // tree, and verify every PRD §4 value survived the round-trip.
+        var s = SchedulerState.empty()
+        val cP = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cP, "P"))
+        val pTask = s.cells[cP]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(pTask, 30))
+        val childList = s.tasks[pTask]!!.childListId!!
+        val cC1 = s.lists[childList]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cC1, "C1"))
+        val c1Task = s.cells[cC1]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(c1Task, 90))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddPriorityColumn(childList))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityColumnWeight(childList, 1, 0.3))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cC1, 0, 2.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cC1, 1, 5.0))
+
+        val text = SchedulerDomain.copyTreeText(
+            s,
+            org.example.project.scheduler.state.SchedulerSelection(main = cP, selected = setOf(cP)),
+        )
+
+        // Paste into a fresh tree's first (empty) cell.
+        var dst = SchedulerState.empty()
+        val target = dst.lists[dst.rootListId]!!.cellIds[0]
+        dst = SchedulerReducer.reduce(
+            dst,
+            SchedulerIntent.ClickCell(
+                cellId = target,
+                ctrl = false,
+                shift = false,
+                visibleOrder = SchedulerDomain.selectableVisibleOrder(dst),
+            ),
+        )
+        dst = SchedulerReducer.reduce(dst, SchedulerIntent.PasteTree(text))
+
+        // The pasted P: min time + child column header restored.
+        val newP = dst.cells[target]!!.taskId!!
+        assertEquals("P", dst.tasks[newP]!!.title)
+        assertEquals(30, dst.tasks[newP]!!.minimumMinutes)
+        val newChildList = dst.tasks[newP]!!.childListId!!
+        assertEquals(listOf(1.0, 0.3), dst.lists[newChildList]!!.weightColumns)
+        // The pasted C1: value row + min time restored.
+        val newC1 = dst.lists[newChildList]!!.cellIds.first { dst.cells[it]!!.taskId != null }
+        assertEquals(listOf(2.0, 5.0), dst.cells[newC1]!!.priorityWeights)
+        assertEquals(90, dst.tasks[dst.cells[newC1]!!.taskId!!]!!.minimumMinutes)
     }
 
     @Test

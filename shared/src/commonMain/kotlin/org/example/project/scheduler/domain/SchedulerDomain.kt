@@ -2,6 +2,7 @@ package org.example.project.scheduler.domain
 
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
@@ -1373,8 +1374,29 @@ object SchedulerDomain {
 
     // ----- PRD §4 tree copy / paste serialization --------------------------------------------
 
-    /** A copied cell: its title and the (populated) subtree beneath it. */
-    data class CopiedNode(val title: String, val children: List<CopiedNode>)
+    /**
+     * A copied cell: its [title], the (populated) subtree beneath it, plus the PRD §4 priority-weight
+     * table values needed to reproduce it — [rowWeights] is this cell's per-column value row (aligned to
+     * its parent sub-list's columns) and [childHeader] is the weight-column header of the sub-list it
+     * parents. [minMinutes] is the PRD §10 minimum time of this node's task (null when the clipboard text
+     * carried no min-time appendix entry for it, e.g. a plain title tree, so paste keeps the default).
+     */
+    data class CopiedNode(
+        val title: String,
+        val children: List<CopiedNode>,
+        val rowWeights: List<Double> = listOf(1.0),
+        val childHeader: List<Double> = listOf(1.0),
+        val minMinutes: Int? = null,
+    )
+
+    /** PRD §4 default priority-weight row/column header — omitted from the serialized text. */
+    private val DEFAULT_WEIGHTS: List<Double> = listOf(1.0)
+
+    /**
+     * PRD §4 separator between the tree section and the trailing min-time appendix. A lone form-feed
+     * line: titles escape `\f` (see [escapeTitle]) so a real title can never be mistaken for it.
+     */
+    const val COPY_SECTION_SEPARATOR: String = "\u000C"
 
     /** True when the cell points at a task with a non-blank title (a real, copyable cell). */
     private fun isPopulated(state: SchedulerState, cellId: CellId): Boolean {
@@ -1384,21 +1406,30 @@ object SchedulerDomain {
 
     /** Build the copied subtree rooted at [cellId] from the task's shared child list (populated cells). */
     private fun copiedSubtree(state: SchedulerState, cellId: CellId): CopiedNode {
-        val taskId = state.cells[cellId]?.taskId
-        val title = taskId?.let { state.tasks[it]?.title }.orEmpty()
-        val childListId = taskId?.let { state.tasks[it]?.childListId }
+        val cell = state.cells[cellId]
+        val taskId = cell?.taskId
+        val task = taskId?.let { state.tasks[it] }
+        val title = task?.title.orEmpty()
+        val rowWeights = cell?.priorityWeights ?: DEFAULT_WEIGHTS
+        val childList = task?.childListId?.let { state.lists[it] }
+        val childHeader = childList?.weightColumns ?: DEFAULT_WEIGHTS
         val children =
-            childListId?.let { state.lists[it]?.cellIds }.orEmpty()
+            childList?.cellIds.orEmpty()
                 .filter { isPopulated(state, it) }
                 .map { copiedSubtree(state, it) }
-        return CopiedNode(title, children)
+        return CopiedNode(title, children, rowWeights, childHeader, task?.minimumMinutes)
     }
 
+    private fun formatWeights(weights: List<Double>): String = weights.joinToString(",") { it.toString() }
+
     /**
-     * PRD §4 Copy: the selected cells' subtrees serialized to the app's tab-indented text (depth =
-     * leading tabs; each title escaped so its own tabs/newlines don't corrupt the structure). Uses the
-     * consecutive selection block when there is one, otherwise the main selection. Empty when nothing
-     * populated is selected.
+     * PRD §4 Copy: the selected cells' subtrees serialized to the app's tab-indented text. Each line is
+     * `<depth tabs><escaped title>` optionally followed by tab-separated fields carrying the priority
+     * weight table values — `w=<csv>` for the cell's own weight row and `h=<csv>` for the header of the
+     * sub-list it parents (both omitted when they are the default single column of 1). Then a
+     * [COPY_SECTION_SEPARATOR] line and, at the end, the minimum time of each distinct task in the copied
+     * tree as `<escaped title>\t<minutes>` lines (PRD §4). Uses the consecutive selection block when there
+     * is one, otherwise the main selection. Empty when nothing populated is selected.
      */
     fun copyTreeText(state: SchedulerState, selection: SchedulerSelection): String {
         val roots =
@@ -1411,46 +1442,104 @@ object SchedulerDomain {
             for (n in ns) {
                 repeat(depth) { sb.append('\t') }
                 sb.append(escapeTitle(n.title))
+                if (n.rowWeights != DEFAULT_WEIGHTS) sb.append('\t').append("w=").append(formatWeights(n.rowWeights))
+                if (n.children.isNotEmpty() && n.childHeader != DEFAULT_WEIGHTS) {
+                    sb.append('\t').append("h=").append(formatWeights(n.childHeader))
+                }
                 sb.append('\n')
                 render(n.children, depth + 1)
             }
         }
         render(nodes, 0)
-        return sb.toString().removeSuffix("\n")
+        // PRD §4 trailing appendix: the minimum time of each distinct task (first-appearance order).
+        val minByTitle = LinkedHashMap<String, Int>()
+        fun collectMins(ns: List<CopiedNode>) {
+            for (n in ns) {
+                if (n.title !in minByTitle) minByTitle[n.title] = n.minMinutes ?: DEFAULT_MINIMUM_MINUTES
+                collectMins(n.children)
+            }
+        }
+        collectMins(nodes)
+        sb.append(COPY_SECTION_SEPARATOR).append('\n')
+        sb.append(minByTitle.entries.joinToString("\n") { "${escapeTitle(it.key)}\t${it.value}" })
+        return sb.toString()
+    }
+
+    private fun parseWeights(csv: String): List<Double>? {
+        if (csv.isEmpty()) return null
+        val result = ArrayList<Double>()
+        for (part in csv.split(',')) result.add(part.toDoubleOrNull() ?: return null)
+        return result
     }
 
     /**
-     * PRD §4 Paste: parse the app's tab-indented tree text into a forest, or null when [text] is not in
-     * that format (a content tab, an indentation jump of more than one level, or nothing populated). The
-     * strictness is what makes paste a no-op for arbitrary clipboard text.
+     * PRD §4 Paste: parse the app's serialized text (see [copyTreeText]) into a forest carrying the
+     * priority weight values and per-task minimum times, or null when [text] is not in that format (an
+     * unknown line field, an unparseable weight/min-time, an indentation jump of more than one level, or
+     * nothing populated). The strictness is what makes paste a no-op for arbitrary clipboard text. A plain
+     * tab-indented title tree (no weight fields, no appendix) still parses — weights default and min-times
+     * stay null so paste leaves them at their defaults.
      */
     fun parseTreeText(text: String): List<CopiedNode>? {
         if (text.isBlank()) return null
-        val entries = ArrayList<Pair<Int, String>>()
-        for (line in text.replace("\r\n", "\n").replace('\r', '\n').split('\n')) {
+        val allLines = text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
+        val sepIndex = allLines.indexOf(COPY_SECTION_SEPARATOR)
+        val treeLines = if (sepIndex >= 0) allLines.subList(0, sepIndex) else allLines
+        val appendixLines = if (sepIndex >= 0) allLines.subList(sepIndex + 1, allLines.size) else emptyList()
+
+        // Appendix: `<escaped title>\t<minutes>` per distinct task. A malformed line → not our format.
+        val minByTitle = HashMap<String, Int>()
+        for (line in appendixLines) {
+            if (line.isBlank()) continue
+            val tab = line.indexOf('\t')
+            if (tab < 0) return null
+            val minutes = line.substring(tab + 1).toIntOrNull() ?: return null
+            minByTitle[unescapeTitle(line.substring(0, tab))] = minutes
+        }
+
+        val entries = ArrayList<MutableCopiedNode>()
+        val depths = ArrayList<Int>()
+        for (line in treeLines) {
             var depth = 0
             while (depth < line.length && line[depth] == '\t') depth++
             val rest = line.substring(depth)
             if (rest.isBlank()) continue
-            if (rest.contains('\t')) return null // a real tab in content → not our format
-            entries.add(depth to unescapeTitle(rest))
+            val fields = rest.split('\t')
+            var rowWeights = DEFAULT_WEIGHTS
+            var childHeader = DEFAULT_WEIGHTS
+            for (field in fields.drop(1)) {
+                when {
+                    field.startsWith("w=") -> rowWeights = parseWeights(field.removePrefix("w=")) ?: return null
+                    field.startsWith("h=") -> childHeader = parseWeights(field.removePrefix("h=")) ?: return null
+                    else -> return null // a real tab in content / unknown field → not our format
+                }
+            }
+            entries.add(MutableCopiedNode(unescapeTitle(fields[0]), rowWeights = rowWeights, childHeader = childHeader))
+            depths.add(depth)
         }
         if (entries.isEmpty()) return null
 
         val roots = ArrayList<MutableCopiedNode>()
         val ancestors = ArrayList<MutableCopiedNode>() // ancestors[d] = current node at depth d
-        for ((depth, title) in entries) {
+        for (i in entries.indices) {
+            val depth = depths[i]
             if (depth > ancestors.size) return null // indentation jumped more than one level
-            val node = MutableCopiedNode(title)
+            val node = entries[i]
             if (depth == 0) roots.add(node) else ancestors[depth - 1].children.add(node)
             while (ancestors.size > depth) ancestors.removeAt(ancestors.size - 1)
             ancestors.add(node)
         }
-        return roots.map { it.toImmutable() }
+        return roots.map { it.toImmutable(minByTitle) }
     }
 
-    private class MutableCopiedNode(val title: String, val children: MutableList<MutableCopiedNode> = mutableListOf()) {
-        fun toImmutable(): CopiedNode = CopiedNode(title, children.map { it.toImmutable() })
+    private class MutableCopiedNode(
+        val title: String,
+        val children: MutableList<MutableCopiedNode> = mutableListOf(),
+        val rowWeights: List<Double> = listOf(1.0),
+        val childHeader: List<Double> = listOf(1.0),
+    ) {
+        fun toImmutable(minByTitle: Map<String, Int>): CopiedNode =
+            CopiedNode(title, children.map { it.toImmutable(minByTitle) }, rowWeights, childHeader, minByTitle[title])
     }
 
     private fun escapeTitle(s: String): String =
@@ -1459,6 +1548,7 @@ object SchedulerDomain {
                 '\\' -> append("\\\\")
                 '\n' -> append("\\n")
                 '\t' -> append("\\t")
+                '\u000C' -> append("\\f")
                 else -> append(c)
             }
         }
@@ -1472,6 +1562,7 @@ object SchedulerDomain {
                     when (s[i + 1]) {
                         'n' -> append('\n')
                         't' -> append('\t')
+                        'f' -> append('\u000C')
                         '\\' -> append('\\')
                         else -> append(s[i + 1])
                     }

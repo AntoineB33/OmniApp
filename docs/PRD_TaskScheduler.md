@@ -87,7 +87,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 
 ### Edition without Edition Mode
 * **Deletion:** When the user presses `Backspace` or `Delete` and no cell is in Edition Mode, all selected cells get emptied.
-* **Copy/paste:** If the selection is consecutive cells, then Ctrl + C copy the selection. It convert the tree structure of the selection and everything under the selected cells into a text. Ctrl + V with a single cell selected allows to paste the copied tree structure only if the text has the right format. In Edit Mode, Ctrl + C and Ctrl + V have the usual behavior.
+* **Copy/paste:** If the selection is consecutive cells, then Ctrl + C copy the selection. It convert the tree structure of the selection and everything under the selected cells into a text. The copied text also contains the priority weight table values, and at the end the minimum time of each task present in the task tree. Ctrl + V with a single cell selected allows to paste the copied tree structure only if the text has the right format. In Edit Mode, Ctrl + C and Ctrl + V have the usual behavior.
 
 ## 5. Priority assignment
 * **priority percentage:** The priority percentage displayed at the right side of a cell is the absolute priority percentage of the `taskId`. It is the sum of the absolute priority percentage of all the cells sharing this `taskId`. The priority percentage of a cell in a list is the priority weight of the cell divided by the sum of the priority weights of this sub-list. Its absolute priority percentage is this fraction multiplied by the absolute priority of the parent cell. If the parent cell is the "root" cell, then its absolute priority percentage is 100%.
