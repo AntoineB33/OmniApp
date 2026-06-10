@@ -501,7 +501,7 @@ object SchedulerDomain {
     /**
      * PRD §9 "working time": the past moments where **at least one task was scheduled/done** — the
      * merged union of every task's record plus every panel (auto/user/pinned), clipped to [nowMillis].
-     * Used as the denominator of a task's recent share ([taskScore]) so idle gaps don't dilute it.
+     * Used as the denominator of a task's recent share ([taskRecentShare]) so idle gaps don't dilute it.
      */
     fun workingPeriods(state: SchedulerState, nowMillis: Long): List<TaskTimeRange> {
         val recorded = state.tasks.values.asSequence().flatMap { it.record.asSequence() }
@@ -526,29 +526,26 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §9 score of leaf task [taskId] for being scheduled at instant [nowMillis]: `s = absolute − f`.
+     * PRD §9 task choice fraction `f` for leaf task [taskId] at instant `t` = [nowMillis]: its minimum
+     * time `m` as a fraction of the working time over `[t1, t]`.
      *
-     * Walking back from `now` over the task's [pastPeriodsForTask], `t1` is the closest past instant at
-     * which the task has accumulated exactly its minimum time (PRD §10). `f = minimumTime / workingTime`
-     * over `[t1, now]` — the fraction of recent working time that was this task. A freshly over-served
-     * task gets `f → 1` and a low score; the higher the score, the more under-served relative to its
-     * absolute priority percentage.
+     * Walking back from `t` over the task's [pastPeriodsForTask], `t1` is the closest past instant at which
+     * the task has accumulated exactly its minimum time `m` (PRD §10); `f = m / workingTime(t1, t)`, the
+     * share of recent working time that was this task (idle gaps excluded — see [workingPeriods]).
      *
      * PRD §9 "If t1 doesn't exist, f is 0": when the task has been done **less than its minimum** in its
-     * whole history (or never), no `[t1, now]` window holds a full minimum of it, so `f = 0` and the
-     * score is just its [absolutePriority] — an under-served task is not penalized. [working] and
-     * [absolutePriority] default to fresh computations but are supplied by [nextTask] so they are
-     * computed once per instant rather than per candidate.
+     * whole history (or never), no past window holds a full `m` of it, so `f = 0` — an under-served task.
+     * A task is chosen by [nextTask] when this `f` is at most its absolute priority percentage. [working]
+     * defaults to a fresh computation but is supplied by [nextTask] so it is computed once per instant.
      */
-    fun taskScore(
+    fun taskRecentShare(
         state: SchedulerState,
         taskId: TaskId,
         nowMillis: Long,
-        absolutePriority: Double = absoluteTaskPriorities(state)[taskId] ?: 0.0,
         working: List<TaskTimeRange> = workingPeriods(state, nowMillis),
     ): Double {
-        val minMillis = (state.tasks[taskId]?.minimumMinutes ?: 0).toLong() * MILLIS_PER_MINUTE
-        if (minMillis <= 0L) return absolutePriority
+        val minMillis = (state.tasks[takId]?.minimumMinutes ?: 0).toLong() * MILLIS_PER_MINUTE
+        if (minMillis <= 0L) return 0.0s
         val periods = pastPeriodsForTask(state, taskId, nowMillis).sortedByDescending { it.endEpochMillis }
         // Walk back accumulating the task's own time until the running total reaches minMillis: that
         // instant is t1. If the task's whole history is shorter than its minimum, t1 doesn't exist.
@@ -563,10 +560,9 @@ object SchedulerDomain {
             }
             acc += dur
         }
-        if (acc < minMillis) return absolutePriority // PRD §9: t1 doesn't exist → f = 0
+        if (acc < minMillis) return 0.0 // PRD §9: t1 doesn't exist → f = 0
         val workTime = spanWithin(working, t1, nowMillis)
-        val f = if (workTime > 0L) minMillis.toDouble() / workTime.toDouble() else 0.0
-        return absolutePriority - f
+        return if (workTime > 0L) minMillis.toDouble() / workTime.toDouble() else 0.0
     }
 
     /** Whether any cell in the tree currently points at [taskId] (i.e. the task is still in the tree). */
@@ -592,13 +588,16 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §9 task choice: the *leaf* task with the highest [taskScore] at [nowMillis] — the one most
-     * under-served relative to its priority. Ties break alphabetically by title (matching §8 manual add).
-     * Empty placeholders, the root/main tasks, tasks with child tasks (PRD §9), tasks no longer in the
-     * tree (kept only for their record, PRD §4/§8), and **blank-titled tasks** (a cell emptied to
-     * "delete" the task keeps its id and lingers while panels/records still point at it) are excluded.
-     * Returns null when there are no real leaf tasks. (Minimum time, PRD §10, constrains the allocated
-     * duration, not which task is chosen.)
+     * PRD §9 task choice: iterate the *leaf* tasks at [nowMillis] **from highest to lowest absolute
+     * priority percentage** (ties alphabetical, matching §8 manual add) and return the first whose recent
+     * share `f` ([taskRecentShare]) is its absolute priority percentage `p` **or lower** (`f ≤ p`) — the
+     * highest-priority task that is not currently over-served. Empty placeholders, the root/main tasks,
+     * tasks with child tasks (PRD §9), tasks no longer in the tree (kept only for their record, PRD §4/§8),
+     * and **blank-titled tasks** (a cell emptied to "delete" the task keeps its id and lingers while
+     * panels/records still point at it) are excluded. Returns null when there are no real leaf tasks. If
+     * every task is over-served (`f > p` for all — a degenerate, near-unreachable state), the highest-
+     * priority task is returned so the fill still progresses. (Minimum time, PRD §10, constrains the
+     * allocated duration, not which task is chosen.)
      */
     fun nextTask(
         state: SchedulerState,
@@ -612,11 +611,15 @@ object SchedulerDomain {
                     state.tasks[it]?.title?.isNotBlank() == true
             }
         if (candidates.isEmpty()) return null
-        // minWith over (score desc, title asc): the highest score wins, ties broken alphabetically.
-        return candidates.minWith(
-            compareByDescending<TaskId> { taskScore(state, it, nowMillis, absolute[it] ?: 0.0, working) }
-                .thenBy { state.tasks[it]?.title.orEmpty() },
-        )
+        // Highest priority first, ties broken alphabetically (PRD §9 "highest to lowest absolute priority").
+        val ordered =
+            candidates.sortedWith(
+                compareByDescending<TaskId> { absolute[it] ?: 0.0 }
+                    .thenBy { state.tasks[it]?.title.orEmpty() },
+            )
+        // The correct task is the first whose recent share f is its priority p or lower (PRD §9).
+        return ordered.firstOrNull { taskRecentShare(state, it, nowMillis, working) <= (absolute[it] ?: 0.0) }
+            ?: ordered.first()
     }
 
     private const val MILLIS_PER_MINUTE: Long = 60_000L
