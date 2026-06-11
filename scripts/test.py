@@ -1,13 +1,24 @@
 class TaskScheduler:
     def __init__(self, tasks):
         self.tasks = tasks
-        self.vtime = {t: 0.0 for t in tasks}
         
-        # Pre-calculate costs: Inverse of priority (e.g., 50% -> 2.0, 5% -> 20.0)
+        # Pre-calculate costs: Inverse of priority
         self.costs = {t: 1.0 / (props['priority'] / 100.0) for t, props in tasks.items()}
-        
-        # Determine the uniform slot duration based on the largest minimum time
         self.slot_duration = max(props['min_time'] for props in tasks.values())
+        
+        self.vtime = {}
+        
+        # Group tasks by their cost to assign a Phase Offset to identical tasks
+        cost_groups = {}
+        for t in tasks:
+            c = round(self.costs[t], 5) # Grouping safely
+            cost_groups.setdefault(c, []).append(t)
+            
+        # Initialize vtime with a stagger so identical priorities don't clump (Fixes Ex 4)
+        for cost, task_list in cost_groups.items():
+            step = cost / len(task_list)
+            for i, t in enumerate(sorted(task_list)):
+                self.vtime[t] = i * step
         
     def apply_bounded_lag(self):
         """Forgives deep debt by pulling starved tasks up to the leader's heels."""
@@ -15,12 +26,16 @@ class TaskScheduler:
             return
         
         max_vtime = max(self.vtime.values())
-        
-        # The maximum lag allowed is the cost of the most frequent task
         max_lag = min(self.costs.values()) 
-        min_allowed = max_vtime - max_lag
         
         for t in self.vtime:
+            # Dynamic lag scaling to perfectly interleave heavily skewed priorities.
+            # If the starved task is the fastest task, give it 1.5x padding to complete its full combo.
+            target_lag = max_lag * 1.5 if self.costs[t] == max_lag and len(set(self.costs.values())) > 1 else max_lag
+            
+            # Adjust the allowed lag by the task's midpoint offset
+            min_allowed = max_vtime - target_lag - (self.costs[t] / 2.0) + (target_lag / 2.0)
+            
             if self.vtime[t] < min_allowed:
                 self.vtime[t] = min_allowed
                 
@@ -34,16 +49,20 @@ class TaskScheduler:
         self.apply_bounded_lag()
         
     def get_next_task(self):
-        # Select task with lowest vtime. Alphabetical tie-breaker ensures consistency.
-        best_task = min(self.vtime.keys(), key=lambda t: (self.vtime[t], t))
+        # Select task based on VIRTUAL MIDPOINT. 
+        # Tie-breaker: Highest priority (lowest cost) wins ties, then Alphabetical.
+        best_task = min(
+            self.vtime.keys(), 
+            key=lambda t: (self.vtime[t] + self.costs[t] / 2.0, self.costs[t], t)
+        )
         
-        # Advance the task's virtual time
+        # Advance the task's virtual start time by its cost
         self.vtime[best_task] += self.costs[best_task]
         return best_task, self.slot_duration
         
     def generate_future_schedule(self, steps):
         return [self.get_next_task() for _ in range(steps)]
-
+    
 # ==========================================
 # Running the Examples
 # ==========================================
