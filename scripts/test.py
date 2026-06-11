@@ -65,6 +65,9 @@ def plot_timeline(schedule, t1, t2):
 # ==========================================
 # Phase 1: Rule Extractor (The Perfect Schedule)
 # ==========================================
+# ==========================================
+# Phase 1: Rule Extractor (The Perfect Schedule)
+# ==========================================
 class TaskScheduler:
     def __init__(self, tasks):
         self.tasks = tasks
@@ -94,32 +97,45 @@ class TaskScheduler:
 
     def generate_timeline(self):
         time = 0
-        supplied = {t['name']: 0 for t in self.tasks}
         
-        while time < self.hyperperiod:
-            best_task = None
-            max_deficit = float('-inf')
+        # 1. Calculate the ideal interval for each task
+        task_info = {}
+        for t in self.tasks:
+            required_time = self.hyperperiod * t['frac_priority']
+            num_blocks = required_time / t['min_time']
+            interval = self.hyperperiod / num_blocks
             
-            for t in self.tasks:
-                required_time_in_hp = self.hyperperiod * t['frac_priority']
-                if supplied[t['name']] + t['min_time'] <= required_time_in_hp:
-                    deficit = (time * t['frac_priority']) - supplied[t['name']]
-                    if deficit > max_deficit:
-                        max_deficit = deficit
-                        best_task = t
-                        
-            if not best_task:
-                time += 1
-                continue
+            task_info[t['name']] = {
+                'min_time': t['min_time'],
+                'interval': float(interval),
+                'blocks_scheduled': 0
+            }
+            
+        # 2. Earliest Deadline First (EDF) Scheduling
+        while time < self.hyperperiod:
+            best_task_name = None
+            earliest_deadline = float('inf')
+            
+            for name, info in task_info.items():
+                # The "deadline" is the ideal finish time of the NEXT block
+                next_deadline = (info['blocks_scheduled'] + 1) * info['interval']
                 
+                # Tie-breaker: If deadlines are equal, it just picks the first in the loop
+                if next_deadline < earliest_deadline:
+                    earliest_deadline = next_deadline
+                    best_task_name = name
+                    
+            # 3. Schedule the winning task
+            best_info = task_info[best_task_name]
+            
             self.schedule.append({
-                'name': best_task['name'],
+                'name': best_task_name,
                 'start': time,
-                'length': best_task['min_time']
+                'length': best_info['min_time']
             })
             
-            supplied[best_task['name']] += best_task['min_time']
-            time += best_task['min_time']
+            best_info['blocks_scheduled'] += 1
+            time += best_info['min_time']
 
     def extract_rules(self):
         starts = defaultdict(list)
@@ -143,13 +159,13 @@ class TaskScheduler:
             for i, actual_start in enumerate(task_starts):
                 ideal_start = base_offset + (i * interval)
                 shift = actual_start - ideal_start
-                if shift != 0:
+                if abs(shift) > 0.1: # Account for minor floating point rounding
                     direction = "delayed" if shift > 0 else "advanced"
                     exceptions.append(f"iteration {i+1} is {direction} by {abs(shift):.1f} mins")
             
             rule_text = f"**Task {name}**: {length} minutes appears every {interval:.1f} minutes."
             if exceptions:
-                rule_text += f" Exceptions: {', '.join(exceptions)}."
+                rule_text += f"\n    Exceptions: {', '.join(exceptions)}"
             else:
                 rule_text += " (Perfectly periodic, no exceptions)."
                 
@@ -254,18 +270,51 @@ class DynamicGapFiller:
 # Example Usage
 # ==========================================
 if __name__ == "__main__":
+    def check_priority_satisfaction(schedule, tasks, tolerance=0.05):
+        actual_by_task = defaultdict(int)
+        total_work_time = 0
+
+        for panel in schedule:
+            duration = panel['end'] - panel['start']
+            if panel['type'] != 'IDLE':
+                actual_by_task[panel['name']] += duration
+                total_work_time += duration
+
+        print("\n=====================================================")
+        print(" PRIORITY SATISFACTION CHECK")
+        print("=====================================================")
+
+        all_satisfied = True
+        for task in tasks:
+            expected_share = float(task['frac_priority'])
+            actual_share = (actual_by_task[task['name']] / total_work_time) if total_work_time else 0.0
+            delta = abs(actual_share - expected_share)
+            satisfied = delta <= tolerance
+            all_satisfied = all_satisfied and satisfied
+            status = "OK" if satisfied else "OFF"
+            print(
+                f"Task {task['name']}: actual={actual_share:.3f}, expected={expected_share:.3f}, "
+                f"delta={delta:.3f} -> {status}"
+            )
+
+        print(f"Overall priority satisfaction: {'YES' if all_satisfied else 'NO'}")
+
     # Base task rules
     tasks = [
-        {"name": "A", "priority": 0.50, "min_time": 30},
-        {"name": "B", "priority": 0.30, "min_time": 20},
-        {"name": "C", "priority": 0.20, "min_time": 10}
+        {"name": "A", "priority": 0.50, "min_time": 45},
+        {"name": "B", "priority": 0.45, "min_time": 45},
+        {"name": "C", "priority": 0.05, "min_time": 45}
     ]
 
     # Pre-existing schedule with fixed appointments
-    pinned_tasks = [
-        {"name": "A", "start": 60, "end": 150}, # A huge 90-min block of Task A
-        {"name": "C", "start": 200, "end": 220} # A 20-min block of Task C
-    ]
+    # pinned_tasks = [
+    #     {"name": "A", "start": 60, "end": 150}, # A huge 90-min block of Task A
+    #     {"name": "C", "start": 200, "end": 220} # A 20-min block of Task C
+    # ]
+    # pinned_tasks = [
+    #     {"name": "A", "start": 60, "end": 150}, # A huge 90-min block of Task A
+    #     {"name": "C", "start": 200, "end": 220} # A 20-min block of Task C
+    # ]
     pinned_tasks=[]
 
     t1 = 0
@@ -291,6 +340,8 @@ if __name__ == "__main__":
     for panel in final_schedule:
         duration = panel['end'] - panel['start']
         print(f"[{panel['start']:>3} - {panel['end']:>3}] ({duration:>2}m) | {panel['type']:<7} | Task {panel['name']}")
+
+    check_priority_satisfaction(final_schedule, tasks)
 
 
     # ==========================================
