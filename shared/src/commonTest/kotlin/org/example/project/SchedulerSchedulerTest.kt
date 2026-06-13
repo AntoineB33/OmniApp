@@ -2,7 +2,9 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
@@ -66,120 +68,45 @@ class SchedulerSchedulerTest {
         return s to solo
     }
 
-    // ----- §9 task choice: recent share f + selection -----------------------------------------
+    // ----- §9 task choice: Earliest Deadline First --------------------------------------------
 
     @Test
-    fun recent_share_is_minimum_over_working_time() {
-        // PRD §9: f = m / workingTime(t1, t). A did exactly its 45-min minimum, the only work in [t1, now]
-        // → t1 = now-45, working time = 45, f = 45/45 = 1.
-        val (s0, a, b) = stateWithTwoTasks()
-        val now = 1_000_000_000_000L
-        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(record = listOf(TaskTimeRange(now - 45 * MIN, now)))))
-        assertEquals(1.0, SchedulerDomain.taskRecentShare(s, a, now), 1e-9)
-        // B has no past time at all → t1 doesn't exist → f = 0.
-        assertEquals(0.0, SchedulerDomain.taskRecentShare(s, b, now), 1e-9)
+    fun edf_period_is_minimum_time_over_priority() {
+        // PRD §9: T = m / p. A 45-min task at 50% priority recurs every 90 min; at 25% every 180 min.
+        assertEquals(90.0 * MIN, SchedulerDomain.edfPeriodMillis(45, 0.5), 1e-6)
+        assertEquals(180.0 * MIN, SchedulerDomain.edfPeriodMillis(45, 0.25), 1e-6)
+        // Zero priority → infinite period (only scheduled as a last resort, never "due").
+        assertTrue(SchedulerDomain.edfPeriodMillis(45, 0.0).isInfinite())
     }
 
     @Test
-    fun recent_share_is_zero_when_t1_does_not_exist() {
-        // PRD §9: "If t1 doesn't exist, f is 0." A has done only 20 min — less than its 45-min minimum.
-        val (s0, a, _) = stateWithTwoTasks()
-        val now = 1_000_000_000_000L
-        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(record = listOf(TaskTimeRange(now - 20 * MIN, now)))))
-        assertEquals(0.0, SchedulerDomain.taskRecentShare(s, a, now), 1e-9)
-    }
-
-    @Test
-    fun recent_share_excludes_idle_gaps() {
-        // PRD §9 "working time = periods where at least one task is scheduled". A 30-min session (m=30)
-        // ended 60 min ago: its minimum is reached at t1 = now-90, but the 60-min idle gap after it is NOT
-        // working time, so f = 30/30 = 1 (not 30/90 wall-clock).
-        val (s0, a, _) = stateWithTwoTasks()
-        val now = 1_000_000_000_000L
-        val s = s0.copy(
-            tasks = s0.tasks + (a to s0.tasks[a]!!.copy(
-                minimumMinutes = 30,
-                record = listOf(TaskTimeRange(now - 90 * MIN, now - 60 * MIN)),
-            )),
-        )
-        assertEquals(1.0, SchedulerDomain.taskRecentShare(s, a, now), 1e-9)
-    }
-
-    @Test
-    fun recent_share_counts_other_tasks_work_within_the_window() {
-        // A's minimum (m=30) is reached over [now-60, now-30] → t1 = now-60. In [t1, now] A worked 30 and B
-        // worked 30 (contiguous) = 60 working time, so f = 30/60 = 0.5.
-        val (s0, a, b) = stateWithTwoTasks()
-        val now = 1_000_000_000_000L
-        val s = s0.copy(
-            tasks = s0.tasks +
-                (a to s0.tasks[a]!!.copy(minimumMinutes = 30, record = listOf(TaskTimeRange(now - 60 * MIN, now - 30 * MIN)))) +
-                (b to s0.tasks[b]!!.copy(record = listOf(TaskTimeRange(now - 30 * MIN, now)))),
-        )
-        assertEquals(0.5, SchedulerDomain.taskRecentShare(s, a, now), 1e-9)
-    }
-
-    @Test
-    fun next_task_picks_highest_priority_task_not_over_served() {
-        // PRD §9: iterate highest→lowest priority, pick the first with f ≤ p. Fresh state: A (p=0.75) and
-        // B (p=0.25) both have f = 0, so the highest-priority qualifier (A) is chosen.
+    fun next_task_picks_the_earliest_deadline_highest_priority_first() {
+        // PRD §9 EDF: A (p=0.75) has the shorter period T=45/0.75=60min, so it is due before B
+        // (p=0.25, T=180min) → the earliest-deadline task A is chosen first.
         val (s, a, _) = stateWithWeightedTasks()
         assertEquals(a, SchedulerDomain.nextTask(s, 1_000_000_000_000L))
     }
 
     @Test
-    fun next_task_skips_an_over_served_higher_priority_task() {
-        // PRD §9: A (p=0.75) just did its whole 45-min minimum alone → f_A = 45/45 = 1 > 0.75, so the
-        // highest-priority task is over-served and skipped; B (p=0.25) has f = 0 ≤ 0.25 and is chosen.
-        val (s0, a, b) = stateWithWeightedTasks()
-        val now = 1_000_000_000_000L
-        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(record = listOf(TaskTimeRange(now - 45 * MIN, now)))))
-        assertEquals(b, SchedulerDomain.nextTask(s, now))
-    }
-
-    @Test
-    fun next_task_treats_f_equal_to_p_as_qualifying() {
-        // PRD §9 "f is p or lower" — the boundary f == p qualifies. A and B (p=0.5 each) each did their
-        // 45-min minimum back-to-back → for A, t1 = now-90 and working time = 90, so f_A = 45/90 = 0.5 = p.
-        // A is first in the (alphabetical) tie order and qualifies, so it is chosen.
-        val (s0, a, b) = stateWithTwoTasks()
-        val now = 1_000_000_000_000L
-        val s = s0.copy(
-            tasks = s0.tasks +
-                (a to s0.tasks[a]!!.copy(record = listOf(TaskTimeRange(now - 90 * MIN, now - 45 * MIN)))) +
-                (b to s0.tasks[b]!!.copy(record = listOf(TaskTimeRange(now - 45 * MIN, now)))),
-        )
-        assertEquals(0.5, SchedulerDomain.taskRecentShare(s, a, now), 1e-9)
-        assertEquals(a, SchedulerDomain.nextTask(s, now))
-    }
-
-    @Test
-    fun working_periods_merge_all_tasks_done_time_and_clip_to_now() {
-        val (s0, a, b) = stateWithTwoTasks()
-        val now = 1_000_000_000_000L
-        val s = s0.copy(
-            tasks = s0.tasks +
-                (a to s0.tasks[a]!!.copy(record = listOf(TaskTimeRange(now - 2 * HOUR_MS, now - HOUR_MS)))) +
-                // B touches A's range (fuses) and straddles `now` (clipped); a future-only range is dropped.
-                (b to s0.tasks[b]!!.copy(record = listOf(TaskTimeRange(now - HOUR_MS, now + HOUR_MS), TaskTimeRange(now + 2 * HOUR_MS, now + 3 * HOUR_MS)))),
-        )
-        assertEquals(listOf(TaskTimeRange(now - 2 * HOUR_MS, now)), SchedulerDomain.workingPeriods(s, now))
-    }
-
-    @Test
-    fun next_task_breaks_ties_alphabetically() {
-        // Fresh state: A and B both have score 0.5 (no past) → the alphabetically-first title wins.
+    fun next_task_breaks_equal_period_ties_alphabetically() {
+        // A and B: equal priority (0.5) and equal minimum → equal period → the alphabetically-first wins.
         val (s, a, _) = stateWithTwoTasks()
         assertEquals(a, SchedulerDomain.nextTask(s, 1_000_000_000_000L))
     }
 
     @Test
-    fun next_task_is_the_most_under_served() {
-        val (s, a, b) = stateWithTwoTasks()
-        val now = 1_000_000_000_000L
-        val withRecord =
-            s.copy(tasks = s.tasks + (a to s.tasks[a]!!.copy(record = listOf(TaskTimeRange(now - HOUR_MS, now)))))
-        assertEquals(b, SchedulerDomain.nextTask(withRecord, now))
+    fun next_task_is_null_when_there_is_no_real_leaf_task() {
+        assertNull(SchedulerDomain.nextTask(SchedulerState.empty(), 1_000_000_000_000L))
+    }
+
+    @Test
+    fun schedulable_leaves_exclude_root_main_and_removed_tasks() {
+        val (s0, a, b) = stateWithTwoTasks()
+        assertEquals(setOf(a, b), SchedulerDomain.schedulableLeaves(s0).toSet())
+        // Emptying A's cell removes it from the tree → no longer schedulable.
+        val c0 = s0.lists[s0.rootListId]!!.cellIds[0]
+        val s1 = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(c0, ""))
+        assertFalse(a in SchedulerDomain.schedulableLeaves(s1))
     }
 
     @Test
@@ -238,7 +165,7 @@ class SchedulerSchedulerTest {
             assertTrue(panels[i].taskId == a || panels[i].taskId == b)
             if (i > 0) assertEquals(panels[i - 1].endEpochMillis, panels[i].startEpochMillis)
         }
-        // The window reaches at least 24h ahead.
+        // The window reaches at least 168h ahead.
         assertTrue(panels.last().endEpochMillis >= now + SchedulerDomain.SCHEDULE_HORIZON_MILLIS)
     }
 
@@ -248,21 +175,16 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun refill_keeping_the_in_progress_panel_gives_every_panel_a_unique_id() {
-        // Regression: a re-fill (e.g. the second of §9's two calculation events) keeps the panel
-        // covering `now` with its old "auto/i" id while numbering the freshly generated panels from
-        // "auto/0" — so the kept current and the first generated panel collided on "auto/0". The
-        // calendar keys overlap layout by id, drawing the next task stretched over the current one.
+    fun refill_at_the_same_now_gives_every_panel_a_unique_id_without_overlap() {
+        // A re-fill (e.g. the second of §9's two calculation events) cuts every in-window non-pinned
+        // panel and regenerates from now, so ids stay unique (auto/0, auto/1, …) and nothing overlaps.
         val (s0, a, b) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
-        // First fill, then feed it back and refill at the SAME now: A's first panel covers now and is
-        // kept; the rest of the window is regenerated.
         val firstFill = SchedulerDomain.fillSchedule(s0, now)
         val refilled = SchedulerDomain.fillSchedule(s0.copy(panels = firstFill), now)
 
         val ids = refilled.map { it.id }
         assertEquals(ids.size, ids.toSet().size, "panel ids must be unique, got $ids")
-        // No two panels overlap in time (the visual symptom of the collision).
         val sorted = refilled.sortedBy { it.startEpochMillis }
         for (i in 1 until sorted.size) {
             assertTrue(
@@ -270,7 +192,7 @@ class SchedulerSchedulerTest {
                 "panels overlap: ${sorted[i - 1]} vs ${sorted[i]}",
             )
         }
-        // Sanity: the in-progress A panel is preserved and the rotation still reads A, B, A, …
+        // The rotation still reads A, B, A, … from now.
         assertEquals(a, sorted.first().taskId)
         assertEquals(b, sorted[1].taskId)
     }
@@ -306,7 +228,9 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun fill_schedule_keeps_the_in_progress_panel_covering_now() {
+    fun fill_schedule_re_derives_the_current_task_from_now() {
+        // PRD §9: the in-progress non-pinned panel is cut and the window re-filled from now; the current
+        // task is re-picked deterministically (continuity), now starting exactly at `now`.
         val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val current = auto("auto/0", a, now - 10 * MIN, now + 35 * MIN)
@@ -314,42 +238,42 @@ class SchedulerSchedulerTest {
 
         val panels = SchedulerDomain.fillSchedule(s, now)
 
-        // The current panel is preserved unchanged and the fill resumes after it.
-        assertTrue(current in panels)
-        assertTrue(panels.any { it.startEpochMillis == current.endEpochMillis })
+        assertTrue(panels.none { it.startEpochMillis < now }) // the stale (non-pinned) panel is gone
+        val firstAuto = panels.first { it.auto }
+        assertEquals(now, firstAuto.startEpochMillis) // the fresh fill starts at now
+        assertEquals(a, firstAuto.taskId) // A and B tie → A re-picked first (continuity)
     }
 
     @Test
-    fun fill_preserves_a_straddling_panel_extension_when_the_new_last_task_matches() {
-        val (s0, solo) = stateWithOneTask(1500) // one 25h panel (> the 24h horizon)
+    fun fill_schedule_shows_a_sole_task_as_one_merged_block() {
+        // PRD §9 merge: a single task's consecutive auto sessions fuse into one continuous panel that
+        // covers the whole window from now past the horizon.
+        val (s, solo) = stateWithOneTask(45)
         val now = 1_000_000_000_000L
-        // A pre-existing SAME-task panel straddles `now+24h` and extends to now+30h (e.g. a manual
-        // stretch of the trailing panel). Same task → the extension must be preserved (PRD §9).
-        val straddler = TaskPanel("auto/9", solo, "Solo", now + 20 * HOUR_MS, now + 30 * HOUR_MS, false, auto = true)
-        val s = s0.copy(panels = listOf(straddler))
 
-        val panels = SchedulerDomain.fillSchedule(s, now)
+        val autos = SchedulerDomain.fillSchedule(s, now).filter { it.auto }
 
-        // The trailing edge stays at the straddler's end (now+30h), not the auto span (now+25h).
-        assertEquals(solo, panels.last().taskId)
-        assertEquals(now + 30 * HOUR_MS, panels.last().endEpochMillis)
+        assertEquals(1, autos.size, "a sole task should be one merged block, got ${autos.size}")
+        assertEquals(solo, autos[0].taskId)
+        assertEquals(now, autos[0].startEpochMillis)
+        assertTrue(autos[0].endEpochMillis >= now + SchedulerDomain.SCHEDULE_HORIZON_MILLIS)
     }
 
     @Test
-    fun fill_removes_a_straddling_panel_extension_when_the_new_last_task_differs() {
-        val (s0, solo) = stateWithOneTask(1500)
+    fun fill_schedule_allocates_time_in_proportion_to_priority() {
+        // PRD §9 EDF: over the window, A (p=0.75) and B (p=0.25) receive ~3:1 of the scheduled time —
+        // each task's utilization m/T equals its priority share.
+        val (s, a, b) = stateWithWeightedTasks()
         val now = 1_000_000_000_000L
-        val other = TaskId("task/other")
-        // A pre-existing DIFFERENT-task panel straddles the horizon → its extension is removed (PRD §9).
-        val straddler = TaskPanel("auto/9", other, "Other", now + 20 * HOUR_MS, now + 30 * HOUR_MS, false, auto = true)
-        val s = s0.copy(panels = listOf(straddler))
-
-        val panels = SchedulerDomain.fillSchedule(s, now)
-
-        // The new (Solo) panel runs its own span past the horizon (to now+25h); the old tail is gone.
-        assertEquals(solo, panels.last().taskId)
-        assertEquals(now + 25 * HOUR_MS, panels.last().endEpochMillis)
-        assertTrue(panels.none { it.taskId == other })
+        val byTask =
+            SchedulerDomain.fillSchedule(s, now)
+                .filter { it.auto }
+                .groupBy { it.taskId }
+                .mapValues { (_, ps) -> ps.sumOf { it.endEpochMillis - it.startEpochMillis } }
+        val aTime = byTask[a] ?: 0L
+        val bTime = byTask[b] ?: 0L
+        val share = aTime.toDouble() / (aTime + bTime)
+        assertTrue(share in 0.70..0.80, "A should get ~75% of the time, got $share")
     }
 
     // ----- §9 RefreshSchedule (calculation event) --------------------------------------------
@@ -384,10 +308,9 @@ class SchedulerSchedulerTest {
 
     @Test
     fun adding_a_second_task_after_a_full_schedule_reschedules_to_include_it() {
-        // Regression: scheduling a sole task filled 24h with its (consecutive, same-task) auto sessions.
-        // These must stay SEPARATE sessions — if they were fused into one block it would become the
-        // kept in-progress panel spanning the whole horizon, and a newly added task could never enter
-        // the schedule (firstFreeMoment → now+24h, the fill loop never runs).
+        // Regression: a sole task fills the window as one merged block. Because a refill cuts every
+        // in-window non-pinned panel (including that block) and re-derives the schedule from now, a
+        // newly added task always enters the schedule — the merged block can never swallow the window.
         val (s0, solo) = stateWithOneTask(45)
         val now = 1_000_000_000_000L
         val scheduled = SchedulerReducer.reduce(s0, SchedulerIntent.RefreshSchedule(now))
@@ -442,12 +365,12 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun refresh_schedule_keeps_a_non_pinned_panel_beyond_the_24h_horizon() {
+    fun refresh_schedule_keeps_a_non_pinned_panel_beyond_the_168h_horizon() {
         val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
-        // A non-pinned user panel added more than 24h out is outside the scheduling window, so toggling
-        // the auto-schedule switch (which reschedules) must not wipe it.
-        val far = TaskPanel("panel/0", a, "A", now + 30 * HOUR_MS, now + 31 * HOUR_MS, pinned = false, auto = false)
+        // A non-pinned user panel added more than 168h out is outside the scheduling window, so a
+        // reschedule must not wipe it.
+        val far = TaskPanel("panel/0", a, "A", now + 200 * HOUR_MS, now + 201 * HOUR_MS, pinned = false, auto = false)
         val s = s0.copy(panels = listOf(far), nextPanelCounter = 1)
 
         val refreshed = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now))

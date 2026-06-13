@@ -203,7 +203,7 @@ class SchedulerCalendarTest {
     @Test
     fun display_grouping_fuses_consecutive_same_task_sessions_keeping_their_ids() {
         val a = TaskId("t/a")
-        // Three back-to-back auto sessions of the same task — what a sole-task 24h fill produces.
+        // Three back-to-back auto sessions of the same task — the display-grouping input shape.
         val groups = SchedulerDomain.groupSameTaskPanelsForDisplay(
             listOf(
                 autoPanel("auto/0", a, 0, 45 * MIN),
@@ -505,23 +505,7 @@ class SchedulerCalendarTest {
         assertNull(SchedulerDomain.nextPinnedStartAfter(listOf(autoPanel("a", a, 100L, 200L)), 0L))
     }
 
-    // ----- §8/§9 past panels count as time done ----------------------------------------------
-
-    @Test
-    fun past_panels_count_toward_time_weighting_so_an_over_served_task_is_not_re_picked() {
-        val (s0, a, b) = stateWithTwoTasks()
-        val now = 1_000_000_000_000L
-        val s =
-            s0.copy(
-                panels =
-                    listOf(
-                        userPanel("e1", now - 5 * HOUR, now - 4 * HOUR, taskId = a),
-                        userPanel("e2", now - 3 * HOUR, now - 2 * HOUR, taskId = a),
-                        userPanel("e3", now - 90 * MIN, now - 30 * MIN, taskId = a),
-                    ),
-            )
-        assertEquals(b, SchedulerDomain.nextTask(s, now))
-    }
+    // ----- §8/§9 past panels still feed the §10 continuous-effort credit ----------------------
 
     @Test
     fun past_periods_for_task_clips_to_now_and_merges_records_and_panels() {

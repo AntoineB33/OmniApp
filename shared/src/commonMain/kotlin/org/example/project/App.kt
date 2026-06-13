@@ -112,11 +112,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         }
 
         // PRD §9 calculation event #1 (calendar change / rolling horizon): after the panels change, the
-        // next scheduling is placed 24 hours before the first moment free of task — i.e. it waits until
-        // `now` reaches `firstFreeMoment − 24h`, then refills so the window stays ~24h ahead. On an empty
+        // next scheduling is placed 168 hours before the first moment free of task — i.e. it waits until
+        // `now` reaches `firstFreeMoment − 168h`, then refills so the window stays ~168h ahead. On an empty
         // schedule the target is in the past, so it fills immediately; after a fill the target moves to
         // the new horizon and the effect re-arms. Polls the (possibly simulated) clock so accelerated
-        // time is honoured. The wait runs regardless of the switch (toggling while merely waiting is a
+        // time is honoured. (The window stays ~168h ahead so it always covers the §9 next-168h horizon.)
+        // The wait runs regardless of the switch (toggling while merely waiting is a
         // no-op); only when the event comes DUE does §7 gate it (dispatch if on, else defer).
         LaunchedEffect(schedulerState.panels, clock) {
             val target =

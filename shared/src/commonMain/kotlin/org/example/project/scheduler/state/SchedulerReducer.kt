@@ -922,7 +922,7 @@ object SchedulerReducer {
     }
 
     /**
-     * PRD §9 calculation event: [advanceSchedule] then refill the non-pinned panels out to +24h with
+     * PRD §9 calculation event: [advanceSchedule] then refill the non-pinned panels out to +168h with
      * [SchedulerDomain.fillSchedule]. Gated by PRD §7: while [SchedulerState.automaticSchedule] is off
      * the refill is skipped (the event waits) — but the advance still runs so completed work is
      * recorded. The refill is committed as a Calendar History Unit (PRD §9 "each scheduling is saved in

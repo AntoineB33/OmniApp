@@ -498,73 +498,6 @@ object SchedulerDomain {
             .toList()
     }
 
-    /**
-     * PRD §9 "working time": the past moments where **at least one task was scheduled/done** — the
-     * merged union of every task's record plus every panel (auto/user/pinned), clipped to [nowMillis].
-     * Used as the denominator of a task's recent share ([taskRecentShare]) so idle gaps don't dilute it.
-     */
-    fun workingPeriods(state: SchedulerState, nowMillis: Long): List<TaskTimeRange> {
-        val recorded = state.tasks.values.asSequence().flatMap { it.record.asSequence() }
-        val panels = state.panels.asSequence().map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
-        val clipped = (recorded + panels)
-            .filter { it.startEpochMillis < nowMillis }
-            .map { TaskTimeRange(it.startEpochMillis, minOf(it.endEpochMillis, nowMillis)) }
-            .toList()
-        return mergeOccupied(clipped)
-    }
-
-    /** Total length of [periods] overlapping the half-open window `[from, to)`. */
-    private fun spanWithin(periods: List<TaskTimeRange>, from: Long, to: Long): Long {
-        if (to <= from) return 0L
-        var sum = 0L
-        for (p in periods) {
-            val lo = maxOf(p.startEpochMillis, from)
-            val hi = minOf(p.endEpochMillis, to)
-            if (hi > lo) sum += hi - lo
-        }
-        return sum
-    }
-
-    /**
-     * PRD §9 task choice fraction `f` for leaf task [taskId] at instant `t` = [nowMillis]: its minimum
-     * time `m` as a fraction of the working time over `[t1, t]`.
-     *
-     * Walking back from `t` over the task's [pastPeriodsForTask], `t1` is the closest past instant at which
-     * the task has accumulated exactly its minimum time `m` (PRD §10); `f = m / workingTime(t1, t)`, the
-     * share of recent working time that was this task (idle gaps excluded — see [workingPeriods]).
-     *
-     * PRD §9 "If t1 doesn't exist, f is 0": when the task has been done **less than its minimum** in its
-     * whole history (or never), no past window holds a full `m` of it, so `f = 0` — an under-served task.
-     * A task is chosen by [nextTask] when this `f` is at most its absolute priority percentage. [working]
-     * defaults to a fresh computation but is supplied by [nextTask] so it is computed once per instant.
-     */
-    fun taskRecentShare(
-        state: SchedulerState,
-        taskId: TaskId,
-        nowMillis: Long,
-        working: List<TaskTimeRange> = workingPeriods(state, nowMillis),
-    ): Double {
-        val minMillis = (state.tasks[takId]?.minimumMinutes ?: 0).toLong() * MILLIS_PER_MINUTE
-        if (minMillis <= 0L) return 0.0s
-        val periods = pastPeriodsForTask(state, taskId, nowMillis).sortedByDescending { it.endEpochMillis }
-        // Walk back accumulating the task's own time until the running total reaches minMillis: that
-        // instant is t1. If the task's whole history is shorter than its minimum, t1 doesn't exist.
-        var acc = 0L
-        var t1 = nowMillis
-        for (p in periods) {
-            val dur = (p.endEpochMillis - p.startEpochMillis).coerceAtLeast(0L)
-            if (acc + dur >= minMillis) {
-                t1 = p.endEpochMillis - (minMillis - acc)
-                acc = minMillis
-                break
-            }
-            acc += dur
-        }
-        if (acc < minMillis) return 0.0 // PRD §9: t1 doesn't exist → f = 0
-        val workTime = spanWithin(working, t1, nowMillis)
-        return if (workTime > 0L) minMillis.toDouble() / workTime.toDouble() else 0.0
-    }
-
     /** Whether any cell in the tree currently points at [taskId] (i.e. the task is still in the tree). */
     fun taskHasCells(state: SchedulerState, taskId: TaskId): Boolean =
         state.cells.values.any { it.taskId == taskId }
@@ -588,38 +521,48 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §9 task choice: iterate the *leaf* tasks at [nowMillis] **from highest to lowest absolute
-     * priority percentage** (ties alphabetical, matching §8 manual add) and return the first whose recent
-     * share `f` ([taskRecentShare]) is its absolute priority percentage `p` **or lower** (`f ≤ p`) — the
-     * highest-priority task that is not currently over-served. Empty placeholders, the root/main tasks,
-     * tasks with child tasks (PRD §9), tasks no longer in the tree (kept only for their record, PRD §4/§8),
-     * and **blank-titled tasks** (a cell emptied to "delete" the task keeps its id and lingers while
-     * panels/records still point at it) are excluded. Returns null when there are no real leaf tasks. If
-     * every task is over-served (`f > p` for all — a degenerate, near-unreachable state), the highest-
-     * priority task is returned so the fill still progresses. (Minimum time, PRD §10, constrains the
-     * allocated duration, not which task is chosen.)
+     * PRD §9: the *schedulable leaf* tasks — leaves of the tree ([isLeafTask]) that are real, titled
+     * tasks still in the tree. Empty placeholders, the root/main tasks, tasks no longer pointed at by any
+     * cell (kept only for their record, PRD §4/§8), and **blank-titled tasks** (a cell emptied to "delete"
+     * the task keeps its id and lingers while panels/records still point at it) are all excluded.
+     */
+    fun schedulableLeaves(state: SchedulerState): List<TaskId> =
+        state.tasks.keys.filter {
+            !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) && isLeafTask(state, it) &&
+                state.tasks[it]?.title?.isNotBlank() == true
+        }
+
+    /**
+     * PRD §9 EDF: the period `T = m / p` (millis) of a leaf task — its minimum time `m` divided by its
+     * absolute priority percentage `p`. The task releases an `m`-long job every `T`, so its utilization
+     * `m / T = p` is exactly its priority share. A zero-priority task has an infinite period (it is only
+     * ever scheduled as a last resort when nothing else is due, PRD §9 "satisfy the priorities").
+     */
+    fun edfPeriodMillis(minimumMinutes: Int, priority: Double): Double {
+        if (priority <= 0.0) return Double.POSITIVE_INFINITY
+        return (minimumMinutes.toLong() * MILLIS_PER_MINUTE).toDouble() / priority
+    }
+
+    /**
+     * PRD §9 task choice (Earliest Deadline First): the leaf task the EDF fill picks *first* at [nowMillis]
+     * — the one with the earliest initial deadline, i.e. the shortest period `T = m / p` ([edfPeriodMillis]).
+     * Ties (equal periods, e.g. equal minimum + equal priority) break by **higher priority, then
+     * alphabetically** (matching §8 manual add and the §9 tie order). Returns null when there is no real
+     * leaf task. This is the convenience point-query; the full window fill ([fillSchedule]) tracks each
+     * task's deadline across the simulation.
      */
     fun nextTask(
         state: SchedulerState,
-        nowMillis: Long,
+        @Suppress("UNUSED_PARAMETER") nowMillis: Long,
     ): TaskId? {
         val absolute = absoluteTaskPriorities(state)
-        val working = workingPeriods(state, nowMillis)
-        val candidates =
-            state.tasks.keys.filter {
-                !isRootTask(it) && !isMainTask(it) && taskHasCells(state, it) && isLeafTask(state, it) &&
-                    state.tasks[it]?.title?.isNotBlank() == true
-            }
-        if (candidates.isEmpty()) return null
-        // Highest priority first, ties broken alphabetically (PRD §9 "highest to lowest absolute priority").
-        val ordered =
-            candidates.sortedWith(
-                compareByDescending<TaskId> { absolute[it] ?: 0.0 }
-                    .thenBy { state.tasks[it]?.title.orEmpty() },
-            )
-        // The correct task is the first whose recent share f is its priority p or lower (PRD §9).
-        return ordered.firstOrNull { taskRecentShare(state, it, nowMillis, working) <= (absolute[it] ?: 0.0) }
-            ?: ordered.first()
+        val leaves = schedulableLeaves(state)
+        if (leaves.isEmpty()) return null
+        return leaves.minWithOrNull(
+            compareBy<TaskId> { edfPeriodMillis(state.tasks[it]?.minimumMinutes ?: 0, absolute[it] ?: 0.0) }
+                .thenByDescending { absolute[it] ?: 0.0 }
+                .thenBy { state.tasks[it]?.title.orEmpty() },
+        )
     }
 
     private const val MILLIS_PER_MINUTE: Long = 60_000L
@@ -876,8 +819,8 @@ object SchedulerDomain {
         return if (span <= 0) minimum else span
     }
 
-    /** PRD §9 Scheduling: the auto fill materializes panels out to this far ahead of `now` (24 hours). */
-    const val SCHEDULE_HORIZON_MILLIS: Long = 24L * 60 * 60 * 1000
+    /** PRD §9 Scheduling: the auto fill materializes panels out to this far ahead of `now` (168 hours). */
+    const val SCHEDULE_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1000
 
     /** The panel whose `[start, end)` contains [nowMillis] (the "task to do now"), or null. */
     fun panelAt(panels: List<TaskPanel>, nowMillis: Long): TaskPanel? =
@@ -943,7 +886,8 @@ object SchedulerDomain {
     /**
      * PRD §9 "the first point in time there is no scheduled task": walking forward from [nowMillis]
      * over the contiguous chain of [panels] that cover it, the first instant left uncovered. With only
-     * the kept panels (pinned + the current in-progress one) this is where the auto fill must resume.
+     * the kept (fixed) panels this is where the auto fill must resume — past a pinned/chore panel that
+     * currently covers `now`.
      */
     fun firstFreeMoment(panels: List<TaskPanel>, nowMillis: Long): Long {
         var cursor = nowMillis
@@ -956,52 +900,58 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §9 Scheduling: regenerate the auto schedule. Keeps every **pinned** panel, the single panel
-     * currently covering [nowMillis], and every panel entirely **outside** the scheduling window —
-     * past (`end ≤ now`) or strictly beyond the horizon (`start > now + 24h`). Scheduling only
-     * regenerates the window `[firstFree, now+24h]`, so a non-pinned user panel the user dragged before
-     * `now` or added more than 24h out is left untouched. Drops the other (in-window, non-pinned)
-     * panels and refills the window from [firstFreeMoment] out past
-     * `now + ` [SCHEDULE_HORIZON_MILLIS] with a contiguous chain of auto panels. Each panel's task is
-     * chosen by [nextTask] **at that panel's start time** (PRD §9 "task choice"); because each panel
-     * just laid down counts as a past period for the next iteration (via [pastPeriodsForTask], clipped
-     * to the moving cursor), the chain rotates across tasks by priority. A panel is shortened so it
-     * never overlaps the next pinned panel (PRD §10).
+     * PRD §9 Scheduling: regenerate the auto schedule with an Earliest-Deadline-First simulation. Every
+     * **non-pinned** panel in the window `[now, now + 168h]` is cut and replaced; the only panels kept
+     * are the **fixed** ones (pinned + chore, [isSchedulerFixed]) and any panel entirely **outside** the
+     * window — already past (`end ≤ now`) or starting beyond the horizon (`start > now + 168h`). Cutting
+     * the in-progress non-pinned panel too means the current task is re-derived from `now` each run, so a
+     * task added to the tree always reschedules immediately (no kept block can swallow the window); the
+     * fill is deterministic, so a refill at the same instant reproduces the same panels (the §9 no-op
+     * short-circuit still fires) and re-picks the same current task (notification continuity, §11).
      *
-     * PRD §9 trailing edge: when `now + 24h` falls inside a pre-existing non-pinned panel that extends
-     * past it, that panel's beyond-horizon extension is removed **unless** the new last task is the SAME
-     * task — in which case it is preserved by extending the new fill's last panel to that panel's end,
-     * keeping the trailing edge unchanged (e.g. honouring a manual stretch). For a DIFFERENT last task
-     * the new fill runs its own span past the horizon, replacing the old extension. Auto panels get
-     * deterministic `auto/{i}` ids (regenerated each run); pinned/user panels keep their `panel/{n}` ids.
+     * EDF: each schedulable leaf ([schedulableLeaves]) releases an `mᵢ`-long job every `Tᵢ = mᵢ / pᵢ`
+     * ([edfPeriodMillis]), so its long-run utilization `mᵢ/Tᵢ = pᵢ` is its priority share. Walking a cursor
+     * from [firstFreeMoment] to the horizon, the task with the earliest current deadline runs next (ties →
+     * higher priority → alphabetical); its deadline then advances by `Tᵢ`. Because the leaves' priorities
+     * sum to 1, total utilization is 1 and the window packs with no idle gaps. A chunk is shortened so it
+     * never overlaps the next fixed panel (PRD §10); the cursor skips over a fixed panel it lands inside.
+     *
+     * PRD §9 merge: two consecutive auto panels of the same task are fused into one block
+     * ([mergeSameTaskPanels]), so a sole task shows as a single continuous panel. Auto panels get
+     * deterministic `auto/{i}` ids (regenerated each run, skipping ids held by kept panels).
      */
     fun fillSchedule(
         state: SchedulerState,
         nowMillis: Long,
     ): List<TaskPanel> {
-        val current = panelAt(state.panels, nowMillis)
         val horizon = nowMillis + SCHEDULE_HORIZON_MILLIS
-        // Scheduling regenerates ONLY the window [firstFree, now+24h]. Keep pinned panels, the
-        // in-progress one, and any panel entirely OUTSIDE the window — past (end ≤ now) or STRICTLY
-        // beyond the horizon (start > now+24h) — so a user panel there (incl. non-pinned) is never
-        // wiped (a panel dragged before `now`, or added >24h out, survives). The `> horizon` is strict
-        // so a panel starting exactly at the horizon (e.g. a preserved `auto/tail`, below) is handled
-        // by the trailing-edge logic, not double-kept here.
-        val keptRaw = state.panels.filter {
-            isSchedulerFixed(it) || it === current || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon
+        // Cut every non-pinned panel in [now, horizon]; keep fixed panels (pinned/chore) and any panel
+        // entirely outside the window — already past (end ≤ now) or beyond the horizon (start > horizon).
+        val kept = state.panels.filter {
+            isSchedulerFixed(it) || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon
         }
-        // The kept in-progress auto panel keeps its old `auto/i` id, which the freshly numbered
-        // generated panels (also `auto/i`, from 0) would otherwise reuse. The calendar keys its overlap
-        // layout by panel id (a panel's `entryId`), so two different-task panels sharing one id render
-        // as a single stretched block (the next task drawn over the in-progress one). Normalize the kept
-        // current auto panel to a stable `auto/0` and number the generated panels around the kept ids
-        // (so a steady-state refill still reproduces identical ids — the no-op `filled == panels` check).
-        val kept =
-            keptRaw.map { if (it === current && it.auto && !it.pinned) it.copy(id = "auto/0") else it }
+        val leaves = schedulableLeaves(state)
+        if (leaves.isEmpty()) return kept.sortedBy { it.startEpochMillis }
+
+        val priorities = absoluteTaskPriorities(state)
         val keptIds = kept.mapTo(HashSet()) { it.id }
         var working = state.copy(panels = kept)
+        val start = firstFreeMoment(kept, nowMillis)
+
+        // EDF state: each leaf's recurrence period Tᵢ and its current deadline (Double millis so an
+        // infinite-period zero-priority task is representable and always sorts last).
+        val period = HashMap<TaskId, Double>(leaves.size)
+        val deadline = HashMap<TaskId, Double>(leaves.size)
+        for (t in leaves) {
+            val p = edfPeriodMillis(state.tasks[t]?.minimumMinutes ?: 0, priorities[t] ?: 0.0)
+            period[t] = p
+            deadline[t] = if (p.isInfinite()) p else start + p
+        }
+        val tieBreak =
+            compareByDescending<TaskId> { priorities[it] ?: 0.0 }.thenBy { state.tasks[it]?.title.orEmpty() }
+
         val generated = mutableListOf<TaskPanel>()
-        var cursor = firstFreeMoment(kept, nowMillis)
+        var cursor = start
         var index = 0
         var idCounter = 0
         fun nextAutoId(): String {
@@ -1018,12 +968,16 @@ object SchedulerDomain {
                 cursor = pinnedCovering.endEpochMillis
                 continue
             }
-            val taskId = nextTask(working, cursor) ?: break
+            // Earliest deadline first; ties (equal deadline) by higher priority then alphabetical title.
+            val taskId =
+                leaves.minWithOrNull(
+                    compareBy<TaskId> { deadline[it] ?: Double.POSITIVE_INFINITY }.then(tieBreak),
+                ) ?: break
             val task = working.tasks[taskId] ?: break
             var end = cursor + scheduledSpanMinutes(working, taskId, cursor) * MILLIS_PER_MINUTE
             nextPinnedStartAfter(kept, cursor)?.let { end = minOf(end, it) }
             if (end <= cursor) break
-            val panel = TaskPanel(
+            generated += TaskPanel(
                 id = nextAutoId(),
                 taskId = taskId,
                 title = task.title,
@@ -1032,39 +986,20 @@ object SchedulerDomain {
                 pinned = false,
                 auto = true,
             )
-            generated += panel
-            // Fold the just-placed panel into the working state so it counts as a past period at the
-            // next cursor (PRD §9 task choice rotates by priority).
+            // Fold the just-placed panel into the working state so the §10 continuous-effort credit sees
+            // it at the next cursor, and advance this task's deadline by one period (EDF next release).
             working = working.copy(panels = kept + generated)
+            val p = period[taskId] ?: Double.POSITIVE_INFINITY
+            if (!p.isInfinite()) deadline[taskId] = (deadline[taskId] ?: start.toDouble()) + p
             cursor = end
             index++
         }
-
-        // PRD §9 trailing edge: if `now+24h` was inside a pre-existing (non-pinned) panel that extends
-        // further, its beyond-horizon extension is removed UNLESS the new last panel is the SAME task —
-        // then it is preserved by extending the new last panel to keep that trailing edge unchanged
-        // (e.g. honouring a manual stretch of the trailing panel). A DIFFERENT last task lets the new
-        // fill replace it (its own span runs past the horizon). The straddler is read from the original
-        // panels (it is in-window, so it was dropped from `kept` and regenerated).
-        val straddler = state.panels.firstOrNull {
-            !isSchedulerFixed(it) && it !== current &&
-                it.startEpochMillis <= horizon && horizon < it.endEpochMillis
-        }
-        val lastGen = generated.lastOrNull()
-        if (straddler != null && lastGen != null && lastGen.taskId == straddler.taskId) {
-            generated[generated.lastIndex] = lastGen.copy(endEpochMillis = straddler.endEpochMillis)
-        }
-        // NB: auto panels are deliberately NOT run through [mergeSameTaskPanels] here. Each auto panel is
-        // a distinct scheduling *session*; the reschedule keeps only the in-progress one (the panel
-        // covering `now`) and refills the rest. Fusing a sole task's consecutive sessions into one block
-        // would make that block span the whole horizon, so the kept "current" panel would swallow the
-        // entire window and a newly added task could never be scheduled (firstFreeMoment → now+24h).
-        // Same-task merging is a property of persistent user/pinned panels, applied on commit (PRD §8).
-        return (kept + generated).sortedBy { it.startEpochMillis }
+        // PRD §9: two consecutive auto panels of the same task merge into one block.
+        return (kept + mergeSameTaskPanels(generated)).sortedBy { it.startEpochMillis }
     }
 
-    /** Safety cap on the number of auto panels one fill can lay down (≈ 24h / shortest sane span). */
-    private const val MAX_SCHEDULE_PANELS = 2_000
+    /** Safety cap on auto panels (pre-merge chunks) one fill can lay down (≈ 168h / a 1-minute minimum). */
+    private const val MAX_SCHEDULE_PANELS = 20_000
 
     // ----- PRD §14 Chores Manager scheduler ---------------------------------------------------
 

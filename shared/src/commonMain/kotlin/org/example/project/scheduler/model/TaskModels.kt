@@ -71,7 +71,7 @@ data class TaskTimeRange(
 /**
  * PRD §8/§9 task panel: one block on the calendar in the schedulable window. A panel is either
  * **auto** (scheduler-generated, [auto] = true — the §9 "task to do now" and the panels that follow
- * it out to +24h) or **user-authored** ([auto] = false — placed via the right-click "add a task"
+ * it out to +168h) or **user-authored** ([auto] = false — placed via the right-click "add a task"
  * action / edit window, or produced by pinning a record). Orthogonally, a panel is **pinned**
  * ([pinned] = true) when the user has locked it in the edit window: pinned panels survive a
  * reschedule and constrain it (the auto fill flows around them, PRD §9/§10), whereas non-pinned

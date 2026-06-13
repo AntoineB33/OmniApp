@@ -136,10 +136,10 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 
 ## 9. Scheduler
 * **Two Calculation Events:** 
-  * Every time the calendar changes, with a 1 second debounce, the calculation event is placed 24 hours before the first moment free of task.
+  * Every time the calendar changes, with a 1 second debounce
   * Every time the task tree changes, with a 1 second debounce
-* **Scheduling:** From the first point in time there is no scheduled task to 24 hours from now, all the not pinned task panels are removed and replaced by a new calculated schedule. If 24 hours from now is in a task panel that extends further, then the extension is also removed unless the last task panel added by the new scheduling is the same task. Each scheduling is saved in a History Unit.
-* **task choice:** When the app must find a task to add at a time t, it iterates over every task with no children from highest to lowest absolute priority percentage until the correct task is found. For a task i, t1 is the closest time in the past such as i has a spanning time equal to its minimum time m between t1 and t. The fraction f is this minimum time divided by the working time between t1 and t. If t1 doesn't exist, f is 0. The working time is the periods where at least one task is scheduled. If f is the absolute priority percentage i or lower, then i is the correct task. It is then scheduled in the calendar with the minimum time of the task (see section 10), or less to not overlap with a pinned task panel.
+* **Scheduling:** Every time the user changes the calendar in the last 168 hours and the next 168 hours, or when the user changes the task tree, if the automatic schedule switch is on then all the not pinned task panels in the next 168 hours are cut and replaced by a new calculated schedule. Two consecutive task panels with the same task merge. Each schedule change is saved in a History Unit.
+* **task choice:** It uses an Earliest Deadline First (EDF) simulation. It finds the best schedule for the next 168 hours that satisfy the priorities and minimum times of each task, while taking into account the pinned task panels.
 
 ## 10. Minimum time for a task
 * **Definition:** Every task has a minimum time defined. It is 45 minutes by default.
