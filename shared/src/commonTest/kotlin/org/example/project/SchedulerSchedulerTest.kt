@@ -276,6 +276,33 @@ class SchedulerSchedulerTest {
         assertTrue(share in 0.70..0.80, "A should get ~75% of the time, got $share")
     }
 
+    @Test
+    fun fill_schedule_lets_pre_now_excess_set_the_starting_phase_without_balancing() {
+        // PRD §9 example 1: A (50%, 45min) and B (50%, 45min) with lots of A pinned before now. The
+        // excess of A must NOT be balanced (B is not over-served to catch up — they still split the
+        // window 50/50) but it sets the starting phase: B goes first → B, A, B, A.
+        val (s0, a, b) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        // "lots of A before now": four back-to-back pinned A panels ending exactly at now.
+        val pastA = (1..4).map { k ->
+            pinned("pin/$k", a, now - k * 45 * MIN, now - (k - 1) * 45 * MIN)
+        }
+        val s = s0.copy(panels = pastA)
+
+        val autos = SchedulerDomain.fillSchedule(s, now).filter { it.auto }.sortedBy { it.startEpochMillis }
+
+        assertTrue(autos.size >= 4, "expected an alternating fill, got ${autos.map { it.taskId }}")
+        assertEquals(now, autos[0].startEpochMillis) // fresh fill starts at now
+        assertEquals(listOf(b, a, b, a), autos.take(4).map { it.taskId }) // B first, then alternates
+        // Excess is not balanced: across the whole window A and B still get equal time (~50/50).
+        val byTask = autos.groupBy { it.taskId }
+            .mapValues { (_, ps) -> ps.sumOf { it.endEpochMillis - it.startEpochMillis } }
+        val aTime = byTask[a] ?: 0L
+        val bTime = byTask[b] ?: 0L
+        val share = bTime.toDouble() / (aTime + bTime)
+        assertTrue(share in 0.45..0.55, "B should still get ~50% in-window (no catch-up), got $share")
+    }
+
     // ----- §9 RefreshSchedule (calculation event) --------------------------------------------
 
     @Test

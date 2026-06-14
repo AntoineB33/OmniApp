@@ -916,6 +916,16 @@ object SchedulerDomain {
      * sum to 1, total utilization is 1 and the window packs with no idle gaps. A chunk is shortened so it
      * never overlaps the next fixed panel (PRD §10); the cursor skips over a fixed panel it lands inside.
      *
+     * PRD §9 "the deficits/excess from the already-placed panels before `now` … influence the chosen
+     * result" (example 1): each leaf's **first** deadline is seeded from its *committed* service before
+     * `now` — its records and the kept fixed/past panels ([pastPeriodsForTask] over [working], so the
+     * soon-to-be-cut auto panels never feed back and flip-flop the pick, §11 continuity). A task served
+     * right up to `now` is seeded one full period out (`lastEnd + Tᵢ`); one never served (or last served
+     * long ago) is due at `start`. The seed is clamped to never start *before* `start`, so an over-served
+     * task only changes who runs *first* — it never buys the others catch-up time. Hence A served heavily
+     * before `now` plus a fresh B (both 50 %, 45 min) yields B, A, B, A: the excess is not balanced, it
+     * only sets the starting phase.
+     *
      * PRD §9 merge: two consecutive auto panels of the same task are fused into one block
      * ([mergeSameTaskPanels]), so a sole task shows as a single continuous panel. Auto panels get
      * deterministic `auto/{i}` ids (regenerated each run, skipping ids held by kept panels).
@@ -945,7 +955,20 @@ object SchedulerDomain {
         for (t in leaves) {
             val p = edfPeriodMillis(state.tasks[t]?.minimumMinutes ?: 0, priorities[t] ?: 0.0)
             period[t] = p
-            deadline[t] = if (p.isInfinite()) p else start + p
+            // PRD §9 example 1: seed the first deadline from committed pre-now service (records + kept
+            // fixed/past panels in `working`, not the auto panels being regenerated). A task served up to
+            // now is one period out (`lastEnd + p`); a never-served task defaults to `start - p` so it is
+            // due at `start`. Clamping at `start` keeps an over-served task from forcing catch-up for the
+            // others — the excess only sets who goes first, it is not balanced away.
+            deadline[t] =
+                if (p.isInfinite()) {
+                    p
+                } else {
+                    val lastEnd =
+                        pastPeriodsForTask(working, t, nowMillis).maxOfOrNull { it.endEpochMillis }?.toDouble()
+                            ?: (start.toDouble() - p)
+                    maxOf(start.toDouble(), lastEnd + p)
+                }
         }
         val tieBreak =
             compareByDescending<TaskId> { priorities[it] ?: 0.0 }.thenBy { state.tasks[it]?.title.orEmpty() }

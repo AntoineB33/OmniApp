@@ -135,11 +135,14 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **focus:** When the calendar is in focus, the task tree doesn't catch letter typing (the main selection doesn't enter Edit Mode).
 
 ## 9. Scheduler
-* **Two Calculation Events:** 
-  * Every time the calendar changes, with a 1 second debounce
-  * Every time the task tree changes, with a 1 second debounce
-* **Scheduling:** Every time the user changes the calendar in the last 168 hours and the next 168 hours, or when the user changes the task tree, if the automatic schedule switch is on then all the not pinned task panels in the next 168 hours are cut and replaced by a new calculated schedule. Two consecutive task panels with the same task merge. Each schedule change is saved in a History Unit.
-* **task choice:** It uses an Earliest Deadline First (EDF) simulation. It finds the best schedule for the next 168 hours that satisfy the priorities and minimum times of each task, while taking into account the pinned task panels.
+* **Scheduling:** Every time the user changes the calendar in the last 168 hours and the next 168 hours, a hole is automatically added to indicate device sleep, or when the user changes the task tree, if the automatic schedule switch is on then all the not pinned task panels in the next 168 hours are cut and replaced by a new calculated schedule. As soon as the next 168 hours are not filled with automatic schedule, it continues the schedule to fill the next 168 hours. Two consecutive task panels with the same task merge. Each schedule change is saved in a History Unit.
+* **task choice:** It must satisfy the target priority percentages within the new schedule. A task panel can't have a spanning time shorter than the minimum time of the task.
+* **Tie-breaker 1:** It uses past excesses/deficits strictly as a tie-breaker for ordering, not for proportional compensation (see example 1).
+* **Tie-breaker 2:** The program must choose the one where the time line has the biggest amount of task panels.
+* **Example 1:** 
+  - tasks: A (50%, 45min), B (50%, 45min)  
+  - pinned panels: lots of A before t_now  
+  - result: B, A, B, A (starting with B because lots of A before, but the deficit of B is not balanced in the new schedule)
 
 ## 10. Minimum time for a task
 * **Definition:** Every task has a minimum time defined. It is 45 minutes by default.
