@@ -39,6 +39,7 @@ object SchedulerReducer {
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state) { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis)
+            is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked)
             is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
             is SchedulerIntent.AdvanceSchedule -> advanceSchedule(state, intent.nowMillis)
             is SchedulerIntent.SetAutomaticSchedule ->
@@ -368,9 +369,10 @@ object SchedulerReducer {
     }
 
     /**
-     * PRD §14: store the chores list and regenerate its calendar panels (anchored at [todayStartMillis]),
-     * keeping any pinned chore panel. Not routed through history (chores/panels here are session/persisted
-     * state, like the §7 switch and the §9 advance tick), so it is not undoable.
+     * PRD §14: store the reminders list and regenerate its calendar tags (anchored at [todayStartMillis]),
+     * preserving each reminder's checked state. Not routed through history (the reminders list itself is
+     * session/persisted state, like the §7 switch and the §9 advance tick), so editing the list is not
+     * undoable — only checking a reminder off is (see [reduceSetReminderChecked]).
      */
     private fun reduceSetChores(
         state: SchedulerState,
@@ -380,6 +382,22 @@ object SchedulerReducer {
         val panels = SchedulerDomain.regenerateChorePanels(state.panels, entries, todayStartMillis)
         if (state.chores == entries && state.panels == panels) return state
         return state.copy(chores = entries, panels = panels)
+    }
+
+    /**
+     * PRD §14 Reminders "checking off": flip the [checked] flag on the reminder tag [panelId] and record it
+     * as a Calendar History Unit (undoable while the calendar is focused, via [commitPanels]). A no-op when
+     * the id is not a reminder tag or is already in the requested state.
+     */
+    private fun reduceSetReminderChecked(
+        state: SchedulerState,
+        panelId: String,
+        checked: Boolean,
+    ): SchedulerState {
+        val panel = state.panels.firstOrNull { it.id == panelId && it.chore } ?: return state
+        if (panel.checked == checked) return state
+        val updated = state.panels.map { if (it.id == panelId) it.copy(checked = checked) else it }
+        return commitPanels(state, updated)
     }
 
     private fun reduceCopySelection(state: SchedulerState): SchedulerState {

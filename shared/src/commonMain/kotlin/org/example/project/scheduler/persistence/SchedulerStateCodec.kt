@@ -93,6 +93,7 @@ object SchedulerStateCodec {
                         auto = it.auto,
                         layoutWeight = it.layoutWeight,
                         chore = it.chore,
+                        checked = it.checked,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -210,6 +211,7 @@ object SchedulerStateCodec {
                         auto = it.auto,
                         layoutWeight = it.layoutWeight,
                         chore = it.chore,
+                        checked = it.checked,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -323,6 +325,8 @@ private data class PersistedPanel(
     val layoutWeight: Double = 1.0,
     // PRD §14: a missing chore flag decodes to false (payloads written before chore panels existed).
     val chore: Boolean = false,
+    // PRD §14: a missing checked flag decodes to false (payloads written before reminders were checkable).
+    val checked: Boolean = false,
 )
 
 @Serializable

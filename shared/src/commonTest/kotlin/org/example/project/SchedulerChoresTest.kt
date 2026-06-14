@@ -2,6 +2,7 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
@@ -14,10 +15,12 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * PRD §14 Chores Manager: a standalone vertical list of pairs (title + spanning time in days, a
- * floating-point number). Covers the testable core — the [SchedulerIntent.SetChores] mutation, its
- * persistence, and that it lives outside the tree Undo/Redo history (PRD §6/§14). The floating window
- * and its lateral-menu toggle are Compose UI (like the §7 calendar window) and are not unit-tested here.
+ * PRD §14 Reminders: a standalone vertical list of rows (title + recurrence in days + time of day) that
+ * the reminder scheduler turns into recurring **zero-duration, checkable calendar tags**. Covers the
+ * testable core — the [SchedulerIntent.SetChores] mutation + persistence, that reminders are NOT
+ * obstacles to the §9 scheduler, that checking a reminder is an undoable Calendar History Unit, that a
+ * checked state survives regeneration, and the now-line accumulation query for overdue reminders. The
+ * floating window / its rendering as tags + checkboxes on the now-line are Compose UI and not unit-tested.
  */
 class SchedulerChoresTest {
 
@@ -58,8 +61,8 @@ class SchedulerChoresTest {
 
     @Test
     fun editing_chores_is_not_part_of_the_tree_undo_history() {
-        // PRD §14/§6: chores live outside the Task Tree snapshot, so Ctrl+Z must not revert them (mirrors
-        // the §7 automatic-schedule switch / the task record).
+        // PRD §14/§6: the reminders list lives outside the Task Tree snapshot, so Ctrl+Z must not revert it
+        // (mirrors the §7 automatic-schedule switch / the task record).
         val s0 = SchedulerState.empty()
         val withChores = SchedulerReducer.reduce(s0, SchedulerIntent.SetChores(listOf(ChoreEntry("A", 1.0))))
         val undone = SchedulerReducer.reduce(withChores, SchedulerIntent.Undo)
@@ -75,9 +78,11 @@ class SchedulerChoresTest {
         assertEquals(entries, decoded.chores)
     }
 
-    // ----- §14 chore scheduler: recurrence day offsets ----------------------------------------
+    // ----- §14 reminder scheduler: recurrence day offsets -------------------------------------
 
     private val DAY = 24L * 60 * 60 * 1000
+    private val HOUR = 3_600_000L
+    private val MIN = 60_000L
 
     @Test
     fun day_offsets_for_an_integer_cadence_step_evenly_within_the_horizon() {
@@ -87,7 +92,7 @@ class SchedulerChoresTest {
 
     @Test
     fun day_offsets_for_an_invalid_cadence_are_just_today() {
-        // PRD §14: the spanning time is a float > 1; a non-cadence (≤ 1) collapses to a single panel today.
+        // PRD §14: the recurrence is a float > 1; a non-cadence (≤ 1) collapses to a single tag today.
         assertEquals(listOf(0), SchedulerDomain.choreOccurrenceDayOffsets(1.0))
         assertEquals(listOf(0), SchedulerDomain.choreOccurrenceDayOffsets(0.5))
     }
@@ -96,123 +101,175 @@ class SchedulerChoresTest {
     fun day_offsets_for_a_fractional_cadence_accumulate_without_drifting() {
         val offsets = SchedulerDomain.choreOccurrenceDayOffsets(2.5, horizonDays = 20)
         assertEquals(0, offsets.first()) // PRD §14: counter starts at today (offset 0)
-        // Strictly increasing, all within the horizon.
         for (i in 1 until offsets.size) assertTrue(offsets[i] > offsets[i - 1])
         assertTrue(offsets.all { it in 0..20 })
-        // Accumulated (not drifting): each offset is the nearest integer to k·2.5, so the last offset is
-        // close to a multiple of 2.5 — average gap stays ≈ 2.5 rather than rounding up every step.
         val avgGap = offsets.last().toDouble() / (offsets.size - 1)
         assertTrue(avgGap in 2.3..2.7, "average gap $avgGap should hover around the 2.5 cadence")
     }
 
-    // ----- §14 chore scheduler: panel generation ----------------------------------------------
+    // ----- §14 reminder scheduler: tag generation ---------------------------------------------
 
     @Test
-    fun chore_panels_are_five_minute_fixed_blocks_at_the_time_of_day() {
+    fun reminders_are_zero_duration_checkable_tags_at_the_time_of_day() {
         val today = 1_000_000_000_000L
         val chores = listOf(ChoreEntry("Water plants", spanDays = 7.0, timeOfDayMinutes = 9 * 60))
-        val panels = SchedulerDomain.choreScheduledPanels(chores, todayStartMillis = today, horizonDays = 28)
+        val tags = SchedulerDomain.choreScheduledPanels(chores, todayStartMillis = today, horizonDays = 28)
 
-        assertEquals(5, panels.size) // offsets 0,7,14,21,28
-        val first = panels.first()
+        assertEquals(5, tags.size) // offsets 0,7,14,21,28
+        val first = tags.first()
         assertEquals(today + 9 * 60 * 60_000L, first.startEpochMillis) // 09:00 today
-        assertEquals(SchedulerDomain.CHORE_PANEL_MILLIS, first.endEpochMillis - first.startEpochMillis) // 5 min
-        assertTrue(panels.all { it.chore && !it.pinned && it.taskId == null })
-        assertTrue(panels.all { it.title == "Water plants" })
-        // Recurs every 7 days at the same time of day.
-        assertEquals(today + 7 * DAY + 9 * 60 * 60_000L, panels[1].startEpochMillis)
+        assertEquals(first.startEpochMillis, first.endEpochMillis) // zero duration: a tag, not a panel
+        assertTrue(tags.all { it.chore && !it.pinned && !it.checked && it.taskId == null })
+        assertTrue(tags.all { it.title == "Water plants" })
+        assertEquals(today + 7 * DAY + 9 * 60 * 60_000L, tags[1].startEpochMillis) // recurs every 7 days
     }
 
     @Test
-    fun chore_scheduler_skips_blank_titles_and_non_cadences() {
+    fun reminder_scheduler_skips_blank_titles_only_and_treats_no_recurrence_as_one_off_today() {
         val today = 1_000_000_000_000L
         val chores = listOf(
             ChoreEntry("", spanDays = 7.0, timeOfDayMinutes = 0), // blank → skipped
-            ChoreEntry("Daily", spanDays = 1.0, timeOfDayMinutes = 0), // ≤ 1 → not a cadence → skipped
+            ChoreEntry("One-off", spanDays = 0.0, timeOfDayMinutes = 0), // no recurrence → just today
             ChoreEntry("Weekly", spanDays = 7.0, timeOfDayMinutes = 60),
         )
-        val panels = SchedulerDomain.choreScheduledPanels(chores, todayStartMillis = today)
-        assertTrue(panels.all { it.title == "Weekly" })
-        assertTrue(panels.isNotEmpty())
+        val tags = SchedulerDomain.choreScheduledPanels(chores, todayStartMillis = today)
+        assertTrue(tags.none { it.title.isBlank() }) // blank-titled reminder skipped
+        // A reminder with no recurrence appears exactly once, today.
+        val oneOff = tags.filter { it.title == "One-off" }
+        assertEquals(1, oneOff.size)
+        assertEquals(today, oneOff.single().startEpochMillis)
+        // The weekly one still recurs (multiple occurrences).
+        assertTrue(tags.count { it.title == "Weekly" } > 1)
     }
 
-    // ----- §14 chore pin system (vs the chore scheduler) --------------------------------------
+    // ----- §14 reminders are NOT obstacles to the §9 task scheduler ---------------------------
 
     @Test
-    fun regenerating_chore_panels_keeps_pinned_ones_and_non_chore_panels() {
-        val today = 1_000_000_000_000L
-        val pinnedChore = TaskPanel("chore/old", null, "Old", today, today + 5 * 60_000L, pinned = true, chore = true)
-        val staleChore = TaskPanel("chore/9/0", null, "Stale", today, today + 5 * 60_000L, pinned = false, chore = true)
-        val taskPanel = TaskPanel("auto/0", TaskId("t"), "Task", today, today + 60_000L, pinned = false, auto = true)
-        val panels = listOf(pinnedChore, staleChore, taskPanel)
-
-        val regen = SchedulerDomain.regenerateChorePanels(
-            panels,
-            chores = listOf(ChoreEntry("Weekly", 7.0, 0)),
-            todayStartMillis = today,
-        )
-
-        assertTrue(pinnedChore in regen) // pinned chore kept (chore pin system)
-        assertTrue(taskPanel in regen) // non-chore panel untouched
-        assertTrue(staleChore !in regen) // non-pinned chore replaced
-        assertTrue(regen.any { it.chore && !it.pinned && it.title == "Weekly" }) // freshly generated
-    }
-
-    // ----- §14 chore panels behave like pinned panels toward the task scheduler ---------------
-
-    @Test
-    fun fill_schedule_keeps_a_chore_panel_and_flows_auto_panels_around_it() {
+    fun fill_schedule_keeps_a_reminder_tag_but_flows_straight_through_it() {
         var s = SchedulerState.empty()
         val c0 = s.lists[s.rootListId]!!.cellIds[0]
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c0, "Solo"))
         val now = 1_000_000_000_000L
-        val HOUR = 3_600_000L
-        // A chore 5-min panel sits 2h ahead; the auto fill must keep it and not overlap it (PRD §14/§9).
-        val chore = TaskPanel("chore/0/0", null, "Chore", now + 2 * HOUR, now + 2 * HOUR + 5 * 60_000L, chore = true)
-        s = s.copy(panels = listOf(chore))
+        // A reminder tag sits 2h ahead; unlike the old 5-min chore panel it must NOT block or shorten the
+        // auto fill (PRD §14: no spanning time → not an obstacle), but it must still be kept.
+        val reminder = TaskPanel("chore/0/0", null, "Reminder", now + 2 * HOUR, now + 2 * HOUR, chore = true)
+        s = s.copy(panels = listOf(reminder))
 
         val panels = SchedulerDomain.fillSchedule(s, now)
 
-        assertTrue(chore in panels) // chore panel survives (treated as pinned)
+        assertTrue(reminder in panels) // tag survives the fill
         val autos = panels.filter { it.auto }
-        assertTrue(autos.none { it.startEpochMillis < chore.endEpochMillis && chore.startEpochMillis < it.endEpochMillis })
-        assertTrue(autos.any { it.endEpochMillis == chore.startEpochMillis }) // shortened to fit before it
+        // The sole task fills the whole window as one continuous block — the tag did not split it.
+        assertEquals(1, autos.size, "reminder must not break the auto fill, got ${autos.size} auto panels")
+        assertEquals(now, autos[0].startEpochMillis)
+        assertTrue(autos[0].startEpochMillis < reminder.startEpochMillis && reminder.startEpochMillis < autos[0].endEpochMillis)
+    }
+
+    // ----- §14 checking a reminder off (Calendar History Unit) --------------------------------
+
+    @Test
+    fun checking_a_reminder_is_an_undoable_calendar_history_unit() {
+        val now = 1_000_000_000_000L
+        val reminder = TaskPanel("chore/0/0", null, "Weekly", now - HOUR, now - HOUR, chore = true)
+        val s0 = SchedulerState.empty().copy(panels = listOf(reminder)).let {
+            SchedulerReducer.reduce(it, SchedulerIntent.SetCalendarFocus(true))
+        }
+
+        val checked = SchedulerReducer.reduce(s0, SchedulerIntent.SetReminderChecked("chore/0/0", true))
+        assertTrue(checked.panels.single { it.id == "chore/0/0" }.checked)
+
+        // PRD §14 "saved in a History Unit": undoable while the calendar is focused.
+        val undone = SchedulerReducer.reduce(checked, SchedulerIntent.Undo)
+        assertFalse(undone.panels.single { it.id == "chore/0/0" }.checked)
+    }
+
+    @Test
+    fun checking_a_non_reminder_or_a_redundant_check_is_a_no_op() {
+        val now = 1_000_000_000_000L
+        val task = TaskPanel("auto/0", TaskId("t"), "Task", now, now + HOUR, auto = true)
+        val reminder = TaskPanel("chore/0/0", null, "Weekly", now - HOUR, now - HOUR, chore = true, checked = true)
+        val s = SchedulerState.empty().copy(panels = listOf(task, reminder))
+
+        assertEquals(s, SchedulerReducer.reduce(s, SchedulerIntent.SetReminderChecked("auto/0", true))) // not a reminder
+        assertEquals(s, SchedulerReducer.reduce(s, SchedulerIntent.SetReminderChecked("chore/0/0", true))) // already checked
+        assertEquals(s, SchedulerReducer.reduce(s, SchedulerIntent.SetReminderChecked("missing", true))) // unknown id
+    }
+
+    // ----- §14 accumulation on the now-line ---------------------------------------------------
+
+    @Test
+    fun overdue_unchecked_reminders_accumulate_on_the_now_line() {
+        val now = 1_000_000_000_000L
+        val due1 = TaskPanel("chore/0/0", null, "Oldest", now - 2 * HOUR, now - 2 * HOUR, chore = true)
+        val due2 = TaskPanel("chore/1/0", null, "Recent", now - HOUR, now - HOUR, chore = true)
+        val done = TaskPanel("chore/2/0", null, "Done", now - 3 * HOUR, now - 3 * HOUR, chore = true, checked = true)
+        val future = TaskPanel("chore/3/0", null, "Later", now + HOUR, now + HOUR, chore = true)
+
+        val overdue = SchedulerDomain.overdueReminders(listOf(future, due2, done, due1), now)
+
+        // Only the past, unchecked reminders, oldest first; the checked one (done) and the future one drop.
+        assertEquals(listOf("chore/0/0", "chore/1/0"), overdue.map { it.id })
     }
 
     // ----- §14 SetChores regenerates the calendar ---------------------------------------------
 
     @Test
-    fun set_chores_generates_chore_panels_on_the_calendar() {
+    fun set_chores_generates_reminder_tags_on_the_calendar() {
         val today = 1_000_000_000_000L
         val entries = listOf(ChoreEntry("Weekly", spanDays = 7.0, timeOfDayMinutes = 8 * 60))
         val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetChores(entries, todayStartMillis = today))
         assertEquals(entries, s.chores)
         assertTrue(s.panels.isNotEmpty())
-        assertTrue(s.panels.all { it.chore })
+        assertTrue(s.panels.all { it.chore && it.startEpochMillis == it.endEpochMillis }) // zero-duration tags
         assertTrue(s.panels.any { it.startEpochMillis == today + 8 * 60 * 60_000L })
     }
 
     @Test
-    fun set_chores_preserves_a_pinned_chore_panel() {
+    fun regenerating_reminders_preserves_a_checked_one_and_leaves_other_panels_alone() {
         val today = 1_000_000_000_000L
-        val pinnedChore = TaskPanel("chore/keep", null, "Keep", today, today + 5 * 60_000L, pinned = true, chore = true)
-        val seeded = SchedulerState.empty().copy(panels = listOf(pinnedChore))
+        // A previously checked reminder occurrence (same deterministic id the scheduler will regenerate).
+        val checkedTag = TaskPanel("chore/0/0", null, "Weekly", today + 8 * HOUR, today + 8 * HOUR, chore = true, checked = true)
+        val taskPanel = TaskPanel("auto/0", TaskId("t"), "Task", today, today + HOUR, auto = true)
+
+        val regen = SchedulerDomain.regenerateChorePanels(
+            listOf(checkedTag, taskPanel),
+            chores = listOf(ChoreEntry("Weekly", 7.0, 8 * 60)),
+            todayStartMillis = today,
+        )
+
+        assertTrue(taskPanel in regen) // non-reminder panel untouched
+        // The regenerated tag with the matching id keeps its checked state (PRD §14 survives regeneration).
+        assertTrue(regen.single { it.id == "chore/0/0" }.checked)
+        // Freshly generated future occurrences exist and start unchecked.
+        assertTrue(regen.any { it.chore && it.id != "chore/0/0" && !it.checked })
+    }
+
+    @Test
+    fun set_chores_preserves_a_checked_reminder() {
+        val today = 1_000_000_000_000L
+        val checkedTag = TaskPanel("chore/0/0", null, "Weekly", today, today, chore = true, checked = true)
+        val seeded = SchedulerState.empty().copy(panels = listOf(checkedTag))
         val s = SchedulerReducer.reduce(
             seeded,
             SchedulerIntent.SetChores(listOf(ChoreEntry("Weekly", 7.0, 0)), todayStartMillis = today),
         )
-        assertTrue(pinnedChore in s.panels) // pinned chore panel survives a chores-manager change
+        assertTrue(s.panels.single { it.id == "chore/0/0" }.checked) // checked state survives the manager change
     }
 
     @Test
-    fun codec_round_trip_preserves_chore_time_of_day_and_panel_flag() {
+    fun codec_round_trip_preserves_reminder_time_of_day_checked_and_tag_flag() {
         val today = 1_000_000_000_000L
         val entries = listOf(ChoreEntry("Weekly", spanDays = 7.0, timeOfDayMinutes = 13 * 60 + 30))
-        val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetChores(entries, todayStartMillis = today))
+        val seeded = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetChores(entries, todayStartMillis = today))
+        // Check the first occurrence so the round-trip has a checked tag to preserve.
+        val firstId = seeded.panels.minByOrNull { it.startEpochMillis }!!.id
+        val s = SchedulerReducer.reduce(seeded, SchedulerIntent.SetReminderChecked(firstId, true))
+
         val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))
         assertNotNull(decoded)
         assertEquals(13 * 60 + 30, decoded.chores.first().timeOfDayMinutes)
         assertTrue(decoded.panels.isNotEmpty() && decoded.panels.all { it.chore })
+        assertTrue(decoded.panels.single { it.id == firstId }.checked) // checked state persisted
     }
 
     @Test

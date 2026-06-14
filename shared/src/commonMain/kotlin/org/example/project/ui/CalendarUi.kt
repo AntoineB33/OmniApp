@@ -147,6 +147,10 @@ data class CalendarRecord(
     val pinned: Boolean = false,
     /** PRD §8 Overlap Mode: horizontal weight of the backing panel (head panel for a merged block). */
     val layoutWeight: Double = 1.0,
+    /** PRD §14 Reminders: a zero-duration, checkable tag (not a height-proportional panel). */
+    val reminder: Boolean = false,
+    /** PRD §14 Reminders: whether this reminder tag has been checked off (done). */
+    val checked: Boolean = false,
 )
 
 /** A [CalendarRecord] clipped to a single day, as start/end hour-of-day fractions in `[0, 24]`. */
@@ -163,6 +167,10 @@ data class PlacedRecord(
     val pinned: Boolean = false,
     /** PRD §8 Overlap Mode: horizontal weight of the backing panel; drives [overlapLayout] widths. */
     val layoutWeight: Double = 1.0,
+    /** PRD §14 Reminders: a zero-duration, checkable tag rendered at [startHour] (not a draggable block). */
+    val reminder: Boolean = false,
+    /** PRD §14 Reminders: whether this reminder tag has been checked off (done). */
+    val checked: Boolean = false,
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
     val fullEndMillis: Long = 0L,
@@ -184,7 +192,9 @@ fun recordsForDay(
         if (start.date > day || end.date < day) return@mapNotNull null
         val startHour = if (start.date < day) 0f else start.hour + start.minute / 60f
         val endHour = if (end.date > day) 24f else end.hour + end.minute / 60f
-        if (endHour <= startHour) return@mapNotNull null
+        // PRD §14: a reminder is a zero-duration tag (start == end) rendered at its time — keep it (the
+        // block path below would drop a zero-height period). Everything else needs positive duration.
+        if (!record.reminder && endHour <= startHour) return@mapNotNull null
         PlacedRecord(
             title = record.title,
             startHour = startHour.coerceIn(0f, 24f),
@@ -196,6 +206,8 @@ fun recordsForDay(
             taskId = record.taskId,
             pinned = record.pinned,
             layoutWeight = record.layoutWeight,
+            reminder = record.reminder,
+            checked = record.checked,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
         )
@@ -429,9 +441,9 @@ fun LateralMenu(
             )
         }
 
-        // PRD §7 Chores Manager: toggles the floating chores window over the tree.
+        // PRD §7 Reminders: toggles the floating reminders window over the tree.
         MenuButton(
-            label = "Chores Manager",
+            label = "Reminders",
             active = choresManagerOpen,
             onClick = onToggleChoresManager,
         )
@@ -451,9 +463,9 @@ fun LateralMenu(
 }
 
 /**
- * PRD §14 Chores Manager: a floating, draggable in-app window (not a modal dialog) holding a vertical
- * list of rows, each a pair of input fields — a title and a spanning time in **days** (a floating-point
- * number). Like the §7 calendar window it floats over the tree, not the lateral menu; grab the title bar
+ * PRD §14 Reminders: a floating, draggable in-app window (not a modal dialog) holding a vertical list of
+ * rows, each three input fields — a title, a recurrence in **days** (a floating-point number) and a time
+ * of day. Like the §7 calendar window it floats over the tree, not the lateral menu; grab the title bar
  * to move it. Rows are edited live: every change pushes the parsed list up via [onChange]. Each row has a
  * bin button (remove) and a `+` (insert above); a trailing `+` appends a row.
  */
@@ -501,7 +513,7 @@ fun ChoresManagerWindow(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Chores Manager",
+                    text = "Reminders",
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.weight(1f),
                 )
@@ -534,7 +546,7 @@ fun ChoresManagerWindow(
                             value = row.title,
                             onValueChange = { rows[index] = row.copy(title = it); push() },
                             singleLine = true,
-                            label = { Text("Chore") },
+                            label = { Text("Reminder") },
                             modifier = Modifier.weight(1f),
                         )
                         OutlinedTextField(
@@ -558,7 +570,7 @@ fun ChoresManagerWindow(
                     }
                 }
                 // Trailing single plus: append a new row at the end of the list.
-                TextButton(onClick = { rows.add(ChoreRow()); push() }) { Text("+ add chore") }
+                TextButton(onClick = { rows.add(ChoreRow()); push() }) { Text("+ add reminder") }
             }
         }
     }
@@ -795,6 +807,8 @@ fun CalendarFloatingWindow(
     onEditEntry: (PlacedRecord) -> Unit = {},
     /** PRD §8 task contextual menu "Remove": requests deleting this block. */
     onRemoveEntry: (PlacedRecord) -> Unit = {},
+    /** PRD §14 Reminders: a reminder tag was clicked → toggle its checked (done) state. */
+    onToggleReminder: (PlacedRecord) -> Unit = {},
     /** PRD §8 Overlap Mode: new horizontal weights for panels whose shared-width edge was dragged. */
     onAdjustWeights: (Map<String, Double>) -> Unit = {},
     /** PRD §8 Overlap Mode: whether overlap is currently armed (toggled by `O` while the calendar is focused). */
@@ -897,6 +911,7 @@ fun CalendarFloatingWindow(
                     onCommitBounds = onCommitBounds,
                     onEditEntry = onEditEntry,
                     onRemoveEntry = onRemoveEntry,
+                    onToggleReminder = onToggleReminder,
                     onAdjustWeights = onAdjustWeights,
                     overlapArmed = overlapArmed,
                 )
@@ -915,6 +930,7 @@ private fun WeekView(
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
+    onToggleReminder: (PlacedRecord) -> Unit,
     onAdjustWeights: (Map<String, Double>) -> Unit,
     overlapArmed: Boolean,
 ) {
@@ -941,8 +957,9 @@ private fun WeekView(
     var scrollLocked by remember { mutableStateOf(false) }
 
     // PRD §8 "there must not be overlaps" (default mode): every block on the calendar (records,
-    // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live.
-    val allBlocks = records.map { calendarBlockKey(it) to it.range }
+    // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live. Reminder
+    // tags (zero-duration, PRD §14) are not blocks and are excluded.
+    val allBlocks = records.filterNot { it.reminder }.map { calendarBlockKey(it) to it.range }
 
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Row(
@@ -1008,6 +1025,7 @@ private fun WeekView(
                         onCommitBounds = onCommitBounds,
                         onEditEntry = onEditEntry,
                         onRemoveEntry = onRemoveEntry,
+                        onToggleReminder = onToggleReminder,
                         onLockScroll = { scrollLocked = it },
                         onAdjustWeights = onAdjustWeights,
                         allBlocks = allBlocks,
@@ -1066,6 +1084,7 @@ private fun DayColumn(
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
+    onToggleReminder: (PlacedRecord) -> Unit,
     onLockScroll: (Boolean) -> Unit,
     onAdjustWeights: (Map<String, Double>) -> Unit,
     allBlocks: List<Pair<String, TaskTimeRange>>,
@@ -1073,13 +1092,17 @@ private fun DayColumn(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
+    // PRD §14: reminders are zero-duration checkable tags rendered on their own path; everything else is
+    // a height-proportional, draggable block. Split them so the block pipeline only sees real blocks.
+    val reminderTags = records.filter { it.reminder }
+    val blockRecords = records.filterNot { it.reminder }
     // The right-click position (in this column's local pixels) that anchors the contextual menu; null
     // when no menu is open. [menuTarget] is the block the click landed on (null = empty space).
     var menuOffset by remember { mutableStateOf<Offset?>(null) }
     var menuTarget by remember { mutableStateOf<PlacedRecord?>(null) }
     // Latest records, so the right-click hit-test closure never reads a stale list (records change
     // every scheduler tick) without restarting the long-lived gesture coroutine.
-    val currentRecords by rememberUpdatedState(records)
+    val currentRecords by rememberUpdatedState(blockRecords)
 
     // PRD §8 Overlap Mode: live width-edge drag. While a weight handle is held this maps panel ids to
     // their in-progress weights so the layout (and the handle position) follow the drag; on release the
@@ -1087,8 +1110,8 @@ private fun DayColumn(
     var weightDrag by remember { mutableStateOf<Map<String, Double>?>(null) }
     val effRecords =
         weightDrag?.let { wd ->
-            records.map { r -> r.entryIds.firstNotNullOfOrNull { wd[it] }?.let { r.copy(layoutWeight = it) } ?: r }
-        } ?: records
+            blockRecords.map { r -> r.entryIds.firstNotNullOfOrNull { wd[it] }?.let { r.copy(layoutWeight = it) } ?: r }
+        } ?: blockRecords
 
     // PRD §8 Overlap Mode: live move/resize preview. The block being moved reports its in-progress bounds
     // here; [liveRecords] places it there so the shared (sliced) layout is recomputed and drawn as an
@@ -1316,6 +1339,52 @@ private fun DayColumn(
                     .background(CalColors.now),
             )
         }
+
+        // PRD §14 Reminders: zero-duration checkable tags. A future (or already-checked) reminder shows at
+        // its scheduled time; an unchecked one whose time has passed is *overdue* and accumulates on the
+        // now-line, stacked top-down. Clicking a tag toggles its checked (done) state.
+        val nowHour = now?.let { it.hour + it.minute / 60f }
+        fun overdue(tag: PlacedRecord) = nowHour != null && !tag.checked && tag.startHour <= nowHour
+        reminderTags.filterNot(::overdue).forEach { tag ->
+            ReminderTag(tag, Modifier.offset(y = hourHeight * tag.startHour)) { onToggleReminder(tag) }
+        }
+        reminderTags.filter(::overdue).forEachIndexed { i, tag ->
+            ReminderTag(tag, Modifier.offset(y = hourHeight * (nowHour ?: 0f) + REMINDER_TAG_HEIGHT * i)) {
+                onToggleReminder(tag)
+            }
+        }
+    }
+}
+
+/** PRD §14: a reminder rendered as a small checkable chip on the calendar (not a draggable block). */
+private val REMINDER_TAG_HEIGHT = 18.dp
+
+@Composable
+private fun ReminderTag(tag: PlacedRecord, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(REMINDER_TAG_HEIGHT)
+            .padding(horizontal = 2.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(if (tag.checked) CalColors.muted.copy(alpha = 0.3f) else CalColors.accent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = if (tag.checked) "☑" else "☐",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+        )
+        Text(
+            text = tag.title,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 

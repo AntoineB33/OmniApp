@@ -596,10 +596,11 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §9/§14: a panel the §9 auto fill must treat as a fixed obstacle — a user-pinned panel or a
-     * chore panel (a chore panel "behaves like a pinned task panel in relation to the task scheduler").
+     * PRD §9: a panel the §9 auto fill must treat as a fixed obstacle — a user-pinned panel. Reminder
+     * tags (PRD §14, [TaskPanel.chore]) are explicitly NOT obstacles: they have no spanning time, so the
+     * auto fill flows straight through them (they are kept across a fill, but never block or shorten it).
      */
-    fun isSchedulerFixed(panel: TaskPanel): Boolean = panel.pinned || panel.chore
+    fun isSchedulerFixed(panel: TaskPanel): Boolean = panel.pinned
 
     /**
      * PRD §10 New Task: the earliest **fixed** panel (pinned or chore, [isSchedulerFixed]) that starts
@@ -935,10 +936,11 @@ object SchedulerDomain {
         nowMillis: Long,
     ): List<TaskPanel> {
         val horizon = nowMillis + SCHEDULE_HORIZON_MILLIS
-        // Cut every non-pinned panel in [now, horizon]; keep fixed panels (pinned/chore) and any panel
-        // entirely outside the window — already past (end ≤ now) or beyond the horizon (start > horizon).
+        // Cut every non-pinned panel in [now, horizon]; keep fixed (pinned) panels, reminder tags (PRD
+        // §14 — kept on the calendar though not obstacles, see isSchedulerFixed), and any panel entirely
+        // outside the window — already past (end ≤ now) or beyond the horizon (start > horizon).
         val kept = state.panels.filter {
-            isSchedulerFixed(it) || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon
+            isSchedulerFixed(it) || it.chore || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon
         }
         val leaves = schedulableLeaves(state)
         if (leaves.isEmpty()) return kept.sortedBy { it.startEpochMillis }
@@ -1024,12 +1026,9 @@ object SchedulerDomain {
     /** Safety cap on auto panels (pre-merge chunks) one fill can lay down (≈ 168h / a 1-minute minimum). */
     private const val MAX_SCHEDULE_PANELS = 20_000
 
-    // ----- PRD §14 Chores Manager scheduler ---------------------------------------------------
+    // ----- PRD §14 Reminders scheduler --------------------------------------------------------
 
-    /** PRD §14: each chore occurrence is a fixed 5-minute panel. */
-    const val CHORE_PANEL_MILLIS: Long = 5L * 60_000L
-
-    /** PRD §14: chore panels are generated this far ahead of the anchor day (a fixed 4-week horizon). */
+    /** PRD §14: reminder tags are generated this far ahead of the anchor day (a fixed 4-week horizon). */
     const val CHORE_HORIZON_DAYS: Int = 28
 
     private const val MILLIS_PER_DAY: Long = 24L * 60 * 60 * 1000
@@ -1054,14 +1053,19 @@ object SchedulerDomain {
         return offsets
     }
 
+    /** PRD §14: a reminder is a calendar panel ([TaskPanel.chore]) — a zero-duration, checkable tag. */
+    fun isReminder(panel: TaskPanel): Boolean = panel.chore
+
     /**
-     * PRD §14 chore scheduler: turn [chores] into recurring 5-minute calendar panels anchored at
+     * PRD §14 reminder scheduler: turn [chores] into **zero-duration calendar tags** anchored at
      * [todayStartMillis] (local midnight of "today", supplied by the caller which knows the time zone).
-     * Each chore is placed at its [ChoreEntry.timeOfDayMinutes] on every [choreOccurrenceDayOffsets] day
-     * out to [CHORE_HORIZON_DAYS]. Blank-titled chores and non-cadences (spanDays ≤ 1) are skipped.
-     * Panels carry [TaskPanel.chore] = true and a null taskId, with deterministic `chore/{index}/{offset}`
-     * ids so a steady regeneration reproduces them. Overlapping chores keep the default layout weight, so
-     * the calendar splits their shared width evenly (PRD §14).
+     * Each reminder is placed at its [ChoreEntry.timeOfDayMinutes] on every [choreOccurrenceDayOffsets] day
+     * out to [CHORE_HORIZON_DAYS]. Only **blank-titled** reminders are skipped; a reminder with no (or a
+     * ≤ 1) recurrence is a **one-off** placed today only ([choreOccurrenceDayOffsets] returns just `[0]`),
+     * so entering just a title + time creates a single reminder. Tags carry [TaskPanel.chore] = true, a null
+     * taskId, and `start == end` (no spanning time), with deterministic `chore/{index}/{offset}` ids so a
+     * steady regeneration reproduces them. They start un-[TaskPanel.checked]. Overlapping tags keep the
+     * default layout weight, so the calendar splits their shared width evenly (PRD §14).
      */
     fun choreScheduledPanels(
         chores: List<ChoreEntry>,
@@ -1070,7 +1074,7 @@ object SchedulerDomain {
     ): List<TaskPanel> {
         val result = mutableListOf<TaskPanel>()
         chores.forEachIndexed { index, chore ->
-            if (chore.title.isBlank() || chore.spanDays <= 1.0) return@forEachIndexed
+            if (chore.title.isBlank()) return@forEachIndexed
             val timeOfDay = chore.timeOfDayMinutes.coerceIn(0, 24 * 60 - 1) * MILLIS_PER_MINUTE
             for (offset in choreOccurrenceDayOffsets(chore.spanDays, horizonDays)) {
                 val start = todayStartMillis + offset * MILLIS_PER_DAY + timeOfDay
@@ -1080,7 +1084,7 @@ object SchedulerDomain {
                         taskId = null,
                         title = chore.title,
                         startEpochMillis = start,
-                        endEpochMillis = start + CHORE_PANEL_MILLIS,
+                        endEpochMillis = start, // zero duration: a reminder is a tag, not a panel.
                         pinned = false,
                         auto = false,
                         chore = true,
@@ -1092,11 +1096,10 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §14 "the calendar updates each time the chores manager window changes": rebuild the chore
-     * panels in [panels] from [chores] (anchored at [todayStartMillis]), keeping every chore panel the
-     * user pinned (the chore pin system: pinned chore panels survive a regeneration) and leaving all
-     * non-chore panels untouched. A freshly generated panel whose id collides with a kept pinned one is
-     * dropped in favour of the pinned panel.
+     * PRD §14 "the calendar updates each time the reminders manager changes": rebuild the reminder tags in
+     * [panels] from [chores] (anchored at [todayStartMillis]), leaving all non-reminder panels untouched.
+     * A reminder's **checked state survives** the regeneration (mirroring the old chore pin behaviour): a
+     * freshly generated tag whose deterministic id matches one the user had already checked stays checked.
      */
     fun regenerateChorePanels(
         panels: List<TaskPanel>,
@@ -1104,12 +1107,24 @@ object SchedulerDomain {
         todayStartMillis: Long,
         horizonDays: Int = CHORE_HORIZON_DAYS,
     ): List<TaskPanel> {
-        val keptPinnedChores = panels.filter { it.chore && it.pinned }
-        val keptIds = keptPinnedChores.mapTo(HashSet()) { it.id }
+        val checkedIds = panels.asSequence().filter { it.chore && it.checked }.mapTo(HashSet()) { it.id }
         val nonChore = panels.filter { !it.chore }
-        val generated = choreScheduledPanels(chores, todayStartMillis, horizonDays).filter { it.id !in keptIds }
-        return nonChore + keptPinnedChores + generated
+        val generated =
+            choreScheduledPanels(chores, todayStartMillis, horizonDays)
+                .map { if (it.id in checkedIds) it.copy(checked = true) else it }
+        return nonChore + generated
     }
+
+    /**
+     * PRD §14 "accumulation when missed": the reminder tags that are *overdue* at [nowMillis] — reminders
+     * ([TaskPanel.chore]) whose scheduled time has passed (`start ≤ now`) and that the user has not yet
+     * checked off. These leave their original slot and accumulate on the calendar's now-line; a checked
+     * reminder is done and drops out. Returned in scheduled-time order (oldest first) so the now-line
+     * stack reads chronologically.
+     */
+    fun overdueReminders(panels: List<TaskPanel>, nowMillis: Long): List<TaskPanel> =
+        panels.filter { it.chore && !it.checked && it.startEpochMillis <= nowMillis }
+            .sortedBy { it.startEpochMillis }
 
     /**
      * PRD §5 priority weight table: the absolute weight of each column. Column n takes its nominal

@@ -269,6 +269,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             onEditEntry = { block -> editingBlock = block },
                             // PRD §8 task contextual menu "Remove": delete the block by its source.
                             onRemoveEntry = { block -> removeBlockIntent(block)?.let(vm::dispatch) },
+                            // PRD §14 Reminders: clicking a reminder tag toggles its checked (done) state.
+                            onToggleReminder = { block ->
+                                block.entryId?.let { vm.dispatch(SchedulerIntent.SetReminderChecked(it, !block.checked)) }
+                            },
                             // PRD §8 Overlap Mode: commit re-divided panel widths from a dragged edge.
                             onAdjustWeights = { weights ->
                                 if (weights.isNotEmpty()) vm.dispatch(SchedulerIntent.SetPanelWeights(weights))
@@ -400,17 +404,34 @@ private fun formatClockTime(dateTime: LocalDateTime): String {
     return "$hh:$mm"
 }
 
-private fun mergePanelsForDisplay(panels: List<TaskPanel>): List<CalendarRecord> =
-    SchedulerDomain.groupSameTaskPanelsForDisplay(panels).map { group ->
-        val head = group.first()
-        CalendarRecord(
-            title = head.title,
-            range = TaskTimeRange(head.startEpochMillis, group.maxOf { it.endEpochMillis }),
-            manual = true,
-            entryId = head.id,
-            entryIds = group.map { it.id },
-            taskId = head.taskId,
-            pinned = head.pinned,
-            layoutWeight = head.layoutWeight,
-        )
-    }
+private fun mergePanelsForDisplay(panels: List<TaskPanel>): List<CalendarRecord> {
+    // PRD §14: reminder tags are zero-duration checkable markers, not height-proportional blocks — they
+    // render on their own path (see CalendarRecord.reminder) and never merge with task panels.
+    val (reminders, blocks) = panels.partition { SchedulerDomain.isReminder(it) }
+    val reminderRecords =
+        reminders.map { tag ->
+            CalendarRecord(
+                title = tag.title,
+                range = TaskTimeRange(tag.startEpochMillis, tag.endEpochMillis),
+                entryId = tag.id,
+                entryIds = listOf(tag.id),
+                reminder = true,
+                checked = tag.checked,
+            )
+        }
+    val blockRecords =
+        SchedulerDomain.groupSameTaskPanelsForDisplay(blocks).map { group ->
+            val head = group.first()
+            CalendarRecord(
+                title = head.title,
+                range = TaskTimeRange(head.startEpochMillis, group.maxOf { it.endEpochMillis }),
+                manual = true,
+                entryId = head.id,
+                entryIds = group.map { it.id },
+                taskId = head.taskId,
+                pinned = head.pinned,
+                layoutWeight = head.layoutWeight,
+            )
+        }
+    return blockRecords + reminderRecords
+}

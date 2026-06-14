@@ -586,4 +586,24 @@ class SchedulerSchedulerTest {
         assertEquals("Practice English", placed[0].title)
         assertTrue(recordsForDay(listOf(record), LocalDate(2024, 1, 2), tz).isEmpty())
     }
+
+    @Test
+    fun records_for_day_keeps_zero_duration_reminder_tags_but_drops_zero_duration_blocks() {
+        // PRD §14: a reminder is a zero-duration tag rendered at its time — it must survive recordsForDay
+        // (the block path drops zero-height periods). A non-reminder zero-duration period is still dropped.
+        val tz = TimeZone.UTC
+        val day = LocalDate(2024, 1, 1)
+        val at20 = LocalDateTime(2024, 1, 1, 20, 0).toInstant(tz).toEpochMilliseconds()
+        val reminder = CalendarRecord(
+            "Water plants", TaskTimeRange(at20, at20), entryId = "chore/0/0", reminder = true, checked = true,
+        )
+        val degenerateBlock = CalendarRecord("Oops", TaskTimeRange(at20, at20))
+
+        val placed = recordsForDay(listOf(reminder, degenerateBlock), day, tz)
+        assertEquals(1, placed.size) // only the reminder tag survives
+        assertTrue(placed[0].reminder)
+        assertTrue(placed[0].checked)
+        assertEquals(20.0f, placed[0].startHour) // rendered at 20:00
+        assertEquals("chore/0/0", placed[0].entryId)
+    }
 }
