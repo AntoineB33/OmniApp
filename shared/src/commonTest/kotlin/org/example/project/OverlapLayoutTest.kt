@@ -14,6 +14,7 @@ import org.example.project.ui.PanelSlice
 import org.example.project.ui.PlacedRecord
 import org.example.project.ui.overlapLayout
 import org.example.project.ui.recordsForDay
+import org.example.project.ui.zoomAnchoredScroll
 
 /**
  * PRD §8 Overlap Mode: unit tests for the pure [overlapLayout] horizontal-slicing algorithm — no
@@ -116,5 +117,30 @@ class OverlapLayoutTest {
         assertSlice(slices(layout, "a").single(), 0f, 3f, 0f, 1f / 3f)
         assertSlice(slices(layout, "b").single(), 0f, 3f, 1f / 3f, 1f / 3f)
         assertSlice(slices(layout, "c").single(), 0f, 3f, 2f / 3f, 1f / 3f)
+    }
+
+    // ----- §8 zoom-to-cursor anchor math ------------------------------------------------------
+
+    @Test
+    fun zoom_keeps_the_content_under_the_cursor_fixed() {
+        // PRD §8: the new scroll must leave the time under the cursor (focalY px from the viewport top)
+        // under that same pixel after the grid scales. Generic check: the content offset under the cursor,
+        // (scroll + focal), scales by the factor, and (newScroll + focal) must equal that scaled offset.
+        fun assertAnchored(scroll: Int, focal: Float, factor: Float) {
+            val newScroll = zoomAnchoredScroll(scroll, focal, factor)
+            val expectedContentUnderCursor = (scroll + focal) * factor
+            assertEquals(expectedContentUnderCursor, newScroll + focal, 1f, "anchor drifted")
+        }
+        // Zoom in at the top, in the middle of the day, and zoom out — the cursor's time stays put.
+        assertAnchored(scroll = 0, focal = 100f, factor = 2f) // top → newScroll 100
+        assertAnchored(scroll = 480, focal = 100f, factor = 2f) // 10:00 region, zoom in → 1060
+        assertAnchored(scroll = 1000, focal = 250f, factor = 1.15f) // evening, small zoom-in step
+        assertAnchored(scroll = 800, focal = 150f, factor = 0.5f) // zoom out
+
+        // Spot-check exact values for the simplest cases.
+        assertEquals(100, zoomAnchoredScroll(0, 100f, 2f))
+        assertEquals(1060, zoomAnchoredScroll(480, 100f, 2f))
+        // Never scrolls above the top.
+        assertEquals(0, zoomAnchoredScroll(0, 100f, 0.5f))
     }
 }

@@ -47,8 +47,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -71,6 +73,7 @@ import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -82,6 +85,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import kotlin.time.Clock
 import kotlin.time.Instant
+import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -825,9 +829,15 @@ fun CalendarFloatingWindow(
     onRedo: () -> Unit = {},
 ) {
     var offset by remember { mutableStateOf(Offset.Zero) }
+    // PRD §8 zoom: the zoom mechanics live in WeekView (which owns the scroll state + viewport geometry,
+    // so it can keep the point under the cursor fixed). The keyboard shortcuts here drive it through this
+    // action holder; [ctrlHeld] tracks the Ctrl modifier so WeekView's scroll handler knows when a wheel
+    // turn means "zoom toward the cursor".
+    val zoomActions = remember { CalendarZoomActions() }
+    var ctrlHeld by remember { mutableStateOf(false) }
     // PRD §8: the calendar owns the keyboard while it is the active surface, so its own shortcuts (O to
-    // toggle overlap, Ctrl+Z/Y to undo/redo the calendar history) work even though the tree normally
-    // holds focus. Focus is (re)claimed when the window opens and on every press inside it.
+    // toggle overlap, Ctrl+Z/Y to undo/redo the calendar history, Ctrl +/- to zoom) work even though the
+    // tree normally holds focus. Focus is (re)claimed when the window opens and on every press inside it.
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
     Surface(
@@ -842,8 +852,10 @@ fun CalendarFloatingWindow(
             .focusable()
             // PRD §8: calendar-owned keyboard shortcuts while it is the focused surface.
             .onPreviewKeyEvent { event ->
+                // Track Ctrl/Cmd on every event (down and up) so Ctrl+scroll zoom (below) knows the state.
+                ctrlHeld = event.isCtrlPressed || event.isMetaPressed
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                val mod = event.isCtrlPressed || event.isMetaPressed
+                val mod = ctrlHeld
                 when {
                     event.key == Key.O && !mod -> {
                         onToggleOverlap()
@@ -855,6 +867,19 @@ fun CalendarFloatingWindow(
                     }
                     mod && event.key == Key.Y -> {
                         onRedo()
+                        true
+                    }
+                    // PRD §8 zoom (toward the cursor): Ctrl + '+'/'=' (or numpad +) in, Ctrl + '-' out, Ctrl+0 reset.
+                    mod && (event.key == Key.Equals || event.key == Key.Plus || event.key == Key.NumPadAdd) -> {
+                        zoomActions.zoomIn()
+                        true
+                    }
+                    mod && (event.key == Key.Minus || event.key == Key.NumPadSubtract) -> {
+                        zoomActions.zoomOut()
+                        true
+                    }
+                    mod && (event.key == Key.Zero || event.key == Key.NumPad0) -> {
+                        zoomActions.reset()
                         true
                     }
                     else -> false
@@ -912,6 +937,8 @@ fun CalendarFloatingWindow(
                     today = today,
                     nowMillis = nowMillis,
                     records = records,
+                    zoomActions = zoomActions,
+                    ctrlHeld = ctrlHeld,
                     onAddTaskAt = onAddTaskAt,
                     onCommitBounds = onCommitBounds,
                     onEditEntry = onEditEntry,
@@ -925,12 +952,41 @@ fun CalendarFloatingWindow(
     }
 }
 
+/** PRD §8 zoom: the week grid's hour-row height at zoom 1f, and the zoom bounds / per-step factor. */
+private val BASE_HOUR_HEIGHT = 48.dp
+private const val MIN_CALENDAR_ZOOM = 0.5f
+private const val MAX_CALENDAR_ZOOM = 4f
+private const val CALENDAR_ZOOM_STEP = 1.15f
+
+/**
+ * PRD §8 zoom-to-cursor: the new vertical scroll (px) that keeps the content currently under [focalY] (px
+ * from the viewport top) under that same pixel after the grid's height is scaled by [scaleFactor]. The
+ * content offset under the cursor is `currentScroll + focalY`; scaling moves it to `(…)*scaleFactor`, so the
+ * scroll that re-pins it is `(…)*scaleFactor - focalY`. Clamped to ≥ 0 (the caller clamps the upper bound to
+ * the post-zoom scroll range). Pure, so the anchor math is unit-tested independently of Compose.
+ */
+internal fun zoomAnchoredScroll(currentScroll: Int, focalY: Float, scaleFactor: Float): Int =
+    ((currentScroll + focalY) * scaleFactor - focalY).coerceAtLeast(0f).roundToInt()
+
+/**
+ * PRD §8 zoom: a holder the calendar's keyboard shortcuts (in [CalendarFloatingWindow]) use to drive the
+ * zoom whose mechanics live in [WeekView] (which owns the scroll state + viewport geometry needed to keep
+ * the point under the cursor fixed). WeekView assigns the lambdas; the key handler invokes them.
+ */
+private class CalendarZoomActions {
+    var zoomIn: () -> Unit = {}
+    var zoomOut: () -> Unit = {}
+    var reset: () -> Unit = {}
+}
+
 @Composable
 private fun WeekView(
     selectedDate: LocalDate,
     today: LocalDate,
     nowMillis: Long,
     records: List<CalendarRecord>,
+    zoomActions: CalendarZoomActions,
+    ctrlHeld: Boolean,
     onAddTaskAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
@@ -944,14 +1000,47 @@ private fun WeekView(
     val tz = remember { TimeZone.currentSystemDefault() }
     // Follows the (possibly simulated) clock so the now-line moves as accelerated time advances.
     val now = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz).time
-    val hourHeight = 48.dp
+    // PRD §8 zoom: the row height scales with [zoom]; the gestures keep the point under the cursor fixed.
+    var zoom by remember { mutableStateOf(1f) }
+    val hourHeight = BASE_HOUR_HEIGHT * zoom
     val gutterWidth = 56.dp
+
+    val scrollState = rememberScrollState()
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    // PRD §8 zoom-to-cursor: the pointer's Y within the scroll viewport (the focal point a zoom pivots
+    // around) and the viewport height (the fallback focal — its centre — for keyboard zoom with no cursor).
+    var focalYpx by remember { mutableStateOf<Float?>(null) }
+    var viewportHpx by remember { mutableStateOf(0f) }
+    // Apply a zoom [factor] keeping the time at [focal] (px from the viewport top) under that same pixel:
+    // the content offset there is `scroll + focal`; after scaling it becomes `(scroll + focal) * f`, so the
+    // new scroll that puts it back under `focal` is `(scroll + focal) * f - focal`.
+    suspend fun applyZoom(factor: Float, focal: Float) {
+        val next = (zoom * factor).coerceIn(MIN_CALENDAR_ZOOM, MAX_CALENDAR_ZOOM)
+        if (next == zoom) return
+        val f = next / zoom
+        val target = zoomAnchoredScroll(scrollState.value, focal, f)
+        zoom = next
+        // scrollTo clamps to the *current* scroll range, which only grows after the taller grid re-lays
+        // out. So when zooming in (especially near the bottom, e.g. the evening) wait — bounded — for the
+        // range to catch up to `target`; otherwise the target is clamped short and the point drifts up.
+        var guard = 0
+        while (scrollState.maxValue < target && guard < 8) {
+            withFrameNanos { }
+            guard++
+        }
+        scrollState.scrollTo(target)
+    }
+    // Register the keyboard shortcuts (driven from CalendarFloatingWindow). They pivot around the cursor if
+    // it is over the grid, else the viewport centre.
+    zoomActions.zoomIn = { scope.launch { applyZoom(CALENDAR_ZOOM_STEP, focalYpx ?: viewportHpx / 2f) } }
+    zoomActions.zoomOut = { scope.launch { applyZoom(1f / CALENDAR_ZOOM_STEP, focalYpx ?: viewportHpx / 2f) } }
+    zoomActions.reset = { scope.launch { applyZoom(1f / zoom, focalYpx ?: viewportHpx / 2f) } }
+    val ctrl = rememberUpdatedState(ctrlHeld)
 
     // PRD §8 (Google-Calendar style): open scrolled to the current time so today's "task to do now"
     // block (which starts at the present hour) is visible without manual scrolling. Show one hour of
     // lead context above it.
-    val scrollState = rememberScrollState()
-    val density = LocalDensity.current
     LaunchedEffect(Unit) {
         val target = with(density) { (hourHeight * (now.hour - 1)).toPx() }
         scrollState.scrollTo(target.roundToInt().coerceAtLeast(0))
@@ -1001,6 +1090,29 @@ private fun WeekView(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .onSizeChanged { viewportHpx = it.height.toFloat() }
+                // PRD §8 zoom-to-cursor: track the cursor's Y in the viewport, and on Ctrl+scroll zoom
+                // toward it (consumed at the Initial pass so the grid doesn't also scroll). A plain wheel
+                // turn isn't consumed, so it falls through to the verticalScroll below.
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            event.changes.firstOrNull()?.let { focalYpx = it.position.y }
+                            if (event.type == PointerEventType.Scroll && ctrl.value) {
+                                val change = event.changes.firstOrNull()
+                                val dy = change?.scrollDelta?.y ?: 0f
+                                if (dy != 0f) {
+                                    val focal = change!!.position.y
+                                    scope.launch {
+                                        applyZoom(if (dy < 0f) CALENDAR_ZOOM_STEP else 1f / CALENDAR_ZOOM_STEP, focal)
+                                    }
+                                    event.changes.forEach { it.consume() }
+                                }
+                            }
+                        }
+                    }
+                }
                 .verticalScroll(scrollState, enabled = !scrollLocked),
         ) {
             Row(Modifier.fillMaxWidth().height(hourHeight * 24)) {
