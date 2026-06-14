@@ -405,9 +405,12 @@ private fun formatClockTime(dateTime: LocalDateTime): String {
 }
 
 private fun mergePanelsForDisplay(panels: List<TaskPanel>): List<CalendarRecord> {
-    // PRD §14: reminder tags are zero-duration checkable markers, not height-proportional blocks — they
-    // render on their own path (see CalendarRecord.reminder) and never merge with task panels.
-    val (reminders, blocks) = panels.partition { SchedulerDomain.isReminder(it) }
+    // PRD §14/§15: reminder tags (zero-duration) and side tasks (very short real durations, e.g. a 20-second
+    // look-away) are NOT height-proportional blocks — drawn at scale they'd be invisible. They render on
+    // their own fixed-height marker paths (CalendarRecord.reminder / .sideTask) and never merge with panels.
+    val reminders = panels.filter { SchedulerDomain.isReminder(it) }
+    val sides = panels.filter { it.sideTask }
+    val blocks = panels.filter { !SchedulerDomain.isReminder(it) && !it.sideTask }
     val reminderRecords =
         reminders.map { tag ->
             CalendarRecord(
@@ -417,6 +420,16 @@ private fun mergePanelsForDisplay(panels: List<TaskPanel>): List<CalendarRecord>
                 entryIds = listOf(tag.id),
                 reminder = true,
                 checked = tag.checked,
+            )
+        }
+    val sideRecords =
+        sides.map { side ->
+            CalendarRecord(
+                title = side.title,
+                range = TaskTimeRange(side.startEpochMillis, side.endEpochMillis),
+                entryId = side.id,
+                entryIds = listOf(side.id),
+                sideTask = true,
             )
         }
     val blockRecords =
@@ -433,5 +446,5 @@ private fun mergePanelsForDisplay(panels: List<TaskPanel>): List<CalendarRecord>
                 layoutWeight = head.layoutWeight,
             )
         }
-    return blockRecords + reminderRecords
+    return blockRecords + reminderRecords + sideRecords
 }

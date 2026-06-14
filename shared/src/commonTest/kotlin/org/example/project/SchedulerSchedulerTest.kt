@@ -11,9 +11,11 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.SideTask
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -301,6 +303,85 @@ class SchedulerSchedulerTest {
         val bTime = byTask[b] ?: 0L
         val share = bTime.toDouble() / (aTime + bTime)
         assertTrue(share in 0.45..0.55, "B should still get ~50% in-window (no catch-up), got $share")
+    }
+
+    // ----- §15 Side tasks --------------------------------------------------------------------
+
+    @Test
+    fun side_task_panels_recur_on_an_epoch_aligned_grid_with_real_duration() {
+        val sides = listOf(SideTask("Eyes", intervalMillis = 60 * MIN, durationMillis = 5 * MIN))
+        val panels = SchedulerDomain.sideTaskPanels(sides, fromMillis = 0L, toMillis = 180 * MIN)
+
+        assertEquals(listOf(0L, 60 * MIN, 120 * MIN, 180 * MIN), panels.map { it.startEpochMillis })
+        assertTrue(panels.all { it.sideTask && it.taskId == null && it.title == "Eyes" })
+        assertTrue(panels.all { it.endEpochMillis - it.startEpochMillis == 5 * MIN }) // real spanning time
+    }
+
+    @Test
+    fun default_side_tasks_are_the_three_from_the_prd() {
+        val titles = SchedulerDomain.DEFAULT_SIDE_TASKS.map { it.title }
+        assertEquals(
+            listOf("look 20 feet away", "take a 5min pose and blink hard", "take a 15min pose"),
+            titles,
+        )
+        // The 20s look-away, the 5-min blink pose, the 15-min pose.
+        assertEquals(20 * 1_000L, SchedulerDomain.DEFAULT_SIDE_TASKS[0].durationMillis)
+        assertEquals(20 * MIN, SchedulerDomain.DEFAULT_SIDE_TASKS[0].intervalMillis)
+        assertEquals(2 * 60 * MIN, SchedulerDomain.DEFAULT_SIDE_TASKS[2].intervalMillis)
+    }
+
+    @Test
+    fun the_running_app_seeds_the_default_side_tasks() {
+        // PRD §15: side tasks are a hardcoded set, seeded into the live state (not into bare test states).
+        val seeded = TaskSchedulerViewModel.loadInitialState(store = null, initial = SchedulerState.empty())
+        assertEquals(SchedulerDomain.DEFAULT_SIDE_TASKS, seeded.sideTasks)
+    }
+
+    @Test
+    fun a_side_task_splits_a_task_panel_without_cutting_its_minimum_time() {
+        // PRD §15: A and B are equal (50%, 45min). A side task lands 20 min into A's first chunk. A must
+        // NOT be cut short — it resumes after the side task and still accumulates its full 45 min before B
+        // starts (contrast a pinned panel, which would truncate A to 20 min and hand the slot to B).
+        val (s0, a, b) = stateWithTwoTasks()
+        val twoHour = 2 * 60 * MIN
+        val now = twoHour * 500_000L - 20 * MIN // 20 min before a 2h grid point → first side task at now+20m
+        val s = s0.copy(sideTasks = listOf(SideTask("Eyes", intervalMillis = twoHour, durationMillis = 5 * MIN)))
+
+        val panels = SchedulerDomain.fillSchedule(s, now)
+        val side = panels.filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
+        val autos = panels.filter { it.auto }.sortedBy { it.startEpochMillis }
+
+        // The side task sits 20 min in, lasting 5 min.
+        assertEquals(now + 20 * MIN, side.startEpochMillis)
+        assertEquals(now + 25 * MIN, side.endEpochMillis)
+        assertEquals("Eyes", side.title)
+
+        // A is split around it: A[now, now+20], A[now+25, now+50] — 45 min total — then B.
+        assertEquals(a, autos[0].taskId)
+        assertEquals(now to now + 20 * MIN, autos[0].startEpochMillis to autos[0].endEpochMillis)
+        assertEquals(a, autos[1].taskId)
+        assertEquals(now + 25 * MIN to now + 50 * MIN, autos[1].startEpochMillis to autos[1].endEpochMillis)
+        val aWork = (autos[0].endEpochMillis - autos[0].startEpochMillis) +
+            (autos[1].endEpochMillis - autos[1].startEpochMillis)
+        assertEquals(45 * MIN, aWork) // full minimum preserved despite the split
+        assertEquals(b, autos[2].taskId) // B only starts once A has had its full minimum
+        assertEquals(now + 50 * MIN, autos[2].startEpochMillis)
+    }
+
+    @Test
+    fun a_pinned_panel_by_contrast_does_cut_the_minimum() {
+        // Control for the test above: a *pinned* obstacle 20 min into A's chunk truncates A (its minimum IS
+        // cut) — proving the no-cut behaviour is specific to side tasks.
+        val (s0, a, b) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val pin = pinned("panel/0", b, now + 20 * MIN, now + 25 * MIN)
+        val s = s0.copy(panels = listOf(pin))
+
+        val autos = SchedulerDomain.fillSchedule(s, now).filter { it.auto }.sortedBy { it.startEpochMillis }
+
+        // A is cut at the pinned panel (only 20 min), not resumed to 45 before the obstacle.
+        assertEquals(a, autos[0].taskId)
+        assertEquals(now + 20 * MIN, autos[0].endEpochMillis) // truncated to 20 min, minimum cut
     }
 
     // ----- §9 RefreshSchedule (calculation event) --------------------------------------------
@@ -605,5 +686,23 @@ class SchedulerSchedulerTest {
         assertTrue(placed[0].checked)
         assertEquals(20.0f, placed[0].startHour) // rendered at 20:00
         assertEquals("chore/0/0", placed[0].entryId)
+    }
+
+    @Test
+    fun records_for_day_keeps_a_sub_minute_side_task_as_a_marker() {
+        // PRD §15 regression: a 20-second side task drawn to scale is ~invisible. recordsForDay must keep it
+        // (flagged sideTask) so the day column can render it as a fixed-height marker at its time.
+        val tz = TimeZone.UTC
+        val day = LocalDate(2024, 1, 1)
+        val start = LocalDateTime(2024, 1, 1, 20, 0).toInstant(tz).toEpochMilliseconds()
+        val side = CalendarRecord(
+            "look 20 feet away", TaskTimeRange(start, start + 20_000L), entryId = "side/0/$start", sideTask = true,
+        )
+
+        val placed = recordsForDay(listOf(side), day, tz)
+        assertEquals(1, placed.size)
+        assertTrue(placed[0].sideTask)
+        assertEquals(20.0f, placed[0].startHour)
+        assertEquals("look 20 feet away", placed[0].title)
     }
 }

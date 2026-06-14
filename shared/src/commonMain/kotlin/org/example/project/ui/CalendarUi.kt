@@ -151,6 +151,8 @@ data class CalendarRecord(
     val reminder: Boolean = false,
     /** PRD §14 Reminders: whether this reminder tag has been checked off (done). */
     val checked: Boolean = false,
+    /** PRD §15 Side tasks: a periodic side task, drawn as a fixed-height marker (its real duration is tiny). */
+    val sideTask: Boolean = false,
 )
 
 /** A [CalendarRecord] clipped to a single day, as start/end hour-of-day fractions in `[0, 24]`. */
@@ -171,6 +173,8 @@ data class PlacedRecord(
     val reminder: Boolean = false,
     /** PRD §14 Reminders: whether this reminder tag has been checked off (done). */
     val checked: Boolean = false,
+    /** PRD §15 Side tasks: a periodic side task rendered as a fixed-height marker at [startHour]. */
+    val sideTask: Boolean = false,
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
     val fullEndMillis: Long = 0L,
@@ -192,9 +196,9 @@ fun recordsForDay(
         if (start.date > day || end.date < day) return@mapNotNull null
         val startHour = if (start.date < day) 0f else start.hour + start.minute / 60f
         val endHour = if (end.date > day) 24f else end.hour + end.minute / 60f
-        // PRD §14: a reminder is a zero-duration tag (start == end) rendered at its time — keep it (the
-        // block path below would drop a zero-height period). Everything else needs positive duration.
-        if (!record.reminder && endHour <= startHour) return@mapNotNull null
+        // PRD §14/§15: reminders (zero-duration) and side tasks (sub-minute durations) render as fixed-
+        // height markers, so keep them even though the block path below would drop a ~zero-height period.
+        if (!record.reminder && !record.sideTask && endHour <= startHour) return@mapNotNull null
         PlacedRecord(
             title = record.title,
             startHour = startHour.coerceIn(0f, 24f),
@@ -208,6 +212,7 @@ fun recordsForDay(
             layoutWeight = record.layoutWeight,
             reminder = record.reminder,
             checked = record.checked,
+            sideTask = record.sideTask,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
         )
@@ -957,9 +962,9 @@ private fun WeekView(
     var scrollLocked by remember { mutableStateOf(false) }
 
     // PRD §8 "there must not be overlaps" (default mode): every block on the calendar (records,
-    // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live. Reminder
-    // tags (zero-duration, PRD §14) are not blocks and are excluded.
-    val allBlocks = records.filterNot { it.reminder }.map { calendarBlockKey(it) to it.range }
+    // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live. Reminder tags
+    // (zero-duration, §14) and side-task markers (§15) are not blocks and are excluded.
+    val allBlocks = records.filterNot { it.reminder || it.sideTask }.map { calendarBlockKey(it) to it.range }
 
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Row(
@@ -1092,10 +1097,12 @@ private fun DayColumn(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    // PRD §14: reminders are zero-duration checkable tags rendered on their own path; everything else is
-    // a height-proportional, draggable block. Split them so the block pipeline only sees real blocks.
+    // PRD §14/§15: reminders (zero-duration) and side tasks (sub-minute durations) render on their own
+    // fixed-height marker paths; everything else is a height-proportional, draggable block. Split them so
+    // the block pipeline only sees real blocks (drawing side tasks to scale would make them invisible).
     val reminderTags = records.filter { it.reminder }
-    val blockRecords = records.filterNot { it.reminder }
+    val sideTaskMarkers = records.filter { it.sideTask }
+    val blockRecords = records.filterNot { it.reminder || it.sideTask }
     // The right-click position (in this column's local pixels) that anchors the contextual menu; null
     // when no menu is open. [menuTarget] is the block the click landed on (null = empty space).
     var menuOffset by remember { mutableStateOf<Offset?>(null) }
@@ -1353,11 +1360,52 @@ private fun DayColumn(
                 onToggleReminder(tag)
             }
         }
+
+        // PRD §15 Side tasks: drawn as fixed-height markers at their scheduled time (their real duration —
+        // e.g. 20 seconds — is far too small to render to scale). Side tasks that coincide (e.g. the 20-min
+        // look-away, the hourly pose and the 2-hourly pose all firing on the hour) are stacked downward so
+        // each stays legible instead of overlapping.
+        sideTaskMarkers.groupBy { it.startHour }.forEach { (startHour, group) ->
+            group.forEachIndexed { i, marker ->
+                SideTaskMarker(marker, Modifier.offset(y = hourHeight * startHour + SIDE_TASK_MARKER_HEIGHT * i))
+            }
+        }
     }
 }
 
 /** PRD §14: a reminder rendered as a small checkable chip on the calendar (not a draggable block). */
 private val REMINDER_TAG_HEIGHT = 18.dp
+
+/** PRD §15: a side task rendered as a small fixed-height marker (its real spanning time is sub-minute). */
+private val SIDE_TASK_MARKER_HEIGHT = 16.dp
+
+@Composable
+private fun SideTaskMarker(marker: PlacedRecord, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(SIDE_TASK_MARKER_HEIGHT)
+            .padding(horizontal = 2.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(CalColors.accent.copy(alpha = 0.55f))
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = "●",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+        )
+        Text(
+            text = marker.title,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
 
 @Composable
 private fun ReminderTag(tag: PlacedRecord, modifier: Modifier = Modifier, onClick: () -> Unit) {

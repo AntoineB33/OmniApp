@@ -6,6 +6,7 @@ import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ScheduleUnitEntry
+import org.example.project.scheduler.model.SideTask
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
@@ -823,6 +824,49 @@ object SchedulerDomain {
     /** PRD §9 Scheduling: the auto fill materializes panels out to this far ahead of `now` (168 hours). */
     const val SCHEDULE_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1000
 
+    // ----- PRD §15 Side tasks -----------------------------------------------------------------
+
+    /**
+     * PRD §15: the hardcoded set of side tasks — periodic activities placed on the calendar with a real
+     * spanning time. The §9 fill weaves them in without letting them reduce the surrounding task's minimum.
+     */
+    val DEFAULT_SIDE_TASKS: List<SideTask> = listOf(
+        SideTask("look 20 feet away", intervalMillis = 20L * 60_000, durationMillis = 20L * 1_000),
+        SideTask("take a 5min pose and blink hard", intervalMillis = 60L * 60_000, durationMillis = 5L * 60_000),
+        SideTask("take a 15min pose", intervalMillis = 2L * 60L * 60_000, durationMillis = 15L * 60_000),
+    )
+
+    /**
+     * PRD §15: materialize [sideTasks] into fixed obstacle panels covering `[fromMillis, toMillis]`. Each
+     * side task recurs on an **epoch-aligned grid** (occurrences at multiples of its interval, so the
+     * cadence never drifts across reschedules), each a `[t, t + duration]` block with `sideTask = true`, a
+     * null taskId, and a deterministic `side/{i}/{t}` id. Zero/negative intervals or durations are skipped.
+     */
+    fun sideTaskPanels(sideTasks: List<SideTask>, fromMillis: Long, toMillis: Long): List<TaskPanel> {
+        val result = mutableListOf<TaskPanel>()
+        sideTasks.forEachIndexed { index, side ->
+            if (side.intervalMillis <= 0 || side.durationMillis <= 0 || side.title.isBlank()) return@forEachIndexed
+            // First occurrence on the grid at or after `from`.
+            var t = ((fromMillis + side.intervalMillis - 1) / side.intervalMillis) * side.intervalMillis
+            while (t <= toMillis) {
+                result.add(
+                    TaskPanel(
+                        id = "side/$index/$t",
+                        taskId = null,
+                        title = side.title,
+                        startEpochMillis = t,
+                        endEpochMillis = t + side.durationMillis,
+                        pinned = false,
+                        auto = false,
+                        sideTask = true,
+                    ),
+                )
+                t += side.intervalMillis
+            }
+        }
+        return result
+    }
+
     /** The panel whose `[start, end)` contains [nowMillis] (the "task to do now"), or null. */
     fun panelAt(panels: List<TaskPanel>, nowMillis: Long): TaskPanel? =
         panels.firstOrNull { it.startEpochMillis <= nowMillis && nowMillis < it.endEpochMillis }
@@ -930,6 +974,13 @@ object SchedulerDomain {
      * PRD §9 merge: two consecutive auto panels of the same task are fused into one block
      * ([mergeSameTaskPanels]), so a sole task shows as a single continuous panel. Auto panels get
      * deterministic `auto/{i}` ids (regenerated each run, skipping ids held by kept panels).
+     *
+     * PRD §15 Side tasks: [SchedulerState.sideTasks] are materialized as fixed obstacle panels
+     * ([sideTaskPanels]) and woven into the window. They behave like a pinned obstacle (the fill flows
+     * around them) with one difference: when a task chunk meets a side task, the chunk is **split** around
+     * it and the task **resumes after** with its remaining work, so its minimum is never charged for the
+     * side-task time (a 45-min task crossing a 5-min side task occupies a 50-min wall-clock span). A pinned
+     * obstacle, by contrast, truncates the chunk (the minimum is cut). Side panels regenerate every fill.
      */
     fun fillSchedule(
         state: SchedulerState,
@@ -938,17 +989,29 @@ object SchedulerDomain {
         val horizon = nowMillis + SCHEDULE_HORIZON_MILLIS
         // Cut every non-pinned panel in [now, horizon]; keep fixed (pinned) panels, reminder tags (PRD
         // §14 — kept on the calendar though not obstacles, see isSchedulerFixed), and any panel entirely
-        // outside the window — already past (end ≤ now) or beyond the horizon (start > horizon).
+        // outside the window — already past (end ≤ now) or beyond the horizon (start > horizon). Side-task
+        // panels (PRD §15) are always cut and regenerated fresh below, so they never accumulate.
         val kept = state.panels.filter {
-            isSchedulerFixed(it) || it.chore || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon
+            !it.sideTask &&
+                (isSchedulerFixed(it) || it.chore || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon)
         }
         val leaves = schedulableLeaves(state)
-        if (leaves.isEmpty()) return kept.sortedBy { it.startEpochMillis }
+        // PRD §15: side tasks materialize regardless of whether there are leaf tasks to fill around them.
+        val sidePanels = sideTaskPanels(state.sideTasks, nowMillis, horizon)
+        if (leaves.isEmpty()) return (kept + sidePanels).sortedBy { it.startEpochMillis }
 
         val priorities = absoluteTaskPriorities(state)
         val keptIds = kept.mapTo(HashSet()) { it.id }
         var working = state.copy(panels = kept)
         val start = firstFreeMoment(kept, nowMillis)
+
+        // PRD §15: the side-task occupied regions (merged, since side tasks can coincide) the regular fill
+        // must skip over. The regular task resumes after each region without its minimum being charged.
+        val sideRegions = mergeOccupied(sidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
+        fun sideRegionCovering(t: Long): TaskTimeRange? =
+            sideRegions.firstOrNull { it.startEpochMillis <= t && t < it.endEpochMillis }
+        fun nextSideRegionStart(t: Long): Long? =
+            sideRegions.asSequence().map { it.startEpochMillis }.filter { it > t }.minOrNull()
 
         // EDF state: each leaf's recurrence period Tᵢ and its current deadline (Double millis so an
         // infinite-period zero-priority task is representable and always sorts last).
@@ -983,6 +1046,14 @@ object SchedulerDomain {
             while ("auto/$idCounter" in keptIds) idCounter++
             return "auto/${idCounter++}"
         }
+        // PRD §15: the task whose minimum chunk is mid-placement, split across a side task, with the work
+        // it still owes. Carried across iterations so it resumes after the side region rather than the EDF
+        // re-picking and its deadline only advances once the whole chunk (or a pinned-truncated one) lands.
+        var pending: Pair<TaskId, Long>? = null
+        fun advance(t: TaskId) {
+            val p = period[t] ?: Double.POSITIVE_INFINITY
+            if (!p.isInfinite()) deadline[t] = (deadline[t] ?: start.toDouble()) + p
+        }
         // Bound the loop defensively: with positive spans this can't run away, but a degenerate zero
         // span (only possible if minima are clamped to 0) would otherwise spin.
         while (cursor < horizon && index < MAX_SCHEDULE_PANELS) {
@@ -990,37 +1061,60 @@ object SchedulerDomain {
                 isSchedulerFixed(it) && it.startEpochMillis <= cursor && cursor < it.endEpochMillis
             }
             if (pinnedCovering != null) {
+                // A pinned obstacle cuts the minimum (PRD §9/§10): abandon any pending chunk's remainder.
                 cursor = pinnedCovering.endEpochMillis
+                pending = null
                 continue
             }
-            // Earliest deadline first; ties (equal deadline) by higher priority then alphabetical title.
+            // PRD §15: skip a side-task region (it never charges the surrounding task) — the pending chunk
+            // resumes on the far side, its remaining work intact.
+            val sideCovering = sideRegionCovering(cursor)
+            if (sideCovering != null) {
+                cursor = sideCovering.endEpochMillis
+                continue
+            }
+
+            // Continue the interrupted task, else Earliest Deadline First (ties → priority → title).
             val taskId =
-                leaves.minWithOrNull(
-                    compareBy<TaskId> { deadline[it] ?: Double.POSITIVE_INFINITY }.then(tieBreak),
-                ) ?: break
+                pending?.first
+                    ?: leaves.minWithOrNull(
+                        compareBy<TaskId> { deadline[it] ?: Double.POSITIVE_INFINITY }.then(tieBreak),
+                    ) ?: break
             val task = working.tasks[taskId] ?: break
-            var end = cursor + scheduledSpanMinutes(working, taskId, cursor) * MILLIS_PER_MINUTE
-            nextPinnedStartAfter(kept, cursor)?.let { end = minOf(end, it) }
-            if (end <= cursor) break
+            val need = pending?.second ?: (scheduledSpanMinutes(working, taskId, cursor) * MILLIS_PER_MINUTE)
+            if (need <= 0) break
+            // This piece runs until the chunk is satisfied, the next side region, the next pinned panel, or
+            // the horizon — whichever comes first.
+            val nextSide = nextSideRegionStart(cursor) ?: Long.MAX_VALUE
+            val nextPinned = nextPinnedStartAfter(kept, cursor) ?: Long.MAX_VALUE
+            val boundary = minOf(nextSide, nextPinned, horizon)
+            val pieceEnd = minOf(cursor + need, boundary)
+            if (pieceEnd <= cursor) break
             generated += TaskPanel(
                 id = nextAutoId(),
                 taskId = taskId,
                 title = task.title,
                 startEpochMillis = cursor,
-                endEpochMillis = end,
+                endEpochMillis = pieceEnd,
                 pinned = false,
                 auto = true,
             )
-            // Fold the just-placed panel into the working state so the §10 continuous-effort credit sees
-            // it at the next cursor, and advance this task's deadline by one period (EDF next release).
             working = working.copy(panels = kept + generated)
-            val p = period[taskId] ?: Double.POSITIVE_INFINITY
-            if (!p.isInfinite()) deadline[taskId] = (deadline[taskId] ?: start.toDouble()) + p
-            cursor = end
+            val placed = pieceEnd - cursor
+            cursor = pieceEnd
+            when {
+                placed >= need -> { advance(taskId); pending = null } // chunk complete → next EDF release
+                boundary == nextPinned && nextPinned <= nextSide -> {
+                    // Truncated by a pinned obstacle: the minimum IS cut here (PRD §9/§10), chunk ends.
+                    advance(taskId); pending = null
+                }
+                else -> pending = taskId to (need - placed) // interrupted by a side task → resume after it
+            }
             index++
         }
-        // PRD §9: two consecutive auto panels of the same task merge into one block.
-        return (kept + mergeSameTaskPanels(generated)).sortedBy { it.startEpochMillis }
+        // PRD §9: two consecutive auto panels of the same task merge into one block. Side-task panels (PRD
+        // §15) are added as-is (they split the run, so adjacent same-task pieces don't touch and stay apart).
+        return (kept + sidePanels + mergeSameTaskPanels(generated)).sortedBy { it.startEpochMillis }
     }
 
     /** Safety cap on auto panels (pre-merge chunks) one fill can lay down (≈ 168h / a 1-minute minimum). */

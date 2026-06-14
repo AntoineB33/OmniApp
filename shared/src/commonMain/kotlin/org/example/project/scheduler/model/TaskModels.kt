@@ -63,6 +63,19 @@ data class ChoreEntry(
 )
 
 /**
+ * PRD §15 Side task: a task to do periodically, placed on the calendar with a **real spanning time** (a
+ * [TaskPanel] with `sideTask = true`). It recurs every [intervalMillis] for [durationMillis]. The
+ * distinguishing rule (vs a simple task): when the §9 auto scheduler splits a task panel around a side
+ * task, the side task's time is *not* counted against that task's minimum — the task resumes after and
+ * still accumulates its full minimum (see [org.example.project.scheduler.domain.SchedulerDomain.fillSchedule]).
+ */
+data class SideTask(
+    val title: String,
+    val intervalMillis: Long,
+    val durationMillis: Long,
+)
+
+/**
  * PRD §9 Task record entry: a single period `[start, end]` the user spent on a task, as epoch
  * milliseconds (stored as primitives so it serializes without a custom time serializer).
  */
@@ -110,6 +123,13 @@ data class TaskPanel(
      * Always false for non-reminder panels.
      */
     val checked: Boolean = false,
+    /**
+     * PRD §15 Side tasks: true for a periodic side-task panel (real spanning time, null taskId). The §9
+     * auto fill treats it as a fixed obstacle but, unlike a pinned panel, splitting a task around it does
+     * not reduce that task's minimum time (the task resumes after and still gets its full minimum).
+     * Regenerated deterministically on every fill (like auto panels), so it is not retained across one.
+     */
+    val sideTask: Boolean = false,
     /**
      * PRD §8 Overlap Mode: this panel's relative horizontal weight within any time slice it shares with
      * other panels. Within a slice each active panel's width is `weight / Σ weights`, so equal weights

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.SchedulerIntent
@@ -34,10 +35,13 @@ class TaskSchedulerViewModel(
         /** PRD §5: reload persisted state; an interrupted Edit Mode session is canceled. */
         fun loadInitialState(store: SchedulerStore?, initial: SchedulerState): SchedulerState {
             val loaded = store?.load()?.let(SchedulerStateCodec::decode) ?: initial
-            return if (loaded.editSession != null) {
-                SchedulerReducer.reduce(loaded, SchedulerIntent.CancelEdit)
+            // PRD §15: side tasks are a hardcoded set (not persisted user data); seed them onto whatever
+            // was loaded so they are always present in the running app, never in the bare test states.
+            val seeded = loaded.copy(sideTasks = SchedulerDomain.DEFAULT_SIDE_TASKS)
+            return if (seeded.editSession != null) {
+                SchedulerReducer.reduce(seeded, SchedulerIntent.CancelEdit)
             } else {
-                loaded
+                seeded
             }
         }
     }

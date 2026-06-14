@@ -94,6 +94,7 @@ object SchedulerStateCodec {
                         layoutWeight = it.layoutWeight,
                         chore = it.chore,
                         checked = it.checked,
+                        sideTask = it.sideTask,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -212,6 +213,7 @@ object SchedulerStateCodec {
                         layoutWeight = it.layoutWeight,
                         chore = it.chore,
                         checked = it.checked,
+                        sideTask = it.sideTask,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -327,6 +329,8 @@ private data class PersistedPanel(
     val chore: Boolean = false,
     // PRD §14: a missing checked flag decodes to false (payloads written before reminders were checkable).
     val checked: Boolean = false,
+    // PRD §15: a missing sideTask flag decodes to false (payloads written before side tasks existed).
+    val sideTask: Boolean = false,
 )
 
 @Serializable

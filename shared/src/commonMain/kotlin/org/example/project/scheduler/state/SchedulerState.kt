@@ -130,6 +130,13 @@ data class SchedulerState(
      * not routed through the Undo/Redo tree history.
      */
     val chores: List<ChoreEntry> = emptyList(),
+    /**
+     * PRD §15 Side tasks: the periodic side tasks to weave into the auto schedule. A hardcoded set in
+     * production (seeded by [org.example.project.scheduler.ui.TaskSchedulerViewModel] from
+     * [org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SIDE_TASKS]); empty by default so the
+     * scheduler tests that assert exact schedules see no side tasks unless they opt in.
+     */
+    val sideTasks: List<org.example.project.scheduler.model.SideTask> = emptyList(),
 ) {
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots
     // (capture) and re-attached from the live tasks on restore (applyTree). Undo/Redo therefore
