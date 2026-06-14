@@ -56,6 +56,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -955,8 +956,21 @@ fun CalendarFloatingWindow(
 /** PRD §8 zoom: the week grid's hour-row height at zoom 1f, and the zoom bounds / per-step factor. */
 private val BASE_HOUR_HEIGHT = 48.dp
 private const val MIN_CALENDAR_ZOOM = 0.5f
-private const val MAX_CALENDAR_ZOOM = 4f
+private const val MAX_CALENDAR_ZOOM = 16f
 private const val CALENDAR_ZOOM_STEP = 1.15f
+
+/** PRD §8: a graduation tick must be at least this tall (dp) to label legibly; below it we use a coarser one. */
+private const val MIN_TICK_DP = 26f
+
+/**
+ * PRD §8 graduation: the minutes between time ticks for a given row [hourHeight] — finer as the user zooms
+ * in. The finest of 60/30/15/10/5/1 minutes whose tick is still at least [MIN_TICK_DP] tall; falls back to
+ * hourly when the grid is too short. Pure, so the zoom→graduation mapping is unit-tested.
+ */
+internal fun calendarTickMinutes(hourHeight: Dp): Int {
+    val dpPerMinute = hourHeight.value / 60f
+    return listOf(60, 30, 15, 10, 5, 1).lastOrNull { it * dpPerMinute >= MIN_TICK_DP } ?: 60
+}
 
 /**
  * PRD §8 zoom-to-cursor: the new vertical scroll (px) that keeps the content currently under [focalY] (px
@@ -1116,18 +1130,24 @@ private fun WeekView(
                 .verticalScroll(scrollState, enabled = !scrollLocked),
         ) {
             Row(Modifier.fillMaxWidth().height(hourHeight * 24)) {
-                // Hour labels gutter.
+                // Time gutter: hour labels, plus sub-hour minute labels (":30", ":15", …) once zoomed in.
                 Column(Modifier.width(gutterWidth)) {
-                    for (hour in 0..23) {
-                        Box(Modifier.height(hourHeight).fillMaxWidth().padding(end = 6.dp)) {
+                    val tick = calendarTickMinutes(hourHeight)
+                    val tickHeight = hourHeight * (tick / 60f)
+                    var minutes = 0
+                    while (minutes < 24 * 60) {
+                        val hour = minutes / 60
+                        val minute = minutes % 60
+                        Box(Modifier.height(tickHeight).fillMaxWidth().padding(end = 6.dp)) {
                             Text(
-                                text = hourLabel(hour),
+                                text = if (minute == 0) hourLabel(hour) else ":" + minute.toString().padStart(2, '0'),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = CalColors.muted,
+                                color = if (minute == 0) CalColors.muted else CalColors.muted.copy(alpha = 0.5f),
                                 textAlign = TextAlign.End,
                                 modifier = Modifier.fillMaxWidth().offset(y = (-6).dp),
                             )
                         }
+                        minutes += tick
                     }
                 }
                 days.forEach { day ->
@@ -1305,6 +1325,27 @@ private fun DayColumn(
                         .border(width = 0.5.dp, color = CalColors.grid),
                 )
             }
+        }
+        // PRD §8 graduation: once zoomed in, faint sub-hour lines at the current tick (every 30/15/10/5/1
+        // min); the on-hour lines are already drawn above. One draw pass (cheap regardless of zoom).
+        val tickMinutes = calendarTickMinutes(hourHeight)
+        if (tickMinutes < 60) {
+            val faint = CalColors.grid.copy(alpha = 0.4f)
+            Box(
+                Modifier.fillMaxSize().drawBehind {
+                    val stepPx = hourHeight.toPx() * (tickMinutes / 60f)
+                    val ticksPerHour = 60 / tickMinutes
+                    var i = 1
+                    var y = stepPx
+                    while (y <= size.height) {
+                        if (i % ticksPerHour != 0) { // skip on-hour lines (drawn above)
+                            drawLine(faint, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                        }
+                        i++
+                        y += stepPx
+                    }
+                },
+            )
         }
 
         // PRD §8 contextual menu, anchored at the right-click position. Edit/Remove for a block,

@@ -12,6 +12,8 @@ import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.PanelSlice
 import org.example.project.ui.PlacedRecord
+import androidx.compose.ui.unit.dp
+import org.example.project.ui.calendarTickMinutes
 import org.example.project.ui.overlapLayout
 import org.example.project.ui.recordsForDay
 import org.example.project.ui.zoomAnchoredScroll
@@ -142,5 +144,26 @@ class OverlapLayoutTest {
         assertEquals(1060, zoomAnchoredScroll(480, 100f, 2f))
         // Never scrolls above the top.
         assertEquals(0, zoomAnchoredScroll(0, 100f, 0.5f))
+    }
+
+    @Test
+    fun graduation_gets_finer_as_the_row_height_grows() {
+        // PRD §8: 60 → 30 → 15 → 10 → 5 → 1 minute ticks, the finest whose tick is still tall enough.
+        assertEquals(60, calendarTickMinutes(48.dp)) // default zoom → hourly
+        assertEquals(60, calendarTickMinutes(24.dp)) // zoomed out / cramped → still hourly (fallback)
+        assertEquals(30, calendarTickMinutes(96.dp)) // 2× → half-hours
+        assertEquals(15, calendarTickMinutes(144.dp)) // 3× → quarter-hours
+        assertEquals(10, calendarTickMinutes(192.dp)) // 4×
+        assertEquals(5, calendarTickMinutes(384.dp)) // 8×
+        assertEquals(1, calendarTickMinutes(1560.dp)) // very tall rows (60×26dp) → minute ticks
+        // Monotonic: a taller row never yields a coarser graduation.
+        var prev = 60
+        var h = 24
+        while (h <= 2000) {
+            val t = calendarTickMinutes(h.dp)
+            assertTrue(t <= prev, "graduation got coarser at ${h}dp: $t after $prev")
+            prev = t
+            h += 8
+        }
     }
 }
