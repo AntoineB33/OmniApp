@@ -687,4 +687,45 @@ class SchedulerCalendarTest {
         assertEquals(start + 20 * MIN, long.sideTasks[0].lastRestMillis)
         assertEquals(start + 20 * MIN, long.sideTasks[1].lastRestMillis)
     }
+
+    @Test
+    fun an_overdue_rest_pause_tracks_the_now_line_on_refill_without_overlapping_the_task() {
+        // PRD §15: an overdue rest pause must follow `now` (so an accelerated clock can't strand it) — this
+        // happens on each refill (the §15 keep-up tick refills while a pause is due). Crucially the task is
+        // re-split around the pause's NEW position, so the pause never overlaps the task fill.
+        val (s0, _, _) = stateWithTwoTasks()
+        val start = 1_000_000_000_000L
+        val s = s0.copy(
+            sideTasks = listOf(org.example.project.scheduler.model.SideTask("5min", 60 * MIN, 5 * MIN, restBreak = true)),
+        )
+
+        val t1 = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(start))
+        val pause1 = t1.panels.single { SchedulerDomain.isRestBreakPanel(it) }
+        assertEquals(start, pause1.startEpochMillis)
+        assertEquals(start + 5 * MIN, pause1.endEpochMillis)
+
+        // The clock jumps forward 12 min: a refill re-places the pause at the new now and re-splits the task.
+        val t2 = SchedulerReducer.reduce(t1, SchedulerIntent.RefreshSchedule(start + 12 * MIN))
+        val pause2 = t2.panels.single { SchedulerDomain.isRestBreakPanel(it) }
+        assertEquals(start + 12 * MIN, pause2.startEpochMillis)
+        assertEquals(start + 17 * MIN, pause2.endEpochMillis)
+        // No task panel overlaps the pause's region — the fill leaves it a clean place (PRD §15).
+        assertTrue(
+            t2.panels.none {
+                !SchedulerDomain.isRestBreakPanel(it) && it.taskId != null &&
+                    it.startEpochMillis < pause2.endEpochMillis && pause2.startEpochMillis < it.endEpochMillis
+            },
+        )
+
+        // Once the user rests it away (recent enough), the next refill drops the marker entirely.
+        val rested = t2.copy(
+            sideTasks = listOf(
+                org.example.project.scheduler.model.SideTask(
+                    "5min", 60 * MIN, 5 * MIN, restBreak = true, lastRestMillis = start + 12 * MIN,
+                ),
+            ),
+        )
+        val t3 = SchedulerReducer.reduce(rested, SchedulerIntent.RefreshSchedule(start + 13 * MIN))
+        assertTrue(t3.panels.none { SchedulerDomain.isRestBreakPanel(it) })
+    }
 }

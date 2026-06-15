@@ -155,7 +155,7 @@ data class CalendarRecord(
     val reminder: Boolean = false,
     /** PRD §14 Reminders: whether this reminder tag has been checked off (done). */
     val checked: Boolean = false,
-    /** PRD §15 Side tasks: a periodic side task, drawn as a fixed-height marker (its real duration is tiny). */
+    /** PRD §15 Side tasks: a periodic side task, drawn as a time-positioned band spanning its real duration. */
     val sideTask: Boolean = false,
 )
 
@@ -177,7 +177,7 @@ data class PlacedRecord(
     val reminder: Boolean = false,
     /** PRD §14 Reminders: whether this reminder tag has been checked off (done). */
     val checked: Boolean = false,
-    /** PRD §15 Side tasks: a periodic side task rendered as a fixed-height marker at [startHour]. */
+    /** PRD §15 Side tasks: a periodic side task rendered as a time-positioned band over [startHour, endHour]. */
     val sideTask: Boolean = false,
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
@@ -200,8 +200,9 @@ fun recordsForDay(
         if (start.date > day || end.date < day) return@mapNotNull null
         val startHour = if (start.date < day) 0f else start.hour + start.minute / 60f
         val endHour = if (end.date > day) 24f else end.hour + end.minute / 60f
-        // PRD §14/§15: reminders (zero-duration) and side tasks (sub-minute durations) render as fixed-
-        // height markers, so keep them even though the block path below would drop a ~zero-height period.
+        // PRD §14/§15: reminders (zero-duration) render as fixed-height tags and side tasks (down to sub-
+        // minute durations) as min-height bands, so keep them even though the block path would drop a
+        // ~zero-height period.
         if (!record.reminder && !record.sideTask && endHour <= startHour) return@mapNotNull null
         PlacedRecord(
             title = record.title,
@@ -1513,13 +1514,24 @@ private fun DayColumn(
             }
         }
 
-        // PRD §15 Side tasks: drawn as fixed-height markers at their scheduled time (their real duration —
-        // e.g. 20 seconds — is far too small to render to scale). Side tasks that coincide (e.g. the 20-min
-        // look-away, the hourly pose and the 2-hourly pose all firing on the hour) are stacked downward so
-        // each stays legible instead of overlapping.
-        sideTaskMarkers.groupBy { it.startHour }.forEach { (startHour, group) ->
-            group.forEachIndexed { i, marker ->
-                SideTaskMarker(marker, Modifier.offset(y = hourHeight * startHour + SIDE_TASK_MARKER_HEIGHT * i))
+        // PRD §15 Side tasks: drawn as real time-positioned bands spanning their true duration, so the §9
+        // fill leaves an exact gap for each one (no overlap with the surrounding task, no stray white where
+        // a multi-minute rest pause sits). A sub-minute look-away therefore renders as a hairline; the 5/15-
+        // min rest pauses fill their region. A small minimum height keeps even a hairline visible/hoverable.
+        // Coinciding side tasks (e.g. the hourly and 2-hourly pose both due now) share the column width side
+        // by side via [overlapLayout], exactly like overlapping task blocks.
+        if (sideTaskMarkers.isNotEmpty()) {
+            val sideLayout = overlapLayout(sideTaskMarkers)
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val colWidth = maxWidth
+                sideTaskMarkers.forEach { marker ->
+                    val key = calendarBlockKey(marker)
+                    val slices = sideLayout[key]
+                        ?: listOf(PanelSlice(marker.startHour, marker.endHour, xFraction = 0f, widthFraction = 1f))
+                    slices.forEach { slice ->
+                        SideTaskBand(marker, slice, hourHeight, colWidth)
+                    }
+                }
             }
         }
     }
@@ -1528,37 +1540,53 @@ private fun DayColumn(
 /** PRD §14: a reminder rendered as a small checkable chip on the calendar (not a draggable block). */
 private val REMINDER_TAG_HEIGHT = 18.dp
 
-/** PRD §15: a side task rendered as a small fixed-height marker (its real spanning time is sub-minute). */
-private val SIDE_TASK_MARKER_HEIGHT = 16.dp
+/** PRD §15: smallest rendered height for a side-task band, so a sub-minute look-away stays a visible hairline. */
+private val SIDE_TASK_MIN_HEIGHT = 3.dp
 
+/** PRD §15: a side-task band only draws its title (●/name) once it is at least this tall; shorter ones are bare. */
+private val SIDE_TASK_LABEL_MIN_HEIGHT = 13.dp
+
+/**
+ * PRD §15 Side task, rendered as a real time-positioned band (one [overlapLayout] slice of it) spanning its
+ * true duration so the §9 fill leaves an exact gap for it. Sub-minute side tasks render at [SIDE_TASK_MIN_HEIGHT]
+ * (a hairline); the title is drawn only when the band is tall enough ([SIDE_TASK_LABEL_MIN_HEIGHT]). The full
+ * name always shows on hover (PRD §8), anchored at the cursor so zoom never floats the bubble off-screen.
+ */
 @Composable
-private fun SideTaskMarker(marker: PlacedRecord, modifier: Modifier = Modifier) {
-    // PRD §8/§15: like a task block, hovering the (short, often title-truncated) marker shows its full name,
-    // anchored at the cursor (so zoom never floats the bubble off-screen above the marker).
-    CalendarHoverTooltip(marker.title, modifier) {
+private fun SideTaskBand(marker: PlacedRecord, slice: PanelSlice, hourHeight: Dp, colWidth: Dp) {
+    val height = (hourHeight * (slice.bottomHour - slice.topHour)).coerceAtLeast(SIDE_TASK_MIN_HEIGHT)
+    val showLabel = height >= SIDE_TASK_LABEL_MIN_HEIGHT
+    CalendarHoverTooltip(
+        marker.title,
+        Modifier
+            .offset(x = colWidth * slice.xFraction, y = hourHeight * slice.topHour)
+            .width(colWidth * slice.widthFraction),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(SIDE_TASK_MARKER_HEIGHT)
-                .padding(horizontal = 2.dp)
+                .height(height)
+                .padding(horizontal = 1.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .background(CalColors.accent.copy(alpha = 0.55f))
-                .padding(horizontal = 4.dp),
+                .background(CalColors.accent)
+                .then(if (showLabel) Modifier.padding(horizontal = 4.dp) else Modifier),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(
-                text = "●",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White,
-            )
-            Text(
-                text = marker.title,
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White,
-                maxLines = 1,
-                modifier = Modifier.weight(1f),
-            )
+            if (showLabel) {
+                Text(
+                    text = "●",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                )
+                Text(
+                    text = marker.title,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }

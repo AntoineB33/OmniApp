@@ -846,6 +846,13 @@ object SchedulerDomain {
     fun isRestBreakDue(sideTask: SideTask, nowMillis: Long): Boolean =
         sideTask.lastRestMillis <= 0L || nowMillis - sideTask.lastRestMillis > sideTask.intervalMillis
 
+    /** PRD §15: id prefix of a rest-pause side panel ([restBreakPanels]) — used to re-place them at the now-line. */
+    const val REST_BREAK_PANEL_ID_PREFIX: String = "side/rest/"
+
+    /** True for a rest-pause side panel (the now-anchored 5/15-min pauses), vs a grid cadence side panel. */
+    fun isRestBreakPanel(panel: TaskPanel): Boolean =
+        panel.sideTask && panel.id.startsWith(REST_BREAK_PANEL_ID_PREFIX)
+
     /**
      * PRD §15 rest pauses: a `[now, now + duration]` side panel for each overdue rest-break ([isRestBreakDue]),
      * scheduled right now so the user takes the pause. Satisfied (recent enough) pauses produce nothing.
@@ -856,7 +863,7 @@ object SchedulerDomain {
             .filter { (_, t) -> t.restBreak && t.durationMillis > 0 && t.title.isNotBlank() && isRestBreakDue(t, nowMillis) }
             .map { (i, t) ->
                 TaskPanel(
-                    id = "side/rest/$i",
+                    id = "$REST_BREAK_PANEL_ID_PREFIX$i",
                     taskId = null,
                     title = t.title,
                     startEpochMillis = nowMillis,

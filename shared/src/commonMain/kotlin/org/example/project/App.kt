@@ -68,9 +68,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         val tz = remember { TimeZone.currentSystemDefault() }
 
         // PRD §9: the frequent tick — advance "now" and the schedule, recording any completed panel so
-        // the next panel becomes the current "task to do now". This does NOT refill the window (that is
-        // the §9 calculation events below); it only advances. Ticks every second under time simulation
-        // so accelerated time shows promptly; otherwise the production 30s cadence.
+        // the next panel becomes the current "task to do now". Ticks every second under time simulation so
+        // accelerated time shows promptly; otherwise the production 30s cadence.
         var nowMillis by remember { mutableStateOf(clock.nowMillis()) }
         LaunchedEffect(clock) {
             val interval: Long = if (DebugFlags.TIME_SIMULATION) 1_000 else 30_000
@@ -91,7 +90,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                 lastRealTick = realNow
                 lastClockTick = now
                 nowMillis = now
-                vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
+                // PRD §15: a due rest pause ("take a 5/15-min pause") must sit at the now-line and split the
+                // surrounding task around it. That placement only happens in a full refill, so while a rest
+                // pause is due we refill each tick (it re-splits cleanly and is a no-op when nothing moved) —
+                // this is what keeps the pause tracking `now` under accelerated time. Otherwise we only
+                // advance (the cheaper tick): the window refill is left to the §9 calculation events below.
+                val current = vm.state.value
+                val restPauseDue =
+                    current.automaticSchedule &&
+                        SchedulerDomain.restBreakPanels(current.sideTasks, now).isNotEmpty()
+                if (restPauseDue) {
+                    vm.dispatch(SchedulerIntent.RefreshSchedule(now))
+                } else {
+                    vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
+                }
                 delay(interval)
             }
         }
