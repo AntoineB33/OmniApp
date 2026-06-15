@@ -86,6 +86,8 @@ import kotlin.math.roundToInt
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -1026,12 +1028,18 @@ private fun WeekView(
     // around) and the viewport height (the fallback focal — its centre — for keyboard zoom with no cursor).
     var focalYpx by remember { mutableStateOf<Float?>(null) }
     var viewportHpx by remember { mutableStateOf(0f) }
+    // PRD §8: serialize zoom steps. A fast wheel/keyboard burst launches several applyZoom coroutines; if
+    // they interleaved, each would read a `scrollState.value`/`zoom` that doesn't yet reflect the others'
+    // pending scrollTo while `zoom` had already jumped several steps, so the final scroll would be computed
+    // for a smaller zoom than actually applied and the anchored point would jump (teleport up). The lock
+    // makes each step read settled state and apply its own scrollTo before the next begins.
+    val zoomMutex = remember { Mutex() }
     // Apply a zoom [factor] keeping the time at [focal] (px from the viewport top) under that same pixel:
     // the content offset there is `scroll + focal`; after scaling it becomes `(scroll + focal) * f`, so the
     // new scroll that puts it back under `focal` is `(scroll + focal) * f - focal`.
-    suspend fun applyZoom(factor: Float, focal: Float) {
+    suspend fun applyZoom(factor: Float, focal: Float) = zoomMutex.withLock {
         val next = (zoom * factor).coerceIn(MIN_CALENDAR_ZOOM, MAX_CALENDAR_ZOOM)
-        if (next == zoom) return
+        if (next == zoom) return@withLock
         val f = next / zoom
         val target = zoomAnchoredScroll(scrollState.value, focal, f)
         zoom = next
