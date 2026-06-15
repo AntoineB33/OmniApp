@@ -1578,6 +1578,8 @@ private fun CalendarHoverTooltip(
 ) {
     TooltipArea(
         modifier = modifier,
+        // Show the bubble the instant the pointer is over the block (no hover dwell delay).
+        delayMillis = 0,
         tooltip = {
             Surface(
                 color = MaterialTheme.colorScheme.inverseSurface,
