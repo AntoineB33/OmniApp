@@ -308,13 +308,40 @@ class SchedulerSchedulerTest {
     // ----- §15 Side tasks --------------------------------------------------------------------
 
     @Test
-    fun side_task_panels_recur_on_an_epoch_aligned_grid_with_real_duration() {
+    fun side_task_panels_recur_on_the_anchor_grid_with_real_duration() {
         val sides = listOf(SideTask("Eyes", intervalMillis = 60 * MIN, durationMillis = 5 * MIN))
-        val panels = SchedulerDomain.sideTaskPanels(sides, fromMillis = 0L, toMillis = 180 * MIN)
+        // anchor 0 → the midnight/epoch grid (occurrences at multiples of the interval).
+        val panels = SchedulerDomain.sideTaskPanels(sides, anchorMillis = 0L, fromMillis = 0L, toMillis = 180 * MIN)
 
         assertEquals(listOf(0L, 60 * MIN, 120 * MIN, 180 * MIN), panels.map { it.startEpochMillis })
         assertTrue(panels.all { it.sideTask && it.taskId == null && it.title == "Eyes" })
         assertTrue(panels.all { it.endEpochMillis - it.startEpochMillis == 5 * MIN }) // real spanning time
+    }
+
+    @Test
+    fun side_task_cadence_runs_on_the_wake_grid_not_the_clock_grid() {
+        // PRD §15: side tasks count from the last wake after a long sleep. A wake 7 min off any 20-min
+        // boundary makes the look-aways land on the wake's grid (wake+20, wake+40, …), not at :00/:20/:40.
+        val sides = listOf(SideTask("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L))
+        val wake = 100_000_000_000L + 7 * MIN
+        val panels = SchedulerDomain.sideTaskPanels(sides, anchorMillis = wake, fromMillis = wake + 1, toMillis = wake + 50 * MIN)
+
+        // Fires 20 min after the wake, then every 20 min — anchored to the wake, not the clock.
+        assertEquals(listOf(wake + 20 * MIN, wake + 40 * MIN), panels.map { it.startEpochMillis })
+    }
+
+    @Test
+    fun fill_schedule_anchors_side_tasks_at_the_state_anchor() {
+        val (s0, _) = stateWithOneTask(45)
+        val now = 1_000_000_000_000L
+        val anchor = now - 7 * MIN // the user woke 7 min ago → 20-min look-away grid is wake, wake+20, …
+        val s = s0.copy(
+            sideTasks = listOf(SideTask("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L)),
+            sideTaskAnchorMillis = anchor,
+        )
+        val firstSide = SchedulerDomain.fillSchedule(s, now).filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
+        // First grid point at/after now: (now-7) + 20 = now+13 min (anchored to the wake, not the clock).
+        assertEquals(now + 13 * MIN, firstSide.startEpochMillis)
     }
 
     @Test
@@ -335,6 +362,69 @@ class SchedulerSchedulerTest {
         // PRD §15: side tasks are a hardcoded set, seeded into the live state (not into bare test states).
         val seeded = TaskSchedulerViewModel.loadInitialState(store = null, initial = SchedulerState.empty())
         assertEquals(SchedulerDomain.DEFAULT_SIDE_TASKS, seeded.sideTasks)
+    }
+
+    @Test
+    fun a_rest_break_is_overdue_only_when_no_qualifying_rest_within_its_interval() {
+        // PRD §15: a 5-min rest pause (1h interval) is due when the user hasn't rested within the hour.
+        val pause = SideTask("Pause", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true)
+        val now = 1_000_000_000_000L
+
+        assertTrue(SchedulerDomain.isRestBreakDue(pause, now)) // never rested (lastRestMillis == 0) → overdue
+        assertTrue(SchedulerDomain.isRestBreakDue(pause.copy(lastRestMillis = now - 61 * MIN), now)) // > 1h ago
+        assertFalse(SchedulerDomain.isRestBreakDue(pause.copy(lastRestMillis = now - 59 * MIN), now)) // rested 59m ago
+    }
+
+    @Test
+    fun rest_break_panels_schedule_only_overdue_pauses_at_now() {
+        // PRD §15: an overdue rest pause is placed at [now, now+duration]; a recently-rested one is omitted.
+        val now = 1_000_000_000_000L
+        val sides = listOf(
+            SideTask("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now - 90 * MIN),
+            SideTask("15min", intervalMillis = 2 * 60 * MIN, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = now - 30 * MIN),
+        )
+        val panels = SchedulerDomain.restBreakPanels(sides, now)
+
+        // Only the 5-min pause is overdue (90 min > 1h); the 15-min one rested 30 min ago (< 2h) is omitted.
+        assertEquals(1, panels.size)
+        assertEquals("5min", panels[0].title)
+        assertEquals(now, panels[0].startEpochMillis)
+        assertEquals(now + 5 * MIN, panels[0].endEpochMillis)
+        assertTrue(panels[0].sideTask && panels[0].taskId == null)
+    }
+
+    @Test
+    fun fill_schedule_places_an_overdue_rest_pause_at_now() {
+        // PRD §15: an overdue rest pause becomes a side panel at `now`, splitting the current task around it.
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val s = s0.copy(
+            sideTasks = listOf(
+                SideTask("Pause", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true),
+            ),
+        )
+        val panels = SchedulerDomain.fillSchedule(s, now)
+        val side = panels.single { it.sideTask }
+        assertEquals(now, side.startEpochMillis)
+        assertEquals(now + 5 * MIN, side.endEpochMillis)
+        // A resumes right after the pause and still gets its full 45 min (the pause is not charged to it):
+        // its first chunk runs [now+5, now+50], so the 5-min pause is not deducted from the minimum.
+        val firstA = panels.filter { it.auto && it.taskId == a }.minByOrNull { it.startEpochMillis }!!
+        assertEquals(now + 5 * MIN, firstA.startEpochMillis)
+        assertEquals(now + 50 * MIN, firstA.endEpochMillis)
+    }
+
+    @Test
+    fun fill_schedule_omits_a_recently_rested_pause() {
+        // PRD §15: a rest pause the user rested within its interval is not scheduled at all.
+        val (s0, _, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val s = s0.copy(
+            sideTasks = listOf(
+                SideTask("Pause", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now - 10 * MIN),
+            ),
+        )
+        assertTrue(SchedulerDomain.fillSchedule(s, now).none { it.sideTask })
     }
 
     @Test

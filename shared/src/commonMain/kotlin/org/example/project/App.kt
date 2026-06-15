@@ -16,7 +16,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.time.Instant
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
@@ -28,6 +30,7 @@ import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
+import org.example.project.scheduler.platform.lastWakeAfterLongSleepMillis
 import org.example.project.scheduler.platform.sendSystemNotification
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.ui.TaskSchedulerScreen
@@ -90,6 +93,39 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                 nowMillis = now
                 vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
                 delay(interval)
+            }
+        }
+
+        // PRD §15: at launch, read the OS sleep history off the UI thread to (a) anchor the cadence
+        // micro-breaks at the last wake after a long (≥15 min) sleep, and (b) seed each rest pause's
+        // last-rest time from the last device sleep that was at least as long as that pause — so a pause
+        // the user already rested away (slept through) is not shown overdue. The in-session updates are
+        // handled by ReportDeviceSleep in the tick loop above.
+        LaunchedEffect(Unit) {
+            val before = vm.state.value.sideTasks
+            val (wake, restedTasks) = withContext(Dispatchers.Default) {
+                val w = lastWakeAfterLongSleepMillis(SchedulerDomain.SIDE_TASK_RESET_SLEEP_MILLIS)
+                val tasks = before.map { side ->
+                    if (!side.restBreak || side.durationMillis <= 0) {
+                        side
+                    } else {
+                        val lastRest = lastWakeAfterLongSleepMillis(side.durationMillis)
+                        if (lastRest != null) side.copy(lastRestMillis = lastRest) else side
+                    }
+                }
+                w to tasks
+            }
+            var changed = false
+            if (wake != null) {
+                vm.dispatch(SchedulerIntent.SetSideTaskAnchor(wake))
+                changed = true
+            }
+            if (restedTasks != before) {
+                vm.dispatch(SchedulerIntent.SetSideTasks(restedTasks))
+                changed = true
+            }
+            if (changed) {
+                vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
             }
         }
 

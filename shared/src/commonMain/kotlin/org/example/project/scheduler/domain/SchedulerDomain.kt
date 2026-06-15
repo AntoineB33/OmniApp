@@ -831,23 +831,65 @@ object SchedulerDomain {
      * spanning time. The §9 fill weaves them in without letting them reduce the surrounding task's minimum.
      */
     val DEFAULT_SIDE_TASKS: List<SideTask> = listOf(
+        // The 20-20-20 micro-break: cadence (laid on the wake-anchored grid).
         SideTask("look 20 feet away", intervalMillis = 20L * 60_000, durationMillis = 20L * 1_000),
-        SideTask("take a 5min pose and blink hard", intervalMillis = 60L * 60_000, durationMillis = 5L * 60_000),
-        SideTask("take a 15min pose", intervalMillis = 2L * 60L * 60_000, durationMillis = 15L * 60_000),
+        // The rest pauses: due `now` only when overdue per the device sleep history (PRD §15).
+        SideTask("take a 5min pose and blink hard", intervalMillis = 60L * 60_000, durationMillis = 5L * 60_000, restBreak = true),
+        SideTask("take a 15min pose", intervalMillis = 2L * 60L * 60_000, durationMillis = 15L * 60_000, restBreak = true),
     )
 
     /**
-     * PRD §15: materialize [sideTasks] into fixed obstacle panels covering `[fromMillis, toMillis]`. Each
-     * side task recurs on an **epoch-aligned grid** (occurrences at multiples of its interval, so the
-     * cadence never drifts across reschedules), each a `[t, t + duration]` block with `sideTask = true`, a
-     * null taskId, and a deterministic `side/{i}/{t}` id. Zero/negative intervals or durations are skipped.
+     * PRD §15 rest pause: whether a rest-break side task is *overdue* at [nowMillis] — the user has not taken
+     * a qualifying rest (a device sleep ≥ its duration) within its interval, so the pause should be scheduled
+     * now. A never-rested (`lastRestMillis == 0`) pause is overdue.
      */
-    fun sideTaskPanels(sideTasks: List<SideTask>, fromMillis: Long, toMillis: Long): List<TaskPanel> {
+    fun isRestBreakDue(sideTask: SideTask, nowMillis: Long): Boolean =
+        sideTask.lastRestMillis <= 0L || nowMillis - sideTask.lastRestMillis > sideTask.intervalMillis
+
+    /**
+     * PRD §15 rest pauses: a `[now, now + duration]` side panel for each overdue rest-break ([isRestBreakDue]),
+     * scheduled right now so the user takes the pause. Satisfied (recent enough) pauses produce nothing.
+     * Deterministic `side/rest/{i}` ids. Invalid (blank/zero-duration) rows are skipped.
+     */
+    fun restBreakPanels(sideTasks: List<SideTask>, nowMillis: Long): List<TaskPanel> =
+        sideTasks.withIndex()
+            .filter { (_, t) -> t.restBreak && t.durationMillis > 0 && t.title.isNotBlank() && isRestBreakDue(t, nowMillis) }
+            .map { (i, t) ->
+                TaskPanel(
+                    id = "side/rest/$i",
+                    taskId = null,
+                    title = t.title,
+                    startEpochMillis = nowMillis,
+                    endEpochMillis = nowMillis + t.durationMillis,
+                    pinned = false,
+                    auto = false,
+                    sideTask = true,
+                )
+            }
+
+    /** PRD §15: a sleep at least this long (15 min) restarts the side-task cadence at the following wake. */
+    const val SIDE_TASK_RESET_SLEEP_MILLIS: Long = 15L * 60_000
+
+    /**
+     * PRD §15: materialize [sideTasks] into fixed obstacle panels covering `[fromMillis, toMillis]`. Each
+     * side task recurs on a grid **anchored at [anchorMillis]** — the last wake after a long sleep (so the
+     * cadence restarts when the user returns to the machine); with `anchorMillis = 0` this is the
+     * epoch/midnight grid. Occurrences land at `anchor + k·interval`, each a `[t, t + duration]` block with
+     * `sideTask = true`, a null taskId, and a deterministic `side/{i}/{t}` id. Invalid rows are skipped.
+     */
+    fun sideTaskPanels(
+        sideTasks: List<SideTask>,
+        anchorMillis: Long,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<TaskPanel> {
         val result = mutableListOf<TaskPanel>()
         sideTasks.forEachIndexed { index, side ->
+            if (side.restBreak) return@forEachIndexed // rest pauses are due-now, not grid — see restBreakPanels
             if (side.intervalMillis <= 0 || side.durationMillis <= 0 || side.title.isBlank()) return@forEachIndexed
-            // First occurrence on the grid at or after `from`.
-            var t = ((fromMillis + side.intervalMillis - 1) / side.intervalMillis) * side.intervalMillis
+            // Smallest k with anchor + k·interval ≥ from (k may be negative when `from` precedes the anchor).
+            val k = (fromMillis - anchorMillis + side.intervalMillis - 1).floorDiv(side.intervalMillis)
+            var t = anchorMillis + k * side.intervalMillis
             while (t <= toMillis) {
                 result.add(
                     TaskPanel(
@@ -997,7 +1039,11 @@ object SchedulerDomain {
         }
         val leaves = schedulableLeaves(state)
         // PRD §15: side tasks materialize regardless of whether there are leaf tasks to fill around them.
-        val sidePanels = sideTaskPanels(state.sideTasks, nowMillis, horizon)
+        // Cadence micro-breaks recur on the wake-anchored grid ([SchedulerState.sideTaskAnchorMillis]; 0 =
+        // grid); rest pauses appear at `now` only when overdue per the device sleep history.
+        val sidePanels =
+            sideTaskPanels(state.sideTasks, state.sideTaskAnchorMillis, nowMillis, horizon) +
+                restBreakPanels(state.sideTasks, nowMillis)
         if (leaves.isEmpty()) return (kept + sidePanels).sortedBy { it.startEpochMillis }
 
         val priorities = absoluteTaskPriorities(state)

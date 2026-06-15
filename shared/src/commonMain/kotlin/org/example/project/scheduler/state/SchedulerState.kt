@@ -137,6 +137,12 @@ data class SchedulerState(
      * scheduler tests that assert exact schedules see no side tasks unless they opt in.
      */
     val sideTasks: List<org.example.project.scheduler.model.SideTask> = emptyList(),
+    /**
+     * PRD §15 cadence anchor: epoch millis of the last wake after a sleep ≥ 15 min — side tasks recur from
+     * here (so the cadence restarts when the user returns). 0 means "unknown", falling back to the grid.
+     * Session/persisted state (re-seeded from the OS sleep history on launch), not part of the tree history.
+     */
+    val sideTaskAnchorMillis: Long = 0L,
 ) {
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots
     // (capture) and re-attached from the live tasks on restore (applyTree). Undo/Redo therefore

@@ -651,4 +651,40 @@ class SchedulerCalendarTest {
         assertTrue(after.panels.isEmpty())
         assertEquals(s0.tasks, after.tasks)
     }
+
+    @Test
+    fun a_long_sleep_resets_the_side_task_anchor_to_the_wake() {
+        // PRD §15: a sleep ≥ 15 min restarts the side-task cadence at the wake time; a shorter one doesn't.
+        val (s0, _, _) = stateWithTwoTasks()
+        val start = 1_000_000_000_000L
+
+        val longSleep = SchedulerReducer.reduce(s0, SchedulerIntent.ReportDeviceSleep(start, start + 30 * MIN))
+        assertEquals(start + 30 * MIN, longSleep.sideTaskAnchorMillis) // re-anchored at the wake
+
+        val shortSleep = SchedulerReducer.reduce(s0, SchedulerIntent.ReportDeviceSleep(start, start + 5 * MIN))
+        assertEquals(s0.sideTaskAnchorMillis, shortSleep.sideTaskAnchorMillis) // unchanged (< 15 min)
+    }
+
+    @Test
+    fun a_device_sleep_counts_as_taking_every_rest_pause_it_covers() {
+        // PRD §15: a device sleep is the user resting — it satisfies every rest pause whose duration it
+        // covers (a long sleep clears the shorter pauses too), recording the wake as their last rest.
+        val (s0, _, _) = stateWithTwoTasks()
+        val sides = listOf(
+            org.example.project.scheduler.model.SideTask("5min", 60 * MIN, 5 * MIN, restBreak = true),
+            org.example.project.scheduler.model.SideTask("15min", 2 * HOUR, 15 * MIN, restBreak = true),
+        )
+        val start = 1_000_000_000_000L
+        val s = s0.copy(sideTasks = sides)
+
+        // A 10-min sleep covers the 5-min pause but not the 15-min one.
+        val short = SchedulerReducer.reduce(s, SchedulerIntent.ReportDeviceSleep(start, start + 10 * MIN))
+        assertEquals(start + 10 * MIN, short.sideTasks[0].lastRestMillis) // 5-min pause satisfied
+        assertEquals(0L, short.sideTasks[1].lastRestMillis) // 15-min pause not (sleep too short)
+
+        // A 20-min sleep covers both.
+        val long = SchedulerReducer.reduce(s, SchedulerIntent.ReportDeviceSleep(start, start + 20 * MIN))
+        assertEquals(start + 20 * MIN, long.sideTasks[0].lastRestMillis)
+        assertEquals(start + 20 * MIN, long.sideTasks[1].lastRestMillis)
+    }
 }

@@ -73,6 +73,18 @@ data class SideTask(
     val title: String,
     val intervalMillis: Long,
     val durationMillis: Long,
+    /**
+     * PRD §15: when true this is a **rest pause** (the 5/15-min pauses) satisfied by a real device sleep of
+     * at least [durationMillis] — it is scheduled at `now` only when *overdue* (no qualifying rest within
+     * [intervalMillis]). When false it is a **cadence** micro-break (the look-away), laid on a recurring grid.
+     */
+    val restBreak: Boolean = false,
+    /**
+     * PRD §15 (rest pauses only): epoch millis of the most recent qualifying rest (a device sleep ≥
+     * [durationMillis], from the OS sleep history), or 0 when none is known. The pause is overdue when
+     * `now - lastRestMillis` exceeds [intervalMillis] (0 counts as overdue).
+     */
+    val lastRestMillis: Long = 0L,
 )
 
 /**

@@ -1,6 +1,9 @@
 package org.example.project.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
+import androidx.compose.foundation.TooltipPlacement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,14 +36,10 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TooltipBox
-import androidx.compose.material3.TooltipDefaults
-import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -1534,30 +1533,68 @@ private val SIDE_TASK_MARKER_HEIGHT = 16.dp
 
 @Composable
 private fun SideTaskMarker(marker: PlacedRecord, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(SIDE_TASK_MARKER_HEIGHT)
-            .padding(horizontal = 2.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(CalColors.accent.copy(alpha = 0.55f))
-            .padding(horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Text(
-            text = "●",
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
-        )
-        Text(
-            text = marker.title,
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
-            maxLines = 1,
-            modifier = Modifier.weight(1f),
-        )
+    // PRD §8/§15: like a task block, hovering the (short, often title-truncated) marker shows its full name,
+    // anchored at the cursor (so zoom never floats the bubble off-screen above the marker).
+    CalendarHoverTooltip(marker.title, modifier) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(SIDE_TASK_MARKER_HEIGHT)
+                .padding(horizontal = 2.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(CalColors.accent.copy(alpha = 0.55f))
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = "●",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+            )
+            Text(
+                text = marker.title,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
+}
+
+/**
+ * A calendar hover tooltip that pops a small bubble with [text] **at the mouse cursor** (foundation
+ * [TooltipArea]), rather than anchored above the element's top edge like the Material3 [TooltipBox]. This
+ * keeps the bubble next to the pointer regardless of how tall the hovered block is when the user has zoomed
+ * the calendar in — anchoring to the top would otherwise float it far above (or off) the visible viewport.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CalendarHoverTooltip(
+    text: String,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    TooltipArea(
+        modifier = modifier,
+        tooltip = {
+            Surface(
+                color = MaterialTheme.colorScheme.inverseSurface,
+                contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                shape = RoundedCornerShape(4.dp),
+                shadowElevation = 4.dp,
+            ) {
+                Text(
+                    text = text.ifEmpty { "(untitled)" },
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+        },
+        tooltipPlacement = TooltipPlacement.CursorPoint(offset = DpOffset(0.dp, 16.dp)),
+        content = content,
+    )
 }
 
 @Composable
@@ -1737,11 +1774,9 @@ private fun CalendarBlock(
                         }
                     },
             ) {
-                TooltipBox(
-                    positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-                    tooltip = { PlainTooltip { Text(record.title.ifEmpty { "(untitled)" }) } },
-                    state = rememberTooltipState(),
-                ) {
+                // PRD §8: the title shows on hover. Anchored to the cursor (not the block's top) so a tall,
+                // zoomed-in block still pops its bubble right where the pointer is, not far above it.
+                CalendarHoverTooltip(record.title) {
                     // The title is written only on the topmost slice so a stepped block reads as one.
                     CalendarBlockBody(color, record.title, showTitle = isFirst)
                 }

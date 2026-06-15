@@ -146,6 +146,24 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §15 Side tasks: set the cadence anchor to [anchorMillis] — the last wake after a sleep ≥ 15 min,
+     * read from the OS sleep history at launch (the in-session reset on a long sleep is handled by
+     * [ReportDeviceSleep]). Side tasks then recur from this instant. Session state, not undoable.
+     */
+    data class SetSideTaskAnchor(
+        val anchorMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §15 Side tasks: replace the side-task list — used at launch to seed each rest pause's
+     * `lastRestMillis` from the OS sleep history (the last device rest ≥ its duration). Session state,
+     * not undoable.
+     */
+    data class SetSideTasks(
+        val sideTasks: List<org.example.project.scheduler.model.SideTask>,
+    ) : SchedulerIntent
+
+    /**
      * PRD §9 calculation event: regenerate the schedule against [nowMillis] — advance past any
      * completed panel, then refill the non-pinned panels out to +168h ([SchedulerDomain.fillSchedule]).
      * Dispatched by the debounced tree-change event and the deferred calendar timer. Gated by PRD §7:

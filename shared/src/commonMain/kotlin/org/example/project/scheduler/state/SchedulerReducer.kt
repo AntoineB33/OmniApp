@@ -40,6 +40,12 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state) { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis)
             is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked)
+            is SchedulerIntent.SetSideTaskAnchor ->
+                if (state.sideTaskAnchorMillis == intent.anchorMillis) state
+                else state.copy(sideTaskAnchorMillis = intent.anchorMillis)
+            is SchedulerIntent.SetSideTasks ->
+                if (state.sideTasks == intent.sideTasks) state
+                else state.copy(sideTasks = intent.sideTasks)
             is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
             is SchedulerIntent.AdvanceSchedule -> advanceSchedule(state, intent.nowMillis)
             is SchedulerIntent.SetAutomaticSchedule ->
@@ -1445,22 +1451,46 @@ private fun appendRecordMap(
  * stretch `[panel.start, sleepStart]` was real work → record it; the sleep window itself is left as a
  * hole (no record). All non-pinned auto panels (the cut one plus any tentative future ones) are
  * dropped so the wake-time [reduceRefreshSchedule] starts a fresh schedule after the sleep. Pinned and
- * user-authored panels are untouched. A no-op when no auto panel covers [sleepStart]. [sleepEnd] is
- * unused (the caller's wake-time refresh defines where the next period begins).
+ * user-authored panels are untouched.
+ *
+ * PRD §15: a sleep of at least [SchedulerDomain.SIDE_TASK_RESET_SLEEP_MILLIS] (15 min) also restarts the
+ * side-task cadence at the wake time [sleepEnd] (so the look-away/pose clocks reset when the user comes
+ * back). A short sleep, or one no auto panel covers, only updates the anchor where applicable.
  */
 private fun reduceReportDeviceSleep(
     state: SchedulerState,
     sleepStart: Long,
-    @Suppress("UNUSED_PARAMETER") sleepEnd: Long,
+    sleepEnd: Long,
 ): SchedulerState {
+    val sleepLength = sleepEnd - sleepStart
+    // §15 cadence reset: a long sleep re-anchors the cadence micro-breaks at the wake; short sleeps leave it.
+    val withAnchor =
+        if (sleepLength >= SchedulerDomain.SIDE_TASK_RESET_SLEEP_MILLIS) {
+            state.copy(sideTaskAnchorMillis = sleepEnd)
+        } else {
+            state
+        }
+    // §15 rest pauses: a device sleep counts as taking every rest pause whose duration it covers (a long
+    // sleep satisfies the shorter pauses too), so record [sleepEnd] as their last rest — clearing "overdue".
+    val restedSideTasks =
+        withAnchor.sideTasks.map { side ->
+            if (side.restBreak && side.durationMillis in 1..sleepLength && side.lastRestMillis < sleepEnd) {
+                side.copy(lastRestMillis = sleepEnd)
+            } else {
+                side
+            }
+        }
+    val base =
+        if (restedSideTasks == withAnchor.sideTasks) withAnchor
+        else withAnchor.copy(sideTasks = restedSideTasks)
     val current =
-        state.panels.firstOrNull {
+        base.panels.firstOrNull {
             it.auto && !it.pinned &&
                 it.startEpochMillis <= sleepStart && sleepStart < it.endEpochMillis
-        } ?: return state
-    val tasks = appendRecordMap(state.tasks, current.taskId, current.startEpochMillis, sleepStart)
-    val remaining = state.panels.filter { it.pinned || !it.auto }
-    return state.copy(tasks = tasks, panels = remaining)
+        } ?: return base
+    val tasks = appendRecordMap(base.tasks, current.taskId, current.startEpochMillis, sleepStart)
+    val remaining = base.panels.filter { it.pinned || !it.auto }
+    return base.copy(tasks = tasks, panels = remaining)
 }
 
 private fun applySetTaskMinimumTime(
