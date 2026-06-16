@@ -68,6 +68,8 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
+import androidx.compose.ui.input.pointer.isMetaPressed as pointerMetaPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -1134,13 +1136,18 @@ private fun WeekView(
                 .onSizeChanged { viewportHpx = it.height.toFloat() }
                 // PRD §8 zoom-to-cursor: track the cursor's Y in the viewport, and on Ctrl+scroll zoom
                 // toward it (consumed at the Initial pass so the grid doesn't also scroll). A plain wheel
-                // turn isn't consumed, so it falls through to the verticalScroll below.
+                // turn isn't consumed, so it falls through to the verticalScroll below. Ctrl is read from the
+                // scroll event's own keyboard modifiers (not the focus-tracked [ctrl]) so zoom works whenever
+                // the cursor is over the calendar — even if it doesn't hold keyboard focus. Pointer hit-testing
+                // means a panel drawn over the calendar receives the wheel instead, so it correctly "doesn't count".
                 .pointerInput(Unit) {
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
                             event.changes.firstOrNull()?.let { focalYpx = it.position.y }
-                            if (event.type == PointerEventType.Scroll && ctrl.value) {
+                            val zoomModifier = event.keyboardModifiers.pointerCtrlPressed ||
+                                event.keyboardModifiers.pointerMetaPressed || ctrl.value
+                            if (event.type == PointerEventType.Scroll && zoomModifier) {
                                 val change = event.changes.firstOrNull()
                                 val dy = change?.scrollDelta?.y ?: 0f
                                 if (dy != 0f) {
