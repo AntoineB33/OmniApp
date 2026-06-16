@@ -831,90 +831,134 @@ object SchedulerDomain {
      * spanning time. The §9 fill weaves them in without letting them reduce the surrounding task's minimum.
      */
     val DEFAULT_SIDE_TASKS: List<SideTask> = listOf(
-        // The 20-20-20 micro-break: cadence (laid on the wake-anchored grid).
+        // The 20-20-20 micro-break: after a ≥20-second pause, the next look-away is due 20 min later.
         SideTask("look 20 feet away", intervalMillis = 20L * 60_000, durationMillis = 20L * 1_000),
-        // The rest pauses: due `now` only when overdue per the device sleep history (PRD §15).
+        // The rest poses: after a pause of at least their length, the next one is due an interval later. The
+        // 5-min pose merges up into the 15-min pose when their windows would overlap (PRD §15).
         SideTask("take a 5min pose and blink hard", intervalMillis = 60L * 60_000, durationMillis = 5L * 60_000, restBreak = true),
         SideTask("take a 15min pose", intervalMillis = 2L * 60L * 60_000, durationMillis = 15L * 60_000, restBreak = true),
     )
 
-    /**
-     * PRD §15 rest pause: whether a rest-break side task is *overdue* at [nowMillis] — the user has not taken
-     * a qualifying rest (a device sleep ≥ its duration) within its interval, so the pause should be scheduled
-     * now. A never-rested (`lastRestMillis == 0`) pause is overdue.
-     */
-    fun isRestBreakDue(sideTask: SideTask, nowMillis: Long): Boolean =
-        sideTask.lastRestMillis <= 0L || nowMillis - sideTask.lastRestMillis > sideTask.intervalMillis
-
-    /** PRD §15: id prefix of a rest-pause side panel ([restBreakPanels]) — used to re-place them at the now-line. */
-    const val REST_BREAK_PANEL_ID_PREFIX: String = "side/rest/"
-
-    /** True for a rest-pause side panel (the now-anchored 5/15-min pauses), vs a grid cadence side panel. */
-    fun isRestBreakPanel(panel: TaskPanel): Boolean =
-        panel.sideTask && panel.id.startsWith(REST_BREAK_PANEL_ID_PREFIX)
+    /** A side task is schedulable when it has a positive interval, a positive duration, and a title. */
+    private fun isValidSideTask(side: SideTask): Boolean =
+        side.intervalMillis > 0 && side.durationMillis > 0 && side.title.isNotBlank()
 
     /**
-     * PRD §15 rest pauses: a `[now, now + duration]` side panel for each overdue rest-break ([isRestBreakDue]),
-     * scheduled right now so the user takes the pause. Satisfied (recent enough) pauses produce nothing.
-     * Deterministic `side/rest/{i}` ids. Invalid (blank/zero-duration) rows are skipped.
+     * PRD §15: the next-occurrence start for [side] at [nowMillis] — its due time `lastRest + interval` (an
+     * interval after the last qualifying pause **ended**), clamped forward to `now` once that time has passed
+     * without the pause being taken, so a missed side task sits at the now-line instead of drifting into the
+     * past. A never-rested task (`lastRestMillis == 0`) is therefore due immediately (at `now`).
      */
-    fun restBreakPanels(sideTasks: List<SideTask>, nowMillis: Long): List<TaskPanel> =
-        sideTasks.withIndex()
-            .filter { (_, t) -> t.restBreak && t.durationMillis > 0 && t.title.isNotBlank() && isRestBreakDue(t, nowMillis) }
-            .map { (i, t) ->
-                TaskPanel(
-                    id = "$REST_BREAK_PANEL_ID_PREFIX$i",
-                    taskId = null,
-                    title = t.title,
-                    startEpochMillis = nowMillis,
-                    endEpochMillis = nowMillis + t.durationMillis,
-                    pinned = false,
-                    auto = false,
-                    sideTask = true,
-                )
-            }
+    fun sideTaskNextStart(side: SideTask, nowMillis: Long): Long =
+        maxOf(side.lastRestMillis + side.intervalMillis, nowMillis)
 
-    /** PRD §15: a sleep at least this long (15 min) restarts the side-task cadence at the following wake. */
-    const val SIDE_TASK_RESET_SLEEP_MILLIS: Long = 15L * 60_000
+    /** PRD §15: true when [side] is overdue at [nowMillis] — its due time has passed, so it sits at `now`. */
+    fun isSideTaskOverdue(side: SideTask, nowMillis: Long): Boolean =
+        side.lastRestMillis + side.intervalMillis <= nowMillis
+
+    /** Safety cap on the side-task projection loop (far above the ~700 occurrences a week-long horizon holds). */
+    private const val SIDE_TASK_PROJECTION_LIMIT: Int = 200_000
 
     /**
-     * PRD §15: materialize [sideTasks] into fixed obstacle panels covering `[fromMillis, toMillis]`. Each
-     * side task recurs on a grid **anchored at [anchorMillis]** — the last wake after a long sleep (so the
-     * cadence restarts when the user returns to the machine); with `anchorMillis = 0` this is the
-     * epoch/midnight grid. Occurrences land at `anchor + k·interval`, each a `[t, t + duration]` block with
-     * `sideTask = true`, a null taskId, and a deterministic `side/{i}/{t}` id. Invalid rows are skipped.
+     * PRD §15: project [sideTasks] forward from [nowMillis] to the scheduling horizon (`now +
+     * [SCHEDULE_HORIZON_MILLIS]`, ≈ the focused week ahead) as obstacle panels, interleaving the three
+     * recurrences and resolving their overlaps. Each panel has `sideTask = true`, a null taskId, and a
+     * deterministic `side/{index}/{start}` id; invalid rows are skipped.
+     *
+     * The simulation walks occurrences in time order (ties resolved toward the **longer** pause so a
+     * coincident bigger pause is placed first), applying:
+     * - **Recurrence:** a rest pose ([SideTask.restBreak]) recurs an interval after it *ends*
+     *   (`start + duration + interval`); the cadence look-away recurs an interval after it *starts*
+     *   (`start + interval`).
+     * - **Initial overdue resolution:** when a pause is taken at/under `now`, every smaller pause that is also
+     *   overdue is re-anchored to `thisPauseEnd + itsInterval` (so e.g. the look-away restarts 20 min after
+     *   the first pose ends, rather than stacking at the now-line).
+     * - **Absorption:** an occurrence whose window falls inside an already-placed longer pause is skipped
+     *   (taking the longer pause covers it) but still advances its own clock.
+     * - **5 → 15 merge:** when the 5-min pose comes due just before the 15-min pose (its window would overlap
+     *   the still-future 15-min pose), it **becomes** a 15-min pose at its own start and the 15-min pose is
+     *   pushed to an interval after the merged pause ends (`mergedEnd + 2 h` = 2h15 after the 5-min start).
      */
-    fun sideTaskPanels(
-        sideTasks: List<SideTask>,
-        anchorMillis: Long,
-        fromMillis: Long,
-        toMillis: Long,
-    ): List<TaskPanel> {
+    fun sideTaskPanels(sideTasks: List<SideTask>, nowMillis: Long): List<TaskPanel> {
+        val horizon = nowMillis + SCHEDULE_HORIZON_MILLIS
+        val valid = sideTasks.withIndex().filter { isValidSideTask(it.value) }
+        if (valid.isEmpty()) return emptyList()
+        // The two rest poses (restBreak), shortest first, drive the 5↔15 merge.
+        val poses = valid.filter { it.value.restBreak }.sortedBy { it.value.durationMillis }
+        val shorterIndex = poses.firstOrNull()?.index
+        val longerEntry = poses.lastOrNull()?.takeIf { it.index != shorterIndex }
+        val longerIndex = longerEntry?.index
+        val longerPose = longerEntry?.value
+
+        // Next-due start per task index; seeded at each task's due time (or `now` when overdue).
+        val due = HashMap<Int, Long>(valid.size)
+        valid.forEach { (i, t) -> due[i] = sideTaskNextStart(t, nowMillis) }
+
         val result = mutableListOf<TaskPanel>()
-        sideTasks.forEachIndexed { index, side ->
-            if (side.restBreak) return@forEachIndexed // rest pauses are due-now, not grid — see restBreakPanels
-            if (side.intervalMillis <= 0 || side.durationMillis <= 0 || side.title.isBlank()) return@forEachIndexed
-            // Smallest k with anchor + k·interval ≥ from (k may be negative when `from` precedes the anchor).
-            val k = (fromMillis - anchorMillis + side.intervalMillis - 1).floorDiv(side.intervalMillis)
-            var t = anchorMillis + k * side.intervalMillis
-            while (t <= toMillis) {
-                result.add(
-                    TaskPanel(
-                        id = "side/$index/$t",
-                        taskId = null,
-                        title = side.title,
-                        startEpochMillis = t,
-                        endEpochMillis = t + side.durationMillis,
-                        pinned = false,
-                        auto = false,
-                        sideTask = true,
-                    ),
-                )
-                t += side.intervalMillis
+        // True when [start] falls inside an already-placed pause strictly longer than [durationMillis].
+        fun coveredByLonger(start: Long, durationMillis: Long): Boolean =
+            result.any { p ->
+                (p.endEpochMillis - p.startEpochMillis) > durationMillis &&
+                    p.startEpochMillis <= start && start < p.endEpochMillis
+            }
+        // A pause taken at/under `now` re-anchors every smaller, also-overdue pause behind it.
+        fun reanchorSmallerOverdue(placedEnd: Long, placedDuration: Long) {
+            valid.forEach { (j, s) ->
+                if (s.durationMillis < placedDuration && (due[j] ?: Long.MAX_VALUE) <= nowMillis) {
+                    due[j] = placedEnd + s.intervalMillis
+                }
             }
         }
-        return result
+
+        var guard = 0
+        while (guard++ < SIDE_TASK_PROJECTION_LIMIT) {
+            // The earliest pending occurrence within the horizon; ties go to the longer pause.
+            val nextIndex = due.entries
+                .filter { it.value <= horizon }
+                .minWithOrNull(
+                    compareBy<Map.Entry<Int, Long>> { it.value }
+                        .thenByDescending { sideTasks[it.key].durationMillis },
+                )?.key ?: break
+            val task = sideTasks[nextIndex]
+            val start = due.getValue(nextIndex)
+
+            // 5 → 15 merge: the 5-min pose's window would overlap the still-future 15-min pose.
+            if (longerPose != null && longerIndex != null && nextIndex == shorterIndex) {
+                val longerDue = due[longerIndex] ?: Long.MAX_VALUE
+                if (longerDue in (start + 1) until (start + task.durationMillis)) {
+                    val mergedEnd = start + longerPose.durationMillis
+                    if (!coveredByLonger(start, longerPose.durationMillis)) {
+                        result.add(sideTaskPanel(longerIndex, longerPose.title, start, mergedEnd))
+                    }
+                    due[nextIndex] = mergedEnd + task.intervalMillis
+                    due[longerIndex] = mergedEnd + longerPose.intervalMillis
+                    if (start <= nowMillis) reanchorSmallerOverdue(mergedEnd, longerPose.durationMillis)
+                    continue
+                }
+            }
+
+            val end = start + task.durationMillis
+            if (!coveredByLonger(start, task.durationMillis)) {
+                result.add(sideTaskPanel(nextIndex, task.title, start, end))
+            }
+            // Recurrence: poses resume an interval after they end; the cadence look-away an interval after it starts.
+            due[nextIndex] = (if (task.restBreak) end else start) + task.intervalMillis
+            if (start <= nowMillis) reanchorSmallerOverdue(end, task.durationMillis)
+        }
+        return result.sortedBy { it.startEpochMillis }
     }
+
+    private fun sideTaskPanel(index: Int, title: String, start: Long, end: Long): TaskPanel =
+        TaskPanel(
+            id = "side/$index/$start",
+            taskId = null,
+            title = title,
+            startEpochMillis = start,
+            endEpochMillis = end,
+            pinned = false,
+            auto = false,
+            sideTask = true,
+        )
 
     /** The panel whose `[start, end)` contains [nowMillis] (the "task to do now"), or null. */
     fun panelAt(panels: List<TaskPanel>, nowMillis: Long): TaskPanel? =
@@ -1046,11 +1090,9 @@ object SchedulerDomain {
         }
         val leaves = schedulableLeaves(state)
         // PRD §15: side tasks materialize regardless of whether there are leaf tasks to fill around them.
-        // Cadence micro-breaks recur on the wake-anchored grid ([SchedulerState.sideTaskAnchorMillis]; 0 =
-        // grid); rest pauses appear at `now` only when overdue per the device sleep history.
-        val sidePanels =
-            sideTaskPanels(state.sideTasks, state.sideTaskAnchorMillis, nowMillis, horizon) +
-                restBreakPanels(state.sideTasks, nowMillis)
+        // Each one places its next occurrence at its due time (or the now-line when overdue), with the
+        // 5-min↔15-min merge applied (see [sideTaskPanels]).
+        val sidePanels = sideTaskPanels(state.sideTasks, nowMillis)
         if (leaves.isEmpty()) return (kept + sidePanels).sortedBy { it.startEpochMillis }
 
         val priorities = absoluteTaskPriorities(state)

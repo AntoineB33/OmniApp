@@ -90,16 +90,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                 lastRealTick = realNow
                 lastClockTick = now
                 nowMillis = now
-                // PRD §15: a due rest pause ("take a 5/15-min pause") must sit at the now-line and split the
-                // surrounding task around it. That placement only happens in a full refill, so while a rest
-                // pause is due we refill each tick (it re-splits cleanly and is a no-op when nothing moved) —
-                // this is what keeps the pause tracking `now` under accelerated time. Otherwise we only
-                // advance (the cheaper tick): the window refill is left to the §9 calculation events below.
+                // PRD §15: an overdue side task must sit at the now-line and split the surrounding task around
+                // it. That placement only happens in a full refill, so while a side task is overdue we refill
+                // each tick (it re-splits cleanly and is a no-op when nothing moved) — this is what keeps the
+                // pause tracking `now` under accelerated time. Otherwise we only advance (the cheaper tick):
+                // the window refill is left to the §9 calculation events below.
                 val current = vm.state.value
-                val restPauseDue =
+                val sideTaskDue =
                     current.automaticSchedule &&
-                        SchedulerDomain.restBreakPanels(current.sideTasks, now).isNotEmpty()
-                if (restPauseDue) {
+                        current.sideTasks.any { SchedulerDomain.isSideTaskOverdue(it, now) }
+                if (sideTaskDue) {
                     vm.dispatch(SchedulerIntent.RefreshSchedule(now))
                 } else {
                     vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
@@ -108,35 +108,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             }
         }
 
-        // PRD §15: at launch, read the OS sleep history off the UI thread to (a) anchor the cadence
-        // micro-breaks at the last wake after a long (≥15 min) sleep, and (b) seed each rest pause's
-        // last-rest time from the last device sleep that was at least as long as that pause — so a pause
-        // the user already rested away (slept through) is not shown overdue. The in-session updates are
-        // handled by ReportDeviceSleep in the tick loop above.
+        // PRD §15: at launch, read the OS sleep history off the UI thread to seed each side task's last-rest
+        // time from the last device sleep that was at least as long as that pause — so a pause the user
+        // already rested away (slept through) is shown next at its due time rather than overdue at the
+        // now-line. The in-session updates are handled by ReportDeviceSleep in the tick loop above.
         LaunchedEffect(Unit) {
             val before = vm.state.value.sideTasks
-            val (wake, restedTasks) = withContext(Dispatchers.Default) {
-                val w = lastWakeAfterLongSleepMillis(SchedulerDomain.SIDE_TASK_RESET_SLEEP_MILLIS)
-                val tasks = before.map { side ->
-                    if (!side.restBreak || side.durationMillis <= 0) {
+            val restedTasks = withContext(Dispatchers.Default) {
+                before.map { side ->
+                    if (side.durationMillis <= 0) {
                         side
                     } else {
                         val lastRest = lastWakeAfterLongSleepMillis(side.durationMillis)
                         if (lastRest != null) side.copy(lastRestMillis = lastRest) else side
                     }
                 }
-                w to tasks
-            }
-            var changed = false
-            if (wake != null) {
-                vm.dispatch(SchedulerIntent.SetSideTaskAnchor(wake))
-                changed = true
             }
             if (restedTasks != before) {
                 vm.dispatch(SchedulerIntent.SetSideTasks(restedTasks))
-                changed = true
-            }
-            if (changed) {
                 vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
             }
         }

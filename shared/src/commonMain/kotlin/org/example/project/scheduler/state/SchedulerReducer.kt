@@ -40,9 +40,6 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state) { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis)
             is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked)
-            is SchedulerIntent.SetSideTaskAnchor ->
-                if (state.sideTaskAnchorMillis == intent.anchorMillis) state
-                else state.copy(sideTaskAnchorMillis = intent.anchorMillis)
             is SchedulerIntent.SetSideTasks ->
                 if (state.sideTasks == intent.sideTasks) state
                 else state.copy(sideTasks = intent.sideTasks)
@@ -1453,9 +1450,9 @@ private fun appendRecordMap(
  * dropped so the wake-time [reduceRefreshSchedule] starts a fresh schedule after the sleep. Pinned and
  * user-authored panels are untouched.
  *
- * PRD §15: a sleep of at least [SchedulerDomain.SIDE_TASK_RESET_SLEEP_MILLIS] (15 min) also restarts the
- * side-task cadence at the wake time [sleepEnd] (so the look-away/pose clocks reset when the user comes
- * back). A short sleep, or one no auto panel covers, only updates the anchor where applicable.
+ * PRD §15: a device sleep is the user taking a pause — it counts as taking every side task whose duration
+ * it covers (a long sleep satisfies the shorter pauses too), recording [sleepEnd] as their last rest so the
+ * next occurrence of each is scheduled an interval later.
  */
 private fun reduceReportDeviceSleep(
     state: SchedulerState,
@@ -1463,26 +1460,19 @@ private fun reduceReportDeviceSleep(
     sleepEnd: Long,
 ): SchedulerState {
     val sleepLength = sleepEnd - sleepStart
-    // §15 cadence reset: a long sleep re-anchors the cadence micro-breaks at the wake; short sleeps leave it.
-    val withAnchor =
-        if (sleepLength >= SchedulerDomain.SIDE_TASK_RESET_SLEEP_MILLIS) {
-            state.copy(sideTaskAnchorMillis = sleepEnd)
-        } else {
-            state
-        }
-    // §15 rest pauses: a device sleep counts as taking every rest pause whose duration it covers (a long
-    // sleep satisfies the shorter pauses too), so record [sleepEnd] as their last rest — clearing "overdue".
+    // §15: a device sleep counts as taking every side task whose duration it covers (a long sleep satisfies
+    // the shorter pauses too), so record [sleepEnd] as their last rest — scheduling the next one an interval on.
     val restedSideTasks =
-        withAnchor.sideTasks.map { side ->
-            if (side.restBreak && side.durationMillis in 1..sleepLength && side.lastRestMillis < sleepEnd) {
+        state.sideTasks.map { side ->
+            if (side.durationMillis in 1..sleepLength && side.lastRestMillis < sleepEnd) {
                 side.copy(lastRestMillis = sleepEnd)
             } else {
                 side
             }
         }
     val base =
-        if (restedSideTasks == withAnchor.sideTasks) withAnchor
-        else withAnchor.copy(sideTasks = restedSideTasks)
+        if (restedSideTasks == state.sideTasks) state
+        else state.copy(sideTasks = restedSideTasks)
     val current =
         base.panels.firstOrNull {
             it.auto && !it.pinned &&

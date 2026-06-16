@@ -653,21 +653,8 @@ class SchedulerCalendarTest {
     }
 
     @Test
-    fun a_long_sleep_resets_the_side_task_anchor_to_the_wake() {
-        // PRD §15: a sleep ≥ 15 min restarts the side-task cadence at the wake time; a shorter one doesn't.
-        val (s0, _, _) = stateWithTwoTasks()
-        val start = 1_000_000_000_000L
-
-        val longSleep = SchedulerReducer.reduce(s0, SchedulerIntent.ReportDeviceSleep(start, start + 30 * MIN))
-        assertEquals(start + 30 * MIN, longSleep.sideTaskAnchorMillis) // re-anchored at the wake
-
-        val shortSleep = SchedulerReducer.reduce(s0, SchedulerIntent.ReportDeviceSleep(start, start + 5 * MIN))
-        assertEquals(s0.sideTaskAnchorMillis, shortSleep.sideTaskAnchorMillis) // unchanged (< 15 min)
-    }
-
-    @Test
-    fun a_device_sleep_counts_as_taking_every_rest_pause_it_covers() {
-        // PRD §15: a device sleep is the user resting — it satisfies every rest pause whose duration it
+    fun a_device_sleep_counts_as_taking_every_side_task_it_covers() {
+        // PRD §15: a device sleep is the user resting — it satisfies every side task whose duration it
         // covers (a long sleep clears the shorter pauses too), recording the wake as their last rest.
         val (s0, _, _) = stateWithTwoTasks()
         val sides = listOf(
@@ -700,24 +687,24 @@ class SchedulerCalendarTest {
         )
 
         val t1 = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(start))
-        val pause1 = t1.panels.single { SchedulerDomain.isRestBreakPanel(it) }
+        val pause1 = t1.panels.filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
         assertEquals(start, pause1.startEpochMillis)
         assertEquals(start + 5 * MIN, pause1.endEpochMillis)
 
         // The clock jumps forward 12 min: a refill re-places the pause at the new now and re-splits the task.
         val t2 = SchedulerReducer.reduce(t1, SchedulerIntent.RefreshSchedule(start + 12 * MIN))
-        val pause2 = t2.panels.single { SchedulerDomain.isRestBreakPanel(it) }
+        val pause2 = t2.panels.filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
         assertEquals(start + 12 * MIN, pause2.startEpochMillis)
         assertEquals(start + 17 * MIN, pause2.endEpochMillis)
         // No task panel overlaps the pause's region — the fill leaves it a clean place (PRD §15).
         assertTrue(
             t2.panels.none {
-                !SchedulerDomain.isRestBreakPanel(it) && it.taskId != null &&
+                !it.sideTask && it.taskId != null &&
                     it.startEpochMillis < pause2.endEpochMillis && pause2.startEpochMillis < it.endEpochMillis
             },
         )
 
-        // Once the user rests it away (recent enough), the next refill drops the marker entirely.
+        // Once the user rests it away (recent enough), the next refill shows it ahead at its due time, not at now.
         val rested = t2.copy(
             sideTasks = listOf(
                 org.example.project.scheduler.model.SideTask(
@@ -726,6 +713,7 @@ class SchedulerCalendarTest {
             ),
         )
         val t3 = SchedulerReducer.reduce(rested, SchedulerIntent.RefreshSchedule(start + 13 * MIN))
-        assertTrue(t3.panels.none { SchedulerDomain.isRestBreakPanel(it) })
+        val pause3 = t3.panels.filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
+        assertEquals(start + 12 * MIN + 60 * MIN, pause3.startEpochMillis) // lastRest + interval, in the future
     }
 }
