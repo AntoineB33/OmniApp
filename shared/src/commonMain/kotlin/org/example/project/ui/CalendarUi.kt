@@ -1,9 +1,6 @@
 package org.example.project.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.TooltipArea
-import androidx.compose.foundation.TooltipPlacement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -53,9 +50,11 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -70,9 +69,12 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -1077,6 +1079,19 @@ private fun WeekView(
     // (zero-duration, §14) and side-task markers (§15) are not blocks and are excluded.
     val allBlocks = records.filterNot { it.reminder || it.sideTask }.map { calendarBlockKey(it) to it.range }
 
+    // PRD §8 hover title: the block/side-task under the cursor, reported up from each element so a single
+    // non-interactive overlay (below) draws the bubble. [viewportCoords] anchors the bubble in viewport
+    // (non-scrolling) space; [hoverScope] is threaded down to every hoverable element.
+    var titleHover by remember { mutableStateOf<CalendarTitleHover?>(null) }
+    var viewportCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val hoverScope = remember {
+        CalendarTitleHoverScope(
+            viewportCoords = { viewportCoords },
+            currentOwner = { titleHover?.ownerId },
+            onHover = { titleHover = it },
+        )
+    }
+
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Row(
             modifier = Modifier.padding(bottom = 8.dp),
@@ -1109,6 +1124,10 @@ private fun WeekView(
             }
         }
 
+        // The viewport box wraps the scrolling grid and the hover-bubble overlay. The overlay is a sibling
+        // of (and drawn above) the scroll content, so the bubble floats over every column without being
+        // clipped or occluded by a neighbouring column, and it does not scroll with the grid.
+        Box(Modifier.fillMaxSize().onGloballyPositioned { viewportCoords = it }) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1175,10 +1194,14 @@ private fun WeekView(
                         onAdjustWeights = onAdjustWeights,
                         allBlocks = allBlocks,
                         overlapArmed = overlapArmed,
+                        hoverScope = hoverScope,
                         modifier = Modifier.weight(1f),
                     )
                 }
             }
+        }
+        // PRD §8 hover title bubble, drawn above all columns; non-interactive so the cursor passes through.
+        titleHover?.let { CalendarTitleBubble(it.title, it.pos) }
         }
     }
 }
@@ -1234,6 +1257,7 @@ private fun DayColumn(
     onAdjustWeights: (Map<String, Double>) -> Unit,
     allBlocks: List<Pair<String, TaskTimeRange>>,
     overlapArmed: Boolean,
+    hoverScope: CalendarTitleHoverScope,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -1409,6 +1433,7 @@ private fun DayColumn(
                 onPreviewChange = { range -> dragPreview = range?.let { key to it } },
                 onCommitBounds = onCommitBounds,
                 onLockScroll = onLockScroll,
+                hoverScope = hoverScope,
             )
         }
 
@@ -1537,7 +1562,7 @@ private fun DayColumn(
                     val slices = sideLayout[key]
                         ?: listOf(PanelSlice(marker.startHour, marker.endHour, xFraction = 0f, widthFraction = 1f))
                     slices.forEach { slice ->
-                        SideTaskBand(marker, slice, hourHeight, colWidth)
+                        SideTaskBand(marker, slice, hourHeight, colWidth, hoverScope)
                     }
                 }
             }
@@ -1561,78 +1586,111 @@ private val SIDE_TASK_LABEL_MIN_HEIGHT = 13.dp
  * name always shows on hover (PRD §8), anchored at the cursor so zoom never floats the bubble off-screen.
  */
 @Composable
-private fun SideTaskBand(marker: PlacedRecord, slice: PanelSlice, hourHeight: Dp, colWidth: Dp) {
+private fun SideTaskBand(
+    marker: PlacedRecord,
+    slice: PanelSlice,
+    hourHeight: Dp,
+    colWidth: Dp,
+    hoverScope: CalendarTitleHoverScope,
+) {
     val height = (hourHeight * (slice.bottomHour - slice.topHour)).coerceAtLeast(SIDE_TASK_MIN_HEIGHT)
     val showLabel = height >= SIDE_TASK_LABEL_MIN_HEIGHT
-    CalendarHoverTooltip(
-        marker.title,
-        Modifier
+    Row(
+        modifier = Modifier
             .offset(x = colWidth * slice.xFraction, y = hourHeight * slice.topHour)
-            .width(colWidth * slice.widthFraction),
+            .width(colWidth * slice.widthFraction)
+            .height(height)
+            .calendarTitleHover(marker.title, hoverScope)
+            .padding(horizontal = 1.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(CalColors.accent)
+            .then(if (showLabel) Modifier.padding(horizontal = 4.dp) else Modifier),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(height)
-                .padding(horizontal = 1.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(CalColors.accent)
-                .then(if (showLabel) Modifier.padding(horizontal = 4.dp) else Modifier),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            if (showLabel) {
-                Text(
-                    text = "●",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White,
-                )
-                Text(
-                    text = marker.title,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White,
-                    maxLines = 1,
-                    modifier = Modifier.weight(1f),
-                )
-            }
+        if (showLabel) {
+            Text(
+                text = "●",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+            )
+            Text(
+                text = marker.title,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
 
 /**
- * A calendar hover tooltip that pops a small bubble with [text] **at the mouse cursor** (foundation
- * [TooltipArea]), rather than anchored above the element's top edge like the Material3 [TooltipBox]. This
- * keeps the bubble next to the pointer regardless of how tall the hovered block is when the user has zoomed
- * the calendar in — anchoring to the top would otherwise float it far above (or off) the visible viewport.
+ * PRD §8 hover title: which block/side-task the cursor is currently over and where. [pos] is the cursor
+ * position in the calendar **viewport's** coordinates (not the scrolling content), so the bubble overlay
+ * sits next to the pointer and follows it even while the grid scrolls under a still cursor. [ownerId]
+ * identifies the reporting element so a stale `Exit` from the element the cursor just left can't clear a
+ * hover the newly entered element has already set.
  */
-@OptIn(ExperimentalFoundationApi::class)
+private class CalendarTitleHover(val ownerId: Any, val title: String, val pos: Offset)
+
+/**
+ * Plumbing handed to every hoverable calendar element so it can report the title under the cursor up to the
+ * single viewport-level bubble overlay. Driving the bubble from the elements (rather than a foundation
+ * `TooltipArea`/`Popup`) is what fixes the "catch the bubble" bug: the popup used to be its own hit-test
+ * layer that stole hover the instant the cursor reached it, freezing the title; the overlay this feeds is a
+ * non-interactive layer (no pointer-input node), so the cursor passes through it to the block beneath, which
+ * keeps reporting and the bubble keeps tracking.
+ */
+private class CalendarTitleHoverScope(
+    val viewportCoords: () -> LayoutCoordinates?,
+    val currentOwner: () -> Any?,
+    val onHover: (CalendarTitleHover?) -> Unit,
+)
+
+/**
+ * Reports [title] (and the cursor's viewport position) to [scope] while the pointer is over this element, and
+ * clears it on exit. Observes pointer events at the Main pass without consuming them, so it never interferes
+ * with the block's drag/resize gesture or the column's right-click menu.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+private fun Modifier.calendarTitleHover(title: String, scope: CalendarTitleHoverScope): Modifier = composed {
+    val ownerId = remember { Any() }
+    var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val report: (Offset) -> Unit = report@{ local ->
+        val viewport = scope.viewportCoords()?.takeIf { it.isAttached } ?: return@report
+        val self = coords?.takeIf { it.isAttached } ?: return@report
+        scope.onHover(CalendarTitleHover(ownerId, title, viewport.localPositionOf(self, local)))
+    }
+    this
+        .onGloballyPositioned { coords = it }
+        .onPointerEvent(PointerEventType.Enter) { report(it.changes.first().position) }
+        .onPointerEvent(PointerEventType.Move) { report(it.changes.first().position) }
+        .onPointerEvent(PointerEventType.Exit) { if (scope.currentOwner() === ownerId) scope.onHover(null) }
+}
+
+/**
+ * The hover title bubble (PRD §8), drawn at [pos] (+16dp below the cursor, mirroring the old cursor-anchored
+ * placement). Rendered with plain draw modifiers only — no `Surface`/clickable/pointer-input — so it is
+ * invisible to hit-testing and the cursor falls through to the block underneath even when it overtakes the
+ * bubble during a fast scroll, keeping the title live.
+ */
 @Composable
-private fun CalendarHoverTooltip(
-    text: String,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    TooltipArea(
-        modifier = modifier,
-        // Show the bubble the instant the pointer is over the block (no hover dwell delay).
-        delayMillis = 0,
-        tooltip = {
-            Surface(
-                color = MaterialTheme.colorScheme.inverseSurface,
-                contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                shape = RoundedCornerShape(4.dp),
-                shadowElevation = 4.dp,
-            ) {
-                Text(
-                    text = text.ifEmpty { "(untitled)" },
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                )
-            }
-        },
-        tooltipPlacement = TooltipPlacement.CursorPoint(offset = DpOffset(0.dp, 16.dp)),
-        content = content,
-    )
+private fun CalendarTitleBubble(text: String, pos: Offset) {
+    val yOffsetPx = with(LocalDensity.current) { 16.dp.roundToPx() }
+    Box(
+        Modifier
+            .offset { IntOffset(pos.x.roundToInt(), pos.y.roundToInt() + yOffsetPx) }
+            .shadow(4.dp, RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colorScheme.inverseSurface, RoundedCornerShape(4.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Text(
+            text = text.ifEmpty { "(untitled)" },
+            color = MaterialTheme.colorScheme.inverseOnSurface,
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
 }
 
 @Composable
@@ -1689,6 +1747,7 @@ private fun CalendarBlock(
     onPreviewChange: (TaskTimeRange?) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onLockScroll: (Boolean) -> Unit,
+    hoverScope: CalendarTitleHoverScope,
 ) {
     val key = calendarBlockKey(record)
     // Read inside the long-lived gesture closure so a mid-drag `O` toggle is picked up immediately.
@@ -1812,9 +1871,10 @@ private fun CalendarBlock(
                         }
                     },
             ) {
-                // PRD §8: the title shows on hover. Anchored to the cursor (not the block's top) so a tall,
-                // zoomed-in block still pops its bubble right where the pointer is, not far above it.
-                CalendarHoverTooltip(record.title) {
+                // PRD §8: the title shows on hover. Reported up to the viewport-level bubble (anchored to the
+                // cursor, not the block's top) so a tall, zoomed-in block still pops its bubble right where the
+                // pointer is — and the cursor can pass through the bubble without freezing it.
+                Box(Modifier.fillMaxSize().calendarTitleHover(record.title, hoverScope)) {
                     // The title is written only on the topmost slice so a stepped block reads as one.
                     CalendarBlockBody(color, record.title, showTitle = isFirst)
                 }
