@@ -291,12 +291,28 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         val displaySidePanels =
             SchedulerDomain.sideTaskPanels(schedulerState.sideTasks, nowMillis, sideTaskHorizonMillis)
 
+        // PRD §14: reminder flags are calculated for the WHOLE focused week — from now to the end of the
+        // week the calendar is showing — so navigating to a week shows its reminders. Like the side-task
+        // projection they are regenerated for display (anchored at today's midnight, out to the focused
+        // week's end), with each tag's checked state carried over from the stored reminder panels by
+        // matching its deterministic id.
+        val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
+        val reminderHorizonDays =
+            ((focusedWeekEndMillis - todayStartMillis) / (24L * 60 * 60 * 1000)).toInt().coerceAtLeast(0)
+        val displayReminderPanels =
+            SchedulerDomain.regenerateChorePanels(
+                schedulerState.panels, schedulerState.chores, todayStartMillis, reminderHorizonDays, nowMillis,
+            ).filter { SchedulerDomain.isReminder(it) }
+
         // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
-        // user-authored, uniform blocks) drawn the same way; side tasks (PRD §15) span the focused week.
+        // user-authored, uniform blocks) drawn the same way; reminders (PRD §14) and side tasks (PRD §15)
+        // span the focused week.
         val calendarRecords =
             schedulerState.tasks.values.flatMap { task ->
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
-            } + mergePanelsForDisplay(schedulerState.panels, displaySidePanels, schedulerState.showSideTasks)
+            } + mergePanelsForDisplay(
+                schedulerState.panels, displayReminderPanels, displaySidePanels, schedulerState.showSideTasks,
+            )
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
         var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
         // PRD §8 Manual add: a not-yet-committed default panel shown in the edit window with a Save
@@ -557,17 +573,19 @@ private fun formatClockTime(dateTime: LocalDateTime): String {
 
 private fun mergePanelsForDisplay(
     panels: List<TaskPanel>,
+    reminderPanels: List<TaskPanel>,
     sidePanels: List<TaskPanel>,
     showSideTasks: Boolean,
 ): List<CalendarRecord> {
     // PRD §14/§15: reminder tags (zero-duration) and side tasks (very short real durations, e.g. a 20-second
     // look-away) are NOT height-proportional blocks — drawn at scale they'd be invisible. They render on
     // their own fixed-height marker paths (CalendarRecord.reminder / .sideTask) and never merge with panels.
-    // PRD §15: the side tasks come from [sidePanels] — projected across the focused week (which may run past
-    // the schedule's fixed obstacle window in [panels]) — not [panels]; the regular `blocks` still come from
-    // [panels]. Within the schedule window both projections are identical (same `now`, same side tasks), so
-    // the blocks stay split around the side tasks exactly as scheduled.
-    val reminders = panels.filter { SchedulerDomain.isReminder(it) }
+    // PRD §14/§15: reminder tags ([reminderPanels]) and side tasks ([sidePanels]) are both projected across
+    // the focused week (which may run past the schedule's fixed obstacle window in [panels]) — not taken from
+    // [panels]; the regular `blocks` still come from [panels]. Within the schedule window the projections are
+    // identical (same `now`, same chores/side tasks), so the blocks stay split around the side tasks exactly
+    // as scheduled and the checked state of each reminder is carried over by matching its deterministic id.
+    val reminders = reminderPanels
     val sides = sidePanels
     val blocks = panels.filter { !SchedulerDomain.isReminder(it) && !it.sideTask }
     val reminderRecords =
