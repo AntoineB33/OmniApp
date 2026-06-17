@@ -246,26 +246,35 @@ class SchedulerCalendarTest {
     @Test
     fun display_grouping_bridges_a_same_task_gap_left_by_a_hidden_side_task() {
         // PRD §15 (side tasks hidden): two same-task panels split around a side task fuse into one block
-        // when the side-task gap is given as a bridge region — purely cosmetic, the panels stay separate.
+        // when bridgeGaps is set — purely cosmetic, the panels stay separate in state.
         val a = TaskId("t/a")
         val panels = listOf(
             autoPanel("auto/0", a, 0, 20 * MIN),
             autoPanel("auto/1", a, 25 * MIN, 50 * MIN), // a 5-min gap = the hidden side task
         )
-        // Side tasks shown (no bridge): the gap splits them into two blocks.
+        // Side tasks shown (no bridging): the gap splits them into two blocks.
         assertEquals(2, SchedulerDomain.groupSameTaskPanelsForDisplay(panels).size)
-        // Side tasks hidden: the gap's side region bridges them into one block keeping both ids.
-        val bridged = SchedulerDomain.groupSameTaskPanelsForDisplay(
-            panels,
-            bridgeRegions = listOf(TaskTimeRange(20 * MIN, 25 * MIN)),
-        )
+        // Side tasks hidden: gaps are bridged so they fuse into one block keeping both ids.
+        val bridged = SchedulerDomain.groupSameTaskPanelsForDisplay(panels, bridgeGaps = true)
         assertEquals(1, bridged.size)
         assertEquals(listOf("auto/0", "auto/1"), bridged[0].map { it.id })
-        // A bridge region that doesn't cover the gap leaves them split.
-        assertEquals(
-            2,
-            SchedulerDomain.groupSameTaskPanelsForDisplay(panels, listOf(TaskTimeRange(30 * MIN, 35 * MIN))).size,
+    }
+
+    @Test
+    fun display_grouping_bridges_gaps_only_between_same_task_same_pin_panels() {
+        // bridgeGaps fuses across gaps, but a different task / differing pin in between still breaks the run
+        // (it is its own block in the input), so the bridge can't over-merge across an intervening block.
+        val a = TaskId("t/a")
+        val b = TaskId("t/b")
+        val groups = SchedulerDomain.groupSameTaskPanelsForDisplay(
+            listOf(
+                autoPanel("auto/0", a, 0, 20 * MIN),
+                autoPanel("auto/1", b, 30 * MIN, 50 * MIN), // different task between → breaks the run
+                autoPanel("auto/2", a, 60 * MIN, 80 * MIN),
+            ),
+            bridgeGaps = true,
         )
+        assertEquals(listOf(listOf("auto/0"), listOf("auto/1"), listOf("auto/2")), groups.map { g -> g.map { it.id } })
     }
 
     @Test

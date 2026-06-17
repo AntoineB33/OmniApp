@@ -615,14 +615,11 @@ private fun mergePanelsForDisplay(
                 )
             }
         }
-    val bridgeRegions =
-        if (showSideTasks) {
-            emptyList()
-        } else {
-            SchedulerDomain.mergeOccupied(sides.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
-        }
+    // PRD §15: when side tasks are hidden, fuse same-task panels across the gaps the (now-hidden) side-task
+    // pauses left — structurally, so the fused block doesn't flicker as `now` advances (a moving side-task
+    // projection would keep drifting out of alignment with the already-scheduled gaps).
     val blockRecords =
-        SchedulerDomain.groupSameTaskPanelsForDisplay(blocks, bridgeRegions).map { group ->
+        SchedulerDomain.groupSameTaskPanelsForDisplay(blocks, bridgeGaps = !showSideTasks).map { group ->
             val head = group.first()
             CalendarRecord(
                 title = head.title,

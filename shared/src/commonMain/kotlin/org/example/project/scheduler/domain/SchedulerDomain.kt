@@ -677,14 +677,19 @@ object SchedulerDomain {
      * UI fuses each returned run into one block while the stored panels stay separate.
      *
      * PRD §15 (side tasks hidden): when the calendar hides side tasks, two same-task panels separated only
-     * by a side-task gap should read as one continuous block. Pass that side-task gap as a [bridgeRegions]
-     * entry and a gap fully covered by one of them is treated as touching — purely cosmetic (the panels stay
-     * separate in state, so the real spanning time is unchanged). With no [bridgeRegions] this is the
-     * original touch-or-overlap grouping.
+     * by a side-task gap should read as one continuous block. Set [bridgeGaps] = true and the gap between
+     * consecutive same-task/same-pin panels is treated as touching regardless of its width — purely cosmetic
+     * (the panels stay separate in state, so the real spanning time is unchanged). This is correct because in
+     * the forward fill a same-task run is only ever broken by a side-task pause (a different task or a pinned
+     * panel sits in the gap as its own block and so breaks the run on its own); deciding it structurally —
+     * rather than matching the live side-task projection, which is recomputed at the current `now` while the
+     * gaps come from the last schedule — avoids a flicker as `now` advances (the two were drifting apart). A
+     * different/pinned block between the two panels still breaks the run because it is a separate block in the
+     * sorted input. With [bridgeGaps] = false this is the original touch-or-overlap grouping.
      */
     fun groupSameTaskPanelsForDisplay(
         panels: List<TaskPanel>,
-        bridgeRegions: List<TaskTimeRange> = emptyList(),
+        bridgeGaps: Boolean = false,
     ): List<List<TaskPanel>> {
         if (panels.isEmpty()) return emptyList()
         val sorted = panels.sortedBy { it.startEpochMillis }
@@ -693,14 +698,10 @@ object SchedulerDomain {
             val group = groups.lastOrNull()
             val head = group?.first()
             val frontier = group?.maxOf { it.endEpochMillis } ?: Long.MIN_VALUE
-            // The gap [frontier, panel.start] is bridgeable when a single region spans it (a hidden side task).
-            val bridged = bridgeRegions.any {
-                it.startEpochMillis <= frontier && panel.startEpochMillis <= it.endEpochMillis
-            }
             val mergeable = head != null &&
                 panel.taskId != null && head.taskId == panel.taskId &&
                 head.pinned == panel.pinned &&
-                (panel.startEpochMillis <= frontier || bridged)
+                (panel.startEpochMillis <= frontier || bridgeGaps)
             if (mergeable) group!!.add(panel) else groups.add(mutableListOf(panel))
         }
         return groups
