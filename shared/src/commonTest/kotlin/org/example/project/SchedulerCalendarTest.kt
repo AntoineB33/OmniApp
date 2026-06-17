@@ -437,6 +437,14 @@ class SchedulerCalendarTest {
     }
 
     @Test
+    fun codec_round_trips_the_show_reminders_preference() {
+        // PRD §14: the calendar's reminder display switch persists across sessions; default is on.
+        assertTrue(SchedulerState.empty().showReminders)
+        val hidden = SchedulerState.empty().copy(showReminders = false)
+        assertEquals(false, SchedulerStateCodec.decode(SchedulerStateCodec.encode(hidden))!!.showReminders)
+    }
+
+    @Test
     fun drag_sticks_to_the_end_of_a_group_when_past_its_midpoint() {
         val placed = SchedulerDomain.placeDraggedEntry(listOf(range(100, 200)), desiredStart = 160, duration = 40)
         assertEquals(range(200, 240), placed)

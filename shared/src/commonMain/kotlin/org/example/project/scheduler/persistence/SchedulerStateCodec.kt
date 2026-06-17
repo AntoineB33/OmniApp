@@ -102,6 +102,7 @@ object SchedulerStateCodec {
             automaticSchedule = automaticSchedule,
             chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit) },
             showSideTasks = showSideTasks,
+            showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
         )
 
@@ -223,6 +224,7 @@ object SchedulerStateCodec {
             automaticSchedule = automaticSchedule,
             chores = chores.map { ChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit) },
             showSideTasks = showSideTasks,
+            showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
         )
     }
@@ -312,6 +314,8 @@ private data class PersistedState(
     val chores: List<PersistedChoreEntry> = emptyList(),
     // PRD §15: default on keeps side tasks visible for payloads written before the display toggle existed.
     val showSideTasks: Boolean = true,
+    // PRD §14: default on keeps reminders visible for payloads written before the display toggle existed.
+    val showReminders: Boolean = true,
     // PRD §15: the 20s look-away voice cue; default on (payloads written before the toggle existed get the voice).
     val lookAwayVoiceEnabled: Boolean = true,
 )

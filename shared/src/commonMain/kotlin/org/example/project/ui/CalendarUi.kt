@@ -545,8 +545,15 @@ fun ChoresManagerWindow(
     initialOffset: Offset = Offset.Zero,
     /** Raise this window to the top of the layers — fired on a press anywhere inside it. */
     onRaise: () -> Unit = {},
+    /**
+     * PRD §14: the time-of-day (minutes since midnight) to pre-fill a newly added reminder's "Time" field —
+     * the current clock time at the moment the `+` is clicked. A negative value (the default) leaves it blank.
+     */
+    newRowTimeOfDayMinutes: () -> Int = { -1 },
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
+    // A new row's Time field starts at the clock time when the `+` was clicked (blank if none provided).
+    fun newRow() = ChoreRow(timeText = formatTimeOfDay(newRowTimeOfDayMinutes()))
     // Per-row editable text (title, days, time-of-day) so an in-progress "3." / "9:" isn't reformatted
     // each keystroke. Seeded once from the incoming chores; live edits drive both this and the pushed list.
     val rows = remember {
@@ -676,11 +683,11 @@ fun ChoresManagerWindow(
                         // Bin: remove this row.
                         TextButton(onClick = { rows.removeAt(index); push() }) { Text("🗑") }
                         // Plus: insert a new row above this one.
-                        TextButton(onClick = { rows.add(index, ChoreRow()); push() }) { Text("+") }
+                        TextButton(onClick = { rows.add(index, newRow()); push() }) { Text("+") }
                     }
                 }
                 // Trailing single plus: append a new row at the end of the list.
-                TextButton(onClick = { rows.add(ChoreRow()); push() }) { Text("+ add reminder") }
+                TextButton(onClick = { rows.add(newRow()); push() }) { Text("+ add reminder") }
             }
         }
     }
@@ -1177,6 +1184,10 @@ fun CalendarFloatingWindow(
     showSideTasks: Boolean = true,
     /** PRD §15: flip the "Side tasks" display switch. */
     onToggleSideTasks: (Boolean) -> Unit = {},
+    /** PRD §14: whether the calendar draws the reminder tags (cosmetic display toggle). */
+    showReminders: Boolean = true,
+    /** PRD §14: flip the "Reminders" display switch. */
+    onToggleReminders: (Boolean) -> Unit = {},
     /** PRD §8/§9 calendar history: Ctrl+Z / Ctrl+Y while the calendar holds keyboard focus. */
     onUndo: () -> Unit = {},
     onRedo: () -> Unit = {},
@@ -1273,8 +1284,23 @@ fun CalendarFloatingWindow(
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.weight(1f),
                 )
-                // PRD §15: toggle whether side tasks are drawn (cosmetic; notifications keep firing). The
-                // Switch consumes its own presses, so toggling it never starts the title-bar window drag.
+                // PRD §14/§15: toggle whether reminders / side tasks are drawn (cosmetic; notifications keep
+                // firing). The Switch consumes its own presses, so toggling it never starts the title-bar drag.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(end = 8.dp),
+                ) {
+                    Text(
+                        text = "Reminders",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = CalColors.muted,
+                    )
+                    Switch(
+                        checked = showReminders,
+                        onCheckedChange = onToggleReminders,
+                    )
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),

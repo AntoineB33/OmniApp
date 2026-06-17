@@ -356,7 +356,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             schedulerState.tasks.values.flatMap { task ->
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
             } + mergePanelsForDisplay(
-                schedulerState.panels, displayReminderPanels, displaySidePanels, schedulerState.showSideTasks,
+                schedulerState.panels, displayReminderPanels, displaySidePanels,
+                schedulerState.showSideTasks, schedulerState.showReminders,
             )
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
         var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
@@ -463,9 +464,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             },
                             overlapArmed = schedulerState.overlapArmed,
                             onToggleOverlap = { vm.dispatch(SchedulerIntent.ToggleCalendarOverlap) },
-                            // PRD §15: the calendar's "Side tasks" display switch (cosmetic; notifications stay on).
+                            // PRD §14/§15: the calendar's "Reminders" / "Side tasks" display switches (cosmetic;
+                            // notifications stay on).
                             showSideTasks = schedulerState.showSideTasks,
                             onToggleSideTasks = { vm.dispatch(SchedulerIntent.SetShowSideTasks(it)) },
+                            showReminders = schedulerState.showReminders,
+                            onToggleReminders = { vm.dispatch(SchedulerIntent.SetShowReminders(it)) },
                             onUndo = { vm.dispatch(SchedulerIntent.Undo) },
                             onRedo = { vm.dispatch(SchedulerIntent.Redo) },
                         )
@@ -515,6 +519,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             // PRD §14: pass `now` too so a reminder with no time-of-day lands at the current time.
                             onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis, nowMillis)) },
                             onDismiss = { choresManagerOpen = false },
+                            // PRD §14: pre-fill a newly added reminder's Time field with the clock time at the click.
+                            newRowTimeOfDayMinutes = {
+                                val t = Instant.fromEpochMilliseconds(clock.nowMillis()).toLocalDateTime(tz)
+                                t.hour * 60 + t.minute
+                            },
                             // Cascade: open up-left of center so it isn't fully hidden behind a wider window.
                             initialOffset = Offset(-200f, -150f),
                             onRaise = { bringWindowToFront(FloatingWindow.Reminders) },
@@ -635,6 +644,7 @@ private fun mergePanelsForDisplay(
     reminderPanels: List<TaskPanel>,
     sidePanels: List<TaskPanel>,
     showSideTasks: Boolean,
+    showReminders: Boolean,
 ): List<CalendarRecord> {
     // PRD §14/§15: reminder tags (zero-duration) and side tasks (very short real durations, e.g. a 20-second
     // look-away) are NOT height-proportional blocks — drawn at scale they'd be invisible. They render on
@@ -644,7 +654,7 @@ private fun mergePanelsForDisplay(
     // [panels]; the regular `blocks` still come from [panels]. Within the schedule window the projections are
     // identical (same `now`, same chores/side tasks), so the blocks stay split around the side tasks exactly
     // as scheduled and the checked state of each reminder is carried over by matching its deterministic id.
-    val reminders = reminderPanels
+    val reminders = if (showReminders) reminderPanels else emptyList()
     val sides = sidePanels
     val blocks = panels.filter { !SchedulerDomain.isReminder(it) && !it.sideTask }
     val reminderRecords =

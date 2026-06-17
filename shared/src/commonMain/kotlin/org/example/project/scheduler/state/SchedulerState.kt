@@ -156,6 +156,12 @@ data class SchedulerState(
      */
     val showSideTasks: Boolean = true,
     /**
+     * PRD §14 Reminders: whether the calendar window draws the reminder tags. A purely cosmetic display
+     * preference (persisted, not undoable) — when off, reminder tags are hidden. The underlying chores and
+     * their scheduling/checked state are unaffected.
+     */
+    val showReminders: Boolean = true,
+    /**
      * PRD §15 Side tasks (20s look-away): whether the spoken voice cue is enabled — when the look-away pause
      * is reached a voice says to look away and, at the pause's end, to resume work (in addition to the
      * notification). On by default; persisted, not undoable.

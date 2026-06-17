@@ -193,6 +193,14 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §14 Reminders: show/hide the reminder tags on the calendar (a cosmetic display preference). Hiding
+     * does not touch the chores or their scheduling/checked state. Persisted; not undoable.
+     */
+    data class SetShowReminders(
+        val show: Boolean,
+    ) : SchedulerIntent
+
+    /**
      * PRD §15 Side tasks: enable/disable the spoken voice cue for the 20s look-away pause. Persisted; not
      * undoable; does not touch the schedule.
      */

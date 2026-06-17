@@ -713,6 +713,23 @@ class SchedulerSchedulerTest {
         assertTrue(SchedulerReducer.reduce(hidden, SchedulerIntent.SetShowSideTasks(true)).showSideTasks)
     }
 
+    @Test
+    fun set_show_reminders_toggles_the_display_flag_without_touching_panels() {
+        // PRD §14: the calendar's reminder display switch is a cosmetic flag — it changes nothing else.
+        val (s0, _, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val scheduled = SchedulerReducer.reduce(s0, SchedulerIntent.RefreshSchedule(now))
+        assertTrue(scheduled.showReminders) // default on
+
+        val hidden = SchedulerReducer.reduce(scheduled, SchedulerIntent.SetShowReminders(false))
+        assertFalse(hidden.showReminders)
+        assertEquals(scheduled.panels, hidden.panels) // the schedule (and reminders) are untouched
+
+        // Idempotent (same instance back) + reversible.
+        assertTrue(SchedulerReducer.reduce(hidden, SchedulerIntent.SetShowReminders(false)) === hidden)
+        assertTrue(SchedulerReducer.reduce(hidden, SchedulerIntent.SetShowReminders(true)).showReminders)
+    }
+
     // ----- §9 AdvanceSchedule (frequent tick) ------------------------------------------------
 
     @Test
