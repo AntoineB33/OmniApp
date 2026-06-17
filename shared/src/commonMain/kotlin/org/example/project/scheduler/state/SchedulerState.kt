@@ -70,6 +70,8 @@ data class HistoryUnit(
 )
 
 sealed interface Delta {
+    /** PRD §5/§6 History Manager: a short human-readable name for this unit (shown in the history window). */
+    val label: String
     fun undo(state: SchedulerState): SchedulerState
     fun redo(state: SchedulerState): SchedulerState
 }

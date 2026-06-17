@@ -12,6 +12,7 @@ import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.CellEditMode
+import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -32,6 +33,19 @@ class SchedulerReducerTest {
         assertEquals(listOf(WellKnownIds.MAIN_TASK), s.tasks[WellKnownIds.ROOT_TASK]!!.childTaskIds)
         assertEquals(listOf(WellKnownIds.MAIN_TASK), s.titleToTaskIds["main"])
         assertEquals(1, s.lists[s.rootListId]!!.cellIds.size)
+    }
+
+    @Test
+    fun history_units_carry_a_label_for_the_history_manager() {
+        // PRD §5/§6 History Manager: each committed unit records a human-readable label, which the window
+        // lists per category. Setting a cell title lands a "Set title" unit in the Main ("the rest") stack.
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Daily"))
+
+        val main = s.histories.forCategory(HistoryCategory.Main)
+        assertEquals("Set title", main.units.last().delta.label)
+        assertEquals(main.units.lastIndex, main.pointer) // newest unit is the current pointer
     }
 
     @Test

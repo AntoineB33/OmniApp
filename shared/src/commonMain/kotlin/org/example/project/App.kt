@@ -43,6 +43,7 @@ import org.example.project.time.SystemAppClock
 import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.ChoresManagerWindow
+import org.example.project.ui.HistoryManagerWindow
 import org.example.project.ui.LateralMenu
 import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.PlacedRecord
@@ -233,6 +234,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // PRD §7/§14 Chores Manager: whether the floating chores window is open (local UI state, like the
         // calendar window; the chores data itself lives in the persisted scheduler state).
         var choresManagerOpen by remember { mutableStateOf(false) }
+        // PRD §5/§6 History Manager: whether the floating history window is open (local UI state).
+        var historyManagerOpen by remember { mutableStateOf(false) }
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
 
@@ -287,6 +290,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
                     choresManagerOpen = choresManagerOpen,
                     onToggleChoresManager = { choresManagerOpen = !choresManagerOpen },
+                    historyManagerOpen = historyManagerOpen,
+                    onToggleHistoryManager = { historyManagerOpen = !historyManagerOpen },
                 )
 
                 // The content area is clipped so the floating calendar window can overlap the tree
@@ -400,6 +405,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             // PRD §14: pass `now` too so a reminder with no time-of-day lands at the current time.
                             onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis, nowMillis)) },
                             onDismiss = { choresManagerOpen = false },
+                            modifier = Modifier.align(Alignment.Center),
+                        )
+                    }
+
+                    // PRD §5/§6 History Manager: floating window listing every category's history units.
+                    if (historyManagerOpen) {
+                        HistoryManagerWindow(
+                            histories = schedulerState.histories,
+                            onDismiss = { historyManagerOpen = false },
                             modifier = Modifier.align(Alignment.Center),
                         )
                     }

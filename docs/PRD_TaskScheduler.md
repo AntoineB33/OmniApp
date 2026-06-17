@@ -113,6 +113,7 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 * **Undo / Redo:**
   * **Undo:** The history pointer decrements. The Delta is applied to the state, and the Delta *inside the unit* is mathematically inverted to represent the forward-change (Redo). For selection history, undo is `Alt + Left` and redo is `Alt + Right`. For the other history categories, undo is `Ctrl + Z` and redo is `Ctrl + Y`.
   * **Branching:** If an Undo is performed followed by a *new* mutation, all forward (Redo) history units are orphaned/discarded.
+* **History Manager:** A floating, draggable in-app window (opened from the lateral menu, like the calendar / reminders windows) **shows all the history unit lists** — one section per category (the rest, calendar, edit mode, selection), each listing its history units oldest-first with a short label per unit, the `applied / total` count, and the current history-pointer position marked. Undone units (ahead of the pointer, still redoable) are dimmed. It is read-only — a live view of what undo/redo will walk.
 * **Persistence:** State changes (Tree, occurrences, parent objects, selection, and history) are continuously streamed to the local multi-platform database.
 
 ## 7. Lateral menu

@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -112,6 +114,9 @@ import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.state.CalendarEdge
+import org.example.project.scheduler.state.HistoryCategory
+import org.example.project.scheduler.state.SchedulerHistories
+import org.example.project.scheduler.state.SchedulerHistory
 
 /** PRD §7: visual language shared by the lateral menu and the calendar. */
 private object CalColors {
@@ -421,6 +426,9 @@ fun LateralMenu(
     /** PRD §7 Chores Manager: whether the chores window is open + toggle callback. */
     choresManagerOpen: Boolean = false,
     onToggleChoresManager: () -> Unit = {},
+    /** PRD §5/§6 History Manager: whether the history window is open + toggle callback. */
+    historyManagerOpen: Boolean = false,
+    onToggleHistoryManager: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -462,6 +470,13 @@ fun LateralMenu(
             label = "Reminders",
             active = choresManagerOpen,
             onClick = onToggleChoresManager,
+        )
+
+        // PRD §5/§6 History: toggles the floating history manager (all the history unit lists).
+        MenuButton(
+            label = "History",
+            active = historyManagerOpen,
+            onClick = onToggleHistoryManager,
         )
 
         // PRD §7 Calendar: the month grid only appears while the calendar is displayed.
@@ -600,6 +615,139 @@ fun ChoresManagerWindow(
                 }
                 // Trailing single plus: append a new row at the end of the list.
                 TextButton(onClick = { rows.add(ChoreRow()); push() }) { Text("+ add reminder") }
+            }
+        }
+    }
+}
+
+/**
+ * PRD §5/§6 History Manager: a floating, draggable in-app window (like the calendar / reminders windows)
+ * that **shows all the history unit lists** — one section per [HistoryCategory] (Main "the rest", Calendar,
+ * Edit Mode, Selection), each listing its [HistoryUnit]s oldest-first with the current pointer marked.
+ * Read-only: it reflects the live history so the user can see what Ctrl+Z / Ctrl+Y (and Alt+←/→) will walk.
+ */
+@Composable
+fun HistoryManagerWindow(
+    histories: SchedulerHistories,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    // Display order: the content stacks first (most-used), then selection.
+    val sections = listOf(
+        "Main (the rest)" to HistoryCategory.Main,
+        "Calendar" to HistoryCategory.Calendar,
+        "Edit Mode" to HistoryCategory.Edit,
+        "Selection" to HistoryCategory.Selection,
+    )
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 10.dp,
+        border = BorderStroke(1.dp, CalColors.grid),
+        modifier = modifier
+            .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
+            .size(width = 380.dp, height = 520.dp),
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            // Title bar doubles as the drag handle for moving the window.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(CalColors.menuBackground)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            offset += dragAmount
+                        }
+                    }
+                    .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "History",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("✕", style = MaterialTheme.typography.titleSmall, color = CalColors.muted)
+                }
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                sections.forEach { (title, category) ->
+                    HistoryCategorySection(title = title, history = histories.forCategory(category))
+                }
+            }
+        }
+    }
+}
+
+/** One section of the history manager: a category's header (with `applied/total`) and its unit rows. */
+@Composable
+private fun HistoryCategorySection(title: String, history: SchedulerHistory) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(text = title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            // pointer is 0-based on the last applied unit; `pointer + 1` units can be undone.
+            Text(
+                text = "${history.pointer + 1} / ${history.units.size}",
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.muted,
+            )
+        }
+        if (history.units.isEmpty()) {
+            Text(
+                text = "(empty)",
+                style = MaterialTheme.typography.bodySmall,
+                color = CalColors.muted,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        } else {
+            history.units.forEachIndexed { index, unit ->
+                val applied = index <= history.pointer
+                val isCurrent = index == history.pointer
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "${index + 1}.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CalColors.muted,
+                        modifier = Modifier.width(22.dp),
+                    )
+                    Text(
+                        text = unit.delta.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        // Undone units (past the pointer, redoable) are dimmed.
+                        color = if (applied) MaterialTheme.colorScheme.onSurface else CalColors.muted,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (isCurrent) {
+                        Text(
+                            text = "● current",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CalColors.accent,
+                        )
+                    }
+                }
             }
         }
     }

@@ -23,21 +23,21 @@ object SchedulerReducer {
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
             is SchedulerIntent.AssignTaskId -> commitDelta(state, assignTaskIdDelta(state, intent.cellId, intent.taskId))
             is SchedulerIntent.SetPriorityWeight ->
-                commitDelta(state, priorityTreeDelta(state) { applySetPriorityWeight(it, intent.cellId, intent.column, intent.value) })
+                commitDelta(state, priorityTreeDelta(state, "Priority weight") { applySetPriorityWeight(it, intent.cellId, intent.column, intent.value) })
             is SchedulerIntent.SetPriorityColumnWeight ->
-                commitDelta(state, priorityTreeDelta(state) { applySetPriorityColumnWeight(it, intent.listId, intent.column, intent.weight) })
+                commitDelta(state, priorityTreeDelta(state, "Column weight") { applySetPriorityColumnWeight(it, intent.listId, intent.column, intent.weight) })
             is SchedulerIntent.AddPriorityColumn ->
-                commitDelta(state, priorityTreeDelta(state) { applyAddPriorityColumn(it, intent.listId, intent.index) })
+                commitDelta(state, priorityTreeDelta(state, "Add weight column") { applyAddPriorityColumn(it, intent.listId, intent.index) })
             is SchedulerIntent.ResetPriorityColumn ->
-                commitDelta(state, priorityTreeDelta(state) { applyResetPriorityColumn(it, intent.listId, intent.column) })
+                commitDelta(state, priorityTreeDelta(state, "Reset weight column") { applyResetPriorityColumn(it, intent.listId, intent.column) })
             is SchedulerIntent.DeletePriorityColumn ->
-                commitDelta(state, priorityTreeDelta(state) { applyDeletePriorityColumn(it, intent.listId, intent.column) })
+                commitDelta(state, priorityTreeDelta(state, "Delete weight column") { applyDeletePriorityColumn(it, intent.listId, intent.column) })
             is SchedulerIntent.MovePriorityColumn ->
-                commitDelta(state, priorityTreeDelta(state) { applyMovePriorityColumn(it, intent.listId, intent.from, intent.to) })
+                commitDelta(state, priorityTreeDelta(state, "Move weight column") { applyMovePriorityColumn(it, intent.listId, intent.from, intent.to) })
             is SchedulerIntent.SetTaskMinimumTime ->
-                commitDelta(state, priorityTreeDelta(state) { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
+                commitDelta(state, priorityTreeDelta(state, "Minimum time") { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
             is SchedulerIntent.SetScheduleUnit ->
-                commitDelta(state, priorityTreeDelta(state) { applySetScheduleUnit(it, intent.taskId, intent.entries) })
+                commitDelta(state, priorityTreeDelta(state, "Schedule unit") { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis, intent.nowMillis)
             is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked)
             is SchedulerIntent.SetSideTasks ->
@@ -406,7 +406,7 @@ object SchedulerReducer {
         val panel = state.panels.firstOrNull { it.id == panelId && it.chore } ?: return state
         if (panel.checked == checked) return state
         val updated = state.panels.map { if (it.id == panelId) it.copy(checked = checked) else it }
-        return commitPanels(state, updated)
+        return commitPanels(state, updated, label = if (checked) "Check reminder" else "Uncheck reminder")
     }
 
     private fun reduceCopySelection(state: SchedulerState): SchedulerState {
@@ -428,14 +428,14 @@ object SchedulerReducer {
         val pasted = pasteTreeAtCell(state.copy(clipboard = text.split('\n')), main, nodes)
         val after = pasted.captureTree()
         if (before == after) return state
-        return commitDelta(pasted, TreeMutationDelta(before = before, after = after))
+        return commitDelta(pasted, TreeMutationDelta(before = before, after = after, label = "Paste"))
     }
 
     private fun editTextDelta(state: SchedulerState, text: String): Delta {
         val session = state.editSession ?: return NoOpDelta
         val before = state.captureTree()
         val after = applyEditText(state, session, text).captureTree()
-        return TreeMutationDelta(before = before, after = after)
+        return TreeMutationDelta(before = before, after = after, label = "Edit text")
     }
 
     // PRD §4 Post-Edit Tree Evaluation: exiting Edit Mode removes empty cells (except the absolute
@@ -449,7 +449,7 @@ object SchedulerReducer {
         val after = cleaned.captureTree()
         val committed =
             if (after != before) {
-                commitDelta(cleaned, TreeMutationDelta(before = before, after = after))
+                commitDelta(cleaned, TreeMutationDelta(before = before, after = after, label = "Edit"))
             } else {
                 cleaned
             }
@@ -605,7 +605,7 @@ object SchedulerReducer {
             )
         val after = moved.captureTree()
         if (before == after) return state
-        return commitDelta(moved, TreeMutationDelta(before = before, after = after))
+        return commitDelta(moved, TreeMutationDelta(before = before, after = after, label = "Move cells"))
     }
 
     private fun reduceEmptySelected(state: SchedulerState): SchedulerState {
@@ -747,13 +747,14 @@ object SchedulerReducer {
     private fun commitPanels(
         state: SchedulerState,
         after: List<TaskPanel>,
+        label: String = "Calendar edit",
     ): SchedulerState {
         val before = state.panels
         // PRD §8: same-task panels auto-merge (unless their pin state differs) the moment an add / edit
         // / move / resize / pin makes them touch or overlap.
         val normalized = SchedulerDomain.mergeSameTaskPanels(after)
         if (before == normalized) return state
-        return commitDelta(state, PanelDelta(before, normalized), HistoryCategory.Calendar)
+        return commitDelta(state, PanelDelta(before, normalized, label), HistoryCategory.Calendar)
     }
 
     /**
@@ -785,7 +786,7 @@ object SchedulerReducer {
                 pinned = intent.pinned,
                 auto = false,
             )
-        return commitPanels(allocated, allocated.panels + panel)
+        return commitPanels(allocated, allocated.panels + panel, label = "Add panel")
     }
 
     private fun reduceUpdateTaskPanel(
@@ -820,7 +821,7 @@ object SchedulerReducer {
                 auto = false,
                 layoutWeight = weight,
             )
-        return commitPanels(allocated, allocated.panels.toMutableList().also { it[index] = updated })
+        return commitPanels(allocated, allocated.panels.toMutableList().also { it[index] = updated }, label = "Edit panel")
     }
 
     private fun reduceMoveTaskPanel(
@@ -846,7 +847,7 @@ object SchedulerReducer {
                 endEpochMillis = placed.endEpochMillis,
                 auto = false,
             )
-        return commitPanels(state, panels.toMutableList().also { it[index] = moved })
+        return commitPanels(state, panels.toMutableList().also { it[index] = moved }, label = "Move panel")
     }
 
     /** PRD §8 (uniform blocks): convert a task-record period into a user panel; drop it from the record. */
@@ -878,14 +879,14 @@ object SchedulerReducer {
                 auto = false,
                 layoutWeight = weight,
             )
-        return commitPanels(allocated, allocated.panels + panel)
+        return commitPanels(allocated, allocated.panels + panel, label = "Pin record")
     }
 
     /** PRD §8 "Remove": delete a panel (undoable calendar delta). */
     private fun reduceRemoveTaskPanel(state: SchedulerState, id: String): SchedulerState {
         val panels = state.panels
         if (panels.none { it.id == id }) return state
-        return commitPanels(state, panels.filterNot { it.id == id })
+        return commitPanels(state, panels.filterNot { it.id == id }, label = "Remove panel")
     }
 
     /** PRD §8 Overlap Mode: re-divide shared width by setting the [layoutWeight] of the given panels. */
@@ -904,14 +905,14 @@ object SchedulerReducer {
                 panel
             }
         }
-        return if (changed) commitPanels(state, updated) else state
+        return if (changed) commitPanels(state, updated, label = "Resize widths") else state
     }
 
     /** PRD §8 "Remove" on a merged block: delete all its backing panels in one delta. */
     private fun reduceRemoveTaskPanels(state: SchedulerState, ids: List<String>): SchedulerState {
         val idSet = ids.toSet()
         if (state.panels.none { it.id in idSet }) return state
-        return commitPanels(state, state.panels.filterNot { it.id in idSet })
+        return commitPanels(state, state.panels.filterNot { it.id in idSet }, label = "Remove block")
     }
 
     /**
@@ -945,7 +946,7 @@ object SchedulerReducer {
                 auto = false,
                 layoutWeight = weight,
             )
-        return commitPanels(allocated, allocated.panels + panel)
+        return commitPanels(allocated, allocated.panels + panel, label = "Edit panel")
     }
 
     /**
@@ -963,7 +964,7 @@ object SchedulerReducer {
         if (filled == advanced.panels) return advanced
         // commitDelta applies PanelDelta.redo (panels = filled); the advance's task/record changes are
         // already in `advanced` and are not part of the delta, so undo restores panels but not records.
-        return commitDelta(advanced, PanelDelta(advanced.panels, filled), HistoryCategory.Calendar)
+        return commitDelta(advanced, PanelDelta(advanced.panels, filled, label = "Reschedule"), HistoryCategory.Calendar)
     }
 
     /** PRD §8 "Remove" on a record block: drop the period from the task's record (history-excluded). */
@@ -999,7 +1000,7 @@ object SchedulerReducer {
                 endEpochMillis = resized.endEpochMillis,
                 auto = false,
             )
-        return commitPanels(state, panels.toMutableList().also { it[index] = updated })
+        return commitPanels(state, panels.toMutableList().also { it[index] = updated }, label = "Resize panel")
     }
 
     private fun undo(state: SchedulerState, category: HistoryCategory): SchedulerState {
@@ -1318,7 +1319,7 @@ private fun assignTaskIdDelta(
         } else {
             applyAssignTaskId(state, cellId, taskId)
         }.captureTree()
-    return TreeMutationDelta(before = before, after = after)
+    return TreeMutationDelta(before = before, after = after, label = "Assign task")
 }
 
 private fun applyAssignTaskId(state: SchedulerState, cellId: CellId, taskId: TaskId): SchedulerState {
@@ -1351,11 +1352,12 @@ private fun applyAssignTaskId(state: SchedulerState, cellId: CellId, taskId: Tas
 /** Wraps a priority-table mutation as an undoable [TreeMutationDelta] (PRD §6). */
 private fun priorityTreeDelta(
     state: SchedulerState,
+    label: String = "Tree change",
     mutate: (SchedulerState) -> SchedulerState,
 ): Delta {
     val before = state.captureTree()
     val after = mutate(state).captureTree()
-    return TreeMutationDelta(before = before, after = after)
+    return TreeMutationDelta(before = before, after = after, label = label)
 }
 
 /**
@@ -1625,7 +1627,7 @@ private fun setCellTitleDelta(
 ): Delta {
     val before = state.captureTree()
     val after = applySetCellTitle(state, cellId, title).captureTree()
-    return TreeMutationDelta(before = before, after = after)
+    return TreeMutationDelta(before = before, after = after, label = "Set title")
 }
 
 private fun applySetCellTitle(
@@ -1755,6 +1757,8 @@ private data class EmptyCellsDelta(
     val selectionBefore: SchedulerSelection,
     val selectionAfter: SchedulerSelection,
 ) : Delta {
+    override val label: String = "Clear cells"
+
     override fun undo(state: SchedulerState): SchedulerState =
         state.applyTree(treeBefore).copy(selection = selectionBefore)
 
@@ -1766,6 +1770,8 @@ private data class SetSelectionDelta(
     val before: SchedulerSelection,
     val after: SchedulerSelection,
 ) : Delta {
+    override val label: String = "Selection"
+
     override fun undo(state: SchedulerState): SchedulerState = state.copy(selection = before)
 
     override fun redo(state: SchedulerState): SchedulerState = state.copy(selection = after)
@@ -1779,6 +1785,7 @@ private data class SetSelectionDelta(
 private data class PanelDelta(
     val before: List<TaskPanel>,
     val after: List<TaskPanel>,
+    override val label: String = "Calendar edit",
 ) : Delta {
     override fun undo(state: SchedulerState): SchedulerState = state.copy(panels = before)
 
@@ -1788,6 +1795,8 @@ private data class PanelDelta(
 private data class ToggleExpandDelta(
     val cellId: CellId,
 ) : Delta {
+    override val label: String = "Expand / collapse"
+
     override fun undo(state: SchedulerState): SchedulerState = applyToggle(state)
 
     override fun redo(state: SchedulerState): SchedulerState = applyToggle(state)
@@ -1807,6 +1816,7 @@ private data class ToggleExpandDelta(
 private data class TreeMutationDelta(
     val before: TreeSnapshot,
     val after: TreeSnapshot,
+    override val label: String = "Tree change",
 ) : Delta {
     override fun undo(state: SchedulerState): SchedulerState = state.applyTree(before)
 
@@ -1814,6 +1824,8 @@ private data class TreeMutationDelta(
 }
 
 private object NoOpDelta : Delta {
+    override val label: String = "No-op"
+
     override fun undo(state: SchedulerState): SchedulerState = state
 
     override fun redo(state: SchedulerState): SchedulerState = state
