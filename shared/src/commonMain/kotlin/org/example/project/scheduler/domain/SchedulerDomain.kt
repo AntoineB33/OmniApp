@@ -888,11 +888,13 @@ object SchedulerDomain {
      * - **Recurrence:** a rest pose ([SideTask.restBreak]) recurs an interval after it *ends*
      *   (`start + duration + interval`); the cadence look-away recurs an interval after it *starts*
      *   (`start + interval`).
-     * - **Initial overdue resolution:** when a pause is taken at/under `now`, every smaller pause that is also
-     *   overdue is re-anchored to `thisPauseEnd + itsInterval` (so e.g. the look-away restarts 20 min after
-     *   the first pose ends, rather than stacking at the now-line).
-     * - **Absorption:** an occurrence whose window falls inside an already-placed longer pause is skipped
-     *   (taking the longer pause covers it) but still advances its own clock.
+     * - **A pause re-anchors shorter pauses:** placing any pause (overdue at `now` or future) re-anchors every
+     *   *shorter* pause to `thisPauseEnd + itsInterval`, so the look-away always lands **20 min after a pose
+     *   ends** ("after a ≥20-second pause, the next look-away is 20 minutes later") and never within an
+     *   interval of a longer pose — the missed-pause stacking at the now-line is the same rule applied there.
+     * - **Absorption:** a (defensive) skip of any occurrence whose window still falls inside an already-placed
+     *   longer pause; it advances its own clock. With the re-anchoring above a shorter pause is normally pushed
+     *   clear of a longer one before it would be drawn.
      * - **5 → 15 merge:** when the 5-min pose comes due just before the 15-min pose (its window would overlap
      *   the still-future 15-min pose), it **becomes** a 15-min pose at its own start and the 15-min pose is
      *   pushed to an interval after the merged pause ends (`mergedEnd + 2 h` = 2h15 after the 5-min start).
@@ -923,10 +925,14 @@ object SchedulerDomain {
                 (p.endEpochMillis - p.startEpochMillis) > durationMillis &&
                     p.startEpochMillis <= start && start < p.endEpochMillis
             }
-        // A pause taken at/under `now` re-anchors every smaller, also-overdue pause behind it.
-        fun reanchorSmallerOverdue(placedEnd: Long, placedDuration: Long) {
+        // PRD §15: placing a pause re-anchors every *shorter* pause to `thisPauseEnd + itsInterval`, so a
+        // shorter pause never lands within its own interval of a longer one that already covers it — e.g.
+        // the look-away always restarts 20 min *after a pose ends* ("after a ≥20-second pause, the next
+        // look-away is 20 minutes later"), rather than continuing its own grid into the gap right after the
+        // pose. Applies to every placed pause (overdue at `now` or future), so the rule holds forward too.
+        fun reanchorSmaller(placedEnd: Long, placedDuration: Long) {
             valid.forEach { (j, s) ->
-                if (s.durationMillis < placedDuration && (due[j] ?: Long.MAX_VALUE) <= nowMillis) {
+                if (s.durationMillis < placedDuration) {
                     due[j] = placedEnd + s.intervalMillis
                 }
             }
@@ -954,7 +960,7 @@ object SchedulerDomain {
                     }
                     due[nextIndex] = mergedEnd + task.intervalMillis
                     due[longerIndex] = mergedEnd + longerPose.intervalMillis
-                    if (start <= nowMillis) reanchorSmallerOverdue(mergedEnd, longerPose.durationMillis)
+                    reanchorSmaller(mergedEnd, longerPose.durationMillis)
                     continue
                 }
             }
@@ -963,9 +969,10 @@ object SchedulerDomain {
             if (!coveredByLonger(start, task.durationMillis)) {
                 result.add(sideTaskPanel(nextIndex, task.title, start, end))
             }
-            // Recurrence: poses resume an interval after they end; the cadence look-away an interval after it starts.
+            // Recurrence: poses resume an interval after they end; the cadence look-away an interval after it
+            // starts. Placing this pause also pushes every shorter pause to an interval after it ends.
             due[nextIndex] = (if (task.restBreak) end else start) + task.intervalMillis
-            if (start <= nowMillis) reanchorSmallerOverdue(end, task.durationMillis)
+            reanchorSmaller(end, task.durationMillis)
         }
         return result.sortedBy { it.startEpochMillis }
     }

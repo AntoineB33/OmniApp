@@ -1,7 +1,7 @@
 # Product Requirements Document (Core)
 
 **Product:** OmniApp  
-**Version:** 1.4.0  
+**Version:** 1.5.0  
 **Phase:** Core Framework & Initial Module (Task Scheduler)
 
 ## 1. Executive Summary

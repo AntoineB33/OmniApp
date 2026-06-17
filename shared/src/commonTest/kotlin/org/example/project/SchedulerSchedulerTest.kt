@@ -311,7 +311,8 @@ class SchedulerSchedulerTest {
     fun side_task_projection_matches_the_prd_example() {
         // PRD §15: with no pause taken for hours (all overdue), the default side tasks project forward from
         // `now` as the worked example: a 15-min pose now, look-aways every 20 min, a 5-min pose at +1h15, a
-        // 15-min pose at +2h15 — with the look-aways that would coincide with a pose absorbed by it.
+        // 15-min pose at +2h15 — and after every pose the look-away restarts 20 min after the pause ENDS
+        // ("after a ≥20-second pause, the next look-away is 20 minutes later").
         val now = 1_000_000_000_000L
         val la = "look 20 feet away"
         val p5 = "take a 5min pose and blink hard"
@@ -323,20 +324,20 @@ class SchedulerSchedulerTest {
         assertEquals(
             listOf(
                 p15 to 0L,
-                la to 35 * MIN,
+                la to 35 * MIN, // 20 min after the 15-min pose ends (t0+15)
                 la to 55 * MIN,
                 p5 to 75 * MIN, // t0 + 1h15
-                la to 95 * MIN, // t0 + 1h35 (the +1h15 look-away was absorbed by the 5-min pose)
-                la to 115 * MIN, // t0 + 1h55
+                la to 100 * MIN, // 20 min after the 5-min pose ends (t0+1h20)
+                la to 120 * MIN, // t0 + 2h
                 p15 to 135 * MIN, // t0 + 2h15
-                la to 155 * MIN, // t0 + 2h35 (the +2h15 look-away was absorbed by the 15-min pose)
+                la to 170 * MIN, // 20 min after the 15-min pose ends (t0+2h30)
             ),
             firstEight,
         )
         // The 15-min pose at t0 spans a real 15 min; every panel is a null-task side panel.
         assertEquals(now + 15 * MIN, panels.first().endEpochMillis)
         assertTrue(panels.all { it.sideTask && it.taskId == null })
-        // The 5-min pose that would fall ~t0+2h20 is absorbed by the t0+2h15 pose (not drawn).
+        // The 5-min pose that would fall ~t0+2h20 is re-anchored past the t0+2h15 pose (to 1h after it ends).
         assertTrue(panels.none { it.title == p5 && it.startEpochMillis in (now + 2 * 60 * MIN)..(now + 145 * MIN) })
     }
 
