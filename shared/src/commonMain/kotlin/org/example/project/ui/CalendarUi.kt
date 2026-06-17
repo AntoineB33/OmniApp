@@ -87,6 +87,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -539,7 +540,7 @@ fun ChoresManagerWindow(
         border = BorderStroke(1.dp, CalColors.grid),
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            .size(width = 420.dp, height = 480.dp),
+            .size(width = 470.dp, height = 480.dp),
     ) {
         Column(Modifier.fillMaxSize()) {
             // Title bar doubles as the drag handle for moving the window.
@@ -600,6 +601,17 @@ fun ChoresManagerWindow(
                             label = { Text("Days") },
                             modifier = Modifier.width(72.dp),
                         )
+                        // PRD §14: when the "Days" field holds a formula, show its evaluated value (rounded to
+                        // two decimals, comma separator) just to its right — e.g. "30/21" → "=1,43".
+                        val daysResult =
+                            if (isDayFormula(row.daysText)) SchedulerDomain.evaluateDayFormula(row.daysText) else null
+                        if (daysResult != null && daysResult.isFinite()) {
+                            Text(
+                                text = "=${formatFormulaResult(daysResult)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = CalColors.muted,
+                            )
+                        }
                         OutlinedTextField(
                             value = row.timeText,
                             onValueChange = { rows[index] = row.copy(timeText = sanitizeTimeOfDay(it)); push() },
@@ -803,6 +815,21 @@ private data class ChoreRow(val title: String = "", val daysText: String = "", v
 /** Render a day span without a forced ".0" tail for whole numbers (e.g. 7.0 → "7", 3.5 → "3.5"). */
 private fun formatDays(days: Double): String =
     if (days == days.toLong().toDouble()) days.toLong().toString() else days.toString()
+
+/**
+ * PRD §14: true when the "Days" text is an arithmetic *formula* (carries an operator / parenthesis) rather
+ * than a plain number — used to decide whether to show its evaluated result beside the field.
+ */
+private fun isDayFormula(text: String): Boolean =
+    text.any { it == '+' || it == '-' || it == '*' || it == '/' || it == '(' || it == ')' }
+
+/** Format a formula's evaluated day span with exactly two decimals and a comma separator (e.g. 1.4285 → "1,43"). */
+private fun formatFormulaResult(value: Double): String {
+    val neg = value < 0
+    val scaled = (abs(value) * 100).roundToInt()
+    val text = "${scaled / 100},${(scaled % 100).toString().padStart(2, '0')}"
+    return if (neg) "-$text" else text
+}
 
 /**
  * PRD §14: keep the "Days" field to characters of an arithmetic formula — digits, a decimal point, the
