@@ -831,6 +831,10 @@ fun CalendarFloatingWindow(
     overlapArmed: Boolean = false,
     /** PRD §8 Overlap Mode: `O` toggles "allow overlap" for the next move/resize. */
     onToggleOverlap: () -> Unit = {},
+    /** PRD §15: whether the calendar draws the side tasks (cosmetic display toggle). */
+    showSideTasks: Boolean = true,
+    /** PRD §15: flip the "Side tasks" display switch. */
+    onToggleSideTasks: (Boolean) -> Unit = {},
     /** PRD §8/§9 calendar history: Ctrl+Z / Ctrl+Y while the calendar holds keyboard focus. */
     onUndo: () -> Unit = {},
     onRedo: () -> Unit = {},
@@ -927,6 +931,23 @@ fun CalendarFloatingWindow(
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.weight(1f),
                 )
+                // PRD §15: toggle whether side tasks are drawn (cosmetic; notifications keep firing). The
+                // Switch consumes its own presses, so toggling it never starts the title-bar window drag.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(end = 8.dp),
+                ) {
+                    Text(
+                        text = "Side tasks",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = CalColors.muted,
+                    )
+                    Switch(
+                        checked = showSideTasks,
+                        onCheckedChange = onToggleSideTasks,
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .size(28.dp)

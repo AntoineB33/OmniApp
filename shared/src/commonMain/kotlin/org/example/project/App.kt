@@ -203,12 +203,32 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             sendSystemNotification("Task to do now", message)
         }
 
+        // PRD §15 Notifications: a side task that becomes the current activity (the eye-care look-away / pose)
+        // is notified by its title. Driven from the scheduler state — NOT the calendar's display toggle — so
+        // hiding side tasks from the calendar never silences them. We track the last side title we notified
+        // (like [lastNotifiedTaskId] above) rather than relying on [currentSideTitle] being a stable key:
+        // [currentPanel] derives from two separately-updated sources (`nowMillis` and `schedulerState`), and an
+        // overdue side task's panel start is clamped to `now`. When `schedulerState` updates one frame before
+        // `nowMillis`, the panel start is momentarily ahead of the stale `now`, so it no longer covers the
+        // now-line — [currentSideTitle] tears to null and back every tick. Keying the notification on it alone
+        // would then re-fire indefinitely for an overdue pause sliding along the now-line. The guard makes a
+        // transient null a no-op (the `?:` returns) and only re-notifies on a genuinely different title — so an
+        // overdue side task notifies once, and the next side task of a different title notifies again.
+        var lastNotifiedSideTitle by remember { mutableStateOf<String?>(null) }
+        val currentSideTitle = currentPanel?.takeIf { it.sideTask }?.title
+        LaunchedEffect(currentSideTitle) {
+            val title = currentSideTitle ?: return@LaunchedEffect
+            if (title == lastNotifiedSideTitle) return@LaunchedEffect
+            lastNotifiedSideTitle = title
+            sendSystemNotification("Side task", title)
+        }
+
         // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
         // user-authored, uniform blocks) drawn the same way.
         val calendarRecords =
             schedulerState.tasks.values.flatMap { task ->
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
-            } + mergePanelsForDisplay(schedulerState.panels)
+            } + mergePanelsForDisplay(schedulerState.panels, schedulerState.showSideTasks)
 
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
@@ -316,6 +336,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             },
                             overlapArmed = schedulerState.overlapArmed,
                             onToggleOverlap = { vm.dispatch(SchedulerIntent.ToggleCalendarOverlap) },
+                            // PRD §15: the calendar's "Side tasks" display switch (cosmetic; notifications stay on).
+                            showSideTasks = schedulerState.showSideTasks,
+                            onToggleSideTasks = { vm.dispatch(SchedulerIntent.SetShowSideTasks(it)) },
                             onUndo = { vm.dispatch(SchedulerIntent.Undo) },
                             onRedo = { vm.dispatch(SchedulerIntent.Redo) },
                         )
@@ -441,7 +464,7 @@ private fun formatClockTime(dateTime: LocalDateTime): String {
     return "$hh:$mm"
 }
 
-private fun mergePanelsForDisplay(panels: List<TaskPanel>): List<CalendarRecord> {
+private fun mergePanelsForDisplay(panels: List<TaskPanel>, showSideTasks: Boolean): List<CalendarRecord> {
     // PRD §14/§15: reminder tags (zero-duration) and side tasks (very short real durations, e.g. a 20-second
     // look-away) are NOT height-proportional blocks — drawn at scale they'd be invisible. They render on
     // their own fixed-height marker paths (CalendarRecord.reminder / .sideTask) and never merge with panels.
@@ -459,18 +482,30 @@ private fun mergePanelsForDisplay(panels: List<TaskPanel>): List<CalendarRecord>
                 checked = tag.checked,
             )
         }
+    // PRD §15 toggle: when side tasks are hidden, draw none, and let same-task panels separated only by a
+    // (now-hidden) side task fuse into one block (cosmetic — the panels and the schedule are untouched).
     val sideRecords =
-        sides.map { side ->
-            CalendarRecord(
-                title = side.title,
-                range = TaskTimeRange(side.startEpochMillis, side.endEpochMillis),
-                entryId = side.id,
-                entryIds = listOf(side.id),
-                sideTask = true,
-            )
+        if (!showSideTasks) {
+            emptyList()
+        } else {
+            sides.map { side ->
+                CalendarRecord(
+                    title = side.title,
+                    range = TaskTimeRange(side.startEpochMillis, side.endEpochMillis),
+                    entryId = side.id,
+                    entryIds = listOf(side.id),
+                    sideTask = true,
+                )
+            }
+        }
+    val bridgeRegions =
+        if (showSideTasks) {
+            emptyList()
+        } else {
+            SchedulerDomain.mergeOccupied(sides.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
         }
     val blockRecords =
-        SchedulerDomain.groupSameTaskPanelsForDisplay(blocks).map { group ->
+        SchedulerDomain.groupSameTaskPanelsForDisplay(blocks, bridgeRegions).map { group ->
             val head = group.first()
             CalendarRecord(
                 title = head.title,

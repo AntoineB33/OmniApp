@@ -137,6 +137,13 @@ data class SchedulerState(
      * scheduler tests that assert exact schedules see no side tasks unless they opt in.
      */
     val sideTasks: List<org.example.project.scheduler.model.SideTask> = emptyList(),
+    /**
+     * PRD §15 Side tasks: whether the calendar window draws the side tasks. A purely cosmetic display
+     * preference (persisted, not undoable) — when off, side-task blocks are hidden and two same-task panels
+     * separated only by a hidden side task render as one merged block. The underlying panels and the
+     * scheduling (and the side-task notifications) are unaffected; the real spanning time never changes.
+     */
+    val showSideTasks: Boolean = true,
 ) {
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots
     // (capture) and re-attached from the live tasks on restore (applyTree). Undo/Redo therefore

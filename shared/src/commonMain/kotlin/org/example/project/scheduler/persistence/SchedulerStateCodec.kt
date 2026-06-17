@@ -100,6 +100,7 @@ object SchedulerStateCodec {
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
             chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes) },
+            showSideTasks = showSideTasks,
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -219,6 +220,7 @@ object SchedulerStateCodec {
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
             chores = chores.map { ChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes) },
+            showSideTasks = showSideTasks,
         )
     }
 
@@ -305,6 +307,8 @@ private data class PersistedState(
     val automaticSchedule: Boolean = true,
     // PRD §14: a missing chores list decodes to empty (payloads written before the chores manager existed).
     val chores: List<PersistedChoreEntry> = emptyList(),
+    // PRD §15: default on keeps side tasks visible for payloads written before the display toggle existed.
+    val showSideTasks: Boolean = true,
 )
 
 @Serializable

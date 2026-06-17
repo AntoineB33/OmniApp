@@ -244,6 +244,31 @@ class SchedulerCalendarTest {
     }
 
     @Test
+    fun display_grouping_bridges_a_same_task_gap_left_by_a_hidden_side_task() {
+        // PRD §15 (side tasks hidden): two same-task panels split around a side task fuse into one block
+        // when the side-task gap is given as a bridge region — purely cosmetic, the panels stay separate.
+        val a = TaskId("t/a")
+        val panels = listOf(
+            autoPanel("auto/0", a, 0, 20 * MIN),
+            autoPanel("auto/1", a, 25 * MIN, 50 * MIN), // a 5-min gap = the hidden side task
+        )
+        // Side tasks shown (no bridge): the gap splits them into two blocks.
+        assertEquals(2, SchedulerDomain.groupSameTaskPanelsForDisplay(panels).size)
+        // Side tasks hidden: the gap's side region bridges them into one block keeping both ids.
+        val bridged = SchedulerDomain.groupSameTaskPanelsForDisplay(
+            panels,
+            bridgeRegions = listOf(TaskTimeRange(20 * MIN, 25 * MIN)),
+        )
+        assertEquals(1, bridged.size)
+        assertEquals(listOf("auto/0", "auto/1"), bridged[0].map { it.id })
+        // A bridge region that doesn't cover the gap leaves them split.
+        assertEquals(
+            2,
+            SchedulerDomain.groupSameTaskPanelsForDisplay(panels, listOf(TaskTimeRange(30 * MIN, 35 * MIN))).size,
+        )
+    }
+
+    @Test
     fun remove_task_panels_deletes_every_backing_panel_in_one_delta() {
         val a = TaskId("t/a")
         val s = SchedulerState.empty().copy(
@@ -392,6 +417,14 @@ class SchedulerCalendarTest {
         )
         val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))
         assertEquals(2.5, decoded!!.panels.first { it.id == "A" }.layoutWeight, 1e-9)
+    }
+
+    @Test
+    fun codec_round_trips_the_show_side_tasks_preference() {
+        // PRD §15: the calendar's side-task display switch persists across sessions; default is on.
+        assertTrue(SchedulerState.empty().showSideTasks)
+        val hidden = SchedulerState.empty().copy(showSideTasks = false)
+        assertEquals(false, SchedulerStateCodec.decode(SchedulerStateCodec.encode(hidden))!!.showSideTasks)
     }
 
     @Test

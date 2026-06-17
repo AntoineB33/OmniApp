@@ -675,8 +675,17 @@ object SchedulerDomain {
      * change, a null taskId, or a gap starts a new group. Unlike [mergeSameTaskPanels] this keeps the
      * individual panels (so callers can still act on each backing panel) rather than fusing them — the
      * UI fuses each returned run into one block while the stored panels stay separate.
+     *
+     * PRD §15 (side tasks hidden): when the calendar hides side tasks, two same-task panels separated only
+     * by a side-task gap should read as one continuous block. Pass that side-task gap as a [bridgeRegions]
+     * entry and a gap fully covered by one of them is treated as touching — purely cosmetic (the panels stay
+     * separate in state, so the real spanning time is unchanged). With no [bridgeRegions] this is the
+     * original touch-or-overlap grouping.
      */
-    fun groupSameTaskPanelsForDisplay(panels: List<TaskPanel>): List<List<TaskPanel>> {
+    fun groupSameTaskPanelsForDisplay(
+        panels: List<TaskPanel>,
+        bridgeRegions: List<TaskTimeRange> = emptyList(),
+    ): List<List<TaskPanel>> {
         if (panels.isEmpty()) return emptyList()
         val sorted = panels.sortedBy { it.startEpochMillis }
         val groups = mutableListOf<MutableList<TaskPanel>>()
@@ -684,10 +693,14 @@ object SchedulerDomain {
             val group = groups.lastOrNull()
             val head = group?.first()
             val frontier = group?.maxOf { it.endEpochMillis } ?: Long.MIN_VALUE
+            // The gap [frontier, panel.start] is bridgeable when a single region spans it (a hidden side task).
+            val bridged = bridgeRegions.any {
+                it.startEpochMillis <= frontier && panel.startEpochMillis <= it.endEpochMillis
+            }
             val mergeable = head != null &&
                 panel.taskId != null && head.taskId == panel.taskId &&
                 head.pinned == panel.pinned &&
-                panel.startEpochMillis <= frontier
+                (panel.startEpochMillis <= frontier || bridged)
             if (mergeable) group!!.add(panel) else groups.add(mutableListOf(panel))
         }
         return groups

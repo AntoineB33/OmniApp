@@ -181,6 +181,14 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §15 Side tasks: show/hide the side tasks on the calendar (a cosmetic display preference). Hiding
+     * does not touch the schedule or notifications. Persisted; not undoable.
+     */
+    data class SetShowSideTasks(
+        val show: Boolean,
+    ) : SchedulerIntent
+
+    /**
      * PRD §12 Device sleep: the device was asleep for `[sleepStartEpochMillis, sleepEndEpochMillis]`
      * (detected on wake as a tick gap far larger than the cadence), so the user was NOT doing the
      * scheduled task during it. Cuts the in-progress scheduled period at the sleep start (recording

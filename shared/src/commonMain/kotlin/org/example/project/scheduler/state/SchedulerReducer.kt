@@ -48,6 +48,9 @@ object SchedulerReducer {
             is SchedulerIntent.SetAutomaticSchedule ->
                 if (state.automaticSchedule == intent.enabled) state
                 else state.copy(automaticSchedule = intent.enabled)
+            is SchedulerIntent.SetShowSideTasks ->
+                if (state.showSideTasks == intent.show) state
+                else state.copy(showSideTasks = intent.show)
             is SchedulerIntent.ReportDeviceSleep ->
                 reduceReportDeviceSleep(state, intent.sleepStartEpochMillis, intent.sleepEndEpochMillis)
             is SchedulerIntent.AddTaskPanel -> reduceAddTaskPanel(state, intent)

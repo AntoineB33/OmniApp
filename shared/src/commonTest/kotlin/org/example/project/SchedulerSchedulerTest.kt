@@ -661,6 +661,23 @@ class SchedulerSchedulerTest {
         assertTrue(filled.panels.isNotEmpty())
     }
 
+    @Test
+    fun set_show_side_tasks_toggles_the_display_flag_without_touching_panels() {
+        // PRD §15: the calendar's side-task display switch is a cosmetic flag — it changes nothing else.
+        val (s0, _, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val scheduled = SchedulerReducer.reduce(s0, SchedulerIntent.RefreshSchedule(now))
+        assertTrue(scheduled.showSideTasks) // default on
+
+        val hidden = SchedulerReducer.reduce(scheduled, SchedulerIntent.SetShowSideTasks(false))
+        assertFalse(hidden.showSideTasks)
+        assertEquals(scheduled.panels, hidden.panels) // the schedule (and side tasks) are untouched
+
+        // Idempotent (same instance back) + reversible.
+        assertTrue(SchedulerReducer.reduce(hidden, SchedulerIntent.SetShowSideTasks(false)) === hidden)
+        assertTrue(SchedulerReducer.reduce(hidden, SchedulerIntent.SetShowSideTasks(true)).showSideTasks)
+    }
+
     // ----- §9 AdvanceSchedule (frequent tick) ------------------------------------------------
 
     @Test
