@@ -11,6 +11,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -44,6 +46,7 @@ import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.ChoresManagerWindow
 import org.example.project.ui.HistoryManagerWindow
+import org.example.project.ui.raiseOnPress
 import org.example.project.ui.LateralMenu
 import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.PlacedRecord
@@ -53,6 +56,9 @@ import org.example.project.ui.startOfWeek
 enum class OmniPage(val label: String) {
     TaskScheduler("Task Scheduler"),
 }
+
+/** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
+private enum class FloatingWindow { Calendar, Reminders, History, TimeSim }
 
 @Composable
 @Preview
@@ -236,6 +242,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         var choresManagerOpen by remember { mutableStateOf(false) }
         // PRD §5/§6 History Manager: whether the floating history window is open (local UI state).
         var historyManagerOpen by remember { mutableStateOf(false) }
+
+        // The floating windows are siblings in one Box, so their paint order is their declaration order.
+        // To put the *currently focused* window on top of the layers, we keep an explicit stacking order
+        // (last == top) and drive each window's zIndex from it. A window is raised when it is opened and on
+        // every press inside it (see raiseOnPress). Unmanaged: the modal edit window (its own scrim already
+        // sits above everything).
+        var windowStack by remember {
+            mutableStateOf(listOf(FloatingWindow.Calendar, FloatingWindow.Reminders, FloatingWindow.History, FloatingWindow.TimeSim))
+        }
+        fun bringWindowToFront(id: FloatingWindow) {
+            if (windowStack.lastOrNull() != id) windowStack = windowStack.filterNot { it == id } + id
+        }
+        fun windowZ(id: FloatingWindow): Float = windowStack.indexOf(id).toFloat()
+
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
 
@@ -280,7 +300,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     page = page,
                     onPageSelected = { page = it },
                     calendarOpen = calendarOpen,
-                    onToggleCalendar = { calendarOpen = !calendarOpen },
+                    onToggleCalendar = {
+                        calendarOpen = !calendarOpen
+                        if (calendarOpen) bringWindowToFront(FloatingWindow.Calendar)
+                    },
                     monthAnchor = monthAnchor,
                     onMonthAnchorChange = { monthAnchor = it },
                     selectedDate = selectedDate,
@@ -289,9 +312,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     automaticSchedule = schedulerState.automaticSchedule,
                     onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
                     choresManagerOpen = choresManagerOpen,
-                    onToggleChoresManager = { choresManagerOpen = !choresManagerOpen },
+                    onToggleChoresManager = {
+                        choresManagerOpen = !choresManagerOpen
+                        if (choresManagerOpen) bringWindowToFront(FloatingWindow.Reminders)
+                    },
                     historyManagerOpen = historyManagerOpen,
-                    onToggleHistoryManager = { historyManagerOpen = !historyManagerOpen },
+                    onToggleHistoryManager = {
+                        historyManagerOpen = !historyManagerOpen
+                        if (historyManagerOpen) bringWindowToFront(FloatingWindow.History)
+                    },
                 )
 
                 // The content area is clipped so the floating calendar window can overlap the tree
@@ -308,11 +337,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             today = today,
                             nowMillis = nowMillis,
                             onDismiss = { calendarOpen = false },
-                            modifier = Modifier.align(Alignment.Center),
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .zIndex(windowZ(FloatingWindow.Calendar)),
                             records = calendarRecords,
                             // PRD §8 focus: pressing in the calendar makes it the focused surface again
-                            // (e.g. after a click into the tree had handed focus back).
+                            // (e.g. after a click into the tree had handed focus back) and raises it to the
+                            // top of the window layers. (onFocus fires inside the window, after its offset.)
                             onFocus = {
+                                bringWindowToFront(FloatingWindow.Calendar)
                                 if (!schedulerState.calendarFocused) {
                                     vm.dispatch(SchedulerIntent.SetCalendarFocus(true))
                                 }
@@ -364,9 +397,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                         )
 
                         // PRD §8 edit window, drawn over the calendar window and the tree — used for
-                        // both editing an existing block and the Manual-add default panel.
+                        // both editing an existing block and the Manual-add default panel. It is a modal
+                        // (full-screen scrim), so it is pinned above every floating window's z-layer.
                         (editingBlock ?: addingBlock)?.let { block ->
                             val isNew = editingBlock == null
+                            Box(Modifier.fillMaxSize().zIndex(100f)) {
                             ManualEntryEditWindow(
                                 initialTitle = block.title,
                                 initialTaskId = block.taskId,
@@ -393,6 +428,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                     addingBlock = null
                                 },
                             )
+                            }
                         }
                     }
 
@@ -405,7 +441,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             // PRD §14: pass `now` too so a reminder with no time-of-day lands at the current time.
                             onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis, nowMillis)) },
                             onDismiss = { choresManagerOpen = false },
-                            modifier = Modifier.align(Alignment.Center),
+                            // Cascade: open up-left of center so it isn't fully hidden behind a wider window.
+                            initialOffset = Offset(-200f, -150f),
+                            onRaise = { bringWindowToFront(FloatingWindow.Reminders) },
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .zIndex(windowZ(FloatingWindow.Reminders)),
                         )
                     }
 
@@ -414,7 +455,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                         HistoryManagerWindow(
                             histories = schedulerState.histories,
                             onDismiss = { historyManagerOpen = false },
-                            modifier = Modifier.align(Alignment.Center),
+                            // Cascade: open down-right of center so the Reminders / calendar windows stay reachable.
+                            initialOffset = Offset(200f, 150f),
+                            onRaise = { bringWindowToFront(FloatingWindow.History) },
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .zIndex(windowZ(FloatingWindow.History)),
                         )
                     }
 
@@ -423,7 +469,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                         TimeSimPanel(
                             clock = simClock,
                             nowMillis = nowMillis,
-                            modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(12.dp)
+                                .zIndex(windowZ(FloatingWindow.TimeSim))
+                                .raiseOnPress { bringWindowToFront(FloatingWindow.TimeSim) },
                         )
                     }
                 }

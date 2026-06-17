@@ -495,6 +495,20 @@ fun LateralMenu(
 }
 
 /**
+ * Raise a floating window to the top of the stack when the user presses anywhere inside it. The press is
+ * observed on the **Initial** pointer pass and is *not* consumed, so the window's own drag / click / button
+ * handlers still receive it — this only records the interaction so the caller can re-order the z-stack.
+ */
+fun Modifier.raiseOnPress(onPress: () -> Unit): Modifier =
+    pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) onPress()
+            }
+        }
+    }
+
+/**
  * PRD §14 Reminders: a floating, draggable in-app window (not a modal dialog) holding a vertical list of
  * rows, each three input fields — a title, a recurrence in **days** (a floating-point number) and a time
  * of day. Like the §7 calendar window it floats over the tree, not the lateral menu; grab the title bar
@@ -507,8 +521,12 @@ fun ChoresManagerWindow(
     onChange: (List<ChoreEntry>) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Initial position relative to centered; staggered per window so they open in a clickable cascade. */
+    initialOffset: Offset = Offset.Zero,
+    /** Raise this window to the top of the layers — fired on a press anywhere inside it. */
+    onRaise: () -> Unit = {},
 ) {
-    var offset by remember { mutableStateOf(Offset.Zero) }
+    var offset by remember { mutableStateOf(initialOffset) }
     // Per-row editable text (title, days, time-of-day) so an in-progress "3." / "9:" isn't reformatted
     // each keystroke. Seeded once from the incoming chores; live edits drive both this and the pushed list.
     val rows = remember {
@@ -540,7 +558,9 @@ fun ChoresManagerWindow(
         border = BorderStroke(1.dp, CalColors.grid),
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            .size(width = 470.dp, height = 480.dp),
+            .size(width = 470.dp, height = 480.dp)
+            // Raise on press AFTER the offset so the hit region tracks the (possibly dragged) window.
+            .raiseOnPress(onRaise),
     ) {
         Column(Modifier.fillMaxSize()) {
             // Title bar doubles as the drag handle for moving the window.
@@ -643,8 +663,12 @@ fun HistoryManagerWindow(
     histories: SchedulerHistories,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Initial position relative to centered; staggered per window so they open in a clickable cascade. */
+    initialOffset: Offset = Offset.Zero,
+    /** Raise this window to the top of the layers — fired on a press anywhere inside it. */
+    onRaise: () -> Unit = {},
 ) {
-    var offset by remember { mutableStateOf(Offset.Zero) }
+    var offset by remember { mutableStateOf(initialOffset) }
     // Display order: the content stacks first (most-used), then selection.
     val sections = listOf(
         "Main (the rest)" to HistoryCategory.Main,
@@ -660,7 +684,9 @@ fun HistoryManagerWindow(
         border = BorderStroke(1.dp, CalColors.grid),
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            .size(width = 780.dp, height = 520.dp),
+            .size(width = 780.dp, height = 520.dp)
+            // Raise on press AFTER the offset so the hit region tracks the (possibly dragged) window.
+            .raiseOnPress(onRaise),
     ) {
         Column(Modifier.fillMaxSize()) {
             // Title bar doubles as the drag handle for moving the window.
