@@ -78,13 +78,14 @@ data class ChoreEntry(
  * PRD §14 Reminders recurrence unit: the user enters a recurrence number/formula and picks a unit; the unit
  * maps that number to the cadence in days ([ChoreEntry.spanDays]) via [toDays]. There are two families:
  * **interval** units (*every n …*: [Days], [Months], [Years]) multiply by the period length, and **rate**
- * units (*n times per …*: [PerMonth], [PerYear]) divide the period length by the number. Months and years
- * use the mean Gregorian year length (365.24219 days): a month is `365.24219 / 12` days.
+ * units (*n times per …*: [PerWeek], [PerMonth], [PerYear]) divide the period length by the number. Months
+ * and years use the mean Gregorian year length (365.24219 days): a month is `365.24219 / 12` days.
  */
 enum class ChoreRecurrenceUnit(val label: String) {
     Days("days"),
     Months("months"),
     Years("years"),
+    PerWeek("per week"),
     PerMonth("per month"),
     PerYear("per year");
 
@@ -93,6 +94,7 @@ enum class ChoreRecurrenceUnit(val label: String) {
         Days -> number
         Months -> number * DAYS_PER_MONTH
         Years -> number * DAYS_PER_YEAR
+        PerWeek -> if (number != 0.0) DAYS_PER_WEEK / number else 0.0
         PerMonth -> if (number != 0.0) DAYS_PER_MONTH / number else 0.0
         PerYear -> if (number != 0.0) DAYS_PER_YEAR / number else 0.0
     }
@@ -102,6 +104,7 @@ enum class ChoreRecurrenceUnit(val label: String) {
         Days -> spanDays
         Months -> spanDays / DAYS_PER_MONTH
         Years -> spanDays / DAYS_PER_YEAR
+        PerWeek -> if (spanDays != 0.0) DAYS_PER_WEEK / spanDays else 0.0
         PerMonth -> if (spanDays != 0.0) DAYS_PER_MONTH / spanDays else 0.0
         PerYear -> if (spanDays != 0.0) DAYS_PER_YEAR / spanDays else 0.0
     }
@@ -109,6 +112,7 @@ enum class ChoreRecurrenceUnit(val label: String) {
     companion object {
         const val DAYS_PER_YEAR: Double = 365.24219
         const val DAYS_PER_MONTH: Double = DAYS_PER_YEAR / 12
+        const val DAYS_PER_WEEK: Double = 7.0
     }
 }
 

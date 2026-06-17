@@ -360,22 +360,36 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun side_task_next_start_is_the_due_time_clamped_forward_to_now_when_overdue() {
+    fun side_task_next_start_clamps_rest_poses_to_now_but_advances_the_look_away_along_its_grid() {
         val now = 1_000_000_000_000L
-        // Up to date (rested 5 min ago, 20-min interval): next is 15 min ahead.
+
+        // A rest pose is detectable, so an overdue one clamps to the now-line and waits there.
+        val pose = SideTask("Pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now - 90 * MIN)
+        assertEquals(now, SchedulerDomain.sideTaskNextStart(pose, now))
+        assertTrue(SchedulerDomain.isSideTaskOverdue(pose, now))
+
+        // The look-away up to date (rested 5 min ago, 20-min interval): next is 15 min ahead.
         val fresh = SideTask("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 5 * MIN)
         assertEquals(now + 15 * MIN, SchedulerDomain.sideTaskNextStart(fresh, now))
         assertFalse(SchedulerDomain.isSideTaskOverdue(fresh, now))
 
-        // Overdue (rested 25 min ago): clamps to the now-line and reads as overdue.
+        // The look-away overdue (rested 25 min ago): its grid is …, now-5min, now+15min, … . The now-5min slot
+        // has fully elapsed, so it is assumed done and the next start advances to now+15min — NOT to the
+        // now-line (clamping to `now` would make the un-trackable look-away slide and the voice cue repeat).
         val late = fresh.copy(lastRestMillis = now - 25 * MIN)
-        assertEquals(now, SchedulerDomain.sideTaskNextStart(late, now))
-        assertTrue(SchedulerDomain.isSideTaskOverdue(late, now))
+        assertEquals(now + 15 * MIN, SchedulerDomain.sideTaskNextStart(late, now))
 
-        // Never rested: due immediately at the now-line.
+        // The grid is anchored at lastRest, not at `now`: advancing `now` within a slot does not move it.
+        assertEquals(
+            SchedulerDomain.sideTaskNextStart(late, now),
+            SchedulerDomain.sideTaskNextStart(late, now + 1),
+        )
+
+        // Never rested: still anchored to a fixed grid (not slid to the now-line) and live around `now`.
         val never = fresh.copy(lastRestMillis = 0L)
-        assertEquals(now, SchedulerDomain.sideTaskNextStart(never, now))
-        assertTrue(SchedulerDomain.isSideTaskOverdue(never, now))
+        val neverStart = SchedulerDomain.sideTaskNextStart(never, now)
+        assertEquals(neverStart, SchedulerDomain.sideTaskNextStart(never, now + 1))
+        assertTrue(neverStart + never.durationMillis > now && neverStart <= now + 20 * MIN)
     }
 
     @Test
@@ -392,14 +406,16 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun an_overdue_side_task_sits_at_the_now_line() {
+    fun an_overdue_look_away_advances_along_its_grid_instead_of_sitting_at_the_now_line() {
         val (s0, _) = stateWithOneTask(45)
         val now = 1_000_000_000_000L
-        val s = s0.copy(sideTasks = listOf(SideTask("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L)))
-        // Never rested → overdue → the earliest occurrence is placed at now (it can't drift into the past).
+        // Look-away (non-rest), last looked away 25 min ago on a 20-min grid: the now-5min slot has elapsed and
+        // is assumed done (the app can't detect a look-away), so the next occurrence is placed at now+15min —
+        // NOT pinned at the now-line. (Contrast fill_schedule_places_an_overdue_rest_pause_at_now.)
+        val s = s0.copy(sideTasks = listOf(SideTask("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 25 * MIN)))
         val side = SchedulerDomain.fillSchedule(s, now).filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
-        assertEquals(now, side.startEpochMillis)
-        assertEquals(now + 20_000L, side.endEpochMillis)
+        assertEquals(now + 15 * MIN, side.startEpochMillis)
+        assertEquals(now + 15 * MIN + 20_000L, side.endEpochMillis)
     }
 
     @Test

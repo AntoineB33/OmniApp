@@ -43,6 +43,12 @@ class SimAppClock(
         speed = newSpeed
     }
 
+    /** Debug: jump virtual time forward by [deltaMillis] (a "time leap"), keeping the current speed. */
+    fun leap(deltaMillis: Long) {
+        anchorVirtual = nowMillis() + deltaMillis
+        anchorReal = realNowMillis()
+    }
+
     /** Snap back to real wall-clock time at 1× speed. */
     fun reset() {
         anchorVirtual = realNowMillis()

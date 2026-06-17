@@ -2,6 +2,7 @@ package org.example.project.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -41,6 +42,8 @@ private val panelAccent = Color(0xFF8E24AA) // distinct from the calendar's blue
 fun TimeSimPanel(
     clock: SimAppClock,
     nowMillis: Long,
+    /** Debug: simulate taking a pause of [durationMillis] (a device sleep) and leap virtual time over it. */
+    onSimulatePause: (durationMillis: Long) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val tz = remember { TimeZone.currentSystemDefault() }
@@ -81,6 +84,19 @@ fun TimeSimPanel(
                     selectedSpeed = 0.0
                 }
             }
+            // PRD §15 debug: simulate taking a pause (a device sleep) and leap virtual time over it, so the
+            // side-task rhythm (look-away / poses) and the now-line can be exercised without waiting.
+            Text(
+                text = "simulate pause + leap",
+                style = MaterialTheme.typography.labelSmall,
+                color = panelAccent,
+                fontWeight = FontWeight.Bold,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                PauseChip(label = "20s") { onSimulatePause(20L * 1_000) }
+                PauseChip(label = "5min") { onSimulatePause(5L * 60 * 1_000) }
+                PauseChip(label = "15min") { onSimulatePause(15L * 60 * 1_000) }
+            }
             Text(
                 text = "reset to real time",
                 style = MaterialTheme.typography.labelSmall,
@@ -98,6 +114,25 @@ fun TimeSimPanel(
             )
         }
     }
+}
+
+@Composable
+private fun PauseChip(label: String, onClick: () -> Unit) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color.Transparent)
+            .border(BorderStroke(1.dp, panelAccent), RoundedCornerShape(6.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(vertical = 4.dp, horizontal = 8.dp),
+    )
 }
 
 @Composable

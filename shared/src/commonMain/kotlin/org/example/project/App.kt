@@ -20,7 +20,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
@@ -58,6 +57,12 @@ import org.example.project.ui.startOfWeek
 enum class OmniPage(val label: String) {
     TaskScheduler("Task Scheduler"),
 }
+
+// PRD §15: the furthest back the look-away cue scan looks when the now-line advances in one step. It exceeds
+// a normal accelerated tick's reach (the fastest sim speed, 300×, advances 300 s over the 1 s tick) so smooth
+// fast-forward never clips a crossing, while a larger leap (manual time-leap, or waking from a long real
+// device sleep) is treated as a jump that announces at most the last few minutes — not a backlog of cues.
+private const val LOOK_AWAY_SWEEP_CAP_MILLIS: Long = 10L * 60 * 1_000
 
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
 private enum class FloatingWindow { Calendar, Reminders, History, TimeSim }
@@ -102,15 +107,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                 lastRealTick = realNow
                 lastClockTick = now
                 nowMillis = now
-                // PRD §15: an overdue side task must sit at the now-line and split the surrounding task around
-                // it. That placement only happens in a full refill, so while a side task is overdue we refill
+                // PRD §15: an overdue *rest pose* must sit at the now-line and split the surrounding task
+                // around it. That placement only happens in a full refill, so while a pose is overdue we refill
                 // each tick (it re-splits cleanly and is a no-op when nothing moved) — this is what keeps the
-                // pause tracking `now` under accelerated time. Otherwise we only advance (the cheaper tick):
-                // the window refill is left to the §9 calculation events below.
+                // pose tracking `now` under accelerated time. The look-away is deliberately excluded: it sits
+                // on a fixed grid (its `lastRest` never updates), so refilling on it would re-place it at `now`
+                // every tick and make the voice cue repeat. Otherwise we only advance (the cheaper tick): the
+                // window refill is left to the §9 calculation events below.
                 val current = vm.state.value
                 val sideTaskDue =
                     current.automaticSchedule &&
-                        current.sideTasks.any { SchedulerDomain.isSideTaskOverdue(it, now) }
+                        current.sideTasks.any { it.restBreak && SchedulerDomain.isSideTaskOverdue(it, now) }
                 if (sideTaskDue) {
                     vm.dispatch(SchedulerIntent.RefreshSchedule(now))
                 } else {
@@ -215,46 +222,60 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             sendSystemNotification("Task to do now", message)
         }
 
-        // PRD §15 Notifications: a side task that becomes the current activity (the eye-care look-away / pose)
-        // is notified by its title. Driven from the scheduler state — NOT the calendar's display toggle — so
-        // hiding side tasks from the calendar never silences them. We track the last side title we notified
-        // (like [lastNotifiedTaskId] above) rather than relying on [currentSideTitle] being a stable key:
-        // [currentPanel] derives from two separately-updated sources (`nowMillis` and `schedulerState`), and an
-        // overdue side task's panel start is clamped to `now`. When `schedulerState` updates one frame before
-        // `nowMillis`, the panel start is momentarily ahead of the stale `now`, so it no longer covers the
-        // now-line — [currentSideTitle] tears to null and back every tick. Keying the notification on it alone
-        // would then re-fire indefinitely for an overdue pause sliding along the now-line. The guard makes a
-        // transient null a no-op (the `?:` returns) and only re-notifies on a genuinely different title — so an
-        // overdue side task notifies once, and the next side task of a different title notifies again.
+        // PRD §15 Notifications: a *rest pose* that becomes the current activity is notified by its title.
+        // Driven from the scheduler state — NOT the calendar's display toggle — so hiding side tasks from the
+        // calendar never silences them. We track the last pose title we notified (like [lastNotifiedTaskId]
+        // above) rather than relying on [currentPoseTitle] being a stable key: [currentPanel] derives from two
+        // separately-updated sources (`nowMillis` and `schedulerState`), and an overdue pose's panel start is
+        // clamped to `now`. When `schedulerState` updates one frame before `nowMillis`, the panel start is
+        // momentarily ahead of the stale `now`, so it no longer covers the now-line — [currentPoseTitle] tears
+        // to null and back every tick. Keying on it alone would then re-fire indefinitely for an overdue pose
+        // sliding along the now-line. The guard makes a transient null a no-op and only re-notifies on a
+        // genuinely different title. The look-away is handled separately below (it does not pin to the now-line
+        // and its window is too short to be reliably "current" at a tick under acceleration).
         var lastNotifiedSideTitle by remember { mutableStateOf<String?>(null) }
-        val currentSideTitle = currentPanel?.takeIf { it.sideTask }?.title
-        LaunchedEffect(currentSideTitle) {
-            val title = currentSideTitle ?: return@LaunchedEffect
+        val currentPoseTitle =
+            currentPanel
+                ?.takeIf { panel ->
+                    panel.sideTask && schedulerState.sideTasks.any { it.restBreak && it.title == panel.title }
+                }
+                ?.title
+        LaunchedEffect(currentPoseTitle) {
+            val title = currentPoseTitle ?: return@LaunchedEffect
             if (title == lastNotifiedSideTitle) return@LaunchedEffect
             lastNotifiedSideTitle = title
             sendSystemNotification("Side task", title)
         }
 
-        // PRD §15 (20s look-away voice): the look-away is the *cadence* side task (a non-rest-break side
-        // task — the app can't detect whether it was actually done, so it always assumes it was). When one
-        // becomes the current panel and the voice toggle is on, a voice says to look away, then — after the
-        // pause's own duration (~20s) — to resume work. The cue is launched on a scope that outlives this
-        // effect so the advancing now-line (which changes [currentPanel] and re-keys the effect) doesn't cut
-        // the "resume" line off. Keyed on the panel id so each occurrence speaks exactly once.
-        val voiceScope = rememberCoroutineScope()
-        val currentLookAwayPanel =
-            currentPanel?.takeIf { panel ->
+        // PRD §15 (20s look-away): the look-away is the *cadence* side task (non-rest-break). It sits on a fixed
+        // grid (see [SchedulerDomain.sideTaskNextStart]) and its window is only ~20s — under time-acceleration
+        // (e.g. 300×) that window passes between two 1s ticks, so the now-line never *covers* it and a
+        // coverage-based cue is missed entirely. Instead we fire on the now-line *crossing* the occurrence: when
+        // it sweeps past a look-away's start we notify + say "look away"; when it sweeps past the end we say
+        // "resume work". Each occurrence is detected exactly once (its grid start/end is stable across refills).
+        //
+        // Under heavy acceleration the start and end fall in the same tick's swept span; the two voice lines are
+        // enqueued in order and play back-to-back (the TTS queue is FIFO — see `speak`). The swept span is
+        // clamped to [LOOK_AWAY_SWEEP_CAP_MILLIS] so a large jump (a manual leap, or waking from a long real
+        // device sleep where the user was away) does not replay a backlog of cues.
+        var lastSweptMillis by remember { mutableStateOf(nowMillis) }
+        LaunchedEffect(nowMillis) {
+            val to = nowMillis
+            val from = maxOf(lastSweptMillis, to - LOOK_AWAY_SWEEP_CAP_MILLIS)
+            lastSweptMillis = to
+            if (to <= from) return@LaunchedEffect // first tick, clock reset, or rewind: nothing to announce
+            val lookAways = schedulerState.panels.filter { panel ->
                 panel.sideTask && schedulerState.sideTasks.any { !it.restBreak && it.title == panel.title }
             }
-        LaunchedEffect(currentLookAwayPanel?.id) {
-            val panel = currentLookAwayPanel ?: return@LaunchedEffect
-            if (!schedulerState.lookAwayVoiceEnabled) return@LaunchedEffect
-            val pauseMillis = (panel.endEpochMillis - panel.startEpochMillis).coerceAtLeast(0)
-            voiceScope.launch {
-                speak("Look 20 feet away")
-                delay(pauseMillis)
-                speak("Resume your work")
-            }
+            lookAways.filter { it.startEpochMillis in (from + 1)..to }
+                .sortedBy { it.startEpochMillis }
+                .forEach {
+                    sendSystemNotification("Side task", it.title)
+                    if (schedulerState.lookAwayVoiceEnabled) speak("Look 20 feet away")
+                }
+            lookAways.filter { it.endEpochMillis in (from + 1)..to }
+                .sortedBy { it.endEpochMillis }
+                .forEach { if (schedulerState.lookAwayVoiceEnabled) speak("Resume your work") }
         }
 
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
@@ -522,6 +543,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                         TimeSimPanel(
                             clock = simClock,
                             nowMillis = nowMillis,
+                            // Debug: simulate taking a pause — leap virtual time over it and report the device
+                            // sleep so the side-task rhythm resets exactly as a real ≥duration pause would.
+                            onSimulatePause = { durationMillis ->
+                                val sleepStart = clock.nowMillis()
+                                simClock.leap(durationMillis)
+                                val sleepEnd = clock.nowMillis()
+                                nowMillis = sleepEnd
+                                vm.dispatch(SchedulerIntent.ReportDeviceSleep(sleepStart, sleepEnd))
+                                if (vm.state.value.automaticSchedule) {
+                                    vm.dispatch(SchedulerIntent.RefreshSchedule(sleepEnd))
+                                }
+                            },
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
                                 .padding(12.dp)

@@ -877,7 +877,7 @@ private data class ChoreRow(
     val unit: ChoreRecurrenceUnit = ChoreRecurrenceUnit.Days,
 )
 
-/** PRD §14: the unit selector beside the recurrence field — days (default) / months / years. */
+/** PRD §14: the unit selector beside the recurrence field — every n days (default) / months / years, or n times per week / month / year. */
 @Composable
 private fun RecurrenceUnitDropdown(unit: ChoreRecurrenceUnit, onSelect: (ChoreRecurrenceUnit) -> Unit) {
     var expanded by remember { mutableStateOf(false) }

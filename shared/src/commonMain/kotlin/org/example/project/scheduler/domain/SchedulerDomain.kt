@@ -858,15 +858,35 @@ object SchedulerDomain {
         side.intervalMillis > 0 && side.durationMillis > 0 && side.title.isNotBlank()
 
     /**
-     * PRD §15: the next-occurrence start for [side] at [nowMillis] — its due time `lastRest + interval` (an
-     * interval after the last qualifying pause **ended**), clamped forward to `now` once that time has passed
-     * without the pause being taken, so a missed side task sits at the now-line instead of drifting into the
-     * past. A never-rested task (`lastRestMillis == 0`) is therefore due immediately (at `now`).
+     * PRD §15: the next-occurrence start for [side] at [nowMillis], beginning from its due time
+     * `lastRest + interval` (an interval after the last qualifying pause **ended**).
+     *
+     * How a *past* due time is handled depends on whether the app can tell the pause was taken:
+     * - A **rest pose** ([SideTask.restBreak], the 5-/15-min poses) is detectable from device sleep, so an
+     *   un-taken one is clamped forward to `now` and waits at the now-line until the user actually rests
+     *   (which updates `lastRestMillis`). A never-rested pose (`lastRestMillis == 0`) is due immediately.
+     * - The **look-away cadence** (non-rest) is NOT detectable — the app can't know whether the user looked
+     *   away — so a fully-elapsed occurrence is *assumed done* and the cadence advances along its fixed grid
+     *   (anchored at `lastRest`, stepped by `interval`) to the next slot still live at `now`. It must NOT
+     *   slide to the now-line: `lastRestMillis` never updates for it, so clamping to `now` would re-place it
+     *   at `now` every tick and make the look-away voice cue repeat indefinitely.
      */
-    fun sideTaskNextStart(side: SideTask, nowMillis: Long): Long =
-        maxOf(side.lastRestMillis + side.intervalMillis, nowMillis)
+    fun sideTaskNextStart(side: SideTask, nowMillis: Long): Long {
+        val due = side.lastRestMillis + side.intervalMillis
+        if (side.restBreak) return maxOf(due, nowMillis)
+        // The current occurrence still covers `now` (or is future) → keep it; otherwise step the grid forward
+        // to the first slot whose window has not already elapsed before `now`.
+        if (due + side.durationMillis > nowMillis) return due
+        val elapsed = nowMillis - side.durationMillis - due
+        val steps = elapsed / side.intervalMillis + 1
+        return due + steps * side.intervalMillis
+    }
 
-    /** PRD §15: true when [side] is overdue at [nowMillis] — its due time has passed, so it sits at `now`. */
+    /**
+     * PRD §15: true when [side]'s due time `lastRest + interval` has passed at [nowMillis]. For a rest pose
+     * this means it sits at the now-line (and is what drives the per-tick refill that keeps it tracking `now`);
+     * the look-away never pins to the now-line, so callers gate this on [SideTask.restBreak].
+     */
     fun isSideTaskOverdue(side: SideTask, nowMillis: Long): Boolean =
         side.lastRestMillis + side.intervalMillis <= nowMillis
 
@@ -891,7 +911,8 @@ object SchedulerDomain {
      * - **A pause re-anchors shorter pauses:** placing any pause (overdue at `now` or future) re-anchors every
      *   *shorter* pause to `thisPauseEnd + itsInterval`, so the look-away always lands **20 min after a pose
      *   ends** ("after a ≥20-second pause, the next look-away is 20 minutes later") and never within an
-     *   interval of a longer pose — the missed-pause stacking at the now-line is the same rule applied there.
+     *   interval of a longer pose. (An overdue *rest pose* seeds at the now-line; the look-away instead seeds
+     *   at the next live slot of its fixed grid — see [sideTaskNextStart].)
      * - **Absorption:** a (defensive) skip of any occurrence whose window still falls inside an already-placed
      *   longer pause; it advances its own clock. With the re-anchoring above a shorter pause is normally pushed
      *   clear of a longer one before it would be drawn.
