@@ -431,6 +431,9 @@ fun LateralMenu(
     /** PRD §5/§6 History Manager: whether the history window is open + toggle callback. */
     historyManagerOpen: Boolean = false,
     onToggleHistoryManager: () -> Unit = {},
+    /** PRD §15 (20s look-away): whether the spoken voice cue is enabled + toggle callback. */
+    lookAwayVoiceEnabled: Boolean = true,
+    onToggleLookAwayVoice: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -464,6 +467,22 @@ fun LateralMenu(
             Switch(
                 checked = automaticSchedule,
                 onCheckedChange = onToggleAutomaticSchedule,
+            )
+        }
+
+        // PRD §15 (20s look-away): spoken voice cue on/off.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Look-away voice",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = lookAwayVoiceEnabled,
+                onCheckedChange = onToggleLookAwayVoice,
             )
         }
 

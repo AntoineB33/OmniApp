@@ -193,6 +193,14 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §15 Side tasks: enable/disable the spoken voice cue for the 20s look-away pause. Persisted; not
+     * undoable; does not touch the schedule.
+     */
+    data class SetLookAwayVoice(
+        val enabled: Boolean,
+    ) : SchedulerIntent
+
+    /**
      * PRD §12 Device sleep: the device was asleep for `[sleepStartEpochMillis, sleepEndEpochMillis]`
      * (detected on wake as a tick gap far larger than the cadence), so the user was NOT doing the
      * scheduled task during it. Cuts the in-progress scheduled period at the sleep start (recording

@@ -155,6 +155,12 @@ data class SchedulerState(
      * scheduling (and the side-task notifications) are unaffected; the real spanning time never changes.
      */
     val showSideTasks: Boolean = true,
+    /**
+     * PRD §15 Side tasks (20s look-away): whether the spoken voice cue is enabled — when the look-away pause
+     * is reached a voice says to look away and, at the pause's end, to resume work (in addition to the
+     * notification). On by default; persisted, not undoable.
+     */
+    val lookAwayVoiceEnabled: Boolean = true,
 ) {
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots
     // (capture) and re-attached from the live tasks on restore (applyTree). Undo/Redo therefore

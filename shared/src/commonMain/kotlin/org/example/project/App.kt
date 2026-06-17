@@ -20,6 +20,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
@@ -36,6 +37,7 @@ import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.platform.lastWakeAfterLongSleepMillis
 import org.example.project.scheduler.platform.sendSystemNotification
+import org.example.project.scheduler.platform.speak
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.ui.TaskSchedulerScreen
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
@@ -233,6 +235,28 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             sendSystemNotification("Side task", title)
         }
 
+        // PRD §15 (20s look-away voice): the look-away is the *cadence* side task (a non-rest-break side
+        // task — the app can't detect whether it was actually done, so it always assumes it was). When one
+        // becomes the current panel and the voice toggle is on, a voice says to look away, then — after the
+        // pause's own duration (~20s) — to resume work. The cue is launched on a scope that outlives this
+        // effect so the advancing now-line (which changes [currentPanel] and re-keys the effect) doesn't cut
+        // the "resume" line off. Keyed on the panel id so each occurrence speaks exactly once.
+        val voiceScope = rememberCoroutineScope()
+        val currentLookAwayPanel =
+            currentPanel?.takeIf { panel ->
+                panel.sideTask && schedulerState.sideTasks.any { !it.restBreak && it.title == panel.title }
+            }
+        LaunchedEffect(currentLookAwayPanel?.id) {
+            val panel = currentLookAwayPanel ?: return@LaunchedEffect
+            if (!schedulerState.lookAwayVoiceEnabled) return@LaunchedEffect
+            val pauseMillis = (panel.endEpochMillis - panel.startEpochMillis).coerceAtLeast(0)
+            voiceScope.launch {
+                speak("Look 20 feet away")
+                delay(pauseMillis)
+                speak("Resume your work")
+            }
+        }
+
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
         val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz).date
@@ -348,6 +372,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     onToggleChoresManager = { onMenuWindowClicked(FloatingWindow.Reminders) { choresManagerOpen = it } },
                     historyManagerOpen = historyManagerOpen,
                     onToggleHistoryManager = { onMenuWindowClicked(FloatingWindow.History) { historyManagerOpen = it } },
+                    lookAwayVoiceEnabled = schedulerState.lookAwayVoiceEnabled,
+                    onToggleLookAwayVoice = { vm.dispatch(SchedulerIntent.SetLookAwayVoice(it)) },
                 )
 
                 // The content area is clipped so the floating calendar window can overlap the tree
