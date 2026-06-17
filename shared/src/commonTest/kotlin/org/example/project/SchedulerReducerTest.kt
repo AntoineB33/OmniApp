@@ -46,6 +46,11 @@ class SchedulerReducerTest {
         val main = s.histories.forCategory(HistoryCategory.Main)
         assertEquals("Set title", main.units.last().delta.label)
         assertEquals(main.units.lastIndex, main.pointer) // newest unit is the current pointer
+
+        // PRD §5/§6: the unit also exposes all its data — here, the cell's title change — which the
+        // history window lists under the label.
+        val details = main.units.last().delta.details
+        assertTrue(details.any { it.contains("Daily") }, "details should describe the title change: $details")
     }
 
     @Test

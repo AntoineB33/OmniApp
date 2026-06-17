@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -115,6 +114,7 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.state.CalendarEdge
 import org.example.project.scheduler.state.HistoryCategory
+import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.SchedulerHistories
 import org.example.project.scheduler.state.SchedulerHistory
 
@@ -648,7 +648,7 @@ fun HistoryManagerWindow(
         border = BorderStroke(1.dp, CalColors.grid),
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            .size(width = 380.dp, height = 520.dp),
+            .size(width = 780.dp, height = 520.dp),
     ) {
         Column(Modifier.fillMaxSize()) {
             // Title bar doubles as the drag handle for moving the window.
@@ -682,27 +682,44 @@ fun HistoryManagerWindow(
             }
             Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
 
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+            // The four category lists sit side by side so every list's head is aligned at the top
+            // (PRD §5/§6). Each column scrolls its units independently.
+            Row(
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                sections.forEach { (title, category) ->
-                    HistoryCategorySection(title = title, history = histories.forCategory(category))
+                sections.forEachIndexed { index, (title, category) ->
+                    HistoryCategorySection(
+                        title = title,
+                        history = histories.forCategory(category),
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                    )
+                    if (index < sections.lastIndex) {
+                        Box(Modifier.fillMaxHeight().width(1.dp).background(CalColors.grid))
+                    }
                 }
             }
         }
     }
 }
 
-/** One section of the history manager: a category's header (with `applied/total`) and its unit rows. */
+/**
+ * One column of the history manager: a category's header (with `applied/total`) pinned at the top, then
+ * its History Units listed **newest-first** (last at the top, first at the bottom). Each unit shows its
+ * label plus all of its data ([Delta.details]); undone units (ahead of the pointer) are dimmed and the
+ * current pointer position is marked.
+ */
 @Composable
-private fun HistoryCategorySection(title: String, history: SchedulerHistory) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+private fun HistoryCategorySection(
+    title: String,
+    history: SchedulerHistory,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(text = title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
             // pointer is 0-based on the last applied unit; `pointer + 1` units can be undone.
             Text(
@@ -716,39 +733,66 @@ private fun HistoryCategorySection(title: String, history: SchedulerHistory) {
                 text = "(empty)",
                 style = MaterialTheme.typography.bodySmall,
                 color = CalColors.muted,
-                modifier = Modifier.padding(start = 8.dp),
             )
         } else {
-            history.units.forEachIndexed { index, unit ->
-                val applied = index <= history.pointer
-                val isCurrent = index == history.pointer
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(start = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        text = "${index + 1}.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = CalColors.muted,
-                        modifier = Modifier.width(22.dp),
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Newest at the top, oldest at the bottom: walk the units in reverse.
+                items(history.units.size) { row ->
+                    val index = history.units.lastIndex - row
+                    HistoryUnitRow(
+                        position = index + 1,
+                        unit = history.units[index],
+                        applied = index <= history.pointer,
+                        isCurrent = index == history.pointer,
                     )
-                    Text(
-                        text = unit.delta.label,
-                        style = MaterialTheme.typography.bodyMedium,
-                        // Undone units (past the pointer, redoable) are dimmed.
-                        color = if (applied) MaterialTheme.colorScheme.onSurface else CalColors.muted,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (isCurrent) {
-                        Text(
-                            text = "● current",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = CalColors.accent,
-                        )
-                    }
                 }
             }
+        }
+    }
+}
+
+/** One History Unit: its position, label, the current-pointer marker, and every line of its data. */
+@Composable
+private fun HistoryUnitRow(
+    position: Int,
+    unit: HistoryUnit,
+    applied: Boolean,
+    isCurrent: Boolean,
+) {
+    // Undone units (past the pointer, redoable) are dimmed.
+    val labelColor = if (applied) MaterialTheme.colorScheme.onSurface else CalColors.muted
+    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = "$position.",
+                style = MaterialTheme.typography.bodySmall,
+                color = CalColors.muted,
+                modifier = Modifier.width(24.dp),
+            )
+            Text(
+                text = unit.delta.label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = labelColor,
+                modifier = Modifier.weight(1f),
+            )
+            if (isCurrent) {
+                Text(text = "●", style = MaterialTheme.typography.labelSmall, color = CalColors.accent)
+            }
+        }
+        unit.delta.details.forEach { line ->
+            Text(
+                text = line,
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.muted,
+                modifier = Modifier.padding(start = 30.dp),
+            )
         }
     }
 }

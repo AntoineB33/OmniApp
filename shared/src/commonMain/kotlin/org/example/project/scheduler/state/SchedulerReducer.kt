@@ -9,6 +9,9 @@ import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
+import kotlin.time.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 
 object SchedulerReducer {
     fun reduce(state: SchedulerState, intent: SchedulerIntent): SchedulerState {
@@ -1759,6 +1762,9 @@ private data class EmptyCellsDelta(
 ) : Delta {
     override val label: String = "Clear cells"
 
+    override val details: List<String>
+        get() = treeDiffLines(treeBefore, treeAfter) + selectionDiffLines(selectionBefore, selectionAfter)
+
     override fun undo(state: SchedulerState): SchedulerState =
         state.applyTree(treeBefore).copy(selection = selectionBefore)
 
@@ -1771,6 +1777,9 @@ private data class SetSelectionDelta(
     val after: SchedulerSelection,
 ) : Delta {
     override val label: String = "Selection"
+
+    override val details: List<String>
+        get() = selectionDiffLines(before, after)
 
     override fun undo(state: SchedulerState): SchedulerState = state.copy(selection = before)
 
@@ -1787,6 +1796,9 @@ private data class PanelDelta(
     val after: List<TaskPanel>,
     override val label: String = "Calendar edit",
 ) : Delta {
+    override val details: List<String>
+        get() = panelDiffLines(before, after)
+
     override fun undo(state: SchedulerState): SchedulerState = state.copy(panels = before)
 
     override fun redo(state: SchedulerState): SchedulerState = state.copy(panels = after)
@@ -1796,6 +1808,9 @@ private data class ToggleExpandDelta(
     val cellId: CellId,
 ) : Delta {
     override val label: String = "Expand / collapse"
+
+    override val details: List<String>
+        get() = listOf("cell ${cellId.value}")
 
     override fun undo(state: SchedulerState): SchedulerState = applyToggle(state)
 
@@ -1818,6 +1833,9 @@ private data class TreeMutationDelta(
     val after: TreeSnapshot,
     override val label: String = "Tree change",
 ) : Delta {
+    override val details: List<String>
+        get() = treeDiffLines(before, after)
+
     override fun undo(state: SchedulerState): SchedulerState = state.applyTree(before)
 
     override fun redo(state: SchedulerState): SchedulerState = state.applyTree(after)
@@ -1829,4 +1847,82 @@ private object NoOpDelta : Delta {
     override fun undo(state: SchedulerState): SchedulerState = state
 
     override fun redo(state: SchedulerState): SchedulerState = state
+}
+
+// ---------------------------------------------------------------------------
+// PRD §5/§6 History Manager: per-delta "all the data" lines. Each derives the concrete changes of a unit
+// from its own before/after data so the history window can list them under the unit's label.
+// ---------------------------------------------------------------------------
+
+/** The task title shown for [cellId] in a snapshot ("∅" for an empty / task-less cell). */
+private fun TreeSnapshot.cellTitle(cellId: CellId): String =
+    cells[cellId]?.taskId?.let { tasks[it]?.title }?.takeIf { it.isNotBlank() } ?: "∅"
+
+/** Specifics of a tree mutation: added / removed / renamed cells, and changed weights or task fields. */
+private fun treeDiffLines(before: TreeSnapshot, after: TreeSnapshot): List<String> {
+    val lines = mutableListOf<String>()
+    (after.cells.keys - before.cells.keys).forEach { lines += "+ cell \"${after.cellTitle(it)}\"" }
+    (before.cells.keys - after.cells.keys).forEach { lines += "− cell \"${before.cellTitle(it)}\"" }
+    (before.cells.keys intersect after.cells.keys).forEach { id ->
+        val bt = before.cellTitle(id)
+        val at = after.cellTitle(id)
+        if (bt != at) lines += "\"$bt\" → \"$at\""
+        val bw = before.cells.getValue(id).priorityWeights
+        val aw = after.cells.getValue(id).priorityWeights
+        if (bw != aw) lines += "weights \"$at\": $bw → $aw"
+    }
+    (before.tasks.keys intersect after.tasks.keys).forEach { id ->
+        val b = before.tasks.getValue(id)
+        val a = after.tasks.getValue(id)
+        if (b.minimumMinutes != a.minimumMinutes) {
+            lines += "min \"${a.title}\": ${b.minimumMinutes} → ${a.minimumMinutes} min"
+        }
+        if (b.scheduleUnit != a.scheduleUnit) {
+            lines += "schedule unit \"${a.title}\": ${b.scheduleUnit.size} → ${a.scheduleUnit.size} step(s)"
+        }
+    }
+    (before.lists.keys intersect after.lists.keys).forEach { id ->
+        val bc = before.lists.getValue(id).weightColumns
+        val ac = after.lists.getValue(id).weightColumns
+        if (bc != ac) lines += "columns: $bc → $ac"
+    }
+    return lines
+}
+
+/** Specifics of a selection change: which cell is the main and how many cells are selected. */
+private fun selectionDiffLines(before: SchedulerSelection, after: SchedulerSelection): List<String> {
+    val lines = mutableListOf<String>()
+    if (before.main != after.main) {
+        lines += "main: ${before.main?.value ?: "—"} → ${after.main?.value ?: "—"}"
+    }
+    if (before.selected != after.selected) {
+        lines += "selected: ${before.selected.size} → ${after.selected.size} cell(s)"
+    }
+    return lines
+}
+
+/** Specifics of a panel-list change: added (+), removed (−) and modified (~) blocks, with title + time. */
+private fun panelDiffLines(before: List<TaskPanel>, after: List<TaskPanel>): List<String> {
+    val lines = mutableListOf<String>()
+    val beforeById = before.associateBy { it.id }
+    val afterById = after.associateBy { it.id }
+    (afterById.keys - beforeById.keys).forEach { lines += "+ ${panelSummary(afterById.getValue(it))}" }
+    (beforeById.keys - afterById.keys).forEach { lines += "− ${panelSummary(beforeById.getValue(it))}" }
+    (beforeById.keys intersect afterById.keys).forEach { id ->
+        val a = afterById.getValue(id)
+        if (beforeById.getValue(id) != a) lines += "~ ${panelSummary(a)}"
+    }
+    return lines
+}
+
+private fun panelSummary(panel: TaskPanel): String =
+    "${panel.title.ifBlank { "(untitled)" }}  ${formatPanelRange(panel.startEpochMillis, panel.endEpochMillis)}"
+
+private fun formatPanelRange(startMillis: Long, endMillis: Long): String {
+    val tz = TimeZone.currentSystemDefault()
+    fun hm(millis: Long): String {
+        val t = Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz)
+        return t.hour.toString().padStart(2, '0') + ":" + t.minute.toString().padStart(2, '0')
+    }
+    return if (startMillis == endMillis) hm(startMillis) else "${hm(startMillis)}–${hm(endMillis)}"
 }

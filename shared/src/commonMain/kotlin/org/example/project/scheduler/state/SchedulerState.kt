@@ -72,6 +72,15 @@ data class HistoryUnit(
 sealed interface Delta {
     /** PRD §5/§6 History Manager: a short human-readable name for this unit (shown in the history window). */
     val label: String
+
+    /**
+     * PRD §5/§6 History Manager: the human-readable specifics of this unit — one line per concrete change
+     * (a renamed cell, an added/removed panel, the selection before→after, …). Derived from the unit's
+     * own before/after data so the window can display all of a unit's data, not just its [label]. Empty
+     * when the unit carries no meaningful per-item detail.
+     */
+    val details: List<String> get() = emptyList()
+
     fun undo(state: SchedulerState): SchedulerState
     fun redo(state: SchedulerState): SchedulerState
 }
