@@ -255,6 +255,26 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             if (windowStack.lastOrNull() != id) windowStack = windowStack.filterNot { it == id } + id
         }
         fun windowZ(id: FloatingWindow): Float = windowStack.indexOf(id).toFloat()
+        fun isWindowOpen(id: FloatingWindow): Boolean = when (id) {
+            FloatingWindow.Calendar -> calendarOpen
+            FloatingWindow.Reminders -> choresManagerOpen
+            FloatingWindow.History -> historyManagerOpen
+            FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
+        }
+        // The focused window is the topmost open one in the stack.
+        fun focusedWindow(): FloatingWindow? = windowStack.lastOrNull { isWindowOpen(it) }
+        // Lateral-menu click on a window button: open it (and focus) when closed; close it when it is the
+        // focused (front) window; otherwise just bring it to focus without closing.
+        fun onMenuWindowClicked(id: FloatingWindow, setOpen: (Boolean) -> Unit) {
+            when {
+                !isWindowOpen(id) -> {
+                    setOpen(true)
+                    bringWindowToFront(id)
+                }
+                focusedWindow() == id -> setOpen(false)
+                else -> bringWindowToFront(id)
+            }
+        }
 
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
@@ -300,10 +320,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     page = page,
                     onPageSelected = { page = it },
                     calendarOpen = calendarOpen,
-                    onToggleCalendar = {
-                        calendarOpen = !calendarOpen
-                        if (calendarOpen) bringWindowToFront(FloatingWindow.Calendar)
-                    },
+                    onToggleCalendar = { onMenuWindowClicked(FloatingWindow.Calendar) { calendarOpen = it } },
                     monthAnchor = monthAnchor,
                     onMonthAnchorChange = { monthAnchor = it },
                     selectedDate = selectedDate,
@@ -312,15 +329,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     automaticSchedule = schedulerState.automaticSchedule,
                     onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
                     choresManagerOpen = choresManagerOpen,
-                    onToggleChoresManager = {
-                        choresManagerOpen = !choresManagerOpen
-                        if (choresManagerOpen) bringWindowToFront(FloatingWindow.Reminders)
-                    },
+                    onToggleChoresManager = { onMenuWindowClicked(FloatingWindow.Reminders) { choresManagerOpen = it } },
                     historyManagerOpen = historyManagerOpen,
-                    onToggleHistoryManager = {
-                        historyManagerOpen = !historyManagerOpen
-                        if (historyManagerOpen) bringWindowToFront(FloatingWindow.History)
-                    },
+                    onToggleHistoryManager = { onMenuWindowClicked(FloatingWindow.History) { historyManagerOpen = it } },
                 )
 
                 // The content area is clipped so the floating calendar window can overlap the tree
