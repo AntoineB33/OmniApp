@@ -133,6 +133,10 @@ sealed interface SchedulerIntent {
     data class SetChores(
         val entries: List<org.example.project.scheduler.model.ChoreEntry>,
         val todayStartMillis: Long = 0L,
+        // PRD §14: a reminder with no time-of-day is placed at the current time; this carries it (the time
+        // zone is the caller's). Defaults to [todayStartMillis] (midnight) so callers that omit it are
+        // unaffected and a not-defined time falls back to midnight.
+        val nowMillis: Long = todayStartMillis,
     ) : SchedulerIntent
 
     /**

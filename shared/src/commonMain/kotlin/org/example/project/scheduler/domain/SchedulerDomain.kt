@@ -873,10 +873,14 @@ object SchedulerDomain {
     private const val SIDE_TASK_PROJECTION_LIMIT: Int = 200_000
 
     /**
-     * PRD §15: project [sideTasks] forward from [nowMillis] to the scheduling horizon (`now +
-     * [SCHEDULE_HORIZON_MILLIS]`, ≈ the focused week ahead) as obstacle panels, interleaving the three
-     * recurrences and resolving their overlaps. Each panel has `sideTask = true`, a null taskId, and a
-     * deterministic `side/{index}/{start}` id; invalid rows are skipped.
+     * PRD §15: project [sideTasks] forward from [nowMillis] to [horizonMillis] as obstacle panels,
+     * interleaving the three recurrences and resolving their overlaps. Each panel has `sideTask = true`, a
+     * null taskId, and a deterministic `side/{index}/{start}` id; invalid rows are skipped.
+     *
+     * [horizonMillis] defaults to the scheduling horizon (`now + [SCHEDULE_HORIZON_MILLIS]`), which is what
+     * the §9 fill uses as a fixed obstacle window. The calendar display passes the **end of the focused week**
+     * instead (PRD §15 "computed from now to the end of the currently focused week"), so navigating to a week
+     * beyond the default horizon still shows the side-task markers across it.
      *
      * The simulation walks occurrences in time order (ties resolved toward the **longer** pause so a
      * coincident bigger pause is placed first), applying:
@@ -892,8 +896,12 @@ object SchedulerDomain {
      *   the still-future 15-min pose), it **becomes** a 15-min pose at its own start and the 15-min pose is
      *   pushed to an interval after the merged pause ends (`mergedEnd + 2 h` = 2h15 after the 5-min start).
      */
-    fun sideTaskPanels(sideTasks: List<SideTask>, nowMillis: Long): List<TaskPanel> {
-        val horizon = nowMillis + SCHEDULE_HORIZON_MILLIS
+    fun sideTaskPanels(
+        sideTasks: List<SideTask>,
+        nowMillis: Long,
+        horizonMillis: Long = nowMillis + SCHEDULE_HORIZON_MILLIS,
+    ): List<TaskPanel> {
+        val horizon = maxOf(horizonMillis, nowMillis)
         val valid = sideTasks.withIndex().filter { isValidSideTask(it.value) }
         if (valid.isEmpty()) return emptyList()
         // The two rest poses (restBreak), shortest first, drive the 5↔15 merge.
@@ -1237,14 +1245,19 @@ object SchedulerDomain {
 
     /**
      * PRD §14: the day offsets (from the anchor, day 0 = today) on which a chore recurring every
-     * [spanDays] lands, out to [horizonDays]. The accumulated counter starts at today (offset 0 is always
-     * included); each subsequent iteration adds [spanDays] and the closest integer to the running sum is
-     * the chosen day, so a fractional cadence does not drift (e.g. 2.5 → 0, 2/3, 5, 8, 10, …, ties to
-     * even per [roundToInt]). Returns just `[0]` when [spanDays] is not a valid cadence (≤ 1, per §14).
+     * [spanDays] lands, out to [horizonDays].
+     *
+     * - **`spanDays ≤ 0`** (blank / no recurrence): a one-off — just `[0]` (today).
+     * - **`0 < spanDays < 1`**: a daily reminder — every day `[0, 1, …, horizonDays]`.
+     * - **`spanDays ≥ 1`**: a day cadence. The accumulated counter starts at today (offset 0 is always
+     *   included); each subsequent iteration adds [spanDays] and the closest integer to the running sum is
+     *   the chosen day, so a fractional cadence lands an exact `numerator` occurrences per `denominator`-day
+     *   window without drifting (e.g. `31/21` ≈ 1.476 → 0, 1, 3, 4, 6, … = 21 days out of every 31).
      */
     fun choreOccurrenceDayOffsets(spanDays: Double, horizonDays: Int = CHORE_HORIZON_DAYS): List<Int> {
+        if (spanDays <= 0.0) return listOf(0)
+        if (spanDays < 1.0) return (0..horizonDays).toList()
         val offsets = mutableListOf(0)
-        if (spanDays <= 1.0) return offsets
         var k = 1
         while (k <= horizonDays + 1) {
             val day = (k * spanDays).roundToInt()
@@ -1255,6 +1268,77 @@ object SchedulerDomain {
         return offsets
     }
 
+    /**
+     * PRD §14: evaluate the reminders "Days" field, which accepts an arithmetic **formula** (e.g. `31/21`,
+     * `1/2`, `7*2`) as well as a plain number — supporting `+ - * /`, parentheses, unary signs and decimals.
+     * Returns the numeric result (the recurrence in days, see [choreOccurrenceDayOffsets]), or null when the
+     * text is blank / malformed / not finite (e.g. a division by zero) — which the caller treats as 0 (a
+     * one-off). Whitespace is ignored; `,` should be normalised to `.` by the caller before parsing.
+     */
+    fun evaluateDayFormula(text: String): Double? = DayFormulaParser(text).parse()
+
+    /** Recursive-descent evaluator for [evaluateDayFormula]: `expr = term (+|-) term`, `term = factor (*|/) factor`. */
+    private class DayFormulaParser(private val s: String) {
+        private var pos = 0
+
+        fun parse(): Double? {
+            val value = expr() ?: return null
+            skipWs()
+            if (pos != s.length) return null // trailing garbage → invalid
+            return value.takeIf { it.isFinite() }
+        }
+
+        private fun skipWs() { while (pos < s.length && s[pos].isWhitespace()) pos++ }
+
+        private fun expr(): Double? {
+            var value = term() ?: return null
+            while (true) {
+                skipWs()
+                when (s.getOrNull(pos)) {
+                    '+' -> { pos++; value += term() ?: return null }
+                    '-' -> { pos++; value -= term() ?: return null }
+                    else -> return value
+                }
+            }
+        }
+
+        private fun term(): Double? {
+            var value = factor() ?: return null
+            while (true) {
+                skipWs()
+                when (s.getOrNull(pos)) {
+                    '*' -> { pos++; value *= factor() ?: return null }
+                    '/' -> { pos++; value /= factor() ?: return null }
+                    else -> return value
+                }
+            }
+        }
+
+        private fun factor(): Double? {
+            skipWs()
+            when (s.getOrNull(pos)) {
+                '+' -> { pos++; return factor() }
+                '-' -> { pos++; return factor()?.let { -it } }
+                '(' -> {
+                    pos++
+                    val value = expr() ?: return null
+                    skipWs()
+                    if (s.getOrNull(pos) != ')') return null
+                    pos++
+                    return value
+                }
+                else -> return number()
+            }
+        }
+
+        private fun number(): Double? {
+            skipWs()
+            val start = pos
+            while (pos < s.length && (s[pos].isDigit() || s[pos] == '.')) pos++
+            return if (pos == start) null else s.substring(start, pos).toDoubleOrNull()
+        }
+    }
+
     /** PRD §14: a reminder is a calendar panel ([TaskPanel.chore]) — a zero-duration, checkable tag. */
     fun isReminder(panel: TaskPanel): Boolean = panel.chore
 
@@ -1262,22 +1346,29 @@ object SchedulerDomain {
      * PRD §14 reminder scheduler: turn [chores] into **zero-duration calendar tags** anchored at
      * [todayStartMillis] (local midnight of "today", supplied by the caller which knows the time zone).
      * Each reminder is placed at its [ChoreEntry.timeOfDayMinutes] on every [choreOccurrenceDayOffsets] day
-     * out to [CHORE_HORIZON_DAYS]. Only **blank-titled** reminders are skipped; a reminder with no (or a
-     * ≤ 1) recurrence is a **one-off** placed today only ([choreOccurrenceDayOffsets] returns just `[0]`),
-     * so entering just a title + time creates a single reminder. Tags carry [TaskPanel.chore] = true, a null
-     * taskId, and `start == end` (no spanning time), with deterministic `chore/{index}/{offset}` ids so a
-     * steady regeneration reproduces them. They start un-[TaskPanel.checked]. Overlapping tags keep the
-     * default layout weight, so the calendar splits their shared width evenly (PRD §14).
+     * out to [CHORE_HORIZON_DAYS]. A reminder whose time-of-day is **not defined** (negative) is placed at
+     * the **current time** instead — the time-of-day of [nowMillis] (defaults to midnight when omitted).
+     * Only **blank-titled** reminders are skipped; a reminder with no recurrence (`spanDays ≤ 0`) is a
+     * **one-off** placed today only, so entering just a title creates a single reminder; a sub-day cadence
+     * (`0 < spanDays < 1`) recurs every day. Tags carry [TaskPanel.chore] = true, a null taskId, and
+     * `start == end` (no spanning time), with deterministic `chore/{index}/{offset}` ids so a steady
+     * regeneration reproduces them. They start un-[TaskPanel.checked]. Overlapping tags keep the default
+     * layout weight, so the calendar splits their shared width evenly (PRD §14).
      */
     fun choreScheduledPanels(
         chores: List<ChoreEntry>,
         todayStartMillis: Long,
         horizonDays: Int = CHORE_HORIZON_DAYS,
+        nowMillis: Long = todayStartMillis,
     ): List<TaskPanel> {
+        val currentTimeOfDayMinutes =
+            ((nowMillis - todayStartMillis) / MILLIS_PER_MINUTE).toInt().coerceIn(0, 24 * 60 - 1)
         val result = mutableListOf<TaskPanel>()
         chores.forEachIndexed { index, chore ->
             if (chore.title.isBlank()) return@forEachIndexed
-            val timeOfDay = chore.timeOfDayMinutes.coerceIn(0, 24 * 60 - 1) * MILLIS_PER_MINUTE
+            // PRD §14: "the defined time in the day, or the current time if not defined in the field".
+            val minutes = if (chore.timeOfDayMinutes < 0) currentTimeOfDayMinutes else chore.timeOfDayMinutes
+            val timeOfDay = minutes.coerceIn(0, 24 * 60 - 1) * MILLIS_PER_MINUTE
             for (offset in choreOccurrenceDayOffsets(chore.spanDays, horizonDays)) {
                 val start = todayStartMillis + offset * MILLIS_PER_DAY + timeOfDay
                 result.add(
@@ -1308,11 +1399,12 @@ object SchedulerDomain {
         chores: List<ChoreEntry>,
         todayStartMillis: Long,
         horizonDays: Int = CHORE_HORIZON_DAYS,
+        nowMillis: Long = todayStartMillis,
     ): List<TaskPanel> {
         val checkedIds = panels.asSequence().filter { it.chore && it.checked }.mapTo(HashSet()) { it.id }
         val nonChore = panels.filter { !it.chore }
         val generated =
-            choreScheduledPanels(chores, todayStartMillis, horizonDays)
+            choreScheduledPanels(chores, todayStartMillis, horizonDays, nowMillis)
                 .map { if (it.id in checkedIds) it.copy(checked = true) else it }
         return nonChore + generated
     }

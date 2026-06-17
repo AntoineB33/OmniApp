@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ChoreEntry
@@ -91,10 +92,54 @@ class SchedulerChoresTest {
     }
 
     @Test
-    fun day_offsets_for_an_invalid_cadence_are_just_today() {
-        // PRD §14: the recurrence is a float > 1; a non-cadence (≤ 1) collapses to a single tag today.
-        assertEquals(listOf(0), SchedulerDomain.choreOccurrenceDayOffsets(1.0))
-        assertEquals(listOf(0), SchedulerDomain.choreOccurrenceDayOffsets(0.5))
+    fun day_offsets_for_a_blank_recurrence_are_just_today() {
+        // PRD §14: a blank / non-positive recurrence collapses to a single tag today (a one-off).
+        assertEquals(listOf(0), SchedulerDomain.choreOccurrenceDayOffsets(0.0))
+        assertEquals(listOf(0), SchedulerDomain.choreOccurrenceDayOffsets(-3.0))
+    }
+
+    @Test
+    fun day_offsets_for_a_sub_day_recurrence_are_every_day() {
+        // PRD §14: a value < 1 happens every day (e.g. 0.5 → alternate? no — daily, placed at its time).
+        assertEquals((0..28).toList(), SchedulerDomain.choreOccurrenceDayOffsets(0.5, horizonDays = 28))
+        assertEquals((0..10).toList(), SchedulerDomain.choreOccurrenceDayOffsets(0.1, horizonDays = 10))
+        // A cadence of exactly 1 day is also every day.
+        assertEquals((0..28).toList(), SchedulerDomain.choreOccurrenceDayOffsets(1.0))
+    }
+
+    @Test
+    fun day_offsets_for_a_fraction_hit_the_exact_count_in_the_smallest_window() {
+        // PRD §14: 31/21 ≈ 1.476 → exactly 21 occurrences across any 31-day window (the smallest exact one).
+        val span = 31.0 / 21.0
+        val within31 = SchedulerDomain.choreOccurrenceDayOffsets(span, horizonDays = 30)
+        assertEquals(21, within31.size)
+        assertTrue(within31.all { it in 0..30 })
+        // Two alternate-day reminders (cadence 2) are exactly every other day.
+        assertEquals(listOf(0, 2, 4, 6, 8, 10), SchedulerDomain.choreOccurrenceDayOffsets(2.0, horizonDays = 10))
+    }
+
+    @Test
+    fun day_formula_evaluates_arithmetic_to_the_recurrence_value() {
+        assertEquals(31.0 / 21.0, SchedulerDomain.evaluateDayFormula("31/21")!!, 1e-12)
+        assertEquals(0.5, SchedulerDomain.evaluateDayFormula("1/2")!!, 1e-12)
+        assertEquals(14.0, SchedulerDomain.evaluateDayFormula("7*2")!!, 1e-12)
+        assertEquals(3.5, SchedulerDomain.evaluateDayFormula(" 2 + 3 / 2 ")!!, 1e-12) // precedence: 2 + 1.5
+        assertEquals(10.0, SchedulerDomain.evaluateDayFormula("(2+3)*2")!!, 1e-12)
+        assertEquals(7.0, SchedulerDomain.evaluateDayFormula("7")!!, 1e-12)
+        // Blank / malformed / non-finite → null (the caller treats it as 0 → a one-off).
+        assertNull(SchedulerDomain.evaluateDayFormula(""))
+        assertNull(SchedulerDomain.evaluateDayFormula("7/"))
+        assertNull(SchedulerDomain.evaluateDayFormula("1+*2"))
+        assertNull(SchedulerDomain.evaluateDayFormula("1/0"))
+    }
+
+    @Test
+    fun reminder_with_no_time_of_day_is_placed_at_the_current_time() {
+        val today = 1_000_000_000_000L
+        val now = today + (13 * 60 + 37) * MIN // 13:37
+        val chores = listOf(ChoreEntry("Stretch", spanDays = 7.0, timeOfDayMinutes = -1))
+        val tags = SchedulerDomain.choreScheduledPanels(chores, todayStartMillis = today, nowMillis = now)
+        assertEquals(now, tags.first().startEpochMillis) // placed at the current time-of-day, not midnight
     }
 
     @Test

@@ -381,7 +381,7 @@ private fun coalesceSlices(raw: Map<String, MutableList<PanelSlice>>): Map<Strin
 }
 
 /** Monday of the week containing [date] (PRD §7 week view starts on Monday, like the mock-up). */
-private fun startOfWeek(date: LocalDate): LocalDate =
+internal fun startOfWeek(date: LocalDate): LocalDate =
     date.minus(date.dayOfWeek.isoDayNumber - 1, DateTimeUnit.DAY)
 
 private fun monthLabel(date: LocalDate): String =
@@ -497,11 +497,24 @@ fun ChoresManagerWindow(
     // each keystroke. Seeded once from the incoming chores; live edits drive both this and the pushed list.
     val rows = remember {
         mutableStateListOf<ChoreRow>().apply {
-            addAll(chores.map { ChoreRow(it.title, formatDays(it.spanDays), formatTimeOfDay(it.timeOfDayMinutes)) })
+            // PRD §14: the "Days" field shows the raw formula the user typed (e.g. "31/21"); fall back to the
+            // numeric span for reminders saved before formulas existed.
+            addAll(
+                chores.map {
+                    ChoreRow(it.title, it.daysFormula.ifBlank { formatDays(it.spanDays) }, formatTimeOfDay(it.timeOfDayMinutes))
+                },
+            )
         }
     }
     fun push() = onChange(
-        rows.map { ChoreEntry(it.title, it.daysText.toDoubleOrNull() ?: 0.0, parseTimeOfDay(it.timeText)) },
+        rows.map {
+            ChoreEntry(
+                title = it.title,
+                spanDays = SchedulerDomain.evaluateDayFormula(it.daysText) ?: 0.0,
+                timeOfDayMinutes = parseTimeOfDay(it.timeText),
+                daysFormula = it.daysText,
+            )
+        },
     )
 
     Surface(
@@ -567,7 +580,7 @@ fun ChoresManagerWindow(
                         )
                         OutlinedTextField(
                             value = row.daysText,
-                            onValueChange = { rows[index] = row.copy(daysText = sanitizeDecimal(it)); push() },
+                            onValueChange = { rows[index] = row.copy(daysText = sanitizeFormula(it)); push() },
                             singleLine = true,
                             label = { Text("Days") },
                             modifier = Modifier.width(72.dp),
@@ -599,21 +612,32 @@ private data class ChoreRow(val title: String = "", val daysText: String = "", v
 private fun formatDays(days: Double): String =
     if (days == days.toLong().toDouble()) days.toLong().toString() else days.toString()
 
-/** Keep only digits and a single decimal point so the "Days" field stays a parseable number. */
-private fun sanitizeDecimal(raw: String): String {
+/**
+ * PRD §14: keep the "Days" field to characters of an arithmetic formula — digits, a decimal point, the
+ * operators `+ - * /`, parentheses and spaces — so it can hold a plain number (`7`, `0.5`) or an expression
+ * (`31/21`). A `,` is normalised to `.`; anything else is dropped. [SchedulerDomain.evaluateDayFormula]
+ * does the actual parsing.
+ */
+private fun sanitizeFormula(raw: String): String {
     val sb = StringBuilder()
-    var dotSeen = false
     for (c in raw) {
         when {
             c.isDigit() -> sb.append(c)
-            (c == '.' || c == ',') && !dotSeen -> { sb.append('.'); dotSeen = true }
+            c == '.' -> sb.append('.')
+            c == ',' -> sb.append('.')
+            c == '+' || c == '-' || c == '*' || c == '/' || c == '(' || c == ')' -> sb.append(c)
+            c == ' ' -> sb.append(' ')
         }
     }
     return sb.toString()
 }
 
-/** PRD §14 "time in the day": render minutes-since-midnight as `HH:MM`. */
+/**
+ * PRD §14 "time in the day": render minutes-since-midnight as `HH:MM`. A negative value means the time is
+ * **not defined** (the reminder is placed at the current time) and shows as a blank field.
+ */
 private fun formatTimeOfDay(minutes: Int): String {
+    if (minutes < 0) return ""
     val m = minutes.coerceIn(0, 24 * 60 - 1)
     return (m / 60).toString().padStart(2, '0') + ":" + (m % 60).toString().padStart(2, '0')
 }
@@ -631,9 +655,12 @@ private fun sanitizeTimeOfDay(raw: String): String {
     return sb.toString()
 }
 
-/** Parse an `HH:MM` (or bare-hour / bare-minutes) field into minutes since midnight, clamped to a day. */
+/**
+ * Parse an `HH:MM` (or bare-hour / bare-minutes) field into minutes since midnight, clamped to a day. An
+ * empty field is **not defined** (PRD §14: the reminder is then placed at the current time) → returns -1.
+ */
 private fun parseTimeOfDay(text: String): Int {
-    if (text.isEmpty()) return 0
+    if (text.isEmpty()) return -1
     val parts = text.split(':')
     val hours = parts.getOrNull(0)?.toIntOrNull() ?: 0
     val mins = parts.getOrNull(1)?.toIntOrNull() ?: 0

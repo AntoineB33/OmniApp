@@ -38,7 +38,7 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state) { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state) { applySetScheduleUnit(it, intent.taskId, intent.entries) })
-            is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis)
+            is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis, intent.nowMillis)
             is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked)
             is SchedulerIntent.SetSideTasks ->
                 if (state.sideTasks == intent.sideTasks) state
@@ -384,8 +384,11 @@ object SchedulerReducer {
         state: SchedulerState,
         entries: List<org.example.project.scheduler.model.ChoreEntry>,
         todayStartMillis: Long,
+        nowMillis: Long,
     ): SchedulerState {
-        val panels = SchedulerDomain.regenerateChorePanels(state.panels, entries, todayStartMillis)
+        val panels = SchedulerDomain.regenerateChorePanels(
+            state.panels, entries, todayStartMillis, nowMillis = nowMillis,
+        )
         if (state.chores == entries && state.panels == panels) return state
         return state.copy(chores = entries, panels = panels)
     }

@@ -47,12 +47,17 @@ data class ScheduleUnitEntry(
 
 /**
  * PRD §14 Reminders entry: one row of the standalone reminders list — a [title], its recurrence
- * [spanDays] (in days; a floating-point number > 1), and [timeOfDayMinutes] (the "time in the day" the
- * reminder is placed, as minutes since local midnight in `0..1439`). Independent of the task tree: the
- * reminders list is its own top-level state, not a per-task field. The reminder scheduler turns each
- * entry into recurring **zero-duration, checkable calendar tags** (see
+ * [spanDays] (in days), and [timeOfDayMinutes] (the "time in the day" the reminder is placed, as minutes
+ * since local midnight in `0..1439`, or **negative** for "not defined" → the current time at generation).
+ * Independent of the task tree: the reminders list is its own top-level state, not a per-task field. The
+ * reminder scheduler turns each entry into recurring **zero-duration, checkable calendar tags** (see
  * [org.example.project.scheduler.domain.SchedulerDomain.choreScheduledPanels]) — unlike the panels they
  * replace, a reminder has no spanning time and is not an obstacle to the §9 task scheduler.
+ *
+ * [spanDays] may be entered as an arithmetic formula in the UI (e.g. `31/21`); [daysFormula] keeps that raw
+ * text so the field round-trips, while [spanDays] is its evaluated value (see
+ * [org.example.project.scheduler.domain.SchedulerDomain.evaluateDayFormula]). A value `≥ 1` is a day
+ * cadence (`2` = alternate days), `0 < spanDays < 1` is a daily reminder, and `≤ 0` (blank) is a one-off.
  *
  * (The `Chore*` names are retained internally for now; the user-facing concept is "Reminders".)
  */
@@ -60,6 +65,7 @@ data class ChoreEntry(
     val title: String,
     val spanDays: Double,
     val timeOfDayMinutes: Int = 0,
+    val daysFormula: String = "",
 )
 
 /**

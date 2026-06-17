@@ -19,10 +19,12 @@ import kotlin.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
@@ -45,6 +47,7 @@ import org.example.project.ui.LateralMenu
 import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.PlacedRecord
 import org.example.project.ui.TimeSimPanel
+import org.example.project.ui.startOfWeek
 
 enum class OmniPage(val label: String) {
     TaskScheduler("Task Scheduler"),
@@ -223,13 +226,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             sendSystemNotification("Side task", title)
         }
 
-        // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
-        // user-authored, uniform blocks) drawn the same way.
-        val calendarRecords =
-            schedulerState.tasks.values.flatMap { task ->
-                task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
-            } + mergePanelsForDisplay(schedulerState.panels, schedulerState.showSideTasks)
-
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
         val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz).date
@@ -239,6 +235,25 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         var choresManagerOpen by remember { mutableStateOf(false) }
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
+
+        // PRD §15: side tasks are projected from now to the END OF THE FOCUSED WEEK — the week the calendar
+        // window is showing ([startOfWeek] of [selectedDate], Monday-based, exclusive end = the next Monday's
+        // midnight). The scheduling horizon is the floor, so the near term is unchanged and navigating to a
+        // further-out week extends the side-task markers to span it. `nowMillis` is the same `now` the last
+        // schedule refresh used (the tick loop sets both together), so within the schedule window this
+        // reproduces the side-task panels already in [schedulerState.panels] and only adds the tail.
+        val focusedWeekEndMillis =
+            startOfWeek(selectedDate).plus(7, DateTimeUnit.DAY).atStartOfDayIn(tz).toEpochMilliseconds()
+        val sideTaskHorizonMillis = maxOf(nowMillis + SchedulerDomain.SCHEDULE_HORIZON_MILLIS, focusedWeekEndMillis)
+        val displaySidePanels =
+            SchedulerDomain.sideTaskPanels(schedulerState.sideTasks, nowMillis, sideTaskHorizonMillis)
+
+        // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
+        // user-authored, uniform blocks) drawn the same way; side tasks (PRD §15) span the focused week.
+        val calendarRecords =
+            schedulerState.tasks.values.flatMap { task ->
+                task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
+            } + mergePanelsForDisplay(schedulerState.panels, displaySidePanels, schedulerState.showSideTasks)
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
         var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
         // PRD §8 Manual add: a not-yet-committed default panel shown in the edit window with a Save
@@ -382,7 +397,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                         val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
                         ChoresManagerWindow(
                             chores = schedulerState.chores,
-                            onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis)) },
+                            // PRD §14: pass `now` too so a reminder with no time-of-day lands at the current time.
+                            onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis, nowMillis)) },
                             onDismiss = { choresManagerOpen = false },
                             modifier = Modifier.align(Alignment.Center),
                         )
@@ -464,12 +480,20 @@ private fun formatClockTime(dateTime: LocalDateTime): String {
     return "$hh:$mm"
 }
 
-private fun mergePanelsForDisplay(panels: List<TaskPanel>, showSideTasks: Boolean): List<CalendarRecord> {
+private fun mergePanelsForDisplay(
+    panels: List<TaskPanel>,
+    sidePanels: List<TaskPanel>,
+    showSideTasks: Boolean,
+): List<CalendarRecord> {
     // PRD §14/§15: reminder tags (zero-duration) and side tasks (very short real durations, e.g. a 20-second
     // look-away) are NOT height-proportional blocks — drawn at scale they'd be invisible. They render on
     // their own fixed-height marker paths (CalendarRecord.reminder / .sideTask) and never merge with panels.
+    // PRD §15: the side tasks come from [sidePanels] — projected across the focused week (which may run past
+    // the schedule's fixed obstacle window in [panels]) — not [panels]; the regular `blocks` still come from
+    // [panels]. Within the schedule window both projections are identical (same `now`, same side tasks), so
+    // the blocks stay split around the side tasks exactly as scheduled.
     val reminders = panels.filter { SchedulerDomain.isReminder(it) }
-    val sides = panels.filter { it.sideTask }
+    val sides = sidePanels
     val blocks = panels.filter { !SchedulerDomain.isReminder(it) && !it.sideTask }
     val reminderRecords =
         reminders.map { tag ->

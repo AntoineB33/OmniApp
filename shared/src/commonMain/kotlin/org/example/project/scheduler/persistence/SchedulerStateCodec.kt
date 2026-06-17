@@ -99,7 +99,7 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
-            chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes) },
+            chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula) },
             showSideTasks = showSideTasks,
         )
 
@@ -219,7 +219,7 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
-            chores = chores.map { ChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes) },
+            chores = chores.map { ChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula) },
             showSideTasks = showSideTasks,
         )
     }
@@ -317,6 +317,9 @@ private data class PersistedChoreEntry(
     val spanDays: Double,
     // PRD §14: a missing time-of-day decodes to midnight (payloads written before the field existed).
     val timeOfDayMinutes: Int = 0,
+    // PRD §14: the raw "Days" formula text (e.g. "31/21") so the field round-trips; a missing value decodes
+    // to "" (payloads written before formulas existed), and the UI then shows the numeric [spanDays].
+    val daysFormula: String = "",
 )
 
 @Serializable

@@ -341,6 +341,24 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun side_tasks_project_to_the_given_horizon_beyond_the_default() {
+        // PRD §15: the calendar passes the focused week's end as the horizon so navigating past the default
+        // 168h scheduling window still shows side-task markers. The shared prefix is unchanged — extending
+        // the horizon only appends later occurrences.
+        val now = 1_000_000_000_000L
+        val sides = listOf(SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now))
+        val defaultPanels = SchedulerDomain.sideTaskPanels(sides, now)
+        val twoWeeksOut = now + 14L * 24 * HOUR_MS
+        val extendedPanels = SchedulerDomain.sideTaskPanels(sides, now, twoWeeksOut)
+
+        assertTrue(extendedPanels.size > defaultPanels.size)
+        assertTrue(defaultPanels.last().startEpochMillis <= now + SchedulerDomain.SCHEDULE_HORIZON_MILLIS)
+        assertTrue(extendedPanels.last().startEpochMillis > now + SchedulerDomain.SCHEDULE_HORIZON_MILLIS)
+        assertTrue(extendedPanels.last().startEpochMillis <= twoWeeksOut)
+        assertEquals(defaultPanels, extendedPanels.subList(0, defaultPanels.size))
+    }
+
+    @Test
     fun side_task_next_start_is_the_due_time_clamped_forward_to_now_when_overdue() {
         val now = 1_000_000_000_000L
         // Up to date (rested 5 min ago, 20-min interval): next is 15 min ahead.
