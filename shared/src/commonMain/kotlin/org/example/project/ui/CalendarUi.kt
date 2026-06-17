@@ -111,6 +111,7 @@ import kotlinx.datetime.toLocalDateTime
 import org.example.project.OmniPage
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ChoreEntry
+import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.state.CalendarEdge
@@ -531,22 +532,30 @@ fun ChoresManagerWindow(
     // each keystroke. Seeded once from the incoming chores; live edits drive both this and the pushed list.
     val rows = remember {
         mutableStateListOf<ChoreRow>().apply {
-            // PRD §14: the "Days" field shows the raw formula the user typed (e.g. "31/21"); fall back to the
-            // numeric span for reminders saved before formulas existed.
+            // PRD §14: the recurrence field shows the raw formula the user typed (e.g. "31/21") in its unit;
+            // fall back to the numeric span (in days) for reminders saved before formulas existed.
             addAll(
                 chores.map {
-                    ChoreRow(it.title, it.daysFormula.ifBlank { formatDays(it.spanDays) }, formatTimeOfDay(it.timeOfDayMinutes))
+                    ChoreRow(
+                        title = it.title,
+                        daysText = it.daysFormula.ifBlank { formatDays(it.spanDays / it.recurrenceUnit.daysPerUnit) },
+                        timeText = formatTimeOfDay(it.timeOfDayMinutes),
+                        unit = it.recurrenceUnit,
+                    )
                 },
             )
         }
     }
     fun push() = onChange(
         rows.map {
+            // PRD §14: the cadence in days is the entered number times the chosen unit's days-per-unit.
+            val number = SchedulerDomain.evaluateDayFormula(it.daysText) ?: 0.0
             ChoreEntry(
                 title = it.title,
-                spanDays = SchedulerDomain.evaluateDayFormula(it.daysText) ?: 0.0,
+                spanDays = number * it.unit.daysPerUnit,
                 timeOfDayMinutes = parseTimeOfDay(it.timeText),
                 daysFormula = it.daysText,
+                recurrenceUnit = it.unit,
             )
         },
     )
@@ -558,7 +567,7 @@ fun ChoresManagerWindow(
         border = BorderStroke(1.dp, CalColors.grid),
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            .size(width = 470.dp, height = 480.dp)
+            .size(width = 560.dp, height = 480.dp)
             // Raise on press AFTER the offset so the hit region tracks the (possibly dragged) window.
             .raiseOnPress(onRaise),
     ) {
@@ -618,11 +627,11 @@ fun ChoresManagerWindow(
                             value = row.daysText,
                             onValueChange = { rows[index] = row.copy(daysText = sanitizeFormula(it)); push() },
                             singleLine = true,
-                            label = { Text("Days") },
+                            label = { Text("Every") },
                             modifier = Modifier.width(72.dp),
                         )
-                        // PRD §14: when the "Days" field holds a formula, show its evaluated value (rounded to
-                        // two decimals, comma separator) just to its right — e.g. "30/21" → "=1,43".
+                        // PRD §14: when the recurrence field holds a formula, show its evaluated value (rounded
+                        // to two decimals, comma separator) just to its right — e.g. "30/21" → "=1,43".
                         val daysResult =
                             if (isDayFormula(row.daysText)) SchedulerDomain.evaluateDayFormula(row.daysText) else null
                         if (daysResult != null && daysResult.isFinite()) {
@@ -632,6 +641,11 @@ fun ChoresManagerWindow(
                                 color = CalColors.muted,
                             )
                         }
+                        // PRD §14: unit selector — days (default), months (≈30.44 days), or years (≈365.24 days).
+                        RecurrenceUnitDropdown(
+                            unit = row.unit,
+                            onSelect = { rows[index] = row.copy(unit = it); push() },
+                        )
                         OutlinedTextField(
                             value = row.timeText,
                             onValueChange = { rows[index] = row.copy(timeText = sanitizeTimeOfDay(it)); push() },
@@ -835,8 +849,44 @@ private fun HistoryUnitRow(
     }
 }
 
-/** One editable chores row: title, day-span text, and time-of-day text (kept as raw strings while typing). */
-private data class ChoreRow(val title: String = "", val daysText: String = "", val timeText: String = "")
+/** One editable chores row: title, recurrence text + unit, and time-of-day text (raw strings while typing). */
+private data class ChoreRow(
+    val title: String = "",
+    val daysText: String = "",
+    val timeText: String = "",
+    val unit: ChoreRecurrenceUnit = ChoreRecurrenceUnit.Days,
+)
+
+/** PRD §14: the unit selector beside the recurrence field — days (default) / months / years. */
+@Composable
+private fun RecurrenceUnitDropdown(unit: ChoreRecurrenceUnit, onSelect: (ChoreRecurrenceUnit) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .border(1.dp, CalColors.grid, RoundedCornerShape(4.dp))
+                .clickable { expanded = true }
+                .padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(unit.label, style = MaterialTheme.typography.bodyMedium)
+            Text("▾", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            ChoreRecurrenceUnit.entries.forEach { entry ->
+                DropdownMenuItem(
+                    text = { Text(entry.label) },
+                    onClick = {
+                        onSelect(entry)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
 
 /** Render a day span without a forced ".0" tail for whole numbers (e.g. 7.0 → "7", 3.5 → "3.5"). */
 private fun formatDays(days: Double): String =

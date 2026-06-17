@@ -66,7 +66,24 @@ data class ChoreEntry(
     val spanDays: Double,
     val timeOfDayMinutes: Int = 0,
     val daysFormula: String = "",
+    /**
+     * PRD §14: the unit the recurrence number is entered in (the dropdown beside the "Days" field). The
+     * cadence [spanDays] is the entered number times the unit's [ChoreRecurrenceUnit.daysPerUnit]; the unit
+     * itself is kept so the field round-trips. Defaults to [ChoreRecurrenceUnit.Days].
+     */
+    val recurrenceUnit: ChoreRecurrenceUnit = ChoreRecurrenceUnit.Days,
 )
+
+/**
+ * PRD §14 Reminders recurrence unit: the user enters a recurrence number/formula and picks a unit; the
+ * cadence in days ([ChoreEntry.spanDays]) is that number times [daysPerUnit]. Months and years use the
+ * mean Gregorian year length (365.24219 days): a month is `365.24219 / 12` days, a year is `365.24219` days.
+ */
+enum class ChoreRecurrenceUnit(val label: String, val daysPerUnit: Double) {
+    Days("days", 1.0),
+    Months("months", 365.24219 / 12),
+    Years("years", 365.24219),
+}
 
 /**
  * PRD §15 Side task: a task to do periodically, placed on the calendar with a **real spanning time** (a

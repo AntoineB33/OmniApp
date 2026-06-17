@@ -10,6 +10,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
+import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.Task
@@ -99,7 +100,7 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
-            chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula) },
+            chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit) },
             showSideTasks = showSideTasks,
         )
 
@@ -219,7 +220,7 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
-            chores = chores.map { ChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula) },
+            chores = chores.map { ChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit) },
             showSideTasks = showSideTasks,
         )
     }
@@ -320,6 +321,9 @@ private data class PersistedChoreEntry(
     // PRD §14: the raw "Days" formula text (e.g. "31/21") so the field round-trips; a missing value decodes
     // to "" (payloads written before formulas existed), and the UI then shows the numeric [spanDays].
     val daysFormula: String = "",
+    // PRD §14: the recurrence unit chosen in the dropdown; a missing value decodes to days (payloads written
+    // before the unit dropdown existed), for which [spanDays] is already a plain day cadence.
+    val recurrenceUnit: ChoreRecurrenceUnit = ChoreRecurrenceUnit.Days,
 )
 
 @Serializable
