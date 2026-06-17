@@ -75,14 +75,41 @@ data class ChoreEntry(
 )
 
 /**
- * PRD §14 Reminders recurrence unit: the user enters a recurrence number/formula and picks a unit; the
- * cadence in days ([ChoreEntry.spanDays]) is that number times [daysPerUnit]. Months and years use the
- * mean Gregorian year length (365.24219 days): a month is `365.24219 / 12` days, a year is `365.24219` days.
+ * PRD §14 Reminders recurrence unit: the user enters a recurrence number/formula and picks a unit; the unit
+ * maps that number to the cadence in days ([ChoreEntry.spanDays]) via [toDays]. There are two families:
+ * **interval** units (*every n …*: [Days], [Months], [Years]) multiply by the period length, and **rate**
+ * units (*n times per …*: [PerMonth], [PerYear]) divide the period length by the number. Months and years
+ * use the mean Gregorian year length (365.24219 days): a month is `365.24219 / 12` days.
  */
-enum class ChoreRecurrenceUnit(val label: String, val daysPerUnit: Double) {
-    Days("days", 1.0),
-    Months("months", 365.24219 / 12),
-    Years("years", 365.24219),
+enum class ChoreRecurrenceUnit(val label: String) {
+    Days("days"),
+    Months("months"),
+    Years("years"),
+    PerMonth("per month"),
+    PerYear("per year");
+
+    /** Cadence in days for an entered recurrence [number] (0 → 0, i.e. a one-off / blank). */
+    fun toDays(number: Double): Double = when (this) {
+        Days -> number
+        Months -> number * DAYS_PER_MONTH
+        Years -> number * DAYS_PER_YEAR
+        PerMonth -> if (number != 0.0) DAYS_PER_MONTH / number else 0.0
+        PerYear -> if (number != 0.0) DAYS_PER_YEAR / number else 0.0
+    }
+
+    /** Inverse of [toDays]: the field number that yields cadence [spanDays] in this unit (for seeding the UI). */
+    fun fromDays(spanDays: Double): Double = when (this) {
+        Days -> spanDays
+        Months -> spanDays / DAYS_PER_MONTH
+        Years -> spanDays / DAYS_PER_YEAR
+        PerMonth -> if (spanDays != 0.0) DAYS_PER_MONTH / spanDays else 0.0
+        PerYear -> if (spanDays != 0.0) DAYS_PER_YEAR / spanDays else 0.0
+    }
+
+    companion object {
+        const val DAYS_PER_YEAR: Double = 365.24219
+        const val DAYS_PER_MONTH: Double = DAYS_PER_YEAR / 12
+    }
 }
 
 /**

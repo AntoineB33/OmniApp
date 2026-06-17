@@ -538,7 +538,7 @@ fun ChoresManagerWindow(
                 chores.map {
                     ChoreRow(
                         title = it.title,
-                        daysText = it.daysFormula.ifBlank { formatDays(it.spanDays / it.recurrenceUnit.daysPerUnit) },
+                        daysText = it.daysFormula.ifBlank { formatDays(it.recurrenceUnit.fromDays(it.spanDays)) },
                         timeText = formatTimeOfDay(it.timeOfDayMinutes),
                         unit = it.recurrenceUnit,
                     )
@@ -548,11 +548,11 @@ fun ChoresManagerWindow(
     }
     fun push() = onChange(
         rows.map {
-            // PRD §14: the cadence in days is the entered number times the chosen unit's days-per-unit.
+            // PRD §14: the chosen unit maps the entered number to a cadence in days (interval vs rate units).
             val number = SchedulerDomain.evaluateDayFormula(it.daysText) ?: 0.0
             ChoreEntry(
                 title = it.title,
-                spanDays = number * it.unit.daysPerUnit,
+                spanDays = it.unit.toDays(number),
                 timeOfDayMinutes = parseTimeOfDay(it.timeText),
                 daysFormula = it.daysText,
                 recurrenceUnit = it.unit,
@@ -641,7 +641,8 @@ fun ChoresManagerWindow(
                                 color = CalColors.muted,
                             )
                         }
-                        // PRD §14: unit selector — days (default), months (≈30.44 days), or years (≈365.24 days).
+                        // PRD §14: unit selector — every n days (default) / months / years, or n times per
+                        // month / per year (rate units divide the period instead of multiplying).
                         RecurrenceUnitDropdown(
                             unit = row.unit,
                             onSelect = { rows[index] = row.copy(unit = it); push() },
