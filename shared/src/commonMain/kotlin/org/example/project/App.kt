@@ -47,6 +47,7 @@ import org.example.project.scheduler.platform.speak
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.ui.PriorityWeightWindow
 import org.example.project.scheduler.ui.TaskSchedulerScreen
+import org.example.project.scheduler.ui.TaskTextWindow
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 import org.example.project.time.SimAppClock
@@ -295,8 +296,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // its window-space rect, used to ignore presses inside it when dismissing on outside clicks.
         var weightWindowListId by remember { mutableStateOf<CellListId?>(null) }
         var weightWindowBounds by remember { mutableStateOf<Rect?>(null) }
+        // PRD §13: the task whose "see text" window is open, or null when closed. Drawn on the top
+        // floating-window layer below, same as the priority-weight window; [taskTextBounds] is its rect.
+        var taskTextTaskId by remember { mutableStateOf<TaskId?>(null) }
+        var taskTextBounds by remember { mutableStateOf<Rect?>(null) }
         // Layout of the content area, so a press position (content-local) can be mapped to window space
-        // and compared against [weightWindowBounds].
+        // and compared against the windows' bounds.
         var contentCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
         // PRD §5: the window closes when any cell enters Edit Mode (its sub-list typing context is gone).
         LaunchedEffect(schedulerState.editSession) {
@@ -426,21 +431,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                         .fillMaxHeight()
                         .clipToBounds()
                         .onGloballyPositioned { contentCoords = it }
-                        // PRD §5: the priority-weight window closes when a press lands anywhere outside it,
-                        // and that press still does its normal job (selecting a cell, focusing the calendar,
-                        // …). We observe presses in the Initial pass without consuming them — an ancestor of
-                        // every window, so it catches clicks on the tree and on other floating windows alike.
+                        // PRD §5/§13: the priority-weight window and the "see text" window close when a press
+                        // lands anywhere outside them, and that press still does its normal job (selecting a
+                        // cell, focusing the calendar, …). We observe presses in the Initial pass without
+                        // consuming them — an ancestor of every window, so it catches clicks on the tree and
+                        // on other floating windows alike. A press inside a window's own bounds is ignored.
                         .pointerInput(Unit) {
                             awaitPointerEventScope {
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
                                     if (event.type != PointerEventType.Press) continue
-                                    if (weightWindowListId == null) continue
+                                    if (weightWindowListId == null && taskTextTaskId == null) continue
                                     val pos = event.changes.firstOrNull()?.position ?: continue
                                     val win = contentCoords?.localToWindow(pos) ?: continue
-                                    val bounds = weightWindowBounds
-                                    if (bounds == null || !bounds.contains(win)) {
+                                    if (weightWindowListId != null && weightWindowBounds?.contains(win) != true) {
                                         weightWindowListId = null
+                                    }
+                                    if (taskTextTaskId != null && taskTextBounds?.contains(win) != true) {
+                                        taskTextTaskId = null
                                     }
                                 }
                             }
@@ -453,6 +461,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                 store = store,
                                 vm = vm,
                                 onSetWeightWindow = { weightWindowListId = it },
+                                onSetTaskTextWindow = { taskTextTaskId = it },
                             )
                     }
 
@@ -469,6 +478,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                 priorities = SchedulerDomain.absoluteTaskPriorities(schedulerState),
                                 onIntent = { vm.dispatch(it) },
                                 onBoundsChange = { weightWindowBounds = it },
+                                modifier = Modifier.align(Alignment.Center).zIndex(50f),
+                            )
+                        }
+                    }
+
+                    // PRD §13: the "see text" task-text window, also on the top floating-window layer.
+                    // Opened from a cell's right-click menu; auto-saves; closed by the interceptor above.
+                    taskTextTaskId?.let { taskId ->
+                        val task = schedulerState.tasks[taskId]
+                        if (task == null) {
+                            taskTextTaskId = null
+                        } else {
+                            TaskTextWindow(
+                                taskTitle = task.title,
+                                initialText = task.text,
+                                onTextChange = { vm.dispatch(SchedulerIntent.SetTaskText(taskId, it)) },
+                                onBoundsChange = { taskTextBounds = it },
                                 modifier = Modifier.align(Alignment.Center).zIndex(50f),
                             )
                         }

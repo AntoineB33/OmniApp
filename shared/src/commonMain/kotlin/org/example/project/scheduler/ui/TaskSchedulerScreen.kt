@@ -181,6 +181,8 @@ fun TaskSchedulerScreen(
     // on the top floating-window layer (above the calendar) and dismissed by clicks anywhere. Pass the
     // sub-list id to open it, or null to close. Defaults make the screen usable standalone (previews/tests).
     onSetWeightWindow: (CellListId?) -> Unit = {},
+    // PRD §13: same hoisting for the "see text" task-text window — pass the task id to open it, null to close.
+    onSetTaskTextWindow: (TaskId?) -> Unit = {},
 ) {
     val state by vm.state.collectAsState()
     val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
@@ -199,9 +201,6 @@ fun TaskSchedulerScreen(
     // PRD §13: the leaf task whose "define schedule unit" floating edit window is open, or null when
     // it is closed. Opened from a cell's right-click contextual menu.
     var scheduleUnitTaskId by remember { mutableStateOf<TaskId?>(null) }
-    // The task whose "see text" floating text-document window is open, or null when it is closed.
-    // Opened from any populated cell's right-click contextual menu.
-    var taskTextTaskId by remember { mutableStateOf<TaskId?>(null) }
 
     // PRD §5: the weight-table window closes if any cell enters Edit Mode. (A vanished sub-list — e.g.
     // via undo — is handled where the window is rendered.)
@@ -469,7 +468,7 @@ fun TaskSchedulerScreen(
                     }
                 },
                 onOpenScheduleUnit = { taskId -> scheduleUnitTaskId = taskId },
-                onOpenTaskText = { taskId -> taskTextTaskId = taskId },
+                onOpenTaskText = { taskId -> onSetTaskTextWindow(taskId) },
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -529,24 +528,9 @@ fun TaskSchedulerScreen(
             }
         }
 
-        // The floating "see text" window — a free-form text document for the task, overlaying the tree.
-        taskTextTaskId?.let { taskId ->
-            val task = state.tasks[taskId]
-            if (task == null) {
-                taskTextTaskId = null
-            } else {
-                TaskTextWindow(
-                    taskTitle = task.title,
-                    initialText = task.text,
-                    // Auto-save: every change is persisted immediately as its own undoable History Unit
-                    // (SetTaskText commits one history unit per call), like Edit Mode of a tree cell.
-                    onTextChange = { text -> vm.dispatch(SchedulerIntent.SetTaskText(taskId, text)) },
-                    onDismiss = { taskTextTaskId = null },
-                )
-            }
-        }
-        // PRD §5: the priority-weight window itself is drawn by the app (App.kt) on the top
-        // floating-window layer, above the calendar — not here — so it sits over every other window.
+        // PRD §5/§13: the priority-weight window and the "see text" window are both drawn by the app
+        // (App.kt) on the top floating-window layer, above the calendar — not here — so they sit over
+        // every other window and dismiss on a click anywhere else (which still does its normal job).
     }
 }
 
@@ -2141,57 +2125,49 @@ private fun ScheduleUnitEditWindow(
 /**
  * The floating "see text" window: a free-form, multi-line text document attached to a task. Opened from a
  * populated cell's right-click menu. The editor auto-saves: every change is pushed to [onTextChange]
- * immediately (each becomes its own undoable History Unit), so there is no Save button — closing only
- * dismisses the window.
+ * immediately (each becomes its own undoable History Unit), so there is no Save/Close button.
  *
- * The scrim dismisses on a pointer tap (not [Modifier.clickable]) on purpose: a focused `clickable` also
- * fires on Space/Enter, so typing a space in the editor would otherwise close the window. The text field
+ * Drawn by the app (App.kt) on the top floating-window layer; the app dismisses it when a press lands
+ * outside [onBoundsChange]'s reported bounds — and that press still does its normal job. The text field
  * auto-focuses so keystrokes land in it immediately.
  */
 @Composable
-private fun TaskTextWindow(
+internal fun TaskTextWindow(
     taskTitle: String,
     initialText: String,
     onTextChange: (String) -> Unit,
-    onDismiss: () -> Unit,
+    onBoundsChange: (Rect?) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var text by remember { mutableStateOf(initialText) }
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    // Stop reporting bounds once the window goes away, so the app's outside-press check has no stale rect.
+    DisposableEffect(Unit) { onDispose { onBoundsChange(null) } }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.25f))
-            .pointerInput(Unit) { detectTapGestures { onDismiss() } },
-        contentAlignment = Alignment.Center,
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 12.dp,
+        border = BorderStroke(1.dp, SheetColors.grid),
+        // Publish window-space bounds (the app ignores presses inside them) and swallow inside taps so a
+        // click on the window chrome isn't mistaken for an outside-press.
+        modifier = modifier
+            .width(420.dp)
+            .onGloballyPositioned { onBoundsChange(it.boundsInWindow()) }
+            .pointerInput(Unit) { detectTapGestures { } },
     ) {
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 12.dp,
-            border = BorderStroke(1.dp, SheetColors.grid),
-            // Swallow taps so clicking inside the window doesn't reach the dismissing scrim.
-            modifier = Modifier.width(420.dp).pointerInput(Unit) { detectTapGestures { } },
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = taskTitle.ifBlank { "Text" },
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                OutlinedTextField(
-                    value = text,
-                    // Auto-save: push every change straight to the model (one History Unit per change).
-                    onValueChange = { text = it; onTextChange(it) },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp).focusRequester(focusRequester),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    TextButton(onClick = onDismiss) { Text("Close") }
-                }
-            }
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = taskTitle.ifBlank { "Text" },
+                style = MaterialTheme.typography.titleSmall,
+            )
+            OutlinedTextField(
+                value = text,
+                // Auto-save: push every change straight to the model (one History Unit per change).
+                onValueChange = { text = it; onTextChange(it) },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp).focusRequester(focusRequester),
+            )
         }
     }
 }
