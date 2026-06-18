@@ -241,7 +241,9 @@ fun TaskSchedulerScreen(
     }
 
     LaunchedEffect(state.editSession, state.selection.main) {
-        if (state.editSession == null) {
+        // PRD §10: don't pull focus to the tree root while a min-time input is open — that field
+        // auto-focuses itself, and grabbing focus here would steal its caret.
+        if (state.editSession == null && minTimeEditCellId == null) {
             focusRequester.requestFocus()
         }
     }
@@ -1028,16 +1030,31 @@ private fun MinTimeInputCell(
     onSet: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var text by remember(minutes) { mutableStateOf(minutes.toString()) }
+    val focusRequester = remember { FocusRequester() }
+    // Initialised once when the field opens, with the caret at the right of the written time (PRD §10).
+    // Not keyed on `minutes`, so live edits and the ▲/▼ buttons don't reset the caret every keystroke;
+    // external changes (the buttons) are synced back in via the SideEffect below.
+    var value by remember {
+        mutableStateOf(TextFieldValue(minutes.toString(), TextRange(minutes.toString().length)))
+    }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    SideEffect {
+        val current = minutes.toString()
+        if (value.text != current) {
+            value = TextFieldValue(current, TextRange(current.length))
+        }
+    }
     Row(
         modifier = modifier.width(MIN_TIME_COLUMN_WIDTH).padding(horizontal = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BasicTextField(
-            value = text,
+            value = value,
             onValueChange = { raw ->
-                val cleaned = raw.filter { it.isDigit() }
-                text = cleaned
+                val cleaned = raw.text.filter { it.isDigit() }
+                // Keep the caret the user placed when nothing was stripped; only when a non-digit is
+                // filtered out do we fall back to a safe caret at the end of the cleaned text.
+                value = if (cleaned == raw.text) raw else TextFieldValue(cleaned, TextRange(cleaned.length))
                 onSet(cleaned.toIntOrNull()?.coerceAtLeast(0) ?: 0)
             },
             singleLine = true,
@@ -1048,6 +1065,7 @@ private fun MinTimeInputCell(
             cursorBrush = SolidColor(SheetColors.activeBorder),
             modifier = Modifier
                 .weight(1f)
+                .focusRequester(focusRequester)
                 .border(1.dp, SheetColors.grid)
                 .padding(horizontal = 4.dp, vertical = 3.dp),
         )
