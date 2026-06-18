@@ -280,6 +280,13 @@ fun TaskSchedulerScreen(
                     }
                     return@onPreviewKeyEvent false
                 }
+                // PRD §10: while a min-time input is open it owns the keyboard — let arrow keys,
+                // Home/End, Backspace/Delete, digit entry and the field's own Ctrl+A/C/V reach the
+                // focused BasicTextField instead of driving tree navigation or Edit Mode. (Global
+                // Ctrl+Z/Y and Alt+arrow selection history above still apply.)
+                if (minTimeEditCellId != null) {
+                    return@onPreviewKeyEvent false
+                }
                 // PRD §3/§4 (not in Edit Mode): select-all and tree copy/paste.
                 if (mod && event.key == Key.A) {
                     vm.dispatch(SchedulerIntent.SelectAllVisibleCells)
@@ -354,11 +361,6 @@ fun TaskSchedulerScreen(
                 if (event.key.isModifierKey()) return@onPreviewKeyEvent true
                 val main = state.selection.main ?: return@onPreviewKeyEvent false
                 if (!SchedulerDomain.isSelectableCell(state, main)) return@onPreviewKeyEvent false
-                // PRD §10: while the selected cell's min-time input is open, typing belongs to it —
-                // don't hijack the keystroke into Edit Mode.
-                if (main == minTimeEditCellId) {
-                    return@onPreviewKeyEvent false
-                }
                 // A dead key (^, ¨, ~ …) carries no character of its own — the composed letter is
                 // only delivered to a focused field. So open Edit Mode immediately with empty text;
                 // the cell becomes the focused field and the following letter composes into it (e.g.
@@ -440,7 +442,12 @@ fun TaskSchedulerScreen(
                     // doesn't change, so the selection-keyed refocus effect wouldn't fire) and even
                     // while the calendar window stays open.
                     if (intent is SchedulerIntent.ClickCell) {
-                        focusRequester.requestFocus()
+                        // PRD §10: but when the click lands on the cell whose min-time input is open, the
+                        // BasicTextField needs to keep the focus it just took — yanking it back to the root
+                        // focusable here is what made the caret vanish right after clicking the field.
+                        if (intent.cellId != minTimeEditCellId) {
+                            focusRequester.requestFocus()
+                        }
                         if (state.calendarFocused) vm.dispatch(SchedulerIntent.SetCalendarFocus(false))
                     }
                     vm.dispatch(intent)
