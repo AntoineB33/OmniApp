@@ -154,7 +154,7 @@ data class SchedulerState(
      * separated only by a hidden side task render as one merged block. The underlying panels and the
      * scheduling (and the side-task notifications) are unaffected; the real spanning time never changes.
      */
-    val showSideTasks: Boolean = true,
+    val showSideTasks: Boolean = false,
     /**
      * PRD §14 Reminders: whether the calendar window draws the reminder tags. A purely cosmetic display
      * preference (persisted, not undoable) — when off, reminder tags are hidden. The underlying chores and

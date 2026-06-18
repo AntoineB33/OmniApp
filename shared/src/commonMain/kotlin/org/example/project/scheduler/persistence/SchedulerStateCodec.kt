@@ -316,8 +316,9 @@ private data class PersistedState(
     val automaticSchedule: Boolean = true,
     // PRD §14: a missing chores list decodes to empty (payloads written before the chores manager existed).
     val chores: List<PersistedChoreEntry> = emptyList(),
-    // PRD §15: default on keeps side tasks visible for payloads written before the display toggle existed.
-    val showSideTasks: Boolean = true,
+    // PRD §15: side tasks are hidden by default, so payloads written before the display toggle existed
+    // (and any that omit the field) decode with the switch off.
+    val showSideTasks: Boolean = false,
     // PRD §14: default on keeps reminders visible for payloads written before the display toggle existed.
     val showReminders: Boolean = true,
     // PRD §15: the 20s look-away voice cue; default on (payloads written before the toggle existed get the voice).

@@ -430,10 +430,10 @@ class SchedulerCalendarTest {
 
     @Test
     fun codec_round_trips_the_show_side_tasks_preference() {
-        // PRD §15: the calendar's side-task display switch persists across sessions; default is on.
-        assertTrue(SchedulerState.empty().showSideTasks)
-        val hidden = SchedulerState.empty().copy(showSideTasks = false)
-        assertEquals(false, SchedulerStateCodec.decode(SchedulerStateCodec.encode(hidden))!!.showSideTasks)
+        // PRD §15: the calendar's side-task display switch persists across sessions; default is off.
+        assertEquals(false, SchedulerState.empty().showSideTasks)
+        val shown = SchedulerState.empty().copy(showSideTasks = true)
+        assertEquals(true, SchedulerStateCodec.decode(SchedulerStateCodec.encode(shown))!!.showSideTasks)
     }
 
     @Test

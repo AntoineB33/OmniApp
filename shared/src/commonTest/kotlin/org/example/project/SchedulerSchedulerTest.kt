@@ -702,15 +702,15 @@ class SchedulerSchedulerTest {
         val (s0, _, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val scheduled = SchedulerReducer.reduce(s0, SchedulerIntent.RefreshSchedule(now))
-        assertTrue(scheduled.showSideTasks) // default on
+        assertFalse(scheduled.showSideTasks) // default off
 
-        val hidden = SchedulerReducer.reduce(scheduled, SchedulerIntent.SetShowSideTasks(false))
-        assertFalse(hidden.showSideTasks)
-        assertEquals(scheduled.panels, hidden.panels) // the schedule (and side tasks) are untouched
+        val shown = SchedulerReducer.reduce(scheduled, SchedulerIntent.SetShowSideTasks(true))
+        assertTrue(shown.showSideTasks)
+        assertEquals(scheduled.panels, shown.panels) // the schedule (and side tasks) are untouched
 
         // Idempotent (same instance back) + reversible.
-        assertTrue(SchedulerReducer.reduce(hidden, SchedulerIntent.SetShowSideTasks(false)) === hidden)
-        assertTrue(SchedulerReducer.reduce(hidden, SchedulerIntent.SetShowSideTasks(true)).showSideTasks)
+        assertTrue(SchedulerReducer.reduce(shown, SchedulerIntent.SetShowSideTasks(true)) === shown)
+        assertFalse(SchedulerReducer.reduce(shown, SchedulerIntent.SetShowSideTasks(false)).showSideTasks)
     }
 
     @Test
