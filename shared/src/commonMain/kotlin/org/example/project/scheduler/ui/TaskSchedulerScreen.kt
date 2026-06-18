@@ -1,10 +1,12 @@
 package org.example.project.scheduler.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -57,6 +59,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -180,8 +183,9 @@ fun TaskSchedulerScreen(
     val focusRequester = remember { FocusRequester() }
     var moveDragActive by remember { mutableStateOf(false) }
     var moveDropTarget by remember { mutableStateOf<MoveDropTarget?>(null) }
-    // PRD §5: the sub-list whose priority-weight table is currently revealed (toggled by clicking a
-    // percentage in that sub-list), or null when no table is shown.
+    // PRD §5: the sub-list whose priority-weight window is open (opened by clicking a percentage in that
+    // sub-list), or null when the window is closed. The window holds the weight table plus a chart of the
+    // sub-list's absolute priorities; it is dismissed by clicking outside it.
     var weightTableListId by remember { mutableStateOf<CellListId?>(null) }
     // PRD §10: the cell whose minimum-time field is currently expanded into an input (clicking its
     // simple display opens it), or null when every min-time field shows as a plain label.
@@ -193,14 +197,10 @@ fun TaskSchedulerScreen(
     // Opened from any populated cell's right-click contextual menu.
     var taskTextTaskId by remember { mutableStateOf<TaskId?>(null) }
 
-    // PRD §5: selecting a cell outside the sub-list — or any cell entering Edit Mode — makes the
-    // weight table disappear.
-    LaunchedEffect(state.selection.main, state.editSession) {
-        val current = weightTableListId
-        if (current != null) {
-            val mainListId = state.selection.main?.let { state.cells[it]?.parentListId }
-            if (state.editSession != null || mainListId != current) weightTableListId = null
-        }
+    // PRD §5: the weight-table window closes if any cell enters Edit Mode. (A vanished sub-list — e.g.
+    // via undo — is handled where the window is rendered.)
+    LaunchedEffect(state.editSession) {
+        if (state.editSession != null) weightTableListId = null
     }
 
     // PRD §10: the min-time input reverts to a simple display when another cell is selected or any
@@ -354,13 +354,6 @@ fun TaskSchedulerScreen(
                 if (event.key.isModifierKey()) return@onPreviewKeyEvent true
                 val main = state.selection.main ?: return@onPreviewKeyEvent false
                 if (!SchedulerDomain.isSelectableCell(state, main)) return@onPreviewKeyEvent false
-                // PRD §5: when the selected cell's sub-list shows its priority-weight table, typing
-                // is meant for the weight fields — don't hijack the keystroke into Edit Mode. Let it
-                // fall through to the focused weight field.
-                val mainCell = state.cells[main]
-                if (mainCell?.taskId != null && mainCell.parentListId == weightTableListId) {
-                    return@onPreviewKeyEvent false
-                }
                 // PRD §10: while the selected cell's min-time input is open, typing belongs to it —
                 // don't hijack the keystroke into Edit Mode.
                 if (main == minTimeEditCellId) {
@@ -411,7 +404,6 @@ fun TaskSchedulerScreen(
                 depth = 0,
                 visibleOrder = visibleOrder,
                 priorities = priorities,
-                weightTableListId = weightTableListId,
                 onTogglePriorityWeights = { listId ->
                     weightTableListId = if (weightTableListId == listId) null else listId
                 },
@@ -492,6 +484,22 @@ fun TaskSchedulerScreen(
                 )
             }
         }
+
+        // PRD §5: the floating priority-weight window — a chart of the sub-list's absolute priorities on
+        // the left, the editable weight table on the right. Opened by clicking a percentage in the tree.
+        weightTableListId?.let { listId ->
+            if (state.lists[listId] == null) {
+                weightTableListId = null
+            } else {
+                PriorityWeightWindow(
+                    state = state,
+                    listId = listId,
+                    priorities = priorities,
+                    onIntent = { vm.dispatch(it) },
+                    onDismiss = { weightTableListId = null },
+                )
+            }
+        }
     }
 }
 
@@ -540,7 +548,6 @@ private fun CellListSection(
     depth: Int,
     visibleOrder: List<CellId>,
     priorities: Map<TaskId, Double>,
-    weightTableListId: CellListId?,
     onTogglePriorityWeights: (CellListId) -> Unit,
     minTimeEditCellId: CellId?,
     onToggleMinTimeEdit: (CellId) -> Unit,
@@ -571,34 +578,6 @@ private fun CellListSection(
         with(density) { (cellTextPx.values.maxOrNull() ?: 0).toDp() }
             .coerceIn(PRIORITY_COLUMN_MIN, PRIORITY_COLUMN_MAX)
     val priorityColumnPx = with(density) { priorityColumnWidth.toPx() }
-    val weightTableActive = weightTableListId == listId
-
-    // PRD §5: drag-reorder state is hoisted here (above both the header and the cell rows) so the
-    // whole moved column — header handle, header weight and every cell row — shows the grey
-    // background, and the blue drop line runs all the way down the column.
-    var draggedColumn by remember(listId) { mutableStateOf<Int?>(null) }
-    var columnDropIndex by remember(listId) { mutableStateOf<Int?>(null) }
-
-    // PRD §5: header of the priority weight table — a row of grab handles above one editable column
-    // weight each, aligned above the cell rows. Handles drag-reorder columns and host the menu.
-    if (weightTableActive) {
-        WeightTableHeader(
-            depth = depth,
-            leadingWidth = 20.dp + priorityColumnWidth + PERCENT_COLUMN_WIDTH,
-            weightColumns = list.weightColumns,
-            draggedColumn = draggedColumn,
-            dropIndex = columnDropIndex,
-            onDraggedColumnChange = { draggedColumn = it },
-            onDropIndexChange = { columnDropIndex = it },
-            onSetColumnWeight = { column, weight ->
-                onIntent(SchedulerIntent.SetPriorityColumnWeight(listId, column, weight))
-            },
-            onAddColumn = { index -> onIntent(SchedulerIntent.AddPriorityColumn(listId, index)) },
-            onResetColumn = { column -> onIntent(SchedulerIntent.ResetPriorityColumn(listId, column)) },
-            onDeleteColumn = { column -> onIntent(SchedulerIntent.DeletePriorityColumn(listId, column)) },
-            onMoveColumn = { from, to -> onIntent(SchedulerIntent.MovePriorityColumn(listId, from, to)) },
-        )
-    }
 
     list.cellIds.forEach { cellId ->
         val cell = state.cells[cellId] ?: return@forEach
@@ -651,11 +630,6 @@ private fun CellListSection(
             priorityLabel = priorityLabel,
             priorityColumnWidth = priorityColumnWidth,
             textOverflow = (cellTextPx[cellId] ?: 0) > priorityColumnPx,
-            weightTableActive = weightTableActive,
-            weightColumnCount = list.weightColumns.size,
-            cellWeights = cell.priorityWeights,
-            draggedColumn = draggedColumn,
-            columnDropIndex = columnDropIndex,
             minMinutes = cell.taskId?.let { state.tasks[it]?.minimumMinutes } ?: 0,
             minTimeEditing = minTimeEditCellId == cellId,
             // PRD §13: the "define schedule unit" menu only appears for a populated leaf cell (a task
@@ -670,9 +644,6 @@ private fun CellListSection(
                     ?.takeIf { selectable }
                     ?.let { taskId -> { onOpenTaskText(taskId) } },
             onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
-            onSetCellWeight = { column, value ->
-                onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, value))
-            },
             onSetMinTime = { minutes ->
                 cell.taskId?.let { onIntent(SchedulerIntent.SetTaskMinimumTime(it, minutes)) }
             },
@@ -760,7 +731,6 @@ private fun CellListSection(
                 depth = depth + 1,
                 visibleOrder = visibleOrder,
                 priorities = priorities,
-                weightTableListId = weightTableListId,
                 onTogglePriorityWeights = onTogglePriorityWeights,
                 minTimeEditCellId = minTimeEditCellId,
                 onToggleMinTimeEdit = onToggleMinTimeEdit,
@@ -1284,6 +1254,195 @@ private fun WeightTableHeader(
     }
 }
 
+/** Width of the task-title column inside the priority-weight window. */
+private val WEIGHT_WINDOW_TITLE_WIDTH = 160.dp
+
+/**
+ * PRD §5 priority-weight window: a floating window opened by clicking a sub-list's absolute priority
+ * percentage. Its left side is the editable weight table (a draggable/reorderable column header plus a
+ * weight input per cell per column); its right side is a circular (pie) chart of the absolute priority
+ * percentages of every task in the sub-list. Dismissed by clicking outside it.
+ */
+@Composable
+private fun PriorityWeightWindow(
+    state: SchedulerState,
+    listId: CellListId,
+    priorities: Map<TaskId, Double>,
+    onIntent: (SchedulerIntent) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val list = state.lists[listId] ?: return
+    // The rows of the table / chart are the populated cells of the sub-list (those with a priority).
+    val populated =
+        list.cellIds.filter { id -> state.cells[id]?.taskId?.let { priorities[it] != null } == true }
+    var draggedColumn by remember(listId) { mutableStateOf<Int?>(null) }
+    var columnDropIndex by remember(listId) { mutableStateOf<Int?>(null) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.25f))
+            // Tap (not clickable) to dismiss so a Space/Enter in a field can't close the window.
+            .pointerInput(Unit) { detectTapGestures { onDismiss() } },
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 12.dp,
+            border = BorderStroke(1.dp, SheetColors.grid),
+            // Bound the window to the screen (so the chart on the right is never pushed off-screen) and
+            // swallow taps so clicking inside doesn't reach the dismissing scrim.
+            modifier = Modifier
+                .widthIn(max = 760.dp)
+                .heightIn(max = 600.dp)
+                .pointerInput(Unit) { detectTapGestures { } },
+        ) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
+                // The table takes the remaining width and scrolls if it is wider/taller than the window,
+                // leaving the fixed-width chart column always visible on the right.
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .horizontalScroll(rememberScrollState()),
+                ) {
+                    WeightTableHeader(
+                        depth = 0,
+                        leadingWidth = WEIGHT_WINDOW_TITLE_WIDTH,
+                        weightColumns = list.weightColumns,
+                        draggedColumn = draggedColumn,
+                        dropIndex = columnDropIndex,
+                        onDraggedColumnChange = { draggedColumn = it },
+                        onDropIndexChange = { columnDropIndex = it },
+                        onSetColumnWeight = { c, w -> onIntent(SchedulerIntent.SetPriorityColumnWeight(listId, c, w)) },
+                        onAddColumn = { i -> onIntent(SchedulerIntent.AddPriorityColumn(listId, i)) },
+                        onResetColumn = { c -> onIntent(SchedulerIntent.ResetPriorityColumn(listId, c)) },
+                        onDeleteColumn = { c -> onIntent(SchedulerIntent.DeletePriorityColumn(listId, c)) },
+                        onMoveColumn = { f, t -> onIntent(SchedulerIntent.MovePriorityColumn(listId, f, t)) },
+                    )
+                    populated.forEach { cellId ->
+                        val cell = state.cells[cellId] ?: return@forEach
+                        val title = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.width(WEIGHT_WINDOW_TITLE_WIDTH).padding(horizontal = 4.dp)) {
+                                Text(
+                                    text = title.ifEmpty { "(untitled)" },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            for (column in list.weightColumns.indices) {
+                                if (draggedColumn != null && columnDropIndex == column) ColumnDropLine()
+                                Box(
+                                    modifier = Modifier.background(
+                                        if (draggedColumn == column) SheetColors.moveDragFill else Color.Transparent,
+                                    ),
+                                ) {
+                                    WeightInputCell(
+                                        value = cell.priorityWeights.getOrElse(column) { 1.0 },
+                                        onSet = { value -> onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, value)) },
+                                    )
+                                }
+                            }
+                            if (draggedColumn != null && columnDropIndex == list.weightColumns.size) ColumnDropLine()
+                        }
+                    }
+                }
+                Spacer(Modifier.width(16.dp))
+                PriorityChart(
+                    titles = populated.map { id -> state.cells[id]?.taskId?.let { state.tasks[it]?.title }.orEmpty() },
+                    fractions = populated.map { id -> state.cells[id]?.taskId?.let { priorities[it] } ?: 0.0 },
+                    modifier = Modifier.width(220.dp).verticalScroll(rememberScrollState()),
+                )
+            }
+        }
+    }
+}
+
+/** Distinct slice color for the [index]-th task in a priority pie chart, spread around the hue wheel. */
+private fun priorityChartColor(index: Int, count: Int): Color {
+    val hue = if (count <= 0) 0f else (index.toFloat() / count) * 360f
+    return Color.hsv(hue, 0.55f, 0.85f)
+}
+
+/**
+ * PRD §5: a circular (pie) chart of the absolute priority percentages [fractions] (0..1) of the tasks
+ * [titles] in a sub-list. Each slice's sweep is proportional to its fraction relative to the sub-list
+ * total, followed by a colour-keyed legend giving each task's title and percentage.
+ */
+@Composable
+private fun PriorityChart(
+    titles: List<String>,
+    fractions: List<Double>,
+    modifier: Modifier = Modifier,
+) {
+    val total = fractions.sum().coerceAtLeast(1e-9)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Priorities",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (titles.isEmpty()) {
+            Text(
+                text = "(no tasks)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@Column
+        }
+        Canvas(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .size(140.dp),
+        ) {
+            val diameter = size.minDimension
+            val topLeft = Offset((size.width - diameter) / 2f, (size.height - diameter) / 2f)
+            val arcSize = Size(diameter, diameter)
+            var startAngle = -90f
+            fractions.forEachIndexed { i, fraction ->
+                val sweep = (fraction / total).toFloat() * 360f
+                drawArc(
+                    color = priorityChartColor(i, fractions.size),
+                    startAngle = startAngle,
+                    sweepAngle = sweep,
+                    useCenter = true,
+                    topLeft = topLeft,
+                    size = arcSize,
+                )
+                startAngle += sweep
+            }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            titles.forEachIndexed { i, title ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(10.dp)
+                            .background(priorityChartColor(i, titles.size), RoundedCornerShape(2.dp)),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = title.ifEmpty { "(untitled)" },
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = formatPriorityPercent(fractions[i]),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun TaskRow(
     depth: Int,
@@ -1303,19 +1462,14 @@ private fun TaskRow(
     priorityLabel: String?,
     priorityColumnWidth: Dp,
     textOverflow: Boolean,
-    weightTableActive: Boolean,
-    weightColumnCount: Int,
-    cellWeights: List<Double>,
-    draggedColumn: Int?,
-    columnDropIndex: Int?,
     minMinutes: Int,
     minTimeEditing: Boolean,
     /** PRD §13: non-null only for a leaf cell — opens its "define schedule unit" window via right-click. */
     onDefineScheduleUnit: (() -> Unit)?,
     /** Non-null for any populated cell — opens its "see text" document window via right-click. */
     onSeeText: (() -> Unit)?,
+    /** PRD §5: clicking the percentage opens the sub-list's priority-weight window. */
     onTogglePriorityWeights: () -> Unit,
-    onSetCellWeight: (Int, Double) -> Unit,
     onSetMinTime: (Int) -> Unit,
     onActivateMinTime: () -> Unit,
     onClick: (CellId, ctrl: Boolean, shift: Boolean, forceClearMulti: Boolean) -> Unit,
@@ -1720,8 +1874,8 @@ private fun TaskRow(
                         )
                     }
                 }
-                // PRD §5: the percentage occupies a fixed-width column (so the weight-table columns
-                // line up across rows) and clicking it toggles the sub-list's weight table.
+                // PRD §5: the percentage occupies a fixed-width column; clicking it opens the sub-list's
+                // priority-weight window (the editable table plus a chart of the sub-list's priorities).
                 Box(
                     modifier = Modifier
                         .width(PERCENT_COLUMN_WIDTH)
@@ -1746,33 +1900,9 @@ private fun TaskRow(
                         )
                     }
                 }
-                if (weightTableActive && priorityLabel != null) {
-                    // PRD §5: this cell's row of the weight table — one value per column. The moved
-                    // column is greyed and the blue drop line is drawn here too, so the highlight
-                    // and the line span the full height of the column, not just the header.
-                    for (column in 0 until weightColumnCount) {
-                        if (draggedColumn != null && columnDropIndex == column) ColumnDropLine()
-                        Box(
-                            modifier = Modifier.background(
-                                if (draggedColumn == column) {
-                                    SheetColors.moveDragFill
-                                } else {
-                                    Color.Transparent
-                                },
-                            ),
-                        ) {
-                            WeightInputCell(
-                                value = cellWeights.getOrElse(column) { 1.0 },
-                                onSet = { value -> onSetCellWeight(column, value) },
-                            )
-                        }
-                    }
-                    if (draggedColumn != null && columnDropIndex == weightColumnCount) ColumnDropLine()
-                }
-                // PRD §10: the task's minimum-time field sits to the right of the priority-weight
-                // display — after the weight columns when the table is open (so it shifts as columns
-                // are added/removed), otherwise just after the percentage. It shows as a plain label
-                // until clicked, then expands into an input field with increment/decrement arrows.
+                // PRD §10: the task's minimum-time field sits just to the right of the percentage. It
+                // shows as a plain label until clicked, then expands into an input field with
+                // increment/decrement arrows.
                 if (priorityLabel != null) {
                     if (minTimeEditing) {
                         MinTimeInputCell(minutes = minMinutes, onSet = onSetMinTime)
