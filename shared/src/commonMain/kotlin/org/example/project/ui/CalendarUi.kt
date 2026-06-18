@@ -58,6 +58,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -555,10 +556,19 @@ fun ChoresManagerWindow(
      * the current clock time at the moment the `+` is clicked. A negative value (the default) leaves it blank.
      */
     newRowTimeOfDayMinutes: () -> Int = { -1 },
+    /**
+     * PRD §14: existing reminders whose title matches the focused row's draft — the **Reminders** id menu
+     * shown under the focused title field (mirrors the "add a checked reminder" window). Picking one fills
+     * the row's title.
+     */
+    reminderMenuEntries: (draftText: String) -> List<SchedulerDomain.ReminderMenuEntry> = { emptyList() },
+    /** PRD §14: distinct reminder titles matching the focused row's draft — the **Title suggestions** menu. */
+    titleSuggestions: (String) -> List<String> = { emptyList() },
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
-    // A new row's Time field starts at the clock time when the `+` was clicked (blank if none provided).
-    fun newRow() = ChoreRow(timeText = formatTimeOfDay(newRowTimeOfDayMinutes()))
+    // PRD §14: which row's title field currently holds focus — drives the title/id suggestion menus shown
+    // beneath it. Set on focus gain only (kept on focus loss so clicking a menu row doesn't dismiss it).
+    var focusedIndex by remember { mutableStateOf<Int?>(null) }
     // Per-row editable text (title, days, time-of-day) so an in-progress "3." / "9:" isn't reformatted
     // each keystroke. Seeded once from the incoming chores; live edits drive both this and the pushed list.
     val rows = remember {
@@ -578,6 +588,18 @@ fun ChoresManagerWindow(
             )
         }
     }
+    // A new row gets a stable, locally-unique id right away (mirroring the reducer's `reminder-{n}` scheme)
+    // so it has an identity before the round-trip through onChange — the id menu can then exclude the row
+    // being edited (otherwise a brand-new reminder would suggest itself).
+    fun newRow() = ChoreRow(
+        timeText = formatTimeOfDay(newRowTimeOfDayMinutes()),
+        id = run {
+            val used = rows.mapTo(mutableSetOf()) { it.id }
+            var n = 0
+            while (used.contains("reminder-$n")) n++
+            "reminder-$n"
+        },
+    )
     fun push() = onChange(
         rows.map {
             // PRD §14: the chosen unit maps the entered number to a cadence in days (interval vs rate units).
@@ -654,7 +676,9 @@ fun ChoresManagerWindow(
                             onValueChange = { rows[index] = row.copy(title = it); push() },
                             singleLine = true,
                             label = { Text("Reminder") },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .onFocusChanged { if (it.isFocused) focusedIndex = index },
                         )
                         OutlinedTextField(
                             value = row.daysText,
@@ -691,6 +715,54 @@ fun ChoresManagerWindow(
                         TextButton(onClick = { rows.removeAt(index); push() }) { Text("🗑") }
                         // Plus: insert a new row above this one.
                         TextButton(onClick = { rows.add(index, newRow()); push() }) { Text("+") }
+                    }
+
+                    // PRD §14: under the focused title field, the same id + title-suggestion menus as the
+                    // "add a checked reminder" window. Both fill this row's title. The row's own reminder is
+                    // excluded from the id menu so it can't suggest itself.
+                    if (focusedIndex == index) {
+                        val entries = reminderMenuEntries(row.title).filter { it.id != row.id }
+                        // The Reminders id menu leads with a "New Reminder" row (mirroring the task cell's
+                        // "New task"): it stands for keeping this row as its own fresh reminder rather than
+                        // adopting an existing one's name. Default selection: "New Reminder" when a reminder
+                        // with this exact title already exists in the window (so a duplicate-named row defaults
+                        // to a distinct new reminder), else the first suggested reminder. Like the task cell
+                        // (which shows its menu only when there's a real task beyond "New task"), this is hidden
+                        // unless at least one existing reminder matches.
+                        if (entries.isNotEmpty()) {
+                            val titleAlreadyExists = entries.any { it.title == row.title }
+                            Text(
+                                text = "Reminders",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            CalendarMenuRow(
+                                label = "New Reminder",
+                                selected = titleAlreadyExists,
+                                onClick = {},
+                            )
+                            entries.forEachIndexed { entryIndex, entry ->
+                                CalendarMenuRow(
+                                    label = entry.title,
+                                    selected = !titleAlreadyExists && entryIndex == 0,
+                                    onClick = { rows[index] = row.copy(title = entry.title); push() },
+                                )
+                            }
+                        }
+                        val suggestions = titleSuggestions(row.title).filter { it != row.title }.take(8)
+                        if (suggestions.isNotEmpty()) {
+                            Text(
+                                text = "Title suggestions",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            suggestions.forEach { suggestion ->
+                                CalendarMenuRow(
+                                    label = suggestion,
+                                    onClick = { rows[index] = row.copy(title = suggestion); push() },
+                                )
+                            }
+                        }
                     }
                 }
                 // Trailing single plus: append a new row at the end of the list.

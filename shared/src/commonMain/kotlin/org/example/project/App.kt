@@ -644,6 +644,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                 val t = Instant.fromEpochMilliseconds(clock.nowMillis()).toLocalDateTime(tz)
                                 t.hour * 60 + t.minute
                             },
+                            // PRD §14: title/id suggestion menus under the focused reminder name field —
+                            // existing reminders matching the draft, and distinct reminder titles.
+                            reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
+                            titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
                             // Cascade: open up-left of center so it isn't fully hidden behind a wider window.
                             initialOffset = Offset(-200f, -150f),
                             onRaise = { bringWindowToFront(FloatingWindow.Reminders) },
