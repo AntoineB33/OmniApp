@@ -609,7 +609,7 @@ object SchedulerReducer {
                 intent.insertBefore,
             )
         val before = state.captureTree()
-        val moved =
+        var moved =
             SchedulerDomain.applyMoveCellsToList(
                 state,
                 sourceListId,
@@ -617,6 +617,13 @@ object SchedulerReducer {
                 targetListId,
                 insertIndex,
             )
+        // PRD §4 Empty cells: restore the invariant disturbed by the move — drop any empty cell that is no
+        // longer its list's bottom cell, then re-append a trailing placeholder where a populated cell now
+        // sits at the bottom (e.g. a task dropped below the old placeholder). Folded into this delta so it
+        // undoes as one unit.
+        moved = evaluatePostEditCleanup(moved)
+        moved = ensureTrailingPlaceholder(moved, sourceListId)
+        moved = ensureTrailingPlaceholder(moved, targetListId)
         val after = moved.captureTree()
         if (before == after) return state
         return commitDelta(moved, TreeMutationDelta(before = before, after = after, label = "Move cells"))
@@ -1286,6 +1293,25 @@ private fun evaluatePostEditCleanup(state: SchedulerState): SchedulerState {
 
 private fun isTextuallyEmptyCell(state: SchedulerState, cellId: CellId): Boolean =
     SchedulerDomain.isTextuallyEmptyCell(state, cellId)
+
+/**
+ * PRD §4 Auto-Expansion invariant: a list always ends with an empty placeholder cell. When a move drops a
+ * populated cell at the bottom of [listId] (e.g. dragging a task *below* the trailing placeholder), append
+ * a fresh empty placeholder so the list bottom is empty again — mirroring the auto-expansion done while
+ * editing. A no-op when the list already ends with an empty cell.
+ */
+private fun ensureTrailingPlaceholder(state: SchedulerState, listId: CellListId): SchedulerState {
+    val list = state.lists[listId] ?: return state
+    val lastId = list.cellIds.lastOrNull()
+    if (lastId != null && SchedulerDomain.isTextuallyEmptyCell(state, lastId)) return state
+    val (placeholderId, withId) = state.allocateCellId(listId)
+    val placeholder = Cell(id = placeholderId, parentListId = listId, taskId = null)
+    val updatedList = (withId.lists[listId] ?: list).let { it.copy(cellIds = it.cellIds + placeholderId) }
+    return withId.copy(
+        cells = withId.cells + (placeholderId to placeholder),
+        lists = withId.lists + (listId to updatedList),
+    )
+}
 
 private fun applyEditText(
     state: SchedulerState,

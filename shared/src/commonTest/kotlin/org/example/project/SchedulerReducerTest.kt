@@ -1864,6 +1864,44 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun moving_cell_below_trailing_placeholder_restores_bottom_empty_cell() {
+        // PRD §4 Empty cells: dropping a task *below* the trailing empty cell must drop that now-middle
+        // empty and re-create a fresh placeholder at the bottom — the empty cell never rests above a
+        // populated one.
+        var s = SchedulerState.empty()
+        val root = s.rootListId
+        fun setTitleAt(index: Int, title: String) {
+            val id = s.lists[root]!!.cellIds[index]
+            s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(id, title))
+        }
+        setTitleAt(0, "A")
+        setTitleAt(1, "B")
+
+        val before = s.lists[root]!!.cellIds
+        assertEquals(3, before.size) // [A, B, <empty placeholder>]
+        val bCell = before[1]
+        val placeholder = before[2]
+        assertTrue(SchedulerDomain.isTextuallyEmptyCell(s, placeholder))
+
+        val visible = SchedulerDomain.selectableVisibleOrder(s)
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = bCell, ctrl = false, shift = false, visibleOrder = visible),
+        )
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.MoveSelectedCells(targetCellId = placeholder, insertBefore = false),
+        )
+
+        val after = s.lists[root]!!.cellIds
+        assertEquals(3, after.size, "the middle empty is dropped and one fresh placeholder is appended")
+        assertEquals("A", s.tasks[s.cells[after[0]]!!.taskId]!!.title)
+        assertEquals("B", s.tasks[s.cells[after[1]]!!.taskId]!!.title)
+        assertFalse(SchedulerDomain.isTextuallyEmptyCell(s, after[1]), "B must not rest at the bottom")
+        assertTrue(SchedulerDomain.isTextuallyEmptyCell(s, after.last()), "list must end with an empty cell")
+    }
+
+    @Test
     fun move_selected_cell_into_sibling_sublist_relocates_across_layers() {
         var s = seedThreeTasks()
         val root = s.rootListId
