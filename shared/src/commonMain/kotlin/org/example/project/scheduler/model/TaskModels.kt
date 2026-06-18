@@ -32,6 +32,12 @@ data class Task(
      * Part of the Task Tree domain object (PRD §6), so edits go through the content Undo/Redo history.
      */
     val scheduleUnit: List<ScheduleUnitEntry> = emptyList(),
+    /**
+     * Free-form text document attached to this task, shown/edited in the "see text" floating window
+     * (opened from a populated cell's right-click menu). Empty when the task has no notes. Part of the
+     * Task Tree domain object (PRD §6), so edits go through the content Undo/Redo history.
+     */
+    val text: String = "",
 )
 
 /**

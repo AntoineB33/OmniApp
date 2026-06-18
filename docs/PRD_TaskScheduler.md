@@ -163,7 +163,8 @@ While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* 
 ## 13. Schedule Unit
 * **Schedule:** A task can have an sequential list of objects containing a title and a spanning time.
 * **Notification:** If the task has a schedule unit, then the notification that tells the user to switch to this task must also tell him the deadlines of each elements of the schedule unit.
-* **Cell Contextual Menu:** If the task has no child task, right-clicking a cell in the task tree shows a contextual menu with the option "define schedule unit".
+* **Cell Contextual Menu:** Right-clicking a populated cell in the task tree shows a contextual menu. It always offers the option **"see text"** (for any cell holding a task — leaf or parent). When the task has **no child task**, the menu *additionally* offers **"define schedule unit"**. Empty cells and the root/main cell have no contextual menu.
+* **Text document ("see text"):** "see text" opens a floating window holding a free-form, multi-line text document associated with the task id (shared across every cell pointing at that task). It has a Cancel and a Save button at the bottom right; the text is empty until the user writes something. Editing the document is saved in a History Unit (undoable, §6). The window is dismissed by clicking outside it; typing inside it (including the space bar) never closes it.
 * **Edition Window:** "define schedule unit" opens a floating edition window showing the list vertically. The titles are input fields and the spanning time are also input fields but with increment and decrement buttons. At the right of a pair, a bin button (to remove the pair) and a plus button (to insert a pair above). At the end of the list, a single plus button. At the bottom right, a Cancel and a Save buttons. If the sum of the spanning times is higher than the minimum time of the task, the Save button is not clickable.
 
 ## 14. Reminders

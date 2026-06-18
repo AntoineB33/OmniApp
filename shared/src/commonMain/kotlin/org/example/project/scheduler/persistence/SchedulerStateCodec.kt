@@ -72,6 +72,7 @@ object SchedulerStateCodec {
                         minimumMinutes = it.minimumMinutes,
                         record = it.record.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
                         scheduleUnit = it.scheduleUnit.map { e -> PersistedScheduleUnitEntry(e.title, e.spanMinutes) },
+                        text = it.text,
                     )
                 },
             expanded = expanded.map(CellId::value),
@@ -144,6 +145,7 @@ object SchedulerStateCodec {
                         minimumMinutes = it.minimumMinutes,
                         record = it.record.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
                         scheduleUnit = it.scheduleUnit.map { e -> PersistedScheduleUnitEntry(e.title, e.spanMinutes) },
+                        text = it.text,
                     )
                 },
             nextTaskCounter = nextTaskCounter,
@@ -163,6 +165,7 @@ object SchedulerStateCodec {
                         minimumMinutes = p.minimumMinutes,
                         record = p.record.map { TaskTimeRange(it.start, it.end) },
                         scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
+                        text = p.text,
                     )
             }
         val cells =
@@ -242,6 +245,7 @@ object SchedulerStateCodec {
                         minimumMinutes = p.minimumMinutes,
                         record = p.record.map { TaskTimeRange(it.start, it.end) },
                         scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
+                        text = p.text,
                     )
             }
         val cells =
@@ -402,6 +406,8 @@ private data class PersistedTask(
     val record: List<PersistedTimeRange> = emptyList(),
     // PRD §13: a missing schedule unit decodes to empty (a task with no schedule unit).
     val scheduleUnit: List<PersistedScheduleUnitEntry> = emptyList(),
+    // "See text": a missing text document decodes to empty (a task with no notes).
+    val text: String = "",
 )
 
 @Serializable

@@ -41,6 +41,8 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state, "Minimum time") { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state, "Schedule unit") { applySetScheduleUnit(it, intent.taskId, intent.entries) })
+            is SchedulerIntent.SetTaskText ->
+                commitDelta(state, priorityTreeDelta(state, "Task text") { applySetTaskText(it, intent.taskId, intent.text) })
             is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis, intent.nowMillis)
             is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked, intent.nowMillis)
             is SchedulerIntent.SetSideTasks ->
@@ -1556,6 +1558,16 @@ private fun applySetScheduleUnit(
     return state.copy(tasks = state.tasks + (taskId to task.copy(scheduleUnit = entries)))
 }
 
+private fun applySetTaskText(
+    state: SchedulerState,
+    taskId: TaskId,
+    text: String,
+): SchedulerState {
+    val task = state.tasks[taskId] ?: return state
+    if (task.text == text) return state
+    return state.copy(tasks = state.tasks + (taskId to task.copy(text = text)))
+}
+
 private fun applySetPriorityColumnWeight(
     state: SchedulerState,
     listId: CellListId,
@@ -1916,6 +1928,9 @@ private fun treeDiffLines(before: TreeSnapshot, after: TreeSnapshot): List<Strin
         }
         if (b.scheduleUnit != a.scheduleUnit) {
             lines += "schedule unit \"${a.title}\": ${b.scheduleUnit.size} → ${a.scheduleUnit.size} step(s)"
+        }
+        if (b.text != a.text) {
+            lines += "text \"${a.title}\": ${b.text.length} → ${a.text.length} char(s)"
         }
     }
     (before.lists.keys intersect after.lists.keys).forEach { id ->

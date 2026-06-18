@@ -189,6 +189,9 @@ fun TaskSchedulerScreen(
     // PRD §13: the leaf task whose "define schedule unit" floating edit window is open, or null when
     // it is closed. Opened from a cell's right-click contextual menu.
     var scheduleUnitTaskId by remember { mutableStateOf<TaskId?>(null) }
+    // The task whose "see text" floating text-document window is open, or null when it is closed.
+    // Opened from any populated cell's right-click contextual menu.
+    var taskTextTaskId by remember { mutableStateOf<TaskId?>(null) }
 
     // PRD §5: selecting a cell outside the sub-list — or any cell entering Edit Mode — makes the
     // weight table disappear.
@@ -417,6 +420,7 @@ fun TaskSchedulerScreen(
                     minTimeEditCellId = if (minTimeEditCellId == cellId) null else cellId
                 },
                 onOpenScheduleUnit = { taskId -> scheduleUnitTaskId = taskId },
+                onOpenTaskText = { taskId -> taskTextTaskId = taskId },
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -467,6 +471,24 @@ fun TaskSchedulerScreen(
                         scheduleUnitTaskId = null
                     },
                     onDismiss = { scheduleUnitTaskId = null },
+                )
+            }
+        }
+
+        // The floating "see text" window — a free-form text document for the task, overlaying the tree.
+        taskTextTaskId?.let { taskId ->
+            val task = state.tasks[taskId]
+            if (task == null) {
+                taskTextTaskId = null
+            } else {
+                TaskTextWindow(
+                    taskTitle = task.title,
+                    initialText = task.text,
+                    onSave = { text ->
+                        vm.dispatch(SchedulerIntent.SetTaskText(taskId, text))
+                        taskTextTaskId = null
+                    },
+                    onDismiss = { taskTextTaskId = null },
                 )
             }
         }
@@ -523,6 +545,7 @@ private fun CellListSection(
     minTimeEditCellId: CellId?,
     onToggleMinTimeEdit: (CellId) -> Unit,
     onOpenScheduleUnit: (TaskId) -> Unit,
+    onOpenTaskText: (TaskId) -> Unit,
     moveDragActive: Boolean,
     moveDropTarget: MoveDropTarget?,
     resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>?,
@@ -641,6 +664,11 @@ private fun CellListSection(
                 cell.taskId
                     ?.takeIf { selectable && SchedulerDomain.isLeafTask(state, it) }
                     ?.let { taskId -> { onOpenScheduleUnit(taskId) } },
+            // "See text" appears for any populated cell (leaf or parent); null for empty / root-main cells.
+            onSeeText =
+                cell.taskId
+                    ?.takeIf { selectable }
+                    ?.let { taskId -> { onOpenTaskText(taskId) } },
             onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
             onSetCellWeight = { column, value ->
                 onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, value))
@@ -737,6 +765,7 @@ private fun CellListSection(
                 minTimeEditCellId = minTimeEditCellId,
                 onToggleMinTimeEdit = onToggleMinTimeEdit,
                 onOpenScheduleUnit = onOpenScheduleUnit,
+                onOpenTaskText = onOpenTaskText,
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -1280,6 +1309,8 @@ private fun TaskRow(
     minTimeEditing: Boolean,
     /** PRD §13: non-null only for a leaf cell — opens its "define schedule unit" window via right-click. */
     onDefineScheduleUnit: (() -> Unit)?,
+    /** Non-null for any populated cell — opens its "see text" document window via right-click. */
+    onSeeText: (() -> Unit)?,
     onTogglePriorityWeights: () -> Unit,
     onSetCellWeight: (Int, Double) -> Unit,
     onSetMinTime: (Int) -> Unit,
@@ -1299,8 +1330,9 @@ private fun TaskRow(
     editMenus: (@Composable () -> Unit)?,
 ) {
     val editFocusRequester = remember { FocusRequester() }
-    // PRD §13: whether this cell's right-click "define schedule unit" menu is showing.
-    var scheduleUnitMenuOpen by remember(cellId) { mutableStateOf(false) }
+    // Whether this cell's right-click contextual menu ("define schedule unit" / "see text") is showing.
+    var contextMenuOpen by remember(cellId) { mutableStateOf(false) }
+    val hasContextMenu = onDefineScheduleUnit != null || onSeeText != null
     // Layout coordinates of this row, used to convert in-row pointer positions to window space so
     // the originating row can map an ongoing drag to the cell currently under the cursor.
     val rowCoordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
@@ -1477,23 +1509,35 @@ private fun TaskRow(
                 .background(cellBackground)
                 .then(cellBorder)
                 .then(selectionPointerModifier())
-                .then(scheduleUnitContextMenuModifier(onDefineScheduleUnit) { scheduleUnitMenuOpen = true })
+                .then(contextMenuModifier(hasContextMenu) { contextMenuOpen = true })
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // PRD §13: right-click contextual menu on a leaf cell with the "define schedule unit" option.
-            if (onDefineScheduleUnit != null) {
+            // Right-click contextual menu: "define schedule unit" (leaf cells, PRD §13) and "see text"
+            // (any populated cell).
+            if (hasContextMenu) {
                 DropdownMenu(
-                    expanded = scheduleUnitMenuOpen,
-                    onDismissRequest = { scheduleUnitMenuOpen = false },
+                    expanded = contextMenuOpen,
+                    onDismissRequest = { contextMenuOpen = false },
                 ) {
-                    DropdownMenuItem(
-                        text = { Text("define schedule unit") },
-                        onClick = {
-                            scheduleUnitMenuOpen = false
-                            onDefineScheduleUnit()
-                        },
-                    )
+                    if (onDefineScheduleUnit != null) {
+                        DropdownMenuItem(
+                            text = { Text("define schedule unit") },
+                            onClick = {
+                                contextMenuOpen = false
+                                onDefineScheduleUnit()
+                            },
+                        )
+                    }
+                    if (onSeeText != null) {
+                        DropdownMenuItem(
+                            text = { Text("see text") },
+                            onClick = {
+                                contextMenuOpen = false
+                                onSeeText()
+                            },
+                        )
+                    }
                 }
             }
             Box(
@@ -1761,16 +1805,16 @@ private fun TaskRow(
 }
 
 /**
- * PRD §13: a right-click (secondary button) on a leaf cell opens its "define schedule unit" menu.
- * Returns a no-op modifier when [onDefineScheduleUnit] is null (non-leaf / empty / root-main cells),
+ * A right-click (secondary button) on a cell opens its contextual menu ("define schedule unit" / "see
+ * text"). Returns a no-op modifier when [enabled] is false (cells with no menu items — empty / root-main),
  * so only eligible cells react. [onOpen] flips the row's local menu-visible flag.
  */
 @OptIn(ExperimentalComposeUiApi::class)
-private fun scheduleUnitContextMenuModifier(
-    onDefineScheduleUnit: (() -> Unit)?,
+private fun contextMenuModifier(
+    enabled: Boolean,
     onOpen: () -> Unit,
 ): Modifier {
-    if (onDefineScheduleUnit == null) return Modifier
+    if (!enabled) return Modifier
     return Modifier.pointerInput(Unit) {
         awaitPointerEventScope {
             while (true) {
@@ -1809,11 +1853,9 @@ private fun ScheduleUnitEditWindow(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.25f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onDismiss,
-            ),
+            // Tap (not clickable) to dismiss: a focused clickable also fires on Space/Enter, which would
+            // close the window while typing in a field.
+            .pointerInput(Unit) { detectTapGestures { onDismiss() } },
         contentAlignment = Alignment.Center,
     ) {
         Surface(
@@ -1821,13 +1863,8 @@ private fun ScheduleUnitEditWindow(
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 12.dp,
             border = BorderStroke(1.dp, SheetColors.grid),
-            // Swallow clicks so they don't reach the dismissing scrim.
-            modifier = Modifier.width(360.dp).clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                enabled = false,
-                onClick = {},
-            ),
+            // Swallow taps so clicking inside the window doesn't reach the dismissing scrim.
+            modifier = Modifier.width(360.dp).pointerInput(Unit) { detectTapGestures { } },
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Define schedule unit", style = MaterialTheme.typography.titleSmall)
@@ -1902,6 +1939,63 @@ private fun ScheduleUnitEditWindow(
                     Spacer(Modifier.width(8.dp))
                     // PRD §13: Save is not clickable while the spans exceed the task's minimum time.
                     TextButton(enabled = canSave, onClick = { onSave(entries) }) { Text("Save") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The floating "see text" window: a free-form, multi-line text document attached to a task. Opened from a
+ * populated cell's right-click menu. Edits are kept local until Save; tapping the scrim cancels.
+ *
+ * The scrim dismisses on a pointer tap (not [Modifier.clickable]) on purpose: a focused `clickable` also
+ * fires on Space/Enter, so typing a space in the editor would otherwise close the window. The text field
+ * auto-focuses so keystrokes land in it immediately.
+ */
+@Composable
+private fun TaskTextWindow(
+    taskTitle: String,
+    initialText: String,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember { mutableStateOf(initialText) }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.25f))
+            .pointerInput(Unit) { detectTapGestures { onDismiss() } },
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 12.dp,
+            border = BorderStroke(1.dp, SheetColors.grid),
+            // Swallow taps so clicking inside the window doesn't reach the dismissing scrim.
+            modifier = Modifier.width(420.dp).pointerInput(Unit) { detectTapGestures { } },
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = taskTitle.ifBlank { "Text" },
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp).focusRequester(focusRequester),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = { onSave(text) }) { Text("Save") }
                 }
             }
         }

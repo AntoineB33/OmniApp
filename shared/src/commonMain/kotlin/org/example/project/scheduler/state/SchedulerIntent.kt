@@ -124,6 +124,15 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * "See text" window Save: replace a task's free-form [text] document. Recorded as a content delta so
+     * it is part of the Undo/Redo history (PRD §6).
+     */
+    data class SetTaskText(
+        val taskId: TaskId,
+        val text: String,
+    ) : SchedulerIntent
+
+    /**
      * PRD §14 Reminders: replace the whole reminders list with [entries] (rows are edited live in the
      * floating window) and regenerate the reminder calendar tags anchored at [todayStartMillis] (local
      * midnight of today, supplied by the caller which knows the time zone). Persisted but not part of the
