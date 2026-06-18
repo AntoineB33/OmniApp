@@ -1602,7 +1602,7 @@ private fun WeekView(
             }
         }
         // PRD §8 hover title bubble, drawn above all columns; non-interactive so the cursor passes through.
-        titleHover?.let { CalendarTitleBubble(it.title, it.pos) }
+        titleHover?.let { CalendarTitleBubble(it.title, it.pos, it.subtitle) }
         }
     }
 }
@@ -1835,6 +1835,7 @@ private fun DayColumn(
                 onCommitBounds = onCommitBounds,
                 onLockScroll = onLockScroll,
                 hoverScope = hoverScope,
+                tz = tz,
             )
         }
 
@@ -2041,7 +2042,13 @@ private fun SideTaskBand(
  * identifies the reporting element so a stale `Exit` from the element the cursor just left can't clear a
  * hover the newly entered element has already set.
  */
-private class CalendarTitleHover(val ownerId: Any, val title: String, val pos: Offset)
+private class CalendarTitleHover(
+    val ownerId: Any,
+    val title: String,
+    val pos: Offset,
+    /** PRD §8: a second bubble line — the panel's start–end times; null for elements without a time range. */
+    val subtitle: String? = null,
+)
 
 /**
  * Plumbing handed to every hoverable calendar element so it can report the title under the cursor up to the
@@ -2063,13 +2070,17 @@ private class CalendarTitleHoverScope(
  * with the block's drag/resize gesture or the column's right-click menu.
  */
 @OptIn(ExperimentalComposeUiApi::class)
-private fun Modifier.calendarTitleHover(title: String, scope: CalendarTitleHoverScope): Modifier = composed {
+private fun Modifier.calendarTitleHover(
+    title: String,
+    scope: CalendarTitleHoverScope,
+    subtitle: String? = null,
+): Modifier = composed {
     val ownerId = remember { Any() }
     var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val report: (Offset) -> Unit = report@{ local ->
         val viewport = scope.viewportCoords()?.takeIf { it.isAttached } ?: return@report
         val self = coords?.takeIf { it.isAttached } ?: return@report
-        scope.onHover(CalendarTitleHover(ownerId, title, viewport.localPositionOf(self, local)))
+        scope.onHover(CalendarTitleHover(ownerId, title, viewport.localPositionOf(self, local), subtitle))
     }
     this
         .onGloballyPositioned { coords = it }
@@ -2085,9 +2096,9 @@ private fun Modifier.calendarTitleHover(title: String, scope: CalendarTitleHover
  * bubble during a fast scroll, keeping the title live.
  */
 @Composable
-private fun CalendarTitleBubble(text: String, pos: Offset) {
+private fun CalendarTitleBubble(text: String, pos: Offset, subtitle: String? = null) {
     val yOffsetPx = with(LocalDensity.current) { 16.dp.roundToPx() }
-    Box(
+    Column(
         Modifier
             .offset { IntOffset(pos.x.roundToInt(), pos.y.roundToInt() + yOffsetPx) }
             .shadow(4.dp, RoundedCornerShape(4.dp))
@@ -2099,6 +2110,14 @@ private fun CalendarTitleBubble(text: String, pos: Offset) {
             color = MaterialTheme.colorScheme.inverseOnSurface,
             style = MaterialTheme.typography.labelMedium,
         )
+        // PRD §8: the panel's start–end times, shown as a second line when the hovered element has them.
+        if (subtitle != null) {
+            Text(
+                text = subtitle,
+                color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.8f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
     }
 }
 
@@ -2157,6 +2176,7 @@ private fun CalendarBlock(
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onLockScroll: (Boolean) -> Unit,
     hoverScope: CalendarTitleHoverScope,
+    tz: TimeZone,
 ) {
     val key = calendarBlockKey(record)
     // Read inside the long-lived gesture closure so a mid-drag `O` toggle is picked up immediately.
@@ -2283,7 +2303,9 @@ private fun CalendarBlock(
                 // PRD §8: the title shows on hover. Reported up to the viewport-level bubble (anchored to the
                 // cursor, not the block's top) so a tall, zoomed-in block still pops its bubble right where the
                 // pointer is — and the cursor can pass through the bubble without freezing it.
-                Box(Modifier.fillMaxSize().calendarTitleHover(record.title, hoverScope)) {
+                // PRD §8: the hover bubble also shows the panel's true (un-clipped) start–end times.
+                val timeRange = "${formatHm(record.fullStartMillis, tz)} – ${formatHm(record.fullEndMillis, tz)}"
+                Box(Modifier.fillMaxSize().calendarTitleHover(record.title, hoverScope, subtitle = timeRange)) {
                     // The title is written only on the topmost slice so a stepped block reads as one.
                     CalendarBlockBody(color, record.title, showTitle = isFirst)
                 }
