@@ -43,6 +43,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -59,6 +60,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -80,6 +82,7 @@ import androidx.compose.ui.input.pointer.isShiftPressed as pointerShiftPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
@@ -174,6 +177,10 @@ fun TaskSchedulerScreen(
     modifier: Modifier = Modifier,
     store: SchedulerStore? = null,
     vm: TaskSchedulerViewModel = viewModel { TaskSchedulerViewModel(store = store) },
+    // PRD §5: opening/closing the priority-weight window is hoisted to the app so the window can be drawn
+    // on the top floating-window layer (above the calendar) and dismissed by clicks anywhere. Pass the
+    // sub-list id to open it, or null to close. Defaults make the screen usable standalone (previews/tests).
+    onSetWeightWindow: (CellListId?) -> Unit = {},
 ) {
     val state by vm.state.collectAsState()
     val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
@@ -183,10 +190,6 @@ fun TaskSchedulerScreen(
     val focusRequester = remember { FocusRequester() }
     var moveDragActive by remember { mutableStateOf(false) }
     var moveDropTarget by remember { mutableStateOf<MoveDropTarget?>(null) }
-    // PRD §5: the sub-list whose priority-weight window is open (opened by clicking a percentage in that
-    // sub-list), or null when the window is closed. The window holds the weight table plus a chart of the
-    // sub-list's absolute priorities; it is dismissed by clicking outside it.
-    var weightTableListId by remember { mutableStateOf<CellListId?>(null) }
     // PRD §10: the cell whose minimum-time field is currently expanded into an input (clicking its
     // simple display opens it), or null when every min-time field shows as a plain label.
     var minTimeEditCellId by remember { mutableStateOf<CellId?>(null) }
@@ -203,7 +206,7 @@ fun TaskSchedulerScreen(
     // PRD §5: the weight-table window closes if any cell enters Edit Mode. (A vanished sub-list — e.g.
     // via undo — is handled where the window is rendered.)
     LaunchedEffect(state.editSession) {
-        if (state.editSession != null) weightTableListId = null
+        if (state.editSession != null) onSetWeightWindow(null)
     }
 
     // PRD §10: the min-time input reverts to a simple display when another cell is selected or any
@@ -449,7 +452,10 @@ fun TaskSchedulerScreen(
                 visibleOrder = visibleOrder,
                 priorities = priorities,
                 onTogglePriorityWeights = { listId ->
-                    weightTableListId = if (weightTableListId == listId) null else listId
+                    // PRD §5: clicking a percentage opens that sub-list's window. Closing is by clicking
+                    // anywhere else (the app's outside-press interceptor), not by re-clicking here — so
+                    // this is deterministic regardless of when the interceptor runs during the gesture.
+                    onSetWeightWindow(listId)
                 },
                 minTimeEditCellId = minTimeEditCellId,
                 onToggleMinTimeEdit = { cellId ->
@@ -540,22 +546,8 @@ fun TaskSchedulerScreen(
                 )
             }
         }
-
-        // PRD §5: the floating priority-weight window — a chart of the sub-list's absolute priorities on
-        // the left, the editable weight table on the right. Opened by clicking a percentage in the tree.
-        weightTableListId?.let { listId ->
-            if (state.lists[listId] == null) {
-                weightTableListId = null
-            } else {
-                PriorityWeightWindow(
-                    state = state,
-                    listId = listId,
-                    priorities = priorities,
-                    onIntent = { vm.dispatch(it) },
-                    onDismiss = { weightTableListId = null },
-                )
-            }
-        }
+        // PRD §5: the priority-weight window itself is drawn by the app (App.kt) on the top
+        // floating-window layer, above the calendar — not here — so it sits over every other window.
     }
 }
 
@@ -1333,15 +1325,17 @@ private val WEIGHT_WINDOW_TITLE_WIDTH = 160.dp
  * PRD §5 priority-weight window: a floating window opened by clicking a sub-list's absolute priority
  * percentage. Its left side is the editable weight table (a draggable/reorderable column header plus a
  * weight input per cell per column); its right side is a circular (pie) chart of the absolute priority
- * percentages of every task in the sub-list. Dismissed by clicking outside it.
+ * percentages of every task in the sub-list. Drawn by the app on the top floating-window layer; the app
+ * dismisses it when a press lands outside [onBoundsChange]'s reported bounds.
  */
 @Composable
-private fun PriorityWeightWindow(
+internal fun PriorityWeightWindow(
     state: SchedulerState,
     listId: CellListId,
     priorities: Map<TaskId, Double>,
     onIntent: (SchedulerIntent) -> Unit,
-    onDismiss: () -> Unit,
+    onBoundsChange: (Rect?) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val list = state.lists[listId] ?: return
     // The rows of the table / chart are the populated cells of the sub-list (those with a priority).
@@ -1350,26 +1344,22 @@ private fun PriorityWeightWindow(
     var draggedColumn by remember(listId) { mutableStateOf<Int?>(null) }
     var columnDropIndex by remember(listId) { mutableStateOf<Int?>(null) }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.25f))
-            // Tap (not clickable) to dismiss so a Space/Enter in a field can't close the window.
-            .pointerInput(Unit) { detectTapGestures { onDismiss() } },
-        contentAlignment = Alignment.Center,
+    // Stop reporting bounds once the window goes away, so the app's outside-press check has no stale rect.
+    DisposableEffect(Unit) { onDispose { onBoundsChange(null) } }
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 12.dp,
+        border = BorderStroke(1.dp, SheetColors.grid),
+        // Bound the window to the screen (so the chart on the right is never pushed off-screen), publish
+        // its window-space bounds (the app ignores presses inside them) and swallow taps that land inside.
+        modifier = modifier
+            .widthIn(max = 760.dp)
+            .heightIn(max = 600.dp)
+            .onGloballyPositioned { onBoundsChange(it.boundsInWindow()) }
+            .pointerInput(Unit) { detectTapGestures { } },
     ) {
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 12.dp,
-            border = BorderStroke(1.dp, SheetColors.grid),
-            // Bound the window to the screen (so the chart on the right is never pushed off-screen) and
-            // swallow taps so clicking inside doesn't reach the dismissing scrim.
-            modifier = Modifier
-                .widthIn(max = 760.dp)
-                .heightIn(max = 600.dp)
-                .pointerInput(Unit) { detectTapGestures { } },
-        ) {
             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
                 // The table takes the remaining width and scrolls if it is wider/taller than the window,
                 // leaving the fixed-width chart column always visible on the right.
@@ -1430,7 +1420,6 @@ private fun PriorityWeightWindow(
                 )
             }
         }
-    }
 }
 
 /** Distinct slice color for the [index]-th task in a priority pie chart, spread around the hue wheel. */

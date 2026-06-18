@@ -12,8 +12,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -29,6 +35,7 @@ import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
@@ -38,6 +45,7 @@ import org.example.project.scheduler.platform.lastWakeAfterLongSleepMillis
 import org.example.project.scheduler.platform.sendSystemNotification
 import org.example.project.scheduler.platform.speak
 import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.ui.PriorityWeightWindow
 import org.example.project.scheduler.ui.TaskSchedulerScreen
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
@@ -282,6 +290,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
         val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz).date
         var calendarOpen by remember { mutableStateOf(false) }
+        // PRD §5: the sub-list whose priority-weight window is open (opened by clicking a percentage in the
+        // tree), or null when closed. Drawn on the top floating-window layer below; [weightWindowBounds] is
+        // its window-space rect, used to ignore presses inside it when dismissing on outside clicks.
+        var weightWindowListId by remember { mutableStateOf<CellListId?>(null) }
+        var weightWindowBounds by remember { mutableStateOf<Rect?>(null) }
+        // Layout of the content area, so a press position (content-local) can be mapped to window space
+        // and compared against [weightWindowBounds].
+        var contentCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+        // PRD §5: the window closes when any cell enters Edit Mode (its sub-list typing context is gone).
+        LaunchedEffect(schedulerState.editSession) {
+            if (schedulerState.editSession != null) weightWindowListId = null
+        }
         // PRD §7/§14 Chores Manager: whether the floating chores window is open (local UI state, like the
         // calendar window; the chores data itself lives in the persisted scheduler state).
         var choresManagerOpen by remember { mutableStateOf(false) }
@@ -400,10 +420,58 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
 
                 // The content area is clipped so the floating calendar window can overlap the tree
                 // but never spill onto the lateral menu (PRD §7).
-                Box(modifier = Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clipToBounds()
+                        .onGloballyPositioned { contentCoords = it }
+                        // PRD §5: the priority-weight window closes when a press lands anywhere outside it,
+                        // and that press still does its normal job (selecting a cell, focusing the calendar,
+                        // …). We observe presses in the Initial pass without consuming them — an ancestor of
+                        // every window, so it catches clicks on the tree and on other floating windows alike.
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    if (event.type != PointerEventType.Press) continue
+                                    if (weightWindowListId == null) continue
+                                    val pos = event.changes.firstOrNull()?.position ?: continue
+                                    val win = contentCoords?.localToWindow(pos) ?: continue
+                                    val bounds = weightWindowBounds
+                                    if (bounds == null || !bounds.contains(win)) {
+                                        weightWindowListId = null
+                                    }
+                                }
+                            }
+                        },
+                ) {
                     when (page) {
                         OmniPage.TaskScheduler ->
-                            TaskSchedulerScreen(modifier = Modifier.fillMaxSize(), store = store, vm = vm)
+                            TaskSchedulerScreen(
+                                modifier = Modifier.fillMaxSize(),
+                                store = store,
+                                vm = vm,
+                                onSetWeightWindow = { weightWindowListId = it },
+                            )
+                    }
+
+                    // PRD §5: the priority-weight window, on the top floating-window layer (zIndex above the
+                    // managed windows' 0..n stack, below the modal edit window's 100). Opened from a tree
+                    // percentage; closed by the outside-press interceptor above.
+                    weightWindowListId?.let { listId ->
+                        if (schedulerState.lists[listId] == null) {
+                            weightWindowListId = null
+                        } else {
+                            PriorityWeightWindow(
+                                state = schedulerState,
+                                listId = listId,
+                                priorities = SchedulerDomain.absoluteTaskPriorities(schedulerState),
+                                onIntent = { vm.dispatch(it) },
+                                onBoundsChange = { weightWindowBounds = it },
+                                modifier = Modifier.align(Alignment.Center).zIndex(50f),
+                            )
+                        }
                     }
 
                     if (calendarOpen) {
