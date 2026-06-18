@@ -538,10 +538,9 @@ fun TaskSchedulerScreen(
                 TaskTextWindow(
                     taskTitle = task.title,
                     initialText = task.text,
-                    onSave = { text ->
-                        vm.dispatch(SchedulerIntent.SetTaskText(taskId, text))
-                        taskTextTaskId = null
-                    },
+                    // Auto-save: every change is persisted immediately as its own undoable History Unit
+                    // (SetTaskText commits one history unit per call), like Edit Mode of a tree cell.
+                    onTextChange = { text -> vm.dispatch(SchedulerIntent.SetTaskText(taskId, text)) },
                     onDismiss = { taskTextTaskId = null },
                 )
             }
@@ -2141,7 +2140,9 @@ private fun ScheduleUnitEditWindow(
 
 /**
  * The floating "see text" window: a free-form, multi-line text document attached to a task. Opened from a
- * populated cell's right-click menu. Edits are kept local until Save; tapping the scrim cancels.
+ * populated cell's right-click menu. The editor auto-saves: every change is pushed to [onTextChange]
+ * immediately (each becomes its own undoable History Unit), so there is no Save button — closing only
+ * dismisses the window.
  *
  * The scrim dismisses on a pointer tap (not [Modifier.clickable]) on purpose: a focused `clickable` also
  * fires on Space/Enter, so typing a space in the editor would otherwise close the window. The text field
@@ -2151,7 +2152,7 @@ private fun ScheduleUnitEditWindow(
 private fun TaskTextWindow(
     taskTitle: String,
     initialText: String,
-    onSave: (String) -> Unit,
+    onTextChange: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var text by remember { mutableStateOf(initialText) }
@@ -2180,16 +2181,15 @@ private fun TaskTextWindow(
                 )
                 OutlinedTextField(
                     value = text,
-                    onValueChange = { text = it },
+                    // Auto-save: push every change straight to the model (one History Unit per change).
+                    onValueChange = { text = it; onTextChange(it) },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp).focusRequester(focusRequester),
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(onClick = { onSave(text) }) { Text("Save") }
+                    TextButton(onClick = onDismiss) { Text("Close") }
                 }
             }
         }
