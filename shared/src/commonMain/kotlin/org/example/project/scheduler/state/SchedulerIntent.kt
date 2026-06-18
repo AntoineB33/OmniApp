@@ -162,6 +162,17 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §14 "add a checked reminder": record that the reminder [reminderId] (titled [title]) was done at
+     * [atMillis] — places an already-checked reminder tag at that time. Recorded as a Calendar History Unit.
+     * The added tag survives reminder regeneration (it is not produced by the recurrence scheduler).
+     */
+    data class AddCheckedReminder(
+        val reminderId: String,
+        val title: String,
+        val atMillis: Long,
+    ) : SchedulerIntent
+
+    /**
      * PRD §15 Side tasks: replace the side-task list — used at launch to seed each side task's
      * `lastRestMillis` from the OS sleep history (the last device rest ≥ its duration). Session state,
      * not undoable.

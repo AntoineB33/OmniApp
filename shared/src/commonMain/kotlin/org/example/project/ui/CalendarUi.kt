@@ -572,6 +572,7 @@ fun ChoresManagerWindow(
                         daysText = it.daysFormula.ifBlank { formatDays(it.recurrenceUnit.fromDays(it.spanDays)) },
                         timeText = formatTimeOfDay(it.timeOfDayMinutes),
                         unit = it.recurrenceUnit,
+                        id = it.id,
                     )
                 },
             )
@@ -587,6 +588,7 @@ fun ChoresManagerWindow(
                 timeOfDayMinutes = parseTimeOfDay(it.timeText),
                 daysFormula = it.daysText,
                 recurrenceUnit = it.unit,
+                id = it.id,
             )
         },
     )
@@ -887,6 +889,9 @@ private data class ChoreRow(
     val daysText: String = "",
     val timeText: String = "",
     val unit: ChoreRecurrenceUnit = ChoreRecurrenceUnit.Days,
+    // PRD §14: carry the reminder's stable id through edits so it isn't reassigned on every change (a blank
+    // id on a brand-new row is filled by the reducer's assignReminderIds).
+    val id: String = "",
 )
 
 /** PRD §14: the unit selector beside the recurrence field — every n days (default) / months / years, or n times per week / month / year. */
@@ -1168,6 +1173,8 @@ fun CalendarFloatingWindow(
     onFocus: () -> Unit = {},
     /** PRD §8 Manual add: invoked with the epoch-millis at a right-click position in the calendar. */
     onAddTaskAt: (Long) -> Unit = {},
+    /** PRD §14: "add a checked reminder" — invoked with the epoch-millis at a right-click position. */
+    onAddCheckedReminderAt: (Long) -> Unit = {},
     /**
      * PRD §8 drag/resize commit: the block, its new start/end millis, and whether Overlap Mode was armed
      * (the bounds are raw/overlapping when armed, else already no-overlap snapped).
@@ -1341,6 +1348,7 @@ fun CalendarFloatingWindow(
                     zoomActions = zoomActions,
                     ctrlHeld = ctrlHeld,
                     onAddTaskAt = onAddTaskAt,
+                    onAddCheckedReminderAt = onAddCheckedReminderAt,
                     onCommitBounds = onCommitBounds,
                     onEditEntry = onEditEntry,
                     onRemoveEntry = onRemoveEntry,
@@ -1402,6 +1410,7 @@ private fun WeekView(
     zoomActions: CalendarZoomActions,
     ctrlHeld: Boolean,
     onAddTaskAt: (Long) -> Unit,
+    onAddCheckedReminderAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
@@ -1587,6 +1596,7 @@ private fun WeekView(
                         now = if (day == today) now else null,
                         records = recordsForDay(records, day, tz),
                         onAddTaskAt = onAddTaskAt,
+                        onAddCheckedReminderAt = onAddCheckedReminderAt,
                         onCommitBounds = onCommitBounds,
                         onEditEntry = onEditEntry,
                         onRemoveEntry = onRemoveEntry,
@@ -1650,6 +1660,7 @@ private fun DayColumn(
     now: LocalTime?,
     records: List<PlacedRecord>,
     onAddTaskAt: (Long) -> Unit,
+    onAddCheckedReminderAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
@@ -1796,6 +1807,13 @@ private fun DayColumn(
                     text = { Text("add a task") },
                     onClick = {
                         anchor?.let { onAddTaskAt(millisAt(it.y)) }
+                        closeMenu()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("add a checked reminder") },
+                    onClick = {
+                        anchor?.let { onAddCheckedReminderAt(millisAt(it.y)) }
                         closeMenu()
                     },
                 )
@@ -2538,6 +2556,132 @@ fun ManualEntryEditWindow(
                             val start = parseHmOnDateOf(startText, startMillis, tz) ?: startMillis
                             val end = parseHmOnDateOf(endText, endMillis, tz) ?: endMillis
                             onSave(effectiveTaskId, title, start, end, pinned)
+                        },
+                    ) { Text("Save") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * PRD §14 "add a checked reminder": a floating editor opened from the calendar's right-click menu. Mirrors
+ * [ManualEntryEditWindow] but for reminders (which have a title and a stable id): a title field with a
+ * **Reminders** id menu (pick an existing reminder by id → fills the title) and a **Title suggestions**
+ * menu, plus a single **Time** field on the right pre-filled with the right-click time. Save records an
+ * already-checked reminder at that time for the chosen reminder id. Rendered by [org.example.project.App].
+ */
+@Composable
+fun ReminderCheckEditWindow(
+    initialMillis: Long,
+    tz: TimeZone,
+    reminderMenuEntries: (draftText: String) -> List<SchedulerDomain.ReminderMenuEntry>,
+    titleSuggestions: (String) -> List<String>,
+    reminderIdForTitle: (String) -> String?,
+    titleForReminderId: (String) -> String?,
+    onSave: (reminderId: String, title: String, atMillis: Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var title by remember { mutableStateOf("") }
+    // The explicitly-picked reminder id, if any; typing reverts to resolving the id from the title.
+    var selectedReminderId by remember { mutableStateOf<String?>(null) }
+    var timeText by remember { mutableStateOf(formatHm(initialMillis, tz)) }
+
+    val entries = reminderMenuEntries(title)
+    // The reminder this window will save against: the explicit pick (while still in the menu), else the
+    // reminder whose title matches what's typed, else blank (a brand-new reminder with no recurrence yet).
+    val effectiveReminderId =
+        when {
+            selectedReminderId != null && entries.any { it.id == selectedReminderId } -> selectedReminderId!!
+            else -> reminderIdForTitle(title) ?: ""
+        }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.25f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 12.dp,
+            border = BorderStroke(1.dp, CalColors.grid),
+            modifier = Modifier.width(320.dp).clickable(enabled = false) {},
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Add a checked reminder", style = MaterialTheme.typography.titleSmall)
+
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = {
+                            title = it
+                            selectedReminderId = null // typing resolves the id from the title again
+                        },
+                        label = { Text("Reminder") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = timeText,
+                        onValueChange = { timeText = it },
+                        label = { Text("Time") },
+                        singleLine = true,
+                        modifier = Modifier.width(96.dp),
+                    )
+                }
+
+                // --- Reminders id menu: existing reminders matching the typed title. ---
+                if (entries.isNotEmpty()) {
+                    Text(
+                        text = "Reminders",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    entries.forEach { entry ->
+                        CalendarMenuRow(
+                            label = entry.title,
+                            selected = entry.id == effectiveReminderId,
+                            onClick = {
+                                selectedReminderId = entry.id
+                                titleForReminderId(entry.id)?.let { title = it }
+                            },
+                        )
+                    }
+                }
+
+                // --- Title suggestions menu ---
+                val suggestions = titleSuggestions(title).take(8)
+                if (suggestions.isNotEmpty()) {
+                    Text(
+                        text = "Title suggestions",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    suggestions.forEach { suggestion ->
+                        CalendarMenuRow(
+                            label = suggestion,
+                            onClick = {
+                                title = suggestion
+                                selectedReminderId = reminderIdForTitle(suggestion)
+                            },
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        enabled = title.isNotBlank(),
+                        onClick = {
+                            val at = parseHmOnDateOf(timeText, initialMillis, tz) ?: initialMillis
+                            onSave(effectiveReminderId, title, at)
                         },
                     ) { Text("Save") }
                 }

@@ -45,6 +45,7 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state, "Task text") { applySetTaskText(it, intent.taskId, intent.text) })
             is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis, intent.nowMillis)
             is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked, intent.nowMillis)
+            is SchedulerIntent.AddCheckedReminder -> reduceAddCheckedReminder(state, intent.reminderId, intent.title, intent.atMillis)
             is SchedulerIntent.SetSideTasks ->
                 if (state.sideTasks == intent.sideTasks) state
                 else state.copy(sideTasks = intent.sideTasks)
@@ -416,11 +417,13 @@ object SchedulerReducer {
         todayStartMillis: Long,
         nowMillis: Long,
     ): SchedulerState {
+        // PRD §14: every reminder carries a stable id; fill any blank (legacy/just-added) row here.
+        val withIds = SchedulerDomain.assignReminderIds(entries)
         val panels = SchedulerDomain.regenerateChorePanels(
-            state.panels, entries, todayStartMillis, nowMillis = nowMillis,
+            state.panels, withIds, todayStartMillis, nowMillis = nowMillis,
         )
-        if (state.chores == entries && state.panels == panels) return state
-        return state.copy(chores = entries, panels = panels)
+        if (state.chores == withIds && state.panels == panels) return state
+        return state.copy(chores = withIds, panels = panels)
     }
 
     /**
@@ -442,6 +445,35 @@ object SchedulerReducer {
             if (it.id == panelId) it.copy(checked = checked, checkedAtMillis = checkedAtMillis) else it
         }
         return commitPanels(state, updated, label = if (checked) "Check reminder" else "Uncheck reminder")
+    }
+
+    /**
+     * PRD §14 "add a checked reminder": place an already-checked reminder tag at [atMillis] for reminder
+     * [reminderId] (display [title]). It is a zero-duration chore panel with the manual prefix so reminder
+     * regeneration keeps it. Recorded on the Calendar history stack (undoable). No-op for a blank title.
+     */
+    private fun reduceAddCheckedReminder(
+        state: SchedulerState,
+        reminderId: String,
+        title: String,
+        atMillis: Long,
+    ): SchedulerState {
+        if (title.isBlank()) return state
+        val (panelId, next) = state.allocatePanelId()
+        val id = SchedulerDomain.MANUAL_REMINDER_PREFIX + reminderId + "/" + panelId.substringAfterLast('/')
+        val panel = TaskPanel(
+            id = id,
+            taskId = null,
+            title = title,
+            startEpochMillis = atMillis,
+            endEpochMillis = atMillis,
+            pinned = false,
+            auto = false,
+            chore = true,
+            checked = true,
+            checkedAtMillis = atMillis,
+        )
+        return commitPanels(next, next.panels + panel, label = "Add checked reminder")
     }
 
     private fun reduceCopySelection(state: SchedulerState): SchedulerState {

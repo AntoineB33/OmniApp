@@ -34,7 +34,9 @@ class SchedulerChoresTest {
     fun set_chores_stores_the_list_with_floating_point_day_spans() {
         val entries = listOf(ChoreEntry("Water plants", 3.5), ChoreEntry("Vacuum", 7.0))
         val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetChores(entries))
-        assertEquals(entries, s.chores)
+        // PRD §14: SetChores assigns each reminder a stable id; compare ignoring it, then confirm ids exist.
+        assertEquals(entries, s.chores.map { it.copy(id = "") })
+        assertTrue(s.chores.all { it.id.isNotBlank() })
     }
 
     @Test
@@ -42,7 +44,7 @@ class SchedulerChoresTest {
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetChores(listOf(ChoreEntry("A", 1.0))))
         val replacement = listOf(ChoreEntry("B", 2.0), ChoreEntry("C", 0.25))
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetChores(replacement))
-        assertEquals(replacement, s.chores)
+        assertEquals(replacement, s.chores.map { it.copy(id = "") })
     }
 
     @Test
@@ -67,7 +69,7 @@ class SchedulerChoresTest {
         val s0 = SchedulerState.empty()
         val withChores = SchedulerReducer.reduce(s0, SchedulerIntent.SetChores(listOf(ChoreEntry("A", 1.0))))
         val undone = SchedulerReducer.reduce(withChores, SchedulerIntent.Undo)
-        assertEquals(listOf(ChoreEntry("A", 1.0)), undone.chores)
+        assertEquals(listOf(ChoreEntry("A", 1.0)), undone.chores.map { it.copy(id = "") })
     }
 
     @Test
@@ -76,7 +78,8 @@ class SchedulerChoresTest {
         val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetChores(entries))
         val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))
         assertNotNull(decoded)
-        assertEquals(entries, decoded.chores)
+        // Round-trip preserves the actual list, including each reminder's assigned id.
+        assertEquals(s.chores, decoded.chores)
     }
 
     // ----- §14 reminder scheduler: recurrence day offsets -------------------------------------
@@ -263,10 +266,34 @@ class SchedulerChoresTest {
         val today = 1_000_000_000_000L
         val entries = listOf(ChoreEntry("Weekly", spanDays = 7.0, timeOfDayMinutes = 8 * 60))
         val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetChores(entries, todayStartMillis = today))
-        assertEquals(entries, s.chores)
+        assertEquals(entries, s.chores.map { it.copy(id = "") })
         assertTrue(s.panels.isNotEmpty())
         assertTrue(s.panels.all { it.chore && it.startEpochMillis == it.endEpochMillis }) // zero-duration tags
         assertTrue(s.panels.any { it.startEpochMillis == today + 8 * 60 * 60_000L })
+    }
+
+    @Test
+    fun add_checked_reminder_places_a_checked_tag_that_survives_regeneration() {
+        val today = 1_000_000_000_000L
+        val at = today + 9 * HOUR
+        val withReminder = SchedulerReducer.reduce(
+            SchedulerState.empty(),
+            SchedulerIntent.SetChores(listOf(ChoreEntry("Weekly", 7.0, 8 * 60)), todayStartMillis = today),
+        )
+        val reminderId = withReminder.chores.single().id
+        val added = SchedulerReducer.reduce(
+            withReminder,
+            SchedulerIntent.AddCheckedReminder(reminderId, "Weekly", at),
+        )
+        // A checked, zero-duration manual reminder tag now exists at the chosen time, tied to the id.
+        val manual = added.panels.single { it.id.startsWith(SchedulerDomain.MANUAL_REMINDER_PREFIX) }
+        assertTrue(manual.chore && manual.checked && manual.startEpochMillis == at && manual.endEpochMillis == at)
+        assertEquals(at, manual.checkedAtMillis)
+        assertTrue(manual.id.contains(reminderId))
+
+        // It is not produced by the recurrence scheduler, so it must survive regeneration.
+        val regen = SchedulerDomain.regenerateChorePanels(added.panels, added.chores, todayStartMillis = today)
+        assertTrue(regen.any { it.id == manual.id && it.checked })
     }
 
     @Test

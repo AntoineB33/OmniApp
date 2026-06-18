@@ -73,6 +73,13 @@ data class ChoreEntry(
     val timeOfDayMinutes: Int = 0,
     val daysFormula: String = "",
     /**
+     * PRD §14: a stable identity for the reminder (like a task's `taskId`), so a checked reminder added
+     * from the calendar can reference "the reminder of this id" independently of its (editable) title.
+     * Blank for entries created before ids existed or freshly added in the manager; [assignReminderIds]
+     * fills any blank with a unique `reminder-{n}` on load and whenever the reminders list is set.
+     */
+    val id: String = "",
+    /**
      * PRD §14: the unit the recurrence number is entered in (the dropdown beside the "Days" field). The
      * cadence [spanDays] is the entered number times the unit's [ChoreRecurrenceUnit.daysPerUnit]; the unit
      * itself is kept so the field round-trips. Defaults to [ChoreRecurrenceUnit.Days].

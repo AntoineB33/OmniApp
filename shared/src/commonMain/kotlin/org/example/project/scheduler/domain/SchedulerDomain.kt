@@ -1436,14 +1436,22 @@ object SchedulerDomain {
         val checkedById: Map<String, Long?> =
             panels.asSequence().filter { it.chore && it.checked }.associate { it.id to it.checkedAtMillis }
         val nonChore = panels.filter { !it.chore }
+        // PRD §14 "add a checked reminder": manually-added checked reminders are not produced by the
+        // recurrence scheduler, so carry them across regeneration verbatim (keyed by their id prefix)
+        // instead of dropping them with the generated tags.
+        val manual = panels.filter { it.chore && it.id.startsWith(MANUAL_REMINDER_PREFIX) }
         val generated =
             choreScheduledPanels(chores, todayStartMillis, horizonDays, nowMillis)
                 .map {
                     if (checkedById.containsKey(it.id)) it.copy(checked = true, checkedAtMillis = checkedById[it.id])
                     else it
                 }
-        return nonChore + generated
+        return nonChore + manual + generated
     }
+
+    /** PRD §14: id prefix marking a checked reminder added by hand ("add a checked reminder"), of the form
+     * `chore-manual/{reminderId}/{uniqueSuffix}`. These survive reminder regeneration (unlike generated tags). */
+    const val MANUAL_REMINDER_PREFIX = "chore-manual/"
 
     /**
      * PRD §14 "accumulation when missed": the reminder tags that are *overdue* at [nowMillis] — reminders
@@ -1677,6 +1685,50 @@ object SchedulerDomain {
     /** PRD §8 calendar edit window: the leaf task to assign when a title suggestion is chosen, if any. */
     fun calendarTaskIdForTitle(state: SchedulerState, title: String): TaskId? =
         state.titleToTaskIds[title].orEmpty().firstOrNull { isLeafTask(state, it) }
+
+    /** PRD §14: a reminder choice for the "add a checked reminder" id menu — its stable id and title. */
+    data class ReminderMenuEntry(val id: String, val title: String)
+
+    /**
+     * PRD §14: ensure every reminder has a stable, unique [ChoreEntry.id]. Blank ids (legacy entries, or a
+     * row freshly added in the manager) are filled with `reminder-{n}` using the smallest free numbers,
+     * leaving existing ids untouched. Run on load and whenever the reminders list is set.
+     */
+    fun assignReminderIds(entries: List<ChoreEntry>): List<ChoreEntry> {
+        val used = entries.map { it.id }.filterTo(mutableSetOf()) { it.isNotBlank() }
+        var counter = 0
+        fun nextId(): String {
+            while (used.contains("reminder-$counter")) counter++
+            val id = "reminder-$counter"
+            used.add(id)
+            counter++
+            return id
+        }
+        return entries.map { if (it.id.isBlank()) it.copy(id = nextId()) else it }
+    }
+
+    /** PRD §14 "add a checked reminder" id menu: existing reminders whose title matches [draftText]. */
+    fun reminderMenuEntries(state: SchedulerState, draftText: String): List<ReminderMenuEntry> {
+        val q = draftText.trim()
+        return state.chores
+            .filter { it.title.isNotBlank() && (q.isBlank() || it.title.contains(q, ignoreCase = true)) }
+            .map { ReminderMenuEntry(it.id, it.title) }
+    }
+
+    /** PRD §14 "add a checked reminder": distinct reminder titles matching [input], for the suggestions menu. */
+    fun reminderTitleSuggestions(state: SchedulerState, input: String): List<String> {
+        val q = input.trim()
+        return state.chores.map { it.title }.filter { it.isNotBlank() }.distinct()
+            .filter { q.isBlank() || it.contains(q, ignoreCase = true) }
+    }
+
+    /** PRD §14: the reminder id of the first reminder with this exact [title], if any. */
+    fun reminderIdForTitle(state: SchedulerState, title: String): String? =
+        state.chores.firstOrNull { it.title == title }?.id
+
+    /** PRD §14: the title of the reminder with this [id], if any. */
+    fun reminderTitleForId(state: SchedulerState, id: String): String? =
+        state.chores.firstOrNull { it.id == id }?.title
 
     fun changeTaskMenuSelectedIndex(
         entries: List<ChangeTaskMenuEntry>,

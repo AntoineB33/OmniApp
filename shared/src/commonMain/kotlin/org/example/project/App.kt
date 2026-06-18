@@ -60,6 +60,7 @@ import org.example.project.ui.raiseOnPress
 import org.example.project.ui.LateralMenu
 import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.PlacedRecord
+import org.example.project.ui.ReminderCheckEditWindow
 import org.example.project.ui.TimeSimPanel
 import org.example.project.ui.startOfWeek
 
@@ -389,6 +390,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // PRD §8 Manual add: a not-yet-committed default panel shown in the edit window with a Save
         // button (null = not adding). Distinct from [editingBlock] so Save knows to add vs. update.
         var addingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
+        // PRD §14 "add a checked reminder": the right-click epoch-millis at which to open the reminder-check
+        // window (null = closed).
+        var addingReminderAtMillis by remember { mutableStateOf<Long?>(null) }
 
         // PRD §8 focus: the floating calendar window is the focused surface while it is open — so the
         // tree stops hijacking letter typing into Edit Mode and Ctrl+Z/Y route to the calendar history.
@@ -538,6 +542,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                     fullEndMillis = startMillis + span,
                                 )
                             },
+                            // PRD §14 "add a checked reminder": open the reminder-check window at the click.
+                            onAddCheckedReminderAt = { atMillis -> addingReminderAtMillis = atMillis },
                             // PRD §8 (uniform blocks): committing a drag/resize updates the panel
                             // (auto blocks become user-authored), or pins a record into a panel.
                             onCommitBounds = { block, newStart, newEnd, allowOverlap ->
@@ -600,6 +606,26 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                     addingBlock = null
                                 },
                             )
+                            }
+                        }
+
+                        // PRD §14 "add a checked reminder": the floating reminder-check editor, above
+                        // every floating window (same z-layer as the manual edit window).
+                        addingReminderAtMillis?.let { atMillis ->
+                            Box(Modifier.fillMaxSize().zIndex(100f)) {
+                                ReminderCheckEditWindow(
+                                    initialMillis = atMillis,
+                                    tz = tz,
+                                    reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
+                                    titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
+                                    reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
+                                    titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
+                                    onDismiss = { addingReminderAtMillis = null },
+                                    onSave = { reminderId, title, at ->
+                                        vm.dispatch(SchedulerIntent.AddCheckedReminder(reminderId, title, at))
+                                        addingReminderAtMillis = null
+                                    },
+                                )
                             }
                         }
                     }

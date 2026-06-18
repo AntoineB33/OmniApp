@@ -101,7 +101,7 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
-            chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit) },
+            chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit, it.id) },
             showSideTasks = showSideTasks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
@@ -225,7 +225,18 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
-            chores = chores.map { ChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit) },
+            chores = SchedulerDomain.assignReminderIds(
+                chores.map {
+                    ChoreEntry(
+                        title = it.title,
+                        spanDays = it.spanDays,
+                        timeOfDayMinutes = it.timeOfDayMinutes,
+                        daysFormula = it.daysFormula,
+                        recurrenceUnit = it.recurrenceUnit,
+                        id = it.id,
+                    )
+                },
+            ),
             showSideTasks = showSideTasks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
@@ -337,6 +348,8 @@ private data class PersistedChoreEntry(
     // PRD §14: the recurrence unit chosen in the dropdown; a missing value decodes to days (payloads written
     // before the unit dropdown existed), for which [spanDays] is already a plain day cadence.
     val recurrenceUnit: ChoreRecurrenceUnit = ChoreRecurrenceUnit.Days,
+    // PRD §14: the reminder's stable id; a missing value decodes to "" and is filled by assignReminderIds.
+    val id: String = "",
 )
 
 @Serializable
