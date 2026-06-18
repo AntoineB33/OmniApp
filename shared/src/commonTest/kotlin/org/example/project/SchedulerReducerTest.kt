@@ -1084,6 +1084,40 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun picking_existing_task_discards_scheduled_draft_no_duplicate_title() {
+        // Regression: typing a title creates a "New task" draft; a scheduling tick can give that draft a
+        // calendar panel. Picking an existing same-title task must fully discard the draft (panels too),
+        // not leave a stray second task with the same title kept alive by its panel.
+        var s = SchedulerState.empty()
+        val alphaCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaCell, "Alpha"))
+        val alphaId = s.cells[alphaCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(alphaCell))
+        val alphaListId = s.tasks[alphaId]!!.childListId!!
+        val nestedCell = s.lists[alphaListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(nestedCell, "g"))
+        val nestedGId = s.cells[nestedCell]!!.taskId!!
+
+        val betaCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId = betaCell, initialText = "g"))
+        val draftId = s.editSession!!.newTaskDraftId!!
+        // A scheduling run while the draft exists (as in the app's debounced tick) gives it a panel.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(nowMillis = 0L))
+        assertTrue(s.panels.any { it.taskId == draftId }, "test premise: the draft must get a panel")
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PickTaskFromMenu(nestedGId))
+
+        assertEquals(nestedGId, s.cells[betaCell]!!.taskId, "cell reuses the picked task")
+        assertEquals(
+            listOf(nestedGId),
+            s.tasks.values.filter { it.title == "g" }.map { it.id },
+            "only the picked task should be titled 'g'; the abandoned draft must be gone",
+        )
+        assertTrue(s.tasks[draftId] == null, "the abandoned draft task must be purged")
+        assertFalse(s.panels.any { it.taskId == draftId }, "the abandoned draft's panels must be dropped")
+    }
+
+    @Test
     fun change_task_menu_first_entry_is_new_task() {
         var s = SchedulerState.empty()
         val cellId = s.lists[s.rootListId]!!.cellIds.first()
@@ -1157,7 +1191,11 @@ class SchedulerReducerTest {
     }
 
     @Test
-    fun reenter_edit_does_not_duplicate_current_task_in_change_menu() {
+    fun reenter_edit_selects_current_task_in_change_menu() {
+        // PRD §4: re-entering Edit Mode on an assigned cell makes the current task the *default
+        // selection*, so it must be listed (and highlightable) — only the in-progress "New task" draft
+        // is hidden. (Excluding the current task here was the cause of "the picked task didn't go
+        // purple": with it removed, changeTaskMenuSelectedIndex could not match it and returned -1.)
         var s = SchedulerState.empty()
         val cellId = s.lists[s.rootListId]!!.cellIds.first()
         s =
@@ -1173,15 +1211,58 @@ class SchedulerReducerTest {
         assertEquals(taskId, session.selectedAssignTaskId)
         assertEquals("g", session.draftText)
 
+        // The UI builds the menu excluding only the "New task" draft.
         val entries =
             SchedulerDomain.changeTaskMenuEntries(
                 s,
                 cellId,
                 session.draftText,
-                excludeTaskId = session.selectedAssignTaskId,
+                excludeTaskId = session.newTaskDraftId,
             )
-        assertEquals(1, entries.size)
-        assertEquals("New task", entries.single().label)
+        // "New task" plus the current task "g"; "g" is the selected (purple) element.
+        assertEquals(2, entries.size)
+        assertEquals("New task", entries[0].label)
+        assertEquals(taskId, entries[1].taskId)
+        val selectedIndex =
+            SchedulerDomain.changeTaskMenuSelectedIndex(entries, session.selectedAssignTaskId)
+        assertEquals(taskId, entries[selectedIndex].taskId)
+    }
+
+    @Test
+    fun picking_a_task_from_the_change_menu_marks_it_selected() {
+        // Regression: after picking an existing task from the Change Task menu it must show as selected
+        // (highlighted), not vanish. The menu excludes only the "New task" draft — never the picked task.
+        var s = SchedulerState.empty()
+        val alphaCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaCell, "Alpha"))
+        val alphaId = s.cells[alphaCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(alphaCell))
+        val alphaListId = s.tasks[alphaId]!!.childListId!!
+        val nestedCell = s.lists[alphaListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(nestedCell, "g"))
+        val nestedGId = s.cells[nestedCell]!!.taskId!!
+
+        // Edit a different (root) cell, typing "g": "New task" is the default selection.
+        val betaCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId = betaCell, initialText = "g"))
+        assertEquals(null, s.editSession!!.selectedAssignTaskId)
+
+        // Pick the existing nested "g" from the menu.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PickTaskFromMenu(nestedGId))
+        val session = s.editSession!!
+        assertEquals(nestedGId, session.selectedAssignTaskId)
+
+        val entries =
+            SchedulerDomain.changeTaskMenuEntries(
+                s,
+                betaCell,
+                session.draftText,
+                excludeTaskId = session.newTaskDraftId,
+            )
+        assertTrue(nestedGId in entries.mapNotNull { it.taskId }, "picked task must stay listed")
+        val selectedIndex =
+            SchedulerDomain.changeTaskMenuSelectedIndex(entries, session.selectedAssignTaskId)
+        assertEquals(nestedGId, entries[selectedIndex].taskId, "picked task must be the selected (purple) entry")
     }
 
     @Test

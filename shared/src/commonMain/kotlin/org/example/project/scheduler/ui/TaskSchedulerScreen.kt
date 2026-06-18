@@ -839,7 +839,10 @@ private fun EditModeMenus(
         }
 
         if (session.mode == CellEditMode.ChangeTask) {
-            val excludeFromMenu = session.selectedAssignTaskId ?: session.newTaskDraftId
+            // Only the in-progress "New task" draft is hidden (it's already the "New task" row itself). A
+            // picked existing task must stay listed so it can render as selected (purple) — excluding it
+            // here would drop it from the entries and leave [changeTaskMenuSelectedIndex] unable to match.
+            val excludeFromMenu = session.newTaskDraftId
             val taskEntries =
                 SchedulerDomain.changeTaskMenuEntries(
                     state,

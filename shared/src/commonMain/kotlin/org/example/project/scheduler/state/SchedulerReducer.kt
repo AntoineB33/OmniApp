@@ -211,11 +211,30 @@ object SchedulerReducer {
                         newTaskDraftId = null,
                     ),
             )
-        return if (title != session.draftText) {
-            commitDelta(withDraft, editTextDelta(withDraft, title), HistoryCategory.Edit)
-        } else {
-            withDraft
-        }
+        val committed =
+            if (title != session.draftText) {
+                commitDelta(withDraft, editTextDelta(withDraft, title), HistoryCategory.Edit)
+            } else {
+                withDraft
+            }
+        // Reusing an existing task abandons the "New task" draft created while typing. If a scheduling
+        // tick had meanwhile given that draft a calendar panel, [purgeOrphanTasks] would keep the now
+        // cell-less draft alive through it, leaving a stray task with the same title (PRD §4: picking a
+        // suggestion must not create a new task id). Discard the draft and its transient panels.
+        return discardDraftTask(committed, session.newTaskDraftId)
+    }
+
+    /**
+     * Remove an abandoned "New task" draft [draftId] (an editing artifact) once it is no longer pointed at
+     * by any cell: drop the auto panels a scheduling tick may have given it, then purge the task. A no-op
+     * when [draftId] is null or the task is still referenced by a cell.
+     */
+    private fun discardDraftTask(state: SchedulerState, draftId: TaskId?): SchedulerState {
+        if (draftId == null) return state
+        if (state.cells.values.any { it.taskId == draftId }) return state
+        val panels = state.panels.filterNot { it.taskId == draftId }
+        val pruned = if (panels.size != state.panels.size) state.copy(panels = panels) else state
+        return SchedulerDomain.purgeOrphanTasks(pruned)
     }
 
     private fun reduceSelectCreateAssignTask(state: SchedulerState): SchedulerState {
