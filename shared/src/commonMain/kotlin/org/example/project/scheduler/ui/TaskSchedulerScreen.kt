@@ -190,6 +190,9 @@ fun TaskSchedulerScreen(
     // PRD §10: the cell whose minimum-time field is currently expanded into an input (clicking its
     // simple display opens it), or null when every min-time field shows as a plain label.
     var minTimeEditCellId by remember { mutableStateOf<CellId?>(null) }
+    // PRD §10: the minimum-time value the open input started with, so Escape can restore it (mirroring
+    // how Edit Mode's Escape reverts a cell to its pre-edit text). Null when no input is open.
+    var minTimeEditOriginal by remember { mutableStateOf<Int?>(null) }
     // PRD §13: the leaf task whose "define schedule unit" floating edit window is open, or null when
     // it is closed. Opened from a cell's right-click contextual menu.
     var scheduleUnitTaskId by remember { mutableStateOf<TaskId?>(null) }
@@ -280,11 +283,48 @@ fun TaskSchedulerScreen(
                     }
                     return@onPreviewKeyEvent false
                 }
-                // PRD §10: while a min-time input is open it owns the keyboard — let arrow keys,
-                // Home/End, Backspace/Delete, digit entry and the field's own Ctrl+A/C/V reach the
-                // focused BasicTextField instead of driving tree navigation or Edit Mode. (Global
-                // Ctrl+Z/Y and Alt+arrow selection history above still apply.)
-                if (minTimeEditCellId != null) {
+                // PRD §10: while a min-time input is open it owns the keyboard. Enter/Tab/Escape act the
+                // same as in a cell's Edit Mode (commit + navigate, or cancel); everything else — arrow
+                // keys, Home/End, Backspace/Delete, digit entry and the field's own Ctrl+A/C/V — reaches
+                // the focused BasicTextField. (Global Ctrl+Z/Y and Alt+arrow selection history above
+                // still apply.)
+                val minTimeCell = minTimeEditCellId
+                if (minTimeCell != null) {
+                    when {
+                        event.key == Key.Escape -> {
+                            // Cancel: restore the value the field opened with, then refocus the tree.
+                            val taskId = state.cells[minTimeCell]?.taskId
+                            val original = minTimeEditOriginal
+                            if (taskId != null && original != null) {
+                                vm.dispatch(SchedulerIntent.SetTaskMinimumTime(taskId, original))
+                            }
+                            minTimeEditCellId = null
+                            focusRequester.requestFocus()
+                            return@onPreviewKeyEvent true
+                        }
+                        // Enter / Shift+Tab — commit (the value is already applied live) and move up;
+                        // Enter alone moves down; Tab moves into the first child (expanding it if needed).
+                        event.key == Key.Enter && event.isShiftPressed -> {
+                            minTimeEditCellId = null
+                            vm.dispatch(SchedulerIntent.NavigateSelection(SelectionNavigate.Previous, shift = false))
+                            return@onPreviewKeyEvent true
+                        }
+                        event.key == Key.Enter -> {
+                            minTimeEditCellId = null
+                            vm.dispatch(SchedulerIntent.NavigateSelection(SelectionNavigate.Next, shift = false))
+                            return@onPreviewKeyEvent true
+                        }
+                        event.key == Key.Tab && event.isShiftPressed -> {
+                            minTimeEditCellId = null
+                            vm.dispatch(SchedulerIntent.NavigateSelection(SelectionNavigate.Previous, shift = false))
+                            return@onPreviewKeyEvent true
+                        }
+                        event.key == Key.Tab -> {
+                            minTimeEditCellId = null
+                            vm.dispatch(SchedulerIntent.SelectFirstChild)
+                            return@onPreviewKeyEvent true
+                        }
+                    }
                     return@onPreviewKeyEvent false
                 }
                 // PRD §3/§4 (not in Edit Mode): select-all and tree copy/paste.
@@ -411,7 +451,14 @@ fun TaskSchedulerScreen(
                 },
                 minTimeEditCellId = minTimeEditCellId,
                 onToggleMinTimeEdit = { cellId ->
-                    minTimeEditCellId = if (minTimeEditCellId == cellId) null else cellId
+                    if (minTimeEditCellId == cellId) {
+                        minTimeEditCellId = null
+                    } else {
+                        // Snapshot the value the field opens with so Escape can revert to it (PRD §10).
+                        minTimeEditOriginal =
+                            state.cells[cellId]?.taskId?.let { state.tasks[it]?.minimumMinutes } ?: 0
+                        minTimeEditCellId = cellId
+                    }
                 },
                 onOpenScheduleUnit = { taskId -> scheduleUnitTaskId = taskId },
                 onOpenTaskText = { taskId -> taskTextTaskId = taskId },
