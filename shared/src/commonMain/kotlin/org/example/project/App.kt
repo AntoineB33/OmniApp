@@ -456,7 +456,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             onRemoveEntry = { block -> removeBlockIntent(block)?.let(vm::dispatch) },
                             // PRD §14 Reminders: clicking a reminder tag toggles its checked (done) state.
                             onToggleReminder = { block ->
-                                block.entryId?.let { vm.dispatch(SchedulerIntent.SetReminderChecked(it, !block.checked)) }
+                                block.entryId?.let { vm.dispatch(SchedulerIntent.SetReminderChecked(it, !block.checked, nowMillis)) }
                             },
                             // PRD §8 Overlap Mode: commit re-divided panel widths from a dragged edge.
                             onAdjustWeights = { weights ->
@@ -666,6 +666,7 @@ private fun mergePanelsForDisplay(
                 entryIds = listOf(tag.id),
                 reminder = true,
                 checked = tag.checked,
+                checkedAtMillis = tag.checkedAtMillis,
             )
         }
     // PRD §15 toggle: when side tasks are hidden, draw none, and let same-task panels separated only by a

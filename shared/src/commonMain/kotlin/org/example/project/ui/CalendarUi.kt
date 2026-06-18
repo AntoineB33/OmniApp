@@ -168,6 +168,8 @@ data class CalendarRecord(
     val reminder: Boolean = false,
     /** PRD §14 Reminders: whether this reminder tag has been checked off (done). */
     val checked: Boolean = false,
+    /** PRD §14 Reminders: epoch millis at which the tag was checked (freeze point), or null while unchecked. */
+    val checkedAtMillis: Long? = null,
     /** PRD §15 Side tasks: a periodic side task, drawn as a time-positioned band spanning its real duration. */
     val sideTask: Boolean = false,
 )
@@ -190,6 +192,8 @@ data class PlacedRecord(
     val reminder: Boolean = false,
     /** PRD §14 Reminders: whether this reminder tag has been checked off (done). */
     val checked: Boolean = false,
+    /** PRD §14 Reminders: epoch millis at which the tag was checked (freeze point), or null while unchecked. */
+    val checkedAtMillis: Long? = null,
     /** PRD §15 Side tasks: a periodic side task rendered as a time-positioned band over [startHour, endHour]. */
     val sideTask: Boolean = false,
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
@@ -230,6 +234,7 @@ fun recordsForDay(
             layoutWeight = record.layoutWeight,
             reminder = record.reminder,
             checked = record.checked,
+            checkedAtMillis = record.checkedAtMillis,
             sideTask = record.sideTask,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
@@ -1929,15 +1934,23 @@ private fun DayColumn(
             )
         }
 
-        // PRD §14 Reminders: zero-duration checkable tags. A future (or already-checked) reminder shows at
-        // its scheduled time; an unchecked one whose time has passed is *overdue* and accumulates on the
-        // now-line, stacked top-down. Clicking a tag toggles its checked (done) state.
+        // PRD §14 Reminders: zero-duration checkable tags, placed by three rules. A still-future, unchecked
+        // reminder sits at its scheduled time. An unchecked reminder whose time has passed is *overdue* and
+        // accumulates on the live now-line, stacked top-down (so it tracks the clock until dealt with). A
+        // checked reminder FREEZES at the moment it was checked ([checkedAtMillis]): it neither snaps back to
+        // its scheduled slot nor keeps following the now-line. Clicking a tag toggles its checked state.
         val nowHour = now?.let { it.hour + it.minute / 60f }
-        fun overdue(tag: PlacedRecord) = nowHour != null && !tag.checked && tag.startHour <= nowHour
-        reminderTags.filterNot(::overdue).forEach { tag ->
-            ReminderTag(tag, Modifier.offset(y = hourHeight * tag.startHour)) { onToggleReminder(tag) }
+        fun checkedAtHour(tag: PlacedRecord): Float? =
+            tag.checkedAtMillis?.let {
+                val t = Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time
+                t.hour + t.minute / 60f
+            }
+        fun onNowLine(tag: PlacedRecord) = nowHour != null && !tag.checked && tag.startHour <= nowHour
+        reminderTags.filterNot(::onNowLine).forEach { tag ->
+            val y = checkedAtHour(tag) ?: tag.startHour
+            ReminderTag(tag, Modifier.offset(y = hourHeight * y)) { onToggleReminder(tag) }
         }
-        reminderTags.filter(::overdue).forEachIndexed { i, tag ->
+        reminderTags.filter(::onNowLine).forEachIndexed { i, tag ->
             ReminderTag(tag, Modifier.offset(y = hourHeight * (nowHour ?: 0f) + REMINDER_TAG_HEIGHT * i)) {
                 onToggleReminder(tag)
             }

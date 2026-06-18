@@ -147,6 +147,9 @@ sealed interface SchedulerIntent {
     data class SetReminderChecked(
         val panelId: String,
         val checked: Boolean,
+        // PRD §14: the clock time of the check, so a checked reminder freezes at this point on the
+        // calendar timeline (caller's time zone). Defaults to 0 for callers that omit it.
+        val nowMillis: Long = 0L,
     ) : SchedulerIntent
 
     /**

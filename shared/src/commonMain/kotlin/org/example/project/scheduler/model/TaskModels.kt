@@ -194,6 +194,13 @@ data class TaskPanel(
      */
     val checked: Boolean = false,
     /**
+     * PRD §14 Reminders: the clock time (epoch millis) at which this reminder was checked off, or null
+     * while unchecked. A checked reminder freezes on the calendar at this point on the timeline — it does
+     * not snap back to its scheduled slot, nor does it track the live now-line. Always null for
+     * non-reminder panels.
+     */
+    val checkedAtMillis: Long? = null,
+    /**
      * PRD §15 Side tasks: true for a periodic side-task panel (real spanning time, null taskId). The §9
      * auto fill treats it as a fixed obstacle but, unlike a pinned panel, splitting a task around it does
      * not reduce that task's minimum time (the task resumes after and still gets its full minimum).

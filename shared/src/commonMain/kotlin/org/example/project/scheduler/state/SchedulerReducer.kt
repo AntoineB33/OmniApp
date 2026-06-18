@@ -42,7 +42,7 @@ object SchedulerReducer {
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state, "Schedule unit") { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis, intent.nowMillis)
-            is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked)
+            is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked, intent.nowMillis)
             is SchedulerIntent.SetSideTasks ->
                 if (state.sideTasks == intent.sideTasks) state
                 else state.copy(sideTasks = intent.sideTasks)
@@ -411,10 +411,15 @@ object SchedulerReducer {
         state: SchedulerState,
         panelId: String,
         checked: Boolean,
+        nowMillis: Long,
     ): SchedulerState {
         val panel = state.panels.firstOrNull { it.id == panelId && it.chore } ?: return state
         if (panel.checked == checked) return state
-        val updated = state.panels.map { if (it.id == panelId) it.copy(checked = checked) else it }
+        // PRD §14: checking freezes the tag at the moment it was checked; un-checking clears that anchor.
+        val checkedAtMillis = if (checked) nowMillis else null
+        val updated = state.panels.map {
+            if (it.id == panelId) it.copy(checked = checked, checkedAtMillis = checkedAtMillis) else it
+        }
         return commitPanels(state, updated, label = if (checked) "Check reminder" else "Uncheck reminder")
     }
 

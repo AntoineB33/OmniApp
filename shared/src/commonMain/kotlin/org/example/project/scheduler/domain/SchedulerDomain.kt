@@ -1430,11 +1430,18 @@ object SchedulerDomain {
         horizonDays: Int = CHORE_HORIZON_DAYS,
         nowMillis: Long = todayStartMillis,
     ): List<TaskPanel> {
-        val checkedIds = panels.asSequence().filter { it.chore && it.checked }.mapTo(HashSet()) { it.id }
+        // Carry over both the checked flag and the moment it was checked (PRD §14 freeze-in-place), keyed
+        // by deterministic id. A null timestamp value is still meaningful (legacy checked tag), so test
+        // membership with containsKey rather than a null lookup.
+        val checkedById: Map<String, Long?> =
+            panels.asSequence().filter { it.chore && it.checked }.associate { it.id to it.checkedAtMillis }
         val nonChore = panels.filter { !it.chore }
         val generated =
             choreScheduledPanels(chores, todayStartMillis, horizonDays, nowMillis)
-                .map { if (it.id in checkedIds) it.copy(checked = true) else it }
+                .map {
+                    if (checkedById.containsKey(it.id)) it.copy(checked = true, checkedAtMillis = checkedById[it.id])
+                    else it
+                }
         return nonChore + generated
     }
 
