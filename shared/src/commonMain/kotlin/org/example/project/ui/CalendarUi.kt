@@ -837,7 +837,7 @@ fun HistoryManagerWindow(
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
     // PRD §6: the history unit whose information window is open (clicked from a row); null when closed.
-    var infoUnit by remember { mutableStateOf<HistoryUnitInfo?>(null) }
+    var infoUnit by remember { mutableStateOf<HistoryUnit?>(null) }
     // Display order: the content stacks first (most-used), then selection.
     val sections = listOf(
         "Main (the rest)" to HistoryCategory.Main,
@@ -912,8 +912,8 @@ fun HistoryManagerWindow(
             }
 
             // PRD §6: the information window for a clicked history unit, overlaid (modal) on the manager.
-            infoUnit?.let { info ->
-                HistoryUnitInfoWindow(info = info, onDismiss = { infoUnit = null })
+            infoUnit?.let { unit ->
+                HistoryUnitInfoWindow(unit = unit, onDismiss = { infoUnit = null })
             }
         }
     }
@@ -929,7 +929,7 @@ fun HistoryManagerWindow(
 private fun HistoryCategorySection(
     title: String,
     history: SchedulerHistory,
-    onSelectUnit: (HistoryUnitInfo) -> Unit,
+    onSelectUnit: (HistoryUnit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
@@ -967,38 +967,13 @@ private fun HistoryCategorySection(
                         unit = unit,
                         applied = applied,
                         isCurrent = isCurrent,
-                        onClick = {
-                            onSelectUnit(
-                                HistoryUnitInfo(
-                                    sectionTitle = title,
-                                    position = index + 1,
-                                    total = history.units.size,
-                                    applied = applied,
-                                    isCurrent = isCurrent,
-                                    unit = unit,
-                                ),
-                            )
-                        },
+                        onClick = { onSelectUnit(unit) },
                     )
                 }
             }
         }
     }
 }
-
-/**
- * PRD §6: the display context of a history unit, gathered when its row is clicked so the information window
- * can show all of the unit's data — its category, position in the list, applied/current status, and the
- * unit itself (label + [Delta.details] + chrono id).
- */
-private data class HistoryUnitInfo(
-    val sectionTitle: String,
-    val position: Int,
-    val total: Int,
-    val applied: Boolean,
-    val isCurrent: Boolean,
-    val unit: HistoryUnit,
-)
 
 /**
  * One History Unit as a **single clickable row** (PRD §6): its position, label, and the current-pointer
@@ -1046,11 +1021,12 @@ private fun HistoryUnitRow(
 
 /**
  * PRD §6: the information window for a clicked history unit — a modal overlay (scrim + centered card,
- * dismissed by clicking outside or the ✕) listing **all** of the unit's data: its label, category, position,
- * applied/current status, chrono id, and every per-change detail line ([Delta.details]).
+ * dismissed by clicking outside or the ✕) listing **all of the unit's own data**: its label, chrono id, and
+ * every per-change detail line ([Delta.details]). It deliberately shows nothing list- or pointer-derived
+ * (position, category, applied/current status) — those belong to the history list, not to the unit.
  */
 @Composable
-private fun HistoryUnitInfoWindow(info: HistoryUnitInfo, onDismiss: () -> Unit) {
+private fun HistoryUnitInfoWindow(unit: HistoryUnit, onDismiss: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1075,7 +1051,7 @@ private fun HistoryUnitInfoWindow(info: HistoryUnitInfo, onDismiss: () -> Unit) 
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = info.unit.delta.label,
+                        text = unit.delta.label,
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.weight(1f),
                     )
@@ -1088,23 +1064,14 @@ private fun HistoryUnitInfoWindow(info: HistoryUnitInfo, onDismiss: () -> Unit) 
                 }
                 Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
 
-                HistoryInfoLine("Category", info.sectionTitle)
-                HistoryInfoLine("Position", "${info.position} of ${info.total}")
-                HistoryInfoLine(
-                    "Status",
-                    buildString {
-                        append(if (info.applied) "Applied" else "Undone (redoable)")
-                        if (info.isCurrent) append(" • current")
-                    },
-                )
-                HistoryInfoLine("Chrono id", info.unit.chronoId.toString())
+                HistoryInfoLine("Chrono id", unit.chronoId.toString())
 
                 Text(
                     text = "Details",
                     style = MaterialTheme.typography.labelMedium,
                     color = CalColors.muted,
                 )
-                val details = info.unit.delta.details
+                val details = unit.delta.details
                 if (details.isEmpty()) {
                     Text(
                         text = "(no further detail)",
