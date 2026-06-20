@@ -34,9 +34,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -94,6 +91,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.PopupProperties
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.time.Clock
@@ -2564,13 +2562,9 @@ fun ManualEntryEditWindow(
                 if (taskEntries.size > 1) {
                     val selectedIndex =
                         SchedulerDomain.changeTaskMenuSelectedIndex(taskEntries, effectiveTaskId)
-                    Text(
-                        text = "Tasks",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    EditMenuSectionLabel("Tasks")
                     taskEntries.forEachIndexed { index, entry ->
-                        CalendarMenuRow(
+                        EditMenuRow(
                             label = entry.label,
                             selected = index == selectedIndex,
                             onClick = {
@@ -2590,13 +2584,9 @@ fun ManualEntryEditWindow(
                 // --- Title suggestions menu ---
                 val suggestions = titleSuggestions(title).take(8)
                 if (suggestions.isNotEmpty()) {
-                    Text(
-                        text = "Title suggestions",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    EditMenuSectionLabel("Title suggestions")
                     suggestions.forEach { suggestion ->
-                        CalendarMenuRow(
+                        EditMenuRow(
                             label = suggestion,
                             onClick = {
                                 title = suggestion
@@ -2773,18 +2763,107 @@ fun ReminderCheckEditWindow(
 }
 
 /**
- * A reminders-manager menu row. Looks like [CalendarMenuRow] but selects via a raw tap gesture instead of
- * `Modifier.clickable`, so a pick does NOT pull focus off the title field — the field stays focused (its
- * "Edit mode"), keeping the menu open exactly as a task cell keeps its menus active after a pick. [onTap] is
- * read through [rememberUpdatedState] so the tap detector (started once) always invokes the latest closure.
+ * PRD §14: the edit modes for a reminder title field, mirroring a task cell's Edit Mode (PRD §4):
+ * [Change] picks *which* reminder this editor refers to (the id menu is shown), [Rename] edits the current
+ * reminder's title in place (the id menu is hidden). Title suggestions show in both modes.
+ */
+private enum class ReminderEditMode { Change, Rename }
+
+/** One choice in the shared [EditModeSelector]: its [label], whether it is [selected], and the pick handler. */
+data class EditModeOption(val label: String, val selected: Boolean, val onSelect: () -> Unit)
+
+/**
+ * The shared **Mode** selector used by every edit-mode editor — the task tree cell (PRD §4), the reminders
+ * manager and the "add a checked reminder" window (PRD §14) — so they all render the identical control: a
+ * "Mode" header above a drop-down **button** (a bordered anchor showing the current mode and a ▾ caret) that
+ * opens a menu of the [options].
+ *
+ * [focusPreserving] keeps a focus-gated editor (the reminders manager, whose menus live only while the title
+ * field holds focus) open while the menu is used: the anchor opens via a raw tap (not `Modifier.clickable`,
+ * which would steal focus) and the popup is **non-focusable**, so the title field never loses focus — a focus
+ * change there would collapse the editor before a pick could register. The same control works as a normal
+ * focusable dropdown everywhere else.
  */
 @Composable
-private fun ReminderMenuRow(label: String, selected: Boolean = false, onTap: () -> Unit) {
-    val currentOnTap by rememberUpdatedState(onTap)
+fun EditModeSelector(options: List<EditModeOption>, focusPreserving: Boolean = false) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = options.firstOrNull { it.selected }?.label ?: options.firstOrNull()?.label ?: ""
+    EditMenuSectionLabel("Mode")
+    Box {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .border(1.dp, CalColors.grid, RoundedCornerShape(4.dp))
+                .then(
+                    if (focusPreserving)
+                        Modifier.pointerInput(Unit) { detectTapGestures { expanded = !expanded } }
+                    else Modifier.clickable { expanded = !expanded }
+                )
+                .padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(selectedLabel, style = MaterialTheme.typography.bodyMedium)
+            Text("▾", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            // Non-focusable in a focus-gated editor so opening the menu does not blur the title field and
+            // collapse the editor; a normal focusable popup (with outside-tap dismissal) everywhere else.
+            properties = PopupProperties(focusable = !focusPreserving),
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option.label) },
+                    onClick = {
+                        option.onSelect()
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** Shared section header above an edit-mode menu list ("Mode", "Tasks", "Reminders", "Title suggestions"). */
+@Composable
+fun EditMenuSectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/**
+ * The shared look for every edit-mode menu row — the task tree cell, the calendar windows and the reminders
+ * manager all render through this one composable, so the Mode / id / title menus look identical everywhere.
+ * Callers differ only in behaviour:
+ *  - [enabled] dims and disables the row (e.g. an unassignable task).
+ *  - [focusPreserving] selects via a raw tap gesture instead of `Modifier.clickable`, so a pick does NOT pull
+ *    focus off a title field. The reminders manager's editor stays open only while its row has focus, so a
+ *    focus change there would collapse it before the pick registered; elsewhere `Modifier.clickable` is used.
+ *    [onClick] is read through [rememberUpdatedState] so the once-started tap detector always runs the latest closure.
+ */
+@Composable
+fun EditMenuRow(
+    label: String,
+    selected: Boolean = false,
+    enabled: Boolean = true,
+    focusPreserving: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val currentOnClick by rememberUpdatedState(onClick)
+    val clickModifier = when {
+        !enabled -> Modifier
+        focusPreserving -> Modifier.pointerInput(Unit) { detectTapGestures { currentOnClick() } }
+        else -> Modifier.clickable(onClick = onClick)
+    }
     Text(
         modifier = Modifier
             .fillMaxWidth()
-            .pointerInput(Unit) { detectTapGestures { currentOnTap() } }
+            .then(clickModifier)
             // Selected rows are marked with an obvious outline rather than a (subtle) purple font.
             .then(
                 if (selected)
@@ -2796,62 +2875,10 @@ private fun ReminderMenuRow(label: String, selected: Boolean = false, onTap: () 
         style =
             if (selected) MaterialTheme.typography.bodyMedium
             else MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurface,
+        color =
+            if (enabled) MaterialTheme.colorScheme.onSurface
+            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
     )
-}
-
-/**
- * PRD §14: the edit modes for a reminder title field, mirroring a task cell's Edit Mode (PRD §4):
- * [Change] picks *which* reminder this editor refers to (the id menu is shown), [Rename] edits the current
- * reminder's title in place (the id menu is hidden). Title suggestions show in both modes.
- */
-private enum class ReminderEditMode { Change, Rename }
-
-/**
- * The shared **Mode** selector used by every edit-mode editor — the task tree cell (PRD §4), the reminders
- * manager and the "add a checked reminder" window (PRD §14) — so they all render the identical dropdown.
- * [selectedLabel] is the current mode's label; [options] are the `(label, onSelect)` choices.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun EditModeSelector(
-    selectedLabel: String,
-    options: List<Pair<String, () -> Unit>>,
-    modifier: Modifier = Modifier,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it },
-        modifier = modifier,
-    ) {
-        OutlinedTextField(
-            modifier = Modifier
-                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                .widthIn(max = 220.dp),
-            value = selectedLabel,
-            onValueChange = {},
-            readOnly = true,
-            singleLine = true,
-            label = { Text("Mode") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-        )
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            options.forEach { (label, onSelect) ->
-                DropdownMenuItem(
-                    text = { Text(label) },
-                    onClick = {
-                        onSelect()
-                        expanded = false
-                    },
-                )
-            }
-        }
-    }
 }
 
 /**
@@ -2882,85 +2909,52 @@ private fun ReminderEditModeMenus(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (showModeSelector) {
-            // The ExposedDropdownMenu behind [EditModeSelector] opens a focusable popup that steals focus
-            // from the title field, collapsing this focus-gated editor (its `focusedIndex` resets) before
-            // a pick can register — so the mode could never be selected. Render the two modes as
-            // focus-preserving taps instead, the same pattern the id/title menus below use.
-            Text(
-                text = "Mode",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            ReminderMenuRow(
-                label = "Change Reminder",
-                selected = mode == ReminderEditMode.Change,
-                onTap = { onSelectMode(ReminderEditMode.Change) },
-            )
-            ReminderMenuRow(
-                label = "Rename",
-                selected = mode == ReminderEditMode.Rename,
-                onTap = { onSelectMode(ReminderEditMode.Rename) },
+            // focusPreserving = true: this is a focus-gated editor (the menus live only while the title field
+            // keeps focus), so the dropdown must open/select without pulling focus off the field.
+            EditModeSelector(
+                options = listOf(
+                    EditModeOption(
+                        label = "Change Reminder",
+                        selected = mode == ReminderEditMode.Change,
+                        onSelect = { onSelectMode(ReminderEditMode.Change) },
+                    ),
+                    EditModeOption(
+                        label = "Rename",
+                        selected = mode == ReminderEditMode.Rename,
+                        onSelect = { onSelectMode(ReminderEditMode.Rename) },
+                    ),
+                ),
+                focusPreserving = true,
             )
         }
 
         // Identity (id) menu — Change mode only, and (mirroring the task cell, which shows its Tasks menu
         // only beyond "New task") only when an existing reminder matches. Leads with a "New Reminder" row.
         if (mode == ReminderEditMode.Change && idMenuEntries.isNotEmpty()) {
-            Text(
-                text = "Reminders",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            ReminderMenuRow(
+            EditMenuSectionLabel("Reminders")
+            EditMenuRow(
                 label = "New Reminder",
                 selected = newReminderSelected,
-                onTap = onPickNewReminder,
+                focusPreserving = true,
+                onClick = onPickNewReminder,
             )
             idMenuEntries.forEach { entry ->
-                ReminderMenuRow(
+                EditMenuRow(
                     label = entry.title,
                     selected = entry.id == selectedEntryId,
-                    onTap = { onPickEntry(entry) },
+                    focusPreserving = true,
+                    onClick = { onPickEntry(entry) },
                 )
             }
         }
 
         // Title suggestions — shown in both modes (in Rename mode, picking one renames to that title).
         if (titleSuggestions.isNotEmpty()) {
-            Text(
-                text = "Title suggestions",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            EditMenuSectionLabel("Title suggestions")
             titleSuggestions.forEach { suggestion ->
-                ReminderMenuRow(label = suggestion, onTap = { onPickSuggestion(suggestion) })
+                EditMenuRow(label = suggestion, focusPreserving = true, onClick = { onPickSuggestion(suggestion) })
             }
         }
     }
 }
 
-/** A clickable menu row matching the tree's `TaskMenuRow` (selected = current pick). */
-@Composable
-private fun CalendarMenuRow(
-    label: String,
-    selected: Boolean = false,
-    onClick: () -> Unit,
-) {
-    Text(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            // Selected rows are marked with an obvious outline rather than a (subtle) purple font.
-            .then(
-                if (selected)
-                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
-                else Modifier
-            )
-            .padding(vertical = 4.dp, horizontal = 8.dp),
-        text = label,
-        style =
-            if (selected) MaterialTheme.typography.bodyMedium
-            else MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurface,
-    )
-}

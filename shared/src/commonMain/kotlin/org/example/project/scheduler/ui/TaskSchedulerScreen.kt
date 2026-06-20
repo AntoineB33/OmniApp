@@ -106,6 +106,9 @@ import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.SelectionNavigate
+import org.example.project.ui.EditMenuRow
+import org.example.project.ui.EditMenuSectionLabel
+import org.example.project.ui.EditModeOption
 import org.example.project.ui.EditModeSelector
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -785,11 +788,6 @@ private fun EditModeMenus(
     onIntent: (SchedulerIntent) -> Unit,
 ) {
     val session = state.editSession ?: return
-    val modeLabel =
-        when (session.mode) {
-            CellEditMode.ChangeTask -> "Change Task"
-            CellEditMode.Rename -> "Rename"
-        }
     // A cell that had no task before this edit began is being *created* — it is always in Change Task mode
     // (there is no existing title to Rename), so the Mode selector is hidden, mirroring the reminders manager.
     val isBeingCreated = session.treeBefore.cells[cellId]?.taskId == null
@@ -824,10 +822,17 @@ private fun EditModeMenus(
     ) {
         if (showSelector) {
             EditModeSelector(
-                selectedLabel = modeLabel,
                 options = listOf(
-                    "Change Task" to { onIntent(SchedulerIntent.SetEditMode(CellEditMode.ChangeTask)) },
-                    "Rename" to { onIntent(SchedulerIntent.SetEditMode(CellEditMode.Rename)) },
+                    EditModeOption(
+                        label = "Change Task",
+                        selected = session.mode == CellEditMode.ChangeTask,
+                        onSelect = { onIntent(SchedulerIntent.SetEditMode(CellEditMode.ChangeTask)) },
+                    ),
+                    EditModeOption(
+                        label = "Rename",
+                        selected = session.mode == CellEditMode.Rename,
+                        onSelect = { onIntent(SchedulerIntent.SetEditMode(CellEditMode.Rename)) },
+                    ),
                 ),
             )
         }
@@ -838,13 +843,9 @@ private fun EditModeMenus(
                     taskEntries,
                     session.selectedAssignTaskId,
                 )
-            Text(
-                text = "Tasks",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            EditMenuSectionLabel("Tasks")
             taskEntries.forEachIndexed { index, entry ->
-                TaskMenuRow(
+                EditMenuRow(
                     label = entry.label,
                     selected = index == selectedIndex,
                     enabled = entry.assignable,
@@ -860,52 +861,15 @@ private fun EditModeMenus(
         }
 
         if (suggestions.isNotEmpty()) {
-            Text(
-                text = "Title suggestions",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            EditMenuSectionLabel("Title suggestions")
             suggestions.take(8).forEach { suggestion ->
-                TaskMenuRow(
+                EditMenuRow(
                     label = suggestion,
                     onClick = { onIntent(SchedulerIntent.PickTitleSuggestion(suggestion)) },
                 )
             }
         }
     }
-}
-
-@Composable
-private fun TaskMenuRow(
-    label: String,
-    selected: Boolean = false,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    Text(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                if (enabled) Modifier.clickable(onClick = onClick)
-                else Modifier
-            )
-            // Selected rows are marked with an obvious outline rather than a (subtle) purple font.
-            .then(
-                if (selected)
-                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
-                else Modifier
-            )
-            .padding(vertical = 4.dp, horizontal = 8.dp),
-        text = label,
-        style =
-            if (selected) MaterialTheme.typography.bodyMedium
-            else MaterialTheme.typography.bodySmall,
-        color =
-            when {
-                !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                else -> MaterialTheme.colorScheme.onSurface
-            },
-    )
 }
 
 /** Steps [value] by [delta], clamps to [0, maxValue], and rounds off binary-float noise. */
