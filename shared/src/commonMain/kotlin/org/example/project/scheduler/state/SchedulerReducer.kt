@@ -475,8 +475,12 @@ object SchedulerReducer {
         atMillis: Long,
     ): SchedulerState {
         if (title.isBlank()) return state
+        // A brand-new reminder (no id picked) gets a freshly-minted stable id rather than a blank one, so the
+        // tag's panel encodes a real identity and the reminder surfaces in the id menu (a blank id decodes to
+        // null and is dropped from [SchedulerDomain.allReminderEntries], making it unselectable).
+        val effectiveReminderId = reminderId.ifBlank { SchedulerDomain.freshReminderId(state) }
         val (panelId, next) = state.allocatePanelId()
-        val id = SchedulerDomain.MANUAL_REMINDER_PREFIX + reminderId + "/" + panelId.substringAfterLast('/')
+        val id = SchedulerDomain.MANUAL_REMINDER_PREFIX + effectiveReminderId + "/" + panelId.substringAfterLast('/')
         val panel = TaskPanel(
             id = id,
             taskId = null,

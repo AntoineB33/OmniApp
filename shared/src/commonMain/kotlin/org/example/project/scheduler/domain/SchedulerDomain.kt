@@ -1715,6 +1715,26 @@ object SchedulerDomain {
         panelId.removePrefix(MANUAL_REMINDER_PREFIX).substringBeforeLast('/').ifBlank { null }
 
     /**
+     * PRD §14: mint a stable `reminder-{n}` id that is not used by any manager reminder
+     * ([SchedulerState.chores]) nor encoded in any existing manually-added "add a checked reminder" panel.
+     * "Add a checked reminder" calls this when the user records a brand-new reminder (no id picked) so the
+     * tag carries a real identity and shows up in the reminder id menu — a blank id is decoded as `null` by
+     * [reminderIdOfManualPanel] and dropped from [allReminderEntries], so it would never be selectable.
+     */
+    fun freshReminderId(state: SchedulerState): String {
+        val used = HashSet<String>()
+        for (chore in state.chores) if (chore.id.isNotBlank()) used.add(chore.id)
+        for (panel in state.panels) {
+            if (panel.chore && panel.id.startsWith(MANUAL_REMINDER_PREFIX)) {
+                reminderIdOfManualPanel(panel.id)?.let { used.add(it) }
+            }
+        }
+        var n = 0
+        while (used.contains("reminder-$n")) n++
+        return "reminder-$n"
+    }
+
+    /**
      * PRD §14: every known reminder identity (stable id + title) — the reminders configured in the
      * reminders manager ([SchedulerState.chores]) plus those that exist *only* as manually-added
      * "add a checked reminder" panels (created on the calendar and not yet added as a manager row).

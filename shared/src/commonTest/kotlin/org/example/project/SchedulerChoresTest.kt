@@ -317,6 +317,23 @@ class SchedulerChoresTest {
     }
 
     @Test
+    fun add_checked_reminder_for_a_brand_new_reminder_mints_an_id_and_shows_in_the_id_menu() {
+        // PRD §14: "add a checked reminder" with a brand-new name (no id picked → blank reminderId) must
+        // still become a selectable reminder identity. A blank id would decode to null and be dropped from
+        // the id menu, so the reducer mints a fresh `reminder-{n}` id instead.
+        val today = 1_000_000_000_000L
+        val at = today + 9 * HOUR
+        val s = SchedulerReducer.reduce(
+            SchedulerState.empty(),
+            SchedulerIntent.AddCheckedReminder(reminderId = "", title = "y", atMillis = at),
+        )
+        val entries = SchedulerDomain.reminderMenuEntries(s, "y")
+        assertEquals(listOf("y"), entries.map { it.title })
+        assertTrue(entries.single().id.isNotBlank(), "a brand-new checked reminder must carry a stable id")
+        assertEquals(entries.single().id, SchedulerDomain.reminderIdForTitle(s, "y"))
+    }
+
+    @Test
     fun regenerating_reminders_preserves_a_checked_one_and_leaves_other_panels_alone() {
         val today = 1_000_000_000_000L
         // A previously checked reminder occurrence (same deterministic id the scheduler will regenerate).
