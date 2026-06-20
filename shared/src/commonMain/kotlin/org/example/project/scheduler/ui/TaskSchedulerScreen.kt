@@ -889,6 +889,12 @@ private fun TaskMenuRow(
                 if (enabled) Modifier.clickable(onClick = onClick)
                 else Modifier
             )
+            // Selected rows are marked with an obvious outline rather than a (subtle) purple font.
+            .then(
+                if (selected)
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
+                else Modifier
+            )
             .padding(vertical = 4.dp, horizontal = 8.dp),
         text = label,
         style =
@@ -897,7 +903,6 @@ private fun TaskMenuRow(
         color =
             when {
                 !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                selected -> MaterialTheme.colorScheme.primary
                 else -> MaterialTheme.colorScheme.onSurface
             },
     )

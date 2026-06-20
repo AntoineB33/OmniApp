@@ -2773,14 +2773,18 @@ private fun ReminderMenuRow(label: String, selected: Boolean = false, onTap: () 
         modifier = Modifier
             .fillMaxWidth()
             .pointerInput(Unit) { detectTapGestures { currentOnTap() } }
+            // Selected rows are marked with an obvious outline rather than a (subtle) purple font.
+            .then(
+                if (selected)
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
+                else Modifier
+            )
             .padding(vertical = 4.dp, horizontal = 8.dp),
         text = label,
         style =
             if (selected) MaterialTheme.typography.bodyMedium
             else MaterialTheme.typography.bodySmall,
-        color =
-            if (selected) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurface,
+        color = MaterialTheme.colorScheme.onSurface,
     )
 }
 
@@ -2934,13 +2938,17 @@ private fun CalendarMenuRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
+            // Selected rows are marked with an obvious outline rather than a (subtle) purple font.
+            .then(
+                if (selected)
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
+                else Modifier
+            )
             .padding(vertical = 4.dp, horizontal = 8.dp),
         text = label,
         style =
             if (selected) MaterialTheme.typography.bodyMedium
             else MaterialTheme.typography.bodySmall,
-        color =
-            if (selected) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurface,
+        color = MaterialTheme.colorScheme.onSurface,
     )
 }
