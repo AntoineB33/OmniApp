@@ -2070,7 +2070,7 @@ private fun DayColumn(
                     val slices = sideLayout[key]
                         ?: listOf(PanelSlice(marker.startHour, marker.endHour, xFraction = 0f, widthFraction = 1f))
                     slices.forEach { slice ->
-                        SideTaskBand(marker, slice, hourHeight, colWidth, hoverScope)
+                        SideTaskBand(marker, slice, hourHeight, colWidth, tz, hoverScope)
                     }
                 }
             }
@@ -2091,7 +2091,8 @@ private val SIDE_TASK_LABEL_MIN_HEIGHT = 13.dp
  * PRD §15 Side task, rendered as a real time-positioned band (one [overlapLayout] slice of it) spanning its
  * true duration so the §9 fill leaves an exact gap for it. Sub-minute side tasks render at [SIDE_TASK_MIN_HEIGHT]
  * (a hairline); the title is drawn only when the band is tall enough ([SIDE_TASK_LABEL_MIN_HEIGHT]). The full
- * name always shows on hover (PRD §8), anchored at the cursor so zoom never floats the bubble off-screen.
+ * name always shows on hover (PRD §8), anchored at the cursor so zoom never floats the bubble off-screen, with
+ * the side task's true (un-clipped) start–end times on a second line — the same bubble blocks get.
  */
 @Composable
 private fun SideTaskBand(
@@ -2099,16 +2100,18 @@ private fun SideTaskBand(
     slice: PanelSlice,
     hourHeight: Dp,
     colWidth: Dp,
+    tz: TimeZone,
     hoverScope: CalendarTitleHoverScope,
 ) {
     val height = (hourHeight * (slice.bottomHour - slice.topHour)).coerceAtLeast(SIDE_TASK_MIN_HEIGHT)
     val showLabel = height >= SIDE_TASK_LABEL_MIN_HEIGHT
+    val timeRange = "${formatHm(marker.fullStartMillis, tz)} – ${formatHm(marker.fullEndMillis, tz)}"
     Row(
         modifier = Modifier
             .offset(x = colWidth * slice.xFraction, y = hourHeight * slice.topHour)
             .width(colWidth * slice.widthFraction)
             .height(height)
-            .calendarTitleHover(marker.title, hoverScope)
+            .calendarTitleHover(marker.title, hoverScope, subtitle = timeRange)
             .padding(horizontal = 1.dp)
             .clip(RoundedCornerShape(4.dp))
             .background(CalColors.accent)
