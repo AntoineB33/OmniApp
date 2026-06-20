@@ -836,6 +836,8 @@ fun HistoryManagerWindow(
     onRaise: () -> Unit = {},
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
+    // PRD §6: the history unit whose information window is open (clicked from a row); null when closed.
+    var infoUnit by remember { mutableStateOf<HistoryUnitInfo?>(null) }
     // Display order: the content stacks first (most-used), then selection.
     val sections = listOf(
         "Main (the rest)" to HistoryCategory.Main,
@@ -855,54 +857,63 @@ fun HistoryManagerWindow(
             // Raise on press AFTER the offset so the hit region tracks the (possibly dragged) window.
             .raiseOnPress(onRaise),
     ) {
-        Column(Modifier.fillMaxSize()) {
-            // Title bar doubles as the drag handle for moving the window.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(CalColors.menuBackground)
-                    .pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            offset += dragAmount
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                // Title bar doubles as the drag handle for moving the window.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(CalColors.menuBackground)
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                offset += dragAmount
+                            }
+                        }
+                        .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "History",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("✕", style = MaterialTheme.typography.titleSmall, color = CalColors.muted)
+                    }
+                }
+                Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
+
+                // The four category lists sit side by side so every list's head is aligned at the top
+                // (PRD §5/§6). Each column scrolls its units independently.
+                Row(
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    sections.forEachIndexed { index, (title, category) ->
+                        HistoryCategorySection(
+                            title = title,
+                            history = histories.forCategory(category),
+                            // PRD §6: clicking a unit row opens its information window.
+                            onSelectUnit = { infoUnit = it },
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                        if (index < sections.lastIndex) {
+                            Box(Modifier.fillMaxHeight().width(1.dp).background(CalColors.grid))
                         }
                     }
-                    .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "History",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f),
-                )
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .clickable(onClick = onDismiss),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("✕", style = MaterialTheme.typography.titleSmall, color = CalColors.muted)
                 }
             }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
 
-            // The four category lists sit side by side so every list's head is aligned at the top
-            // (PRD §5/§6). Each column scrolls its units independently.
-            Row(
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                sections.forEachIndexed { index, (title, category) ->
-                    HistoryCategorySection(
-                        title = title,
-                        history = histories.forCategory(category),
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                    )
-                    if (index < sections.lastIndex) {
-                        Box(Modifier.fillMaxHeight().width(1.dp).background(CalColors.grid))
-                    }
-                }
+            // PRD §6: the information window for a clicked history unit, overlaid (modal) on the manager.
+            infoUnit?.let { info ->
+                HistoryUnitInfoWindow(info = info, onDismiss = { infoUnit = null })
             }
         }
     }
@@ -910,14 +921,15 @@ fun HistoryManagerWindow(
 
 /**
  * One column of the history manager: a category's header (with `applied/total`) pinned at the top, then
- * its History Units listed **newest-first** (last at the top, first at the bottom). Each unit shows its
- * label plus all of its data ([Delta.details]); undone units (ahead of the pointer) are dimmed and the
- * current pointer position is marked.
+ * its History Units listed **newest-first** (last at the top, first at the bottom). Each unit is a single
+ * row showing its label (PRD §6); clicking it opens an information window with all of the unit's data via
+ * [onSelectUnit]. Undone units (ahead of the pointer) are dimmed and the current pointer position is marked.
  */
 @Composable
 private fun HistoryCategorySection(
     title: String,
     history: SchedulerHistory,
+    onSelectUnit: (HistoryUnitInfo) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
@@ -947,11 +959,26 @@ private fun HistoryCategorySection(
                 // Newest at the top, oldest at the bottom: walk the units in reverse.
                 items(history.units.size) { row ->
                     val index = history.units.lastIndex - row
+                    val unit = history.units[index]
+                    val applied = index <= history.pointer
+                    val isCurrent = index == history.pointer
                     HistoryUnitRow(
                         position = index + 1,
-                        unit = history.units[index],
-                        applied = index <= history.pointer,
-                        isCurrent = index == history.pointer,
+                        unit = unit,
+                        applied = applied,
+                        isCurrent = isCurrent,
+                        onClick = {
+                            onSelectUnit(
+                                HistoryUnitInfo(
+                                    sectionTitle = title,
+                                    position = index + 1,
+                                    total = history.units.size,
+                                    applied = applied,
+                                    isCurrent = isCurrent,
+                                    unit = unit,
+                                ),
+                            )
+                        },
                     )
                 }
             }
@@ -959,46 +986,156 @@ private fun HistoryCategorySection(
     }
 }
 
-/** One History Unit: its position, label, the current-pointer marker, and every line of its data. */
+/**
+ * PRD §6: the display context of a history unit, gathered when its row is clicked so the information window
+ * can show all of the unit's data — its category, position in the list, applied/current status, and the
+ * unit itself (label + [Delta.details] + chrono id).
+ */
+private data class HistoryUnitInfo(
+    val sectionTitle: String,
+    val position: Int,
+    val total: Int,
+    val applied: Boolean,
+    val isCurrent: Boolean,
+    val unit: HistoryUnit,
+)
+
+/**
+ * One History Unit as a **single clickable row** (PRD §6): its position, label, and the current-pointer
+ * marker. Clicking it ([onClick]) opens the information window with all of the unit's data — the row itself
+ * no longer lists the per-change detail lines.
+ */
 @Composable
 private fun HistoryUnitRow(
     position: Int,
     unit: HistoryUnit,
     applied: Boolean,
     isCurrent: Boolean,
+    onClick: () -> Unit,
 ) {
     // Undone units (past the pointer, redoable) are dimmed.
     val labelColor = if (applied) MaterialTheme.colorScheme.onSurface else CalColors.muted
-    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(4.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp, horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = "$position.",
+            style = MaterialTheme.typography.bodySmall,
+            color = CalColors.muted,
+            modifier = Modifier.width(24.dp),
+        )
+        Text(
+            text = unit.delta.label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = labelColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (isCurrent) {
+            Text(text = "●", style = MaterialTheme.typography.labelSmall, color = CalColors.accent)
+        }
+    }
+}
+
+/**
+ * PRD §6: the information window for a clicked history unit — a modal overlay (scrim + centered card,
+ * dismissed by clicking outside or the ✕) listing **all** of the unit's data: its label, category, position,
+ * applied/current status, chrono id, and every per-change detail line ([Delta.details]).
+ */
+@Composable
+private fun HistoryUnitInfoWindow(info: HistoryUnitInfo, onDismiss: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.3f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 14.dp,
+            border = BorderStroke(1.dp, CalColors.grid),
+            modifier = Modifier
+                .padding(24.dp)
+                .widthIn(min = 280.dp, max = 460.dp)
+                // Swallow clicks on the card so they don't fall through to the dismiss scrim.
+                .clickable(enabled = false) {},
         ) {
-            Text(
-                text = "$position.",
-                style = MaterialTheme.typography.bodySmall,
-                color = CalColors.muted,
-                modifier = Modifier.width(24.dp),
-            )
-            Text(
-                text = unit.delta.label,
-                style = MaterialTheme.typography.bodyMedium,
-                color = labelColor,
-                modifier = Modifier.weight(1f),
-            )
-            if (isCurrent) {
-                Text(text = "●", style = MaterialTheme.typography.labelSmall, color = CalColors.accent)
+            Column(
+                modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = info.unit.delta.label,
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Box(
+                        modifier = Modifier.size(28.dp).clip(CircleShape).clickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("✕", style = MaterialTheme.typography.titleSmall, color = CalColors.muted)
+                    }
+                }
+                Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
+
+                HistoryInfoLine("Category", info.sectionTitle)
+                HistoryInfoLine("Position", "${info.position} of ${info.total}")
+                HistoryInfoLine(
+                    "Status",
+                    buildString {
+                        append(if (info.applied) "Applied" else "Undone (redoable)")
+                        if (info.isCurrent) append(" • current")
+                    },
+                )
+                HistoryInfoLine("Chrono id", info.unit.chronoId.toString())
+
+                Text(
+                    text = "Details",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = CalColors.muted,
+                )
+                val details = info.unit.delta.details
+                if (details.isEmpty()) {
+                    Text(
+                        text = "(no further detail)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CalColors.muted,
+                    )
+                } else {
+                    details.forEach { line ->
+                        Text(text = line, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
         }
-        unit.delta.details.forEach { line ->
-            Text(
-                text = line,
-                style = MaterialTheme.typography.labelSmall,
-                color = CalColors.muted,
-                modifier = Modifier.padding(start = 30.dp),
-            )
-        }
+    }
+}
+
+/** One `label: value` line in the history-unit information window (PRD §6). */
+@Composable
+private fun HistoryInfoLine(label: String, value: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "$label:",
+            style = MaterialTheme.typography.labelSmall,
+            color = CalColors.muted,
+            modifier = Modifier.width(76.dp),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
