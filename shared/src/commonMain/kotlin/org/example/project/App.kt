@@ -648,6 +648,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             // existing reminders matching the draft, and distinct reminder titles.
                             reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
                             titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
+                            // A new row's id must avoid every known reminder id (including calendar-only ones).
+                            knownReminderIds = { SchedulerDomain.allReminderEntries(schedulerState).mapTo(mutableSetOf()) { it.id } },
                             // Cascade: open up-left of center so it isn't fully hidden behind a wider window.
                             initialOffset = Offset(-200f, -150f),
                             onRaise = { bringWindowToFront(FloatingWindow.Reminders) },

@@ -1755,11 +1755,17 @@ object SchedulerDomain {
         return byId.map { (id, title) -> ReminderMenuEntry(id, title) }
     }
 
-    /** PRD §14 reminder id menu: known reminders ([allReminderEntries]) whose title matches [draftText]. */
+    /**
+     * PRD §14 reminder id menu: known reminders ([allReminderEntries]) whose title **exactly** (case-
+     * insensitively) matches [draftText]. Empty text matches nothing — mirroring the task Change Task menu
+     * ([matchingUserTaskIds], PRD §4): the id menu only offers reusing a reminder whose title IS the typed
+     * text, so a partial draft ("y" vs "yoga") never surfaces a longer reminder and an empty field shows no
+     * id menu at all. (Partial-as-you-type matches are the *title suggestion* menu's job, not the id menu's.)
+     */
     fun reminderMenuEntries(state: SchedulerState, draftText: String): List<ReminderMenuEntry> {
         val q = draftText.trim()
-        return allReminderEntries(state)
-            .filter { q.isBlank() || it.title.contains(q, ignoreCase = true) }
+        if (q.isEmpty()) return emptyList()
+        return allReminderEntries(state).filter { it.title.equals(q, ignoreCase = true) }
     }
 
     /** PRD §14 reminder title-suggestion menu: distinct reminder titles matching [input]. */

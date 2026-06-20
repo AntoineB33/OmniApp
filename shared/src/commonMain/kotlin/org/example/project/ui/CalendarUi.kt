@@ -570,6 +570,12 @@ fun ChoresManagerWindow(
     reminderMenuEntries: (draftText: String) -> List<SchedulerDomain.ReminderMenuEntry> = { emptyList() },
     /** PRD §14: distinct reminder titles matching the focused row's draft — the **Title suggestions** menu. */
     titleSuggestions: (String) -> List<String> = { emptyList() },
+    /**
+     * PRD §14: every known reminder id (manager rows + calendar-only "add a checked reminder" reminders).
+     * A new row's minted id must dodge all of these, not just the rows here, or it could collide with a
+     * calendar-only reminder and filter that reminder out of the id menu (it would land in `rowIds`).
+     */
+    knownReminderIds: () -> Set<String> = { emptySet() },
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
     // PRD §14: which row's title field currently holds focus — drives the edit-mode menus shown beneath it.
@@ -603,11 +609,14 @@ fun ChoresManagerWindow(
     val existingReminderIds = remember { chores.mapTo(mutableSetOf<String>()) { it.id } }
     // A new row gets a stable, locally-unique id right away (mirroring the reducer's `reminder-{n}` scheme)
     // so it has an identity before the round-trip through onChange — the id menu can then exclude the row
-    // being edited (otherwise a brand-new reminder would suggest itself).
+    // being edited (otherwise a brand-new reminder would suggest itself). The minted id must also dodge ids
+    // owned by calendar-only "add a checked reminder" reminders: colliding with one would make the id menu
+    // filter that reminder out (it appears in `rowIds`), so it would never be offered for adoption.
     fun newRow() = ChoreRow(
         timeText = formatTimeOfDay(newRowTimeOfDayMinutes()),
         id = run {
             val used = rows.mapTo(mutableSetOf()) { it.id }
+            used.addAll(knownReminderIds())
             var n = 0
             while (used.contains("reminder-$n")) n++
             "reminder-$n"

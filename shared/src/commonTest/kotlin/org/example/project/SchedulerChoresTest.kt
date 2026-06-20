@@ -334,6 +334,23 @@ class SchedulerChoresTest {
     }
 
     @Test
+    fun reminder_id_menu_matches_titles_exactly_and_shows_nothing_for_an_empty_field() {
+        // PRD §14: the id menu mirrors the task Change Task menu — it offers a reminder only when the typed
+        // text IS its title (exactly, case-insensitively). An empty field matches nothing (so opening the
+        // Reminders window and focusing a blank field shows no id menu), and a partial draft must not surface
+        // a longer reminder. Partial-as-you-type matches belong to the title-suggestion menu instead.
+        val today = 1_000_000_000_000L
+        val s = SchedulerReducer.reduce(
+            SchedulerState.empty(),
+            SchedulerIntent.AddCheckedReminder(reminderId = "", title = "yoga", atMillis = today + 9 * HOUR),
+        )
+        assertEquals(emptyList(), SchedulerDomain.reminderMenuEntries(s, ""), "empty field → no id menu")
+        assertEquals(emptyList(), SchedulerDomain.reminderMenuEntries(s, "y"), "partial draft must not match")
+        assertEquals(listOf("yoga"), SchedulerDomain.reminderMenuEntries(s, "yoga").map { it.title })
+        assertEquals(listOf("yoga"), SchedulerDomain.reminderMenuEntries(s, "YOGA").map { it.title }, "case-insensitive")
+    }
+
+    @Test
     fun regenerating_reminders_preserves_a_checked_one_and_leaves_other_panels_alone() {
         val today = 1_000_000_000_000L
         // A previously checked reminder occurrence (same deterministic id the scheduler will regenerate).
