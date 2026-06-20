@@ -620,20 +620,33 @@ fun ChoresManagerWindow(
             "reminder-$n"
         },
     )
-    fun push() = onChange(
-        rows.map {
-            // PRD §14: the chosen unit maps the entered number to a cadence in days (interval vs rate units).
-            val number = SchedulerDomain.evaluateDayFormula(it.daysText) ?: 0.0
-            ChoreEntry(
-                title = it.title,
-                spanDays = it.unit.toDays(number),
-                timeOfDayMinutes = parseTimeOfDay(it.timeText),
-                daysFormula = it.daysText,
-                recurrenceUnit = it.unit,
-                id = it.id,
-            )
-        },
-    )
+    fun push() {
+        // PRD §14: resolve each row's effective reminder id. A row still being created (its minted id is not
+        // an existing reminder) and not explicitly marked "New Reminder" adopts the reminder its id menu shows
+        // selected by default — the first matching calendar-only reminder not already owned by another row —
+        // exactly as the "add a checked reminder" window resolves its id from the title. Without this,
+        // relying on the default selection (not clicking it) would leave the row a distinct reminder, so a
+        // past checked reminder of the matching title would not act as its scheduling tie-breaker (PRD §14).
+        val taken = rows.filter { it.id in existingReminderIds }.mapTo(mutableSetOf()) { it.id }
+        onChange(
+            rows.map { row ->
+                // PRD §14: the chosen unit maps the entered number to a cadence in days (interval vs rate units).
+                val number = SchedulerDomain.evaluateDayFormula(row.daysText) ?: 0.0
+                val effectiveId =
+                    if (row.id in existingReminderIds || row.explicitNew) row.id
+                    else reminderMenuEntries(row.title).firstOrNull { it.id !in taken }?.id ?: row.id
+                taken.add(effectiveId)
+                ChoreEntry(
+                    title = row.title,
+                    spanDays = row.unit.toDays(number),
+                    timeOfDayMinutes = parseTimeOfDay(row.timeText),
+                    daysFormula = row.daysText,
+                    recurrenceUnit = row.unit,
+                    id = effectiveId,
+                )
+            },
+        )
+    }
 
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -704,7 +717,9 @@ fun ChoresManagerWindow(
                     ) {
                         OutlinedTextField(
                             value = row.title,
-                            onValueChange = { rows[index] = row.copy(title = it); push() },
+                            // Editing the title reverts an explicit "New Reminder" pick so the id resolves from
+                            // the title again (mirrors the "add a checked reminder" window, PRD §14).
+                            onValueChange = { rows[index] = row.copy(title = it, explicitNew = false); push() },
                             singleLine = true,
                             label = { Text("Reminder") },
                             modifier = Modifier
@@ -764,14 +779,18 @@ fun ChoresManagerWindow(
                             // always in Change Reminder mode — there is nothing to Rename, so hide the selector.
                             showModeSelector = row.id in existingReminderIds,
                             idMenuEntries = entries,
-                            newReminderSelected = entries.isEmpty(),
-                            selectedEntryId = entries.firstOrNull()?.id,
-                            onPickNewReminder = {},
+                            // The default highlight mirrors the resolved id in push(): "New Reminder" when the
+                            // user explicitly chose it (or nothing matches), else the first matching reminder.
+                            newReminderSelected = row.explicitNew || entries.isEmpty(),
+                            selectedEntryId = if (row.explicitNew) null else entries.firstOrNull()?.id,
+                            // Explicitly choosing "New Reminder" keeps this row's own freshly-minted id even
+                            // though its title matches a calendar-only reminder (PRD §14).
+                            onPickNewReminder = { rows[index] = row.copy(explicitNew = true); push() },
                             onPickEntry = { entry ->
                                 // Adopting an existing reminder makes this row an existing reminder too —
                                 // record its id so the Mode selector (Change/Rename) now appears for it.
                                 existingReminderIds.add(entry.id)
-                                rows[index] = row.copy(id = entry.id, title = entry.title)
+                                rows[index] = row.copy(id = entry.id, title = entry.title, explicitNew = false)
                                 push()
                             },
                             titleSuggestions = titleSuggestions(row.title).filter { it != row.title }.take(8),
@@ -979,6 +998,11 @@ private data class ChoreRow(
     // PRD §14: carry the reminder's stable id through edits so it isn't reassigned on every change (a blank
     // id on a brand-new row is filled by the reducer's assignReminderIds).
     val id: String = "",
+    // PRD §14: the user explicitly picked "New Reminder" for this still-being-created row, so it keeps its
+    // own freshly-minted id even when its title matches a calendar-only reminder (otherwise the default is to
+    // adopt that matching reminder's id, like the "add a checked reminder" window). Reset when the title is
+    // edited, mirroring the check window where typing reverts to resolving the id from the title.
+    val explicitNew: Boolean = false,
 )
 
 /** PRD §14: the unit selector beside the recurrence field — every n days (default) / months / years, or n times per week / month / year. */

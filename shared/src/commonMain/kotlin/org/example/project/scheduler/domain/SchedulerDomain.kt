@@ -1273,26 +1273,37 @@ object SchedulerDomain {
     private const val MILLIS_PER_DAY: Long = 24L * 60 * 60 * 1000
 
     /**
-     * PRD §14: the day offsets (from the anchor, day 0 = today) on which a chore recurring every
-     * [spanDays] lands, out to [horizonDays].
+     * PRD §14: the day offsets (from today, day 0) on which a chore recurring every [spanDays] lands, out to
+     * [horizonDays].
      *
      * - **`spanDays ≤ 0`** (blank / no recurrence): a one-off — just `[0]` (today).
      * - **`0 < spanDays < 1`**: a daily reminder — every day `[0, 1, …, horizonDays]`.
-     * - **`spanDays ≥ 1`**: a day cadence. The accumulated counter starts at today (offset 0 is always
-     *   included); each subsequent iteration adds [spanDays] and the closest integer to the running sum is
-     *   the chosen day, so a fractional cadence lands an exact `numerator` occurrences per `denominator`-day
-     *   window without drifting (e.g. `31/21` ≈ 1.476 → 0, 1, 3, 4, 6, … = 21 days out of every 31).
+     * - **`spanDays ≥ 1`**: a day cadence. The accumulated counter is anchored at [anchorOffset] (day 0 =
+     *   today; **negative** = a past completion, e.g. a checked reminder acting as the §14 tie-breaker); each
+     *   subsequent iteration adds [spanDays] and the closest integer to the running sum is the chosen day, so
+     *   a fractional cadence lands an exact `numerator` occurrences per `denominator`-day window without
+     *   drifting (e.g. `31/21` ≈ 1.476 → 0, 1, 3, 4, 6, … = 21 days out of every 31). Occurrences that already
+     *   fell in the past (a day before today) are dropped — the future tags resume the cadence from the
+     *   anchor, so a weekly reminder last done on a Monday recurs on Mondays, not from today. With the default
+     *   `anchorOffset = 0` (no prior completion) the counter starts at today and offset 0 is always included.
      */
-    fun choreOccurrenceDayOffsets(spanDays: Double, horizonDays: Int = CHORE_HORIZON_DAYS): List<Int> {
+    fun choreOccurrenceDayOffsets(
+        spanDays: Double,
+        horizonDays: Int = CHORE_HORIZON_DAYS,
+        anchorOffset: Int = 0,
+    ): List<Int> {
         if (spanDays <= 0.0) return listOf(0)
         if (spanDays < 1.0) return (0..horizonDays).toList()
-        val offsets = mutableListOf(0)
-        var k = 1
-        while (k <= horizonDays + 1) {
-            val day = (k * spanDays).roundToInt()
-            if (day > horizonDays) break
-            if (day != offsets.last()) offsets.add(day)
+        val offsets = mutableListOf<Int>()
+        // Walk the cadence from the anchor; a negative anchor needs extra steps to first reach today.
+        val maxK = horizonDays + (if (anchorOffset < 0) -anchorOffset else 0) + 2
+        var k = 0
+        while (k <= maxK) {
+            val day = anchorOffset + (k * spanDays).roundToInt()
             k++
+            if (day < 0) continue // a missed occurrence before today: not regenerated as a future tag
+            if (day > horizonDays) break
+            if (offsets.isEmpty() || day != offsets.last()) offsets.add(day)
         }
         return offsets
     }
@@ -1383,12 +1394,18 @@ object SchedulerDomain {
      * `start == end` (no spanning time), with deterministic `chore/{index}/{offset}` ids so a steady
      * regeneration reproduces them. They start un-[TaskPanel.checked]. Overlapping tags keep the default
      * layout weight, so the calendar splits their shared width evenly (PRD §14).
+     *
+     * [anchorMillisByReminderId] supplies, per reminder id ([ChoreEntry.id]), the epoch-millis of the most
+     * recent **checked** occurrence of that reminder (PRD §14 tie-breaker). When present, the cadence is
+     * anchored at that completion's day instead of today, so a reminder last done on a Monday recurs on
+     * Mondays (see [choreOccurrenceDayOffsets]). Reminders with no past completion fall back to today.
      */
     fun choreScheduledPanels(
         chores: List<ChoreEntry>,
         todayStartMillis: Long,
         horizonDays: Int = CHORE_HORIZON_DAYS,
         nowMillis: Long = todayStartMillis,
+        anchorMillisByReminderId: Map<String, Long> = emptyMap(),
     ): List<TaskPanel> {
         val currentTimeOfDayMinutes =
             ((nowMillis - todayStartMillis) / MILLIS_PER_MINUTE).toInt().coerceIn(0, 24 * 60 - 1)
@@ -1398,7 +1415,11 @@ object SchedulerDomain {
             // PRD §14: "the defined time in the day, or the current time if not defined in the field".
             val minutes = if (chore.timeOfDayMinutes < 0) currentTimeOfDayMinutes else chore.timeOfDayMinutes
             val timeOfDay = minutes.coerceIn(0, 24 * 60 - 1) * MILLIS_PER_MINUTE
-            for (offset in choreOccurrenceDayOffsets(chore.spanDays, horizonDays)) {
+            // PRD §14 tie-breaker: anchor the cadence at the last checked occurrence of this reminder, if any.
+            val anchorOffset = anchorMillisByReminderId[chore.id]
+                ?.let { (it - todayStartMillis).floorDiv(MILLIS_PER_DAY).toInt() }
+                ?: 0
+            for (offset in choreOccurrenceDayOffsets(chore.spanDays, horizonDays, anchorOffset)) {
                 val start = todayStartMillis + offset * MILLIS_PER_DAY + timeOfDay
                 result.add(
                     TaskPanel(
@@ -1440,8 +1461,18 @@ object SchedulerDomain {
         // recurrence scheduler, so carry them across regeneration verbatim (keyed by their id prefix)
         // instead of dropping them with the generated tags.
         val manual = panels.filter { it.chore && it.id.startsWith(MANUAL_REMINDER_PREFIX) }
+        // PRD §14 tie-breaker: anchor each reminder's cadence at its most recent checked occurrence (manual
+        // "add a checked reminder" tags or previously-checked generated tags), so the recurrence lines up with
+        // past completions (a weekly reminder checked on a Monday recurs on Mondays) rather than from today.
+        val anchorMillisByReminderId = HashMap<String, Long>()
+        for (p in panels) {
+            if (!p.chore || !p.checked) continue
+            val rid = reminderIdOfChorePanel(p.id, chores) ?: continue
+            val existing = anchorMillisByReminderId[rid]
+            if (existing == null || p.startEpochMillis > existing) anchorMillisByReminderId[rid] = p.startEpochMillis
+        }
         val generated =
-            choreScheduledPanels(chores, todayStartMillis, horizonDays, nowMillis)
+            choreScheduledPanels(chores, todayStartMillis, horizonDays, nowMillis, anchorMillisByReminderId)
                 .map {
                     if (checkedById.containsKey(it.id)) it.copy(checked = true, checkedAtMillis = checkedById[it.id])
                     else it
@@ -1713,6 +1744,21 @@ object SchedulerDomain {
      */
     private fun reminderIdOfManualPanel(panelId: String): String? =
         panelId.removePrefix(MANUAL_REMINDER_PREFIX).substringBeforeLast('/').ifBlank { null }
+
+    /**
+     * PRD §14: the reminder id of any chore tag — a manually-added `chore-manual/{reminderId}/{suffix}` panel
+     * (via [reminderIdOfManualPanel]) or a generated `chore/{index}/{offset}` panel, whose `{index}` selects
+     * the reminder in [chores]. Null when the id doesn't decode to a known reminder. Used to attribute a
+     * checked tag to its reminder when computing cadence anchors ([choreScheduledPanels]).
+     */
+    private fun reminderIdOfChorePanel(panelId: String, chores: List<ChoreEntry>): String? = when {
+        panelId.startsWith(MANUAL_REMINDER_PREFIX) -> reminderIdOfManualPanel(panelId)
+        panelId.startsWith("chore/") ->
+            panelId.removePrefix("chore/").substringBefore('/').toIntOrNull()
+                ?.let { chores.getOrNull(it)?.id }
+                ?.takeIf { it.isNotBlank() }
+        else -> null
+    }
 
     /**
      * PRD §14: mint a stable `reminder-{n}` id that is not used by any manager reminder

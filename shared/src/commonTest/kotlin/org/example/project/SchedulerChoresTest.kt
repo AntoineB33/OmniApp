@@ -122,6 +122,27 @@ class SchedulerChoresTest {
     }
 
     @Test
+    fun day_offsets_anchor_the_cadence_at_a_past_completion() {
+        // PRD §14 tie-breaker: a weekly reminder last done 5 days ago (offset -5, e.g. last Monday) recurs
+        // every 7 days from THAT day, not from today — so the in-horizon occurrences are +2, +9, +16, +23
+        // (Mondays), and today (offset 0, a Saturday) is NOT one of them.
+        assertEquals(
+            listOf(2, 9, 16, 23),
+            SchedulerDomain.choreOccurrenceDayOffsets(7.0, horizonDays = 28, anchorOffset = -5),
+        )
+        // A completion exactly one cadence ago re-includes today (offset 0) as the next due day.
+        assertEquals(
+            listOf(0, 7, 14, 21, 28),
+            SchedulerDomain.choreOccurrenceDayOffsets(7.0, horizonDays = 28, anchorOffset = -7),
+        )
+        // No anchor (the default) keeps the legacy "start from today" behaviour.
+        assertEquals(
+            listOf(0, 7, 14, 21, 28),
+            SchedulerDomain.choreOccurrenceDayOffsets(7.0, horizonDays = 28),
+        )
+    }
+
+    @Test
     fun day_formula_evaluates_arithmetic_to_the_recurrence_value() {
         assertEquals(31.0 / 21.0, SchedulerDomain.evaluateDayFormula("31/21")!!, 1e-12)
         assertEquals(0.5, SchedulerDomain.evaluateDayFormula("1/2")!!, 1e-12)
@@ -294,6 +315,73 @@ class SchedulerChoresTest {
         // It is not produced by the recurrence scheduler, so it must survive regeneration.
         val regen = SchedulerDomain.regenerateChorePanels(added.panels, added.chores, todayStartMillis = today)
         assertTrue(regen.any { it.id == manual.id && it.checked })
+    }
+
+    @Test
+    fun reducer_flow_add_checked_reminder_then_weekly_row_recurs_on_that_weekday() {
+        // Exact reported flow through the real intents: (1) right-click on a past Monday → AddCheckedReminder
+        // with a brand-new id, (2) open the reminders manager, add a row that adopts that reminder's id and
+        // set it to "once per week" → SetChores. The generated cadence must land on Mondays, not today.
+        val today = 1_000_000_000_000L
+        val monday = today - 5 * DAY + 8 * HOUR
+
+        val afterCheck = SchedulerReducer.reduce(
+            SchedulerState.empty(),
+            SchedulerIntent.AddCheckedReminder(reminderId = "", title = "Weekly", atMillis = monday),
+        )
+        // The row adopts the manual reminder's id (the id menu default), exactly as the UI does.
+        val reminderId = SchedulerDomain.reminderIdForTitle(afterCheck, "Weekly")
+        assertNotNull(reminderId)
+        val afterRow = SchedulerReducer.reduce(
+            afterCheck,
+            SchedulerIntent.SetChores(
+                entries = listOf(ChoreEntry("Weekly", spanDays = 7.0, timeOfDayMinutes = 8 * 60, id = reminderId)),
+                todayStartMillis = today,
+                nowMillis = today + 12 * HOUR,
+            ),
+        )
+
+        val generated = afterRow.panels.filter { it.chore && it.id.startsWith("chore/") }
+        assertTrue(generated.isNotEmpty())
+        assertTrue(generated.all { (it.startEpochMillis - monday) % (7 * DAY) == 0L }, "tags must fall on Mondays")
+        assertFalse(generated.any { it.startEpochMillis in today until today + DAY }, "no tag on today (Saturday)")
+        assertEquals(monday + 7 * DAY, generated.minOf { it.startEpochMillis })
+    }
+
+    @Test
+    fun a_past_checked_reminder_anchors_the_weekly_cadence_to_its_weekday() {
+        // PRD §14 tie-breaker (reported anomaly): a checked reminder added on a past Monday, then configured to
+        // recur "once per week", must place its future tags on Mondays — anchored at the past completion — not
+        // on today's weekday. Today is a "Saturday" (offset 0); the check is 5 days back (last "Monday").
+        val today = 1_000_000_000_000L
+        val monday = today - 5 * DAY + 8 * HOUR
+        val chore = ChoreEntry("Weekly", spanDays = 7.0, timeOfDayMinutes = 8 * 60, id = "reminder-0")
+        val manualChecked = TaskPanel(
+            id = SchedulerDomain.MANUAL_REMINDER_PREFIX + "reminder-0/0",
+            taskId = null,
+            title = "Weekly",
+            startEpochMillis = monday,
+            endEpochMillis = monday,
+            chore = true,
+            checked = true,
+            checkedAtMillis = monday,
+        )
+
+        val regen = SchedulerDomain.regenerateChorePanels(
+            panels = listOf(manualChecked),
+            chores = listOf(chore),
+            todayStartMillis = today,
+            nowMillis = today + 12 * HOUR,
+        )
+
+        val generated = regen.filter { it.chore && it.id.startsWith("chore/") }
+        assertTrue(generated.isNotEmpty())
+        // Every generated occurrence is a whole number of weeks after the checked Monday (same weekday)...
+        assertTrue(generated.all { (it.startEpochMillis - monday) % (7 * DAY) == 0L })
+        // ...none lands today (the Saturday) — the bug was recurring from today's weekday instead.
+        assertFalse(generated.any { it.startEpochMillis in today until today + DAY })
+        // ...and the first future tag is the upcoming Monday, two days out.
+        assertEquals(monday + 7 * DAY, generated.minOf { it.startEpochMillis })
     }
 
     @Test
