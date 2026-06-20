@@ -123,7 +123,15 @@ object SchedulerReducer {
                         cellId = intent.cellId,
                         renderVia = selection.renderVia,
                         draftText = draft,
-                        selectedAssignTaskId = if (typingToEdit) null else cell.taskId,
+                        // PRD §4 default selection: typing into a cell defaults the id menu to the first
+                        // eligible existing task whose title matches (reuse it), or "New task" when none
+                        // matches; re-entering an assigned cell keeps its current task selected.
+                        selectedAssignTaskId =
+                            if (typingToEdit) {
+                                SchedulerDomain.eligibleAssignTaskIds(state, intent.cellId, draft).firstOrNull()
+                            } else {
+                                cell.taskId
+                            },
                         newTaskDraftId = null,
                         treeBefore = state.captureTree(),
                     ),
@@ -139,24 +147,32 @@ object SchedulerReducer {
     private fun reduceUpdateEditText(state: SchedulerState, text: String): SchedulerState {
         val session = state.editSession ?: return state
         if (text == session.draftText) return state
-        val typingSwitchesToNewTask =
-            session.mode == CellEditMode.ChangeTask && text != session.draftText
+        // PRD §4 default selection: while typing in Change Task mode the id menu re-resolves to the first
+        // eligible existing task whose title matches the text (reuse it), or "New task" when none matches.
+        // Switching to reuse drops the in-progress "New task" draft id; a run of non-matching keystrokes
+        // keeps the same draft so a fresh task isn't spun up on every keystroke.
+        val firstEligible =
+            if (session.mode == CellEditMode.ChangeTask) {
+                SchedulerDomain.eligibleAssignTaskIds(state, session.cellId, text).firstOrNull()
+            } else {
+                null
+            }
+        val reuseExisting = session.mode == CellEditMode.ChangeTask && firstEligible != null
         val withDraft =
             state.copy(
                 editSession =
                     session.copy(
                         draftText = text,
                         selectedAssignTaskId =
-                            if (typingSwitchesToNewTask) null else session.selectedAssignTaskId,
+                            if (session.mode == CellEditMode.ChangeTask) firstEligible else session.selectedAssignTaskId,
                         newTaskDraftId =
-                            if (typingSwitchesToNewTask && session.selectedAssignTaskId != null) {
-                                null
-                            } else {
-                                session.newTaskDraftId
-                            },
+                            if (reuseExisting) null else session.newTaskDraftId,
                     ),
             )
-        return commitEditText(withDraft, text)
+        val committed = commitEditText(withDraft, text)
+        // Typing switched to reusing an existing task: drop the now cell-less "New task" draft (and any
+        // panels a scheduling tick gave it), mirroring PickTaskFromMenu (PRD §4).
+        return if (reuseExisting) discardDraftTask(committed, session.newTaskDraftId) else committed
     }
 
     private fun commitEditText(base: SchedulerState, text: String): SchedulerState {
@@ -1850,6 +1866,25 @@ private fun applySetCellTitle(
             tasks = tasks,
             titleToTaskIds = titleToTaskIds,
         )
+
+    // PRD §4: reassigning this cell to a different task (e.g. typing a new title in Change Task mode spins up
+    // a fresh draft) leaves the cell's *previous* task behind. Drop its now-stale occurrence and, when no
+    // cell points at it anymore, its ephemeral (auto, non-pinned) scheduler panels — a task typed only to
+    // fill this cell is just an editing leftover, so without a real binding [purgeOrphanTasks] removes it.
+    // Pinned/manual panels and recorded periods are real user data and still keep it alive (a genuinely
+    // deleted scheduled task whose history is preserved, PRD §9).
+    val vacatedTaskId = cell.taskId
+    if (vacatedTaskId != null && vacatedTaskId != taskId) {
+        result.tasks[vacatedTaskId]?.let { vacated ->
+            result = result.copy(
+                tasks = result.tasks + (vacatedTaskId to vacated.copy(occurrences = vacated.occurrences - cellId)),
+            )
+        }
+        if (result.cells.values.none { it.taskId == vacatedTaskId }) {
+            val trimmed = result.panels.filterNot { it.taskId == vacatedTaskId && it.auto && !it.pinned }
+            if (trimmed.size != result.panels.size) result = result.copy(panels = trimmed)
+        }
+    }
 
     return SchedulerDomain.purgeOrphanTasks(result)
 }

@@ -1099,7 +1099,10 @@ class SchedulerReducerTest {
         val nestedGId = s.cells[nestedCell]!!.taskId!!
 
         val betaCell = s.lists[s.rootListId]!!.cellIds.last()
+        // Typing "g" now defaults to reusing the existing nested "g"; explicitly choosing "New task"
+        // forces a fresh draft titled "g" while the existing same-title task stays pickable in the menu.
         s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId = betaCell, initialText = "g"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SelectCreateAssignTask)
         val draftId = s.editSession!!.newTaskDraftId!!
         // A scheduling run while the draft exists (as in the app's debounced tick) gives it a panel.
         s = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(nowMillis = 0L))
@@ -1115,6 +1118,58 @@ class SchedulerReducerTest {
         )
         assertTrue(s.tasks[draftId] == null, "the abandoned draft task must be purged")
         assertFalse(s.panels.any { it.taskId == draftId }, "the abandoned draft's panels must be dropped")
+    }
+
+    @Test
+    fun changing_text_in_edit_mode_discards_the_previous_task_and_its_auto_panel() {
+        // PRD §4: editing a cell and changing its text to a new task spins up a fresh draft and leaves the
+        // cell's previous task behind. That previous task, kept alive only by an ephemeral auto panel (a
+        // scheduling tick) with no cell, is an editing leftover — it must be purged along with its auto
+        // panel, not linger as a ghost task/calendar block.
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Alpha"))
+        val originalTaskId = s.cells[cellId]!!.taskId!!
+        // A scheduling tick gives "Alpha" an auto panel (the only thing that would otherwise keep it alive).
+        s = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(nowMillis = 0L))
+        assertTrue(s.panels.any { it.taskId == originalTaskId }, "test premise: Alpha must get an auto panel")
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText("Alphabet"))
+
+        val newTaskId = s.cells[cellId]!!.taskId!!
+        assertNotEquals(originalTaskId, newTaskId, "the cell points at a fresh task, not the old one")
+        assertNull(s.tasks[originalTaskId], "the abandoned previous task must be purged from memory")
+        assertFalse(
+            s.panels.any { it.taskId == originalTaskId },
+            "the abandoned previous task's auto panel must be dropped",
+        )
+    }
+
+    @Test
+    fun typing_exact_existing_title_defaults_to_reusing_that_task() {
+        // PRD §4 default selection: the first eligible existing task is selected by default, so typing a
+        // title that exactly matches a task in another branch reuses it instead of creating a new task.
+        var s = SchedulerState.empty()
+        val alphaCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(alphaCell, "Alpha"))
+        val alphaId = s.cells[alphaCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(alphaCell))
+        val nestedCell = s.lists[s.tasks[alphaId]!!.childListId!!]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(nestedCell, "g"))
+        val nestedGId = s.cells[nestedCell]!!.taskId!!
+
+        // Type "g" into an empty root cell: it defaults to reusing the existing "g", with no new task.
+        val betaCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId = betaCell, initialText = "g"))
+        assertEquals(nestedGId, s.editSession!!.selectedAssignTaskId)
+        assertEquals(null, s.editSession!!.newTaskDraftId)
+        assertEquals(nestedGId, s.cells[betaCell]!!.taskId)
+        assertEquals(
+            listOf(nestedGId),
+            s.tasks.values.filter { it.title == "g" }.map { it.id },
+            "typing an existing title must reuse it, not create a second 'g' task",
+        )
     }
 
     @Test
@@ -1242,10 +1297,11 @@ class SchedulerReducerTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(nestedCell, "g"))
         val nestedGId = s.cells[nestedCell]!!.taskId!!
 
-        // Edit a different (root) cell, typing "g": "New task" is the default selection.
+        // Edit a different (root) cell, typing "g": the first eligible existing task ("g") is now the
+        // default selection (PRD §4), reused immediately — not "New task".
         val betaCell = s.lists[s.rootListId]!!.cellIds.last()
         s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId = betaCell, initialText = "g"))
-        assertEquals(null, s.editSession!!.selectedAssignTaskId)
+        assertEquals(nestedGId, s.editSession!!.selectedAssignTaskId)
 
         // Pick the existing nested "g" from the menu.
         s = SchedulerReducer.reduce(s, SchedulerIntent.PickTaskFromMenu(nestedGId))
@@ -1553,7 +1609,9 @@ class SchedulerReducerTest {
                 s,
                 gChild,
                 s.editSession!!.draftText,
-                excludeTaskId = s.editSession!!.selectedAssignTaskId ?: s.editSession!!.newTaskDraftId,
+                // Mirror the UI, which excludes only the in-progress "New task" draft (a reused existing
+                // task stays listed so it can render as the selected entry).
+                excludeTaskId = s.editSession!!.newTaskDraftId,
             )
         assertEquals(1, partialEntries.size)
         assertEquals("New task", partialEntries.single().label)
@@ -1566,7 +1624,9 @@ class SchedulerReducerTest {
                 s,
                 gChild,
                 s.editSession!!.draftText,
-                excludeTaskId = s.editSession!!.selectedAssignTaskId ?: s.editSession!!.newTaskDraftId,
+                // Mirror the UI, which excludes only the in-progress "New task" draft (a reused existing
+                // task stays listed so it can render as the selected entry).
+                excludeTaskId = s.editSession!!.newTaskDraftId,
             )
         assertEquals(2, exactEntries.size)
         assertEquals("New task", exactEntries.first().label)

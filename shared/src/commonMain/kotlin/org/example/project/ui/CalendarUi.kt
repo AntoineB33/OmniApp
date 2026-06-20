@@ -9,6 +9,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -32,6 +34,9 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -56,6 +61,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -566,9 +572,11 @@ fun ChoresManagerWindow(
     titleSuggestions: (String) -> List<String> = { emptyList() },
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
-    // PRD §14: which row's title field currently holds focus — drives the title/id suggestion menus shown
-    // beneath it. Set on focus gain only (kept on focus loss so clicking a menu row doesn't dismiss it).
+    // PRD §14: which row's title field currently holds focus — drives the edit-mode menus shown beneath it.
     var focusedIndex by remember { mutableStateOf<Int?>(null) }
+    // PRD §14: the focused row's edit mode (Change vs Rename), reset to Change whenever focus moves to a
+    // different row (keyed on focusedIndex so each row's editor starts in Change mode).
+    var editMode by remember(focusedIndex) { mutableStateOf(ReminderEditMode.Change) }
     // Per-row editable text (title, days, time-of-day) so an in-progress "3." / "9:" isn't reformatted
     // each keystroke. Seeded once from the incoming chores; live edits drive both this and the pushed list.
     val rows = remember {
@@ -588,6 +596,11 @@ fun ChoresManagerWindow(
             )
         }
     }
+    // PRD §14: reminder ids that already exist — the rows seeded from `chores` when the window opened, plus
+    // any id a row later adopts from the id menu. A row whose id is NOT here is still *being created*, so
+    // (like the "add a checked reminder" window) it shows no Mode selector: it is always in Change Reminder
+    // mode, with no prior title to Rename yet.
+    val existingReminderIds = remember { chores.mapTo(mutableSetOf<String>()) { it.id } }
     // A new row gets a stable, locally-unique id right away (mirroring the reducer's `reminder-{n}` scheme)
     // so it has an identity before the round-trip through onChange — the id menu can then exclude the row
     // being edited (otherwise a brand-new reminder would suggest itself).
@@ -667,6 +680,17 @@ fun ChoresManagerWindow(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 rows.forEachIndexed { index, row ->
+                  // The row is a focus group so that opening the Mode dropdown (a focusable anchor) keeps the
+                  // editor open rather than collapsing it. Entering Edit mode still requires focusing the
+                  // *title* field (set below); the group only governs *staying* in edit mode — the menus
+                  // vanish once focus leaves the whole row.
+                  Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { if (!it.hasFocus && focusedIndex == index) focusedIndex = null }
+                        .focusGroup(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                  ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -717,53 +741,37 @@ fun ChoresManagerWindow(
                         TextButton(onClick = { rows.add(index, newRow()); push() }) { Text("+") }
                     }
 
-                    // PRD §14: under the focused title field, the same id + title-suggestion menus as the
-                    // "add a checked reminder" window. Both fill this row's title. The row's own reminder is
-                    // excluded from the id menu so it can't suggest itself.
+                    // PRD §14: the row's Edit mode — the shared mode selector + menus show beneath the fields
+                    // (and vanish when focus leaves the row). The id menu lists reminders matching the draft
+                    // that are NOT already a row in this window — i.e. reminders that exist only as "add a
+                    // checked reminder" panels on the calendar. Picking one adopts its id (adding that reminder
+                    // to the manager); "New Reminder" keeps this row's own freshly-minted id. The default
+                    // highlight is the first such reminder, or "New Reminder" when there are none.
                     if (focusedIndex == index) {
-                        val entries = reminderMenuEntries(row.title).filter { it.id != row.id }
-                        // The Reminders id menu leads with a "New Reminder" row (mirroring the task cell's
-                        // "New task"): it stands for keeping this row as its own fresh reminder rather than
-                        // adopting an existing one's name. Default selection: "New Reminder" when a reminder
-                        // with this exact title already exists in the window (so a duplicate-named row defaults
-                        // to a distinct new reminder), else the first suggested reminder. Like the task cell
-                        // (which shows its menu only when there's a real task beyond "New task"), this is hidden
-                        // unless at least one existing reminder matches.
-                        if (entries.isNotEmpty()) {
-                            val titleAlreadyExists = entries.any { it.title == row.title }
-                            Text(
-                                text = "Reminders",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            CalendarMenuRow(
-                                label = "New Reminder",
-                                selected = titleAlreadyExists,
-                                onClick = {},
-                            )
-                            entries.forEachIndexed { entryIndex, entry ->
-                                CalendarMenuRow(
-                                    label = entry.title,
-                                    selected = !titleAlreadyExists && entryIndex == 0,
-                                    onClick = { rows[index] = row.copy(title = entry.title); push() },
-                                )
-                            }
-                        }
-                        val suggestions = titleSuggestions(row.title).filter { it != row.title }.take(8)
-                        if (suggestions.isNotEmpty()) {
-                            Text(
-                                text = "Title suggestions",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            suggestions.forEach { suggestion ->
-                                CalendarMenuRow(
-                                    label = suggestion,
-                                    onClick = { rows[index] = row.copy(title = suggestion); push() },
-                                )
-                            }
-                        }
+                        val rowIds = rows.mapTo(mutableSetOf()) { it.id }
+                        val entries = reminderMenuEntries(row.title).filter { it.id !in rowIds }
+                        ReminderEditModeMenus(
+                            mode = editMode,
+                            onSelectMode = { editMode = it },
+                            // A row still being created (a brand-new id, not yet an existing reminder) is
+                            // always in Change Reminder mode — there is nothing to Rename, so hide the selector.
+                            showModeSelector = row.id in existingReminderIds,
+                            idMenuEntries = entries,
+                            newReminderSelected = entries.isEmpty(),
+                            selectedEntryId = entries.firstOrNull()?.id,
+                            onPickNewReminder = {},
+                            onPickEntry = { entry ->
+                                // Adopting an existing reminder makes this row an existing reminder too —
+                                // record its id so the Mode selector (Change/Rename) now appears for it.
+                                existingReminderIds.add(entry.id)
+                                rows[index] = row.copy(id = entry.id, title = entry.title)
+                                push()
+                            },
+                            titleSuggestions = titleSuggestions(row.title).filter { it != row.title }.take(8),
+                            onPickSuggestion = { suggestion -> rows[index] = row.copy(title = suggestion); push() },
+                        )
                     }
+                  }
                 }
                 // Trailing single plus: append a new row at the end of the list.
                 TextButton(onClick = { rows.add(newRow()); push() }) { Text("+ add reminder") }
@@ -2639,7 +2647,8 @@ fun ManualEntryEditWindow(
 /**
  * PRD §14 "add a checked reminder": a floating editor opened from the calendar's right-click menu. Mirrors
  * [ManualEntryEditWindow] but for reminders (which have a title and a stable id): a title field with a
- * **Reminders** id menu (pick an existing reminder by id → fills the title) and a **Title suggestions**
+ * **Reminders** id menu — a leading **"New Reminder"** row (record the check against a brand-new, distinct
+ * reminder) followed by existing reminders by id (pick one → fills the title) — and a **Title suggestions**
  * menu, plus a single **Time** field on the right pre-filled with the right-click time. Save records an
  * already-checked reminder at that time for the chosen reminder id. Rendered by [org.example.project.App].
  */
@@ -2655,15 +2664,19 @@ fun ReminderCheckEditWindow(
     onDismiss: () -> Unit,
 ) {
     var title by remember { mutableStateOf("") }
-    // The explicitly-picked reminder id, if any; typing reverts to resolving the id from the title.
+    // The explicitly-picked reminder id, if any; typing reverts to resolving the id from the title. The
+    // empty string is a distinct sentinel meaning the user explicitly picked "New Reminder" (a brand-new,
+    // distinct reminder) even when the typed title matches an existing one; null means "no explicit pick".
     var selectedReminderId by remember { mutableStateOf<String?>(null) }
     var timeText by remember { mutableStateOf(formatHm(initialMillis, tz)) }
 
     val entries = reminderMenuEntries(title)
-    // The reminder this window will save against: the explicit pick (while still in the menu), else the
-    // reminder whose title matches what's typed, else blank (a brand-new reminder with no recurrence yet).
+    // The reminder this window will save against: an explicit "New Reminder" pick (blank), else the explicit
+    // id pick (while still in the menu), else the reminder whose title matches what's typed, else blank (a
+    // brand-new reminder with no recurrence yet).
     val effectiveReminderId =
         when {
+            selectedReminderId == "" -> ""
             selectedReminderId != null && entries.any { it.id == selectedReminderId } -> selectedReminderId!!
             else -> reminderIdForTitle(title) ?: ""
         }
@@ -2705,43 +2718,28 @@ fun ReminderCheckEditWindow(
                     )
                 }
 
-                // --- Reminders id menu: existing reminders matching the typed title. ---
-                if (entries.isNotEmpty()) {
-                    Text(
-                        text = "Reminders",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    entries.forEach { entry ->
-                        CalendarMenuRow(
-                            label = entry.title,
-                            selected = entry.id == effectiveReminderId,
-                            onClick = {
-                                selectedReminderId = entry.id
-                                titleForReminderId(entry.id)?.let { title = it }
-                            },
-                        )
-                    }
-                }
-
-                // --- Title suggestions menu ---
-                val suggestions = titleSuggestions(title).take(8)
-                if (suggestions.isNotEmpty()) {
-                    Text(
-                        text = "Title suggestions",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    suggestions.forEach { suggestion ->
-                        CalendarMenuRow(
-                            label = suggestion,
-                            onClick = {
-                                title = suggestion
-                                selectedReminderId = reminderIdForTitle(suggestion)
-                            },
-                        )
-                    }
-                }
+                // --- Reminders id menu + Title suggestions, shared with the reminders manager. No mode
+                // selector here: this window is always in "Change Reminder" mode (PRD §14). "New Reminder"
+                // records the check against a brand-new, distinct reminder (effective id blank); picking an
+                // existing reminder attaches the check to that id. ---
+                ReminderEditModeMenus(
+                    mode = ReminderEditMode.Change,
+                    onSelectMode = {},
+                    showModeSelector = false,
+                    idMenuEntries = entries,
+                    newReminderSelected = effectiveReminderId == "",
+                    selectedEntryId = effectiveReminderId.takeIf { it.isNotEmpty() },
+                    onPickNewReminder = { selectedReminderId = "" },
+                    onPickEntry = { entry ->
+                        selectedReminderId = entry.id
+                        titleForReminderId(entry.id)?.let { title = it }
+                    },
+                    titleSuggestions = titleSuggestions(title).take(8),
+                    onPickSuggestion = { suggestion ->
+                        title = suggestion
+                        selectedReminderId = reminderIdForTitle(suggestion)
+                    },
+                )
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2757,6 +2755,169 @@ fun ReminderCheckEditWindow(
                         },
                     ) { Text("Save") }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * A reminders-manager menu row. Looks like [CalendarMenuRow] but selects via a raw tap gesture instead of
+ * `Modifier.clickable`, so a pick does NOT pull focus off the title field — the field stays focused (its
+ * "Edit mode"), keeping the menu open exactly as a task cell keeps its menus active after a pick. [onTap] is
+ * read through [rememberUpdatedState] so the tap detector (started once) always invokes the latest closure.
+ */
+@Composable
+private fun ReminderMenuRow(label: String, selected: Boolean = false, onTap: () -> Unit) {
+    val currentOnTap by rememberUpdatedState(onTap)
+    Text(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pointerInput(Unit) { detectTapGestures { currentOnTap() } }
+            .padding(vertical = 4.dp, horizontal = 8.dp),
+        text = label,
+        style =
+            if (selected) MaterialTheme.typography.bodyMedium
+            else MaterialTheme.typography.bodySmall,
+        color =
+            if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurface,
+    )
+}
+
+/**
+ * PRD §14: the edit modes for a reminder title field, mirroring a task cell's Edit Mode (PRD §4):
+ * [Change] picks *which* reminder this editor refers to (the id menu is shown), [Rename] edits the current
+ * reminder's title in place (the id menu is hidden). Title suggestions show in both modes.
+ */
+private enum class ReminderEditMode { Change, Rename }
+
+/**
+ * The shared **Mode** selector used by every edit-mode editor — the task tree cell (PRD §4), the reminders
+ * manager and the "add a checked reminder" window (PRD §14) — so they all render the identical dropdown.
+ * [selectedLabel] is the current mode's label; [options] are the `(label, onSelect)` choices.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EditModeSelector(
+    selectedLabel: String,
+    options: List<Pair<String, () -> Unit>>,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = modifier,
+    ) {
+        OutlinedTextField(
+            modifier = Modifier
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                .widthIn(max = 220.dp),
+            value = selectedLabel,
+            onValueChange = {},
+            readOnly = true,
+            singleLine = true,
+            label = { Text("Mode") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            options.forEach { (label, onSelect) ->
+                DropdownMenuItem(
+                    text = { Text(label) },
+                    onClick = {
+                        onSelect()
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * PRD §14: the shared edit-mode menu block for a reminder title field — used by both the reminders manager
+ * ([ChoresManagerWindow]) and the "add a checked reminder" window ([ReminderCheckEditWindow]), the reminder
+ * counterpart of the task cell's `EditModeMenus`. It renders a **Mode** selector ([ReminderEditMode]), then —
+ * in [ReminderEditMode.Change] only, and only when at least one existing reminder matches — a **Reminders**
+ * id menu led by a "New Reminder" row, and finally a **Title suggestions** menu shown in both modes. All rows
+ * use [ReminderMenuRow] (a focus-preserving tap), so the block works inside the manager's focus-gated editor
+ * without a dropdown stealing focus. Selection/picking semantics are supplied by the caller.
+ */
+@Composable
+private fun ReminderEditModeMenus(
+    mode: ReminderEditMode,
+    onSelectMode: (ReminderEditMode) -> Unit,
+    idMenuEntries: List<SchedulerDomain.ReminderMenuEntry>,
+    newReminderSelected: Boolean,
+    selectedEntryId: String?,
+    onPickNewReminder: () -> Unit,
+    onPickEntry: (SchedulerDomain.ReminderMenuEntry) -> Unit,
+    titleSuggestions: List<String>,
+    onPickSuggestion: (String) -> Unit,
+    /**
+     * PRD §14: whether to show the Change Reminder / Rename mode selector. The "add a checked reminder"
+     * window passes false — it is always in Change Reminder mode, so the selector never appears there.
+     */
+    showModeSelector: Boolean = true,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (showModeSelector) {
+            // The ExposedDropdownMenu behind [EditModeSelector] opens a focusable popup that steals focus
+            // from the title field, collapsing this focus-gated editor (its `focusedIndex` resets) before
+            // a pick can register — so the mode could never be selected. Render the two modes as
+            // focus-preserving taps instead, the same pattern the id/title menus below use.
+            Text(
+                text = "Mode",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            ReminderMenuRow(
+                label = "Change Reminder",
+                selected = mode == ReminderEditMode.Change,
+                onTap = { onSelectMode(ReminderEditMode.Change) },
+            )
+            ReminderMenuRow(
+                label = "Rename",
+                selected = mode == ReminderEditMode.Rename,
+                onTap = { onSelectMode(ReminderEditMode.Rename) },
+            )
+        }
+
+        // Identity (id) menu — Change mode only, and (mirroring the task cell, which shows its Tasks menu
+        // only beyond "New task") only when an existing reminder matches. Leads with a "New Reminder" row.
+        if (mode == ReminderEditMode.Change && idMenuEntries.isNotEmpty()) {
+            Text(
+                text = "Reminders",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            ReminderMenuRow(
+                label = "New Reminder",
+                selected = newReminderSelected,
+                onTap = onPickNewReminder,
+            )
+            idMenuEntries.forEach { entry ->
+                ReminderMenuRow(
+                    label = entry.title,
+                    selected = entry.id == selectedEntryId,
+                    onTap = { onPickEntry(entry) },
+                )
+            }
+        }
+
+        // Title suggestions — shown in both modes (in Rename mode, picking one renames to that title).
+        if (titleSuggestions.isNotEmpty()) {
+            Text(
+                text = "Title suggestions",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            titleSuggestions.forEach { suggestion ->
+                ReminderMenuRow(label = suggestion, onTap = { onPickSuggestion(suggestion) })
             }
         }
     }

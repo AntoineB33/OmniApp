@@ -33,10 +33,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -110,6 +106,7 @@ import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.SelectionNavigate
+import org.example.project.ui.EditModeSelector
 import kotlinx.coroutines.withTimeoutOrNull
 
 private object SheetColors {
@@ -780,7 +777,6 @@ private fun CellListSection(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditModeMenus(
     state: SchedulerState,
@@ -789,97 +785,80 @@ private fun EditModeMenus(
     onIntent: (SchedulerIntent) -> Unit,
 ) {
     val session = state.editSession ?: return
-    var modeMenuExpanded by remember(session.cellId) { mutableStateOf(false) }
     val modeLabel =
         when (session.mode) {
             CellEditMode.ChangeTask -> "Change Task"
             CellEditMode.Rename -> "Rename"
         }
+    // A cell that had no task before this edit began is being *created* — it is always in Change Task mode
+    // (there is no existing title to Rename), so the Mode selector is hidden, mirroring the reminders manager.
+    val isBeingCreated = session.treeBefore.cells[cellId]?.taskId == null
+    val showSelector = !isBeingCreated
+
+    // Only the in-progress "New task" draft is hidden (it's already the "New task" row itself). A picked
+    // existing task must stay listed so it can render as selected (purple) — excluding it here would drop it
+    // from the entries and leave [changeTaskMenuSelectedIndex] unable to match.
+    val taskEntries =
+        if (session.mode == CellEditMode.ChangeTask) {
+            SchedulerDomain.changeTaskMenuEntries(
+                state,
+                cellId,
+                draftText,
+                excludeTaskId = session.newTaskDraftId,
+            )
+        } else {
+            emptyList()
+        }
+    val showTasks = taskEntries.size > 1
+    val suggestions = SchedulerDomain.titleSuggestions(state, draftText)
+
+    // Render nothing when there is no menu to show, so the empty container takes no vertical space and the
+    // row below is not pushed down by a blank gap. The row only lowers while a menu is actually visible.
+    if (!showSelector && !showTasks && suggestions.isEmpty()) return
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 4.dp),
+            .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        ExposedDropdownMenuBox(
-            expanded = modeMenuExpanded,
-            onExpandedChange = { modeMenuExpanded = it },
-        ) {
-            OutlinedTextField(
-                modifier = Modifier
-                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                    .widthIn(max = 220.dp),
-                value = modeLabel,
-                onValueChange = {},
-                readOnly = true,
-                singleLine = true,
-                label = { Text("Mode") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modeMenuExpanded) },
-                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+        if (showSelector) {
+            EditModeSelector(
+                selectedLabel = modeLabel,
+                options = listOf(
+                    "Change Task" to { onIntent(SchedulerIntent.SetEditMode(CellEditMode.ChangeTask)) },
+                    "Rename" to { onIntent(SchedulerIntent.SetEditMode(CellEditMode.Rename)) },
+                ),
             )
-            ExposedDropdownMenu(
-                expanded = modeMenuExpanded,
-                onDismissRequest = { modeMenuExpanded = false },
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Change Task") },
-                    onClick = {
-                        onIntent(SchedulerIntent.SetEditMode(CellEditMode.ChangeTask))
-                        modeMenuExpanded = false
-                    },
+        }
+
+        if (showTasks) {
+            val selectedIndex =
+                SchedulerDomain.changeTaskMenuSelectedIndex(
+                    taskEntries,
+                    session.selectedAssignTaskId,
                 )
-                DropdownMenuItem(
-                    text = { Text("Rename") },
+            Text(
+                text = "Tasks",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            taskEntries.forEachIndexed { index, entry ->
+                TaskMenuRow(
+                    label = entry.label,
+                    selected = index == selectedIndex,
+                    enabled = entry.assignable,
                     onClick = {
-                        onIntent(SchedulerIntent.SetEditMode(CellEditMode.Rename))
-                        modeMenuExpanded = false
+                        if (entry.taskId == null) {
+                            onIntent(SchedulerIntent.SelectCreateAssignTask)
+                        } else {
+                            onIntent(SchedulerIntent.PickTaskFromMenu(entry.taskId))
+                        }
                     },
                 )
             }
         }
 
-        if (session.mode == CellEditMode.ChangeTask) {
-            // Only the in-progress "New task" draft is hidden (it's already the "New task" row itself). A
-            // picked existing task must stay listed so it can render as selected (purple) — excluding it
-            // here would drop it from the entries and leave [changeTaskMenuSelectedIndex] unable to match.
-            val excludeFromMenu = session.newTaskDraftId
-            val taskEntries =
-                SchedulerDomain.changeTaskMenuEntries(
-                    state,
-                    cellId,
-                    draftText,
-                    excludeTaskId = excludeFromMenu,
-                )
-            if (taskEntries.size > 1) {
-                val selectedIndex =
-                    SchedulerDomain.changeTaskMenuSelectedIndex(
-                        taskEntries,
-                        session.selectedAssignTaskId,
-                    )
-                Text(
-                    text = "Tasks",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                taskEntries.forEachIndexed { index, entry ->
-                    TaskMenuRow(
-                        label = entry.label,
-                        selected = index == selectedIndex,
-                        enabled = entry.assignable,
-                        onClick = {
-                            if (entry.taskId == null) {
-                                onIntent(SchedulerIntent.SelectCreateAssignTask)
-                            } else {
-                                onIntent(SchedulerIntent.PickTaskFromMenu(entry.taskId))
-                            }
-                        },
-                    )
-                }
-            }
-        }
-
-        val suggestions = SchedulerDomain.titleSuggestions(state, draftText)
         if (suggestions.isNotEmpty()) {
             Text(
                 text = "Title suggestions",
@@ -1967,13 +1946,15 @@ private fun TaskRow(
             )
         }
         if (isEditing) {
+            // The menu (mode selector / task list / title suggestions) renders directly below the cell
+            // without its own white background or border, so it no longer appears as a stark white bar
+            // under the (light-blue) editing row. The box only supplies indentation; its own padding
+            // comes from [EditModeMenus], which renders nothing at all when there is no menu to show —
+            // so the row below is pushed down only while a menu is actually visible.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = (depth * INDENT_STEP_DP).dp)
-                    .background(SheetColors.cellBackground)
-                    .border(1.dp, SheetColors.grid)
-                    .padding(8.dp),
+                    .padding(start = (depth * INDENT_STEP_DP).dp),
             ) {
                 editMenus?.invoke()
             }

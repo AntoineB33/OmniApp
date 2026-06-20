@@ -297,6 +297,26 @@ class SchedulerChoresTest {
     }
 
     @Test
+    fun add_checked_reminder_creates_a_reminder_identity_not_yet_in_the_manager() {
+        // PRD §14: a reminder created via "add a checked reminder" is a known reminder identity (sourced
+        // from its panel) even though it is not yet a row in the reminders manager. The id menus surface
+        // it so the user can add it to the manager (or attach further checks to it).
+        val today = 1_000_000_000_000L
+        val at = today + 9 * HOUR
+        val s = SchedulerReducer.reduce(
+            SchedulerState.empty(),
+            SchedulerIntent.AddCheckedReminder(reminderId = "reminder-0", title = "Stretch", atMillis = at),
+        )
+        assertTrue(s.chores.isEmpty(), "no manager row is created by 'add a checked reminder'")
+        assertEquals(
+            listOf("reminder-0" to "Stretch"),
+            SchedulerDomain.reminderMenuEntries(s, "Stretch").map { it.id to it.title },
+        )
+        assertEquals("Stretch", SchedulerDomain.reminderTitleForId(s, "reminder-0"))
+        assertEquals("reminder-0", SchedulerDomain.reminderIdForTitle(s, "Stretch"))
+    }
+
+    @Test
     fun regenerating_reminders_preserves_a_checked_one_and_leaves_other_panels_alone() {
         val today = 1_000_000_000_000L
         // A previously checked reminder occurrence (same deterministic id the scheduler will regenerate).

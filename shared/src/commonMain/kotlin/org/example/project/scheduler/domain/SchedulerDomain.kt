@@ -1707,28 +1707,55 @@ object SchedulerDomain {
         return entries.map { if (it.id.isBlank()) it.copy(id = nextId()) else it }
     }
 
-    /** PRD §14 "add a checked reminder" id menu: existing reminders whose title matches [draftText]. */
-    fun reminderMenuEntries(state: SchedulerState, draftText: String): List<ReminderMenuEntry> {
-        val q = draftText.trim()
-        return state.chores
-            .filter { it.title.isNotBlank() && (q.isBlank() || it.title.contains(q, ignoreCase = true)) }
-            .map { ReminderMenuEntry(it.id, it.title) }
+    /**
+     * PRD §14: the reminder id encoded in a manually-added "add a checked reminder" panel id
+     * (`chore-manual/{reminderId}/{suffix}`). Blank for a brand-new (id-less) reminder → null.
+     */
+    private fun reminderIdOfManualPanel(panelId: String): String? =
+        panelId.removePrefix(MANUAL_REMINDER_PREFIX).substringBeforeLast('/').ifBlank { null }
+
+    /**
+     * PRD §14: every known reminder identity (stable id + title) — the reminders configured in the
+     * reminders manager ([SchedulerState.chores]) plus those that exist *only* as manually-added
+     * "add a checked reminder" panels (created on the calendar and not yet added as a manager row).
+     * A manager reminder wins when the same id appears in both; manager reminders come first.
+     */
+    fun allReminderEntries(state: SchedulerState): List<ReminderMenuEntry> {
+        val byId = LinkedHashMap<String, String>()
+        for (chore in state.chores) {
+            if (chore.id.isNotBlank() && chore.title.isNotBlank() && !byId.containsKey(chore.id)) {
+                byId[chore.id] = chore.title
+            }
+        }
+        for (panel in state.panels) {
+            if (!panel.chore || !panel.id.startsWith(MANUAL_REMINDER_PREFIX) || panel.title.isBlank()) continue
+            val rid = reminderIdOfManualPanel(panel.id) ?: continue
+            if (!byId.containsKey(rid)) byId[rid] = panel.title
+        }
+        return byId.map { (id, title) -> ReminderMenuEntry(id, title) }
     }
 
-    /** PRD §14 "add a checked reminder": distinct reminder titles matching [input], for the suggestions menu. */
+    /** PRD §14 reminder id menu: known reminders ([allReminderEntries]) whose title matches [draftText]. */
+    fun reminderMenuEntries(state: SchedulerState, draftText: String): List<ReminderMenuEntry> {
+        val q = draftText.trim()
+        return allReminderEntries(state)
+            .filter { q.isBlank() || it.title.contains(q, ignoreCase = true) }
+    }
+
+    /** PRD §14 reminder title-suggestion menu: distinct reminder titles matching [input]. */
     fun reminderTitleSuggestions(state: SchedulerState, input: String): List<String> {
         val q = input.trim()
-        return state.chores.map { it.title }.filter { it.isNotBlank() }.distinct()
+        return allReminderEntries(state).map { it.title }.distinct()
             .filter { q.isBlank() || it.contains(q, ignoreCase = true) }
     }
 
-    /** PRD §14: the reminder id of the first reminder with this exact [title], if any. */
+    /** PRD §14: the reminder id of the first known reminder with this exact [title], if any. */
     fun reminderIdForTitle(state: SchedulerState, title: String): String? =
-        state.chores.firstOrNull { it.title == title }?.id
+        allReminderEntries(state).firstOrNull { it.title == title }?.id
 
-    /** PRD §14: the title of the reminder with this [id], if any. */
+    /** PRD §14: the title of the known reminder with this [id], if any. */
     fun reminderTitleForId(state: SchedulerState, id: String): String? =
-        state.chores.firstOrNull { it.id == id }?.title
+        allReminderEntries(state).firstOrNull { it.id == id }?.title
 
     fun changeTaskMenuSelectedIndex(
         entries: List<ChangeTaskMenuEntry>,
