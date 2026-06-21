@@ -778,13 +778,20 @@ fun ChoresManagerWindow(
                     // to the manager); "New Reminder" keeps this row's own freshly-minted id. The default
                     // highlight is the first such reminder, or "New Reminder" when there are none.
                     if (focusedIndex == index) {
-                        // PRD §14: exclude reminders already represented by a row in this window, keyed by each
-                        // row's *resolved* id — a row that adopts a calendar-only reminder by typing its name
-                        // counts as that reminder here even before the manager round-trips, so the menu never
-                        // re-suggests a reminder that is already a row (including this row's own resolved one,
-                        // mirroring how a seeded existing row excludes itself).
-                        val resolvedIds = resolvedRowIds().toSet()
-                        val entries = reminderMenuEntries(row.title).filter { it.id !in resolvedIds }
+                        // PRD §14: exclude reminders already represented by a row — every OTHER row's resolved
+                        // id, plus the focused row's **own** id. Excluding the focused row's own id (never the
+                        // reminder it merely adopts by default, which always has a different id since minted ids
+                        // dodge known reminder ids) hides its provisional "New Reminder" self-identity: that id
+                        // is only persisted as a chore while "New Reminder" is selected and must not reappear as
+                        // a selectable entry. The adopted calendar-only reminder (and "New Reminder") still show,
+                        // so selecting a matching title never empties the menu.
+                        val resolved = resolvedRowIds()
+                        val excludedIds = buildSet {
+                            rows.forEachIndexed { i, r ->
+                                add(if (i == index) r.id else resolved[i])
+                            }
+                        }
+                        val entries = reminderMenuEntries(row.title).filter { it.id !in excludedIds }
                         ReminderEditModeMenus(
                             mode = editMode,
                             onSelectMode = { editMode = it },
