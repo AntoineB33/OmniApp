@@ -162,14 +162,17 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §14 "add a checked reminder": record that the reminder [reminderId] (titled [title]) was done at
-     * [atMillis] — places an already-checked reminder tag at that time. Recorded as a Calendar History Unit.
-     * The added tag survives reminder regeneration (it is not produced by the recurrence scheduler).
+     * PRD §14 "add reminder": place a manually-added reminder tag for [reminderId] (titled [title]) at
+     * [atMillis], with the user-chosen [checked] (already done) and [pinned] (stays put) switches. Recorded
+     * as a Calendar History Unit. The tag survives reminder regeneration while it is checked **or** pinned
+     * (it is not produced by the recurrence scheduler); checking anchors the reminder's recurrence.
      */
-    data class AddCheckedReminder(
+    data class AddReminder(
         val reminderId: String,
         val title: String,
         val atMillis: Long,
+        val checked: Boolean,
+        val pinned: Boolean,
     ) : SchedulerIntent
 
     /**

@@ -54,7 +54,7 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state, "Task text") { applySetTaskText(it, intent.taskId, intent.text) })
             is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis, intent.nowMillis)
             is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked, intent.nowMillis)
-            is SchedulerIntent.AddCheckedReminder -> reduceAddCheckedReminder(state, intent.reminderId, intent.title, intent.atMillis)
+            is SchedulerIntent.AddReminder -> reduceAddReminder(state, intent.reminderId, intent.title, intent.atMillis, intent.checked, intent.pinned)
             is SchedulerIntent.SetSideTasks ->
                 if (state.sideTasks == intent.sideTasks) state
                 else state.copy(sideTasks = intent.sideTasks)
@@ -475,15 +475,19 @@ object SchedulerReducer {
     }
 
     /**
-     * PRD §14 "add a checked reminder": place an already-checked reminder tag at [atMillis] for reminder
-     * [reminderId] (display [title]). It is a zero-duration chore panel with the manual prefix so reminder
-     * regeneration keeps it. Recorded on the Calendar history stack (undoable). No-op for a blank title.
+     * PRD §14 "add reminder": place a manually-added reminder tag at [atMillis] for reminder [reminderId]
+     * (display [title]) with the chosen [checked] / [pinned] switches. It is a zero-duration chore panel with
+     * the manual prefix; reminder regeneration keeps it while it is checked **or** pinned (an unchecked,
+     * unpinned tag has no reference and is dropped on the next regeneration). Recorded on the Calendar history
+     * stack (undoable). No-op for a blank title.
      */
-    private fun reduceAddCheckedReminder(
+    private fun reduceAddReminder(
         state: SchedulerState,
         reminderId: String,
         title: String,
         atMillis: Long,
+        checked: Boolean,
+        pinned: Boolean,
     ): SchedulerState {
         if (title.isBlank()) return state
         // A brand-new reminder (no id picked) gets a freshly-minted stable id rather than a blank one, so the
@@ -498,13 +502,14 @@ object SchedulerReducer {
             title = title,
             startEpochMillis = atMillis,
             endEpochMillis = atMillis,
-            pinned = false,
+            pinned = pinned,
             auto = false,
             chore = true,
-            checked = true,
-            checkedAtMillis = atMillis,
+            checked = checked,
+            // PRD §14: checking freezes the tag at the moment placed (anchors recurrence); unchecked has none.
+            checkedAtMillis = if (checked) atMillis else null,
         )
-        return commitPanels(next, next.panels + panel, label = "Add checked reminder")
+        return commitPanels(next, next.panels + panel, label = "Add reminder")
     }
 
     private fun reduceCopySelection(state: SchedulerState): SchedulerState {

@@ -380,7 +380,7 @@ class SchedulerChoresTest {
         val reminderId = withReminder.chores.single().id
         val added = SchedulerReducer.reduce(
             withReminder,
-            SchedulerIntent.AddCheckedReminder(reminderId, "Weekly", at),
+            SchedulerIntent.AddReminder(reminderId, "Weekly", at, checked = true, pinned = false),
         )
         // A checked, zero-duration manual reminder tag now exists at the chosen time, tied to the id.
         val manual = added.panels.single { it.id.startsWith(SchedulerDomain.MANUAL_REMINDER_PREFIX) }
@@ -394,8 +394,46 @@ class SchedulerChoresTest {
     }
 
     @Test
+    fun add_reminder_pinned_but_unchecked_survives_regeneration_and_is_referenced() {
+        // PRD §14 "add reminder": a pinned, *unchecked* manual reminder is a placement (not a completion). It
+        // must survive regeneration on its pin (no row backs it), and its id is a live reference (selectable
+        // in the id menus), even though no checked tag exists for it.
+        val today = 1_000_000_000_000L
+        val at = today + 9 * HOUR
+        val s = SchedulerReducer.reduce(
+            SchedulerState.empty(),
+            SchedulerIntent.AddReminder(reminderId = "", title = "Floss", atMillis = at, checked = false, pinned = true),
+        )
+        val manual = s.panels.single { it.id.startsWith(SchedulerDomain.MANUAL_REMINDER_PREFIX) }
+        assertTrue(manual.chore && manual.pinned && !manual.checked)
+        assertNull(manual.checkedAtMillis) // unchecked → no completion anchor
+
+        val regen = SchedulerDomain.regenerateChorePanels(s.panels, s.chores, todayStartMillis = today)
+        assertTrue(regen.any { it.id == manual.id && it.pinned && !it.checked }, "pinned tag survives regeneration")
+
+        // The reminder identity is referenced (kept alive) and selectable, but it is NOT a completion.
+        val rid = manual.id.removePrefix(SchedulerDomain.MANUAL_REMINDER_PREFIX).substringBeforeLast('/')
+        assertTrue(rid in SchedulerDomain.referencedReminderIds(s))
+        assertFalse(rid in SchedulerDomain.checkedReminderIds(s))
+        assertEquals(listOf("Floss"), SchedulerDomain.reminderMenuEntries(s, "Floss").map { it.title })
+    }
+
+    @Test
+    fun add_reminder_unchecked_and_unpinned_does_not_survive_regeneration() {
+        // PRD §14: an unchecked, unpinned manual reminder has no reference — it is dropped on the next
+        // regeneration (GC), like a stale orphan tag.
+        val today = 1_000_000_000_000L
+        val s = SchedulerReducer.reduce(
+            SchedulerState.empty(),
+            SchedulerIntent.AddReminder(reminderId = "", title = "Ghost", atMillis = today + 9 * HOUR, checked = false, pinned = false),
+        )
+        val regen = SchedulerDomain.regenerateChorePanels(s.panels, s.chores, todayStartMillis = today)
+        assertTrue(regen.none { it.title == "Ghost" }, "an unchecked, unpinned manual reminder is GC'd")
+    }
+
+    @Test
     fun reducer_flow_add_checked_reminder_then_weekly_row_recurs_on_that_weekday() {
-        // Exact reported flow through the real intents: (1) right-click on a past Monday → AddCheckedReminder
+        // Exact reported flow through the real intents: (1) right-click on a past Monday → AddReminder (checked)
         // with a brand-new id, (2) open the reminders manager, add a row that adopts that reminder's id and
         // set it to "once per week" → SetChores. The generated cadence must land on Mondays, not today.
         val today = 1_000_000_000_000L
@@ -403,7 +441,7 @@ class SchedulerChoresTest {
 
         val afterCheck = SchedulerReducer.reduce(
             SchedulerState.empty(),
-            SchedulerIntent.AddCheckedReminder(reminderId = "", title = "Weekly", atMillis = monday),
+            SchedulerIntent.AddReminder(reminderId = "", title = "Weekly", atMillis = monday, checked = true, pinned = false),
         )
         // The row adopts the manual reminder's id (the id menu default), exactly as the UI does.
         val reminderId = SchedulerDomain.reminderIdForTitle(afterCheck, "Weekly")
@@ -469,7 +507,7 @@ class SchedulerChoresTest {
         val at = today + 9 * HOUR
         val s = SchedulerReducer.reduce(
             SchedulerState.empty(),
-            SchedulerIntent.AddCheckedReminder(reminderId = "reminder-0", title = "Stretch", atMillis = at),
+            SchedulerIntent.AddReminder(reminderId = "reminder-0", title = "Stretch", atMillis = at, checked = true, pinned = false),
         )
         assertTrue(s.chores.isEmpty(), "no manager row is created by 'add a checked reminder'")
         assertEquals(
@@ -489,7 +527,7 @@ class SchedulerChoresTest {
         val at = today + 9 * HOUR
         val s = SchedulerReducer.reduce(
             SchedulerState.empty(),
-            SchedulerIntent.AddCheckedReminder(reminderId = "", title = "y", atMillis = at),
+            SchedulerIntent.AddReminder(reminderId = "", title = "y", atMillis = at, checked = true, pinned = false),
         )
         val entries = SchedulerDomain.reminderMenuEntries(s, "y")
         assertEquals(listOf("y"), entries.map { it.title })
@@ -506,7 +544,7 @@ class SchedulerChoresTest {
         val today = 1_000_000_000_000L
         val s = SchedulerReducer.reduce(
             SchedulerState.empty(),
-            SchedulerIntent.AddCheckedReminder(reminderId = "", title = "yoga", atMillis = today + 9 * HOUR),
+            SchedulerIntent.AddReminder(reminderId = "", title = "yoga", atMillis = today + 9 * HOUR, checked = true, pinned = false),
         )
         assertEquals(emptyList(), SchedulerDomain.reminderMenuEntries(s, ""), "empty field → no id menu")
         assertEquals(emptyList(), SchedulerDomain.reminderMenuEntries(s, "y"), "partial draft must not match")

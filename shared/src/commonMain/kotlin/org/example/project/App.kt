@@ -62,7 +62,7 @@ import org.example.project.ui.raiseOnPress
 import org.example.project.ui.LateralMenu
 import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.PlacedRecord
-import org.example.project.ui.ReminderCheckEditWindow
+import org.example.project.ui.ReminderEditWindow
 import org.example.project.ui.TimeSimPanel
 import org.example.project.ui.startOfWeek
 
@@ -563,8 +563,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                     fullEndMillis = startMillis + span,
                                 )
                             },
-                            // PRD §14 "add a checked reminder": open the reminder-check window at the click.
-                            onAddCheckedReminderAt = { atMillis -> addingReminderAtMillis = atMillis },
+                            // PRD §14 "add reminder": open the reminder editor at the click.
+                            onAddReminderAt = { atMillis -> addingReminderAtMillis = atMillis },
                             // PRD §8 (uniform blocks): committing a drag/resize updates the panel
                             // (auto blocks become user-authored), or pins a record into a panel.
                             onCommitBounds = { block, newStart, newEnd, allowOverlap ->
@@ -630,11 +630,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             }
                         }
 
-                        // PRD §14 "add a checked reminder": the floating reminder-check editor, above
-                        // every floating window (same z-layer as the manual edit window).
+                        // PRD §14 "add reminder": the floating reminder editor, above every floating window
+                        // (same z-layer as the manual edit window).
                         addingReminderAtMillis?.let { atMillis ->
                             Box(Modifier.fillMaxSize().zIndex(100f)) {
-                                ReminderCheckEditWindow(
+                                ReminderEditWindow(
                                     initialMillis = atMillis,
                                     tz = tz,
                                     reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
@@ -642,8 +642,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                     reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
                                     titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
                                     onDismiss = { addingReminderAtMillis = null },
-                                    onSave = { reminderId, title, at ->
-                                        vm.dispatch(SchedulerIntent.AddCheckedReminder(reminderId, title, at))
+                                    onSave = { reminderId, title, at, checked, pinned ->
+                                        vm.dispatch(SchedulerIntent.AddReminder(reminderId, title, at, checked, pinned))
                                         addingReminderAtMillis = null
                                     },
                                 )
@@ -671,9 +671,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
                             // A new row's id must avoid every known reminder id (including calendar-only ones).
                             knownReminderIds = { SchedulerDomain.allReminderEntries(schedulerState).mapTo(mutableSetOf()) { it.id } },
-                            // PRD §14: reminder ids kept alive by a checked tag — the focused row shows its own
-                            // id in the menu only when it is one of these (independently referenced).
-                            checkedReminderIds = { SchedulerDomain.checkedReminderIds(schedulerState) },
+                            // PRD §14: reminder ids kept alive by a checked or pinned tag — the focused row
+                            // shows its own id in the menu only when it is one of these (independently referenced).
+                            referencedReminderIds = { SchedulerDomain.referencedReminderIds(schedulerState) },
                             // PRD §14 "constrained in": resolve a reminder name ↔ id for the constraint picker.
                             reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
                             titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },

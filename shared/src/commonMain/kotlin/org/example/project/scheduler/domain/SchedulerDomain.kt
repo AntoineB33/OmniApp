@@ -1530,8 +1530,9 @@ object SchedulerDomain {
     /**
      * PRD §14 "the calendar updates each time the reminders manager changes": rebuild the reminder tags in
      * [panels] from [chores] (anchored at [todayStartMillis]), leaving all non-reminder panels untouched.
-     * A reminder's **checked state survives** the regeneration (mirroring the old chore pin behaviour): a
-     * freshly generated tag whose deterministic id matches one the user had already checked stays checked.
+     * A reminder tag the user placed by hand survives the regeneration while it is **checked or pinned**
+     * (mirroring the old chore pin behaviour): a freshly generated tag whose deterministic id matches one of
+     * those kept tags is dropped in its favour, so its checked/pinned state is preserved.
      */
     fun regenerateChorePanels(
         panels: List<TaskPanel>,
@@ -1542,31 +1543,33 @@ object SchedulerDomain {
     ): List<TaskPanel> {
         val withIds = assignReminderIds(chores)
         val nonChore = panels.filter { !it.chore }
-        // PRD §14: a **checked** reminder tag is a completion record keyed by its reminder's stable id —
-        // it survives regeneration AND row edits/reorder/detach (manual "add a checked reminder" tags and
-        // previously-checked generated tags alike). Keep them all verbatim; they are the only persistent
-        // reminder references besides the manager rows.
-        val checked = panels.filter { it.chore && it.checked }
-        val checkedIds = checked.mapTo(HashSet()) { it.id }
-        // PRD §14 tie-breaker: anchor each reminder's cadence at its most recent checked occurrence, so the
-        // recurrence lines up with past completions (a weekly reminder checked on a Monday recurs on Mondays).
+        // PRD §14: a **checked** (a completion record) or **pinned** reminder tag is a persistent reference
+        // keyed by its reminder's stable id — it survives regeneration AND row edits/reorder/detach (manual
+        // "add reminder" tags and previously-checked generated tags alike). Keep them all verbatim; they are
+        // the only persistent reminder references besides the manager rows.
+        val kept = panels.filter { it.chore && (it.checked || it.pinned) }
+        val keptIds = kept.mapTo(HashSet()) { it.id }
+        // PRD §14 tie-breaker: anchor each reminder's cadence at its most recent **checked** occurrence (a
+        // completion), so the recurrence lines up with past completions (a weekly reminder checked on a
+        // Monday recurs on Mondays). A pinned-but-unchecked tag is a placement, not a completion — it does
+        // not anchor.
         val anchorMillisByReminderId = HashMap<String, Long>()
-        for (p in checked) {
+        for (p in kept) {
+            if (!p.checked) continue
             val rid = reminderIdOfChorePanel(p.id) ?: continue
             val existing = anchorMillisByReminderId[rid]
             if (existing == null || p.startEpochMillis > existing) anchorMillisByReminderId[rid] = p.startEpochMillis
         }
-        // Fresh **unchecked** tags for the current rows, skipping occurrences already kept as checked.
-        // Unchecked chore panels that are not reproduced here (stale generated tags, or orphans whose
-        // reminder is no longer a row) are dropped — an id referenced by neither a row nor a checked tag
-        // ceases to exist (PRD §14 garbage collection).
+        // Fresh tags for the current rows, skipping occurrences already kept. Chore panels that are not
+        // reproduced here (stale generated tags, or orphans whose reminder is no longer a row and is neither
+        // checked nor pinned) are dropped — an id referenced by nothing ceases to exist (PRD §14 GC).
         val generated =
             choreScheduledPanels(withIds, todayStartMillis, horizonDays, nowMillis, anchorMillisByReminderId)
-                .filter { it.id !in checkedIds }
-        return nonChore + checked + generated
+                .filter { it.id !in keptIds }
+        return nonChore + kept + generated
     }
 
-    /** PRD §14: id prefix marking a checked reminder added by hand ("add a checked reminder"), of the form
+    /** PRD §14: id prefix marking a reminder added by hand ("add reminder"), of the form
      * `chore-manual/{reminderId}/{uniqueSuffix}`. These survive reminder regeneration (unlike generated tags). */
     const val MANUAL_REMINDER_PREFIX = "chore-manual/"
 
@@ -1863,6 +1866,17 @@ object SchedulerDomain {
             .toSet()
 
     /**
+     * PRD §14: reminder ids kept alive by a calendar tag the user placed by hand — a **checked** tag (a
+     * completion) or a **pinned** tag (a placement). These are the persistent references besides the manager
+     * rows: such an id survives a row being detached/removed and stays selectable in the id menus.
+     */
+    fun referencedReminderIds(state: SchedulerState): Set<String> =
+        state.panels.asSequence()
+            .filter { it.chore && (it.checked || it.pinned) }
+            .mapNotNull { reminderIdOfChorePanel(it.id) }
+            .toSet()
+
+    /**
      * PRD §14: mint a stable `reminder-{n}` id that is not used by any manager reminder
      * ([SchedulerState.chores]) nor encoded in any existing manually-added "add a checked reminder" panel.
      * "Add a checked reminder" calls this when the user records a brand-new reminder (no id picked) so the
@@ -1872,9 +1886,9 @@ object SchedulerDomain {
     fun freshReminderId(state: SchedulerState): String {
         val used = HashSet<String>()
         for (chore in state.chores) if (chore.id.isNotBlank()) used.add(chore.id)
-        // Dodge every reminder id that has a checked tag (manual or generated), so a brand-new reminder
-        // never collides with an existing completion record.
-        used.addAll(checkedReminderIds(state))
+        // Dodge every reminder id kept alive by a checked or pinned tag, so a brand-new reminder never
+        // collides with an existing completion record or pinned placement.
+        used.addAll(referencedReminderIds(state))
         var n = 0
         while (used.contains("reminder-$n")) n++
         return "reminder-$n"
@@ -1882,10 +1896,11 @@ object SchedulerDomain {
 
     /**
      * PRD §14: every **referenced** reminder identity (stable id + title) — the reminders configured in the
-     * reminders manager ([SchedulerState.chores]) plus those referenced *only* by a **checked** tag on the
-     * calendar (a manually-added "add a checked reminder", or a generated tag the user checked, whose row was
-     * since removed/detached). An unchecked generated tag is not a reference (it regenerates from its row), so
-     * it is not listed. A manager reminder wins when the same id appears in both; manager reminders come first.
+     * reminders manager ([SchedulerState.chores]) plus those referenced *only* by a **checked or pinned** tag
+     * on the calendar (a manually-added "add reminder", or a generated tag the user checked, whose row was
+     * since removed/detached). A plain unchecked, unpinned generated tag is not a reference (it regenerates
+     * from its row), so it is not listed. A manager reminder wins when the same id appears in both; manager
+     * reminders come first.
      */
     fun allReminderEntries(state: SchedulerState): List<ReminderMenuEntry> {
         val byId = LinkedHashMap<String, String>()
@@ -1895,7 +1910,7 @@ object SchedulerDomain {
             }
         }
         for (panel in state.panels) {
-            if (!panel.chore || !panel.checked || panel.title.isBlank()) continue
+            if (!panel.chore || !(panel.checked || panel.pinned) || panel.title.isBlank()) continue
             val rid = reminderIdOfChorePanel(panel.id) ?: continue
             if (!byId.containsKey(rid)) byId[rid] = panel.title
         }

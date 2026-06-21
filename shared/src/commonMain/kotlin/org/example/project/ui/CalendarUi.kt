@@ -577,11 +577,11 @@ fun ChoresManagerWindow(
      */
     knownReminderIds: () -> Set<String> = { emptySet() },
     /**
-     * PRD §14: reminder ids that have at least one **checked** tag on the calendar. A focused row whose own
-     * id is in here is a *real* reminder (independently referenced), so the id menu offers it (the row can
-     * detach from it and the id survives via the check) instead of hiding it as a provisional self-identity.
+     * PRD §14: reminder ids kept alive by a **checked or pinned** tag on the calendar. A focused row whose
+     * own id is in here is a *real* reminder (independently referenced), so the id menu offers it (the row can
+     * detach from it and the id survives via that tag) instead of hiding it as a provisional self-identity.
      */
-    checkedReminderIds: () -> Set<String> = { emptySet() },
+    referencedReminderIds: () -> Set<String> = { emptySet() },
     /** PRD §14 "constrained in": the reminder id of the first known reminder whose title is exactly this. */
     reminderIdForTitle: (String) -> String? = { null },
     /** PRD §14 "constrained in": the title of a known reminder id (shown beside the "constrained in" button). */
@@ -831,22 +831,22 @@ fun ChoresManagerWindow(
                         // id, plus the focused row's **own** id. Excluding the focused row's own id hides its
                         // provisional "New Reminder" self-identity (only persisted while "New Reminder" is
                         // selected; it must not reappear as a selectable entry). EXCEPTION: when the row's own
-                        // id is independently referenced by a checked reminder, it is a real reminder — show it
-                        // so the user can re-pick it or detach (picking "New Reminder") while the checked tag
+                        // id is independently referenced by a checked or pinned tag, it is a real reminder —
+                        // show it so the user can re-pick it or detach (picking "New Reminder") while that tag
                         // keeps it alive. The reminder a row merely adopts by default always has a different id
                         // (minted ids dodge known reminder ids), so it is never the excluded one.
-                        val checkedIds = checkedReminderIds()
-                        val ownChecked = row.id in checkedIds
+                        val referencedIds = referencedReminderIds()
+                        val ownReferenced = row.id in referencedIds
                         val resolved = resolvedRowIds()
                         val excludedIds = buildSet {
                             rows.forEachIndexed { i, r ->
-                                if (i == index) { if (!ownChecked) add(r.id) } else add(resolved[i])
+                                if (i == index) { if (!ownReferenced) add(r.id) } else add(resolved[i])
                             }
                         }
                         val entries = reminderMenuEntries(row.title).filter { it.id !in excludedIds }
-                        // A checked-referenced own id makes the row a real reminder, so its "New Reminder" pick
-                        // no longer forces the New highlight: the menu defaults to the first matching reminder.
-                        val provisionalNew = row.explicitNew && !ownChecked
+                        // A referenced own id makes the row a real reminder, so its "New Reminder" pick no
+                        // longer forces the New highlight: the menu defaults to the first matching reminder.
+                        val provisionalNew = row.explicitNew && !ownReferenced
                         // The default highlight mirrors the resolved id in push(): "New Reminder" when the
                         // user explicitly chose it (or nothing matches), else the first matching reminder.
                         val newReminderSelected = provisionalNew || entries.isEmpty()
@@ -855,11 +855,11 @@ fun ChoresManagerWindow(
                             onSelectMode = { editMode = it },
                             // The Mode selector must appear whenever the id menu resolves to a real reminder —
                             // i.e. anything other than "New Reminder". That covers a row that already is/became a
-                            // real reminder (adopted via onPickEntry or kept alive by a checked tag) AND a row
-                            // whose id menu merely defaults to a matching existing reminder (e.g. after picking a
-                            // title suggestion). Only hide it when "New Reminder" is the selection (PRD §14).
+                            // real reminder (adopted via onPickEntry or kept alive by a checked/pinned tag) AND a
+                            // row whose id menu merely defaults to a matching existing reminder (e.g. after
+                            // picking a title suggestion). Only hide it when "New Reminder" is selected (PRD §14).
                             showModeSelector =
-                                row.id in existingReminderIds || ownChecked || !newReminderSelected,
+                                row.id in existingReminderIds || ownReferenced || !newReminderSelected,
                             idMenuEntries = entries,
                             newReminderSelected = newReminderSelected,
                             selectedEntryId = if (provisionalNew) null else entries.firstOrNull()?.id,
@@ -1500,8 +1500,8 @@ fun CalendarFloatingWindow(
     onFocus: () -> Unit = {},
     /** PRD §8 Manual add: invoked with the epoch-millis at a right-click position in the calendar. */
     onAddTaskAt: (Long) -> Unit = {},
-    /** PRD §14: "add a checked reminder" — invoked with the epoch-millis at a right-click position. */
-    onAddCheckedReminderAt: (Long) -> Unit = {},
+    /** PRD §14: "add reminder" — invoked with the epoch-millis at a right-click position. */
+    onAddReminderAt: (Long) -> Unit = {},
     /**
      * PRD §8 drag/resize commit: the block, its new start/end millis, and whether Overlap Mode was armed
      * (the bounds are raw/overlapping when armed, else already no-overlap snapped).
@@ -1675,7 +1675,7 @@ fun CalendarFloatingWindow(
                     zoomActions = zoomActions,
                     ctrlHeld = ctrlHeld,
                     onAddTaskAt = onAddTaskAt,
-                    onAddCheckedReminderAt = onAddCheckedReminderAt,
+                    onAddReminderAt = onAddReminderAt,
                     onCommitBounds = onCommitBounds,
                     onEditEntry = onEditEntry,
                     onRemoveEntry = onRemoveEntry,
@@ -1737,7 +1737,7 @@ private fun WeekView(
     zoomActions: CalendarZoomActions,
     ctrlHeld: Boolean,
     onAddTaskAt: (Long) -> Unit,
-    onAddCheckedReminderAt: (Long) -> Unit,
+    onAddReminderAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
@@ -1923,7 +1923,7 @@ private fun WeekView(
                         now = if (day == today) now else null,
                         records = recordsForDay(records, day, tz),
                         onAddTaskAt = onAddTaskAt,
-                        onAddCheckedReminderAt = onAddCheckedReminderAt,
+                        onAddReminderAt = onAddReminderAt,
                         onCommitBounds = onCommitBounds,
                         onEditEntry = onEditEntry,
                         onRemoveEntry = onRemoveEntry,
@@ -1987,7 +1987,7 @@ private fun DayColumn(
     now: LocalTime?,
     records: List<PlacedRecord>,
     onAddTaskAt: (Long) -> Unit,
-    onAddCheckedReminderAt: (Long) -> Unit,
+    onAddReminderAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
@@ -2138,9 +2138,9 @@ private fun DayColumn(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("add a checked reminder") },
+                    text = { Text("add reminder") },
                     onClick = {
-                        anchor?.let { onAddCheckedReminderAt(millisAt(it.y)) }
+                        anchor?.let { onAddReminderAt(millisAt(it.y)) }
                         closeMenu()
                     },
                 )
@@ -2887,22 +2887,23 @@ fun ManualEntryEditWindow(
 }
 
 /**
- * PRD §14 "add a checked reminder": a floating editor opened from the calendar's right-click menu. Mirrors
+ * PRD §14 "add reminder": a floating editor opened from the calendar's right-click menu. Mirrors
  * [ManualEntryEditWindow] but for reminders (which have a title and a stable id): a title field with a
- * **Reminders** id menu — a leading **"New Reminder"** row (record the check against a brand-new, distinct
- * reminder) followed by existing reminders by id (pick one → fills the title) — and a **Title suggestions**
- * menu, plus a single **Time** field on the right pre-filled with the right-click time. Save records an
- * already-checked reminder at that time for the chosen reminder id. Rendered by [org.example.project.App].
+ * **Reminders** id menu — a leading **"New Reminder"** row (record against a brand-new, distinct reminder)
+ * followed by existing reminders by id (pick one → fills the title) — and a **Title suggestions** menu, plus
+ * a single **Time** field on the right pre-filled with the right-click time, and **checked** / **pinned**
+ * switches. Save places a reminder tag at that time for the chosen reminder id with those flags (checked =
+ * already done; pinned = stays put across regeneration). Rendered by [org.example.project.App].
  */
 @Composable
-fun ReminderCheckEditWindow(
+fun ReminderEditWindow(
     initialMillis: Long,
     tz: TimeZone,
     reminderMenuEntries: (draftText: String) -> List<SchedulerDomain.ReminderMenuEntry>,
     titleSuggestions: (String) -> List<String>,
     reminderIdForTitle: (String) -> String?,
     titleForReminderId: (String) -> String?,
-    onSave: (reminderId: String, title: String, atMillis: Long) -> Unit,
+    onSave: (reminderId: String, title: String, atMillis: Long, checked: Boolean, pinned: Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var title by remember { mutableStateOf("") }
@@ -2911,6 +2912,10 @@ fun ReminderCheckEditWindow(
     // distinct reminder) even when the typed title matches an existing one; null means "no explicit pick".
     var selectedReminderId by remember { mutableStateOf<String?>(null) }
     var timeText by remember { mutableStateOf(formatHm(initialMillis, tz)) }
+    // PRD §14: the two switches. "checked" defaults on (the common case — recording something just done);
+    // "pinned" off. At least one keeps the tag alive across regeneration.
+    var checked by remember { mutableStateOf(true) }
+    var pinned by remember { mutableStateOf(false) }
 
     val entries = reminderMenuEntries(title)
     // The reminder this window will save against: an explicit "New Reminder" pick (blank), else the explicit
@@ -2938,7 +2943,7 @@ fun ReminderCheckEditWindow(
             modifier = Modifier.width(320.dp).clickable(enabled = false) {},
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Add a checked reminder", style = MaterialTheme.typography.titleSmall)
+                Text("Add reminder", style = MaterialTheme.typography.titleSmall)
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
@@ -2983,6 +2988,17 @@ fun ReminderCheckEditWindow(
                     },
                 )
 
+                // PRD §14: the two switches — "checked" (already done) and "pinned" (stays put across
+                // reminder regeneration even when not done).
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Checked", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Switch(checked = checked, onCheckedChange = { checked = it })
+                }
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Pinned", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Switch(checked = pinned, onCheckedChange = { pinned = it })
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
@@ -2993,7 +3009,7 @@ fun ReminderCheckEditWindow(
                         enabled = title.isNotBlank(),
                         onClick = {
                             val at = parseHmOnDateOf(timeText, initialMillis, tz) ?: initialMillis
-                            onSave(effectiveReminderId, title, at)
+                            onSave(effectiveReminderId, title, at, checked, pinned)
                         },
                     ) { Text("Save") }
                 }
@@ -3229,7 +3245,7 @@ fun EditMenuRow(
 
 /**
  * PRD §14: the shared edit-mode menu block for a reminder title field — used by both the reminders manager
- * ([ChoresManagerWindow]) and the "add a checked reminder" window ([ReminderCheckEditWindow]), the reminder
+ * ([ChoresManagerWindow]) and the "add reminder" window ([ReminderEditWindow]), the reminder
  * counterpart of the task cell's `EditModeMenus`. It renders a **Mode** selector ([ReminderEditMode]), then —
  * in [ReminderEditMode.Change] only, and only when at least one existing reminder matches — a **Reminders**
  * id menu led by a "New Reminder" row, and finally a **Title suggestions** menu shown in both modes. All rows
