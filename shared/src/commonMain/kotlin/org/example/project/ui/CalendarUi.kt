@@ -92,6 +92,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -581,9 +582,15 @@ fun ChoresManagerWindow(
      * detach from it and the id survives via the check) instead of hiding it as a provisional self-identity.
      */
     checkedReminderIds: () -> Set<String> = { emptySet() },
+    /** PRD §14 "constrained in": the reminder id of the first known reminder whose title is exactly this. */
+    reminderIdForTitle: (String) -> String? = { null },
+    /** PRD §14 "constrained in": the title of a known reminder id (shown beside the "constrained in" button). */
+    titleForReminderId: (String) -> String? = { null },
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
     val focusManager = LocalFocusManager.current
+    // PRD §14 "constrained in": the index of the row whose constraint picker is open, or null when closed.
+    var constrainingRowIndex by remember { mutableStateOf<Int?>(null) }
     // PRD §14: which row's title field currently holds focus — drives the edit-mode menus shown beneath it.
     var focusedIndex by remember { mutableStateOf<Int?>(null) }
     // PRD §14: the focused row's edit mode (Change vs Rename), reset to Change whenever focus moves to a
@@ -603,6 +610,7 @@ fun ChoresManagerWindow(
                         timeText = formatTimeOfDay(it.timeOfDayMinutes),
                         unit = it.recurrenceUnit,
                         id = it.id,
+                        constrainedToReminderId = it.constrainedToReminderId,
                     )
                 },
             )
@@ -659,6 +667,7 @@ fun ChoresManagerWindow(
                     daysFormula = row.daysText,
                     recurrenceUnit = row.unit,
                     id = ids[index],
+                    constrainedToReminderId = row.constrainedToReminderId,
                 )
             },
         )
@@ -788,6 +797,29 @@ fun ChoresManagerWindow(
                         TextButton(onClick = { rows.add(index, newRow()); push() }) { Text("+") }
                     }
 
+                    // PRD §14 "constrained in": a button opening the constraint picker, with the chosen
+                    // constraining reminder's name shown to its right. A constrained reminder is only placed
+                    // on the days the chosen reminder also occurs (averaging its own cadence).
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        TextButton(onClick = { constrainingRowIndex = index }) { Text("constrained in") }
+                        val constrainedName =
+                            row.constrainedToReminderId.takeIf { it.isNotBlank() }?.let(titleForReminderId)
+                        if (constrainedName != null) {
+                            Text(constrainedName, style = MaterialTheme.typography.bodyMedium)
+                            // A small clear affordance to detach the constraint.
+                            TextButton(
+                                onClick = {
+                                    rows[index] = row.copy(constrainedToReminderId = ""); push()
+                                },
+                            ) { Text("✕", color = CalColors.muted) }
+                        } else {
+                            Text("(none)", style = MaterialTheme.typography.bodyMedium, color = CalColors.muted)
+                        }
+                    }
+
                     // PRD §14: the row's Edit mode — the shared mode selector + menus show beneath the fields
                     // (and vanish when focus leaves the row). The id menu lists reminders matching the draft
                     // that are NOT already a row in this window — i.e. reminders that exist only as "add a
@@ -851,6 +883,27 @@ fun ChoresManagerWindow(
                 TextButton(onClick = { rows.add(newRow()); push() }) { Text("+ add reminder") }
             }
         }
+    }
+
+    // PRD §14 "constrained in": the constraint picker, shown over the manager when a row's button is tapped.
+    val idx = constrainingRowIndex
+    val constrainingRow = idx?.let { rows.getOrNull(it) }
+    if (idx != null && constrainingRow != null) {
+        ReminderConstraintEditWindow(
+            initialReminderId = constrainingRow.constrainedToReminderId,
+            // A reminder can't be constrained to itself, so hide its own identity from the picker.
+            excludeReminderId = resolvedRowIds().getOrNull(idx) ?: constrainingRow.id,
+            reminderMenuEntries = reminderMenuEntries,
+            titleSuggestions = titleSuggestions,
+            reminderIdForTitle = reminderIdForTitle,
+            titleForReminderId = titleForReminderId,
+            onDismiss = { constrainingRowIndex = null },
+            onSave = { reminderId ->
+                rows[idx] = constrainingRow.copy(constrainedToReminderId = reminderId)
+                push()
+                constrainingRowIndex = null
+            },
+        )
     }
 }
 
@@ -1164,6 +1217,8 @@ private data class ChoreRow(
     // adopt that matching reminder's id, like the "add a checked reminder" window). Reset when the title is
     // edited, mirroring the check window where typing reverts to resolving the id from the title.
     val explicitNew: Boolean = false,
+    // PRD §14 "constrained in": id of the reminder this row is constrained to (blank = unconstrained).
+    val constrainedToReminderId: String = "",
 )
 
 /** PRD §14: the unit selector beside the recurrence field — every n days (default) / months / years, or n times per week / month / year. */
@@ -2948,6 +3003,112 @@ fun ReminderCheckEditWindow(
 }
 
 /**
+ * PRD §14 "constrained in": the floating picker opened from a reminder row's "constrained in" button. It
+ * holds a single reminder-name input with the shared **Title suggestions** + **Reminders** id menu (no mode
+ * selector — there is nothing to rename), and Cancel / Save on the bottom right. Picking / typing an existing
+ * reminder constrains the row to it (its name then shows beside the button); "No constraint" (or an empty
+ * field) clears the constraint. The reminder being edited is hidden from the menu so it can't constrain
+ * itself. Rendered in a [Popup] so it overlays the manager window regardless of nesting.
+ */
+@Composable
+fun ReminderConstraintEditWindow(
+    initialReminderId: String,
+    excludeReminderId: String,
+    reminderMenuEntries: (draftText: String) -> List<SchedulerDomain.ReminderMenuEntry>,
+    titleSuggestions: (String) -> List<String>,
+    reminderIdForTitle: (String) -> String?,
+    titleForReminderId: (String) -> String?,
+    onSave: (reminderId: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var title by remember {
+        mutableStateOf(initialReminderId.takeIf { it.isNotBlank() }?.let(titleForReminderId).orEmpty())
+    }
+    // The explicitly-picked reminder id; typing reverts to resolving the id from the title. "" is a distinct
+    // sentinel meaning the user explicitly picked "No constraint"; null means "no explicit pick".
+    var selectedReminderId by remember { mutableStateOf<String?>(initialReminderId.takeIf { it.isNotBlank() }) }
+
+    val entries = reminderMenuEntries(title).filter { it.id != excludeReminderId }
+    val effectiveReminderId =
+        when {
+            selectedReminderId == "" -> ""
+            selectedReminderId != null && entries.any { it.id == selectedReminderId } -> selectedReminderId!!
+            else -> reminderIdForTitle(title)?.takeIf { it != excludeReminderId } ?: ""
+        }
+
+    Popup(
+        alignment = Alignment.Center,
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.25f))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 12.dp,
+                border = BorderStroke(1.dp, CalColors.grid),
+                modifier = Modifier.width(320.dp).clickable(enabled = false) {},
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Constrain to reminder", style = MaterialTheme.typography.titleSmall)
+
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = {
+                            title = it
+                            selectedReminderId = null // typing resolves the id from the title again
+                        },
+                        label = { Text("Reminder") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    ReminderEditModeMenus(
+                        mode = ReminderEditMode.Change,
+                        onSelectMode = {},
+                        showModeSelector = false,
+                        newReminderLabel = "No constraint",
+                        idMenuEntries = entries,
+                        newReminderSelected = effectiveReminderId == "",
+                        selectedEntryId = effectiveReminderId.takeIf { it.isNotEmpty() },
+                        onPickNewReminder = {
+                            selectedReminderId = ""
+                            title = ""
+                        },
+                        onPickEntry = { entry ->
+                            selectedReminderId = entry.id
+                            titleForReminderId(entry.id)?.let { title = it }
+                        },
+                        titleSuggestions = titleSuggestions(title)
+                            .filter { reminderIdForTitle(it) != excludeReminderId }
+                            .take(8),
+                        onPickSuggestion = { suggestion ->
+                            title = suggestion
+                            selectedReminderId = reminderIdForTitle(suggestion)
+                        },
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = onDismiss) { Text("Cancel") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = { onSave(effectiveReminderId) }) { Text("Save") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
  * PRD §14: the edit modes for a reminder title field, mirroring a task cell's Edit Mode (PRD §4):
  * [Change] picks *which* reminder this editor refers to (the id menu is shown), [Rename] edits the current
  * reminder's title in place (the id menu is hidden). Title suggestions show in both modes.
@@ -3091,6 +3252,11 @@ private fun ReminderEditModeMenus(
      * window passes false — it is always in Change Reminder mode, so the selector never appears there.
      */
     showModeSelector: Boolean = true,
+    /**
+     * PRD §14: label of the leading id-menu row that means "not an existing reminder". "New Reminder" for
+     * the manager / check window; the "constrained in" window overrides it to "No constraint".
+     */
+    newReminderLabel: String = "New Reminder",
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (showModeSelector) {
@@ -3118,7 +3284,7 @@ private fun ReminderEditModeMenus(
         if (mode == ReminderEditMode.Change && idMenuEntries.isNotEmpty()) {
             EditMenuSectionLabel("Reminders")
             EditMenuRow(
-                label = "New Reminder",
+                label = newReminderLabel,
                 selected = newReminderSelected,
                 focusPreserving = true,
                 onClick = onPickNewReminder,

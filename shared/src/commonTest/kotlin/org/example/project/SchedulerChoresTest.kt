@@ -176,6 +176,82 @@ class SchedulerChoresTest {
         assertTrue(avgGap in 2.3..2.7, "average gap $avgGap should hover around the 2.5 cadence")
     }
 
+    // ----- §14 "constrained in": a reminder only occurs on its constraining reminder's days -----
+
+    @Test
+    fun constrained_offsets_snap_onto_constraining_days_and_average_the_cadence() {
+        // A reminder of cadence 2.8 days constrained to a daily reminder: every day is eligible, so the
+        // reminder lands ~every 2.8 days while never falling between days. The average gap hovers at 2.8.
+        val daily = (0..28).toList()
+        val offsets = SchedulerDomain.constrainedOccurrenceOffsets(2.8, daily, horizonDays = 28)
+        assertTrue(offsets.all { it in daily }) // only ever on a constraining day
+        for (i in 1 until offsets.size) assertTrue(offsets[i] > offsets[i - 1])
+        val avgGap = offsets.last().toDouble() / (offsets.size - 1)
+        assertTrue(avgGap in 2.6..3.0, "average gap $avgGap should hover around the 2.8 cadence")
+    }
+
+    @Test
+    fun constrained_reminder_faster_than_its_constraint_is_capped_to_every_constraining_day() {
+        // cyclopirox "2.5 per week" (spanDays = 2.8) constrained to shampoo "every 3 days". 2.8 < 3, so it
+        // can't beat the constraint: it lands on every shampoo day (offsets 0,3,6,...), never off one.
+        val shampoo = SchedulerDomain.choreOccurrenceDayOffsets(3.0, horizonDays = 21)
+        val cyclopirox = SchedulerDomain.constrainedOccurrenceOffsets(2.8, shampoo, horizonDays = 21)
+        assertEquals(shampoo, cyclopirox)
+    }
+
+    @Test
+    fun constrained_reminder_panels_only_appear_on_the_constraining_reminders_days() {
+        val today = 1_000_000_000_000L
+        val chores = listOf(
+            ChoreEntry("shampoo", spanDays = 3.0, timeOfDayMinutes = 8 * 60, id = "reminder-0"),
+            ChoreEntry(
+                "cyclopirox",
+                spanDays = 7.0 / 2.5, // 2.5 per week ≈ 2.8 days
+                timeOfDayMinutes = 8 * 60,
+                id = "reminder-1",
+                constrainedToReminderId = "reminder-0",
+            ),
+        )
+        val tags = SchedulerDomain.choreScheduledPanels(chores, todayStartMillis = today, horizonDays = 21)
+        val shampooDays = tags.filter { it.title == "shampoo" }.map { it.startEpochMillis }.toSet()
+        val cycloDays = tags.filter { it.title == "cyclopirox" }.map { it.startEpochMillis }
+        assertTrue(cycloDays.isNotEmpty())
+        // Every cyclopirox tag coincides with a shampoo tag (same day + time).
+        assertTrue(cycloDays.all { it in shampooDays })
+    }
+
+    @Test
+    fun a_dangling_or_self_or_cyclic_constraint_falls_back_to_the_unconstrained_cadence() {
+        val today = 1_000_000_000_000L
+        // Dangling (target id does not exist) → behaves as a normal weekly reminder.
+        val dangling = listOf(
+            ChoreEntry("solo", spanDays = 7.0, timeOfDayMinutes = 0, id = "reminder-0", constrainedToReminderId = "nope"),
+        )
+        val danglingTags = SchedulerDomain.choreScheduledPanels(dangling, todayStartMillis = today, horizonDays = 28)
+        assertEquals(5, danglingTags.size) // offsets 0,7,14,21,28 — unconstrained
+
+        // A 2-cycle (a→b, b→a) must not loop forever; each resolves to a finite schedule.
+        val cyclic = listOf(
+            ChoreEntry("a", spanDays = 3.0, timeOfDayMinutes = 0, id = "reminder-0", constrainedToReminderId = "reminder-1"),
+            ChoreEntry("b", spanDays = 3.0, timeOfDayMinutes = 0, id = "reminder-1", constrainedToReminderId = "reminder-0"),
+        )
+        val cyclicTags = SchedulerDomain.choreScheduledPanels(cyclic, todayStartMillis = today, horizonDays = 21)
+        assertTrue(cyclicTags.any { it.title == "a" } && cyclicTags.any { it.title == "b" })
+    }
+
+    @Test
+    fun a_constraint_round_trips_through_persistence() {
+        val state = SchedulerState.empty().copy(
+            chores = listOf(
+                ChoreEntry("shampoo", spanDays = 3.0, id = "reminder-0"),
+                ChoreEntry("cyclopirox", spanDays = 2.8, id = "reminder-1", constrainedToReminderId = "reminder-0"),
+            ),
+        )
+        val restored = SchedulerStateCodec.decode(SchedulerStateCodec.encode(state))
+        assertNotNull(restored)
+        assertEquals("reminder-0", restored.chores.first { it.title == "cyclopirox" }.constrainedToReminderId)
+    }
+
     // ----- §14 reminder scheduler: tag generation ---------------------------------------------
 
     @Test

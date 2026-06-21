@@ -102,7 +102,7 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
-            chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit, it.id) },
+            chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit, it.id, it.constrainedToReminderId) },
             showSideTasks = showSideTasks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
@@ -236,6 +236,7 @@ object SchedulerStateCodec {
                         daysFormula = it.daysFormula,
                         recurrenceUnit = it.recurrenceUnit,
                         id = it.id,
+                        constrainedToReminderId = it.constrainedToReminderId,
                     )
                 },
             ),
@@ -356,6 +357,9 @@ private data class PersistedChoreEntry(
     val recurrenceUnit: ChoreRecurrenceUnit = ChoreRecurrenceUnit.Days,
     // PRD §14: the reminder's stable id; a missing value decodes to "" and is filled by assignReminderIds.
     val id: String = "",
+    // PRD §14 "constrained in": the id of the reminder this one is constrained to; "" when unconstrained
+    // (and for payloads written before the feature existed).
+    val constrainedToReminderId: String = "",
 )
 
 @Serializable

@@ -85,6 +85,15 @@ data class ChoreEntry(
      * itself is kept so the field round-trips. Defaults to [ChoreRecurrenceUnit.Days].
      */
     val recurrenceUnit: ChoreRecurrenceUnit = ChoreRecurrenceUnit.Days,
+    /**
+     * PRD §14 "constrained in": the [id] of another reminder this one is *constrained to*, or blank when
+     * unconstrained. A constrained reminder is only ever placed on days the constraining reminder also
+     * occurs, while still averaging its own cadence ([spanDays]) — e.g. a "2.5 per week" reminder
+     * constrained to a "every 3 days" reminder appears ~2.5 times a week but only on those 3-day days (see
+     * [org.example.project.scheduler.domain.SchedulerDomain.constrainedOccurrenceOffsets]). A blank /
+     * dangling / cyclic reference falls back to the reminder's own unconstrained cadence.
+     */
+    val constrainedToReminderId: String = "",
 )
 
 /**

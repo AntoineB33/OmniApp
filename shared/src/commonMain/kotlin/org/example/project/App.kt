@@ -674,6 +674,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             // PRD §14: reminder ids kept alive by a checked tag — the focused row shows its own
                             // id in the menu only when it is one of these (independently referenced).
                             checkedReminderIds = { SchedulerDomain.checkedReminderIds(schedulerState) },
+                            // PRD §14 "constrained in": resolve a reminder name ↔ id for the constraint picker.
+                            reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
+                            titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
                             // Cascade: open up-left of center so it isn't fully hidden behind a wider window.
                             initialOffset = Offset(-200f, -150f),
                             onRaise = { focusWindow(FloatingWindow.Reminders) },

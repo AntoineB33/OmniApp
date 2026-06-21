@@ -1352,6 +1352,35 @@ object SchedulerDomain {
     }
 
     /**
+     * PRD §14 "constrained in": the day offsets of a reminder of cadence [spanDays] that may only occur on
+     * the days its constraining reminder occurs ([constrainingDays]). Each constraining day is taken in turn;
+     * the reminder is placed there when its running due-date (advanced by [spanDays] per placement) has been
+     * reached, so over time it averages its own cadence yet never lands off a constraining day. When its
+     * cadence is *shorter* than the constraining reminder's it simply lands on every constraining day (capped
+     * at that rate); a one-off (`spanDays ≤ 0`) lands on the first constraining day only. The phase rides the
+     * constraining schedule (the first placement is the first constraining day), so the constrained reminder
+     * has no independent anchor — it exists only alongside its constraint.
+     */
+    fun constrainedOccurrenceOffsets(
+        spanDays: Double,
+        constrainingDays: List<Int>,
+        horizonDays: Int = CHORE_HORIZON_DAYS,
+    ): List<Int> {
+        val days = constrainingDays.filter { it in 0..horizonDays }.distinct().sorted()
+        if (days.isEmpty()) return emptyList()
+        if (spanDays <= 0.0) return listOf(days.first())
+        val result = mutableListOf<Int>()
+        var due = Double.NEGATIVE_INFINITY // first eligible constraining day is always placed
+        for (d in days) {
+            if (d >= due) {
+                result.add(d)
+                due = (if (due.isInfinite()) d.toDouble() else due) + spanDays
+            }
+        }
+        return result
+    }
+
+    /**
      * PRD §14: evaluate the reminders "Days" field, which accepts an arithmetic **formula** (e.g. `31/21`,
      * `1/2`, `7*2`) as well as a plain number — supporting `+ - * /`, parentheses, unary signs and decimals.
      * Returns the numeric result (the recurrence in days, see [choreOccurrenceDayOffsets]), or null when the
@@ -1454,18 +1483,32 @@ object SchedulerDomain {
             ((nowMillis - todayStartMillis) / MILLIS_PER_MINUTE).toInt().coerceIn(0, 24 * 60 - 1)
         val result = mutableListOf<TaskPanel>()
         // A tag id needs a stable reminder id; fill any blank one defensively so direct callers need not.
-        assignReminderIds(chores).forEach { chore ->
+        val withIds = assignReminderIds(chores)
+        val byId = withIds.associateBy { it.id }
+        fun anchorOffsetFor(id: String): Int =
+            anchorMillisByReminderId[id]?.let { (it - todayStartMillis).floorDiv(MILLIS_PER_DAY).toInt() } ?: 0
+        // PRD §14 "constrained in": the day offsets a reminder actually occupies. Unconstrained → its own
+        // cadence (anchored at its last completion). Constrained → snapped onto the days its constraining
+        // reminder occupies (resolved recursively; [visiting] breaks any constraint cycle, and a blank,
+        // self, missing or blank-titled target falls back to the unconstrained cadence).
+        fun effectiveOffsets(chore: ChoreEntry, visiting: Set<String>): List<Int> {
+            val targetId = chore.constrainedToReminderId
+            val target = byId[targetId]
+                ?.takeIf { it.title.isNotBlank() && it.id != chore.id && it.id !in visiting }
+            if (targetId.isBlank() || target == null) {
+                return choreOccurrenceDayOffsets(chore.spanDays, horizonDays, anchorOffsetFor(chore.id))
+            }
+            val constrainingDays = effectiveOffsets(target, visiting + chore.id)
+            return constrainedOccurrenceOffsets(chore.spanDays, constrainingDays, horizonDays)
+        }
+        withIds.forEach { chore ->
             // PRD §14: a tag is keyed by its reminder's *stable id*, not the row index, so checked tags
             // survive row reorders/detach (see [regenerateChorePanels]). Skip blank-title / id-less rows.
             if (chore.title.isBlank() || chore.id.isBlank()) return@forEach
             // PRD §14: "the defined time in the day, or the current time if not defined in the field".
             val minutes = if (chore.timeOfDayMinutes < 0) currentTimeOfDayMinutes else chore.timeOfDayMinutes
             val timeOfDay = minutes.coerceIn(0, 24 * 60 - 1) * MILLIS_PER_MINUTE
-            // PRD §14 tie-breaker: anchor the cadence at the last checked occurrence of this reminder, if any.
-            val anchorOffset = anchorMillisByReminderId[chore.id]
-                ?.let { (it - todayStartMillis).floorDiv(MILLIS_PER_DAY).toInt() }
-                ?: 0
-            for (offset in choreOccurrenceDayOffsets(chore.spanDays, horizonDays, anchorOffset)) {
+            for (offset in effectiveOffsets(chore, emptySet())) {
                 val start = todayStartMillis + offset * MILLIS_PER_DAY + timeOfDay
                 result.add(
                     TaskPanel(
