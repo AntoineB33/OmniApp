@@ -487,6 +487,58 @@ class SchedulerChoresTest {
     }
 
     @Test
+    fun a_checked_reminder_keeps_its_identity_when_its_row_detaches_to_a_new_reminder() {
+        // PRD §14: checking a reminder records a completion keyed by the reminder's STABLE id. If the row
+        // then becomes a different reminder (the user picks "New Reminder"), the checked tag still references
+        // the old reminder, so it survives (and stays a selectable identity) instead of being GC'd.
+        val today = 1_000_000_000_000L
+        var s = SchedulerReducer.reduce(
+            SchedulerState.empty(),
+            SchedulerIntent.SetChores(
+                listOf(ChoreEntry("rem", spanDays = 1.0, timeOfDayMinutes = 0, id = "rem-B")),
+                todayStartMillis = today, nowMillis = today,
+            ),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetReminderChecked("chore/rem-B/0", true, today))
+        assertTrue("rem-B" in SchedulerDomain.checkedReminderIds(s))
+
+        // Detach: the row now represents a brand-new reminder rem-C; rem-B is no longer a manager row.
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.SetChores(
+                listOf(ChoreEntry("rem", spanDays = 1.0, timeOfDayMinutes = 0, id = "rem-C")),
+                todayStartMillis = today, nowMillis = today,
+            ),
+        )
+        assertTrue(s.chores.none { it.id == "rem-B" }) // rem-B is no longer a row
+        // rem-B survives, referenced by the checked tag, and is still a selectable reminder identity.
+        assertTrue("rem-B" in SchedulerDomain.checkedReminderIds(s))
+        assertEquals("rem", SchedulerDomain.reminderTitleForId(s, "rem-B"))
+        assertTrue(SchedulerDomain.allReminderEntries(s).any { it.id == "rem-B" && it.title == "rem" })
+        // Both reminders match the shared title now — the id menu would offer "rem-C" and the kept "rem-B".
+        assertEquals(setOf("rem-B", "rem-C"), SchedulerDomain.reminderMenuEntries(s, "rem").map { it.id }.toSet())
+    }
+
+    @Test
+    fun a_reminder_with_no_row_and_no_check_is_garbage_collected() {
+        // PRD §14: an id referenced by neither a manager row nor a checked tag must be deleted.
+        val today = 1_000_000_000_000L
+        var s = SchedulerReducer.reduce(
+            SchedulerState.empty(),
+            SchedulerIntent.SetChores(
+                listOf(ChoreEntry("rem", spanDays = 1.0, timeOfDayMinutes = 0, id = "rem-B")),
+                todayStartMillis = today, nowMillis = today,
+            ),
+        )
+        assertTrue(s.panels.any { it.chore && it.id.startsWith("chore/rem-B/") })
+        // Remove the row without ever checking it → no row, no checked tag → the reminder ceases to exist.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetChores(emptyList(), todayStartMillis = today, nowMillis = today))
+        assertTrue(s.panels.none { it.chore }) // its generated tags are gone (not lingering as orphans)
+        assertTrue(SchedulerDomain.allReminderEntries(s).isEmpty())
+        assertNull(SchedulerDomain.reminderTitleForId(s, "rem-B"))
+    }
+
+    @Test
     fun codec_decodes_old_payload_to_an_empty_chores_list() {
         val json =
             """

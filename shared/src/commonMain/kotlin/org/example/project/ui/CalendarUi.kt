@@ -575,6 +575,12 @@ fun ChoresManagerWindow(
      * calendar-only reminder and filter that reminder out of the id menu (it would land in `rowIds`).
      */
     knownReminderIds: () -> Set<String> = { emptySet() },
+    /**
+     * PRD §14: reminder ids that have at least one **checked** tag on the calendar. A focused row whose own
+     * id is in here is a *real* reminder (independently referenced), so the id menu offers it (the row can
+     * detach from it and the id survives via the check) instead of hiding it as a provisional self-identity.
+     */
+    checkedReminderIds: () -> Set<String> = { emptySet() },
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
     val focusManager = LocalFocusManager.current
@@ -790,30 +796,41 @@ fun ChoresManagerWindow(
                     // highlight is the first such reminder, or "New Reminder" when there are none.
                     if (focusedIndex == index) {
                         // PRD §14: exclude reminders already represented by a row — every OTHER row's resolved
-                        // id, plus the focused row's **own** id. Excluding the focused row's own id (never the
-                        // reminder it merely adopts by default, which always has a different id since minted ids
-                        // dodge known reminder ids) hides its provisional "New Reminder" self-identity: that id
-                        // is only persisted as a chore while "New Reminder" is selected and must not reappear as
-                        // a selectable entry. The adopted calendar-only reminder (and "New Reminder") still show,
-                        // so selecting a matching title never empties the menu.
+                        // id, plus the focused row's **own** id. Excluding the focused row's own id hides its
+                        // provisional "New Reminder" self-identity (only persisted while "New Reminder" is
+                        // selected; it must not reappear as a selectable entry). EXCEPTION: when the row's own
+                        // id is independently referenced by a checked reminder, it is a real reminder — show it
+                        // so the user can re-pick it or detach (picking "New Reminder") while the checked tag
+                        // keeps it alive. The reminder a row merely adopts by default always has a different id
+                        // (minted ids dodge known reminder ids), so it is never the excluded one.
+                        val checkedIds = checkedReminderIds()
+                        val ownChecked = row.id in checkedIds
                         val resolved = resolvedRowIds()
                         val excludedIds = buildSet {
                             rows.forEachIndexed { i, r ->
-                                add(if (i == index) r.id else resolved[i])
+                                if (i == index) { if (!ownChecked) add(r.id) } else add(resolved[i])
                             }
                         }
                         val entries = reminderMenuEntries(row.title).filter { it.id !in excludedIds }
+                        // A checked-referenced own id makes the row a real reminder, so its "New Reminder" pick
+                        // no longer forces the New highlight: the menu defaults to the first matching reminder.
+                        val provisionalNew = row.explicitNew && !ownChecked
+                        // The default highlight mirrors the resolved id in push(): "New Reminder" when the
+                        // user explicitly chose it (or nothing matches), else the first matching reminder.
+                        val newReminderSelected = provisionalNew || entries.isEmpty()
                         ReminderEditModeMenus(
                             mode = editMode,
                             onSelectMode = { editMode = it },
-                            // A row still being created (a brand-new id, not yet an existing reminder) is
-                            // always in Change Reminder mode — there is nothing to Rename, so hide the selector.
-                            showModeSelector = row.id in existingReminderIds,
+                            // The Mode selector must appear whenever the id menu resolves to a real reminder —
+                            // i.e. anything other than "New Reminder". That covers a row that already is/became a
+                            // real reminder (adopted via onPickEntry or kept alive by a checked tag) AND a row
+                            // whose id menu merely defaults to a matching existing reminder (e.g. after picking a
+                            // title suggestion). Only hide it when "New Reminder" is the selection (PRD §14).
+                            showModeSelector =
+                                row.id in existingReminderIds || ownChecked || !newReminderSelected,
                             idMenuEntries = entries,
-                            // The default highlight mirrors the resolved id in push(): "New Reminder" when the
-                            // user explicitly chose it (or nothing matches), else the first matching reminder.
-                            newReminderSelected = row.explicitNew || entries.isEmpty(),
-                            selectedEntryId = if (row.explicitNew) null else entries.firstOrNull()?.id,
+                            newReminderSelected = newReminderSelected,
+                            selectedEntryId = if (provisionalNew) null else entries.firstOrNull()?.id,
                             // Explicitly choosing "New Reminder" keeps this row's own freshly-minted id even
                             // though its title matches a calendar-only reminder (PRD §14).
                             onPickNewReminder = { rows[index] = row.copy(explicitNew = true); push() },

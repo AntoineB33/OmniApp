@@ -671,6 +671,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
                             // A new row's id must avoid every known reminder id (including calendar-only ones).
                             knownReminderIds = { SchedulerDomain.allReminderEntries(schedulerState).mapTo(mutableSetOf()) { it.id } },
+                            // PRD §14: reminder ids kept alive by a checked tag — the focused row shows its own
+                            // id in the menu only when it is one of these (independently referenced).
+                            checkedReminderIds = { SchedulerDomain.checkedReminderIds(schedulerState) },
                             // Cascade: open up-left of center so it isn't fully hidden behind a wider window.
                             initialOffset = Offset(-200f, -150f),
                             onRaise = { focusWindow(FloatingWindow.Reminders) },
