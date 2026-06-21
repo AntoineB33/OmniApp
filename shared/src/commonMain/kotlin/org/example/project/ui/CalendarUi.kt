@@ -84,6 +84,7 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -576,6 +577,7 @@ fun ChoresManagerWindow(
     knownReminderIds: () -> Set<String> = { emptySet() },
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
+    val focusManager = LocalFocusManager.current
     // PRD §14: which row's title field currently holds focus — drives the edit-mode menus shown beneath it.
     var focusedIndex by remember { mutableStateOf<Int?>(null) }
     // PRD §14: the focused row's edit mode (Change vs Rename), reset to Change whenever focus moves to a
@@ -667,7 +669,16 @@ fun ChoresManagerWindow(
             // Raise on press AFTER the offset so the hit region tracks the (possibly dragged) window.
             .raiseOnPress(onRaise),
     ) {
-        Column(Modifier.fillMaxSize()) {
+        Column(
+            // PRD §14: clicking anywhere in the window that is not the focused title field or its edit-mode
+            // menus leaves Edit mode — a tap on empty/non-interactive space clears focus, which the title
+            // field's onFocusChanged turns into focusedIndex = null (hiding the menus). Interactive children
+            // (the title field, menu rows, other inputs/buttons) consume their own taps, so this only fires
+            // for clicks that land on bare window chrome.
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) { detectTapGestures { focusManager.clearFocus() } },
+        ) {
             // Title bar doubles as the drag handle for moving the window.
             Row(
                 modifier = Modifier
