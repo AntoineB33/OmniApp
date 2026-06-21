@@ -232,6 +232,49 @@ object SchedulerDomain {
     }
 
     /**
+     * [taskId] together with every task in its sub-tree, walked **structurally** through the shared child
+     * lists (childListId → list cells → their taskId) rather than the denormalized [Task.childTaskIds],
+     * which can be stale (see [isLeafTask]). Used by the Change Task filter so the "shared descendant"
+     * check reflects the live tree. The `result.add` guard makes it safe against any existing cycles.
+     *
+     * [excludeCellId] is skipped during the walk: while a cell is in Edit Mode it is tentatively assigned
+     * the candidate task, so it momentarily sits inside its own ancestors' sub-trees. Ignoring it keeps
+     * the candidate from colliding with itself (its current tentative content must not constrain it).
+     */
+    private fun structuralSubtreeTaskIds(
+        state: SchedulerState,
+        taskId: TaskId,
+        excludeCellId: CellId? = null,
+    ): Set<TaskId> {
+        val result = mutableSetOf<TaskId>()
+        val stack = ArrayDeque(listOf(taskId))
+        while (stack.isNotEmpty()) {
+            val id = stack.removeLast()
+            if (!result.add(id)) continue
+            val childListId = state.tasks[id]?.childListId ?: continue
+            val list = state.lists[childListId] ?: continue
+            list.cellIds.forEach { cellId ->
+                if (cellId != excludeCellId) state.cells[cellId]?.taskId?.let(stack::addLast)
+            }
+        }
+        return result
+    }
+
+    /**
+     * PRD §4 Filtering: the set of task sub-trees a candidate must not collide with when assigned to
+     * [cellId] — the union of the structural sub-trees of all of the cell's non-root ancestors (the
+     * "parents set"), with [cellId] itself ignored. Assigning a candidate whose own sub-tree shares any
+     * task with this scope would place that shared task twice inside a single non-root sub-tree. Example:
+     * with a→c and b→c, editing a cell under b yields scope {b, c}; the candidate a (sub-tree {a, c})
+     * collides on c, so b cannot be made a parent of a. Root-level cells have no ancestors, so the same
+     * task may freely recur there.
+     */
+    private fun assignCollisionScope(state: SchedulerState, cellId: CellId): Set<TaskId> =
+        ancestorTaskIds(state, cellId).flatMapTo(mutableSetOf()) {
+            structuralSubtreeTaskIds(state, it, excludeCellId = cellId)
+        }
+
+    /**
      * Whether [movingTaskId] (with its whole sub-tree) may be inserted into the list owning
      * [targetCellId] without breaking PRD constraints: 1 (a taskId cannot appear twice in one
      * list) or 2 (a taskId cannot equal one of its ancestors — that would create an infinite
@@ -1561,8 +1604,14 @@ object SchedulerDomain {
     fun canAssignTaskId(state: SchedulerState, cellId: CellId, taskId: TaskId): Boolean {
         if (!isSelectableCell(state, cellId)) return false
         if (isRootTask(taskId) || isMainTask(taskId)) return false
+        // "already in the sub-list": the same task can't appear twice in the cell's own list.
         if (taskId in siblingTaskIds(state, cellId)) return false
-        if (taskId in ancestorTaskIds(state, cellId)) return false
+        // "parents set": assigning a task whose sub-tree shares any task with an ancestor's sub-tree
+        // would duplicate that task within a single non-root sub-tree (subsumes the ancestor/cycle case).
+        val collisionScope = assignCollisionScope(state, cellId)
+        if (structuralSubtreeTaskIds(state, taskId, excludeCellId = cellId).any { it in collisionScope }) {
+            return false
+        }
         return true
     }
 
@@ -1635,7 +1684,9 @@ object SchedulerDomain {
 
     /**
      * Task IDs eligible for "Change Task" on [cellId] while editing [text].
-     * Filters ancestors/siblings; sorts by path length, path label, child titles (PRD §4).
+     * Hides tasks already in the cell's list ("sub-list") and tasks that would duplicate a task within a
+     * non-root sub-tree (the "parents set" / shared-descendant rule, see [assignCollisionScope]); sorts
+     * by path length, path label, child titles (PRD §4).
      */
     fun eligibleAssignTaskIds(
         state: SchedulerState,
@@ -1644,8 +1695,12 @@ object SchedulerDomain {
         /** Draft task created while "New task" is selected; already represented by that menu row. */
         excludeTaskId: TaskId? = null,
     ): List<TaskId> {
-        val forbidden = siblingTaskIds(state, cellId) + ancestorTaskIds(state, cellId)
-        return matchingUserTaskIds(state, text, excludeTaskId).filter { it !in forbidden }
+        val siblings = siblingTaskIds(state, cellId)
+        val collisionScope = assignCollisionScope(state, cellId)
+        return matchingUserTaskIds(state, text, excludeTaskId).filter { candidate ->
+            candidate !in siblings &&
+                structuralSubtreeTaskIds(state, candidate, excludeCellId = cellId).none { it in collisionScope }
+        }
     }
 
     /**

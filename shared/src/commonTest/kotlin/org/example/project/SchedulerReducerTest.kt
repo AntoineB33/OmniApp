@@ -1079,6 +1079,49 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun eligible_assign_task_ids_hide_shared_descendant_parents_set() {
+        // PRD §4 Filtering — the "parents set" / shared-descendant rule. With a→c and b→c (c shared by
+        // both a and b), a cell under b must not offer a: assigning a there would make b a parent of a,
+        // placing c twice inside b's sub-tree. An unrelated task stays assignable, and so do recurrences
+        // at root (no ancestor), which is why c can sit under both a and b in the first place.
+        var s = SchedulerState.empty()
+
+        // a → c
+        val aCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(aCell, "a"))
+        val aTask = s.cells[aCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(aCell))
+        val aChildList = s.tasks[aTask]!!.childListId!!
+        val aChild = s.lists[aChildList]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(aChild, "c"))
+        val cTask = s.cells[aChild]!!.taskId!!
+
+        // b at root; an unrelated task z at root too.
+        val bCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(bCell, "b"))
+        val bTask = s.cells[bCell]!!.taskId!!
+        val zCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(zCell, "z"))
+        val zTask = s.cells[zCell]!!.taskId!!
+
+        // b → c : title a temp child (which appends a trailing empty), then reassign it to the shared c.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(bCell))
+        val bChildList = s.tasks[bTask]!!.childListId!!
+        val bChild = s.lists[bChildList]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(bChild, "tmp"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AssignTaskId(bChild, cTask))
+
+        val emptyUnderB = s.lists[bChildList]!!.cellIds.last()
+        assertEquals(null, s.cells[emptyUnderB]!!.taskId)
+
+        // a shares descendant c with b's sub-tree → excluded; z is unrelated → eligible.
+        assertFalse(aTask in SchedulerDomain.eligibleAssignTaskIds(s, emptyUnderB, "a"))
+        assertTrue(zTask in SchedulerDomain.eligibleAssignTaskIds(s, emptyUnderB, "z"))
+        assertFalse(SchedulerDomain.canAssignTaskId(s, emptyUnderB, aTask))
+        assertTrue(SchedulerDomain.canAssignTaskId(s, emptyUnderB, zTask))
+    }
+
+    @Test
     fun eligible_assign_task_ids_sorted_by_path_length_then_label() {
         var s = SchedulerState.empty()
         // Two distinct taskIds share the exact title "Task" at different depths
