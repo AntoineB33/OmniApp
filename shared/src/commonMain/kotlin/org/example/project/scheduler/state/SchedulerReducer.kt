@@ -9,11 +9,20 @@ import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.time.AppClock
+import org.example.project.time.SystemAppClock
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
 object SchedulerReducer {
+    /**
+     * PRD §6: source of the wall-clock instant stamped on every committed History Unit. Defaults to the
+     * real clock; the app shell can point it at its [AppClock] (e.g. the accelerated [SimAppClock]) so
+     * recorded timestamps follow the same time the rest of the app sees.
+     */
+    var clock: AppClock = SystemAppClock
+
     fun reduce(state: SchedulerState, intent: SchedulerIntent): SchedulerState {
         return when (intent) {
             is SchedulerIntent.ClickCell -> reduceClick(state, intent)
@@ -1144,19 +1153,23 @@ object SchedulerReducer {
         val newState = forward.redo(state)
         val history = state.histories.forCategory(category)
 
-        val appendedUnits =
-            if (history.pointer == history.units.lastIndex) {
-                history.units + HistoryUnit(
-                    chronoId = history.units.size.toLong(),
-                    delta = forward,
-                )
-            } else {
-                history.units.take(history.pointer + 1) + HistoryUnit(
-                    chronoId = (history.pointer + 1).toLong(),
-                    delta = forward,
-                )
-            }
-        val appendedPointer = history.pointer + 1
+        // PRD §5 Branching: a new mutation after an undo orphans the redo units — keep only the prefix
+        // up to the pointer, then append this unit after it.
+        val retained =
+            if (history.pointer == history.units.lastIndex) history.units
+            else history.units.take(history.pointer + 1)
+
+        // PRD §6: stamp the change's wall-clock time; chronoId stays 0 unless an already-retained unit
+        // shares this exact timestamp, in which case it is the next tie-break index (1, 2, …).
+        val now = clock.nowMillis()
+        val newUnit =
+            HistoryUnit(
+                timeMillis = now,
+                chronoId = retained.count { it.timeMillis == now }.toLong(),
+                delta = forward,
+            )
+        val appendedUnits = retained + newUnit
+        val appendedPointer = retained.size
 
         // PRD §5: each category's history list is capped — drop the oldest units once it exceeds
         // [MAX_HISTORY_UNITS], shifting the pointer back by however many were removed.

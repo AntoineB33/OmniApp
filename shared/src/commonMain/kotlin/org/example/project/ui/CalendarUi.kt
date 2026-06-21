@@ -1064,6 +1064,7 @@ private fun HistoryUnitInfoWindow(unit: HistoryUnit, onDismiss: () -> Unit) {
                 }
                 Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
 
+                HistoryInfoLine("Time", formatHistoryTime(unit.timeMillis))
                 HistoryInfoLine("Chrono id", unit.chronoId.toString())
 
                 Text(
@@ -1086,6 +1087,13 @@ private fun HistoryUnitInfoWindow(unit: HistoryUnit, onDismiss: () -> Unit) {
             }
         }
     }
+}
+
+/** PRD §6: the History Unit's exact timestamp, rendered as `YYYY-MM-DD HH:MM:SS` in the local zone. */
+private fun formatHistoryTime(millis: Long): String {
+    val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
+    fun p2(v: Int) = v.toString().padStart(2, '0')
+    return "${dt.year}-${p2(dt.monthNumber)}-${p2(dt.dayOfMonth)} ${p2(dt.hour)}:${p2(dt.minute)}:${p2(dt.second)}"
 }
 
 /** One `label: value` line in the history-unit information window (PRD §6). */

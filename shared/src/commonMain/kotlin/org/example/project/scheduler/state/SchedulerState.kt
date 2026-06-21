@@ -64,8 +64,15 @@ data class SchedulerHistories(
         }
 }
 
+/**
+ * PRD §6: one recorded change. [timeMillis] is the exact wall-clock instant (epoch millis) of the
+ * change. [chronoId] only breaks ties between units that share the same [timeMillis]: it is **0** by
+ * default and becomes 1, 2, … (in commit order) when an earlier retained unit already carries the
+ * same timestamp, so truly simultaneous events still sort deterministically.
+ */
 data class HistoryUnit(
-    val chronoId: Long,
+    val timeMillis: Long,
+    val chronoId: Long = 0,
     val delta: Delta,
 )
 

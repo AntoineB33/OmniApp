@@ -20,6 +20,7 @@ import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.SelectionNavigate
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
+import org.example.project.time.AppClock
 
 class SchedulerReducerTest {
     @Test
@@ -51,6 +52,40 @@ class SchedulerReducerTest {
         // history window lists under the label.
         val details = main.units.last().delta.details
         assertTrue(details.any { it.contains("Daily") }, "details should describe the title change: $details")
+    }
+
+    @Test
+    fun history_units_stamp_time_and_use_chrono_id_only_for_ties() {
+        // PRD §6: each unit records the wall-clock instant of the change; chronoId stays 0 unless an
+        // already-recorded unit shares that exact timestamp, in which case it is the next index (1, 2, …).
+        val controllable = object : AppClock {
+            var now = 1_000L
+            override fun nowMillis(): Long = now
+        }
+        val previous = SchedulerReducer.clock
+        SchedulerReducer.clock = controllable
+        try {
+            var s = SchedulerState.empty()
+            val cellId = s.lists[s.rootListId]!!.cellIds.first()
+
+            // Two changes recorded at the same instant → same time, chronoId 0 then 1.
+            s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "A"))
+            s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cellId))
+            var units = s.histories.forCategory(HistoryCategory.Main).units
+            assertEquals(1_000L, units[0].timeMillis)
+            assertEquals(0L, units[0].chronoId)
+            assertEquals(1_000L, units[1].timeMillis)
+            assertEquals(1L, units[1].chronoId) // tie with the unit at the same instant
+
+            // A change at a new instant → chronoId back to 0 (no tie).
+            controllable.now = 2_000L
+            s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cellId))
+            units = s.histories.forCategory(HistoryCategory.Main).units
+            assertEquals(2_000L, units.last().timeMillis)
+            assertEquals(0L, units.last().chronoId)
+        } finally {
+            SchedulerReducer.clock = previous
+        }
     }
 
     @Test

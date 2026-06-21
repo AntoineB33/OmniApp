@@ -45,6 +45,7 @@ import org.example.project.scheduler.platform.lastWakeAfterLongSleepMillis
 import org.example.project.scheduler.platform.sendSystemNotification
 import org.example.project.scheduler.platform.speak
 import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.ui.PriorityWeightWindow
 import org.example.project.scheduler.ui.TaskSchedulerScreen
 import org.example.project.scheduler.ui.TaskTextWindow
@@ -92,6 +93,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // now-line and day rollovers can be exercised in seconds), else the real wall clock.
         val simClock = remember { SimAppClock() }
         val clock: AppClock = if (DebugFlags.TIME_SIMULATION) simClock else SystemAppClock
+        // PRD §6: History Units are timestamped from the same clock the rest of the app reads, so under
+        // time simulation their times match the (accelerated) calendar.
+        SideEffect { SchedulerReducer.clock = clock }
         val tz = remember { TimeZone.currentSystemDefault() }
 
         // PRD §9: the frequent tick — advance "now" and the schedule, recording any completed panel so
