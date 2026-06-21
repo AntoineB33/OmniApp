@@ -583,16 +583,18 @@ class SchedulerSchedulerTest {
     // ----- §9 RefreshSchedule (calculation event) --------------------------------------------
 
     @Test
-    fun refresh_schedule_fills_panels_and_is_a_calendar_history_unit() {
+    fun refresh_schedule_fills_panels_without_creating_a_history_unit() {
         val (s, _, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val scheduled = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(now))
         assertTrue(scheduled.panels.isNotEmpty())
 
-        // PRD §9 "each scheduling is saved in a History Unit": undoable while the calendar is focused.
+        // PRD §9: a derived schedule is NOT a History Unit, so no calendar unit is recorded and undo
+        // (while the calendar is focused) has nothing to walk — the filled panels stay put.
+        assertEquals(0, scheduled.histories.calendar.units.size)
         val focused = SchedulerReducer.reduce(scheduled, SchedulerIntent.SetCalendarFocus(true))
         val undone = SchedulerReducer.reduce(focused, SchedulerIntent.Undo)
-        assertTrue(undone.panels.isEmpty()) // restored to the pre-fill (empty) panel list
+        assertEquals(scheduled.panels, undone.panels) // nothing to undo: the schedule is unchanged
     }
 
     @Test

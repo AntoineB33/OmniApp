@@ -113,9 +113,9 @@ data class SchedulerState(
     /**
      * PRD §8/§9 task panels: the calendar blocks in the schedulable window — both scheduler-generated
      * (`auto`) panels and user-authored ones, with `pinned` panels surviving a reschedule (see
-     * [TaskPanel]). Persisted user/scheduler data that lives outside [TreeSnapshot]: panel-list
-     * changes (manual edits and each scheduling run, PRD §9) go through the [HistoryCategory.Calendar]
-     * stack, not the tree snapshot.
+     * [TaskPanel]). Persisted user/scheduler data that lives outside [TreeSnapshot]: *manual* panel-list
+     * edits (PRD §8) go through the [HistoryCategory.Calendar] stack, not the tree snapshot. An
+     * automatic scheduling run (PRD §9) is derived from the state and is NOT recorded in any history.
      */
     val panels: List<TaskPanel> = emptyList(),
     /** Monotonic suffix for `panel/{n}` ids; never reused, so undo need not roll it back. */

@@ -182,8 +182,9 @@ data class TaskTimeRange(
  * [taskId] is null for a calendar-only "New task" — creating one here intentionally does NOT create a
  * task in the tree (PRD §8); [title] is the shown label in either case. Like the task record, panels
  * are persisted user/scheduler data that lives outside the [org.example.project.scheduler.state.TreeSnapshot];
- * panel-list changes (manual edits *and* each scheduling run) go through the
- * [org.example.project.scheduler.state.HistoryCategory.Calendar] stack (PRD §5/§9).
+ * *manual* panel-list edits go through the [org.example.project.scheduler.state.HistoryCategory.Calendar]
+ * stack (PRD §5/§8), while an automatic scheduling run (PRD §9) is derived from the state and recorded
+ * in no history.
  */
 data class TaskPanel(
     val id: String,

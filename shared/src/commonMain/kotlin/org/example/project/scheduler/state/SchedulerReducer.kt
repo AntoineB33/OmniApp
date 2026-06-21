@@ -1047,18 +1047,17 @@ object SchedulerReducer {
      * PRD §9 calculation event: [advanceSchedule] then refill the non-pinned panels out to +168h with
      * [SchedulerDomain.fillSchedule]. Gated by PRD §7: while [SchedulerState.automaticSchedule] is off
      * the refill is skipped (the event waits) — but the advance still runs so completed work is
-     * recorded. The refill is committed as a Calendar History Unit (PRD §9 "each scheduling is saved in
-     * a History Unit"); the advance's record side effects stay outside the history. A no-op tick
-     * returns the same instance.
+     * recorded. The refill is NOT recorded as a History Unit (PRD §9): a schedule is derived from the
+     * task tree / calendar state, not an independent user action, so it carries no undo entry — undo/redo
+     * walk only the user changes and the schedule re-derives from whatever state they land on. A no-op
+     * tick returns the same instance.
      */
     private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
         val advanced = advanceSchedule(state, nowMillis)
         if (!advanced.automaticSchedule) return advanced
         val filled = SchedulerDomain.fillSchedule(advanced, nowMillis)
         if (filled == advanced.panels) return advanced
-        // commitDelta applies PanelDelta.redo (panels = filled); the advance's task/record changes are
-        // already in `advanced` and are not part of the delta, so undo restores panels but not records.
-        return commitDelta(advanced, PanelDelta(advanced.panels, filled, label = "Reschedule"), HistoryCategory.Calendar)
+        return advanced.copy(panels = filled)
     }
 
     /** PRD §8 "Remove" on a record block: drop the period from the task's record (history-excluded). */
@@ -1926,9 +1925,10 @@ private data class SetSelectionDelta(
 }
 
 /**
- * PRD §5/§9: the whole panel list before/after a calendar add, edit, move, resize, *or a scheduling
- * run* (PRD §9 "each scheduling is saved in a History Unit"). Lives in the [HistoryCategory.Calendar]
- * stack so it is undone/redone only while the calendar is focused (PRD §8).
+ * PRD §5/§8: the whole panel list before/after a *manual* calendar add, edit, move, or resize. Lives
+ * in the [HistoryCategory.Calendar] stack so it is undone/redone only while the calendar is focused
+ * (PRD §8). An automatic scheduling run (PRD §9) does NOT use this delta — a derived schedule carries
+ * no history unit.
  */
 private data class PanelDelta(
     val before: List<TaskPanel>,
@@ -1997,11 +1997,24 @@ private object NoOpDelta : Delta {
 private fun TreeSnapshot.cellTitle(cellId: CellId): String =
     cells[cellId]?.taskId?.let { tasks[it]?.title }?.takeIf { it.isNotBlank() } ?: "∅"
 
-/** Specifics of a tree mutation: added / removed / renamed cells, and changed weights or task fields. */
+/** Whether [cellId] carries authored content (a task with a non-blank title) in this snapshot. */
+private fun TreeSnapshot.cellHasContent(cellId: CellId): Boolean =
+    cells[cellId]?.taskId?.let { tasks[it]?.title }?.isNotBlank() == true
+
+/**
+ * Specifics of a tree mutation: added / removed / renamed cells, and changed weights or task fields.
+ * Added / removed *empty* cells are auto-expansion scaffolding (PRD §4: the hidden sub-list placeholder
+ * and the trailing sibling placeholder), not authored content — they are deduced from the populated
+ * cells and re-derived on undo/redo, so they are not listed as part of the unit's delta.
+ */
 private fun treeDiffLines(before: TreeSnapshot, after: TreeSnapshot): List<String> {
     val lines = mutableListOf<String>()
-    (after.cells.keys - before.cells.keys).forEach { lines += "+ cell \"${after.cellTitle(it)}\"" }
-    (before.cells.keys - after.cells.keys).forEach { lines += "− cell \"${before.cellTitle(it)}\"" }
+    (after.cells.keys - before.cells.keys)
+        .filter { after.cellHasContent(it) }
+        .forEach { lines += "+ cell \"${after.cellTitle(it)}\"" }
+    (before.cells.keys - after.cells.keys)
+        .filter { before.cellHasContent(it) }
+        .forEach { lines += "− cell \"${before.cellTitle(it)}\"" }
     (before.cells.keys intersect after.cells.keys).forEach { id ->
         val bt = before.cellTitle(id)
         val at = after.cellTitle(id)
