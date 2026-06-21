@@ -13,6 +13,7 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStateCodec
+import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.CalendarEdge
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -404,7 +405,7 @@ class SchedulerCalendarTest {
                 userPanel("B", 0, HOUR, b, pinned = true),
             ),
             nextPanelCounter = 2,
-        ).copy(calendarFocused = true)
+        ).copy(focusedWindow = AppWindow.Calendar)
         val adjusted = SchedulerReducer.reduce(
             s,
             SchedulerIntent.SetPanelWeights(mapOf("A" to 3.0, "B" to 1.0)),

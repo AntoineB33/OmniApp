@@ -39,13 +39,26 @@ data class SchedulerHistory(
  * other unit), [Calendar] while the calendar is focused (skipping non-calendar units — and non-focus
  * Ctrl+Z skips calendar units), and otherwise [Main].
  */
-enum class HistoryCategory { Edit, Selection, Calendar, Main }
+enum class HistoryCategory { Edit, Selection, Calendar, Main, WindowNav }
 
+/**
+ * PRD §7: the focus targets the user navigates between — the task tree plus the floating windows. The
+ * focused window is the top layer except when the task tree is focused. Persisted with the rest of the
+ * app state.
+ */
+enum class AppWindow { Tree, Calendar, Reminders, History }
+
+/**
+ * PRD §5/§6: every History Unit lives in one shared timeline; the categories are just how the History
+ * Manager *queries and groups* that timeline into columns. [WindowNav] holds window-navigation units
+ * (PRD §7) — recorded for display but, for now, not walked by any undo/redo command.
+ */
 data class SchedulerHistories(
     val edit: SchedulerHistory = SchedulerHistory(),
     val selection: SchedulerHistory = SchedulerHistory(),
     val calendar: SchedulerHistory = SchedulerHistory(),
     val main: SchedulerHistory = SchedulerHistory(),
+    val windowNav: SchedulerHistory = SchedulerHistory(),
 ) {
     fun forCategory(category: HistoryCategory): SchedulerHistory =
         when (category) {
@@ -53,6 +66,7 @@ data class SchedulerHistories(
             HistoryCategory.Selection -> selection
             HistoryCategory.Calendar -> calendar
             HistoryCategory.Main -> main
+            HistoryCategory.WindowNav -> windowNav
         }
 
     fun withCategory(category: HistoryCategory, history: SchedulerHistory): SchedulerHistories =
@@ -61,6 +75,7 @@ data class SchedulerHistories(
             HistoryCategory.Selection -> copy(selection = history)
             HistoryCategory.Calendar -> copy(calendar = history)
             HistoryCategory.Main -> copy(main = history)
+            HistoryCategory.WindowNav -> copy(windowNav = history)
         }
 }
 
@@ -133,10 +148,11 @@ data class SchedulerState(
      */
     val automaticSchedule: Boolean = true,
     /**
-     * PRD §5 whether the calendar window currently has focus, which routes Ctrl+Z/Y to the calendar
-     * history (and away from it when unfocused). Transient session state, not persisted.
+     * PRD §7 the window the user is currently focused on (the task tree or a floating window). Routes
+     * Ctrl+Z/Y to that window's history (PRD §5/§6) and gates which surface catches letter typing
+     * (PRD §8). Persisted with the rest of the app state.
      */
-    val calendarFocused: Boolean = false,
+    val focusedWindow: AppWindow = AppWindow.Tree,
     /**
      * PRD §8 Overlap Mode: whether `O` has armed "allow overlap" for the next calendar move/resize.
      * Transient session state, not persisted and not undoable.
@@ -175,6 +191,9 @@ data class SchedulerState(
      */
     val lookAwayVoiceEnabled: Boolean = true,
 ) {
+    /** PRD §8: the calendar catches letter typing / routes Ctrl+Z/Y only while it is the focused window. */
+    val calendarFocused: Boolean get() = focusedWindow == AppWindow.Calendar
+
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots
     // (capture) and re-attached from the live tasks on restore (applyTree). Undo/Redo therefore
     // never reverts records, even though they live on the Task object.

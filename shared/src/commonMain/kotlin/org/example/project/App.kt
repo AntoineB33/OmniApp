@@ -44,6 +44,7 @@ import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.platform.lastWakeAfterLongSleepMillis
 import org.example.project.scheduler.platform.sendSystemNotification
 import org.example.project.scheduler.platform.speak
+import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.ui.PriorityWeightWindow
@@ -338,16 +339,30 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         }
         // The focused window is the topmost open one in the stack.
         fun focusedWindow(): FloatingWindow? = windowStack.lastOrNull { isWindowOpen(it) }
+        // PRD §7: the scheduler-state focus target for a floating window (null for the debug TimeSim panel,
+        // which is not a navigable app window).
+        fun appWindowOf(id: FloatingWindow): AppWindow? = when (id) {
+            FloatingWindow.Calendar -> AppWindow.Calendar
+            FloatingWindow.Reminders -> AppWindow.Reminders
+            FloatingWindow.History -> AppWindow.History
+            FloatingWindow.TimeSim -> null
+        }
+        // PRD §7 window navigation: raise [id] to the top layer AND move scheduler focus onto it, which
+        // clears the tree selection, forcibly exits tree Edit Mode, and records a WindowNav history unit.
+        fun focusWindow(id: FloatingWindow) {
+            bringWindowToFront(id)
+            appWindowOf(id)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it)) }
+        }
         // Lateral-menu click on a window button: open it (and focus) when closed; close it when it is the
         // focused (front) window; otherwise just bring it to focus without closing.
         fun onMenuWindowClicked(id: FloatingWindow, setOpen: (Boolean) -> Unit) {
             when {
                 !isWindowOpen(id) -> {
                     setOpen(true)
-                    bringWindowToFront(id)
+                    focusWindow(id)
                 }
                 focusedWindow() == id -> setOpen(false)
-                else -> bringWindowToFront(id)
+                else -> focusWindow(id)
             }
         }
 
@@ -402,6 +417,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // tree stops hijacking letter typing into Edit Mode and Ctrl+Z/Y route to the calendar history.
         LaunchedEffect(calendarOpen) {
             vm.dispatch(SchedulerIntent.SetCalendarFocus(calendarOpen))
+        }
+
+        // PRD §7: switching focus to another window leaves Edit Mode in any window — close the calendar's
+        // edit / add-reminder surfaces so they don't linger over the newly focused window.
+        LaunchedEffect(schedulerState.focusedWindow) {
+            editingBlock = null
+            addingReminderAtMillis = null
         }
 
         Box(
@@ -521,12 +543,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             // PRD §8 focus: pressing in the calendar makes it the focused surface again
                             // (e.g. after a click into the tree had handed focus back) and raises it to the
                             // top of the window layers. (onFocus fires inside the window, after its offset.)
-                            onFocus = {
-                                bringWindowToFront(FloatingWindow.Calendar)
-                                if (!schedulerState.calendarFocused) {
-                                    vm.dispatch(SchedulerIntent.SetCalendarFocus(true))
-                                }
-                            },
+                            onFocus = { focusWindow(FloatingWindow.Calendar) },
                             // PRD §8 Manual add: open the edit window pre-filled with the default task
                             // (highest absolute priority, min-time span) and a Save button.
                             onAddTaskAt = { startMillis ->
@@ -656,7 +673,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             knownReminderIds = { SchedulerDomain.allReminderEntries(schedulerState).mapTo(mutableSetOf()) { it.id } },
                             // Cascade: open up-left of center so it isn't fully hidden behind a wider window.
                             initialOffset = Offset(-200f, -150f),
-                            onRaise = { bringWindowToFront(FloatingWindow.Reminders) },
+                            onRaise = { focusWindow(FloatingWindow.Reminders) },
                             modifier = Modifier
                                 .align(Alignment.Center)
                                 .zIndex(windowZ(FloatingWindow.Reminders)),
@@ -670,7 +687,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             onDismiss = { historyManagerOpen = false },
                             // Cascade: open down-right of center so the Reminders / calendar windows stay reachable.
                             initialOffset = Offset(200f, 150f),
-                            onRaise = { bringWindowToFront(FloatingWindow.History) },
+                            onRaise = { focusWindow(FloatingWindow.History) },
                             modifier = Modifier
                                 .align(Alignment.Center)
                                 .zIndex(windowZ(FloatingWindow.History)),
@@ -698,7 +715,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                 .align(Alignment.BottomEnd)
                                 .padding(12.dp)
                                 .zIndex(windowZ(FloatingWindow.TimeSim))
-                                .raiseOnPress { bringWindowToFront(FloatingWindow.TimeSim) },
+                                .raiseOnPress { focusWindow(FloatingWindow.TimeSim) },
                         )
                     }
                 }

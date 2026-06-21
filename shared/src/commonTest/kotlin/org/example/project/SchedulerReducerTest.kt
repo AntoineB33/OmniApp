@@ -11,6 +11,7 @@ import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SchedulerStore
+import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.EditExitNavigation
@@ -86,6 +87,34 @@ class SchedulerReducerTest {
         } finally {
             SchedulerReducer.clock = previous
         }
+    }
+
+    @Test
+    fun focusing_a_floating_window_clears_selection_exits_edit_and_records_a_window_nav_unit() {
+        // PRD §7: clicking a floating window forcibly exits tree Edit Mode, makes the tree selection
+        // disappear, moves focus, and records a (non-undoable) WindowNav history unit.
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = cellId, ctrl = false, shift = false, visibleOrder = emptyList()),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId, "x"))
+        assertNotNull(s.selection.main)
+        assertNotNull(s.editSession)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(AppWindow.Calendar))
+        assertEquals(AppWindow.Calendar, s.focusedWindow)
+        assertNull(s.editSession) // Edit Mode left
+        assertNull(s.selection.main) // selection disappeared
+        assertTrue(s.selection.selected.isEmpty())
+        val nav = s.histories.windowNav
+        assertEquals(1, nav.units.size)
+        assertEquals("Focus Calendar", nav.units.last().delta.label)
+
+        // The WindowNav unit is not walked by any undo/redo command, so Ctrl+Z does not revert focus.
+        val undone = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertEquals(AppWindow.Calendar, undone.focusedWindow)
     }
 
     @Test

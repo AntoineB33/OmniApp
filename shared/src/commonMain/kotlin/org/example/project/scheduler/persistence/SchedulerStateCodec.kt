@@ -17,6 +17,7 @@ import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.SchedulerEditSession
 import org.example.project.scheduler.state.SchedulerSelection
@@ -105,6 +106,7 @@ object SchedulerStateCodec {
             showSideTasks = showSideTasks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
+            focusedWindow = focusedWindow.name,
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -240,6 +242,7 @@ object SchedulerStateCodec {
             showSideTasks = showSideTasks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
+            focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),
         )
     }
 
@@ -334,6 +337,9 @@ private data class PersistedState(
     val showReminders: Boolean = true,
     // PRD §15: the 20s look-away voice cue; default on (payloads written before the toggle existed get the voice).
     val lookAwayVoiceEnabled: Boolean = true,
+    // PRD §7: the focused window; a missing value decodes to the task tree (payloads written before window
+    // focus was persisted).
+    val focusedWindow: String = "Tree",
 )
 
 @Serializable

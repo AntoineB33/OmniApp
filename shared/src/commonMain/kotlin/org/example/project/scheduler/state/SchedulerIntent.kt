@@ -406,8 +406,15 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §5: mark the calendar focused/unfocused so Ctrl+Z/Y route to (or away from) the calendar
-     * history. Not undoable.
+     * PRD §7 window navigation: move focus to [window] (the task tree or a floating window). Focusing a
+     * floating window forcibly exits any tree Edit Mode and clears the tree selection (PRD §4); the
+     * navigation itself is recorded as a (currently non-undoable) WindowNav History Unit (PRD §7).
+     */
+    data class FocusWindow(val window: AppWindow) : SchedulerIntent
+
+    /**
+     * PRD §5/§7: shorthand for focusing the calendar (true) or returning focus to the task tree (false);
+     * delegates to [FocusWindow].
      */
     data class SetCalendarFocus(val focused: Boolean) : SchedulerIntent
 

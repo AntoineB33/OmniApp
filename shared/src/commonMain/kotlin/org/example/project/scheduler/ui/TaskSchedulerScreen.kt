@@ -101,6 +101,7 @@ import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.platform.isDeadKey
 import org.example.project.scheduler.platform.readSystemClipboardText
 import org.example.project.scheduler.platform.writeSystemClipboardText
+import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
@@ -415,9 +416,9 @@ fun TaskSchedulerScreen(
                     } else {
                         event.printableChar() ?: return@onPreviewKeyEvent false
                     }
-                // PRD §8 focus: while the calendar is in focus, the tree must not hijack letter typing
-                // into Edit Mode — the calendar (and its edit window) owns the keyboard then.
-                if (state.calendarFocused) return@onPreviewKeyEvent false
+                // PRD §7/§8 focus: while a floating window is focused, the tree must not hijack letter
+                // typing into Edit Mode — the focused window owns the keyboard then.
+                if (state.focusedWindow != AppWindow.Tree) return@onPreviewKeyEvent false
                 vm.dispatch(SchedulerIntent.BeginEdit(main, typed))
                 true
             }
@@ -502,7 +503,10 @@ fun TaskSchedulerScreen(
                         if (intent.cellId != minTimeEditCellId) {
                             focusRequester.requestFocus()
                         }
-                        if (state.calendarFocused) vm.dispatch(SchedulerIntent.SetCalendarFocus(false))
+                        // PRD §7: clicking into the tree returns focus to it from whichever window held it.
+                        if (state.focusedWindow != AppWindow.Tree) {
+                            vm.dispatch(SchedulerIntent.FocusWindow(AppWindow.Tree))
+                        }
                     }
                     vm.dispatch(intent)
                 },

@@ -84,7 +84,9 @@ object SchedulerReducer {
             is SchedulerIntent.RemoveTaskPanels -> reduceRemoveTaskPanels(state, intent.ids)
             is SchedulerIntent.ReplaceTaskPanels -> reduceReplaceTaskPanels(state, intent)
             is SchedulerIntent.RemoveRecordPeriod -> reduceRemoveRecordPeriod(state, intent)
-            is SchedulerIntent.SetCalendarFocus -> state.copy(calendarFocused = intent.focused)
+            is SchedulerIntent.FocusWindow -> reduceFocusWindow(state, intent.window)
+            is SchedulerIntent.SetCalendarFocus ->
+                reduceFocusWindow(state, if (intent.focused) AppWindow.Calendar else AppWindow.Tree)
             SchedulerIntent.ToggleCalendarOverlap -> state.copy(overlapArmed = !state.overlapArmed)
             is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
             is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
@@ -760,6 +762,23 @@ object SchedulerReducer {
             next,
             SetSelectionDelta(before = next.selection, after = SchedulerSelection()),
             HistoryCategory.Selection,
+        )
+    }
+
+    /**
+     * PRD §7 window navigation. Moving focus to a *floating* window forcibly exits any tree Edit Mode and
+     * clears the tree selection (PRD §4 "Forced Exit"; the selection "disappears") — [reduceClearSelection]
+     * does both and records the Selection-state change. The navigation itself is then recorded as a
+     * WindowNav History Unit (shown in the History Manager but, for now, not walked by any undo/redo
+     * command). A no-op when focus does not actually change.
+     */
+    private fun reduceFocusWindow(state: SchedulerState, window: AppWindow): SchedulerState {
+        if (state.focusedWindow == window) return state
+        val cleared = if (window != AppWindow.Tree) reduceClearSelection(state) else state
+        return commitDelta(
+            cleared,
+            FocusDelta(before = cleared.focusedWindow, after = window),
+            HistoryCategory.WindowNav,
         )
     }
 
@@ -1935,6 +1954,21 @@ private data class SetSelectionDelta(
     override fun undo(state: SchedulerState): SchedulerState = state.copy(selection = before)
 
     override fun redo(state: SchedulerState): SchedulerState = state.copy(selection = after)
+}
+
+/** PRD §7: a window-navigation unit — the focus moving from one window to another. */
+private data class FocusDelta(
+    val before: AppWindow,
+    val after: AppWindow,
+) : Delta {
+    override val label: String = "Focus ${after.name}"
+
+    override val details: List<String>
+        get() = listOf("focus: ${before.name} → ${after.name}")
+
+    override fun undo(state: SchedulerState): SchedulerState = state.copy(focusedWindow = before)
+
+    override fun redo(state: SchedulerState): SchedulerState = state.copy(focusedWindow = after)
 }
 
 /**

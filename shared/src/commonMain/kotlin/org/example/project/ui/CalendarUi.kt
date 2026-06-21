@@ -844,6 +844,7 @@ fun HistoryManagerWindow(
         "Calendar" to HistoryCategory.Calendar,
         "Edit Mode" to HistoryCategory.Edit,
         "Selection" to HistoryCategory.Selection,
+        "Window nav" to HistoryCategory.WindowNav,
     )
 
     Surface(
@@ -853,7 +854,7 @@ fun HistoryManagerWindow(
         border = BorderStroke(1.dp, CalColors.grid),
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            .size(width = 780.dp, height = 520.dp)
+            .size(width = 940.dp, height = 520.dp)
             // Raise on press AFTER the offset so the hit region tracks the (possibly dragged) window.
             .raiseOnPress(onRaise),
     ) {
