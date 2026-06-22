@@ -11,8 +11,8 @@
   Layout produced (matches piperExecutable()/piperModel() in Voice.jvm.kt):
     <Dir>\piper.exe
     <Dir>\espeak-ng-data\...
-    <Dir>\en_US-lessac-medium.onnx
-    <Dir>\en_US-lessac-medium.onnx.json
+    <Dir>\en_US-amy-medium.onnx
+    <Dir>\en_US-amy-medium.onnx.json
 
 .PARAMETER Dir
   Target install directory. Defaults to $env:USERPROFILE\.omniapp\piper.
@@ -31,8 +31,8 @@ $ErrorActionPreference = "Stop"
 
 # Pinned versions so installs are reproducible. Bump as new releases land.
 $PiperZipUrl   = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip"
-$VoiceBaseUrl  = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium"
-$VoiceModel    = "en_US-lessac-medium.onnx"
+$VoiceBaseUrl  = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium"
+$VoiceModel    = "en_US-amy-medium.onnx"
 
 # Download with retries. The HuggingFace CDN occasionally resets mid-transfer,
 # which leaves a truncated file; we retry a few times before giving up.
