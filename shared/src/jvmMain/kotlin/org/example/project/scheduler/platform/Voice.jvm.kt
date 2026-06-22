@@ -20,6 +20,11 @@ private val speechQueue = Executors.newSingleThreadExecutor { runnable ->
  * no audio device). `waitFor()` holds the worker until the utterance finishes so the next cue does not
  * start mid-sentence. A single quote in [text] is replaced so it can't break the PowerShell single-quoted
  * string (our cues have none, but this keeps the call robust).
+ *
+ * The synthesizer is forced onto an installed English voice; otherwise it uses the machine's default voice,
+ * which on a French-locale Windows reads our English cues (and numbers like "20") with a French accent. We
+ * pick an enabled `en` voice, preferring female ones and then en-GB/en-US, and fall back to the default if
+ * none exists.
  */
 actual fun speak(text: String) {
     val sanitized = text.replace('\'', ' ').replace('\n', ' ')
@@ -30,7 +35,14 @@ actual fun speak(text: String) {
                 "-NoProfile",
                 "-Command",
                 "Add-Type -AssemblyName System.Speech; " +
-                    "(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('$sanitized')",
+                    "\$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
+                    "\$en = \$s.GetInstalledVoices() | " +
+                    "Where-Object { \$_.Enabled -and \$_.VoiceInfo.Culture.TwoLetterISOLanguageName -eq 'en' } | " +
+                    "Sort-Object @{ Expression = { if (\$_.VoiceInfo.Gender -eq 'Female') { 0 } else { 1 } } }, " +
+                    "@{ Expression = { switch (\$_.VoiceInfo.Culture.Name) { 'en-GB' { 0 } 'en-US' { 1 } default { 2 } } } } | " +
+                    "Select-Object -First 1; " +
+                    "if (\$en) { \$s.SelectVoice(\$en.VoiceInfo.Name) }; " +
+                    "\$s.Speak('$sanitized')",
             ).start().waitFor()
         }
     }
