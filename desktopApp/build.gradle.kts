@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.JavaExec
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
@@ -24,5 +25,14 @@ compose.desktop {
             packageName = "org.example.project"
             packageVersion = "0.5.0"
         }
+    }
+}
+
+// Forward `-Pomniapp.stateDir=<path>` to the launched app JVM as a system
+// property so dev scripts can point the app at an isolated state directory.
+// (The compose `run` task is a JavaExec subtype.)
+tasks.withType<JavaExec>().configureEach {
+    (project.findProperty("omniapp.stateDir") as String?)?.let { stateDir ->
+        systemProperty("omniapp.stateDir", stateDir)
     }
 }

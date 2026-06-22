@@ -2,8 +2,12 @@
 setlocal EnableDelayedExpansion
 
 REM =====================================================================
-REM  dev-reset.bat  -  kill running app, wait for exit, delete state,
-REM                    then relaunch. Development helper only.
+REM  dev-reset.bat  -  kill running app, wait for exit, delete THIS
+REM                    script's isolated state dir, then relaunch with an
+REM                    empty DB. Development helper only.
+REM  This uses a dedicated state dir (.omniapp-reset) that is SEPARATE
+REM  from the real DB (~/.omniapp) preserved by dev-restart.bat, so a
+REM  reset never destroys the data dev-restart relies on.
 REM  Location: <project-root>\scripts\dev-reset.bat
 REM  Run from anywhere - paths resolve relative to the project root.
 REM =====================================================================
@@ -15,11 +19,15 @@ REM or the jar/module name. This is how we find the right process to
 REM kill, without touching the Gradle daemon, your IDE, or other JVMs.
 set "APP_IDENTIFIER=org.example.project.MainKt"
 
-REM State folder to delete, relative to the project root.
-set "STATE_DIR=%USERPROFILE%\.omniapp"
+REM Isolated state folder for reset runs. MUST differ from the real DB
+REM (~/.omniapp) used by dev-restart.bat, so wiping it here never touches
+REM preserved data. The app is told to use it via -Pomniapp.stateDir.
+set "STATE_DIR=%USERPROFILE%\.omniapp-reset"
 
 REM Command used to (re)launch the app, run from the project root.
-set "LAUNCH_CMD=gradlew.bat :desktopApp:run"
+REM The -P property is forwarded to the app JVM as -Domniapp.stateDir
+REM (see desktopApp/build.gradle.kts).
+set "LAUNCH_CMD=gradlew.bat :desktopApp:run -Pomniapp.stateDir=%STATE_DIR%"
 REM ---------------------------------------------------------------------
 
 REM Resolve project root as the parent of this script's folder.

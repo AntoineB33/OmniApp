@@ -2,9 +2,10 @@
 setlocal EnableDelayedExpansion
 
 REM =====================================================================
-REM  dev-reset.bat  -  kill running app, wait for exit, delete state,
-REM                    then relaunch. Development helper only.
-REM  Location: <project-root>\scripts\dev-reset.bat
+REM  dev-restart.bat  -  kill running app, wait for exit, then relaunch,
+REM                      PRESERVING the existing DB/state. Dev helper only.
+REM  (For an empty DB, use dev-reset.bat instead.)
+REM  Location: <project-root>\scripts\dev-restart.bat
 REM  Run from anywhere - paths resolve relative to the project root.
 REM =====================================================================
 
