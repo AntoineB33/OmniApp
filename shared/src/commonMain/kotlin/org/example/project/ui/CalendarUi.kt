@@ -2292,10 +2292,18 @@ private fun DayColumn(
                 t.hour + t.minute / 60f
             }
         fun onNowLine(tag: PlacedRecord) = nowHour != null && !tag.checked && tag.startHour <= nowHour
-        reminderTags.filterNot(::onNowLine).forEach { tag ->
-            val y = checkedAtHour(tag) ?: tag.startHour
-            ReminderTag(tag, Modifier.offset(y = hourHeight * y)) { onToggleReminder(tag) }
-        }
+        // PRD §14: scheduled reminders that fall at the same time — or close enough that their fixed-height
+        // tags would overlap — stack downward instead of drawing on top of each other. Sweep them in time
+        // order, pushing each tag below the previous one whenever its natural slot would collide.
+        var lastScheduledBottom: Dp? = null
+        reminderTags.filterNot(::onNowLine)
+            .sortedBy { checkedAtHour(it) ?: it.startHour }
+            .forEach { tag ->
+                val naturalY = hourHeight * (checkedAtHour(tag) ?: tag.startHour)
+                val y = lastScheduledBottom?.let { maxOf(naturalY, it) } ?: naturalY
+                lastScheduledBottom = y + REMINDER_TAG_HEIGHT
+                ReminderTag(tag, Modifier.offset(y = y)) { onToggleReminder(tag) }
+            }
         reminderTags.filter(::onNowLine).forEachIndexed { i, tag ->
             ReminderTag(tag, Modifier.offset(y = hourHeight * (nowHour ?: 0f) + REMINDER_TAG_HEIGHT * i)) {
                 onToggleReminder(tag)
