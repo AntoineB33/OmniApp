@@ -28,7 +28,7 @@ private val speechQueue = Executors.newSingleThreadExecutor { runnable ->
  */
 actual fun speak(text: String) {
     // The exact voice name you picked from the audition script
-    val preferredVoice = "Microsoft Hortense Desktop" 
+    val preferredVoice = "Microsoft Zira Desktop" 
     val sanitized = text.replace('\'', ' ').replace('\n', ' ')
     
     speechQueue.execute {
