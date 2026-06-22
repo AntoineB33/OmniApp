@@ -2181,6 +2181,7 @@ private fun DayColumn(
                 onLockScroll = onLockScroll,
                 hoverScope = hoverScope,
                 tz = tz,
+                onEditEntry = onEditEntry,
             )
         }
 
@@ -2511,6 +2512,7 @@ private fun ReminderTag(tag: PlacedRecord, modifier: Modifier = Modifier, onClic
  * now", or manual entry), drawn identically (same colour) with the same behaviour:
  *  - Click and drag while holding → move; committed once, on release, via [onCommitBounds].
  *  - Grab the top/bottom edge and drag → resize that edge, also committed via [onCommitBounds].
+ *  - Double-click (no drag) → open the edit window via [onEditEntry] (same as the right-click "Edit").
  * Right-click (the Edit/Remove menu) is handled by the enclosing day column, so a secondary press is
  * left unconsumed here for it to pick up. The live preview applies the SAME no-overlap snapping/
  * clamping the reducer commits with, so a block never visually overlaps another. Auto blocks
@@ -2533,6 +2535,7 @@ private fun CalendarBlock(
     onLockScroll: (Boolean) -> Unit,
     hoverScope: CalendarTitleHoverScope,
     tz: TimeZone,
+    onEditEntry: (PlacedRecord) -> Unit,
 ) {
     val key = calendarBlockKey(record)
     // Read inside the long-lived gesture closure so a mid-drag `O` toggle is picked up immediately.
@@ -2603,6 +2606,11 @@ private fun CalendarBlock(
                         // Cap the resize edge zone at a third of the slice so a short slice still has a
                         // central "move" region the press can land in.
                         val edgePx = minOf(with(density) { 6.dp.toPx() }, sliceHeightPx / 3f)
+                        // PRD §8 double-click → open the edit window. Track the previous no-drag tap's
+                        // press time across gestures so a second tap within the platform double-tap
+                        // window is recognised here (a tap doesn't move/commit, so this is additive).
+                        val doubleTapWindowMs = viewConfiguration.doubleTapTimeoutMillis
+                        var lastTapUptime = 0L
 
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
@@ -2610,6 +2618,7 @@ private fun CalendarBlock(
                             // Right-click → leave it unconsumed so the enclosing day column shows the
                             // Edit/Remove contextual menu for this block (PRD §8).
                             if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
+                            val downUptime = down.uptimeMillis
 
                             // Resize only on the block's true top (first slice) / bottom (last slice);
                             // an interior slice edge is just a slice boundary, so it moves the block.
@@ -2632,6 +2641,13 @@ private fun CalendarBlock(
                                         if (started) {
                                             val b = if (edge != null) resizedBounds(edge) else movedBounds()
                                             onCommitBounds(record, b.startEpochMillis, b.endEpochMillis, armed.value)
+                                        } else if (downUptime - lastTapUptime <= doubleTapWindowMs) {
+                                            // Second quick tap with no drag → open the edit window, then
+                                            // reset so a third tap starts a fresh pair.
+                                            onEditEntry(record)
+                                            lastTapUptime = 0L
+                                        } else {
+                                            lastTapUptime = downUptime
                                         }
                                         break
                                     }

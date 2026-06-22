@@ -27,7 +27,10 @@ private val speechQueue = Executors.newSingleThreadExecutor { runnable ->
  * none exists.
  */
 actual fun speak(text: String) {
+    // The exact voice name you picked from the audition script
+    val preferredVoice = "Microsoft Hortense Desktop" 
     val sanitized = text.replace('\'', ' ').replace('\n', ' ')
+    
     speechQueue.execute {
         runCatching {
             ProcessBuilder(
@@ -36,12 +39,14 @@ actual fun speak(text: String) {
                 "-Command",
                 "Add-Type -AssemblyName System.Speech; " +
                     "\$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
-                    "\$en = \$s.GetInstalledVoices() | " +
-                    "Where-Object { \$_.Enabled -and \$_.VoiceInfo.Culture.TwoLetterISOLanguageName -eq 'en' } | " +
-                    "Sort-Object @{ Expression = { if (\$_.VoiceInfo.Gender -eq 'Female') { 0 } else { 1 } } }, " +
-                    "@{ Expression = { switch (\$_.VoiceInfo.Culture.Name) { 'en-GB' { 0 } 'en-US' { 1 } default { 2 } } } } | " +
-                    "Select-Object -First 1; " +
-                    "if (\$en) { \$s.SelectVoice(\$en.VoiceInfo.Name) }; " +
+                    "\$preferred = '$preferredVoice'; " +
+                    "\$voice = \$s.GetInstalledVoices() | Where-Object { \$_.VoiceInfo.Name -eq \$preferred -and \$_.Enabled }; " +
+                    "if (\$voice) { \$s.SelectVoice(\$preferred) } " +
+                    "else { " +
+                        // Your existing fallback logic if the preferred voice isn't found
+                        "\$en = \$s.GetInstalledVoices() | Where-Object { \$_.Enabled -and \$_.VoiceInfo.Culture.TwoLetterISOLanguageName -eq 'en' } | Select-Object -First 1; " +
+                        "if (\$en) { \$s.SelectVoice(\$en.VoiceInfo.Name) } " +
+                    "}; " +
                     "\$s.Speak('$sanitized')",
             ).start().waitFor()
         }
