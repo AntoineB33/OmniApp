@@ -109,16 +109,51 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         }
         val tz = remember { TimeZone.currentSystemDefault() }
 
-        // PRD §9: the frequent tick — advance "now" and the schedule, recording any completed panel so
-        // the next panel becomes the current "task to do now". Ticks every second under time simulation so
-        // accelerated time shows promptly; otherwise the production 30s cadence.
         var nowMillis by remember { mutableStateOf(clock.nowMillis()) }
+
+        // PRD §9: the single "time has advanced to `now`" step — record any completed panel (so the next
+        // panel becomes the current "task to do now") and, when a side task is due, refill the +168h
+        // schedule; otherwise just advance. Shared by the real per-tick loop and the debug "simulate
+        // pause" control so both drive the identical scheduling logic.
+        fun advanceTo(now: Long) {
+            nowMillis = now
+            // PRD §15: an overdue *rest pose* must sit at the now-line and split the surrounding task
+            // around it. That placement only happens in a full refill, so while a pose is overdue we refill
+            // each tick (it re-splits cleanly and is a no-op when nothing moved) — this is what keeps the
+            // pose tracking `now` under accelerated time. The look-away is deliberately excluded: it sits on
+            // a fixed grid (its `lastRest` never updates), so refilling on it would re-place it at `now`
+            // every tick and make the voice cue repeat. Otherwise we only advance (the cheaper tick): the
+            // window refill is left to the §9 calculation events.
+            val current = vm.state.value
+            val sideTaskDue =
+                current.automaticSchedule &&
+                    current.sideTasks.any { it.restBreak && SchedulerDomain.isSideTaskOverdue(it, now) }
+            if (sideTaskDue) {
+                vm.dispatch(SchedulerIntent.RefreshSchedule(now))
+            } else {
+                vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
+            }
+        }
+
+        // PRD §12: a gap in time of `[sleepStart, sleepEnd]` — the process was suspended (real device
+        // sleep) or a debug leap jumped the clock over it. Report the sleep (cut the in-progress panel,
+        // leave the hole, rest the covered side tasks), then advance to the wake instant exactly as a
+        // normal tick does. The one handler both the real detector and the "simulate pause" button call,
+        // so a simulated pause is just an alternate *source* of a gap, handled by identical code.
+        fun onTimeGap(sleepStart: Long, sleepEnd: Long) {
+            vm.dispatch(SchedulerIntent.ReportDeviceSleep(sleepStart, sleepEnd))
+            advanceTo(sleepEnd)
+        }
+
+        // PRD §9: the frequent tick. Ticks every second under time simulation so accelerated time shows
+        // promptly; otherwise the production 30s cadence.
         LaunchedEffect(clock) {
             val interval: Long = if (DebugFlags.TIME_SIMULATION) 1_000 else 30_000
             // PRD §12 Device sleep is detected from *real* elapsed time, not the active clock's: a tick
             // gap far larger than the cadence in wall-clock seconds means the process was suspended.
             // Using the sim clock here would misread fast-forwarded time (e.g. 300×) as constant sleep
-            // and keep cutting the current panel's past portion.
+            // and keep cutting the current panel's past portion. A debug leap advances only the sim clock
+            // (no real gap), so it cannot trip this detector — the panel injects the gap via [onTimeGap].
             var lastRealTick = SystemAppClock.nowMillis()
             var lastClockTick = clock.nowMillis()
             while (true) {
@@ -127,27 +162,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                 if (realNow - lastRealTick > interval * 3) {
                     // Report the gap in the active clock's domain (sim time when accelerated), so the
                     // hole lands where the panel actually is on the calendar.
-                    vm.dispatch(SchedulerIntent.ReportDeviceSleep(lastClockTick, now))
+                    onTimeGap(lastClockTick, now)
+                } else {
+                    advanceTo(now)
                 }
                 lastRealTick = realNow
                 lastClockTick = now
-                nowMillis = now
-                // PRD §15: an overdue *rest pose* must sit at the now-line and split the surrounding task
-                // around it. That placement only happens in a full refill, so while a pose is overdue we refill
-                // each tick (it re-splits cleanly and is a no-op when nothing moved) — this is what keeps the
-                // pose tracking `now` under accelerated time. The look-away is deliberately excluded: it sits
-                // on a fixed grid (its `lastRest` never updates), so refilling on it would re-place it at `now`
-                // every tick and make the voice cue repeat. Otherwise we only advance (the cheaper tick): the
-                // window refill is left to the §9 calculation events below.
-                val current = vm.state.value
-                val sideTaskDue =
-                    current.automaticSchedule &&
-                        current.sideTasks.any { it.restBreak && SchedulerDomain.isSideTaskOverdue(it, now) }
-                if (sideTaskDue) {
-                    vm.dispatch(SchedulerIntent.RefreshSchedule(now))
-                } else {
-                    vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
-                }
                 delay(interval)
             }
         }
@@ -715,17 +735,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                         TimeSimPanel(
                             clock = simClock,
                             nowMillis = nowMillis,
-                            // Debug: simulate taking a pause — leap virtual time over it and report the device
-                            // sleep so the side-task rhythm resets exactly as a real ≥duration pause would.
+                            // Debug: simulate taking a pause — leap virtual time over it, then feed the gap
+                            // through the same [onTimeGap] handler a real device sleep uses, so the side-task
+                            // rhythm and schedule resume by the exact same logic as a real ≥duration pause.
                             onSimulatePause = { durationMillis ->
                                 val sleepStart = clock.nowMillis()
                                 simClock.leap(durationMillis)
-                                val sleepEnd = clock.nowMillis()
-                                nowMillis = sleepEnd
-                                vm.dispatch(SchedulerIntent.ReportDeviceSleep(sleepStart, sleepEnd))
-                                if (vm.state.value.automaticSchedule) {
-                                    vm.dispatch(SchedulerIntent.RefreshSchedule(sleepEnd))
-                                }
+                                onTimeGap(sleepStart, clock.nowMillis())
                             },
                             pendingRollback = schedulerState.histories.hasPendingDebugRollback,
                             modifier = Modifier
