@@ -44,6 +44,11 @@ fun TimeSimPanel(
     nowMillis: Long,
     /** Debug: simulate taking a pause of [durationMillis] (a device sleep) and leap virtual time over it. */
     onSimulatePause: (durationMillis: Long) -> Unit = {},
+    /**
+     * Whether the history currently holds changes made under the diverged clock that the next app start
+     * will revert (PRD §6). Drives the red "will be reverted on restart" warning.
+     */
+    pendingRollback: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val tz = remember { TimeZone.currentSystemDefault() }
@@ -96,6 +101,16 @@ fun TimeSimPanel(
                 PauseChip(label = "20s") { onSimulatePause(20L * 1_000) }
                 PauseChip(label = "5min") { onSimulatePause(5L * 60 * 1_000) }
                 PauseChip(label = "15min") { onSimulatePause(15L * 60 * 1_000) }
+            }
+            // PRD §6: warn that any change made while time is diverged is debug-only and will be undone
+            // on the next start, so the real saved data is never polluted by fast-forwarding.
+            if (pendingRollback) {
+                Text(
+                    text = "⚠ changes made under sim time will be reverted on restart",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFD32F2F),
+                    fontWeight = FontWeight.Bold,
+                )
             }
             Text(
                 text = "reset to real time",

@@ -35,9 +35,12 @@ class TaskSchedulerViewModel(
         /** PRD §5: reload persisted state; an interrupted Edit Mode session is canceled. */
         fun loadInitialState(store: SchedulerStore?, initial: SchedulerState): SchedulerState {
             val loaded = store?.load()?.let(SchedulerStateCodec::decode) ?: initial
+            // PRD §6: revert any changes committed under the diverged debug clock before they reach the
+            // running app, so a fast-forwarded session never pollutes the real saved data on restart.
+            val clean = SchedulerReducer.rollbackDebugTainted(loaded)
             // PRD §15: side tasks are a hardcoded set (not persisted user data); seed them onto whatever
             // was loaded so they are always present in the running app, never in the bare test states.
-            val seeded = loaded.copy(sideTasks = SchedulerDomain.DEFAULT_SIDE_TASKS)
+            val seeded = clean.copy(sideTasks = SchedulerDomain.DEFAULT_SIDE_TASKS)
             return if (seeded.editSession != null) {
                 SchedulerReducer.reduce(seeded, SchedulerIntent.CancelEdit)
             } else {

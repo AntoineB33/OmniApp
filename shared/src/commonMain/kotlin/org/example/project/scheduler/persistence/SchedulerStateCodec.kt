@@ -1,5 +1,6 @@
 package org.example.project.scheduler.persistence
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -19,9 +20,22 @@ import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.CellEditMode
+import org.example.project.scheduler.state.Delta
+import org.example.project.scheduler.state.EmptyCellsDelta
+import org.example.project.scheduler.state.FocusDelta
+import org.example.project.scheduler.state.HistoryCategory
+import org.example.project.scheduler.state.HistoryUnit
+import org.example.project.scheduler.state.NoOpDelta
+import org.example.project.scheduler.state.PanelDelta
+import org.example.project.scheduler.state.RecordDelta
 import org.example.project.scheduler.state.SchedulerEditSession
+import org.example.project.scheduler.state.SchedulerHistories
+import org.example.project.scheduler.state.SchedulerHistory
 import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.state.SetSelectionDelta
+import org.example.project.scheduler.state.ToggleExpandDelta
+import org.example.project.scheduler.state.TreeMutationDelta
 import org.example.project.scheduler.state.TreeSnapshot
 
 /**
@@ -107,6 +121,81 @@ object SchedulerStateCodec {
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
             focusedWindow = focusedWindow.name,
+            histories = histories.toPersisted(),
+        )
+
+    private fun SchedulerHistories.toPersisted(): PersistedHistories =
+        PersistedHistories(
+            edit = forCategory(HistoryCategory.Edit).toPersisted(),
+            selection = forCategory(HistoryCategory.Selection).toPersisted(),
+            calendar = forCategory(HistoryCategory.Calendar).toPersisted(),
+            main = forCategory(HistoryCategory.Main).toPersisted(),
+            windowNav = forCategory(HistoryCategory.WindowNav).toPersisted(),
+        )
+
+    private fun SchedulerHistory.toPersisted(): PersistedHistory =
+        PersistedHistory(
+            pointer = pointer,
+            units =
+                units.map { unit ->
+                    PersistedHistoryUnit(
+                        timeMillis = unit.timeMillis,
+                        chronoId = unit.chronoId,
+                        debugTainted = unit.debugTainted,
+                        delta = unit.delta.toPersisted(),
+                    )
+                },
+        )
+
+    private fun SchedulerSelection.toPersisted(): PersistedSelection =
+        PersistedSelection(
+            main = main?.value,
+            selected = selected.map(CellId::value),
+            rangeAnchor = rangeAnchor?.value,
+            renderVia = renderVia?.value,
+        )
+
+    /** Maps each [Delta] subtype to its serializable mirror. Exhaustive over the sealed hierarchy. */
+    private fun Delta.toPersisted(): PersistedDelta =
+        when (this) {
+            is TreeMutationDelta -> PersistedDelta.TreeMutation(before.toPersisted(), after.toPersisted(), label)
+            is EmptyCellsDelta ->
+                PersistedDelta.EmptyCells(
+                    treeBefore.toPersisted(),
+                    treeAfter.toPersisted(),
+                    selectionBefore.toPersisted(),
+                    selectionAfter.toPersisted(),
+                )
+            is SetSelectionDelta -> PersistedDelta.SetSelection(before.toPersisted(), after.toPersisted())
+            is FocusDelta -> PersistedDelta.Focus(before.name, after.name)
+            is PanelDelta ->
+                PersistedDelta.Panels(
+                    before.map { it.toPersistedPanel() },
+                    after.map { it.toPersistedPanel() },
+                    label,
+                )
+            is ToggleExpandDelta -> PersistedDelta.ToggleExpand(cellId.value)
+            is RecordDelta ->
+                PersistedDelta.Record(
+                    before.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
+                    after.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
+                )
+            NoOpDelta -> PersistedDelta.NoOp
+        }
+
+    private fun TaskPanel.toPersistedPanel(): PersistedPanel =
+        PersistedPanel(
+            id = id,
+            taskId = taskId?.value,
+            title = title,
+            start = startEpochMillis,
+            end = endEpochMillis,
+            pinned = pinned,
+            auto = auto,
+            layoutWeight = layoutWeight,
+            chore = chore,
+            checked = checked,
+            sideTask = sideTask,
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -244,8 +333,81 @@ object SchedulerStateCodec {
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
             focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),
+            histories = histories?.toHistories() ?: SchedulerHistories(),
         )
     }
+
+    private fun PersistedHistories.toHistories(): SchedulerHistories =
+        SchedulerHistories(
+            edit = edit.toHistory(),
+            selection = selection.toHistory(),
+            calendar = calendar.toHistory(),
+            main = main.toHistory(),
+            windowNav = windowNav.toHistory(),
+        )
+
+    private fun PersistedHistory.toHistory(): SchedulerHistory =
+        SchedulerHistory(
+            pointer = pointer,
+            units =
+                units.map { u ->
+                    HistoryUnit(
+                        timeMillis = u.timeMillis,
+                        chronoId = u.chronoId,
+                        delta = u.delta.toDelta(),
+                        debugTainted = u.debugTainted,
+                    )
+                },
+        )
+
+    private fun PersistedSelection.toSelection(): SchedulerSelection =
+        SchedulerSelection(
+            main = main?.let(::CellId),
+            selected = selected.map(::CellId).toSet(),
+            rangeAnchor = rangeAnchor?.let(::CellId),
+            renderVia = renderVia?.let(::CellId),
+        )
+
+    private fun PersistedDelta.toDelta(): Delta =
+        when (this) {
+            is PersistedDelta.TreeMutation -> TreeMutationDelta(before.toSnapshot(), after.toSnapshot(), label)
+            is PersistedDelta.EmptyCells ->
+                EmptyCellsDelta(
+                    treeBefore.toSnapshot(),
+                    treeAfter.toSnapshot(),
+                    selectionBefore.toSelection(),
+                    selectionAfter.toSelection(),
+                )
+            is PersistedDelta.SetSelection -> SetSelectionDelta(before.toSelection(), after.toSelection())
+            is PersistedDelta.Focus ->
+                FocusDelta(
+                    runCatching { AppWindow.valueOf(before) }.getOrDefault(AppWindow.Tree),
+                    runCatching { AppWindow.valueOf(after) }.getOrDefault(AppWindow.Tree),
+                )
+            is PersistedDelta.Panels -> PanelDelta(before.map { it.toPanel() }, after.map { it.toPanel() }, label)
+            is PersistedDelta.ToggleExpand -> ToggleExpandDelta(CellId(cellId))
+            is PersistedDelta.Record ->
+                RecordDelta(
+                    before.mapKeys { TaskId(it.key) }.mapValues { e -> e.value.map { TaskTimeRange(it.start, it.end) } },
+                    after.mapKeys { TaskId(it.key) }.mapValues { e -> e.value.map { TaskTimeRange(it.start, it.end) } },
+                )
+            PersistedDelta.NoOp -> NoOpDelta
+        }
+
+    private fun PersistedPanel.toPanel(): TaskPanel =
+        TaskPanel(
+            id = id,
+            taskId = taskId?.let(::TaskId),
+            title = title,
+            startEpochMillis = start,
+            endEpochMillis = end,
+            pinned = pinned,
+            auto = auto,
+            layoutWeight = layoutWeight,
+            chore = chore,
+            checked = checked,
+            sideTask = sideTask,
+        )
 
     private fun PersistedTreeSnapshot.toSnapshot(): TreeSnapshot {
         val tasks =
@@ -341,7 +503,96 @@ private data class PersistedState(
     // PRD §7: the focused window; a missing value decodes to the task tree (payloads written before window
     // focus was persisted).
     val focusedWindow: String = "Tree",
+    // PRD §5/§6: the Undo/Redo history, now persisted so debug-time changes can be reverted at restart.
+    // A missing value decodes to empty (payloads written before history was persisted start fresh).
+    val histories: PersistedHistories? = null,
 )
+
+@Serializable
+private data class PersistedHistories(
+    val edit: PersistedHistory = PersistedHistory(),
+    val selection: PersistedHistory = PersistedHistory(),
+    val calendar: PersistedHistory = PersistedHistory(),
+    val main: PersistedHistory = PersistedHistory(),
+    val windowNav: PersistedHistory = PersistedHistory(),
+)
+
+@Serializable
+private data class PersistedHistory(
+    val pointer: Int = -1,
+    val units: List<PersistedHistoryUnit> = emptyList(),
+)
+
+@Serializable
+private data class PersistedHistoryUnit(
+    val timeMillis: Long,
+    val chronoId: Long = 0,
+    val debugTainted: Boolean = false,
+    val delta: PersistedDelta,
+)
+
+@Serializable
+private data class PersistedSelection(
+    val main: String? = null,
+    val selected: List<String> = emptyList(),
+    val rangeAnchor: String? = null,
+    val renderVia: String? = null,
+)
+
+/**
+ * Serializable mirror of the in-memory [Delta] sealed hierarchy. Closed polymorphism — kotlinx writes a
+ * `type` discriminator from each variant's [SerialName], so units round-trip without a serializers module.
+ */
+@Serializable
+private sealed interface PersistedDelta {
+    @Serializable
+    @SerialName("treeMutation")
+    data class TreeMutation(
+        val before: PersistedTreeSnapshot,
+        val after: PersistedTreeSnapshot,
+        val label: String,
+    ) : PersistedDelta
+
+    @Serializable
+    @SerialName("emptyCells")
+    data class EmptyCells(
+        val treeBefore: PersistedTreeSnapshot,
+        val treeAfter: PersistedTreeSnapshot,
+        val selectionBefore: PersistedSelection,
+        val selectionAfter: PersistedSelection,
+    ) : PersistedDelta
+
+    @Serializable
+    @SerialName("setSelection")
+    data class SetSelection(val before: PersistedSelection, val after: PersistedSelection) : PersistedDelta
+
+    @Serializable
+    @SerialName("focus")
+    data class Focus(val before: String, val after: String) : PersistedDelta
+
+    @Serializable
+    @SerialName("panels")
+    data class Panels(
+        val before: List<PersistedPanel>,
+        val after: List<PersistedPanel>,
+        val label: String,
+    ) : PersistedDelta
+
+    @Serializable
+    @SerialName("toggleExpand")
+    data class ToggleExpand(val cellId: String) : PersistedDelta
+
+    @Serializable
+    @SerialName("record")
+    data class Record(
+        val before: Map<String, List<PersistedTimeRange>>,
+        val after: Map<String, List<PersistedTimeRange>>,
+    ) : PersistedDelta
+
+    @Serializable
+    @SerialName("noOp")
+    data object NoOp : PersistedDelta
+}
 
 @Serializable
 private data class PersistedChoreEntry(

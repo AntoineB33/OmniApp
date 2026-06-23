@@ -23,6 +23,14 @@ object SchedulerReducer {
      */
     var clock: AppClock = SystemAppClock
 
+    /**
+     * Whether changes are currently being made under the debug time-simulation clock (diverged from
+     * real time). The app shell injects a live predicate (clock-divergence check); every History Unit
+     * committed while this returns `true` is flagged [HistoryUnit.debugTainted] and reverted at the
+     * next app start. Defaults to `{ false }` (production / tests) so nothing is ever tainted.
+     */
+    var debugTainting: () -> Boolean = { false }
+
     fun reduce(state: SchedulerState, intent: SchedulerIntent): SchedulerState {
         return when (intent) {
             is SchedulerIntent.ClickCell -> reduceClick(state, intent)
@@ -59,7 +67,8 @@ object SchedulerReducer {
                 if (state.sideTasks == intent.sideTasks) state
                 else state.copy(sideTasks = intent.sideTasks)
             is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
-            is SchedulerIntent.AdvanceSchedule -> advanceSchedule(state, intent.nowMillis)
+            is SchedulerIntent.AdvanceSchedule ->
+                commitRecordChanges(state, advanceSchedule(state, intent.nowMillis))
             is SchedulerIntent.SetAutomaticSchedule ->
                 if (state.automaticSchedule == intent.enabled) state
                 else state.copy(automaticSchedule = intent.enabled)
@@ -73,7 +82,10 @@ object SchedulerReducer {
                 if (state.lookAwayVoiceEnabled == intent.enabled) state
                 else state.copy(lookAwayVoiceEnabled = intent.enabled)
             is SchedulerIntent.ReportDeviceSleep ->
-                reduceReportDeviceSleep(state, intent.sleepStartEpochMillis, intent.sleepEndEpochMillis)
+                commitRecordChanges(
+                    state,
+                    reduceReportDeviceSleep(state, intent.sleepStartEpochMillis, intent.sleepEndEpochMillis),
+                )
             is SchedulerIntent.AddTaskPanel -> reduceAddTaskPanel(state, intent)
             is SchedulerIntent.UpdateTaskPanel -> reduceUpdateTaskPanel(state, intent)
             is SchedulerIntent.MoveTaskPanel -> reduceMoveTaskPanel(state, intent)
@@ -1086,7 +1098,7 @@ object SchedulerReducer {
      * tick returns the same instance.
      */
     private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
-        val advanced = advanceSchedule(state, nowMillis)
+        val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis))
         if (!advanced.automaticSchedule) return advanced
         val filled = SchedulerDomain.fillSchedule(advanced, nowMillis)
         if (filled == advanced.panels) return advanced
@@ -1191,15 +1203,18 @@ object SchedulerReducer {
                 timeMillis = now,
                 chronoId = retained.count { it.timeMillis == now }.toLong(),
                 delta = forward,
+                debugTainted = debugTainting(),
             )
         val appendedUnits = retained + newUnit
         val appendedPointer = retained.size
 
         // PRD §5: each category's history list is capped — drop the oldest units once it exceeds
-        // [MAX_HISTORY_UNITS], shifting the pointer back by however many were removed.
+        // [MAX_HISTORY_UNITS], shifting the pointer back by however many were removed. Debug-tainted
+        // units are exempt from the cap: dropping one would break the chain the restart rollback walks,
+        // leaving a half-reverted state, so only the oldest *untainted* units are evicted.
         val overflow = (appendedUnits.size - MAX_HISTORY_UNITS).coerceAtLeast(0)
-        val cappedUnits = if (overflow > 0) appendedUnits.drop(overflow) else appendedUnits
-        val cappedPointer = appendedPointer - overflow
+        val (cappedUnits, removed) = dropOldestUntainted(appendedUnits, overflow)
+        val cappedPointer = appendedPointer - removed
 
         return newState.copy(
             histories =
@@ -1208,6 +1223,96 @@ object SchedulerReducer {
                     history.copy(pointer = cappedPointer, units = cappedUnits),
                 ),
         )
+    }
+
+    /**
+     * PRD §8/§9: records the completed-work [record] changes between [before] and [after] (the periods
+     * appended as auto panels elapse in [advanceSchedule] / a device-sleep cut) as a single Main
+     * [RecordDelta], so they are Ctrl+Z-undoable and reverted by the debug-time restart rollback.
+     * Returns [after] with that unit appended; every non-record field of [after] (the advanced panel
+     * list, rested side tasks, …) is preserved. A no-op when no record changed.
+     */
+    private fun commitRecordChanges(before: SchedulerState, after: SchedulerState): SchedulerState {
+        val changedIds =
+            (before.tasks.keys + after.tasks.keys).filter { id ->
+                before.tasks[id]?.record.orEmpty() != after.tasks[id]?.record.orEmpty()
+            }
+        if (changedIds.isEmpty()) return after
+        val recBefore = changedIds.associateWith { before.tasks[it]?.record.orEmpty() }
+        val recAfter = changedIds.associateWith { after.tasks[it]?.record.orEmpty() }
+        // Commit against `after` (records already applied), so RecordDelta.redo is a no-op replay and
+        // `after`'s other fields survive; the unit still carries `recBefore` for undo and rollback.
+        return commitDelta(after, RecordDelta(recBefore, recAfter), HistoryCategory.Main)
+    }
+
+    /**
+     * Drops up to [count] of the oldest **untainted** units from the front of [units], leaving every
+     * debug-tainted unit in place. Returns the surviving list and how many were actually removed (so
+     * the caller can shift the history pointer). Used to enforce [MAX_HISTORY_UNITS] without evicting a
+     * unit the restart rollback still needs.
+     */
+    private fun dropOldestUntainted(units: List<HistoryUnit>, count: Int): Pair<List<HistoryUnit>, Int> {
+        if (count <= 0) return units to 0
+        var budget = count
+        var removed = 0
+        val kept = ArrayList<HistoryUnit>(units.size)
+        for (unit in units) {
+            if (budget > 0 && !unit.debugTainted) {
+                budget--
+                removed++
+            } else {
+                kept.add(unit)
+            }
+        }
+        return kept to removed
+    }
+
+    /**
+     * PRD §6 debug-time rollback: at app start, revert every History Unit committed under the diverged
+     * debug clock ([HistoryUnit.debugTainted]) and drop it from history, so fast-forwarding never leaves
+     * future-dated changes in the real saved data. The *applied* tainted units (those at or before their
+     * category's pointer) are undone newest-first across every category — they are the most recent
+     * changes (future-dated timestamps), so unwinding in reverse commit order restores the snapshot
+     * deltas cleanly. Then all tainted units (applied or still in a redo branch) are removed and each
+     * pointer is shifted back past the dropped units it had already applied.
+     *
+     * Assumes tainted units are the tail of the timeline (the debug clock stays diverged until reset or
+     * restart). The pathological "reset to real time mid-session, then edit, then restart" ordering —
+     * where an untainted unit sits *after* a tainted one on the same slice — is not specially handled;
+     * see [[scheduler-history-architecture]]. A no-op when nothing is tainted.
+     */
+    fun rollbackDebugTainted(state: SchedulerState): SchedulerState {
+        val histories = state.histories
+        if (!histories.hasPendingDebugRollback) return state
+
+        val appliedTainted =
+            histories.all().flatMap { (_, history) ->
+                history.units.filterIndexed { index, unit -> unit.debugTainted && index <= history.pointer }
+            }.sortedWith(
+                compareByDescending<HistoryUnit> { it.timeMillis }.thenByDescending { it.chronoId },
+            )
+        var reverted = state
+        for (unit in appliedTainted) reverted = unit.delta.undo(reverted)
+
+        var newHistories = histories
+        for ((category, history) in histories.all()) {
+            if (history.units.none { it.debugTainted }) continue
+            val kept = ArrayList<HistoryUnit>(history.units.size)
+            var droppedAtOrBeforePointer = 0
+            history.units.forEachIndexed { index, unit ->
+                if (unit.debugTainted) {
+                    if (index <= history.pointer) droppedAtOrBeforePointer++
+                } else {
+                    kept.add(unit)
+                }
+            }
+            newHistories =
+                newHistories.withCategory(
+                    category,
+                    history.copy(units = kept, pointer = history.pointer - droppedAtOrBeforePointer),
+                )
+        }
+        return reverted.copy(histories = newHistories)
     }
 
     /** PRD §5: the maximum number of History Units retained per category (oldest dropped beyond this). */
@@ -1929,7 +2034,7 @@ private fun applySetCellTitle(
     return SchedulerDomain.purgeOrphanTasks(result)
 }
 
-private data class EmptyCellsDelta(
+internal data class EmptyCellsDelta(
     val treeBefore: TreeSnapshot,
     val treeAfter: TreeSnapshot,
     val selectionBefore: SchedulerSelection,
@@ -1947,7 +2052,7 @@ private data class EmptyCellsDelta(
         state.applyTree(treeAfter).copy(selection = selectionAfter)
 }
 
-private data class SetSelectionDelta(
+internal data class SetSelectionDelta(
     val before: SchedulerSelection,
     val after: SchedulerSelection,
 ) : Delta {
@@ -1962,7 +2067,7 @@ private data class SetSelectionDelta(
 }
 
 /** PRD §7: a window-navigation unit — the focus moving from one window to another. */
-private data class FocusDelta(
+internal data class FocusDelta(
     val before: AppWindow,
     val after: AppWindow,
 ) : Delta {
@@ -1982,7 +2087,7 @@ private data class FocusDelta(
  * (PRD §8). An automatic scheduling run (PRD §9) does NOT use this delta — a derived schedule carries
  * no history unit.
  */
-private data class PanelDelta(
+internal data class PanelDelta(
     val before: List<TaskPanel>,
     val after: List<TaskPanel>,
     override val label: String = "Calendar edit",
@@ -1995,7 +2100,7 @@ private data class PanelDelta(
     override fun redo(state: SchedulerState): SchedulerState = state.copy(panels = after)
 }
 
-private data class ToggleExpandDelta(
+internal data class ToggleExpandDelta(
     val cellId: CellId,
 ) : Delta {
     override val label: String = "Expand / collapse"
@@ -2019,7 +2124,7 @@ private data class ToggleExpandDelta(
     }
 }
 
-private data class TreeMutationDelta(
+internal data class TreeMutationDelta(
     val before: TreeSnapshot,
     val after: TreeSnapshot,
     override val label: String = "Tree change",
@@ -2032,12 +2137,49 @@ private data class TreeMutationDelta(
     override fun redo(state: SchedulerState): SchedulerState = state.applyTree(after)
 }
 
-private object NoOpDelta : Delta {
+internal object NoOpDelta : Delta {
     override val label: String = "No-op"
 
     override fun undo(state: SchedulerState): SchedulerState = state
 
     override fun redo(state: SchedulerState): SchedulerState = state
+}
+
+/**
+ * PRD §8/§9: a change to one or more tasks' completed-work [record]s (the periods appended by
+ * [advanceSchedule] / device-sleep cuts as auto panels elapse). These were historically applied
+ * outside Undo/Redo; routing them through a delta makes them undoable AND lets the debug-time
+ * rollback revert future-dated records produced under accelerated time. Captures only the affected
+ * tasks' records (before/after) so undo/redo touch nothing else.
+ */
+internal data class RecordDelta(
+    val before: Map<TaskId, List<TaskTimeRange>>,
+    val after: Map<TaskId, List<TaskTimeRange>>,
+) : Delta {
+    override val label: String = "Record work"
+
+    override val details: List<String>
+        get() = (before.keys + after.keys).distinct().mapNotNull { id ->
+            val b = before[id].orEmpty().size
+            val a = after[id].orEmpty().size
+            if (a != b) "${id.value}: $b → $a periods" else null
+        }
+
+    override fun undo(state: SchedulerState): SchedulerState = applyRecords(state, before)
+
+    override fun redo(state: SchedulerState): SchedulerState = applyRecords(state, after)
+
+    private fun applyRecords(
+        state: SchedulerState,
+        records: Map<TaskId, List<TaskTimeRange>>,
+    ): SchedulerState {
+        var tasks = state.tasks
+        for ((id, rec) in records) {
+            val task = tasks[id] ?: continue
+            tasks = tasks + (id to task.copy(record = rec))
+        }
+        return state.copy(tasks = tasks)
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlin.math.abs
 import kotlin.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -96,7 +97,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         val clock: AppClock = if (DebugFlags.TIME_SIMULATION) simClock else SystemAppClock
         // PRD §6: History Units are timestamped from the same clock the rest of the app reads, so under
         // time simulation their times match the (accelerated) calendar.
-        SideEffect { SchedulerReducer.clock = clock }
+        SideEffect {
+            SchedulerReducer.clock = clock
+            // Flag changes made while the debug clock is diverged from real time (accelerated, paused or
+            // leaped) so the next app start reverts them. Production (no time-sim) is never tainted.
+            SchedulerReducer.debugTainting = {
+                DebugFlags.TIME_SIMULATION &&
+                    (simClock.speed != 1.0 ||
+                        abs(simClock.nowMillis() - SystemAppClock.nowMillis()) > 1_000L)
+            }
+        }
         val tz = remember { TimeZone.currentSystemDefault() }
 
         // PRD §9: the frequent tick — advance "now" and the schedule, recording any completed panel so
@@ -717,6 +727,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                     vm.dispatch(SchedulerIntent.RefreshSchedule(sleepEnd))
                                 }
                             },
+                            pendingRollback = schedulerState.histories.hasPendingDebugRollback,
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
                                 .padding(12.dp)

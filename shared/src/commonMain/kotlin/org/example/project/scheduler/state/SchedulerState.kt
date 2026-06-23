@@ -77,6 +77,17 @@ data class SchedulerHistories(
             HistoryCategory.Main -> copy(main = history)
             HistoryCategory.WindowNav -> copy(windowNav = history)
         }
+
+    /** Every category's history, in a fixed order — for queries that span the whole timeline. */
+    fun all(): List<Pair<HistoryCategory, SchedulerHistory>> =
+        HistoryCategory.entries.map { it to forCategory(it) }
+
+    /**
+     * Whether any retained unit (in any category) was committed under the diverged debug clock and so
+     * is pending revert at the next app start. Drives the debug panel's red "will be reverted" warning.
+     */
+    val hasPendingDebugRollback: Boolean
+        get() = all().any { (_, history) -> history.units.any { it.debugTainted } }
 }
 
 /**
@@ -84,11 +95,17 @@ data class SchedulerHistories(
  * change. [chronoId] only breaks ties between units that share the same [timeMillis]: it is **0** by
  * default and becomes 1, 2, … (in commit order) when an earlier retained unit already carries the
  * same timestamp, so truly simultaneous events still sort deterministically.
+ *
+ * [debugTainted] marks a unit committed while the debug time-simulation clock was diverged from the
+ * real wall clock (accelerated / paused / leaped). Such units are persisted like any other, but the
+ * next app start reverts and deletes them (see `TaskSchedulerViewModel.loadInitialState`) so debug
+ * fast-forwarding never pollutes the real saved data with future-dated changes.
  */
 data class HistoryUnit(
     val timeMillis: Long,
     val chronoId: Long = 0,
     val delta: Delta,
+    val debugTainted: Boolean = false,
 )
 
 sealed interface Delta {

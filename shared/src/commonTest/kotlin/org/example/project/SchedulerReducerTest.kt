@@ -2822,4 +2822,68 @@ class SchedulerReducerTest {
 
         return s
     }
+
+    @Test
+    fun load_reverts_and_drops_debug_tainted_history_units() {
+        // PRD §6: a change committed while the debug clock is diverged is reverted and removed at the
+        // next app start, so fast-forwarding never leaves future-dated data behind; real-time changes
+        // committed in the same session survive untouched.
+        val previousTaint = SchedulerReducer.debugTainting
+        val previousClock = SchedulerReducer.clock
+        val controllable = object : AppClock {
+            var now = 1_000L
+            override fun nowMillis(): Long = now
+        }
+        SchedulerReducer.clock = controllable
+        try {
+            var s = SchedulerState.empty()
+            val cellId = s.lists[s.rootListId]!!.cellIds.first()
+
+            // A real-time (untainted) change.
+            SchedulerReducer.debugTainting = { false }
+            s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Real"))
+
+            // A change committed under the diverged debug clock (future-dated, tainted).
+            controllable.now = 9_999L
+            SchedulerReducer.debugTainting = { true }
+            s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Sim"))
+            assertEquals("Sim", s.tasks[s.cells[cellId]!!.taskId!!]!!.title)
+            assertEquals(2, s.histories.main.units.size)
+            assertTrue(s.histories.hasPendingDebugRollback)
+
+            val loaded = TaskSchedulerViewModel.loadInitialState(store = null, initial = s)
+            assertFalse(loaded.histories.hasPendingDebugRollback)
+            assertEquals(1, loaded.histories.main.units.size)
+            assertEquals(0, loaded.histories.main.pointer)
+            assertEquals("Real", loaded.tasks[loaded.cells[cellId]!!.taskId!!]!!.title)
+        } finally {
+            SchedulerReducer.clock = previousClock
+            SchedulerReducer.debugTainting = previousTaint
+        }
+    }
+
+    @Test
+    fun codec_round_trips_history_units_and_debug_taint() {
+        // PRD §5/§6: the whole Undo/Redo history (and each unit's debug-taint flag) is persisted, so the
+        // restart rollback can run against the reloaded state.
+        val previousTaint = SchedulerReducer.debugTainting
+        SchedulerReducer.debugTainting = { true }
+        try {
+            var s = SchedulerState.empty()
+            val cellId = s.lists[s.rootListId]!!.cellIds.first()
+            s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Tainted"))
+
+            val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))!!
+            assertEquals(s.histories.main.units.size, decoded.histories.main.units.size)
+            assertEquals(s.histories.main.pointer, decoded.histories.main.pointer)
+            assertEquals(
+                s.histories.main.units.last().delta.label,
+                decoded.histories.main.units.last().delta.label,
+            )
+            assertTrue(decoded.histories.main.units.last().debugTainted)
+            assertTrue(decoded.histories.hasPendingDebugRollback)
+        } finally {
+            SchedulerReducer.debugTainting = previousTaint
+        }
+    }
 }
