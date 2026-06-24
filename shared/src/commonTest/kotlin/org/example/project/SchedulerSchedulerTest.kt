@@ -440,6 +440,30 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun a_look_away_merges_into_a_pose_that_comes_due_within_its_window() {
+        // PRD §15: a 20s look-away due just before a 15-min pose — the pose comes due inside the look-away's
+        // 20s window — is absorbed: it becomes a 15-min pose starting at the look-away's start, so no separate
+        // look-away renders (or sounds) there. The look-away then resumes 20 min after the pose ends.
+        val now = 1_000_000_000_000L
+        val look = now + 20 * MIN // the look-away's first start (lastRest + 20-min interval)
+        val sides = listOf(
+            SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now),
+            // 15-min pose due at look + 10s, just inside the look-away's [look, look+20s) window.
+            SideTask("take a 15min pose", intervalMillis = 2 * 60 * MIN, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = look + 10_000L - 2 * 60 * MIN),
+        )
+        val panels = SchedulerDomain.sideTaskPanels(sides, now).sortedBy { it.startEpochMillis }
+
+        // The first occurrence is the 15-min pose, pulled back to the look-away's start (not the look-away).
+        assertEquals("take a 15min pose", panels.first().title)
+        assertEquals(look, panels.first().startEpochMillis)
+        assertEquals(look + 15 * MIN, panels.first().endEpochMillis)
+        // No look-away renders inside the absorbed window.
+        assertTrue(panels.none { it.title == "look 20 feet away" && it.startEpochMillis in look until (look + 20_000L) })
+        // The look-away resumes 20 min after the pose ends.
+        assertEquals(look + 35 * MIN, panels.first { it.title == "look 20 feet away" }.startEpochMillis)
+    }
+
+    @Test
     fun default_side_tasks_are_the_three_from_the_prd() {
         val titles = SchedulerDomain.DEFAULT_SIDE_TASKS.map { it.title }
         assertEquals(

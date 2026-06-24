@@ -971,12 +971,9 @@ object SchedulerDomain {
         val horizon = maxOf(horizonMillis, nowMillis)
         val valid = sideTasks.withIndex().filter { isValidSideTask(it.value) }
         if (valid.isEmpty()) return emptyList()
-        // The two rest poses (restBreak), shortest first, drive the 5↔15 merge.
-        val poses = valid.filter { it.value.restBreak }.sortedBy { it.value.durationMillis }
-        val shorterIndex = poses.firstOrNull()?.index
-        val longerEntry = poses.lastOrNull()?.takeIf { it.index != shorterIndex }
-        val longerIndex = longerEntry?.index
-        val longerPose = longerEntry?.value
+        // The rest poses (restBreak) absorb any shorter pause whose window they fall inside (the 5↔15 merge
+        // and the look-away→pose merge below).
+        val poses = valid.filter { it.value.restBreak }
 
         // Next-due start per task index; seeded at each task's due time (or `now` when overdue).
         val due = HashMap<Int, Long>(valid.size)
@@ -1014,19 +1011,24 @@ object SchedulerDomain {
             val task = sideTasks[nextIndex]
             val start = due.getValue(nextIndex)
 
-            // 5 → 15 merge: the 5-min pose's window would overlap the still-future 15-min pose.
-            if (longerPose != null && longerIndex != null && nextIndex == shorterIndex) {
-                val longerDue = due[longerIndex] ?: Long.MAX_VALUE
-                if (longerDue in (start + 1) until (start + task.durationMillis)) {
-                    val mergedEnd = start + longerPose.durationMillis
-                    if (!coveredByLonger(start, longerPose.durationMillis)) {
-                        result.add(sideTaskPanel(longerIndex, longerPose.title, start, mergedEnd))
-                    }
-                    due[nextIndex] = mergedEnd + task.intervalMillis
-                    due[longerIndex] = mergedEnd + longerPose.intervalMillis
-                    reanchorSmaller(mergedEnd, longerPose.durationMillis)
-                    continue
+            // Merge (PRD §15): a strictly-longer rest pose coming due within this occurrence's window absorbs
+            // it — the occurrence "becomes" that pose, which then starts here (at this occurrence's start) and
+            // ends its own duration later. We pull the pose's due back to `start` and re-evaluate; the loop
+            // places it next (the tie-break prefers the longer pause, and re-anchoring pushes this shorter
+            // occurrence past the pose's end). This generalizes the 5-min→15-min merge to the 20s look-away, so
+            // a look-away that would overlap a pose never renders — or sounds — as its own occurrence. It also
+            // cascades: a look-away pulled onto a 5-min pose that itself overlaps the 15-min pose ends as a
+            // single 15-min pose.
+            val absorbing = poses
+                .filter {
+                    it.index != nextIndex &&
+                        it.value.durationMillis > task.durationMillis &&
+                        (due[it.index] ?: Long.MAX_VALUE) in (start + 1) until (start + task.durationMillis)
                 }
+                .maxByOrNull { it.value.durationMillis }
+            if (absorbing != null) {
+                due[absorbing.index] = start
+                continue
             }
 
             val end = start + task.durationMillis
