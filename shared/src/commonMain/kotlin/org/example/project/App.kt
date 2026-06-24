@@ -361,6 +361,31 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             }
         }
 
+        // Wind-down: when the now-line reaches the no-task hour before bed (each sleep window's bedtime − 1h),
+        // notify the user to stop work. Scheduled at the real instant the (possibly accelerated) clock reaches
+        // that boundary — same approach as the look-away cues, so it is correct under time acceleration and
+        // fires once per night (deduped by the boundary instant).
+        var announcedWindDowns by remember { mutableStateOf(setOf<Long>()) }
+        LaunchedEffect(nowMillis, schedulerState.panels) {
+            while (true) {
+                val simNow = clock.nowMillis()
+                val speed = (clock as? SimAppClock)?.speed ?: 1.0
+                announcedWindDowns = announcedWindDowns.filterTo(mutableSetOf()) { it >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS }
+                val windDowns = schedulerState.panels
+                    .filter { it.sleep }
+                    .map { it.startEpochMillis - SchedulerDomain.NO_TASK_BEFORE_BED_MILLIS }
+                windDowns.filter { it <= simNow && it !in announcedWindDowns }.sorted().forEach {
+                    announcedWindDowns = announcedWindDowns + it
+                    if (it >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS) {
+                        sendSystemNotification("Stop work", "Wind down — bedtime in 1 hour")
+                    }
+                }
+                val next = windDowns.filter { it > simNow && it !in announcedWindDowns }.minOrNull() ?: break
+                if (speed <= 0.0) break
+                delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
+            }
+        }
+
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
         val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz).date

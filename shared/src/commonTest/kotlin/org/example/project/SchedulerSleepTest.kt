@@ -98,6 +98,24 @@ class SchedulerSleepTest {
     }
 
     @Test
+    fun no_task_is_scheduled_in_the_hour_before_bed() {
+        val now = utc(2024, 1, 1, 10, 0)
+        val state = soloTask().copy(sleep = SchedulerDomain.DEFAULT_SLEEP)
+        val autos = SchedulerDomain.fillSchedule(state, now, tz).filter { it.auto }
+        // Tonight's no-task window: [22:00 (bedtime − 1h), 07:30 next day (wake)].
+        val windDownStart = utc(2024, 1, 1, 22, 0)
+        val wake = utc(2024, 1, 2, 7, 30)
+        autos.forEach { a ->
+            assertTrue(
+                a.endEpochMillis <= windDownStart || a.startEpochMillis >= wake,
+                "auto [${a.startEpochMillis},${a.endEpochMillis}] intrudes on the wind-down hour or sleep",
+            )
+        }
+        // A task still runs right up to the start of the wind-down hour.
+        assertTrue(autos.any { it.endEpochMillis == windDownStart })
+    }
+
+    @Test
     fun side_tasks_are_not_projected_into_a_sleep_window() {
         val now = utc(2024, 1, 1, 10, 0)
         val to = now + 2L * 24 * HOUR_MS

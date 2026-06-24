@@ -919,6 +919,9 @@ object SchedulerDomain {
     /** The production-default sleep schedule: wake 07:30, no drift, 8h30 in bed (so bedtime 23:00). */
     val DEFAULT_SLEEP: SleepSchedule = SleepSchedule()
 
+    /** Wind-down before bed in which no task is scheduled (the sleep obstacle extends this much earlier). */
+    const val NO_TASK_BEFORE_BED_MILLIS: Long = 60L * MILLIS_PER_MINUTE
+
     /**
      * The wake time (minutes since local midnight) for the local day [dateEpochDay], after applying the
      * 15-min-per-2-days drift toward [SleepSchedule.goalWakeMinutes]. Returns the plain
@@ -1295,8 +1298,12 @@ object SchedulerDomain {
         val start = firstFreeMoment(kept, nowMillis)
 
         // PRD §15 + sleep: the side-task and sleep occupied regions (merged) the regular fill must skip
-        // over. The regular task resumes after each region without its minimum being charged.
-        val sideRegions = mergeOccupied(sidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) } + sleepRanges)
+        // over. The regular task resumes after each region without its minimum being charged. The sleep
+        // region is extended one hour earlier here — no task is scheduled in the wind-down hour before bed
+        // (side tasks and the rendered Sleep block keep the raw sleep window).
+        val taskSleepRanges =
+            sleepRanges.map { TaskTimeRange(it.startEpochMillis - NO_TASK_BEFORE_BED_MILLIS, it.endEpochMillis) }
+        val sideRegions = mergeOccupied(sidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) } + taskSleepRanges)
         fun sideRegionCovering(t: Long): TaskTimeRange? =
             sideRegions.firstOrNull { it.startEpochMillis <= t && t < it.endEpochMillis }
         fun nextSideRegionStart(t: Long): Long? =
