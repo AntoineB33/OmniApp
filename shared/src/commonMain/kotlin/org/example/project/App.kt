@@ -782,7 +782,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             },
                             pendingRollback = schedulerState.histories.hasPendingDebugRollback,
                             modifier = Modifier
-                                .align(Alignment.BottomEnd)
+                                // Bottom-left of the content area — just to the right of the lateral menu.
+                                .align(Alignment.BottomStart)
                                 .padding(12.dp)
                                 .zIndex(windowZ(FloatingWindow.TimeSim))
                                 .raiseOnPress { focusWindow(FloatingWindow.TimeSim) },
