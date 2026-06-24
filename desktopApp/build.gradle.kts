@@ -38,4 +38,8 @@ tasks.withType<JavaExec>().configureEach {
     (project.findProperty("omniapp.stateDir") as String?)?.let { stateDir ->
         systemProperty("omniapp.stateDir", stateDir)
     }
+    // The dev `run` task (a JavaExec) enables time simulation by default; override with
+    // `-Pomniapp.timeSim=false`. The packaged release (createDistributable, not a JavaExec) never sets it,
+    // so main() reads it absent and ships with the debug tooling off.
+    systemProperty("omniapp.timeSim", (project.findProperty("omniapp.timeSim") as String?) ?: "true")
 }

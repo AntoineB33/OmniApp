@@ -331,17 +331,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     panel.sideTask && schedulerState.sideTasks.any { !it.restBreak && it.title == panel.title }
                 }
 
-                // Announce any start the clock has now reached, capturing its end for the resume cue.
+                // Announce any start the clock has just reached, capturing its end for the resume cue. Only
+                // starts *within the cap window* count: a stale occurrence still sitting in the panels (kept
+                // between refills, its start now well in the past) must NOT be announced — otherwise, since
+                // [announcedStarts] is pruned past the cap, it would be re-announced every tick as it crosses
+                // the cap boundary, capturing an end and firing "Resume your work" repeatedly with no
+                // preceding "Look 20 feet away".
                 occurrences
-                    .filter { it.startEpochMillis <= simNow && it.startEpochMillis !in announcedStarts }
+                    .filter {
+                        it.startEpochMillis in (simNow - LOOK_AWAY_SWEEP_CAP_MILLIS)..simNow &&
+                            it.startEpochMillis !in announcedStarts
+                    }
                     .sortedBy { it.startEpochMillis }
                     .forEach {
                         announcedStarts = announcedStarts + it.startEpochMillis
                         pendingEnds = pendingEnds + it.endEpochMillis
-                        if (it.startEpochMillis >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS) {
-                            sendSystemNotification("Side task", it.title)
-                            if (voice) speak("Look 20 feet away")
-                        }
+                        sendSystemNotification("Side task", it.title)
+                        if (voice) speak("Look 20 feet away")
                     }
 
                 // Fire (and drop) every captured end the clock has now reached.
