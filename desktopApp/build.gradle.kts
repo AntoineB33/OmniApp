@@ -24,6 +24,9 @@ compose.desktop {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "org.example.project"
             packageVersion = "0.5.0"
+            // The packaged app jlinks a minimal runtime; SQLDelight's SQLite driver needs java.sql
+            // (java.sql.DriverManager), so include it or the release crashes when it opens the DB.
+            modules("java.sql")
         }
     }
 }
