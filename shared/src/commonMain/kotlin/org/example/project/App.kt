@@ -299,34 +299,65 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         }
 
         // PRD §15 (20s look-away): the look-away is the *cadence* side task (non-rest-break). It sits on a fixed
-        // grid (see [SchedulerDomain.sideTaskNextStart]) and its window is only ~20s — under time-acceleration
-        // (e.g. 300×) that window passes between two 1s ticks, so the now-line never *covers* it and a
-        // coverage-based cue is missed entirely. Instead we fire on the now-line *crossing* the occurrence: when
-        // it sweeps past a look-away's start we notify + say "look away"; when it sweeps past the end we say
-        // "resume work". Each occurrence is detected exactly once (its grid start/end is stable across refills).
+        // grid (see [SchedulerDomain.sideTaskNextStart]) and each occurrence has a start ("Look 20 feet away")
+        // and an end 20s later ("Resume your work").
         //
-        // Under heavy acceleration the start and end fall in the same tick's swept span; the two voice lines are
-        // enqueued in order and play back-to-back (the TTS queue is FIFO — see `speak`). The swept span is
-        // clamped to [LOOK_AWAY_SWEEP_CAP_MILLIS] so a large jump (a manual leap, or waking from a long real
-        // device sleep where the user was away) does not replay a backlog of cues.
-        var lastSweptMillis by remember { mutableStateOf(nowMillis) }
-        LaunchedEffect(nowMillis) {
-            val to = nowMillis
-            val from = maxOf(lastSweptMillis, to - LOOK_AWAY_SWEEP_CAP_MILLIS)
-            lastSweptMillis = to
-            if (to <= from) return@LaunchedEffect // first tick, clock reset, or rewind: nothing to announce
-            val lookAways = schedulerState.panels.filter { panel ->
-                panel.sideTask && schedulerState.sideTasks.any { !it.restBreak && it.title == panel.title }
-            }
-            lookAways.filter { it.startEpochMillis in (from + 1)..to }
-                .sortedBy { it.startEpochMillis }
-                .forEach {
-                    sendSystemNotification("Side task", it.title)
-                    if (schedulerState.lookAwayVoiceEnabled) speak("Look 20 feet away")
+        // Rather than poll the now-line each tick (whose ~20s window passes between two ticks under time
+        // acceleration and is easily missed), we *schedule* every cue at the real instant the (possibly
+        // accelerated) clock reaches its boundary: realDelay = (boundary − simNow) / speed. The cues therefore
+        // fire at their programmed times regardless of the acceleration factor, and any that come due together
+        // stack in the FIFO TTS queue (see `speak`) instead of overlapping.
+        //
+        // An occurrence's end is captured the moment we announce its start, because a §9 refill regenerates the
+        // side panels by projecting only from `now` forward ([SchedulerDomain.sideTaskPanels]) — so once the
+        // now-line passes a look-away's start, that occurrence (and its end) is pruned from [schedulerState.panels].
+        // The effect re-keys each tick (and on any panel change) to pick up newly projected occurrences and clock
+        // speed changes; [announcedStarts]/[pendingEnds] survive the re-key so nothing fires twice. Boundaries
+        // more than [LOOK_AWAY_SWEEP_CAP_MILLIS] behind `now` (e.g. after a debug leap or a long device sleep)
+        // are consumed silently rather than replayed as a backlog.
+        var announcedStarts by remember { mutableStateOf(setOf<Long>()) }
+        var pendingEnds by remember { mutableStateOf(setOf<Long>()) }
+        LaunchedEffect(nowMillis, schedulerState.panels) {
+            while (true) {
+                val simNow = clock.nowMillis()
+                val speed = (clock as? SimAppClock)?.speed ?: 1.0
+                val voice = schedulerState.lookAwayVoiceEnabled
+                // Forget long-past bookkeeping so the sets can't grow without bound over a long session;
+                // such occurrences are already pruned from the projection, so they cannot reappear.
+                announcedStarts = announcedStarts.filterTo(mutableSetOf()) { it >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS }
+
+                val occurrences = schedulerState.panels.filter { panel ->
+                    panel.sideTask && schedulerState.sideTasks.any { !it.restBreak && it.title == panel.title }
                 }
-            lookAways.filter { it.endEpochMillis in (from + 1)..to }
-                .sortedBy { it.endEpochMillis }
-                .forEach { if (schedulerState.lookAwayVoiceEnabled) speak("Resume your work") }
+
+                // Announce any start the clock has now reached, capturing its end for the resume cue.
+                occurrences
+                    .filter { it.startEpochMillis <= simNow && it.startEpochMillis !in announcedStarts }
+                    .sortedBy { it.startEpochMillis }
+                    .forEach {
+                        announcedStarts = announcedStarts + it.startEpochMillis
+                        pendingEnds = pendingEnds + it.endEpochMillis
+                        if (it.startEpochMillis >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS) {
+                            sendSystemNotification("Side task", it.title)
+                            if (voice) speak("Look 20 feet away")
+                        }
+                    }
+
+                // Fire (and drop) every captured end the clock has now reached.
+                pendingEnds.filter { it <= simNow }.sorted().forEach { end ->
+                    pendingEnds = pendingEnds - end
+                    if (end >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS && voice) speak("Resume your work")
+                }
+
+                // Sleep until the next boundary's real-time instant, then loop. A re-key (tick or panel change)
+                // restarts this with a fresh clock speed; a pause (speed 0) waits for that re-key.
+                val nextStart = occurrences.map { it.startEpochMillis }
+                    .filter { it > simNow && it !in announcedStarts }.minOrNull()
+                val nextEnd = pendingEnds.filter { it > simNow }.minOrNull()
+                val next = listOfNotNull(nextStart, nextEnd).minOrNull() ?: break
+                if (speed <= 0.0) break
+                delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
+            }
         }
 
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
