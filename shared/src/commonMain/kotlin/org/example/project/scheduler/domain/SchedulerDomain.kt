@@ -1,12 +1,21 @@
 package org.example.project.scheduler.domain
 
+import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.time.Instant
+import kotlinx.datetime.DatePeriod
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.minus
+import kotlinx.datetime.plus
+import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.SideTask
+import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
@@ -733,6 +742,9 @@ object SchedulerDomain {
     fun groupSameTaskPanelsForDisplay(
         panels: List<TaskPanel>,
         bridgeGaps: Boolean = false,
+        // A bridged gap is never closed across one of these sleep windows — the sleep block is always
+        // visible, so it must cut the run even when side tasks are hidden.
+        sleepRegions: List<TaskTimeRange> = emptyList(),
     ): List<List<TaskPanel>> {
         if (panels.isEmpty()) return emptyList()
         val sorted = panels.sortedBy { it.startEpochMillis }
@@ -741,10 +753,12 @@ object SchedulerDomain {
             val group = groups.lastOrNull()
             val head = group?.first()
             val frontier = group?.maxOf { it.endEpochMillis } ?: Long.MIN_VALUE
+            val sleepInGap =
+                sleepRegions.any { it.startEpochMillis < panel.startEpochMillis && it.endEpochMillis > frontier }
             val mergeable = head != null &&
                 panel.taskId != null && head.taskId == panel.taskId &&
                 head.pinned == panel.pinned &&
-                (panel.startEpochMillis <= frontier || bridgeGaps)
+                (panel.startEpochMillis <= frontier || (bridgeGaps && !sleepInGap))
             if (mergeable) group!!.add(panel) else groups.add(mutableListOf(panel))
         }
         return groups
@@ -900,6 +914,74 @@ object SchedulerDomain {
     private fun isValidSideTask(side: SideTask): Boolean =
         side.intervalMillis > 0 && side.durationMillis > 0 && side.title.isNotBlank()
 
+    // ----- Sleep schedule -----------------------------------------------------------------------
+
+    /** The production-default sleep schedule: wake 07:30, no drift, 8h30 in bed (so bedtime 23:00). */
+    val DEFAULT_SLEEP: SleepSchedule = SleepSchedule()
+
+    /**
+     * The wake time (minutes since local midnight) for the local day [dateEpochDay], after applying the
+     * 15-min-per-2-days drift toward [SleepSchedule.goalWakeMinutes]. Returns the plain
+     * [SleepSchedule.wakeMinutes] when there is no anchor or it is already at the goal. Pure.
+     */
+    fun effectiveWakeMinutes(sleep: SleepSchedule, dateEpochDay: Long): Int {
+        val anchor = sleep.anchorEpochDay ?: return sleep.wakeMinutes
+        if (sleep.goalWakeMinutes == sleep.wakeMinutes) return sleep.wakeMinutes
+        val steps = ((dateEpochDay - anchor) / 2).coerceAtLeast(0)
+        val maxShift = abs(sleep.goalWakeMinutes - sleep.wakeMinutes).toLong()
+        val shift = (steps * 15).coerceIn(0, maxShift).toInt()
+        val direction = if (sleep.goalWakeMinutes > sleep.wakeMinutes) 1 else -1
+        return sleep.wakeMinutes + direction * shift
+    }
+
+    /**
+     * The nightly sleep windows `[wake(day) − duration, wake(day))` (one per local day whose window
+     * intersects `[fromMillis, toMillis)`) as obstacle panels (`sleep = true`, null taskId, "Sleep").
+     * The wake time per day follows [effectiveWakeMinutes] so the window drifts with the goal. Empty when
+     * [sleep] is null or has a non-positive duration.
+     */
+    fun sleepPanels(
+        sleep: SleepSchedule?,
+        fromMillis: Long,
+        toMillis: Long,
+        timeZone: TimeZone,
+    ): List<TaskPanel> {
+        if (sleep == null || sleep.sleepDurationMinutes <= 0 || toMillis <= fromMillis) return emptyList()
+        val durationMillis = sleep.sleepDurationMinutes.toLong() * MILLIS_PER_MINUTE
+        val fromDate = Instant.fromEpochMilliseconds(fromMillis).toLocalDateTime(timeZone).date
+        val toDate = Instant.fromEpochMilliseconds(toMillis).toLocalDateTime(timeZone).date
+        val result = mutableListOf<TaskPanel>()
+        // A window is indexed by its wake day; the window starts the previous evening, so begin one day
+        // early to catch a window already in progress at [fromMillis].
+        var date = fromDate.minus(DatePeriod(days = 1))
+        val lastDate = toDate.plus(DatePeriod(days = 1))
+        while (date <= lastDate) {
+            val epochDay = date.toEpochDays().toLong()
+            val wakeMillis =
+                date.atStartOfDayIn(timeZone).toEpochMilliseconds() +
+                    effectiveWakeMinutes(sleep, epochDay).toLong() * MILLIS_PER_MINUTE
+            val sleepStart = wakeMillis - durationMillis
+            if (wakeMillis > fromMillis && sleepStart < toMillis) {
+                result.add(
+                    TaskPanel(
+                        id = "sleep/$epochDay",
+                        taskId = null,
+                        title = "Sleep",
+                        startEpochMillis = sleepStart,
+                        endEpochMillis = wakeMillis,
+                        sleep = true,
+                    ),
+                )
+            }
+            date = date.plus(DatePeriod(days = 1))
+        }
+        return result
+    }
+
+    /** The sleep windows from [sleepPanels] as occupied time ranges, for scheduler obstacle math. */
+    fun sleepRegions(sleep: SleepSchedule?, fromMillis: Long, toMillis: Long, timeZone: TimeZone): List<TaskTimeRange> =
+        sleepPanels(sleep, fromMillis, toMillis, timeZone).map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+
     /**
      * PRD §15: the next-occurrence start for [side] at [nowMillis], beginning from its due time
      * `lastRest + interval` (an interval after the last qualifying pause **ended**).
@@ -967,6 +1049,9 @@ object SchedulerDomain {
         sideTasks: List<SideTask>,
         nowMillis: Long,
         horizonMillis: Long = nowMillis + SCHEDULE_HORIZON_MILLIS,
+        // The user's sleep windows: an occurrence whose start lands inside one is skipped, its cadence
+        // resuming at wake (the window's end). Empty by default so existing callers/tests are unchanged.
+        sleepRegions: List<TaskTimeRange> = emptyList(),
     ): List<TaskPanel> {
         val horizon = maxOf(horizonMillis, nowMillis)
         val valid = sideTasks.withIndex().filter { isValidSideTask(it.value) }
@@ -1010,6 +1095,14 @@ object SchedulerDomain {
                 )?.key ?: break
             val task = sideTasks[nextIndex]
             val start = due.getValue(nextIndex)
+
+            // Sleep: an occurrence whose start falls in a sleep window is skipped; its cadence resumes at
+            // wake (the window's end), so nothing is projected while the user is asleep.
+            val sleepCover = sleepRegions.firstOrNull { it.startEpochMillis <= start && start < it.endEpochMillis }
+            if (sleepCover != null) {
+                due[nextIndex] = sleepCover.endEpochMillis
+                continue
+            }
 
             // Merge (PRD §15): a strictly-longer rest pose coming due within this occurrence's window absorbs
             // it — the occurrence "becomes" that pose, which then starts here (at this occurrence's start) and
@@ -1173,31 +1266,37 @@ object SchedulerDomain {
     fun fillSchedule(
         state: SchedulerState,
         nowMillis: Long,
+        // Sleep is local wall-clock, so the otherwise tz-pure fill needs a zone to place the nightly
+        // sleep windows. Defaults to the system zone for production; tests pass empty/explicit sleep.
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
     ): List<TaskPanel> {
         val horizon = nowMillis + SCHEDULE_HORIZON_MILLIS
         // Cut every non-pinned panel in [now, horizon]; keep fixed (pinned) panels, reminder tags (PRD
         // §14 — kept on the calendar though not obstacles, see isSchedulerFixed), and any panel entirely
         // outside the window — already past (end ≤ now) or beyond the horizon (start > horizon). Side-task
-        // panels (PRD §15) are always cut and regenerated fresh below, so they never accumulate.
+        // and sleep panels are always cut and regenerated fresh below, so they never accumulate.
         val kept = state.panels.filter {
-            !it.sideTask &&
+            !it.sideTask && !it.sleep &&
                 (isSchedulerFixed(it) || it.chore || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon)
         }
+        // The user's sleep windows: obstacle panels the fill and the side tasks must avoid (rendered too).
+        val sleepPanels = sleepPanels(state.sleep, nowMillis, horizon, timeZone)
+        val sleepRanges = sleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
         val leaves = schedulableLeaves(state)
         // PRD §15: side tasks materialize regardless of whether there are leaf tasks to fill around them.
         // Each one places its next occurrence at its due time (or the now-line when overdue), with the
-        // 5-min↔15-min merge applied (see [sideTaskPanels]).
-        val sidePanels = sideTaskPanels(state.sideTasks, nowMillis)
-        if (leaves.isEmpty()) return (kept + sidePanels).sortedBy { it.startEpochMillis }
+        // 5-min↔15-min merge applied and sleep windows skipped (see [sideTaskPanels]).
+        val sidePanels = sideTaskPanels(state.sideTasks, nowMillis, sleepRegions = sleepRanges)
+        if (leaves.isEmpty()) return (kept + sidePanels + sleepPanels).sortedBy { it.startEpochMillis }
 
         val priorities = absoluteTaskPriorities(state)
         val keptIds = kept.mapTo(HashSet()) { it.id }
         var working = state.copy(panels = kept)
         val start = firstFreeMoment(kept, nowMillis)
 
-        // PRD §15: the side-task occupied regions (merged, since side tasks can coincide) the regular fill
-        // must skip over. The regular task resumes after each region without its minimum being charged.
-        val sideRegions = mergeOccupied(sidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
+        // PRD §15 + sleep: the side-task and sleep occupied regions (merged) the regular fill must skip
+        // over. The regular task resumes after each region without its minimum being charged.
+        val sideRegions = mergeOccupied(sidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) } + sleepRanges)
         fun sideRegionCovering(t: Long): TaskTimeRange? =
             sideRegions.firstOrNull { it.startEpochMillis <= t && t < it.endEpochMillis }
         fun nextSideRegionStart(t: Long): Long? =
@@ -1302,9 +1401,9 @@ object SchedulerDomain {
             }
             index++
         }
-        // PRD §9: two consecutive auto panels of the same task merge into one block. Side-task panels (PRD
-        // §15) are added as-is (they split the run, so adjacent same-task pieces don't touch and stay apart).
-        return (kept + sidePanels + mergeSameTaskPanels(generated)).sortedBy { it.startEpochMillis }
+        // PRD §9: two consecutive auto panels of the same task merge into one block. Side-task and sleep
+        // panels are added as-is (they split the run, so adjacent same-task pieces don't touch and stay apart).
+        return (kept + sidePanels + sleepPanels + mergeSameTaskPanels(generated)).sortedBy { it.startEpochMillis }
     }
 
     /** Safety cap on auto panels (pre-merge chunks) one fill can lay down (≈ 168h / a 1-minute minimum). */

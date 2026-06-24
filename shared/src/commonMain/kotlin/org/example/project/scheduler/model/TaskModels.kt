@@ -171,6 +171,24 @@ data class SideTask(
 )
 
 /**
+ * The user's sleep schedule: a nightly window `[wake − sleepDuration, wake)` (local wall-clock) that the
+ * task scheduler and side-task projection must leave empty (see
+ * [org.example.project.scheduler.domain.SchedulerDomain.sleepPanels]).
+ *
+ * [wakeMinutes] is the current wake time as minutes since local midnight; [goalWakeMinutes] is the wake
+ * time it drifts toward by 15 min every 2 days; [sleepDurationMillis-equivalent] is held as
+ * [sleepDurationMinutes] (constant, so bedtime drifts with wake). [anchorEpochDay] is the local day the
+ * drift started (set when settings are saved with a goal different from the current wake), or null when
+ * there is no drift. See [org.example.project.scheduler.domain.SchedulerDomain.effectiveWakeMinutes].
+ */
+data class SleepSchedule(
+    val wakeMinutes: Int = 450, // 07:30
+    val goalWakeMinutes: Int = 450, // 07:30
+    val sleepDurationMinutes: Int = 510, // 8h30
+    val anchorEpochDay: Long? = null,
+)
+
+/**
  * PRD §9 Task record entry: a single period `[start, end]` the user spent on a task, as epoch
  * milliseconds (stored as primitives so it serializes without a custom time serializer).
  */
@@ -233,6 +251,13 @@ data class TaskPanel(
      * Regenerated deterministically on every fill (like auto panels), so it is not retained across one.
      */
     val sideTask: Boolean = false,
+    /**
+     * The user's sleep window (see [SleepSchedule]): true for a generated nightly obstacle panel
+     * (null taskId, title "Sleep"). Like a side-task panel it is a fixed obstacle the §9 fill skips
+     * (resuming after, no minimum charged) and the side-task projection avoids; it is regenerated every
+     * fill and rendered as a distinct block on the calendar.
+     */
+    val sleep: Boolean = false,
     /**
      * PRD §8 Overlap Mode: this panel's relative horizontal weight within any time slice it shares with
      * other panels. Within a slice each active panel's width is `weight / Σ weights`, so equal weights

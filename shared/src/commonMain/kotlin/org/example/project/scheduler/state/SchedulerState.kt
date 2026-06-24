@@ -207,6 +207,14 @@ data class SchedulerState(
      * notification). On by default; persisted, not undoable.
      */
     val lookAwayVoiceEnabled: Boolean = true,
+    /**
+     * The user's sleep schedule (a nightly window the §9 task fill and the §15 side-task projection must
+     * leave empty; see [org.example.project.scheduler.domain.SchedulerDomain.sleepPanels]). **Null by
+     * default** so the scheduler tests that assert exact schedules see no sleep window unless they opt in;
+     * production is seeded with [org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SLEEP] by
+     * [org.example.project.scheduler.ui.TaskSchedulerViewModel]. Persisted; not undoable.
+     */
+    val sleep: org.example.project.scheduler.model.SleepSchedule? = null,
 ) {
     /** PRD §8: the calendar catches letter typing / routes Ctrl+Z/Y only while it is the focused window. */
     val calendarFocused: Boolean get() = focusedWindow == AppWindow.Calendar

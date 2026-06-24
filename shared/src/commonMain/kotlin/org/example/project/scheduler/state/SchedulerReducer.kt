@@ -81,6 +81,7 @@ object SchedulerReducer {
             is SchedulerIntent.SetLookAwayVoice ->
                 if (state.lookAwayVoiceEnabled == intent.enabled) state
                 else state.copy(lookAwayVoiceEnabled = intent.enabled)
+            is SchedulerIntent.SetSleepSchedule -> reduceSetSleepSchedule(state, intent.sleep, intent.todayEpochDay)
             is SchedulerIntent.ReportDeviceSleep ->
                 commitRecordChanges(
                     state,
@@ -1103,6 +1104,26 @@ object SchedulerReducer {
         val filled = SchedulerDomain.fillSchedule(advanced, nowMillis)
         if (filled == advanced.panels) return advanced
         return advanced.copy(panels = filled)
+    }
+
+    /**
+     * Store the user's sleep schedule and refill so the calendar immediately reflects the new sleep window.
+     * The 15-min-per-2-days wake drift is anchored at [todayEpochDay] when a goal different from the current
+     * wake is set (else there is no drift). Persisted; not undoable.
+     */
+    private fun reduceSetSleepSchedule(
+        state: SchedulerState,
+        sleep: org.example.project.scheduler.model.SleepSchedule,
+        todayEpochDay: Long,
+    ): SchedulerState {
+        val anchored =
+            sleep.copy(anchorEpochDay = if (sleep.goalWakeMinutes != sleep.wakeMinutes) todayEpochDay else null)
+        if (state.sleep == anchored) return state
+        val updated = state.copy(sleep = anchored)
+        // Refill so the nightly sleep window takes effect right away (when auto-scheduling is on).
+        if (!updated.automaticSchedule) return updated
+        val filled = SchedulerDomain.fillSchedule(updated, clock.nowMillis())
+        return updated.copy(panels = filled)
     }
 
     /** PRD §8 "Remove" on a record block: drop the period from the task's record (history-excluded). */

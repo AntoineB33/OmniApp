@@ -87,7 +87,13 @@ class TaskSchedulerViewModel(
             val clean = SchedulerReducer.rollbackDebugTainted(loaded)
             // PRD §15: side tasks are a hardcoded set (not persisted user data); seed them onto whatever
             // was loaded so they are always present in the running app, never in the bare test states.
-            val seeded = clean.copy(sideTasks = SchedulerDomain.DEFAULT_SIDE_TASKS)
+            // The sleep schedule is seeded with the default only when none was persisted, so production
+            // always has a sleep window (07:30 / 8h30) while bare test states keep `sleep = null`.
+            val seeded =
+                clean.copy(
+                    sideTasks = SchedulerDomain.DEFAULT_SIDE_TASKS,
+                    sleep = clean.sleep ?: SchedulerDomain.DEFAULT_SLEEP,
+                )
             return if (seeded.editSession != null) {
                 SchedulerReducer.reduce(seeded, SchedulerIntent.CancelEdit)
             } else {

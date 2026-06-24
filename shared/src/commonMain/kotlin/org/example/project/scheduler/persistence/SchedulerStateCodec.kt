@@ -14,6 +14,7 @@ import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ScheduleUnitEntry
+import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
@@ -175,6 +176,7 @@ object SchedulerStateCodec {
                         chore = it.chore,
                         checked = it.checked,
                         sideTask = it.sideTask,
+                        sleep = it.sleep,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -185,6 +187,7 @@ object SchedulerStateCodec {
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
             focusedWindow = focusedWindow.name,
             histories = histories.toPersisted(),
+            sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
         )
 
     private fun SchedulerHistories.toPersisted(): PersistedHistories =
@@ -259,6 +262,7 @@ object SchedulerStateCodec {
             chore = chore,
             checked = checked,
             sideTask = sideTask,
+            sleep = sleep,
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -375,6 +379,7 @@ object SchedulerStateCodec {
                         chore = it.chore,
                         checked = it.checked,
                         sideTask = it.sideTask,
+                        sleep = it.sleep,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -397,6 +402,7 @@ object SchedulerStateCodec {
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
             focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),
             histories = histories?.toHistories() ?: SchedulerHistories(),
+            sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
         )
     }
 
@@ -470,6 +476,7 @@ object SchedulerStateCodec {
             chore = chore,
             checked = checked,
             sideTask = sideTask,
+            sleep = sleep,
         )
 
     private fun PersistedTreeSnapshot.toSnapshot(): TreeSnapshot {
@@ -569,6 +576,17 @@ private data class PersistedState(
     // PRD §5/§6: the Undo/Redo history, now persisted so debug-time changes can be reverted at restart.
     // A missing value decodes to empty (payloads written before history was persisted start fresh).
     val histories: PersistedHistories? = null,
+    // The user's sleep schedule; a missing value decodes to null (payloads written before the sleep
+    // window existed) and the ViewModel then seeds the default.
+    val sleep: PersistedSleep? = null,
+)
+
+@Serializable
+private data class PersistedSleep(
+    val wakeMinutes: Int = 450,
+    val goalWakeMinutes: Int = 450,
+    val sleepDurationMinutes: Int = 510,
+    val anchorEpochDay: Long? = null,
 )
 
 @Serializable
@@ -692,6 +710,8 @@ private data class PersistedPanel(
     val checked: Boolean = false,
     // PRD §15: a missing sideTask flag decodes to false (payloads written before side tasks existed).
     val sideTask: Boolean = false,
+    // A missing sleep flag decodes to false (payloads written before the sleep window existed).
+    val sleep: Boolean = false,
 )
 
 @Serializable

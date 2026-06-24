@@ -64,6 +64,7 @@ import org.example.project.ui.LateralMenu
 import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.PlacedRecord
 import org.example.project.ui.ReminderEditWindow
+import org.example.project.ui.SleepWindow
 import org.example.project.ui.TimeSimPanel
 import org.example.project.ui.startOfWeek
 
@@ -78,7 +79,7 @@ enum class OmniPage(val label: String) {
 private const val LOOK_AWAY_SWEEP_CAP_MILLIS: Long = 10L * 60 * 1_000
 
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
-private enum class FloatingWindow { Calendar, Reminders, History, TimeSim }
+private enum class FloatingWindow { Calendar, Reminders, History, Sleep, TimeSim }
 
 @Composable
 @Preview
@@ -385,6 +386,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         var choresManagerOpen by remember { mutableStateOf(false) }
         // PRD §5/§6 History Manager: whether the floating history window is open (local UI state).
         var historyManagerOpen by remember { mutableStateOf(false) }
+        // Sleep schedule window: whether the floating sleep-settings window is open (local UI state).
+        var sleepWindowOpen by remember { mutableStateOf(false) }
 
         // The floating windows are siblings in one Box, so their paint order is their declaration order.
         // To put the *currently focused* window on top of the layers, we keep an explicit stacking order
@@ -392,7 +395,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // every press inside it (see raiseOnPress). Unmanaged: the modal edit window (its own scrim already
         // sits above everything).
         var windowStack by remember {
-            mutableStateOf(listOf(FloatingWindow.Calendar, FloatingWindow.Reminders, FloatingWindow.History, FloatingWindow.TimeSim))
+            mutableStateOf(listOf(FloatingWindow.Calendar, FloatingWindow.Reminders, FloatingWindow.History, FloatingWindow.Sleep, FloatingWindow.TimeSim))
         }
         fun bringWindowToFront(id: FloatingWindow) {
             if (windowStack.lastOrNull() != id) windowStack = windowStack.filterNot { it == id } + id
@@ -402,6 +405,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             FloatingWindow.Calendar -> calendarOpen
             FloatingWindow.Reminders -> choresManagerOpen
             FloatingWindow.History -> historyManagerOpen
+            FloatingWindow.Sleep -> sleepWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
         }
         // The focused window is the topmost open one in the stack.
@@ -412,6 +416,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             FloatingWindow.Calendar -> AppWindow.Calendar
             FloatingWindow.Reminders -> AppWindow.Reminders
             FloatingWindow.History -> AppWindow.History
+            FloatingWindow.Sleep -> null
             FloatingWindow.TimeSim -> null
         }
         // PRD §7 window navigation: raise [id] to the top layer AND move scheduler focus onto it, which
@@ -445,8 +450,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         val focusedWeekEndMillis =
             startOfWeek(selectedDate).plus(7, DateTimeUnit.DAY).atStartOfDayIn(tz).toEpochMilliseconds()
         val sideTaskHorizonMillis = maxOf(nowMillis + SchedulerDomain.SCHEDULE_HORIZON_MILLIS, focusedWeekEndMillis)
+        // The user's sleep windows across the displayed range — shown as "Sleep" blocks and avoided by the
+        // side-task projection (so neither tasks nor side tasks appear while asleep).
+        val displaySleepPanels =
+            SchedulerDomain.sleepPanels(schedulerState.sleep, nowMillis, sideTaskHorizonMillis, tz)
+        val displaySleepRegions =
+            displaySleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
         val displaySidePanels =
-            SchedulerDomain.sideTaskPanels(schedulerState.sideTasks, nowMillis, sideTaskHorizonMillis)
+            SchedulerDomain.sideTaskPanels(schedulerState.sideTasks, nowMillis, sideTaskHorizonMillis, displaySleepRegions)
 
         // PRD §14: reminder flags are calculated for the WHOLE focused week — from now to the end of the
         // week the calendar is showing — so navigating to a week shows its reminders. Like the side-task
@@ -468,7 +479,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             schedulerState.tasks.values.flatMap { task ->
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
             } + mergePanelsForDisplay(
-                schedulerState.panels, displayReminderPanels, displaySidePanels,
+                schedulerState.panels, displayReminderPanels, displaySidePanels, displaySleepPanels,
                 schedulerState.showSideTasks, schedulerState.showReminders,
             )
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
@@ -518,6 +529,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     onToggleHistoryManager = { onMenuWindowClicked(FloatingWindow.History) { historyManagerOpen = it } },
                     lookAwayVoiceEnabled = schedulerState.lookAwayVoiceEnabled,
                     onToggleLookAwayVoice = { vm.dispatch(SchedulerIntent.SetLookAwayVoice(it)) },
+                    sleepWindowOpen = sleepWindowOpen,
+                    onToggleSleep = { onMenuWindowClicked(FloatingWindow.Sleep) { sleepWindowOpen = it } },
                 )
 
                 // The content area is clipped so the floating calendar window can overlap the tree
@@ -767,6 +780,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                         )
                     }
 
+                    // Sleep schedule: floating window to configure the nightly sleep window the scheduler avoids.
+                    if (sleepWindowOpen) {
+                        SleepWindow(
+                            sleep = schedulerState.sleep ?: SchedulerDomain.DEFAULT_SLEEP,
+                            onSave = { vm.dispatch(SchedulerIntent.SetSleepSchedule(it, today.toEpochDays().toLong())) },
+                            onDismiss = { sleepWindowOpen = false },
+                            // Cascade: open up-right of center so the other windows stay reachable.
+                            initialOffset = Offset(120f, -120f),
+                            onRaise = { focusWindow(FloatingWindow.Sleep) },
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .zIndex(windowZ(FloatingWindow.Sleep)),
+                        )
+                    }
+
                     // Debug-only time-acceleration control (gated by DebugFlags.TIME_SIMULATION).
                     if (DebugFlags.TIME_SIMULATION) {
                         TimeSimPanel(
@@ -861,6 +889,7 @@ private fun mergePanelsForDisplay(
     panels: List<TaskPanel>,
     reminderPanels: List<TaskPanel>,
     sidePanels: List<TaskPanel>,
+    sleepPanels: List<TaskPanel>,
     showSideTasks: Boolean,
     showReminders: Boolean,
 ): List<CalendarRecord> {
@@ -874,7 +903,7 @@ private fun mergePanelsForDisplay(
     // as scheduled and the checked state of each reminder is carried over by matching its deterministic id.
     val reminders = if (showReminders) reminderPanels else emptyList()
     val sides = sidePanels
-    val blocks = panels.filter { !SchedulerDomain.isReminder(it) && !it.sideTask }
+    val blocks = panels.filter { !SchedulerDomain.isReminder(it) && !it.sideTask && !it.sleep }
     val reminderRecords =
         reminders.map { tag ->
             CalendarRecord(
@@ -906,8 +935,9 @@ private fun mergePanelsForDisplay(
     // PRD §15: when side tasks are hidden, fuse same-task panels across the gaps the (now-hidden) side-task
     // pauses left — structurally, so the fused block doesn't flicker as `now` advances (a moving side-task
     // projection would keep drifting out of alignment with the already-scheduled gaps).
+    val sleepRanges = sleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
     val blockRecords =
-        SchedulerDomain.groupSameTaskPanelsForDisplay(blocks, bridgeGaps = !showSideTasks).map { group ->
+        SchedulerDomain.groupSameTaskPanelsForDisplay(blocks, bridgeGaps = !showSideTasks, sleepRegions = sleepRanges).map { group ->
             val head = group.first()
             CalendarRecord(
                 title = head.title,
@@ -920,5 +950,16 @@ private fun mergePanelsForDisplay(
                 layoutWeight = head.layoutWeight,
             )
         }
-    return blockRecords + reminderRecords + sideRecords
+    // The sleep windows render as their own labeled band behind the task blocks (drawn first).
+    val sleepRecords =
+        sleepPanels.map { sleepPanel ->
+            CalendarRecord(
+                title = sleepPanel.title,
+                range = TaskTimeRange(sleepPanel.startEpochMillis, sleepPanel.endEpochMillis),
+                entryId = sleepPanel.id,
+                entryIds = listOf(sleepPanel.id),
+                sleep = true,
+            )
+        }
+    return sleepRecords + blockRecords + reminderRecords + sideRecords
 }

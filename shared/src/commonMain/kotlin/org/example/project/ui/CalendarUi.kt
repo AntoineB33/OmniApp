@@ -179,6 +179,8 @@ data class CalendarRecord(
     val checkedAtMillis: Long? = null,
     /** PRD §15 Side tasks: a periodic side task, drawn as a time-positioned band spanning its real duration. */
     val sideTask: Boolean = false,
+    /** The user's sleep window, drawn as a labeled greyed band behind the task blocks. */
+    val sleep: Boolean = false,
 )
 
 /** A [CalendarRecord] clipped to a single day, as start/end hour-of-day fractions in `[0, 24]`. */
@@ -203,6 +205,8 @@ data class PlacedRecord(
     val checkedAtMillis: Long? = null,
     /** PRD §15 Side tasks: a periodic side task rendered as a time-positioned band over [startHour, endHour]. */
     val sideTask: Boolean = false,
+    /** The user's sleep window, rendered as a labeled greyed band over [startHour, endHour]. */
+    val sleep: Boolean = false,
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
     val fullEndMillis: Long = 0L,
@@ -243,6 +247,7 @@ fun recordsForDay(
             checked = record.checked,
             checkedAtMillis = record.checkedAtMillis,
             sideTask = record.sideTask,
+            sleep = record.sleep,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
         )
@@ -443,6 +448,9 @@ fun LateralMenu(
     /** PRD §5/§6 History Manager: whether the history window is open + toggle callback. */
     historyManagerOpen: Boolean = false,
     onToggleHistoryManager: () -> Unit = {},
+    /** Sleep schedule window: whether it is open + toggle callback. */
+    sleepWindowOpen: Boolean = false,
+    onToggleSleep: () -> Unit = {},
     /** PRD §15 (20s look-away): whether the spoken voice cue is enabled + toggle callback. */
     lookAwayVoiceEnabled: Boolean = true,
     onToggleLookAwayVoice: (Boolean) -> Unit = {},
@@ -510,6 +518,13 @@ fun LateralMenu(
             label = "History",
             active = historyManagerOpen,
             onClick = onToggleHistoryManager,
+        )
+
+        // Sleep schedule: toggles the floating window for the nightly sleep window the scheduler avoids.
+        MenuButton(
+            label = "Sleep",
+            active = sleepWindowOpen,
+            onClick = onToggleSleep,
         )
 
         // PRD §7 Calendar: the month grid only appears while the calendar is displayed.
@@ -1809,7 +1824,7 @@ private fun WeekView(
     // PRD §8 "there must not be overlaps" (default mode): every block on the calendar (records,
     // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live. Reminder tags
     // (zero-duration, §14) and side-task markers (§15) are not blocks and are excluded.
-    val allBlocks = records.filterNot { it.reminder || it.sideTask }.map { calendarBlockKey(it) to it.range }
+    val allBlocks = records.filterNot { it.reminder || it.sideTask || it.sleep }.map { calendarBlockKey(it) to it.range }
 
     // PRD §8 hover title: the block/side-task under the cursor, reported up from each element so a single
     // non-interactive overlay (below) draws the bubble. [viewportCoords] anchors the bubble in viewport
@@ -2005,7 +2020,8 @@ private fun DayColumn(
     // the block pipeline only sees real blocks (drawing side tasks to scale would make them invisible).
     val reminderTags = records.filter { it.reminder }
     val sideTaskMarkers = records.filter { it.sideTask }
-    val blockRecords = records.filterNot { it.reminder || it.sideTask }
+    val sleepBands = records.filter { it.sleep }
+    val blockRecords = records.filterNot { it.reminder || it.sideTask || it.sleep }
     // The right-click position (in this column's local pixels) that anchors the contextual menu; null
     // when no menu is open. [menuTarget] is the block the click landed on (null = empty space).
     var menuOffset by remember { mutableStateOf<Offset?>(null) }
@@ -2117,6 +2133,26 @@ private fun DayColumn(
                     }
                 },
             )
+        }
+
+        // The user's sleep windows: a greyed band labeled "Sleep" drawn behind the task blocks so it is
+        // clear why nothing is scheduled there.
+        sleepBands.forEach { band ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset(y = hourHeight * band.startHour)
+                    .height(hourHeight * (band.endHour - band.startHour))
+                    .background(CalColors.muted.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Text(
+                    text = "Sleep",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CalColors.muted,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
 
         // PRD §8 contextual menu, anchored at the right-click position. Edit/Remove for a block,
