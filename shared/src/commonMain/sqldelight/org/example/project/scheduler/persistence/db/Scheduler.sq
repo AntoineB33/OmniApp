@@ -1,0 +1,51 @@
+-- PRD §5 Persistence: the scheduler's durable state lives in SQLite.
+-- `app_state` holds the non-history part of the state as a single serialized JSON row (id is always 0).
+-- The Undo/Redo history is stored per-unit: one row per History Unit in `history_unit`, plus one
+-- `history_pointer` row per category recording where that category's Ctrl+Z/Y cursor sits.
+
+CREATE TABLE app_state (
+    id INTEGER NOT NULL PRIMARY KEY,
+    payload TEXT NOT NULL
+);
+
+CREATE TABLE history_unit (
+    category TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    time_millis INTEGER NOT NULL,
+    chrono_id INTEGER NOT NULL,
+    debug_tainted INTEGER NOT NULL,
+    delta TEXT NOT NULL,
+    PRIMARY KEY (category, ordinal)
+);
+
+CREATE TABLE history_pointer (
+    category TEXT NOT NULL PRIMARY KEY,
+    pointer INTEGER NOT NULL
+);
+
+selectAppState:
+SELECT payload FROM app_state WHERE id = 0;
+
+upsertAppState:
+INSERT OR REPLACE INTO app_state(id, payload) VALUES (0, ?);
+
+selectAllHistory:
+SELECT category, ordinal, time_millis, chrono_id, debug_tainted, delta
+FROM history_unit
+ORDER BY category, ordinal;
+
+deleteAllHistory:
+DELETE FROM history_unit;
+
+insertHistoryUnit:
+INSERT INTO history_unit(category, ordinal, time_millis, chrono_id, debug_tainted, delta)
+VALUES (?, ?, ?, ?, ?, ?);
+
+selectAllPointers:
+SELECT category, pointer FROM history_pointer;
+
+deleteAllPointers:
+DELETE FROM history_pointer;
+
+insertPointer:
+INSERT INTO history_pointer(category, pointer) VALUES (?, ?);

@@ -60,6 +60,69 @@ object SchedulerStateCodec {
     fun decode(text: String): SchedulerState? =
         runCatching { json.decodeFromString<PersistedState>(text).toState() }.getOrNull()
 
+    /**
+     * Splits a [SchedulerState] into the structured [PersistedSnapshot] the SQLite store persists: the
+     * non-history state as one JSON [PersistedSnapshot.statePayload] row, plus one [HistoryRow] per
+     * History Unit and one [HistoryPointerRow] per category. The history is intentionally *omitted*
+     * from the payload blob (it lives in its own per-row table instead).
+     */
+    fun encodeSnapshot(state: SchedulerState): PersistedSnapshot {
+        val statePayload = json.encodeToString(state.toPersisted().copy(histories = null))
+        val rows = mutableListOf<HistoryRow>()
+        val pointers = mutableListOf<HistoryPointerRow>()
+        for ((category, history) in state.histories.all()) {
+            pointers.add(HistoryPointerRow(category.name, history.pointer))
+            history.units.forEachIndexed { index, unit ->
+                rows.add(
+                    HistoryRow(
+                        category = category.name,
+                        ordinal = index,
+                        timeMillis = unit.timeMillis,
+                        chronoId = unit.chronoId,
+                        debugTainted = unit.debugTainted,
+                        deltaJson = json.encodeToString(unit.delta.toPersisted()),
+                    ),
+                )
+            }
+        }
+        return PersistedSnapshot(statePayload, rows, pointers)
+    }
+
+    /** Rebuilds a [SchedulerState] from a [PersistedSnapshot], or `null` if the payload is corrupt. */
+    fun decodeSnapshot(snapshot: PersistedSnapshot): SchedulerState? =
+        runCatching {
+            json.decodeFromString<PersistedState>(snapshot.statePayload).toState()
+                .copy(histories = buildHistories(snapshot.history, snapshot.pointers))
+        }.getOrNull()
+
+    private fun buildHistories(
+        rows: List<HistoryRow>,
+        pointers: List<HistoryPointerRow>,
+    ): SchedulerHistories {
+        val pointerByCategory = pointers.associate { it.category to it.pointer }
+        val rowsByCategory = rows.groupBy { it.category }
+        var histories = SchedulerHistories()
+        for (category in HistoryCategory.entries) {
+            val units =
+                (rowsByCategory[category.name] ?: emptyList())
+                    .sortedBy { it.ordinal }
+                    .map { row ->
+                        HistoryUnit(
+                            timeMillis = row.timeMillis,
+                            chronoId = row.chronoId,
+                            delta = json.decodeFromString<PersistedDelta>(row.deltaJson).toDelta(),
+                            debugTainted = row.debugTainted,
+                        )
+                    }
+            histories =
+                histories.withCategory(
+                    category,
+                    SchedulerHistory(pointer = pointerByCategory[category.name] ?: -1, units = units),
+                )
+        }
+        return histories
+    }
+
     private fun SchedulerState.toPersisted(): PersistedState =
         PersistedState(
             rootListId = rootListId.value,

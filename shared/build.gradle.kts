@@ -7,6 +7,15 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.kotlinSerialization)
+    alias(libs.plugins.sqldelight)
+}
+
+sqldelight {
+    databases {
+        create("SchedulerDatabase") {
+            packageName.set("org.example.project.scheduler.persistence.db")
+        }
+    }
 }
 
 kotlin {
@@ -50,6 +59,7 @@ kotlin {
     sourceSets {
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
+            implementation(libs.sqldelight.androidDriver)
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
@@ -62,9 +72,21 @@ kotlin {
             implementation(libs.androidx.lifecycle.runtimeCompose)
             implementation(libs.kotlinx.serializationJson)
             implementation(libs.kotlinx.datetime)
+            implementation(libs.kotlinx.coroutinesCore)
+            implementation(libs.sqldelight.runtime)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
+        }
+        jvmMain.dependencies {
+            implementation(libs.sqldelight.sqliteDriver)
+        }
+        jvmTest.dependencies {
+            implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutinesTest)
+        }
+        iosMain.dependencies {
+            implementation(libs.sqldelight.nativeDriver)
         }
         jsMain.dependencies {
             implementation(libs.wrappers.browser)

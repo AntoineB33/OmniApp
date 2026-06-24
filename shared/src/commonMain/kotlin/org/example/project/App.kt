@@ -91,6 +91,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         val vm: TaskSchedulerViewModel = viewModel { TaskSchedulerViewModel(store = store) }
         val schedulerState by vm.state.collectAsState()
 
+        // PRD §5 Persistence: flush any pending debounced write when the app/composition is torn down,
+        // so a change made within the debounce window survives a normal close.
+        DisposableEffect(vm) {
+            onDispose { vm.flush() }
+        }
+
         // Time source: a virtual clock when the debug time-sim flag is on (so deadlines, the calendar
         // now-line and day rollovers can be exercised in seconds), else the real wall clock.
         val simClock = remember { SimAppClock() }

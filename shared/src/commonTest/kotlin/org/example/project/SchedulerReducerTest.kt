@@ -9,6 +9,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.WellKnownIds
+import org.example.project.scheduler.persistence.PersistedSnapshot
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.AppWindow
@@ -1913,7 +1914,9 @@ class SchedulerReducerTest {
         val rootList = first.state.value.rootListId
         val cellId = first.state.value.lists[rootList]!!.cellIds.first()
         first.dispatch(SchedulerIntent.SetCellTitle(cellId, "Remembered"))
-        assertNotNull(store.payload)
+        // Writes are debounced now; flush to persist synchronously for the assertion.
+        first.flush()
+        assertNotNull(store.snapshot)
 
         // A fresh ViewModel (simulating an app restart) must rehydrate from the store.
         val second = TaskSchedulerViewModel(store = store)
@@ -1922,12 +1925,12 @@ class SchedulerReducerTest {
     }
 
     private class InMemoryStore : SchedulerStore {
-        var payload: String? = null
+        var snapshot: PersistedSnapshot? = null
 
-        override fun load(): String? = payload
+        override fun load(): PersistedSnapshot? = snapshot
 
-        override fun save(data: String) {
-            payload = data
+        override fun save(snapshot: PersistedSnapshot) {
+            this.snapshot = snapshot
         }
     }
 
