@@ -25,18 +25,18 @@ OmniApp prioritizes Desktop interactions first.
 
 ## 4. Local Persistence & Offline-First
 OmniApp is entirely offline-capable.
-* **Framework:** Local database operations utilize a multi-platform SQL wrapper (e.g., SQLDelight).
-* **Reactivity:** Database queries return asynchronous flows (via Kotlin Coroutines/Flow). The ViewModels collect these flows to maintain real-time sync between the DB and the UI State.
-* **Continuous Sync:** All mutations in the state (including Undo/Redo history units) are immediately serialized and saved to the local database with a small debounce, ensuring zero data loss on unexpected exits.
+* **Framework:** Local database operations utilize a multi-platform SQL wrapper (SQLDelight); the desktop target uses the SQLite JDBC driver, web targets fall back to browser local-storage.
+* **Load + debounced save:** State is loaded from the database once at startup; while running, the in-memory MVI State is the single source of truth. Every mutation updates that State immediately and is written back to the database on a small debounce (the store is not a reactive `Flow` source — the ViewModel does not collect DB queries live).
+* **Continuous Sync:** All mutations (including Undo/Redo history units, stored one row per unit) are saved to the local database on that debounce, with a flush on close, to minimize data loss on unexpected exits.
 
 ## 5. History Architecture (Undo/Redo Engine)
-The Undo/Redo mechanism operates on a **Delta-based History Graph** managed globally.
+The Undo/Redo mechanism operates on **Delta-based `HistoryUnits`** kept in one shared, persisted timeline (see §4 and `docs/PRD_TaskScheduler.md` §6 for the authoritative spec).
 * Instead of saving full state snapshots (which would cause memory bloat with an infinite tree), the engine stores `HistoryUnits`.
-* A `HistoryUnit` contains the inverse operation (Delta) required to undo a specific Intent.
-* The state holds a `historyPointer`. 
-  * `Ctrl + Z` moves the pointer backward, applying the inverse Delta.
-  * `Ctrl + Y` moves the pointer forward, applying the forward Delta.
-  * New Intents immediately clear all `HistoryUnits` ahead of the current pointer.
+* A `HistoryUnit` carries a `Delta` that is applied to move the state forward/back and inverted for the opposite direction, so the same unit serves both undo and redo.
+* The timeline is **grouped into categories** (Edit Mode, Selection, Calendar, Main "the rest", Window-nav), **each with its own pointer** that walks only its own units — there is no single global pointer.
+  * `Ctrl + Z` / `Ctrl + Y` walk the category of the **currently focused window** (the tree's edits, or the focused floating window's — e.g. the calendar's).
+  * `Alt + Left` / `Alt + Right` walk the **selection-state** changes (task tree only).
+  * A new mutation immediately discards the `HistoryUnits` ahead of that category's pointer (branch truncation).
 
 ## 6. Testing Strategy (TDD)
 Behavior-Driven Development (BDD) and Test-Driven Development (TDD) are strictly enforced, focusing entirely on state mechanics.

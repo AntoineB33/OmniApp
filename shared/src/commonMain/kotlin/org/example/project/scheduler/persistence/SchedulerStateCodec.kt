@@ -40,14 +40,19 @@ import org.example.project.scheduler.state.TreeMutationDelta
 import org.example.project.scheduler.state.TreeSnapshot
 
 /**
- * Serializes the durable part of [SchedulerState] (the Task Tree, occurrences, expansion,
- * and selection) to/from JSON for [SchedulerStore].
+ * Serializes the durable part of [SchedulerState] for [SchedulerStore]: the Task Tree, occurrences,
+ * expansion, selection, calendar panels, chores, sleep schedule, settings, and the Undo/Redo history.
  *
- * The Undo/Redo history is intentionally not persisted: it holds polymorphic in-memory
- * [org.example.project.scheduler.state.Delta]s and, per PRD §5, a reloaded session starts
- * a fresh history. An in-flight [SchedulerEditSession] is persisted so a crash mid-edit can
- * be detected; [org.example.project.scheduler.ui.TaskSchedulerViewModel] cancels it on load.
- * The `titleToTaskIds` index is derived, so it is rebuilt on load rather than stored.
+ * The Undo/Redo history IS persisted (PRD §6): each unit's polymorphic
+ * [org.example.project.scheduler.state.Delta] round-trips through its serializable mirror, so a
+ * reloaded session keeps its undo/redo timeline. (Units committed under the diverged debug clock are
+ * reverted on load — see [org.example.project.scheduler.state.SchedulerReducer.rollbackDebugTainted], §16.)
+ * [encodeSnapshot]/[decodeSnapshot] split this into the SQLite shape — the non-history state as one JSON
+ * row plus one row per history unit — while [encode]/[decode] keep the whole-blob JSON for legacy migration.
+ *
+ * An in-flight [SchedulerEditSession] is persisted so a crash mid-edit can be detected;
+ * [org.example.project.scheduler.ui.TaskSchedulerViewModel] cancels it on load. The `titleToTaskIds`
+ * index is derived, so it is rebuilt on load rather than stored.
  */
 object SchedulerStateCodec {
     private val json = Json {
