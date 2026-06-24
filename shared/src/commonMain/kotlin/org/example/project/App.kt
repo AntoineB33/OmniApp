@@ -562,6 +562,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     onToggleLookAwayVoice = { vm.dispatch(SchedulerIntent.SetLookAwayVoice(it)) },
                     sleepWindowOpen = sleepWindowOpen,
                     onToggleSleep = { onMenuWindowClicked(FloatingWindow.Sleep) { sleepWindowOpen = it } },
+                    anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen,
+                    onCloseAllWindows = {
+                        calendarOpen = false
+                        choresManagerOpen = false
+                        historyManagerOpen = false
+                        sleepWindowOpen = false
+                    },
                 )
 
                 // The content area is clipped so the floating calendar window can overlap the tree

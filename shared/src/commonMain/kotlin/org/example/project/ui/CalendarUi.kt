@@ -454,6 +454,9 @@ fun LateralMenu(
     /** PRD §15 (20s look-away): whether the spoken voice cue is enabled + toggle callback. */
     lookAwayVoiceEnabled: Boolean = true,
     onToggleLookAwayVoice: (Boolean) -> Unit = {},
+    /** Whether any floating window is open — gates the "close all windows" button + the callback to do so. */
+    anyWindowOpen: Boolean = false,
+    onCloseAllWindows: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -467,6 +470,11 @@ fun LateralMenu(
     ) {
         // First element: page navigation (persistent across all feature pages).
         PageNavButton(page = page, onPageSelected = onPageSelected)
+
+        // Shown only while a floating window is open: closes every floating window at once.
+        if (anyWindowOpen) {
+            MenuButton(label = "✕ Close windows", active = false, onClick = onCloseAllWindows)
+        }
 
         MenuButton(
             label = "Calendar",
