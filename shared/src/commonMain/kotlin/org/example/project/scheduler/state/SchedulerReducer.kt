@@ -1532,10 +1532,12 @@ private fun evaluatePostEditCleanup(state: SchedulerState): SchedulerState {
         }
     }
 
-    if (!changed) return state
-    return SchedulerDomain.purgeOrphanTasks(
-        state.copy(cells = cells, lists = lists, tasks = tasks),
-    )
+    // Always sweep for detached subtrees: emptying a *parent* cell leaves its children dangling under it
+    // without removing any placeholder, so the loop above may report no change yet a subtree still needs
+    // collecting (PRD §4, see [SchedulerDomain.pruneDetachedTree]). pruneDetachedTree folds in the orphan-task
+    // purge, and short-circuits to a plain purge when nothing is detached.
+    val afterRemoval = if (changed) state.copy(cells = cells, lists = lists, tasks = tasks) else state
+    return SchedulerDomain.pruneDetachedTree(afterRemoval)
 }
 
 private fun isTextuallyEmptyCell(state: SchedulerState, cellId: CellId): Boolean =

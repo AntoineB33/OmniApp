@@ -88,6 +88,80 @@ class SchedulerCalendarTest {
         assertEquals("B", emptied.tasks[b]?.title) // the sibling is untouched
     }
 
+    @Test
+    fun emptying_a_parent_cell_removes_its_detached_child_subtree() {
+        // Repro: a child task left under an emptied parent used to linger (its cell still sat in the
+        // parent's now-detached sublist), so the "removed" task id kept showing up in the calendar's
+        // title / id suggestion menus. Emptying a cell must collect its whole subtree.
+        var s = SchedulerState.empty()
+        val c0 = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c0, "A"))
+        val aId = s.tasks.keys.first { s.tasks[it]!!.title == "A" }
+        val childCell = s.lists[s.tasks[aId]!!.childListId!!]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(childCell, "A1"))
+        val a1Id = s.tasks.keys.first { s.tasks[it]!!.title == "A1" }
+
+        // "Remove every cell": empty the parent A's cell (Backspace path).
+        val emptied = SchedulerReducer.reduce(
+            s.copy(selection = org.example.project.scheduler.state.SchedulerSelection(main = c0, selected = setOf(c0))),
+            SchedulerIntent.EmptySelectedCells,
+        )
+
+        // The detached child is gone from the tasks, the title index, and the calendar suggestion menus.
+        assertNull(emptied.tasks[a1Id])
+        assertFalse(emptied.titleToTaskIds.containsKey("A1"))
+        assertTrue(SchedulerDomain.calendarTaskMenuEntries(emptied, "A1").none { it.taskId == a1Id })
+        assertTrue(SchedulerDomain.calendarTitleSuggestions(emptied, "A1").isEmpty())
+        // Its detached cell/sublist are collected too (no dangling cell keeps it alive).
+        assertTrue(emptied.cells.values.none { it.taskId == a1Id })
+    }
+
+    @Test
+    fun a_transient_blank_parent_mid_edit_does_not_drop_its_children() {
+        // Guard: the detached-subtree sweep runs only at committed edit boundaries, never per-keystroke.
+        // Clearing a parent's field to empty mid-edit (which the live tree shows between keystrokes) must
+        // NOT delete its children — they're restored as the user keeps typing.
+        var s = SchedulerState.empty()
+        val c0 = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c0, "A"))
+        val aId = s.tasks.keys.first { s.tasks[it]!!.title == "A" }
+        val childCell = s.lists[s.tasks[aId]!!.childListId!!]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(childCell, "A1"))
+        val a1Id = s.tasks.keys.first { s.tasks[it]!!.title == "A1" }
+
+        // Enter edit on the parent and clear it to empty (a live per-keystroke update, not committed).
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(c0))
+        val midEdit = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText(""))
+
+        assertEquals("A1", midEdit.tasks[a1Id]?.title) // child survives the transient blank parent
+    }
+
+    @Test
+    fun calendar_menus_do_not_offer_a_cell_less_tombstone_task() {
+        // Repro: a task removed from the tree but kept alive only by calendar history (a record, as
+        // auto-scheduling leaves behind, or a panel) is a tombstone — it has no cell and can't be
+        // scheduled. It must NOT be offered back in the calendar add-panel title / id menus.
+        var s = SchedulerState.empty()
+        val c0 = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c0, "A"))
+        val aId = s.tasks.keys.first { s.tasks[it]!!.title == "A" }
+        // A keeps a recorded period (its only surviving reference once the cell goes).
+        s = s.copy(tasks = s.tasks + (aId to s.tasks[aId]!!.copy(record = listOf(range(0, 1000)))))
+
+        val emptied = SchedulerReducer.reduce(
+            s.copy(selection = org.example.project.scheduler.state.SchedulerSelection(main = c0, selected = setOf(c0))),
+            SchedulerIntent.EmptySelectedCells,
+        )
+
+        // The tombstone survives (so its record block stays labelled) but is cell-less...
+        assertEquals("A", emptied.tasks[aId]?.title)
+        assertFalse(SchedulerDomain.taskHasCells(emptied, aId))
+        // ...and is absent from every calendar add-panel menu.
+        assertTrue(SchedulerDomain.calendarTaskMenuEntries(emptied, "A").none { it.taskId == aId })
+        assertTrue(SchedulerDomain.calendarTitleSuggestions(emptied, "A").isEmpty())
+        assertNull(SchedulerDomain.calendarTaskIdForTitle(emptied, "A"))
+    }
+
     // ----- §8 manual add (default task) -------------------------------------------------------
 
     @Test

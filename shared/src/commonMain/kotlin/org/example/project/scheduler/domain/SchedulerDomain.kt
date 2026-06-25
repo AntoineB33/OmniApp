@@ -1888,14 +1888,23 @@ object SchedulerDomain {
      * the task already represented by the current draft/selection. This lets the calendar window
      * create a task (taskId left null) or reuse an existing one, exactly like Edit Mode in the tree.
      */
+    /**
+     * PRD §8 calendar edit window: a task is a valid panel target only when it is a **leaf** (the calendar
+     * schedules leaves, never a parent) **and still lives in the tree** (some cell points at it). The
+     * latter excludes a *tombstone* — a task with no cell, kept alive only to keep its calendar panels /
+     * records labelled (see [purgeOrphanTasks] and the reducer's tombstone handling). A tombstone can't be
+     * scheduled (it has no cell, so [schedulableLeaves] skips it) and the user has removed it from the tree,
+     * so it must not be offered back as a reusable task in the title / id menus.
+     */
+    private fun isCalendarPanelTarget(state: SchedulerState, taskId: TaskId): Boolean =
+        isLeafTask(state, taskId) && taskHasCells(state, taskId)
+
     fun calendarTaskMenuEntries(
         state: SchedulerState,
         draftText: String,
         excludeTaskId: TaskId? = null,
     ): List<ChangeTaskMenuEntry> {
-        // PRD §8 calendar edit window: only leaf tasks (no child tasks) are offered — the calendar
-        // schedules leaves, so a parent task is never a valid panel target.
-        val matching = matchingUserTaskIds(state, draftText, excludeTaskId).filter { isLeafTask(state, it) }
+        val matching = matchingUserTaskIds(state, draftText, excludeTaskId).filter { isCalendarPanelTarget(state, it) }
         return buildList {
             add(ChangeTaskMenuEntry(taskId = null, label = "New task"))
             for (taskId in matching) {
@@ -1919,12 +1928,12 @@ object SchedulerDomain {
      */
     fun calendarTitleSuggestions(state: SchedulerState, input: String): List<String> =
         titleSuggestions(state, input).filter { title ->
-            state.titleToTaskIds[title].orEmpty().any { isLeafTask(state, it) }
+            state.titleToTaskIds[title].orEmpty().any { isCalendarPanelTarget(state, it) }
         }
 
     /** PRD §8 calendar edit window: the leaf task to assign when a title suggestion is chosen, if any. */
     fun calendarTaskIdForTitle(state: SchedulerState, title: String): TaskId? =
-        state.titleToTaskIds[title].orEmpty().firstOrNull { isLeafTask(state, it) }
+        state.titleToTaskIds[title].orEmpty().firstOrNull { isCalendarPanelTarget(state, it) }
 
     /** PRD §14: a reminder choice for the "add a checked reminder" id menu — its stable id and title. */
     data class ReminderMenuEntry(val id: String, val title: String)
@@ -2138,6 +2147,49 @@ object SchedulerDomain {
                 }
         val titleToTaskIds = buildTitleIndex(tasks)
         return state.copy(tasks = tasks, titleToTaskIds = titleToTaskIds)
+    }
+
+    /**
+     * PRD §4: drop every cell, sublist, and task of a subtree *detached from the root* — the children left
+     * dangling under a cell that was emptied (in this model only a titled cell owns a child sublist, so an
+     * emptied parent's subtree is no longer part of the tree). Without this, those orphaned cells keep their
+     * tasks alive, so a "removed" task id still surfaces in the title / id suggestion menus.
+     *
+     * Reachability walks the tree from the root list, descending into a cell's child sublist only when its
+     * task has a **non-blank** title. Whatever it doesn't reach is detached and removed, then [purgeOrphanTasks]
+     * drops the now cell-less tasks. Call only at committed edit boundaries ([evaluatePostEditCleanup] — exit
+     * edit / empty selection / move), never mid-keystroke, so a transient blank while renaming a parent (which
+     * the live tree shows between keystrokes) does not delete its children.
+     */
+    fun pruneDetachedTree(state: SchedulerState): SchedulerState {
+        val reachableCells = mutableSetOf<CellId>()
+        val reachableLists = mutableSetOf<CellListId>()
+        val queue = ArrayDeque(listOf(state.rootListId))
+        while (queue.isNotEmpty()) {
+            val listId = queue.removeFirst()
+            if (!reachableLists.add(listId)) continue
+            val list = state.lists[listId] ?: continue
+            for (cellId in list.cellIds) {
+                reachableCells.add(cellId)
+                val task = state.cells[cellId]?.taskId?.let { state.tasks[it] } ?: continue
+                if (task.title.isNotBlank()) task.childListId?.let { queue.add(it) }
+            }
+        }
+        // Nothing detached → only the regular orphan-task purge is needed (and the common case stays cheap).
+        if (reachableCells.size == state.cells.size && reachableLists.size == state.lists.size) {
+            return purgeOrphanTasks(state)
+        }
+        val cells = state.cells.filterKeys { it in reachableCells }
+        val lists = state.lists.filterKeys { it in reachableLists }
+        val tasks =
+            state.tasks.mapValues { (_, task) ->
+                task.copy(
+                    occurrences = task.occurrences.filter { it in reachableCells },
+                    childListId = task.childListId?.takeIf { it in reachableLists },
+                )
+            }
+        val expanded = state.expanded.filterTo(mutableSetOf()) { it in reachableCells }
+        return purgeOrphanTasks(state.copy(cells = cells, lists = lists, tasks = tasks, expanded = expanded))
     }
 
     fun buildTitleIndex(tasks: Map<TaskId, Task>): Map<String, List<TaskId>> {
