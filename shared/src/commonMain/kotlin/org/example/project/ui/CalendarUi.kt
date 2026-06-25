@@ -119,6 +119,7 @@ import org.example.project.OmniPage
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.ChoreRecurrenceUnit
+import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.state.CalendarEdge
@@ -169,6 +170,8 @@ data class CalendarRecord(
     val taskId: TaskId? = null,
     /** PRD §9 whether the backing panel is pinned (seeds the edit-window pin toggle). */
     val pinned: Boolean = false,
+    /** PRD §8 the backing panel's four pin dimensions (head panel for a merged block); seeds the edit-window switches. */
+    val pins: PanelPins = PanelPins(),
     /** PRD §8 Overlap Mode: horizontal weight of the backing panel (head panel for a merged block). */
     val layoutWeight: Double = 1.0,
     /** PRD §14 Reminders: a zero-duration, checkable tag (not a height-proportional panel). */
@@ -195,6 +198,8 @@ data class PlacedRecord(
     val entryIds: List<String> = emptyList(),
     val taskId: TaskId? = null,
     val pinned: Boolean = false,
+    /** PRD §8 the backing panel's four pin dimensions; seeds the edit-window switches. */
+    val pins: PanelPins = PanelPins(),
     /** PRD §8 Overlap Mode: horizontal weight of the backing panel; drives [overlapLayout] widths. */
     val layoutWeight: Double = 1.0,
     /** PRD §14 Reminders: a zero-duration, checkable tag rendered at [startHour] (not a draggable block). */
@@ -242,6 +247,7 @@ fun recordsForDay(
             entryIds = record.entryIds,
             taskId = record.taskId,
             pinned = record.pinned,
+            pins = record.pins,
             layoutWeight = record.layoutWeight,
             reminder = record.reminder,
             checked = record.checked,
@@ -2163,8 +2169,9 @@ private fun DayColumn(
             }
         }
 
-        // PRD §8 contextual menu, anchored at the right-click position. Edit/Remove for a block,
-        // else "add a task".
+        // PRD §8 contextual menu, anchored at the right-click position. A block gets Edit/Remove; both a
+        // block and a gap also get the "add" actions (anchored at the right-click time), so a panel's menu
+        // is a superset of the gap's.
         val anchor = menuOffset
         fun closeMenu() { menuOffset = null; menuTarget = null }
         DropdownMenu(
@@ -2173,22 +2180,7 @@ private fun DayColumn(
             offset = anchor?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
         ) {
             val target = menuTarget
-            if (target == null) {
-                DropdownMenuItem(
-                    text = { Text("add a task") },
-                    onClick = {
-                        anchor?.let { onAddTaskAt(millisAt(it.y)) }
-                        closeMenu()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("add reminder") },
-                    onClick = {
-                        anchor?.let { onAddReminderAt(millisAt(it.y)) }
-                        closeMenu()
-                    },
-                )
-            } else {
+            if (target != null) {
                 DropdownMenuItem(
                     text = { Text("Edit") },
                     onClick = { closeMenu(); onEditEntry(target) },
@@ -2198,6 +2190,20 @@ private fun DayColumn(
                     onClick = { closeMenu(); onRemoveEntry(target) },
                 )
             }
+            DropdownMenuItem(
+                text = { Text("add a task") },
+                onClick = {
+                    anchor?.let { onAddTaskAt(millisAt(it.y)) }
+                    closeMenu()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("add reminder") },
+                onClick = {
+                    anchor?.let { onAddReminderAt(millisAt(it.y)) }
+                    closeMenu()
+                },
+            )
         }
         // PRD §8 (uniform blocks): every period — task record, scheduled "to do now", or manual entry
         // — renders as the same interactive block (click+drag to move, grab an edge to resize). The
@@ -2786,6 +2792,22 @@ private fun parseHmOnDateOf(text: String, refMillis: Long, tz: TimeZone): Long? 
     return LocalDateTime(date.year, date.month, date.day, h, m).toInstant(tz).toEpochMilliseconds()
 }
 
+/** PRD §8 one labeled pin-dimension switch row in the calendar edit window. */
+@Composable
+private fun PinSwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
 /**
  * PRD §8 edit window: a floating editor for a calendar block that mirrors the tree's Edit Mode in
  * "Change Task" (the only relevant mode here — a calendar block always changes/assigns its task):
@@ -2806,10 +2828,10 @@ fun ManualEntryEditWindow(
     titleSuggestions: (String) -> List<String>,
     taskIdForTitle: (String) -> TaskId?,
     titleForTaskId: (TaskId) -> String?,
-    onSave: (taskId: TaskId?, title: String, startMillis: Long, endMillis: Long, pinned: Boolean) -> Unit,
+    onSave: (taskId: TaskId?, title: String, startMillis: Long, endMillis: Long, pins: PanelPins) -> Unit,
     onDismiss: () -> Unit,
-    /** PRD §8/§9: the panel's current pinned state, toggled by the "Pin" button in this window. */
-    initialPinned: Boolean = false,
+    /** PRD §8: the panel's current four pin dimensions, toggled by the switches in this window. */
+    initialPins: PanelPins = PanelPins(),
 ) {
     var title by remember { mutableStateOf(initialTitle) }
     // The explicitly-picked existing task, if any. PRD §8: unlike the tree, the calendar does NOT
@@ -2820,8 +2842,10 @@ fun ManualEntryEditWindow(
     var newTaskChosen by remember { mutableStateOf(false) }
     var startText by remember { mutableStateOf(formatHm(startMillis, tz)) }
     var endText by remember { mutableStateOf(formatHm(endMillis, tz)) }
-    // PRD §9: pinned panels survive a reschedule; toggled here.
-    var pinned by remember { mutableStateOf(initialPinned) }
+    // PRD §8: the four independent pin dimensions, toggled by the switches below. Only [existence] is
+    // enforced today (a pinned panel survives a reschedule); position/spanning/distance are stored and
+    // shown so they round-trip across edits until their enforcement lands.
+    var pins by remember { mutableStateOf(initialPins) }
 
     // Full-screen scrim; clicking outside dismisses (PRD §8 floating window over everything).
     Box(
@@ -2922,18 +2946,13 @@ fun ManualEntryEditWindow(
                     )
                 }
 
-                // PRD §8/§9 "pin" button: toggle whether this panel survives a reschedule.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Pin",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Switch(checked = pinned, onCheckedChange = { pinned = it })
-                }
+                // PRD §8 pin switches: the four independent pin dimensions. Only "existence" is enforced
+                // today (a pinned panel survives a reschedule); the rest are stored and shown.
+                EditMenuSectionLabel("Pins")
+                PinSwitchRow("Existence", pins.existence) { pins = pins.copy(existence = it) }
+                PinSwitchRow("Position", pins.position) { pins = pins.copy(position = it) }
+                PinSwitchRow("Spanning", pins.spanning) { pins = pins.copy(spanning = it) }
+                PinSwitchRow("Distance", pins.distance) { pins = pins.copy(distance = it) }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2945,7 +2964,7 @@ fun ManualEntryEditWindow(
                         onClick = {
                             val start = parseHmOnDateOf(startText, startMillis, tz) ?: startMillis
                             val end = parseHmOnDateOf(endText, endMillis, tz) ?: endMillis
-                            onSave(effectiveTaskId, title, start, end, pinned)
+                            onSave(effectiveTaskId, title, start, end, pins)
                         },
                     ) { Text("Save") }
                 }

@@ -693,6 +693,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                     entryId = null,
                                     taskId = taskId,
                                     pinned = true, // PRD §8: the "pin" button is on by default for a new panel
+                                    // PRD §8: seeds the edit window's switches — Existence on by default, the rest off.
+                                    pins = PanelPins(existence = true),
                                     fullStartMillis = startMillis,
                                     fullEndMillis = startMillis + span,
                                 )
@@ -703,7 +705,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             // (auto blocks become user-authored), or pins a record into a panel.
                             onCommitBounds = { block, newStart, newEnd, allowOverlap ->
                                 commitBoundsIntent(
-                                    block, block.taskId, block.title, newStart, newEnd, block.pinned, allowOverlap,
+                                    block, block.taskId, block.title, newStart, newEnd, block.pins, allowOverlap,
                                 )?.let(vm::dispatch)
                             },
                             onEditEntry = { block -> editingBlock = block },
@@ -747,14 +749,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                 titleSuggestions = { SchedulerDomain.calendarTitleSuggestions(schedulerState, it) },
                                 taskIdForTitle = { SchedulerDomain.calendarTaskIdForTitle(schedulerState, it) },
                                 titleForTaskId = { schedulerState.tasks[it]?.title },
-                                initialPinned = block.pinned,
+                                initialPins = block.pins,
                                 onDismiss = { editingBlock = null; addingBlock = null },
-                                onSave = { taskId, title, startMillis, endMillis, pinned ->
+                                onSave = { taskId, title, startMillis, endMillis, pins ->
                                     val intent =
                                         if (isNew) {
-                                            SchedulerIntent.AddTaskPanel(taskId, title, startMillis, endMillis, PanelPins(existence = pinned))
+                                            SchedulerIntent.AddTaskPanel(taskId, title, startMillis, endMillis, pins)
                                         } else {
-                                            commitBoundsIntent(block, taskId, title, startMillis, endMillis, pinned)
+                                            commitBoundsIntent(block, taskId, title, startMillis, endMillis, pins)
                                         }
                                     intent?.let(vm::dispatch)
                                     editingBlock = null
@@ -888,12 +890,9 @@ private fun commitBoundsIntent(
     title: String,
     startMillis: Long,
     endMillis: Long,
-    pinned: Boolean,
+    pins: PanelPins,
     allowOverlap: Boolean = false,
 ): SchedulerIntent? {
-    // PRD §8: the calendar's single "Pin" toggle is the *existence* pin; the other pin dimensions
-    // (position/spanning/distance) have no UI yet and stay default until that follow-up lands.
-    val pins = PanelPins(existence = pinned)
     return when {
     // A merged block (several same-task panels shown as one): replace the whole group with one panel.
     block.entryIds.size > 1 ->
@@ -1006,6 +1005,7 @@ private fun mergePanelsForDisplay(
                 entryIds = group.map { it.id },
                 taskId = head.taskId,
                 pinned = head.pinned,
+                pins = head.pins,
                 layoutWeight = head.layoutWeight,
             )
         }
