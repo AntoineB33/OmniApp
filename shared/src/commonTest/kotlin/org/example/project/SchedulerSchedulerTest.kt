@@ -13,6 +13,7 @@ import kotlinx.datetime.toInstant
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.SideTask
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
@@ -58,7 +59,8 @@ class SchedulerSchedulerTest {
         TaskPanel(id, taskId, "x", start, end, pinned = false, auto = true)
 
     private fun pinned(id: String, taskId: TaskId, start: Long, end: Long) =
-        TaskPanel(id, taskId, "x", start, end, pinned = true, auto = false)
+        // A well-formed pinned panel: the existence pin is the source of [TaskPanel.pinned] (PRD §8).
+        TaskPanel(id, taskId, "x", start, end, pinned = true, auto = false, pins = PanelPins(existence = true))
 
     /** A single task "Solo" with the given minimum time (minutes). */
     private fun stateWithOneTask(minMinutes: Int): Pair<SchedulerState, TaskId> {

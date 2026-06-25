@@ -13,6 +13,7 @@ import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
+import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.Task
@@ -379,6 +380,8 @@ object SchedulerStateCodec {
                         startEpochMillis = it.start,
                         endEpochMillis = it.end,
                         pinned = it.pinned,
+                        // PRD §8: reconstruct [pins] from the persisted [pinned] (the only wired pin).
+                        pins = PanelPins(existence = it.pinned),
                         auto = it.auto,
                         layoutWeight = it.layoutWeight,
                         chore = it.chore,
@@ -476,6 +479,8 @@ object SchedulerStateCodec {
             startEpochMillis = start,
             endEpochMillis = end,
             pinned = pinned,
+            // PRD §8: reconstruct [pins] from the persisted [pinned] (the only wired pin).
+            pins = PanelPins(existence = pinned),
             auto = auto,
             layoutWeight = layoutWeight,
             chore = chore,

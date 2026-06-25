@@ -9,6 +9,7 @@ import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
+import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
@@ -50,6 +51,43 @@ class SchedulerCalendarTest {
         return Triple(s, a, b)
     }
 
+    @Test
+    fun emptying_a_cell_keeps_its_task_title_for_calendar_panels_and_records() {
+        // Regression: a task with calendar history (a past panel and/or a recorded period) that loses its
+        // last cell must survive *with its title* — clearing the cell used to blank the shared task title,
+        // leaving its calendar blocks rendering as "(untitled)".
+        val (s0, a, _) = stateWithTwoTasks()
+        val now = 1_000_000_000_000L
+        val s =
+            s0.copy(
+                panels = listOf(autoPanel("auto/0", a, now - 30 * MIN, now - MIN)),
+                tasks = s0.tasks + (a to s0.tasks[a]!!.copy(record = listOf(range(now - 90 * MIN, now - 60 * MIN)))),
+                nextPanelCounter = 1,
+            )
+        val aCell = s.tasks[a]!!.occurrences.first()
+
+        // "Remove the cell" by emptying it (PRD §4 Backspace/Delete path).
+        val emptied = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(aCell, ""))
+
+        // The taskId is kept (its panel/record still reference it) and keeps its title — not "(untitled)".
+        assertEquals("A", emptied.tasks[a]?.title)
+        assertTrue(emptied.panels.any { it.taskId == a })
+        assertTrue(emptied.tasks[a]!!.record.isNotEmpty())
+        // The cell no longer binds the task (the tree shows it blank) and the task has no cells left.
+        assertFalse(SchedulerDomain.taskHasCells(emptied, a))
+    }
+
+    @Test
+    fun emptying_a_cell_with_no_calendar_history_blanks_the_title_as_before() {
+        // The tombstone rule is scoped to calendar history: an ordinary task with no panels/records keeps
+        // the prior behaviour — emptying its cell blanks the (shared) title rather than preserving it.
+        val (s0, a, b) = stateWithTwoTasks()
+        val aCell = s0.tasks[a]!!.occurrences.first()
+        val emptied = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(aCell, ""))
+        assertEquals("", emptied.tasks[a]?.title) // blanked — no history to preserve it for
+        assertEquals("B", emptied.tasks[b]?.title) // the sibling is untouched
+    }
+
     // ----- §8 manual add (default task) -------------------------------------------------------
 
     @Test
@@ -68,7 +106,7 @@ class SchedulerCalendarTest {
         val (s, a, _) = stateWithTwoTasks()
         val start = 5_000_000L
         val withPanel =
-            SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(a, "A", start, start + 45 * MIN, pinned = true))
+            SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(a, "A", start, start + 45 * MIN, pins = PanelPins(existence = true)))
         assertEquals(1, withPanel.panels.size)
         val panel = withPanel.panels[0]
         assertEquals(a, panel.taskId)
@@ -84,12 +122,12 @@ class SchedulerCalendarTest {
     fun update_panel_can_make_it_a_calendar_only_new_task() {
         val (s, a, _) = stateWithTwoTasks()
         val withPanel =
-            SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(a, "A", 1_000_000L, 1_000_000L + 45 * MIN, false))
+            SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(a, "A", 1_000_000L, 1_000_000L + 45 * MIN, PanelPins(existence = false)))
         val id = withPanel.panels[0].id
         val updated =
             SchedulerReducer.reduce(
                 withPanel,
-                SchedulerIntent.UpdateTaskPanel(id, null, "Brand new", 2_000_000L, 2_000_000L + 30 * MIN, false),
+                SchedulerIntent.UpdateTaskPanel(id, null, "Brand new", 2_000_000L, 2_000_000L + 30 * MIN, PanelPins(existence = false)),
             )
         val panel = updated.panels[0]
         assertNull(panel.taskId)
@@ -103,7 +141,7 @@ class SchedulerCalendarTest {
         val now = 1_000_000_000_000L
         val s = s0.copy(panels = listOf(autoPanel("auto/0", a, now, now + 45 * MIN)))
         val updated =
-            SchedulerReducer.reduce(s, SchedulerIntent.UpdateTaskPanel("auto/0", a, "A", now, now + 45 * MIN, pinned = true))
+            SchedulerReducer.reduce(s, SchedulerIntent.UpdateTaskPanel("auto/0", a, "A", now, now + 45 * MIN, pins = PanelPins(existence = true)))
         val panel = updated.panels[0]
         assertTrue(panel.pinned)
         assertFalse(panel.auto)
@@ -192,7 +230,7 @@ class SchedulerCalendarTest {
             panels = listOf(TaskPanel("panel/0", a, "A", 0, 30 * MIN, pinned = true, auto = false)),
             nextPanelCounter = 1,
         )
-        val added = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(a, "A", 30 * MIN, 60 * MIN, pinned = true))
+        val added = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(a, "A", 30 * MIN, 60 * MIN, pins = PanelPins(existence = true)))
         assertEquals(1, added.panels.size)
         assertEquals(0, added.panels[0].startEpochMillis)
         assertEquals(60 * MIN, added.panels[0].endEpochMillis)
@@ -301,7 +339,7 @@ class SchedulerCalendarTest {
         )
         val replaced = SchedulerReducer.reduce(
             s,
-            SchedulerIntent.ReplaceTaskPanels(listOf("auto/0", "auto/1"), a, "A", 0, 90 * MIN, pinned = true),
+            SchedulerIntent.ReplaceTaskPanels(listOf("auto/0", "auto/1"), a, "A", 0, 90 * MIN, pins = PanelPins(existence = true)),
         )
         // The two A sessions are gone, replaced by one pinned user panel; the B block stays.
         assertTrue(replaced.panels.none { it.id == "auto/0" || it.id == "auto/1" })
@@ -329,7 +367,7 @@ class SchedulerCalendarTest {
         // Drop A onto B with overlap armed: bounds stay raw (overlapping), width seeded to 1/2.
         val updated = SchedulerReducer.reduce(
             s,
-            SchedulerIntent.UpdateTaskPanel("A", a, "A", 0, HOUR, pinned = true, allowOverlap = true),
+            SchedulerIntent.UpdateTaskPanel("A", a, "A", 0, HOUR, pins = PanelPins(existence = true), allowOverlap = true),
         )
         val pa = updated.panels.first { it.id == "A" }
         assertEquals(0, pa.startEpochMillis)
@@ -350,7 +388,7 @@ class SchedulerCalendarTest {
         )
         val moved = SchedulerReducer.reduce(
             s,
-            SchedulerIntent.UpdateTaskPanel("pB", b, "B", 1 * HOUR, 3 * HOUR, pinned = true, allowOverlap = true),
+            SchedulerIntent.UpdateTaskPanel("pB", b, "B", 1 * HOUR, 3 * HOUR, pins = PanelPins(existence = true), allowOverlap = true),
         )
         val pA = moved.panels.first { it.id == "pA" }
         val pB = moved.panels.first { it.id == "pB" }
@@ -369,7 +407,7 @@ class SchedulerCalendarTest {
         )
         val updated = SchedulerReducer.reduce(
             s,
-            SchedulerIntent.UpdateTaskPanel("A", a, "A2", 0, 2 * HOUR, pinned = true),
+            SchedulerIntent.UpdateTaskPanel("A", a, "A2", 0, 2 * HOUR, pins = PanelPins(existence = true)),
         )
         assertEquals(5.0, updated.panels.first { it.id == "A" }.layoutWeight, 1e-9)
     }
@@ -389,7 +427,7 @@ class SchedulerCalendarTest {
         )
         val updated = SchedulerReducer.reduce(
             s,
-            SchedulerIntent.UpdateTaskPanel("A", a, "A", 0, HOUR, pinned = true, allowOverlap = true),
+            SchedulerIntent.UpdateTaskPanel("A", a, "A", 0, HOUR, pins = PanelPins(existence = true), allowOverlap = true),
         )
         // Overlaps B(2) + C(4): S = 6, k = 2 ⇒ w = 3.0 (fraction 3/9 = 1/3 = 1/n).
         assertEquals(3.0, updated.panels.first { it.id == "A" }.layoutWeight, 1e-9)
@@ -495,7 +533,7 @@ class SchedulerCalendarTest {
     fun calendar_edits_are_undone_only_while_the_calendar_is_focused() {
         val (s, _, _) = stateWithTwoTasks()
         val withPanel =
-            SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(null, "x", 1_000_000L, 1_000_000L + 45 * MIN, false))
+            SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(null, "x", 1_000_000L, 1_000_000L + 45 * MIN, PanelPins(existence = false)))
         val focused = SchedulerReducer.reduce(withPanel, SchedulerIntent.SetCalendarFocus(true))
 
         val undone = SchedulerReducer.reduce(focused, SchedulerIntent.Undo)
@@ -510,7 +548,7 @@ class SchedulerCalendarTest {
     fun unfocused_undo_skips_calendar_units_and_undoes_the_tree() {
         val (s, _, _) = stateWithTwoTasks()
         val withPanel =
-            SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(null, "x", 1_000_000L, 1_000_000L + 45 * MIN, false))
+            SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(null, "x", 1_000_000L, 1_000_000L + 45 * MIN, PanelPins(existence = false)))
         val undone = SchedulerReducer.reduce(withPanel, SchedulerIntent.Undo)
         assertEquals(1, undone.panels.size) // panel preserved
         assertNotEquals(withPanel.cells, undone.cells) // a tree mutation was reverted
@@ -535,7 +573,7 @@ class SchedulerCalendarTest {
                     title = s.tasks[a]!!.title,
                     startEpochMillis = recorded.startEpochMillis + 60 * MIN,
                     endEpochMillis = recorded.endEpochMillis + 60 * MIN,
-                    pinned = true,
+                    pins = PanelPins(existence = true),
                 ),
             )
         assertTrue(pinnedS.tasks[a]!!.record.isEmpty())
@@ -654,7 +692,7 @@ class SchedulerCalendarTest {
     fun removing_a_panel_deletes_it_and_can_be_undone_when_focused() {
         val (s, _, _) = stateWithTwoTasks()
         val withPanel =
-            SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(null, "x", 1_000_000L, 1_000_000L + 45 * MIN, false))
+            SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(null, "x", 1_000_000L, 1_000_000L + 45 * MIN, PanelPins(existence = false)))
         val id = withPanel.panels[0].id
         val removed = SchedulerReducer.reduce(withPanel, SchedulerIntent.RemoveTaskPanel(id))
         assertTrue(removed.panels.isEmpty())

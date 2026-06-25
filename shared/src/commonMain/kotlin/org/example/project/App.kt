@@ -37,6 +37,7 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
@@ -77,6 +78,14 @@ enum class OmniPage(val label: String) {
 // fast-forward never clips a crossing, while a larger leap (manual time-leap, or waking from a long real
 // device sleep) is treated as a jump that announces at most the last few minutes — not a backlog of cues.
 private const val LOOK_AWAY_SWEEP_CAP_MILLIS: Long = 10L * 60 * 1_000
+
+// How fresh a look-away occurrence's *start* must be for its "Look 20 feet away"/"Resume your work" cues to
+// fire. The loop schedules each cue at the exact instant the clock reaches the boundary, so a real crossing is
+// announced sub-second-late; a start staler than this is one the app only just observed — typically an
+// occurrence already in progress when the app cold-starts — and is consumed silently. Announcing it would
+// waste most of the 20 s rest and, when launched late in the window, fire "Resume your work" right after
+// "Look 20 feet away".
+private const val LOOK_AWAY_START_FRESH_MILLIS: Long = 2_000
 
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
 private enum class FloatingWindow { Calendar, Reminders, History, Sleep, TimeSim }
@@ -345,9 +354,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     .sortedBy { it.startEpochMillis }
                     .forEach {
                         announcedStarts = announcedStarts + it.startEpochMillis
-                        pendingEnds = pendingEnds + it.endEpochMillis
-                        sendSystemNotification("Side task", it.title)
-                        if (voice) speak("Look 20 feet away")
+                        // Only cue a look-away we're catching at (or just after) its start. An occurrence
+                        // already in progress when the app cold-starts — its start up to a full duration in the
+                        // past, not yet in [announcedStarts] — is consumed silently: announcing it would waste
+                        // most of the 20 s rest and, launched late in the window, fire "Resume your work" right
+                        // after "Look 20 feet away". Its end is left uncaptured so no resume cue follows.
+                        if (it.startEpochMillis >= simNow - LOOK_AWAY_START_FRESH_MILLIS) {
+                            pendingEnds = pendingEnds + it.endEpochMillis
+                            sendSystemNotification("Side task", it.title)
+                            if (voice) speak("Look 20 feet away")
+                        }
                     }
 
                 // Fire (and drop) every captured end the clock has now reached.
@@ -736,7 +752,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                                 onSave = { taskId, title, startMillis, endMillis, pinned ->
                                     val intent =
                                         if (isNew) {
-                                            SchedulerIntent.AddTaskPanel(taskId, title, startMillis, endMillis, pinned)
+                                            SchedulerIntent.AddTaskPanel(taskId, title, startMillis, endMillis, PanelPins(existence = pinned))
                                         } else {
                                             commitBoundsIntent(block, taskId, title, startMillis, endMillis, pinned)
                                         }
@@ -874,12 +890,16 @@ private fun commitBoundsIntent(
     endMillis: Long,
     pinned: Boolean,
     allowOverlap: Boolean = false,
-): SchedulerIntent? = when {
+): SchedulerIntent? {
+    // PRD §8: the calendar's single "Pin" toggle is the *existence* pin; the other pin dimensions
+    // (position/spanning/distance) have no UI yet and stay default until that follow-up lands.
+    val pins = PanelPins(existence = pinned)
+    return when {
     // A merged block (several same-task panels shown as one): replace the whole group with one panel.
     block.entryIds.size > 1 ->
-        SchedulerIntent.ReplaceTaskPanels(block.entryIds, taskId, title, startMillis, endMillis, pinned, allowOverlap)
+        SchedulerIntent.ReplaceTaskPanels(block.entryIds, taskId, title, startMillis, endMillis, pins, allowOverlap)
     block.entryId != null ->
-        SchedulerIntent.UpdateTaskPanel(block.entryId, taskId, title, startMillis, endMillis, pinned, allowOverlap)
+        SchedulerIntent.UpdateTaskPanel(block.entryId, taskId, title, startMillis, endMillis, pins, allowOverlap)
     block.taskId != null ->
         SchedulerIntent.PinRecordAsPanel(
             recordTaskId = block.taskId,
@@ -889,10 +909,11 @@ private fun commitBoundsIntent(
             title = title,
             startEpochMillis = startMillis,
             endEpochMillis = endMillis,
-            pinned = pinned,
+            pins = pins,
             allowOverlap = allowOverlap,
         )
     else -> null
+    }
 }
 
 /**

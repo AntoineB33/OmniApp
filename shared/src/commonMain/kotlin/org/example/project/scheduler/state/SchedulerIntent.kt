@@ -308,7 +308,7 @@ sealed interface SchedulerIntent {
         val title: String,
         val startEpochMillis: Long,
         val endEpochMillis: Long,
-        val pinned: Boolean,
+        val pins: org.example.project.scheduler.model.PanelPins,
     ) : SchedulerIntent
 
     /**
@@ -323,7 +323,7 @@ sealed interface SchedulerIntent {
         val title: String,
         val startEpochMillis: Long,
         val endEpochMillis: Long,
-        val pinned: Boolean,
+        val pins: org.example.project.scheduler.model.PanelPins,
         /** PRD §8 Overlap Mode: keep the raw (possibly overlapping) bounds and seed the panel to 1/n. */
         val allowOverlap: Boolean = false,
     ) : SchedulerIntent
@@ -377,7 +377,7 @@ sealed interface SchedulerIntent {
         val title: String,
         val startEpochMillis: Long,
         val endEpochMillis: Long,
-        val pinned: Boolean,
+        val pins: org.example.project.scheduler.model.PanelPins,
         /** PRD §8 Overlap Mode: keep the raw (possibly overlapping) bounds and seed the panel to 1/n. */
         val allowOverlap: Boolean = false,
     ) : SchedulerIntent
@@ -413,7 +413,7 @@ sealed interface SchedulerIntent {
         val title: String,
         val startEpochMillis: Long,
         val endEpochMillis: Long,
-        val pinned: Boolean,
+        val pins: org.example.project.scheduler.model.PanelPins,
         /** PRD §8 Overlap Mode: keep the raw (possibly overlapping) bounds and seed the panel to 1/n. */
         val allowOverlap: Boolean = false,
     ) : SchedulerIntent

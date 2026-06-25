@@ -213,13 +213,39 @@ data class TaskTimeRange(
  * stack (PRD §5/§8), while an automatic scheduling run (PRD §9) is derived from the state and recorded
  * in no history.
  */
+/** PRD §8: the calendar unit a panel's position is confined to when "position pinned" (else [Exact]). */
+enum class PositionGranularity { Exact, Hour, Day, Week, Month, Year }
+
+/**
+ * PRD §8 pin switches: the four independent ways a calendar panel can be pinned, edited in the panel's
+ * edit window. [existence] keeps the occurrence; [position] (confined to [positionGranularity]) fixes
+ * where it sits; [spanning] fixes its duration; [distance] fixes the gap to a reference occurrence
+ * ([distanceRefTaskId] at [distanceRefStartMillis]). The scheduler's single fixed flag
+ * ([TaskPanel.pinned]) is derived from these; in this pass only [existence] is enforced (the rest are
+ * stored and shown, enforcement is a follow-up).
+ */
+data class PanelPins(
+    val existence: Boolean = false,
+    val position: Boolean = false,
+    val positionGranularity: PositionGranularity = PositionGranularity.Exact,
+    val spanning: Boolean = false,
+    val distance: Boolean = false,
+    val distanceRefTaskId: TaskId? = null,
+    val distanceRefStartMillis: Long? = null,
+)
+
 data class TaskPanel(
     val id: String,
     val taskId: TaskId?,
     val title: String,
     val startEpochMillis: Long,
     val endEpochMillis: Long,
-    /** PRD §9: locked by the user (edit-window toggle); survives + constrains a reschedule. */
+    /**
+     * PRD §9: the scheduler's "fixed" flag — a pinned panel survives + constrains a reschedule
+     * ([org.example.project.scheduler.domain.SchedulerDomain.isSchedulerFixed]). Derived from [pins] at
+     * save time (see the reducer's `derivePinned`); kept as its own field so the scheduler, the display
+     * merge, and the chore logic that read it are unchanged.
+     */
     val pinned: Boolean = false,
     /** True for scheduler-generated panels (the §9 auto fill); false for user-authored ones. */
     val auto: Boolean = false,
@@ -265,6 +291,8 @@ data class TaskPanel(
      * the column. Default 1.0.
      */
     val layoutWeight: Double = 1.0,
+    /** PRD §8 pin switches: the four independent pin dimensions (see [PanelPins]); drives [pinned]. */
+    val pins: PanelPins = PanelPins(),
 )
 
 /**

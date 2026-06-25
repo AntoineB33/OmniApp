@@ -5,6 +5,7 @@ import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
@@ -909,6 +910,13 @@ object SchedulerReducer {
         return records + panels
     }
 
+    /**
+     * PRD §8 pin switches → the scheduler's single fixed flag ([TaskPanel.pinned]). In this pass only the
+     * **existence** pin is enforced (a fixed panel survives + constrains a reschedule); the position /
+     * spanning / distance pins are stored on the panel but their partial enforcement is a follow-up.
+     */
+    private fun derivePinned(pins: PanelPins): Boolean = pins.existence
+
     private fun reduceAddTaskPanel(
         state: SchedulerState,
         intent: SchedulerIntent.AddTaskPanel,
@@ -923,7 +931,8 @@ object SchedulerReducer {
                 title = intent.title,
                 startEpochMillis = intent.startEpochMillis,
                 endEpochMillis = end,
-                pinned = intent.pinned,
+                pinned = derivePinned(intent.pins),
+                pins = intent.pins,
                 auto = false,
             )
         return commitPanels(allocated, allocated.panels + panel, label = "Add panel")
@@ -957,7 +966,8 @@ object SchedulerReducer {
                 title = intent.title,
                 startEpochMillis = intent.startEpochMillis,
                 endEpochMillis = end,
-                pinned = intent.pinned,
+                pinned = derivePinned(intent.pins),
+                pins = intent.pins,
                 auto = false,
                 layoutWeight = weight,
             )
@@ -1015,7 +1025,8 @@ object SchedulerReducer {
                 title = intent.title,
                 startEpochMillis = intent.startEpochMillis,
                 endEpochMillis = end,
-                pinned = intent.pinned,
+                pinned = derivePinned(intent.pins),
+                pins = intent.pins,
                 auto = false,
                 layoutWeight = weight,
             )
@@ -1082,7 +1093,8 @@ object SchedulerReducer {
                 title = intent.title,
                 startEpochMillis = intent.startEpochMillis,
                 endEpochMillis = end,
-                pinned = intent.pinned,
+                pinned = derivePinned(intent.pins),
+                pins = intent.pins,
                 auto = false,
                 layoutWeight = weight,
             )
@@ -1939,16 +1951,31 @@ private fun applySetCellTitle(
     val previousTask = working.tasks[taskId]
     val previousTitle = previousTask?.title
 
+    // PRD §4/§8: emptying a cell whose task still has calendar history — a recorded period (§8) or a panel
+    // (§9) — must NOT rename that task to blank, or its records/panels would render as "(untitled)". Keep
+    // the task as a tombstone the calendar still labels and unbind *this* cell instead of clearing the
+    // shared title. The taskId is dropped only once nothing — no cell, panel, or record — references it
+    // ([purgeOrphanTasks]); a cell-less task is never scheduled ([schedulableLeaves] needs [taskHasCells]).
+    val keepAsTombstone =
+        title.isEmpty() && previousTask != null &&
+            (previousTask.record.isNotEmpty() || working.panels.any { it.taskId == taskId })
+
     val tasks = working.tasks.toMutableMap()
     val task =
-        (previousTask ?: Task(id = taskId, title = title)).let { existing ->
-            existing.copy(
-                title = title,
-                occurrences = SchedulerDomain.sortOccurrences(
-                    working,
-                    (existing.occurrences + cellId).distinct(),
-                ),
+        if (keepAsTombstone) {
+            previousTask!!.copy(
+                occurrences = SchedulerDomain.sortOccurrences(working, previousTask.occurrences - cellId),
             )
+        } else {
+            (previousTask ?: Task(id = taskId, title = title)).let { existing ->
+                existing.copy(
+                    title = title,
+                    occurrences = SchedulerDomain.sortOccurrences(
+                        working,
+                        (existing.occurrences + cellId).distinct(),
+                    ),
+                )
+            }
         }
     tasks[taskId] = task
 
@@ -1961,7 +1988,8 @@ private fun applySetCellTitle(
     }
 
     var titleToTaskIds = working.titleToTaskIds
-    if (previousTitle != null && previousTitle != title) {
+    // A tombstone keeps its previous title, so its title-index entry must survive too.
+    if (!keepAsTombstone && previousTitle != null && previousTitle != title) {
         titleToTaskIds = SchedulerDomain.removeTitleMapping(titleToTaskIds, previousTitle, taskId)
     }
     if (title.isNotEmpty()) {
@@ -1969,7 +1997,7 @@ private fun applySetCellTitle(
     }
 
     val cells = working.cells.toMutableMap()
-    cells[cellId] = cell.copy(taskId = taskId)
+    cells[cellId] = cell.copy(taskId = if (keepAsTombstone) null else taskId)
 
     var lists = working.lists.toMutableMap()
     var currentList = lists[cell.parentListId] ?: return state
