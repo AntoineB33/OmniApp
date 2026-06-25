@@ -730,7 +730,7 @@ object SchedulerDomain {
      *
      * PRD §15 (side tasks hidden): when the calendar hides side tasks, two same-task panels separated only
      * by a side-task gap should read as one continuous block. Set [bridgeGaps] = true and the gap between
-     * consecutive same-task/same-pin panels is treated as touching regardless of its width — purely cosmetic
+     * consecutive same-task/same-pin **auto** panels is treated as touching regardless of its width — purely cosmetic
      * (the panels stay separate in state, so the real spanning time is unchanged). This is correct because in
      * the forward fill a same-task run is only ever broken by a side-task pause (a different task or a pinned
      * panel sits in the gap as its own block and so breaks the run on its own); deciding it structurally —
@@ -758,7 +758,12 @@ object SchedulerDomain {
             val mergeable = head != null &&
                 panel.taskId != null && head.taskId == panel.taskId &&
                 head.pinned == panel.pinned &&
-                (panel.startEpochMillis <= frontier || (bridgeGaps && !sleepInGap))
+                // Touching/overlapping panels always group. A *gap* is only bridged for the forward
+                // auto-fill's side-task splits, which produce auto panels — so the bridge is restricted to
+                // auto panels. User-placed (pinned/manual) entries are deliberate distinct blocks: two
+                // pinned same-task panels days apart must NOT fuse into one block spanning the gap.
+                (panel.startEpochMillis <= frontier ||
+                    (bridgeGaps && !sleepInGap && head.auto && panel.auto))
             if (mergeable) group!!.add(panel) else groups.add(mutableListOf(panel))
         }
         return groups

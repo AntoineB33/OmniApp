@@ -391,6 +391,21 @@ class SchedulerCalendarTest {
     }
 
     @Test
+    fun display_grouping_does_not_bridge_a_gap_between_two_pinned_manual_panels() {
+        // Regression: two existence-pinned manual panels of the same task placed days apart used to fuse
+        // into one block spanning the whole gap (the bridge only checks for a sleep window in the gap, and
+        // past sleep windows aren't supplied). The bridge is for the auto-fill's side-task splits only, so
+        // user-placed pinned panels must stay separate blocks.
+        val a = TaskId("t/a")
+        val panels = listOf(
+            userPanel("panel/0", 0, 45 * MIN, taskId = a, pinned = true),
+            userPanel("panel/3", 3 * 24 * HOUR, 3 * 24 * HOUR + 8 * HOUR, taskId = a, pinned = true),
+        )
+        val groups = SchedulerDomain.groupSameTaskPanelsForDisplay(panels, bridgeGaps = true)
+        assertEquals(2, groups.size)
+    }
+
+    @Test
     fun remove_task_panels_deletes_every_backing_panel_in_one_delta() {
         val a = TaskId("t/a")
         val s = SchedulerState.empty().copy(
