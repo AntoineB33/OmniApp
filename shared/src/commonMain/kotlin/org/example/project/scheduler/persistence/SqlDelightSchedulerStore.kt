@@ -10,7 +10,7 @@ import org.example.project.scheduler.persistence.db.SchedulerDatabase
  * [save] replaces the whole history in a single transaction so a redo branch that was discarded in
  * memory (the units after the pointer) leaves no stale rows behind.
  */
-class SqlDelightSchedulerStore(private val database: SchedulerDatabase) : SchedulerStore {
+class SqlDelightSchedulerStore(private val database: SchedulerDatabase) : SchedulerStore, SyncMetaStore {
     private val queries = database.schedulerQueries
 
     override fun load(): PersistedSnapshot? {
@@ -52,6 +52,31 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) : Schedu
                 queries.insertPointer(category = row.category, pointer = row.pointer.toLong())
             }
         }
+    }
+
+    override fun loadSyncMeta(): SyncMeta? =
+        queries.selectSyncMeta().executeAsOneOrNull()?.let { row ->
+            SyncMeta(
+                deviceId = row.device_id,
+                lastKnownRevision = row.last_known_revision,
+                dirty = row.dirty != 0L,
+                accessToken = row.access_token,
+                refreshToken = row.refresh_token,
+                userId = row.user_id,
+                email = row.email,
+            )
+        }
+
+    override fun saveSyncMeta(meta: SyncMeta) {
+        queries.upsertSyncMeta(
+            device_id = meta.deviceId,
+            last_known_revision = meta.lastKnownRevision,
+            dirty = if (meta.dirty) 1L else 0L,
+            access_token = meta.accessToken,
+            refresh_token = meta.refreshToken,
+            user_id = meta.userId,
+            email = meta.email,
+        )
     }
 }
 

@@ -4,6 +4,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SqlDelightSchedulerStore
+import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.migrateLegacyJsonPayload
 import org.example.project.scheduler.persistence.db.SchedulerDatabase
 import org.example.project.scheduler.state.AppWindow
@@ -104,6 +105,80 @@ class SchedulerStoreTest {
 
         // Second call is a no-op because the store already holds data.
         assertEquals(false, migrateLegacyJsonPayload(store, legacyJson))
+    }
+
+    @Test
+    fun sync_meta_round_trips() {
+        val store = newStore()
+        assertNull(store.loadSyncMeta())
+
+        val meta =
+            SyncMeta(
+                deviceId = "device-1",
+                lastKnownRevision = 7,
+                dirty = true,
+                accessToken = "at",
+                refreshToken = "rt",
+                userId = "user-1",
+                email = "a@b.c",
+            )
+        store.saveSyncMeta(meta)
+        assertEquals(meta, store.loadSyncMeta())
+
+        // Upsert: a second save replaces the single row rather than adding one.
+        store.saveSyncMeta(meta.copy(lastKnownRevision = 8, dirty = false))
+        assertEquals(8, store.loadSyncMeta()!!.lastKnownRevision)
+        assertEquals(false, store.loadSyncMeta()!!.dirty)
+    }
+
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by the *previous* schema (v1: app_state +
+     * history_unit + history_pointer, no sync_meta) must still load after the sync feature ships, with the
+     * 1.sqm migration adding sync_meta on open. Reproduces the on-disk v1 shape, then opens it with the
+     * current schema and asserts old data survives and sync_meta is usable.
+     */
+    @Test
+    fun upgrades_pre_sync_v1_db_and_preserves_data() {
+        val dbFile = File.createTempFile("scheduler-v1", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            // Build the v1 schema by hand (no SchedulerDatabase.Schema), exactly as the old build wrote it.
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            val raw = JdbcSqliteDriver(url, Properties())
+            raw.execute(null, "CREATE TABLE app_state (id INTEGER NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+            raw.execute(
+                null,
+                "CREATE TABLE history_unit (category TEXT NOT NULL, ordinal INTEGER NOT NULL, " +
+                    "time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, debug_tainted INTEGER NOT NULL, " +
+                    "delta TEXT NOT NULL, PRIMARY KEY (category, ordinal))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE history_pointer (category TEXT NOT NULL PRIMARY KEY, pointer INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(null, "INSERT INTO app_state(id, payload) VALUES (0, ?)", 1) {
+                bindString(0, payload)
+            }
+            raw.execute(null, "PRAGMA user_version = 1", 0)
+            raw.close()
+
+            // Open with the current schema: the v1 -> v2 migration must run (adding sync_meta) without
+            // dropping the app_state row.
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            val loaded = store.load()
+            assertEquals(payload, loaded!!.statePayload)
+            // The new table exists and works (no row yet for an upgraded DB).
+            assertNull(store.loadSyncMeta())
+            store.saveSyncMeta(SyncMeta(deviceId = "d"))
+            assertEquals("d", store.loadSyncMeta()!!.deviceId)
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
     }
 
     @Test

@@ -44,7 +44,10 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStore
+import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
+import org.example.project.scheduler.sync.RemoteSnapshotClient
+import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.platform.lastWakeAfterLongSleepMillis
 import org.example.project.scheduler.platform.sendSystemNotification
 import org.example.project.scheduler.platform.speak
@@ -53,6 +56,8 @@ import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.ui.PriorityWeightWindow
+import org.example.project.scheduler.ui.SignInDialog
+import org.example.project.scheduler.ui.SyncStatusChip
 import org.example.project.scheduler.ui.TaskSchedulerScreen
 import org.example.project.scheduler.ui.TaskTextWindow
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
@@ -116,9 +121,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
     MaterialTheme {
         var page by remember { mutableStateOf(OmniPage.TaskScheduler) }
 
+        // PRD §5 cross-device sync: when the local store can also hold sync bookkeeping (the SQLite store
+        // implements SyncMetaStore), build the Supabase-backed engine. Web's localStorage store does not yet,
+        // so sync is simply disabled there.
+        val syncEngine =
+            remember(store) {
+                (store as? SyncMetaStore)?.let { SchedulerSyncEngine(RemoteSnapshotClient(), it) }
+            }
+
         // The scheduler view-model is hoisted here so the floating calendar can read the Task Tree's
         // records (PRD §8) while the Task Scheduler screen drives the same state.
-        val vm: TaskSchedulerViewModel = viewModel { TaskSchedulerViewModel(store = store) }
+        val vm: TaskSchedulerViewModel =
+            viewModel { TaskSchedulerViewModel(store = store, syncEngine = syncEngine) }
         val schedulerState by vm.state.collectAsState()
 
         // PRD §5 Persistence: flush any pending debounced write when the app/composition is torn down,
@@ -956,6 +970,25 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                         )
                     }
                 }
+            }
+
+            // PRD §5 cross-device sync: account/status chip + sign-in dialog (top-right overlay, above the
+            // floating windows). Renders nothing when sync is disabled (chip hides on a null state).
+            val syncStateValue = vm.syncState?.collectAsState()?.value
+            var showSignIn by remember { mutableStateOf(false) }
+            SyncStatusChip(
+                state = syncStateValue,
+                onClick = { showSignIn = true },
+                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).zIndex(120f),
+            )
+            if (showSignIn) {
+                SignInDialog(
+                    state = syncStateValue,
+                    onSignIn = { e, p -> vm.signIn(e, p) },
+                    onSignUp = { e, p -> vm.signUp(e, p) },
+                    onSignOut = { vm.signOut() },
+                    onDismiss = { showSignIn = false },
+                )
             }
         }
     }

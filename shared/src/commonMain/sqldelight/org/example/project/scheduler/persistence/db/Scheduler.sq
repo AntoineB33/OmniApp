@@ -23,6 +23,21 @@ CREATE TABLE history_pointer (
     pointer INTEGER NOT NULL
 );
 
+-- Cross-device sync bookkeeping (PRD §5). One row (id is always 0): the local device id, the last remote
+-- `revision` this device has seen/written (optimistic-concurrency baseline), a `dirty` flag set when the
+-- local state has unpushed changes, and the cached Supabase session so sign-in survives restarts.
+-- Added in migration 1.sqm; existing DBs (schema v1) gain it on upgrade.
+CREATE TABLE sync_meta (
+    id INTEGER NOT NULL PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    last_known_revision INTEGER NOT NULL DEFAULT 0,
+    dirty INTEGER NOT NULL DEFAULT 0,
+    access_token TEXT,
+    refresh_token TEXT,
+    user_id TEXT,
+    email TEXT
+);
+
 selectAppState:
 SELECT payload FROM app_state WHERE id = 0;
 
@@ -49,3 +64,12 @@ DELETE FROM history_pointer;
 
 insertPointer:
 INSERT INTO history_pointer(category, pointer) VALUES (?, ?);
+
+selectSyncMeta:
+SELECT device_id, last_known_revision, dirty, access_token, refresh_token, user_id, email
+FROM sync_meta WHERE id = 0;
+
+upsertSyncMeta:
+INSERT OR REPLACE INTO sync_meta(
+    id, device_id, last_known_revision, dirty, access_token, refresh_token, user_id, email
+) VALUES (0, ?, ?, ?, ?, ?, ?, ?);
