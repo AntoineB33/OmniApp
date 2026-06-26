@@ -421,6 +421,73 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun last_side_task_before_returns_the_look_away_when_it_is_the_most_recent_past_occurrence() {
+        // PRD §15 manual redo: occurrences are at lastRest + k·interval (k≥1). With lastRest 25 min ago on a
+        // 20-min grid, the most recent occurrence before now is at now-5min (k=1); now+15min (k=2) is future.
+        val now = 1_000_000_000_000L
+        val sides = listOf(SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 25 * MIN))
+        val last = SchedulerDomain.lastSideTaskBefore(sides, now)
+        assertNotNull(last)
+        assertEquals("look 20 feet away", last.title)
+        assertEquals(now - 5 * MIN, last.startEpochMillis)
+        assertTrue(last.startEpochMillis < now)
+    }
+
+    @Test
+    fun last_side_task_before_returns_the_pose_right_after_a_pose_was_taken() {
+        // PRD §15 manual redo: a pose taken 3 min ago (lastRest), with the look-away re-anchored to that
+        // pose's end — so within the first 20 min after the pose, the most recent past side task is the pose,
+        // not a look-away. The button must therefore be hidden in that window.
+        val now = 1_000_000_000_000L
+        val poseStart = now - 3 * MIN
+        val sides = listOf(
+            // Look-away last rested at the pose's end (device-sleep semantics), so its next start is pose+20min (future).
+            SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = poseStart + 5 * MIN),
+            // 5-min pose whose last occurrence STARTED 3 min ago (interval before that puts the grid point in-window).
+            SideTask("pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = poseStart - 60 * MIN),
+        )
+        val last = SchedulerDomain.lastSideTaskBefore(sides, now)
+        assertNotNull(last)
+        assertEquals("pose", last.title)
+    }
+
+    @Test
+    fun last_side_task_before_is_null_when_there_are_no_side_tasks_or_none_before_now() {
+        val now = 1_000_000_000_000L
+        assertNull(SchedulerDomain.lastSideTaskBefore(emptyList(), now))
+        // A look-away that has never occurred before now: its first occurrence is in the future.
+        val future = listOf(SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now))
+        assertNull(SchedulerDomain.lastSideTaskBefore(future, now))
+    }
+
+    @Test
+    fun last_side_task_before_skips_an_occurrence_inside_a_sleep_window() {
+        // PRD §15: an occurrence whose start lands in a sleep region is not placed, so it can't be the
+        // "last past side task". With the only recent grid point swallowed by sleep, the result is the
+        // prior one outside the window (or null when none).
+        val now = 1_000_000_000_000L
+        // Grid points (lastRest 45 min ago, 20-min interval): now-25min, now-5min, now+15min(future).
+        val sides = listOf(SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 45 * MIN))
+        // Sleep covers the now-5min grid point, which must therefore not be the returned occurrence.
+        val sleep = listOf(TaskTimeRange(now - 6 * MIN, now - 1 * MIN))
+        val last = SchedulerDomain.lastSideTaskBefore(sides, now, sleep)
+        assertNotNull(last)
+        assertTrue(last.startEpochMillis < now)
+        assertFalse(last.startEpochMillis in (now - 6 * MIN) until (now - 1 * MIN))
+    }
+
+    @Test
+    fun taking_a_look_away_now_re_anchors_the_cadence_so_the_next_look_away_is_one_interval_out() {
+        // PRD §15 manual redo "updates the calendar": setting the look-away's lastRest to now (what the
+        // SetSideTasks dispatch does) moves its next projected occurrence to now + interval.
+        val now = 1_000_000_000_000L
+        val sides = listOf(SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 5 * MIN))
+        val taken = sides.map { it.copy(lastRestMillis = now) }
+        val next = SchedulerDomain.sideTaskPanels(taken, now).minByOrNull { it.startEpochMillis }!!
+        assertEquals(now + 20 * MIN, next.startEpochMillis)
+    }
+
+    @Test
     fun the_five_minute_pose_merges_into_a_fifteen_minute_pose_when_it_comes_due_just_before() {
         // PRD §15: the 5-min pose is due now; the 15-min pose is due 2 min later (within the 5-min window) →
         // the 5-min pose becomes a 15-min pose at now, and the 15-min pose is pushed to now + 2h15.

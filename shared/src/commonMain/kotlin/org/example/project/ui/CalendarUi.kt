@@ -460,6 +460,12 @@ fun LateralMenu(
     /** PRD §15 (20s look-away): whether the spoken voice cue is enabled + toggle callback. */
     lookAwayVoiceEnabled: Boolean = true,
     onToggleLookAwayVoice: (Boolean) -> Unit = {},
+    /**
+     * PRD §15 (20s look-away): shown only when the last past side task before the now-line is a 20s
+     * look-away — re-runs the 20s pause now (superseding any look-away still sounding/pending).
+     */
+    showLookAwayButton: Boolean = false,
+    onLookAwayNow: () -> Unit = {},
     /** Whether any floating window is open — gates the "close all windows" button + the callback to do so. */
     anyWindowOpen: Boolean = false,
     onCloseAllWindows: () -> Unit = {},
@@ -518,6 +524,11 @@ fun LateralMenu(
                 checked = lookAwayVoiceEnabled,
                 onCheckedChange = onToggleLookAwayVoice,
             )
+        }
+
+        // PRD §15 (20s look-away): only while the most recent past side task is a 20s look-away — redo it now.
+        if (showLookAwayButton) {
+            MenuButton(label = "Look away now", active = false, onClick = onLookAwayNow)
         }
 
         // PRD §7 Reminders: toggles the floating reminders window over the tree.

@@ -64,8 +64,11 @@ Helper scripts in `scripts/` (Windows batch / PowerShell). They keep **three sep
 - **`dev-restart.bat`** — kills the running desktop app and relaunches `:desktopApp:run`, **preserving** the debug DB.
 - **`dev-reset.bat`** — same, but launches against an isolated DB that is **wiped first**, for a clean-slate test run.
 - **`release-deploy.bat`** — builds a self-contained release app image (bundled JRE, via `:desktopApp:createDistributable`), installs it to `%LOCALAPPDATA%\OmniApp` (outside the project, so active development can't affect the running release), registers it to start at Windows login, and launches it. Re-run any time to update the release from current code — the release DB is preserved. Time simulation is off in this build.
-- **`release-launch.bat`** — the small launcher the Startup shortcut points at: it sets the release DB and starts the installed app. Deployed by `release-deploy.bat`; not run by hand.
 - **`setup-piper.ps1`** — installs the local Piper neural text-to-speech voice used for the spoken side-task cues; without it the app falls back to the system speech voice.
+
+Internal helpers that are **not run by hand** live in `scripts/internal/`:
+- **`release-launch.bat`** — the small launcher the Startup shortcut points at: it sets the release DB and starts the installed app. Deployed to the install root by `release-deploy.bat`.
+- **`db_duplicate_check.py`** — compares the live debug DB against an adapted `scheduler-state.duplicate.db` by last history-unit date; called by `dev-restart.bat`.
 
 ---
 

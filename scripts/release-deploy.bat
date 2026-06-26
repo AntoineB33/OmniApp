@@ -47,7 +47,7 @@ REM ---- Register the launcher + Startup entry FIRST, so a locked-file -----
 REM ---- hiccup in the binary copy below can never skip startup setup. -----
 echo [4/6] Installing launcher + registering Windows startup entry...
 if not exist "%INSTALL_ROOT%\" mkdir "%INSTALL_ROOT%"
-copy /y "%SCRIPT_DIR%release-launch.bat" "%INSTALL_ROOT%\release-launch.bat" >nul
+copy /y "%SCRIPT_DIR%internal\release-launch.bat" "%INSTALL_ROOT%\release-launch.bat" >nul
 powershell -NoProfile -Command "$wsh = New-Object -ComObject WScript.Shell; $lnk = $wsh.CreateShortcut((Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\OmniApp.lnk')); $lnk.TargetPath = '%INSTALL_ROOT%\release-launch.bat'; $lnk.WorkingDirectory = '%INSTALL_ROOT%'; $lnk.WindowStyle = 7; $lnk.Save()"
 
 echo [5/6] Deploying binaries to %APP_DEST% (DB at %USERPROFILE%\.omniapp-release untouched)...

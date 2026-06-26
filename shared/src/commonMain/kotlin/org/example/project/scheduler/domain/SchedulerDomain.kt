@@ -1064,13 +1064,62 @@ object SchedulerDomain {
         val horizon = maxOf(horizonMillis, nowMillis)
         val valid = sideTasks.withIndex().filter { isValidSideTask(it.value) }
         if (valid.isEmpty()) return emptyList()
+        // Seed each task at its due time (or `now` when overdue) and run the shared projection engine forward.
+        val seedDue = valid.associate { (i, t) -> i to sideTaskNextStart(t, nowMillis) }
+        return simulateSideTasks(sideTasks, seedDue, horizon, sleepRegions)
+    }
+
+    /**
+     * PRD §15: the most recent side-task occurrence whose start is strictly before [nowMillis] (the
+     * "last past side task before the now-line"), or null when none. Reuses the same interleaving /
+     * merge / re-anchor / sleep engine the forward [sideTaskPanels] uses, but seeds each task's grid at a
+     * point a full longest-interval (+ longest duration) before `now` and runs only up to `now`. That
+     * lookback is wide enough that any pose able to re-anchor a look-away inside the window is itself
+     * placed first, so the reconstructed recent cadence matches what the forward projection would have
+     * drawn. Callers test `restBreak` of the returned panel's source task to tell a 20s look-away apart
+     * from a rest pose.
+     */
+    fun lastSideTaskBefore(
+        sideTasks: List<SideTask>,
+        nowMillis: Long,
+        sleepRegions: List<TaskTimeRange> = emptyList(),
+    ): TaskPanel? {
+        val valid = sideTasks.withIndex().filter { isValidSideTask(it.value) }
+        if (valid.isEmpty()) return null
+        val maxInterval = valid.maxOf { it.value.intervalMillis }
+        val maxDuration = valid.maxOf { it.value.durationMillis }
+        val from = nowMillis - maxInterval - maxDuration
+        val seedDue = valid.associate { (i, t) ->
+            // A pose recurs over a (duration + interval) cycle; the look-away every interval. Seed at the
+            // grid point at/just before [from] so the loop reconstructs every occurrence up to `now`.
+            val step = if (t.restBreak) t.durationMillis + t.intervalMillis else t.intervalMillis
+            val base = t.lastRestMillis + t.intervalMillis
+            i to (if (base >= from) base else base + ((from - base) / step) * step)
+        }
+        return simulateSideTasks(sideTasks, seedDue, nowMillis, sleepRegions)
+            .filter { it.startEpochMillis < nowMillis }
+            .maxByOrNull { it.startEpochMillis }
+    }
+
+    /**
+     * PRD §15 projection engine shared by [sideTaskPanels] (forward from `now`) and [lastSideTaskBefore]
+     * (recent past). Walks the [seedDue] occurrences in time order up to [horizon], resolving overlaps via
+     * the merge / absorption / re-anchor rules documented on [sideTaskPanels]. [seedDue] maps each
+     * participating side-task index to the start of its first occurrence to consider.
+     */
+    private fun simulateSideTasks(
+        sideTasks: List<SideTask>,
+        seedDue: Map<Int, Long>,
+        horizon: Long,
+        sleepRegions: List<TaskTimeRange>,
+    ): List<TaskPanel> {
+        if (seedDue.isEmpty()) return emptyList()
         // The rest poses (restBreak) absorb any shorter pause whose window they fall inside (the 5↔15 merge
         // and the look-away→pose merge below).
-        val poses = valid.filter { it.value.restBreak }
+        val poses = seedDue.keys.filter { sideTasks[it].restBreak }
 
-        // Next-due start per task index; seeded at each task's due time (or `now` when overdue).
-        val due = HashMap<Int, Long>(valid.size)
-        valid.forEach { (i, t) -> due[i] = sideTaskNextStart(t, nowMillis) }
+        // Next-due start per task index; seeded by the caller.
+        val due = HashMap(seedDue)
 
         val result = mutableListOf<TaskPanel>()
         // True when [start] falls inside an already-placed pause strictly longer than [durationMillis].
@@ -1085,7 +1134,8 @@ object SchedulerDomain {
         // look-away is 20 minutes later"), rather than continuing its own grid into the gap right after the
         // pose. Applies to every placed pause (overdue at `now` or future), so the rule holds forward too.
         fun reanchorSmaller(placedEnd: Long, placedDuration: Long) {
-            valid.forEach { (j, s) ->
+            seedDue.keys.forEach { j ->
+                val s = sideTasks[j]
                 if (s.durationMillis < placedDuration) {
                     due[j] = placedEnd + s.intervalMillis
                 }
@@ -1122,13 +1172,13 @@ object SchedulerDomain {
             // single 15-min pose.
             val absorbing = poses
                 .filter {
-                    it.index != nextIndex &&
-                        it.value.durationMillis > task.durationMillis &&
-                        (due[it.index] ?: Long.MAX_VALUE) in (start + 1) until (start + task.durationMillis)
+                    it != nextIndex &&
+                        sideTasks[it].durationMillis > task.durationMillis &&
+                        (due[it] ?: Long.MAX_VALUE) in (start + 1) until (start + task.durationMillis)
                 }
-                .maxByOrNull { it.value.durationMillis }
+                .maxByOrNull { sideTasks[it].durationMillis }
             if (absorbing != null) {
-                due[absorbing.index] = start
+                due[absorbing] = start
                 continue
             }
 

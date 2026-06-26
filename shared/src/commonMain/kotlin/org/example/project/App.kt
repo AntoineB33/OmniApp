@@ -26,7 +26,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.math.abs
 import kotlin.time.Instant
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
@@ -46,6 +48,7 @@ import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.platform.lastWakeAfterLongSleepMillis
 import org.example.project.scheduler.platform.sendSystemNotification
 import org.example.project.scheduler.platform.speak
+import org.example.project.scheduler.platform.stopSpeaking
 import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -79,13 +82,30 @@ enum class OmniPage(val label: String) {
 // device sleep) is treated as a jump that announces at most the last few minutes — not a backlog of cues.
 private const val LOOK_AWAY_SWEEP_CAP_MILLIS: Long = 10L * 60 * 1_000
 
-// How fresh a look-away occurrence's *start* must be for its "Look 20 feet away"/"Resume your work" cues to
-// fire. The loop schedules each cue at the exact instant the clock reaches the boundary, so a real crossing is
-// announced sub-second-late; a start staler than this is one the app only just observed — typically an
-// occurrence already in progress when the app cold-starts — and is consumed silently. Announcing it would
+// How fresh a look-away occurrence's *start* must be — as a budget in **real** time — for its "Look 20 feet
+// away"/"Resume your work" cues to fire. The loop schedules each cue at the exact instant the clock reaches
+// the boundary, so a real crossing is announced sub-second-late; a start staler than this is one the app only
+// just observed — typically an occurrence already in progress when the app cold-starts — and is consumed
+// silently. This is a *real*-time budget (converted to sim-time by the clock speed at the call site, see
+// [LOOK_AWAY_START_FRESH_MILLIS] usage): a fixed sim-time window would shrink to a few real milliseconds under
+// heavy acceleration (e.g. 300×) — tighter than coroutine-delay jitter — so every just-reached start would be
+// judged stale and no cue would ever fire. Announcing a genuinely stale start would instead
 // waste most of the 20 s rest and, when launched late in the window, fire "Resume your work" right after
 // "Look 20 feet away".
 private const val LOOK_AWAY_START_FRESH_MILLIS: Long = 2_000
+
+// Real-time cap on each sleep while the manual "Look away now" rest counts down (see [App]'s restartLookAway).
+// The rest is measured in SIM time, so the wait re-reads the clock speed this often — small enough that a
+// speed change made mid-rest (e.g. jumping to 300×) is honored almost immediately, large enough to be cheap.
+private const val LOOK_AWAY_RESUME_POLL_MILLIS: Long = 200
+
+// PRD §12/§15 device-sleep detection: the *real*-time gap between two advance ticks that means the process was
+// suspended (the device slept). It is the production tick cadence × 3 — a fixed REAL duration that does NOT
+// scale with the (possibly accelerated) sim tick rate, so device inactivity is detected by the same ~90 s real
+// gap at every speed. Accelerating in the debug window only changes how far apart the checks land *in the
+// timeline*; their real cadence — and therefore this detection — stays identical to production. (A fast 1 s sim
+// tick must not lower this bar, or ordinary coroutine-tick jitter would be misread as a device sleep.)
+private const val DEVICE_SLEEP_THRESHOLD_MILLIS: Long = 90L * 1_000
 
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
 private enum class FloatingWindow { Calendar, Reminders, History, Sleep, TimeSim }
@@ -161,21 +181,26 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             advanceTo(sleepEnd)
         }
 
-        // PRD §9: the frequent tick. Ticks every second under time simulation so accelerated time shows
-        // promptly; otherwise the production 30s cadence.
+        // PRD §9: the advance tick. Fires every second under time simulation so accelerated time shows
+        // promptly on the now-line/readout; otherwise the production 30s cadence. This rate drives only
+        // display/advance — never device-sleep detection, whose threshold is the fixed real duration
+        // [DEVICE_SLEEP_THRESHOLD_MILLIS] so the inactivity check behaves identically at every speed.
         LaunchedEffect(clock) {
             val interval: Long = if (DebugFlags.TIME_SIMULATION) 1_000 else 30_000
-            // PRD §12 Device sleep is detected from *real* elapsed time, not the active clock's: a tick
-            // gap far larger than the cadence in wall-clock seconds means the process was suspended.
-            // Using the sim clock here would misread fast-forwarded time (e.g. 300×) as constant sleep
-            // and keep cutting the current panel's past portion. A debug leap advances only the sim clock
-            // (no real gap), so it cannot trip this detector — the panel injects the gap via [onTimeGap].
+            // PRD §12 Device sleep is detected from *real* elapsed time, not the active clock's: a wall-clock
+            // gap between two ticks larger than [DEVICE_SLEEP_THRESHOLD_MILLIS] means the process was suspended.
+            // The threshold is a constant real duration (production cadence × 3), NOT `interval` — so the fast
+            // 1s sim tick does not lower the bar: a real device sleep is recognised by the same ~90s real gap at
+            // every speed, and ordinary sim-tick jitter is never misread as a sleep. Measuring in sim time would
+            // instead misread fast-forwarded time (e.g. 300×) as constant sleep and keep cutting the panel's
+            // past. A debug leap advances only the sim clock (no real gap), so it cannot trip this detector —
+            // the panel injects the gap via [onTimeGap].
             var lastRealTick = SystemAppClock.nowMillis()
             var lastClockTick = clock.nowMillis()
             while (true) {
                 val realNow = SystemAppClock.nowMillis()
                 val now = clock.nowMillis()
-                if (realNow - lastRealTick > interval * 3) {
+                if (realNow - lastRealTick > DEVICE_SLEEP_THRESHOLD_MILLIS) {
                     // Report the gap in the active clock's domain (sim time when accelerated), so the
                     // hole lands where the panel actually is on the calendar.
                     onTimeGap(lastClockTick, now)
@@ -327,6 +352,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // are consumed silently rather than replayed as a backlog.
         var announcedStarts by remember { mutableStateOf(setOf<Long>()) }
         var pendingEnds by remember { mutableStateOf(setOf<Long>()) }
+        // PRD §15 (20s look-away) manual redo: a long-lived scope + the in-flight manual look-away's job, so
+        // the side-menu "Look away now" button (see [restartLookAway]) can supersede a prior manual pause.
+        val lookAwayScope = rememberCoroutineScope()
+        var manualLookAwayJob by remember { mutableStateOf<Job?>(null) }
         LaunchedEffect(nowMillis, schedulerState.panels) {
             while (true) {
                 val simNow = clock.nowMillis()
@@ -354,12 +383,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     .sortedBy { it.startEpochMillis }
                     .forEach {
                         announcedStarts = announcedStarts + it.startEpochMillis
-                        // Only cue a look-away we're catching at (or just after) its start. An occurrence
-                        // already in progress when the app cold-starts — its start up to a full duration in the
-                        // past, not yet in [announcedStarts] — is consumed silently: announcing it would waste
-                        // most of the 20 s rest and, launched late in the window, fire "Resume your work" right
-                        // after "Look 20 feet away". Its end is left uncaptured so no resume cue follows.
-                        if (it.startEpochMillis >= simNow - LOOK_AWAY_START_FRESH_MILLIS) {
+                        // Only cue a look-away whose rest window we're still catching. The freshness budget is
+                        // a REAL-time tolerance (so it absorbs the loop's scheduling jitter) scaled to sim-time
+                        // by the clock [speed], then capped just below the occurrence's own duration: under
+                        // heavy acceleration a fixed sim-time window collapses to a few real ms (tighter than
+                        // coroutine-delay jitter) and every just-reached start is silently dropped, so no cue
+                        // ever fires (the reported 300× anomaly). The cap keeps a genuinely cold-start,
+                        // already-ended occurrence (its start a full duration in the past) silent — announcing
+                        // it would waste the rest and fire "Resume" right after "Look away". An un-cued start's
+                        // end is left uncaptured so no resume cue follows.
+                        val durationMillis = it.endEpochMillis - it.startEpochMillis
+                        val freshWindow =
+                            (LOOK_AWAY_START_FRESH_MILLIS * speed).toLong().coerceAtMost(durationMillis - 1)
+                        if (it.startEpochMillis >= simNow - freshWindow) {
                             pendingEnds = pendingEnds + it.endEpochMillis
                             sendSystemNotification("Side task", it.title)
                             if (voice) speak("Look 20 feet away")
@@ -485,6 +521,43 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             }
         }
 
+        // PRD §15 (20s look-away) manual redo: re-run the 20s pause now, superseding any look-away cue that
+        // is still sounding or pending. Stops the live/queued speech, drops the automatic loop's pending
+        // "Resume your work" ([pendingEnds]) and any prior manual pause, then re-anchors the look-away cadence
+        // (records this pause as its new last rest, exactly like a device sleep — see [reduceReportDeviceSleep])
+        // so the calendar's next look-away moves an interval out, and finally speaks a fresh "Look away" → a
+        // 20s SIM-time rest → "Resume your work" (the rest tracks the live clock speed — see the wait below).
+        fun restartLookAway() {
+            val now = clock.nowMillis()
+            val lookAway = schedulerState.sideTasks.firstOrNull { !it.restBreak } ?: return
+            stopSpeaking()
+            pendingEnds = emptySet()
+            manualLookAwayJob?.cancel()
+            vm.dispatch(
+                SchedulerIntent.SetSideTasks(
+                    schedulerState.sideTasks.map { if (!it.restBreak) it.copy(lastRestMillis = now) else it },
+                ),
+            )
+            if (schedulerState.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(now))
+            val voice = schedulerState.lookAwayVoiceEnabled
+            manualLookAwayJob = lookAwayScope.launch {
+                sendSystemNotification("Side task", lookAway.title)
+                if (voice) speak("Look 20 feet away")
+                // Rest for one duration of SIM time, waiting on the (continuous) sim clock rather than a single
+                // real-time delay computed from the speed at button-press. Each sleep is capped so a speed
+                // change made mid-rest is honored: accelerating to e.g. 300× fires "Resume your work" within a
+                // fraction of a second of the sim clock reaching the boundary, and pausing (speed 0) holds it.
+                val resumeAt = clock.nowMillis() + lookAway.durationMillis
+                while (clock.nowMillis() < resumeAt) {
+                    val speed = (clock as? SimAppClock)?.speed ?: 1.0
+                    val remainingReal =
+                        if (speed > 0.0) ((resumeAt - clock.nowMillis()).toDouble() / speed).toLong() else Long.MAX_VALUE
+                    delay(remainingReal.coerceIn(1L, LOOK_AWAY_RESUME_POLL_MILLIS))
+                }
+                if (voice) speak("Resume your work")
+            }
+        }
+
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
 
@@ -505,6 +578,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
             displaySleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
         val displaySidePanels =
             SchedulerDomain.sideTaskPanels(schedulerState.sideTasks, nowMillis, sideTaskHorizonMillis, displaySleepRegions)
+
+        // PRD §15 (20s look-away): show the manual "Look away now" button only when the most recent past
+        // side task before the now-line is a 20s look-away (a non-rest-break side task), not a rest pose.
+        val showLookAwayButton =
+            SchedulerDomain.lastSideTaskBefore(schedulerState.sideTasks, nowMillis, displaySleepRegions)
+                ?.let { panel -> schedulerState.sideTasks.any { !it.restBreak && it.title == panel.title } }
+                ?: false
 
         // PRD §14: reminder flags are calculated for the WHOLE focused week — from now to the end of the
         // week the calendar is showing — so navigating to a week shows its reminders. Like the side-task
@@ -576,6 +656,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     onToggleHistoryManager = { onMenuWindowClicked(FloatingWindow.History) { historyManagerOpen = it } },
                     lookAwayVoiceEnabled = schedulerState.lookAwayVoiceEnabled,
                     onToggleLookAwayVoice = { vm.dispatch(SchedulerIntent.SetLookAwayVoice(it)) },
+                    showLookAwayButton = showLookAwayButton,
+                    onLookAwayNow = { restartLookAway() },
                     sleepWindowOpen = sleepWindowOpen,
                     onToggleSleep = { onMenuWindowClicked(FloatingWindow.Sleep) { sleepWindowOpen = it } },
                     anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen,
