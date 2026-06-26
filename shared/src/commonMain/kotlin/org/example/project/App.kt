@@ -25,19 +25,15 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.math.abs
 import kotlin.time.Instant
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.engine.AppSchedulerHost
+import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.TaskId
@@ -48,10 +44,6 @@ import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
-import org.example.project.scheduler.platform.lastWakeAfterLongSleepMillis
-import org.example.project.scheduler.platform.sendSystemNotification
-import org.example.project.scheduler.platform.speak
-import org.example.project.scheduler.platform.stopSpeaking
 import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -81,43 +73,12 @@ enum class OmniPage(val label: String) {
     TaskScheduler("Task Scheduler"),
 }
 
-// PRD §15: the furthest back the look-away cue scan looks when the now-line advances in one step. It exceeds
-// a normal accelerated tick's reach (the fastest sim speed, 300×, advances 300 s over the 1 s tick) so smooth
-// fast-forward never clips a crossing, while a larger leap (manual time-leap, or waking from a long real
-// device sleep) is treated as a jump that announces at most the last few minutes — not a backlog of cues.
-private const val LOOK_AWAY_SWEEP_CAP_MILLIS: Long = 10L * 60 * 1_000
-
-// How fresh a look-away occurrence's *start* must be — as a budget in **real** time — for its "Look 20 feet
-// away"/"Resume your work" cues to fire. The loop schedules each cue at the exact instant the clock reaches
-// the boundary, so a real crossing is announced sub-second-late; a start staler than this is one the app only
-// just observed — typically an occurrence already in progress when the app cold-starts — and is consumed
-// silently. This is a *real*-time budget (converted to sim-time by the clock speed at the call site, see
-// [LOOK_AWAY_START_FRESH_MILLIS] usage): a fixed sim-time window would shrink to a few real milliseconds under
-// heavy acceleration (e.g. 300×) — tighter than coroutine-delay jitter — so every just-reached start would be
-// judged stale and no cue would ever fire. Announcing a genuinely stale start would instead
-// waste most of the 20 s rest and, when launched late in the window, fire "Resume your work" right after
-// "Look 20 feet away".
-private const val LOOK_AWAY_START_FRESH_MILLIS: Long = 2_000
-
-// Real-time cap on each sleep while the manual "Look away now" rest counts down (see [App]'s restartLookAway).
-// The rest is measured in SIM time, so the wait re-reads the clock speed this often — small enough that a
-// speed change made mid-rest (e.g. jumping to 300×) is honored almost immediately, large enough to be cheap.
-private const val LOOK_AWAY_RESUME_POLL_MILLIS: Long = 200
-
-// PRD §12/§15 device-sleep detection: the *real*-time gap between two advance ticks that means the process was
-// suspended (the device slept). It is the production tick cadence × 3 — a fixed REAL duration that does NOT
-// scale with the (possibly accelerated) sim tick rate, so device inactivity is detected by the same ~90 s real
-// gap at every speed. Accelerating in the debug window only changes how far apart the checks land *in the
-// timeline*; their real cadence — and therefore this detection — stays identical to production. (A fast 1 s sim
-// tick must not lower this bar, or ordinary coroutine-tick jitter would be misread as a device sleep.)
-private const val DEVICE_SLEEP_THRESHOLD_MILLIS: Long = 90L * 1_000
-
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
 private enum class FloatingWindow { Calendar, Reminders, History, Sleep, TimeSim }
 
 @Composable
 @Preview
-fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
+fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedulerHost? = null) {
     MaterialTheme {
         var page by remember { mutableStateOf(OmniPage.TaskScheduler) }
 
@@ -132,7 +93,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         // The scheduler view-model is hoisted here so the floating calendar can read the Task Tree's
         // records (PRD §8) while the Task Scheduler screen drives the same state.
         val vm: TaskSchedulerViewModel =
-            viewModel { TaskSchedulerViewModel(store = store, syncEngine = syncEngine) }
+            host?.vm ?: viewModel { TaskSchedulerViewModel(store = store, syncEngine = syncEngine) }
         val schedulerState by vm.state.collectAsState()
 
         // PRD §5 Persistence: flush any pending debounced write when the app/composition is torn down,
@@ -159,304 +120,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
         }
         val tz = remember { TimeZone.currentSystemDefault() }
 
-        var nowMillis by remember { mutableStateOf(clock.nowMillis()) }
-
-        // PRD §9: the single "time has advanced to `now`" step — record any completed panel (so the next
-        // panel becomes the current "task to do now") and, when a side task is due, refill the +168h
-        // schedule; otherwise just advance. Shared by the real per-tick loop and the debug "simulate
-        // pause" control so both drive the identical scheduling logic.
-        fun advanceTo(now: Long) {
-            nowMillis = now
-            // PRD §15: an overdue *rest pose* must sit at the now-line and split the surrounding task
-            // around it. That placement only happens in a full refill, so while a pose is overdue we refill
-            // each tick (it re-splits cleanly and is a no-op when nothing moved) — this is what keeps the
-            // pose tracking `now` under accelerated time. The look-away is deliberately excluded: it sits on
-            // a fixed grid (its `lastRest` never updates), so refilling on it would re-place it at `now`
-            // every tick and make the voice cue repeat. Otherwise we only advance (the cheaper tick): the
-            // window refill is left to the §9 calculation events.
-            val current = vm.state.value
-            val sideTaskDue =
-                current.automaticSchedule &&
-                    current.sideTasks.any { it.restBreak && SchedulerDomain.isSideTaskOverdue(it, now) }
-            if (sideTaskDue) {
-                vm.dispatch(SchedulerIntent.RefreshSchedule(now))
-            } else {
-                vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
-            }
+        // The scheduling engine owns the advancing `now` and drives the §9 reschedules and the
+        // §11/§13/§15 notifications / voice cues. On Android the foreground service supplies an
+        // already-started engine via [host] (so the service is the single source of truth); on
+        // desktop/web/iOS it is created here and started for the composition's lifetime.
+        val engineScope = rememberCoroutineScope()
+        val engine: SchedulerEngine = remember(host) {
+            host?.engine ?: SchedulerEngine(vm = vm, clock = clock, scope = engineScope, tz = tz)
         }
-
-        // PRD §12: a gap in time of `[sleepStart, sleepEnd]` — the process was suspended (real device
-        // sleep) or a debug leap jumped the clock over it. Report the sleep (cut the in-progress panel,
-        // leave the hole, rest the covered side tasks), then advance to the wake instant exactly as a
-        // normal tick does. The one handler both the real detector and the "simulate pause" button call,
-        // so a simulated pause is just an alternate *source* of a gap, handled by identical code.
-        fun onTimeGap(sleepStart: Long, sleepEnd: Long) {
-            vm.dispatch(SchedulerIntent.ReportDeviceSleep(sleepStart, sleepEnd))
-            advanceTo(sleepEnd)
-        }
-
-        // PRD §9: the advance tick. Fires every second under time simulation so accelerated time shows
-        // promptly on the now-line/readout; otherwise the production 30s cadence. This rate drives only
-        // display/advance — never device-sleep detection, whose threshold is the fixed real duration
-        // [DEVICE_SLEEP_THRESHOLD_MILLIS] so the inactivity check behaves identically at every speed.
-        LaunchedEffect(clock) {
-            val interval: Long = if (DebugFlags.TIME_SIMULATION) 1_000 else 30_000
-            // PRD §12 Device sleep is detected from *real* elapsed time, not the active clock's: a wall-clock
-            // gap between two ticks larger than [DEVICE_SLEEP_THRESHOLD_MILLIS] means the process was suspended.
-            // The threshold is a constant real duration (production cadence × 3), NOT `interval` — so the fast
-            // 1s sim tick does not lower the bar: a real device sleep is recognised by the same ~90s real gap at
-            // every speed, and ordinary sim-tick jitter is never misread as a sleep. Measuring in sim time would
-            // instead misread fast-forwarded time (e.g. 300×) as constant sleep and keep cutting the panel's
-            // past. A debug leap advances only the sim clock (no real gap), so it cannot trip this detector —
-            // the panel injects the gap via [onTimeGap].
-            var lastRealTick = SystemAppClock.nowMillis()
-            var lastClockTick = clock.nowMillis()
-            while (true) {
-                val realNow = SystemAppClock.nowMillis()
-                val now = clock.nowMillis()
-                if (realNow - lastRealTick > DEVICE_SLEEP_THRESHOLD_MILLIS) {
-                    // Report the gap in the active clock's domain (sim time when accelerated), so the
-                    // hole lands where the panel actually is on the calendar.
-                    onTimeGap(lastClockTick, now)
-                } else {
-                    advanceTo(now)
-                }
-                lastRealTick = realNow
-                lastClockTick = now
-                delay(interval)
-            }
-        }
-
-        // PRD §15: at launch, read the OS sleep history off the UI thread to seed each side task's last-rest
-        // time from the last device sleep that was at least as long as that pause — so a pause the user
-        // already rested away (slept through) is shown next at its due time rather than overdue at the
-        // now-line. The in-session updates are handled by ReportDeviceSleep in the tick loop above.
-        LaunchedEffect(Unit) {
-            val before = vm.state.value.sideTasks
-            val restedTasks = withContext(Dispatchers.Default) {
-                before.map { side ->
-                    if (side.durationMillis <= 0) {
-                        side
-                    } else {
-                        val lastRest = lastWakeAfterLongSleepMillis(side.durationMillis)
-                        if (lastRest != null) side.copy(lastRestMillis = lastRest) else side
-                    }
-                }
-            }
-            if (restedTasks != before) {
-                vm.dispatch(SchedulerIntent.SetSideTasks(restedTasks))
-                vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
-            }
-        }
-
-        // PRD §7: while "Auto schedule" is off, the §9 calculation events that come due are deferred —
-        // they coalesce into a SINGLE reschedule that fires once the switch is turned back on. Merely
-        // toggling the switch (with nothing pending) must NOT reschedule. The calc events below are
-        // deliberately NOT keyed on `automaticSchedule`, so flipping it does not relaunch them; instead
-        // they read the live switch when they come due and either dispatch or mark this flag.
-        var pendingReschedule by remember { mutableStateOf(false) }
-
-        // PRD §9 calculation event #2 (tree change): recompute on a 1-second debounce after the task
-        // tree changes — so the first task on an empty database is scheduled, editing a task's minimum
-        // time reshapes the schedule, and deleting a scheduled task's cell refills around the cut.
-        // Keyed on cells too (a deletion changes `cells` while the task object is briefly kept). The
-        // LaunchedEffect restart-on-change cancels the prior delay, giving the debounce.
-        LaunchedEffect(schedulerState.tasks, schedulerState.cells, clock) {
-            delay(1_000)
-            if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
-            else pendingReschedule = true // §7: defer until the switch is on
-        }
-
-        // PRD §9 calculation event #1 (calendar change / rolling horizon): after the panels change, the
-        // next scheduling is placed 168 hours before the first moment free of task — i.e. it waits until
-        // `now` reaches `firstFreeMoment − 168h`, then refills so the window stays ~168h ahead. On an empty
-        // schedule the target is in the past, so it fills immediately; after a fill the target moves to
-        // the new horizon and the effect re-arms. Polls the (possibly simulated) clock so accelerated
-        // time is honoured. (The window stays ~168h ahead so it always covers the §9 next-168h horizon.)
-        // The wait runs regardless of the switch (toggling while merely waiting is a
-        // no-op); only when the event comes DUE does §7 gate it (dispatch if on, else defer).
-        LaunchedEffect(schedulerState.panels, clock) {
-            val target =
-                SchedulerDomain.firstFreeMoment(schedulerState.panels, clock.nowMillis()) -
-                    SchedulerDomain.SCHEDULE_HORIZON_MILLIS
-            val pollInterval: Long = if (DebugFlags.TIME_SIMULATION) 1_000 else 30_000
-            while (clock.nowMillis() < target) {
-                delay(pollInterval)
-            }
-            if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
-            else pendingReschedule = true // §7: defer until the switch is on
-        }
-
-        // PRD §7: when the switch is turned on, fire the single deferred reschedule (if any §9 event
-        // came due while it was off). With nothing pending this does nothing — so toggling the switch
-        // off and on, by itself, never reschedules.
-        LaunchedEffect(schedulerState.automaticSchedule) {
-            if (schedulerState.automaticSchedule && pendingReschedule) {
-                pendingReschedule = false
-                vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
-            }
-        }
-
-        // PRD §11 Notifications: whenever "the task to do now" changes to a DIFFERENT task, post a
-        // system notification naming it. We track the last task we notified about (not just the
-        // scheduled id) so transient id changes that resolve back to the same task don't re-notify —
-        // e.g. moving the current block pins it (id → null) and the scheduler immediately re-picks the
-        // same task (null → same id), which must stay silent. Clearing the schedule keeps the last
-        // value so re-scheduling the same task later is still silent.
-        // PRD §13 Notification: when the new task carries a schedule unit, the message also lists each
-        // step's deadline, computed from the start of the task's current slot ([currentPanel] start).
-        var lastNotifiedTaskId by remember { mutableStateOf<TaskId?>(null) }
-        val currentPanel = SchedulerDomain.currentPanel(schedulerState, nowMillis)
-        val currentTaskId = currentPanel?.taskId
-        LaunchedEffect(currentTaskId) {
-            val taskId = currentTaskId ?: return@LaunchedEffect
-            if (taskId == lastNotifiedTaskId) return@LaunchedEffect
-            val message =
-                SchedulerDomain.taskSwitchNotificationMessage(
-                    state = schedulerState,
-                    taskId = taskId,
-                    startMillis = currentPanel.startEpochMillis,
-                ) { deadline -> formatClockTime(Instant.fromEpochMilliseconds(deadline).toLocalDateTime(tz)) }
-                    ?: return@LaunchedEffect
-            lastNotifiedTaskId = taskId
-            sendSystemNotification("Task to do now", message)
-        }
-
-        // PRD §15 Notifications: a *rest pose* that becomes the current activity is notified by its title.
-        // Driven from the scheduler state — NOT the calendar's display toggle — so hiding side tasks from the
-        // calendar never silences them. We track the last pose title we notified (like [lastNotifiedTaskId]
-        // above) rather than relying on [currentPoseTitle] being a stable key: [currentPanel] derives from two
-        // separately-updated sources (`nowMillis` and `schedulerState`), and an overdue pose's panel start is
-        // clamped to `now`. When `schedulerState` updates one frame before `nowMillis`, the panel start is
-        // momentarily ahead of the stale `now`, so it no longer covers the now-line — [currentPoseTitle] tears
-        // to null and back every tick. Keying on it alone would then re-fire indefinitely for an overdue pose
-        // sliding along the now-line. The guard makes a transient null a no-op and only re-notifies on a
-        // genuinely different title. The look-away is handled separately below (it does not pin to the now-line
-        // and its window is too short to be reliably "current" at a tick under acceleration).
-        var lastNotifiedSideTitle by remember { mutableStateOf<String?>(null) }
-        val currentPoseTitle =
-            currentPanel
-                ?.takeIf { panel ->
-                    panel.sideTask && schedulerState.sideTasks.any { it.restBreak && it.title == panel.title }
-                }
-                ?.title
-        LaunchedEffect(currentPoseTitle) {
-            val title = currentPoseTitle ?: return@LaunchedEffect
-            if (title == lastNotifiedSideTitle) return@LaunchedEffect
-            lastNotifiedSideTitle = title
-            sendSystemNotification("Side task", title)
-        }
-
-        // PRD §15 (20s look-away): the look-away is the *cadence* side task (non-rest-break). It sits on a fixed
-        // grid (see [SchedulerDomain.sideTaskNextStart]) and each occurrence has a start ("Look 20 feet away")
-        // and an end 20s later ("Resume your work").
-        //
-        // Rather than poll the now-line each tick (whose ~20s window passes between two ticks under time
-        // acceleration and is easily missed), we *schedule* every cue at the real instant the (possibly
-        // accelerated) clock reaches its boundary: realDelay = (boundary − simNow) / speed. The cues therefore
-        // fire at their programmed times regardless of the acceleration factor, and any that come due together
-        // stack in the FIFO TTS queue (see `speak`) instead of overlapping.
-        //
-        // An occurrence's end is captured the moment we announce its start, because a §9 refill regenerates the
-        // side panels by projecting only from `now` forward ([SchedulerDomain.sideTaskPanels]) — so once the
-        // now-line passes a look-away's start, that occurrence (and its end) is pruned from [schedulerState.panels].
-        // The effect re-keys each tick (and on any panel change) to pick up newly projected occurrences and clock
-        // speed changes; [announcedStarts]/[pendingEnds] survive the re-key so nothing fires twice. Boundaries
-        // more than [LOOK_AWAY_SWEEP_CAP_MILLIS] behind `now` (e.g. after a debug leap or a long device sleep)
-        // are consumed silently rather than replayed as a backlog.
-        var announcedStarts by remember { mutableStateOf(setOf<Long>()) }
-        var pendingEnds by remember { mutableStateOf(setOf<Long>()) }
-        // PRD §15 (20s look-away) manual redo: a long-lived scope + the in-flight manual look-away's job, so
-        // the side-menu "Look away now" button (see [restartLookAway]) can supersede a prior manual pause.
-        val lookAwayScope = rememberCoroutineScope()
-        var manualLookAwayJob by remember { mutableStateOf<Job?>(null) }
-        LaunchedEffect(nowMillis, schedulerState.panels) {
-            while (true) {
-                val simNow = clock.nowMillis()
-                val speed = (clock as? SimAppClock)?.speed ?: 1.0
-                val voice = schedulerState.lookAwayVoiceEnabled
-                // Forget long-past bookkeeping so the sets can't grow without bound over a long session;
-                // such occurrences are already pruned from the projection, so they cannot reappear.
-                announcedStarts = announcedStarts.filterTo(mutableSetOf()) { it >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS }
-
-                val occurrences = schedulerState.panels.filter { panel ->
-                    panel.sideTask && schedulerState.sideTasks.any { !it.restBreak && it.title == panel.title }
-                }
-
-                // Announce any start the clock has just reached, capturing its end for the resume cue. Only
-                // starts *within the cap window* count: a stale occurrence still sitting in the panels (kept
-                // between refills, its start now well in the past) must NOT be announced — otherwise, since
-                // [announcedStarts] is pruned past the cap, it would be re-announced every tick as it crosses
-                // the cap boundary, capturing an end and firing "Resume your work" repeatedly with no
-                // preceding "Look 20 feet away".
-                occurrences
-                    .filter {
-                        it.startEpochMillis in (simNow - LOOK_AWAY_SWEEP_CAP_MILLIS)..simNow &&
-                            it.startEpochMillis !in announcedStarts
-                    }
-                    .sortedBy { it.startEpochMillis }
-                    .forEach {
-                        announcedStarts = announcedStarts + it.startEpochMillis
-                        // Only cue a look-away whose rest window we're still catching. The freshness budget is
-                        // a REAL-time tolerance (so it absorbs the loop's scheduling jitter) scaled to sim-time
-                        // by the clock [speed], then capped just below the occurrence's own duration: under
-                        // heavy acceleration a fixed sim-time window collapses to a few real ms (tighter than
-                        // coroutine-delay jitter) and every just-reached start is silently dropped, so no cue
-                        // ever fires (the reported 300× anomaly). The cap keeps a genuinely cold-start,
-                        // already-ended occurrence (its start a full duration in the past) silent — announcing
-                        // it would waste the rest and fire "Resume" right after "Look away". An un-cued start's
-                        // end is left uncaptured so no resume cue follows.
-                        val durationMillis = it.endEpochMillis - it.startEpochMillis
-                        val freshWindow =
-                            (LOOK_AWAY_START_FRESH_MILLIS * speed).toLong().coerceAtMost(durationMillis - 1)
-                        if (it.startEpochMillis >= simNow - freshWindow) {
-                            pendingEnds = pendingEnds + it.endEpochMillis
-                            sendSystemNotification("Side task", it.title)
-                            if (voice) speak("Look 20 feet away")
-                        }
-                    }
-
-                // Fire (and drop) every captured end the clock has now reached.
-                pendingEnds.filter { it <= simNow }.sorted().forEach { end ->
-                    pendingEnds = pendingEnds - end
-                    if (end >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS && voice) speak("Resume your work")
-                }
-
-                // Sleep until the next boundary's real-time instant, then loop. A re-key (tick or panel change)
-                // restarts this with a fresh clock speed; a pause (speed 0) waits for that re-key.
-                val nextStart = occurrences.map { it.startEpochMillis }
-                    .filter { it > simNow && it !in announcedStarts }.minOrNull()
-                val nextEnd = pendingEnds.filter { it > simNow }.minOrNull()
-                val next = listOfNotNull(nextStart, nextEnd).minOrNull() ?: break
-                if (speed <= 0.0) break
-                delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
-            }
-        }
-
-        // Wind-down: when the now-line reaches the no-task hour before bed (each sleep window's bedtime − 1h),
-        // notify the user to stop work. Scheduled at the real instant the (possibly accelerated) clock reaches
-        // that boundary — same approach as the look-away cues, so it is correct under time acceleration and
-        // fires once per night (deduped by the boundary instant).
-        var announcedWindDowns by remember { mutableStateOf(setOf<Long>()) }
-        LaunchedEffect(nowMillis, schedulerState.panels) {
-            while (true) {
-                val simNow = clock.nowMillis()
-                val speed = (clock as? SimAppClock)?.speed ?: 1.0
-                announcedWindDowns = announcedWindDowns.filterTo(mutableSetOf()) { it >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS }
-                val windDowns = schedulerState.panels
-                    .filter { it.sleep }
-                    .map { it.startEpochMillis - SchedulerDomain.NO_TASK_BEFORE_BED_MILLIS }
-                windDowns.filter { it <= simNow && it !in announcedWindDowns }.sorted().forEach {
-                    announcedWindDowns = announcedWindDowns + it
-                    if (it >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS) {
-                        sendSystemNotification("Stop work", "Wind down — bedtime in 1 hour")
-                    }
-                }
-                val next = windDowns.filter { it > simNow && it !in announcedWindDowns }.minOrNull() ?: break
-                if (speed <= 0.0) break
-                delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
-            }
-        }
+        LaunchedEffect(engine) { if (host == null) engine.start() }
+        val nowMillis by engine.nowMillis.collectAsState()
 
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
@@ -532,43 +205,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                 }
                 focusedWindow() == id -> setOpen(false)
                 else -> focusWindow(id)
-            }
-        }
-
-        // PRD §15 (20s look-away) manual redo: re-run the 20s pause now, superseding any look-away cue that
-        // is still sounding or pending. Stops the live/queued speech, drops the automatic loop's pending
-        // "Resume your work" ([pendingEnds]) and any prior manual pause, then re-anchors the look-away cadence
-        // (records this pause as its new last rest, exactly like a device sleep — see [reduceReportDeviceSleep])
-        // so the calendar's next look-away moves an interval out, and finally speaks a fresh "Look away" → a
-        // 20s SIM-time rest → "Resume your work" (the rest tracks the live clock speed — see the wait below).
-        fun restartLookAway() {
-            val now = clock.nowMillis()
-            val lookAway = schedulerState.sideTasks.firstOrNull { !it.restBreak } ?: return
-            stopSpeaking()
-            pendingEnds = emptySet()
-            manualLookAwayJob?.cancel()
-            vm.dispatch(
-                SchedulerIntent.SetSideTasks(
-                    schedulerState.sideTasks.map { if (!it.restBreak) it.copy(lastRestMillis = now) else it },
-                ),
-            )
-            if (schedulerState.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(now))
-            val voice = schedulerState.lookAwayVoiceEnabled
-            manualLookAwayJob = lookAwayScope.launch {
-                sendSystemNotification("Side task", lookAway.title)
-                if (voice) speak("Look 20 feet away")
-                // Rest for one duration of SIM time, waiting on the (continuous) sim clock rather than a single
-                // real-time delay computed from the speed at button-press. Each sleep is capped so a speed
-                // change made mid-rest is honored: accelerating to e.g. 300× fires "Resume your work" within a
-                // fraction of a second of the sim clock reaching the boundary, and pausing (speed 0) holds it.
-                val resumeAt = clock.nowMillis() + lookAway.durationMillis
-                while (clock.nowMillis() < resumeAt) {
-                    val speed = (clock as? SimAppClock)?.speed ?: 1.0
-                    val remainingReal =
-                        if (speed > 0.0) ((resumeAt - clock.nowMillis()).toDouble() / speed).toLong() else Long.MAX_VALUE
-                    delay(remainingReal.coerceIn(1L, LOOK_AWAY_RESUME_POLL_MILLIS))
-                }
-                if (voice) speak("Resume your work")
             }
         }
 
@@ -671,7 +307,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                     lookAwayVoiceEnabled = schedulerState.lookAwayVoiceEnabled,
                     onToggleLookAwayVoice = { vm.dispatch(SchedulerIntent.SetLookAwayVoice(it)) },
                     showLookAwayButton = showLookAwayButton,
-                    onLookAwayNow = { restartLookAway() },
+                    onLookAwayNow = { engine.restartLookAway() },
                     sleepWindowOpen = sleepWindowOpen,
                     onToggleSleep = { onMenuWindowClicked(FloatingWindow.Sleep) { sleepWindowOpen = it } },
                     anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen,
@@ -958,7 +594,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore()) {
                             onSimulatePause = { durationMillis ->
                                 val sleepStart = clock.nowMillis()
                                 simClock.leap(durationMillis)
-                                onTimeGap(sleepStart, clock.nowMillis())
+                                engine.reportTimeGap(sleepStart, clock.nowMillis())
                             },
                             pendingRollback = schedulerState.histories.hasPendingDebugRollback,
                             modifier = Modifier
@@ -1051,12 +687,6 @@ private fun removeBlockIntent(block: PlacedRecord): SchedulerIntent? = when {
  * panels stay separate in state — auto panels are distinct scheduling sessions the reschedule must be
  * able to reshape — so this fusing is purely visual. A null-task ("New task") panel never merges.
  */
-/** PRD §13: a compact `HH:MM` label for a schedule-unit step deadline in the task-switch notification. */
-private fun formatClockTime(dateTime: LocalDateTime): String {
-    val hh = dateTime.hour.toString().padStart(2, '0')
-    val mm = dateTime.minute.toString().padStart(2, '0')
-    return "$hh:$mm"
-}
 
 private fun mergePanelsForDisplay(
     panels: List<TaskPanel>,

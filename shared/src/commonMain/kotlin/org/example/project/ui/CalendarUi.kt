@@ -76,7 +76,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed as pointerMetaPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
-import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
@@ -2502,9 +2502,28 @@ private fun Modifier.calendarTitleHover(
     }
     this
         .onGloballyPositioned { coords = it }
-        .onPointerEvent(PointerEventType.Enter) { report(it.changes.first().position) }
-        .onPointerEvent(PointerEventType.Move) { report(it.changes.first().position) }
-        .onPointerEvent(PointerEventType.Exit) { if (scope.currentOwner() === ownerId) scope.onHover(null) }
+        .onPointerEventCompat(PointerEventType.Enter) { report(it.changes.first().position) }
+        .onPointerEventCompat(PointerEventType.Move) { report(it.changes.first().position) }
+        .onPointerEventCompat(PointerEventType.Exit) { if (scope.currentOwner() === ownerId) scope.onHover(null) }
+}
+
+/**
+ * Multiplatform replacement for desktop Compose's `Modifier.onPointerEvent`: invoke [onEvent] for each
+ * pointer event of type [eventType] seen on [pass]. Built on the common [pointerInput]/[awaitPointerEvent]
+ * primitives so it compiles on every target (the desktop extension is JVM/skiko-only). On touch-only
+ * Android these hover events (Enter/Move/Exit) simply never fire, which is the correct no-op.
+ */
+private fun Modifier.onPointerEventCompat(
+    eventType: PointerEventType,
+    pass: PointerEventPass = PointerEventPass.Main,
+    onEvent: (PointerEvent) -> Unit,
+): Modifier = pointerInput(eventType, pass) {
+    awaitPointerEventScope {
+        while (true) {
+            val event = awaitPointerEvent(pass)
+            if (event.type == eventType) onEvent(event)
+        }
+    }
 }
 
 /**
