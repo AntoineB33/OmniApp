@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -60,7 +61,9 @@ fun SleepWindow(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            .width(320.dp)
+            // requiredWidth (not width) so the window keeps its fixed width and does not adapt to the app's
+            // width when the content area is narrower than it.
+            .requiredWidth(320.dp)
             .raiseOnPress(onRaise),
     ) {
         Column(Modifier.fillMaxWidth()) {

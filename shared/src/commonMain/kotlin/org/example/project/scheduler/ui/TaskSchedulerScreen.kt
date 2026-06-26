@@ -23,7 +23,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -438,6 +440,13 @@ fun TaskSchedulerScreen(
         Column(
             modifier = Modifier
                 .verticalScroll(rememberScrollState())
+                // The tree keeps its natural width and scrolls horizontally when the content is wider than
+                // the viewport — it does NOT stretch to fill (or shrink to) the app's width, mirroring the
+                // vertical scroll above. width(IntrinsicSize.Max) sizes the column to its widest row so the
+                // rows' fillMaxWidth resolves against that natural width instead of the (infinite) scroll
+                // constraint, and every cell border stays aligned to the same right edge.
+                .horizontalScroll(rememberScrollState())
+                .width(IntrinsicSize.Max)
                 .pointerInput(Unit) {
                     detectTapGestures {
                         vm.dispatch(SchedulerIntent.ClearSelection)
@@ -2107,7 +2116,9 @@ internal fun TaskTextWindow(
         // Publish window-space bounds (the app ignores presses inside them) and swallow inside taps so a
         // click on the window chrome isn't mistaken for an outside-press.
         modifier = modifier
-            .width(420.dp)
+            // requiredWidth (not width) so the window keeps its size when the content area is narrower
+            // than it — it must not adapt its size to the app's width.
+            .requiredWidth(420.dp)
             .onGloballyPositioned { onBoundsChange(it.boundsInWindow()) }
             .pointerInput(Unit) { detectTapGestures { } },
     ) {

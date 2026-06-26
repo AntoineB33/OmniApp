@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -720,7 +721,9 @@ fun ChoresManagerWindow(
         border = BorderStroke(1.dp, CalColors.grid),
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            .size(width = 560.dp, height = 480.dp)
+            // requiredSize (not size) so the window keeps its fixed size and does not adapt to the app's
+            // width when the content area is narrower than it.
+            .requiredSize(width = 560.dp, height = 480.dp)
             // Raise on press AFTER the offset so the hit region tracks the (possibly dragged) window.
             .raiseOnPress(onRaise),
     ) {
@@ -982,7 +985,9 @@ fun HistoryManagerWindow(
         border = BorderStroke(1.dp, CalColors.grid),
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            .size(width = 940.dp, height = 520.dp)
+            // requiredSize (not size) so the window keeps its fixed size and does not adapt to the app's
+            // width when the content area is narrower than it.
+            .requiredSize(width = 940.dp, height = 520.dp)
             // Raise on press AFTER the offset so the hit region tracks the (possibly dragged) window.
             .raiseOnPress(onRaise),
     ) {
@@ -1590,7 +1595,9 @@ fun CalendarFloatingWindow(
         border = BorderStroke(1.dp, CalColors.grid),
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            .size(width = 720.dp, height = 540.dp)
+            // requiredSize (not size) so the window keeps its fixed size and does not adapt to the app's
+            // width when the content area is narrower than it.
+            .requiredSize(width = 720.dp, height = 540.dp)
             .focusRequester(focusRequester)
             .focusable()
             // PRD §8: calendar-owned keyboard shortcuts while it is the focused surface.
