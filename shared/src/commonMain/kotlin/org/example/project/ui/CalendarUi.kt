@@ -1577,6 +1577,24 @@ fun CalendarFloatingWindow(
     onRedo: () -> Unit = {},
 ) {
     var offset by remember { mutableStateOf(Offset.Zero) }
+    // Keep the title bar (the only drag handle) reachable: this window has a fixed [requiredSize] that, on a
+    // small screen (e.g. Android), is taller than the content area it is centered in. Centering an over-tall
+    // window puts its head above the top edge, where it can't be grabbed to move it. We track the parent /
+    // window / header heights and clamp the vertical offset so the header stays within the parent's bounds.
+    var containerHeightPx by remember { mutableStateOf(0) }
+    var windowHeightPx by remember { mutableStateOf(0) }
+    var headerHeightPx by remember { mutableStateOf(0) }
+    // Lowest (most negative) and highest offset.y that keep the header on-screen, given a centered placement:
+    // resting top = (containerH - windowH) / 2, and we want that top + offset.y to stay in
+    // [0, containerH - headerH]. Returns [y] unchanged until the sizes are known.
+    fun clampOffsetY(y: Float): Float {
+        if (containerHeightPx == 0 || windowHeightPx == 0) return y
+        val restingTop = (containerHeightPx - windowHeightPx) / 2f
+        val maxTop = (containerHeightPx - headerHeightPx).coerceAtLeast(0).toFloat()
+        val a = -restingTop // offset that places the header's top at 0
+        val b = maxTop - restingTop // offset that places the header's top at the lowest visible row
+        return y.coerceIn(minOf(a, b), maxOf(a, b))
+    }
     // PRD §8 zoom: the zoom mechanics live in WeekView (which owns the scroll state + viewport geometry,
     // so it can keep the point under the cursor fixed). The keyboard shortcuts here drive it through this
     // action holder; [ctrlHeld] tracks the Ctrl modifier so WeekView's scroll handler knows when a wheel
@@ -1598,6 +1616,13 @@ fun CalendarFloatingWindow(
             // requiredSize (not size) so the window keeps its fixed size and does not adapt to the app's
             // width when the content area is narrower than it.
             .requiredSize(width = 720.dp, height = 540.dp)
+            // Measure the window and its parent so an over-tall window (small screens) is nudged down until
+            // its header is visible; clamping a fixed point converges, so re-applying on each layout is safe.
+            .onGloballyPositioned { coords ->
+                containerHeightPx = coords.parentLayoutCoordinates?.size?.height ?: 0
+                windowHeightPx = coords.size.height
+                offset = offset.copy(y = clampOffsetY(offset.y))
+            }
             .focusRequester(focusRequester)
             .focusable()
             // PRD §8: calendar-owned keyboard shortcuts while it is the focused surface.
@@ -1655,11 +1680,13 @@ fun CalendarFloatingWindow(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .onSizeChanged { headerHeightPx = it.height }
                     .background(CalColors.menuBackground)
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
-                            offset += dragAmount
+                            // Clamp the vertical drag so the header can't be dragged off the top/bottom edge.
+                            offset = Offset(offset.x + dragAmount.x, clampOffsetY(offset.y + dragAmount.y))
                         }
                     }
                     .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
