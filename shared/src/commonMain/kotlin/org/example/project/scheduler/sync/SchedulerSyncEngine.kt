@@ -10,10 +10,13 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.time.Instant
 import kotlinx.serialization.json.Json
 import org.example.project.scheduler.persistence.PersistedSnapshot
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.SyncMetaStore
+import org.example.project.scheduler.platform.DeviceKind
+import org.example.project.time.SystemAppClock
 
 /** Coarse status for a sync status indicator. */
 sealed interface SyncState {
@@ -49,7 +52,7 @@ class SchedulerSyncEngine(
     private val client: RemoteSnapshotClient,
     private val metaStore: SyncMetaStore,
     private val json: Json = Json { ignoreUnknownKeys = true },
-) {
+) : PresenceGateway {
     private val mutex = Mutex()
     private var session: SupabaseSession? = null
 
@@ -201,4 +204,33 @@ class SchedulerSyncEngine(
             setMeta(meta().copy(accessToken = refreshed.accessToken, refreshToken = refreshed.refreshToken))
             block(refreshed)
         }
+
+    // ---- PRD §15 cross-device presence (PresenceGateway) ----
+    //
+    // These run outside [mutex] (the reconcile lock): presence is an independent, best-effort side channel,
+    // so a heartbeat/peer-query never blocks — or is blocked by — a snapshot reconcile.
+
+    override val signedIn: Boolean get() = session != null
+
+    override suspend fun publishPresence(kind: DeviceKind, screenActive: Boolean) {
+        val current = session ?: return
+        val deviceId = meta().deviceId
+        runCatching { withAuth(current) { client.upsertPresence(it, deviceId, kind.name.lowercase(), screenActive) } }
+    }
+
+    override suspend fun activePeersExist(staleMillis: Long): Boolean {
+        val current = session ?: return false
+        val selfId = meta().deviceId
+        val rows = runCatching { withAuth(current) { client.fetchPresence(it) } }.getOrNull() ?: return false
+        val now = SystemAppClock.nowMillis()
+        return rows.any { row ->
+            row.deviceId != selfId &&
+                row.screenActive &&
+                run {
+                    // A future timestamp (server clock ahead of ours) is the freshest possible, so allow it.
+                    val updated = runCatching { Instant.parse(row.updatedAt).toEpochMilliseconds() }.getOrNull()
+                    updated != null && now - updated < staleMillis
+                }
+        }
+    }
 }

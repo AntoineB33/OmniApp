@@ -30,6 +30,18 @@ data class SupabaseSession(
 /** The remote mirror of one user's [org.example.project.scheduler.persistence.PersistedSnapshot]. */
 data class RemoteSnapshot(val payload: String, val revision: Long)
 
+/**
+ * PRD §15 cross-device presence: one device's heartbeat row. [updatedAt] is the server timestamp (ISO-8601)
+ * of the last heartbeat — the freshness the gateway uses to age out a device that stopped reporting.
+ */
+@Serializable
+data class DevicePresence(
+    @SerialName("device_id") val deviceId: String,
+    val kind: String,
+    @SerialName("screen_active") val screenActive: Boolean,
+    @SerialName("updated_at") val updatedAt: String,
+)
+
 /** Raised when Supabase returns a non-success response we did not specifically handle. */
 class SupabaseException(val status: Int, message: String) : Exception("Supabase $status: $message")
 
@@ -134,6 +146,36 @@ class RemoteSnapshotClient(
         return updated.isNotEmpty()
     }
 
+    // ---- Presence (PostgREST, PRD §15) ----
+
+    /**
+     * Upserts this device's presence row (heartbeat) keyed by `(user_id, device_id)`. `merge-duplicates`
+     * makes a repeat from the same device update its existing row rather than conflict; `updated_at` is
+     * refreshed server-side (the table trigger), so freshness does not depend on the client clock.
+     */
+    suspend fun upsertPresence(session: SupabaseSession, deviceId: String, kind: String, screenActive: Boolean) {
+        val response =
+            http.post("${config.restUrl}/device_presence") {
+                authHeaders(session)
+                header("Prefer", "resolution=merge-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(PresenceUpsert(session.userId, deviceId, kind, screenActive)))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
+    /** Returns every presence row for this account (all of the user's devices). */
+    suspend fun fetchPresence(session: SupabaseSession): List<DevicePresence> {
+        val response =
+            http.get("${config.restUrl}/device_presence") {
+                authHeaders(session)
+                url.parameters.append("user_id", "eq.${session.userId}")
+                url.parameters.append("select", "device_id,kind,screen_active,updated_at")
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        return json.decodeFromString<List<DevicePresence>>(response.bodyAsText())
+    }
+
     fun close() = http.close()
 
     private fun io.ktor.client.request.HttpRequestBuilder.authHeaders(session: SupabaseSession) {
@@ -174,3 +216,11 @@ private data class SnapshotInsert(
 )
 
 @Serializable private data class SnapshotUpdate(val payload: String, val revision: Long)
+
+@Serializable
+private data class PresenceUpsert(
+    @SerialName("user_id") val userId: String,
+    @SerialName("device_id") val deviceId: String,
+    val kind: String,
+    @SerialName("screen_active") val screenActive: Boolean,
+)

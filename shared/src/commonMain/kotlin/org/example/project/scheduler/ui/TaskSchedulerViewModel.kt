@@ -19,6 +19,7 @@ import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.sync.PresenceGateway
 import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.sync.SyncState
 
@@ -39,6 +40,9 @@ class TaskSchedulerViewModel(
 
     /** PRD §5 sync status for an indicator; null when sync is disabled. */
     val syncState: StateFlow<SyncState>? = syncEngine?.state
+
+    /** PRD §15 cross-device presence channel for the scheduler engine; null when sync is disabled. */
+    val presence: PresenceGateway? get() = syncEngine
 
     // PRD §5 Persistence: every change updates the in-memory state immediately; the SQLite DB is then
     // updated on a debounce so a burst of edits (e.g. typing a cell) collapses into one write instead

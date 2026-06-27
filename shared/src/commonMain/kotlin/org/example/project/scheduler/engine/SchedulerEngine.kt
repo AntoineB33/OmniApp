@@ -20,10 +20,14 @@ import kotlinx.datetime.toLocalDateTime
 import org.example.project.DebugFlags
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.platform.DeviceKind
+import org.example.project.scheduler.platform.currentDeviceKind
+import org.example.project.scheduler.platform.isScreenActive
 import org.example.project.scheduler.platform.sendSystemNotification
 import org.example.project.scheduler.platform.lastWakeAfterLongSleepMillis
-import org.example.project.scheduler.platform.speak
+import org.example.project.scheduler.platform.speak as platformSpeak
 import org.example.project.scheduler.platform.stopSpeaking
+import org.example.project.scheduler.sync.PresenceGateway
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
@@ -50,6 +54,17 @@ private const val LOOK_AWAY_RESUME_POLL_MILLIS: Long = 200
 // scale with the (possibly accelerated) sim tick rate, so device inactivity is detected by the same ~90 s real
 // gap at every speed.
 private const val DEVICE_SLEEP_THRESHOLD_MILLIS: Long = 90L * 1_000
+
+// PRD §15 cross-device presence: how often this device republishes its "active screen" heartbeat (real time).
+private const val PRESENCE_HEARTBEAT_MILLIS: Long = 30L * 1_000
+
+// PRD §15: a peer heartbeat older than this (real time) no longer counts as an active screen — it covers a
+// device that slept/crashed without posting screen_active=false. Matches [DEVICE_SLEEP_THRESHOLD_MILLIS].
+private const val PRESENCE_STALE_MILLIS: Long = 90L * 1_000
+
+// PRD §15: real-time cap on each sleep while waiting for a 5/15-min pose to end before the "pause finished"
+// voice cue, so a mid-wait sim-speed change is picked up promptly (cf. [LOOK_AWAY_RESUME_POLL_MILLIS]).
+private const val POSE_FINISH_POLL_MILLIS: Long = 1_000
 
 /**
  * Bundle of the single process-shared [TaskSchedulerViewModel] + its already-started [SchedulerEngine],
@@ -87,6 +102,14 @@ class SchedulerEngine(
     private val clock: AppClock,
     private val scope: CoroutineScope,
     private val tz: TimeZone = TimeZone.currentSystemDefault(),
+    // PRD §15 cross-device presence: the heartbeat/peer-query channel (the sync engine); null disables it.
+    private val presence: PresenceGateway? = null,
+    // PRD §15: what kind of device this is — only the phone speaks the "pause finished" cue. Injectable for tests.
+    private val deviceKind: DeviceKind = currentDeviceKind(),
+    // PRD §15: whether this device's screen is active right now. Injectable for tests.
+    private val screenActive: () -> Boolean = ::isScreenActive,
+    // PRD §15: the voice sink (defaults to the platform TTS); injectable so cues are assertable in tests.
+    private val speak: (String) -> Unit = ::platformSpeak,
 ) {
     private val _nowMillis = MutableStateFlow(clock.nowMillis())
 
@@ -107,6 +130,10 @@ class SchedulerEngine(
     private var announcedWindDowns = setOf<Long>()
     private var manualLookAwayJob: Job? = null
 
+    // PRD §15 (5/15-min pose "pause finished" cue): pose start instants already evaluated, so each pose is
+    // only gated/scheduled once. Survives a collectLatest restart like [announcedStarts]/[pendingEnds].
+    private var poseFinishHandled = setOf<Long>()
+
     private var started = false
 
     fun start() {
@@ -121,6 +148,8 @@ class SchedulerEngine(
         launchSidePoseNotification()
         launchLookAwayCues()
         launchWindDownNotification()
+        launchPresenceHeartbeat()
+        launchPoseFinishVoiceCue()
     }
 
     // PRD §9: the single "time has advanced to `now`" step — see the original `advanceTo` in App.kt.
@@ -365,5 +394,101 @@ class SchedulerEngine(
             }
             if (voice) speak("Resume your work")
         }
+    }
+
+    // PRD §15 cross-device presence: republish this device's "active screen" heartbeat on a fixed real-time
+    // cadence so peers always have a fresh row to read when a pose starts. No-op when sync is disabled.
+    private fun launchPresenceHeartbeat() = scope.launch {
+        val gateway = presence ?: return@launch
+        while (true) {
+            if (gateway.signedIn) {
+                withContext(Dispatchers.Default) { runCatching { gateway.publishPresence(deviceKind, screenActive()) } }
+            }
+            delay(PRESENCE_HEARTBEAT_MILLIS)
+        }
+    }
+
+    /**
+     * PRD §15: when the now-line reaches the **start** of a 5- or 15-minute pose and **no device on the
+     * account has an active screen** (this phone's screen is off and no peer reports one), the **phone**
+     * speaks at the pose's **end** to say the pause is over. Eligibility is decided at the start; only the
+     * phone ever speaks this cue, so it is inert on desktop. Mirrors [launchLookAwayCues]' occurrence scan,
+     * filtered to the `restBreak` poses; [poseFinishHandled] survives the re-key so each pose fires once.
+     */
+    private fun launchPoseFinishVoiceCue() = scope.launch {
+        val gateway = presence ?: return@launch
+        if (deviceKind != DeviceKind.Phone) return@launch
+        combine(_nowMillis, vm.state.map { it.panels }.distinctUntilChanged()) { _, panels -> panels }
+            .collectLatest {
+                while (true) {
+                    val st = vm.state.value
+                    val simNow = clock.nowMillis()
+                    val speed = (clock as? SimAppClock)?.speed ?: 1.0
+                    poseFinishHandled = poseFinishHandled.filterTo(mutableSetOf()) { it >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS }
+
+                    val poses = st.panels.filter { panel ->
+                        panel.sideTask && st.sideTasks.any { it.restBreak && it.title == panel.title }
+                    }
+
+                    poses
+                        .filter {
+                            it.startEpochMillis in (simNow - LOOK_AWAY_SWEEP_CAP_MILLIS)..simNow &&
+                                it.startEpochMillis !in poseFinishHandled
+                        }
+                        .sortedBy { it.startEpochMillis }
+                        .forEach { pose ->
+                            poseFinishHandled = poseFinishHandled + pose.startEpochMillis
+                            val durationMillis = pose.endEpochMillis - pose.startEpochMillis
+                            val freshWindow =
+                                (LOOK_AWAY_START_FRESH_MILLIS * speed).toLong()
+                                    .coerceAtMost((durationMillis - 1).coerceAtLeast(1))
+                            if (pose.startEpochMillis >= simNow - freshWindow) {
+                                schedulePoseFinishCue(gateway, pose.endEpochMillis)
+                            }
+                        }
+
+                    val next = poses.map { it.startEpochMillis }
+                        .filter { it > simNow && it !in poseFinishHandled }.minOrNull() ?: break
+                    if (speed <= 0.0) break
+                    delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
+                }
+            }
+    }
+
+    // PRD §15: gate evaluated at a pose's start; if it holds, wait until [endMillis] and announce the pause is
+    // over. Launched on [scope] (not the collectLatest job) so a panel/now re-key never cancels a committed
+    // cue. The eligibility query is at the start (per spec); the wait then runs to the original end.
+    private fun schedulePoseFinishCue(gateway: PresenceGateway, endMillis: Long) {
+        scope.launch {
+            if (!gateway.signedIn || screenActive()) return@launch
+            val peersActive = withContext(Dispatchers.Default) { gateway.activePeersExist(PRESENCE_STALE_MILLIS) }
+            if (!poseFinishEligible(isPhone = deviceKind == DeviceKind.Phone, signedIn = gateway.signedIn,
+                    screenActive = screenActive(), peersActive = peersActive)) {
+                return@launch
+            }
+            while (clock.nowMillis() < endMillis) {
+                val speed = (clock as? SimAppClock)?.speed ?: 1.0
+                if (speed <= 0.0) {
+                    delay(POSE_FINISH_POLL_MILLIS)
+                    continue
+                }
+                val remainingReal = ((endMillis - clock.nowMillis()).toDouble() / speed).toLong()
+                delay(remainingReal.coerceIn(1L, POSE_FINISH_POLL_MILLIS))
+            }
+            speak("Your pause is over. You can resume your work.")
+        }
+    }
+
+    companion object {
+        /**
+         * PRD §15: the gate for the phone's "pause finished" voice cue — true only when this is the phone,
+         * a session is available, this device's screen is off, and no other device reports an active screen.
+         */
+        internal fun poseFinishEligible(
+            isPhone: Boolean,
+            signedIn: Boolean,
+            screenActive: Boolean,
+            peersActive: Boolean,
+        ): Boolean = isPhone && signedIn && !screenActive && !peersActive
     }
 }

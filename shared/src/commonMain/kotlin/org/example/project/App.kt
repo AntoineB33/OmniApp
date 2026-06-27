@@ -126,7 +126,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // desktop/web/iOS it is created here and started for the composition's lifetime.
         val engineScope = rememberCoroutineScope()
         val engine: SchedulerEngine = remember(host) {
-            host?.engine ?: SchedulerEngine(vm = vm, clock = clock, scope = engineScope, tz = tz)
+            host?.engine
+                ?: SchedulerEngine(vm = vm, clock = clock, scope = engineScope, tz = tz, presence = vm.presence)
         }
         LaunchedEffect(engine) { if (host == null) engine.start() }
         val nowMillis by engine.nowMillis.collectAsState()

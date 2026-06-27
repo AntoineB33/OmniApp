@@ -39,7 +39,7 @@ object SchedulerHolder {
         val store = createDefaultSchedulerStore()
         val syncEngine = (store as? SyncMetaStore)?.let { SchedulerSyncEngine(RemoteSnapshotClient(), it) }
         val vm = TaskSchedulerViewModel(store = store, syncEngine = syncEngine)
-        val engine = SchedulerEngine(vm = vm, clock = SystemAppClock, scope = scope)
+        val engine = SchedulerEngine(vm = vm, clock = SystemAppClock, scope = scope, presence = vm.presence)
         engine.start()
         return AppSchedulerHost(vm, engine).also { host = it }
     }
