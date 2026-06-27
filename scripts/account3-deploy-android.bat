@@ -2,20 +2,27 @@
 setlocal EnableDelayedExpansion
 
 REM =====================================================================
-REM  android-deploy.bat - the Android analog of release-deploy.bat.
-REM  Builds a SIGNED release APK and installs/updates it onto a connected
-REM  device over adb (USB or wifi-adb), then launches it. The app's
-REM  MainActivity starts the foreground SchedulerService, and a
-REM  BOOT_COMPLETED receiver restarts that service on every reboot - so the
-REM  scheduler keeps firing reminders at startup and in the background,
-REM  mirroring how release-deploy.bat registers a Windows Startup entry.
+REM  account3-deploy-android.bat - build a SIGNED release APK, install it on
+REM  the connected device over adb, and launch it auto-signed-in as ACCOUNT 3.
+REM  The MainActivity starts the foreground SchedulerService and a
+REM  BOOT_COMPLETED receiver restarts that service on every reboot, so the
+REM  scheduler keeps firing reminders in the background - the Android analog
+REM  of account3-deploy-windows.bat's Windows-startup registration.
 REM
-REM  The on-device app data / SQLite DB is preserved across updates
-REM  (adb install -r keeps app data; only the binaries are replaced).
+REM  Auto-login: account-3 credentials are passed as launch-Intent extras
+REM  (omniapp_login_user / omniapp_login_pass); MainActivity stages them and
+REM  the shared VM signs in on first build. The session is then cached in the
+REM  on-device DB, so the BOOT_COMPLETED restart (and ordinary taps) keep the
+REM  app logged in without the extras afterwards. App data / DB is preserved
+REM  across updates (adb install -r keeps app data; only binaries change).
+REM  Credentials come from scripts/accounts.env (gitignored).
 REM
 REM  First run generates a local signing keystore (kept OUTSIDE the repo,
 REM  under %USERPROFILE%\.omniapp) and records its coordinates in
 REM  local.properties (gitignored) so the Gradle build can sign with it.
+REM
+REM  NOTE: the credentials are passed on the `adb shell am start` command
+REM  line (visible to `ps`/logcat on the device). Fine for a personal device.
 REM =====================================================================
 
 REM ----------------------------- CONFIG --------------------------------
@@ -28,6 +35,9 @@ set "KEY_PASS=omniapp"
 REM ---------------------------------------------------------------------
 
 set "SCRIPT_DIR=%~dp0"
+call "%SCRIPT_DIR%internal\load-accounts-env.bat" || exit /b 1
+if not defined ACC3_USER (echo [x] ACC3_USER/ACC3_PASS missing from accounts.env.& exit /b 1)
+
 pushd "%SCRIPT_DIR%.." || (echo [x] Could not enter project root.& exit /b 1)
 set "LOCALPROPS=%CD%\local.properties"
 set "APK=androidApp\build\outputs\apk\release\androidApp-release.apk"
@@ -86,14 +96,20 @@ echo [4/6] Installing/updating the app ^(app data + DB preserved^)...
 "%ADB%" install -r "%APK%"
 if errorlevel 1 (echo [x] Install failed.& popd & exit /b 1)
 
-echo [5/6] Launching ^(starts the foreground SchedulerService^)...
-"%ADB%" shell am start -n "%LAUNCH_ACTIVITY%" >nul
+REM ---- [5/6] Force-stop so the next launch is a fresh process. The shared
+REM ---- scheduler VM is a process singleton; it must be (re)built with the
+REM ---- credentials present, so kill any running instance before relaunching.
+echo [5/6] Launching auto-signed-in as %ACC3_USER%...
+"%ADB%" shell am force-stop "%APP_ID%"
+"%ADB%" shell am start -n "%LAUNCH_ACTIVITY%" --es omniapp_login_user "%ACC3_USER%" --es omniapp_login_pass "%ACC3_PASS%" >nul
+if errorlevel 1 (echo [x] Launch with login extras failed.& popd & exit /b 1)
 
 echo [6/6] Done.
 popd
 echo.
 echo   Installed APK: %APK%
 echo   Keystore:      %KEYSTORE%
+echo   Login:         signing in as %ACC3_USER% ^(session then cached on-device^)
 echo   Boot-start:    BootReceiver restarts SchedulerService after every reboot.
 echo.
 echo   TIP: For reliable background reminders, exempt OmniApp from battery

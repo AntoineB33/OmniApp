@@ -21,7 +21,10 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.sync.PresenceGateway
 import org.example.project.scheduler.sync.SchedulerSyncEngine
+import org.example.project.scheduler.sync.StartupLogin
 import org.example.project.scheduler.sync.SyncState
+import org.example.project.scheduler.sync.startupLoginCredentials
+import org.example.project.scheduler.sync.usernameToEmail
 
 class TaskSchedulerViewModel(
     initial: SchedulerState = SchedulerState.empty(),
@@ -32,6 +35,9 @@ class TaskSchedulerViewModel(
     // PRD §5 cross-device sync. Null = sync disabled (the default, so tests and offline-only builds are
     // unaffected). When present, local saves push (debounced) and the app pulls remote changes.
     private val syncEngine: SchedulerSyncEngine? = null,
+    // Credentials for non-interactive launch (the per-account `/scripts`). Injectable so tests can drive
+    // the auto-login path without the platform property/env/Intent plumbing.
+    private val startupLogin: () -> StartupLogin? = { startupLoginCredentials() },
 ) : ViewModel() {
     // PRD §5 Initialization: load from local persistence when present, otherwise start
     // from the empty DB (root → main).
@@ -62,8 +68,16 @@ class TaskSchedulerViewModel(
                 applyRemote = { snapshot -> applyRemoteSnapshot(snapshot) },
             )
             engine.restoreSession()
-            // PRD §5 Initialization: pull any newer remote state on launch (no-op when signed out/offline).
-            saveScope.launch { engine.reconcile() }
+            // Non-interactive launch (per-account `/scripts`): when no session was restored and startup
+            // credentials were supplied, sign in to that account. signIn() reconciles, so we skip the plain
+            // reconcile below in that case.
+            val creds = if (!engine.isSignedIn) startupLogin() else null
+            if (creds != null) {
+                signIn(usernameToEmail(creds.username), creds.password)
+            } else {
+                // PRD §5 Initialization: pull any newer remote state on launch (no-op when signed out/offline).
+                saveScope.launch { engine.reconcile() }
+            }
         }
     }
 
