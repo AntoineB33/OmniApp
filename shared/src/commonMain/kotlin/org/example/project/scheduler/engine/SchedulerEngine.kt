@@ -55,12 +55,24 @@ private const val LOOK_AWAY_RESUME_POLL_MILLIS: Long = 200
 // gap at every speed.
 private const val DEVICE_SLEEP_THRESHOLD_MILLIS: Long = 90L * 1_000
 
-// PRD §15 cross-device presence: how often this device republishes its "active screen" heartbeat (real time).
-private const val PRESENCE_HEARTBEAT_MILLIS: Long = 30L * 1_000
+// PRD §15 cross-device presence: instead of a constant heartbeat, a device with an active screen announces
+// itself only WHILE the now-line sits inside a 5/15-min rest pose — the one window the phone's "pause
+// finished" cue needs to know whether another device is in use. First ping is one interval in (so a user who
+// closes the machine to take the pause never announces), then one every interval it stays in the pose.
+private const val POSE_BEACON_INTERVAL_MILLIS: Long = 60L * 1_000
 
-// PRD §15: a peer heartbeat older than this (real time) no longer counts as an active screen — it covers a
-// device that slept/crashed without posting screen_active=false. Matches [DEVICE_SLEEP_THRESHOLD_MILLIS].
-private const val PRESENCE_STALE_MILLIS: Long = 90L * 1_000
+// PRD §15: how long before a pose's end the phone reads presence to decide the cue — a 1-min lead that
+// doubles as a buffer to retry the read on a flaky connection before the pose actually ends.
+private const val POSE_FINISH_CHECK_LEAD_MILLIS: Long = 60L * 1_000
+
+// PRD §15: a presence row older than this no longer counts as an active screen. ~2.5× the beacon interval, so
+// a live machine that dropped a single beacon still reads as present at the pre-end check.
+private const val POSE_PRESENCE_FRESH_MILLIS: Long = 150L * 1_000
+
+// PRD §15: how many times the pre-end presence read is retried (and the real-time gap between tries) before
+// giving up. A give-up is treated as "no peer active" (fail-open: a real pause still gets its end cue).
+private const val POSE_FINISH_READ_ATTEMPTS: Int = 3
+private const val POSE_FINISH_RETRY_MILLIS: Long = 2L * 1_000
 
 // PRD §15: real-time cap on each sleep while waiting for a 5/15-min pose to end before the "pause finished"
 // voice cue, so a mid-wait sim-speed change is picked up promptly (cf. [LOOK_AWAY_RESUME_POLL_MILLIS]).
@@ -148,7 +160,7 @@ class SchedulerEngine(
         launchSidePoseNotification()
         launchLookAwayCues()
         launchWindDownNotification()
-        launchPresenceHeartbeat()
+        launchPosePresenceBeacon()
         launchPoseFinishVoiceCue()
     }
 
@@ -396,17 +408,33 @@ class SchedulerEngine(
         }
     }
 
-    // PRD §15 cross-device presence: republish this device's "active screen" heartbeat on a fixed real-time
-    // cadence so peers always have a fresh row to read when a pose starts. No-op when sync is disabled.
-    private fun launchPresenceHeartbeat() = scope.launch {
+    // PRD §15 cross-device presence: announce this device's active screen ONLY while the now-line is inside a
+    // 5/15-min rest pose — the only window the phone's "pause finished" cue needs to know whether another
+    // device is in use (so an idle/working session writes nothing outside poses, staying well within the free
+    // tier). Keyed on the boolean "now is in a rest pose" so re-placing the pose at the now-line (the user
+    // working through it) does NOT reset the loop. First ping is one interval in, so a user who closes the
+    // machine to take the pause never announces; thereafter one per interval while still in the pose with the
+    // screen on. A closed/asleep machine's coroutine isn't running, so it simply stops announcing.
+    private fun launchPosePresenceBeacon() = scope.launch {
         val gateway = presence ?: return@launch
-        while (true) {
-            if (gateway.signedIn) {
-                withContext(Dispatchers.Default) { runCatching { gateway.publishPresence(deviceKind, screenActive()) } }
+        combine(_nowMillis, vm.state) { now, st -> inRestPose(st, now) }
+            .distinctUntilChanged()
+            .collectLatest { inPose ->
+                if (!inPose) return@collectLatest
+                while (true) {
+                    delay(POSE_BEACON_INTERVAL_MILLIS)
+                    if (!inRestPose(vm.state.value, clock.nowMillis())) break
+                    if (gateway.signedIn && screenActive()) {
+                        withContext(Dispatchers.Default) {
+                            runCatching { gateway.publishPresence(deviceKind, screenActive = true) }
+                        }
+                    }
+                }
             }
-            delay(PRESENCE_HEARTBEAT_MILLIS)
-        }
     }
+
+    /** Whether the panel covering [now] is a 5/15-min rest pose (a `restBreak` side task). */
+    private fun inRestPose(st: SchedulerState, now: Long): Boolean = currentPoseTitle(st, now) != null
 
     /**
      * PRD §15: when the now-line reaches the **start** of a 5- or 15-minute pose and **no device on the
@@ -455,28 +483,53 @@ class SchedulerEngine(
             }
     }
 
-    // PRD §15: gate evaluated at a pose's start; if it holds, wait until [endMillis] and announce the pause is
-    // over. Launched on [scope] (not the collectLatest job) so a panel/now re-key never cancels a committed
-    // cue. The eligibility query is at the start (per spec); the wait then runs to the original end.
+    // PRD §15: committed at a pose's start but DECIDED ~1 min before its end — late enough that a machine the
+    // user kept working on has beaconed within the freshness window (so the phone stays silent), early enough
+    // to leave a buffer to retry the read on a flaky connection. Launched on [scope] (not the collectLatest
+    // job) so a panel/now re-key never cancels a committed cue. A read that never succeeds is treated as "no
+    // peer" (fail-open) so a real pause is never left without its end cue.
     private fun schedulePoseFinishCue(gateway: PresenceGateway, endMillis: Long) {
         scope.launch {
-            if (!gateway.signedIn || screenActive()) return@launch
-            val peersActive = withContext(Dispatchers.Default) { gateway.activePeersExist(PRESENCE_STALE_MILLIS) }
+            if (!gateway.signedIn) return@launch
+            sleepUntilSim(endMillis - POSE_FINISH_CHECK_LEAD_MILLIS)
+            if (screenActive()) return@launch
+            val peersActive = readPeersActiveWithRetry(gateway, endMillis)
             if (!poseFinishEligible(isPhone = deviceKind == DeviceKind.Phone, signedIn = gateway.signedIn,
                     screenActive = screenActive(), peersActive = peersActive)) {
                 return@launch
             }
-            while (clock.nowMillis() < endMillis) {
-                val speed = (clock as? SimAppClock)?.speed ?: 1.0
-                if (speed <= 0.0) {
-                    delay(POSE_FINISH_POLL_MILLIS)
-                    continue
-                }
-                val remainingReal = ((endMillis - clock.nowMillis()).toDouble() / speed).toLong()
-                delay(remainingReal.coerceIn(1L, POSE_FINISH_POLL_MILLIS))
-            }
+            sleepUntilSim(endMillis)
+            // Re-check the local screen: the user may have picked up the phone during the final minute.
+            if (screenActive()) return@launch
             speak("Your pause is over. You can resume your work.")
         }
+    }
+
+    /** Suspends (sim-speed aware, so a mid-wait speed change is honored) until the clock reaches [targetMillis]. */
+    private suspend fun sleepUntilSim(targetMillis: Long) {
+        while (clock.nowMillis() < targetMillis) {
+            val speed = (clock as? SimAppClock)?.speed ?: 1.0
+            if (speed <= 0.0) {
+                delay(POSE_FINISH_POLL_MILLIS)
+                continue
+            }
+            val remainingReal = ((targetMillis - clock.nowMillis()).toDouble() / speed).toLong()
+            delay(remainingReal.coerceIn(1L, POSE_FINISH_POLL_MILLIS))
+        }
+    }
+
+    /**
+     * Reads whether any peer device currently has an active screen, retrying on a transport failure (a `null`
+     * answer) up to [POSE_FINISH_READ_ATTEMPTS] times within the pre-end buffer. A definitive `true`/`false`
+     * returns immediately; persistent failure returns `false` (fail-open — the phone speaks the end cue).
+     */
+    private suspend fun readPeersActiveWithRetry(gateway: PresenceGateway, endMillis: Long): Boolean {
+        repeat(POSE_FINISH_READ_ATTEMPTS) { attempt ->
+            val answer = withContext(Dispatchers.Default) { gateway.activePeersExistOrNull(POSE_PRESENCE_FRESH_MILLIS) }
+            if (answer != null) return answer
+            if (attempt < POSE_FINISH_READ_ATTEMPTS - 1 && clock.nowMillis() < endMillis) delay(POSE_FINISH_RETRY_MILLIS)
+        }
+        return false
     }
 
     companion object {

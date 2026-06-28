@@ -5,6 +5,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SqlDelightSchedulerStore
 import org.example.project.scheduler.persistence.SyncMeta
+import org.example.project.scheduler.persistence.WindowPlacement
 import org.example.project.scheduler.persistence.migrateLegacyJsonPayload
 import org.example.project.scheduler.persistence.db.SchedulerDatabase
 import org.example.project.scheduler.state.AppWindow
@@ -175,6 +176,94 @@ class SchedulerStoreTest {
             assertNull(store.loadSyncMeta())
             store.saveSyncMeta(SyncMeta(deviceId = "d"))
             assertEquals("d", store.loadSyncMeta()!!.deviceId)
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
+    }
+
+    @Test
+    fun window_placements_round_trip() {
+        val store = newStore()
+        assertTrue(store.loadPlacements().isEmpty())
+
+        store.savePlacement("Calendar", WindowPlacement(x = 12f, y = -34f, visible = true))
+        store.savePlacement("Sleep", WindowPlacement(x = 5f, y = 6f, width = 320f, height = 0f, visible = false))
+
+        val placements = store.loadPlacements()
+        assertEquals(WindowPlacement(x = 12f, y = -34f, visible = true), placements["Calendar"])
+        assertEquals(WindowPlacement(x = 5f, y = 6f, width = 320f, height = 0f, visible = false), placements["Sleep"])
+
+        // Upsert: a second save for the same window replaces its single row rather than adding one.
+        store.savePlacement("Calendar", WindowPlacement(x = 99f, y = 0f, visible = false))
+        assertEquals(WindowPlacement(x = 99f, y = 0f, visible = false), store.loadPlacements()["Calendar"])
+        assertEquals(2, store.loadPlacements().size)
+    }
+
+    /**
+     * Window geometry is LOCAL-ONLY and orthogonal to the synced state: saving a placement must not change
+     * the [org.example.project.scheduler.persistence.PersistedSnapshot] the store loads (and thus syncs).
+     */
+    @Test
+    fun window_placements_do_not_affect_persisted_snapshot() {
+        val store = newStore()
+        store.save(SchedulerStateCodec.encodeSnapshot(stateWithHistory()))
+        val before = store.load()!!
+
+        store.savePlacement("Calendar", WindowPlacement(x = 1f, y = 2f, visible = true))
+
+        assertEquals(before, store.load()!!)
+    }
+
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by the *previous* schema (v2: app_state +
+     * history_unit + history_pointer + sync_meta, no window_placement) must still load after this feature
+     * ships, with the 2.sqm migration adding window_placement on open. Reproduces the on-disk v2 shape, then
+     * opens it with the current schema and asserts old data survives and window placements are usable.
+     */
+    @Test
+    fun upgrades_pre_window_placement_v2_db_and_preserves_data() {
+        val dbFile = File.createTempFile("scheduler-v2", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            val raw = JdbcSqliteDriver(url, Properties())
+            raw.execute(null, "CREATE TABLE app_state (id INTEGER NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+            raw.execute(
+                null,
+                "CREATE TABLE history_unit (category TEXT NOT NULL, ordinal INTEGER NOT NULL, " +
+                    "time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, debug_tainted INTEGER NOT NULL, " +
+                    "delta TEXT NOT NULL, PRIMARY KEY (category, ordinal))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE history_pointer (category TEXT NOT NULL PRIMARY KEY, pointer INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
+                    "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
+                    "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT)",
+                0,
+            )
+            raw.execute(null, "INSERT INTO app_state(id, payload) VALUES (0, ?)", 1) {
+                bindString(0, payload)
+            }
+            raw.execute(null, "PRAGMA user_version = 2", 0)
+            raw.close()
+
+            // Open with the current schema: the v2 -> v3 migration must run (adding window_placement) without
+            // dropping the app_state row.
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            assertEquals(payload, store.load()!!.statePayload)
+            // The new table exists and works (no placement yet for an upgraded DB).
+            assertTrue(store.loadPlacements().isEmpty())
+            store.savePlacement("Calendar", WindowPlacement(x = 7f, y = 8f, visible = true))
+            assertEquals(WindowPlacement(x = 7f, y = 8f, visible = true), store.loadPlacements()["Calendar"])
             driver.close()
         } finally {
             dbFile.delete()

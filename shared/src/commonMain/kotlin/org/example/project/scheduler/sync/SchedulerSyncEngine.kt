@@ -218,10 +218,14 @@ class SchedulerSyncEngine(
         runCatching { withAuth(current) { client.upsertPresence(it, deviceId, kind.name.lowercase(), screenActive) } }
     }
 
-    override suspend fun activePeersExist(staleMillis: Long): Boolean {
+    /** Fail-open convenience: a transport failure (`null`) counts as "no active peer". */
+    suspend fun activePeersExist(staleMillis: Long): Boolean = activePeersExistOrNull(staleMillis) ?: false
+
+    override suspend fun activePeersExistOrNull(staleMillis: Long): Boolean? {
         val current = session ?: return false
         val selfId = meta().deviceId
-        val rows = runCatching { withAuth(current) { client.fetchPresence(it) } }.getOrNull() ?: return false
+        // A transport failure returns null (unknown) so the caller can retry, rather than masquerading as "no peer".
+        val rows = runCatching { withAuth(current) { client.fetchPresence(it) } }.getOrNull() ?: return null
         val now = SystemAppClock.nowMillis()
         return rows.any { row ->
             row.deviceId != selfId &&

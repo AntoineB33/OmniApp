@@ -49,6 +49,8 @@ fun SleepWindow(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
+    /** Persists the window's new drag position when a drag gesture ends (local-only geometry). */
+    onOffsetChange: (Offset) -> Unit = {},
     onRaise: () -> Unit = {},
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
@@ -73,7 +75,7 @@ fun SleepWindow(
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surfaceVariant)
                     .pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
+                        detectDragGestures(onDragEnd = { onOffsetChange(offset) }) { change, dragAmount ->
                             change.consume()
                             offset += dragAmount
                         }

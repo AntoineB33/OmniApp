@@ -41,6 +41,8 @@ import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.persistence.SyncMetaStore
+import org.example.project.scheduler.persistence.WindowPlacement
+import org.example.project.scheduler.persistence.WindowPlacementStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
@@ -96,6 +98,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             host?.vm ?: viewModel { TaskSchedulerViewModel(store = store, syncEngine = syncEngine) }
         val schedulerState by vm.state.collectAsState()
 
+        // Floating-window geometry/visibility, persisted LOCALLY ONLY (never synced, never a History Unit).
+        // Absent on stores without the capability (e.g. web's localStorage) — placement then stays in-memory.
+        // Loaded once; the open flags below seed their initial visibility from it, offsets persist on drag-end.
+        val placementStore = remember(store) { store as? WindowPlacementStore }
+        val initialPlacements = remember(placementStore) { placementStore?.loadPlacements().orEmpty() }
+        fun savedOffset(id: FloatingWindow, default: Offset): Offset =
+            initialPlacements[id.name]?.let { Offset(it.x, it.y) } ?: default
+        fun savedVisible(id: FloatingWindow): Boolean = initialPlacements[id.name]?.visible == true
+        fun persistPlacement(id: FloatingWindow, offset: Offset, visible: Boolean) =
+            placementStore?.savePlacement(id.name, WindowPlacement(x = offset.x, y = offset.y, visible = visible))
+
         // PRD §5 Persistence: flush any pending debounced write when the app/composition is torn down,
         // so a change made within the debounce window survives a normal close.
         DisposableEffect(vm) {
@@ -135,7 +148,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
         val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz).date
-        var calendarOpen by remember { mutableStateOf(false) }
+        var calendarOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Calendar)) }
         // PRD §5: the sub-list whose priority-weight window is open (opened by clicking a percentage in the
         // tree), or null when closed. Drawn on the top floating-window layer below; [weightWindowBounds] is
         // its window-space rect, used to ignore presses inside it when dismissing on outside clicks.
@@ -154,11 +167,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         // PRD §7/§14 Chores Manager: whether the floating chores window is open (local UI state, like the
         // calendar window; the chores data itself lives in the persisted scheduler state).
-        var choresManagerOpen by remember { mutableStateOf(false) }
+        var choresManagerOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Reminders)) }
         // PRD §5/§6 History Manager: whether the floating history window is open (local UI state).
-        var historyManagerOpen by remember { mutableStateOf(false) }
+        var historyManagerOpen by remember { mutableStateOf(savedVisible(FloatingWindow.History)) }
         // Sleep schedule window: whether the floating sleep-settings window is open (local UI state).
-        var sleepWindowOpen by remember { mutableStateOf(false) }
+        var sleepWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Sleep)) }
 
         // The floating windows are siblings in one Box, so their paint order is their declaration order.
         // To put the *currently focused* window on top of the layers, we keep an explicit stacking order
@@ -208,6 +221,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 else -> focusWindow(id)
             }
         }
+
+        // Local-only persisted drag positions for the managed windows. The defaults reproduce the previous
+        // hard-coded cascade staggers, used until the user drags a window (which persists via onOffsetChange).
+        var calendarOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Calendar, Offset.Zero)) }
+        var remindersOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Reminders, Offset(-200f, -150f))) }
+        var historyOffset by remember { mutableStateOf(savedOffset(FloatingWindow.History, Offset(200f, 150f))) }
+        var sleepOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Sleep, Offset(120f, -120f))) }
+        // Persist each window's visibility whenever it opens/closes (its offset persists separately on drag-end).
+        LaunchedEffect(calendarOpen) { persistPlacement(FloatingWindow.Calendar, calendarOffset, calendarOpen) }
+        LaunchedEffect(choresManagerOpen) { persistPlacement(FloatingWindow.Reminders, remindersOffset, choresManagerOpen) }
+        LaunchedEffect(historyManagerOpen) { persistPlacement(FloatingWindow.History, historyOffset, historyManagerOpen) }
+        LaunchedEffect(sleepWindowOpen) { persistPlacement(FloatingWindow.Sleep, sleepOffset, sleepWindowOpen) }
 
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
@@ -462,6 +487,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onToggleReminders = { vm.dispatch(SchedulerIntent.SetShowReminders(it)) },
                             onUndo = { vm.dispatch(SchedulerIntent.Undo) },
                             onRedo = { vm.dispatch(SchedulerIntent.Redo) },
+                            initialOffset = calendarOffset,
+                            onOffsetChange = {
+                                calendarOffset = it
+                                persistPlacement(FloatingWindow.Calendar, it, true)
+                            },
                         )
 
                         // PRD §8 edit window, drawn over the calendar window and the tree — used for
@@ -547,7 +577,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
                             titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
                             // Cascade: open up-left of center so it isn't fully hidden behind a wider window.
-                            initialOffset = Offset(-200f, -150f),
+                            initialOffset = remindersOffset,
+                            onOffsetChange = {
+                                remindersOffset = it
+                                persistPlacement(FloatingWindow.Reminders, it, true)
+                            },
                             onRaise = { focusWindow(FloatingWindow.Reminders) },
                             modifier = Modifier
                                 .align(Alignment.Center)
@@ -561,7 +595,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             histories = schedulerState.histories,
                             onDismiss = { historyManagerOpen = false },
                             // Cascade: open down-right of center so the Reminders / calendar windows stay reachable.
-                            initialOffset = Offset(200f, 150f),
+                            initialOffset = historyOffset,
+                            onOffsetChange = {
+                                historyOffset = it
+                                persistPlacement(FloatingWindow.History, it, true)
+                            },
                             onRaise = { focusWindow(FloatingWindow.History) },
                             modifier = Modifier
                                 .align(Alignment.Center)
@@ -576,7 +614,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onSave = { vm.dispatch(SchedulerIntent.SetSleepSchedule(it, today.toEpochDays().toLong())) },
                             onDismiss = { sleepWindowOpen = false },
                             // Cascade: open up-right of center so the other windows stay reachable.
-                            initialOffset = Offset(120f, -120f),
+                            initialOffset = sleepOffset,
+                            onOffsetChange = {
+                                sleepOffset = it
+                                persistPlacement(FloatingWindow.Sleep, it, true)
+                            },
                             onRaise = { focusWindow(FloatingWindow.Sleep) },
                             modifier = Modifier
                                 .align(Alignment.Center)

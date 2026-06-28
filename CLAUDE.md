@@ -14,6 +14,14 @@ Kotlin Multiplatform (KMP) project targeting Windows Desktop first.
 - Old DBs can hold data an older build wrote that current invariants forbid; `decode` must heal such states, not surface them as anomalies. Reference case: a blank-titled task that still has records rendered every past calendar block as "(untitled)" (see the `calendar-untitled-tombstone` note). The fix is data-level, not UI — the test must catch the bad persisted shape, not just the rendering.
 - Adding a field to a `Persisted*` type: give it a default so payloads written before the field decode cleanly, and add/extend a decode test that loads a payload lacking it.
 
+## What is authoritative vs. derived (reconstructibility rule)
+Persist and sync **only state that cannot be recomputed from other persisted data.** Anything derivable is recomputed (on load / on the next now-advance) instead of being stored or pushed. Before persisting or syncing a field, ask whether it can be re-derived from the inputs below; if so, recompute it rather than storing it, and never let an engine tick that *only* re-derives it mark the state dirty or trigger a sync push.
+- **Authoritative (persist + sync):** the task tree (lists/cells/tasks, titles, weights), completed-work **records** (`task.record`), **user-authored / pinned** calendar panels, chores/reminders, the sleep schedule, settings, and the Undo/Redo **history units**.
+- **Derived (must NOT count as a syncable change):** the automatic schedule — the auto / side-task / sleep **panels** `SchedulerDomain.fillSchedule` regenerates. They are a pure function of `now` + the task tree + the sleep/side-task config + device-sleep history, so the engine rebuilds them on load and on every now-advance. Side-task config is likewise hardcoded (`DEFAULT_SIDE_TASKS`, seeded in `prepareLoadedState`), not persisted — that is this rule already applied.
+- **Deliberate exception:** the whole-state snapshot is itself replayable from all the history units — but only while history is within `MAX_HISTORY_UNITS` (older units are evicted). Because history is bounded, the snapshot is kept as the authoritative base and is persisted/synced anyway.
+
+**Known deviation (to fix):** the regenerated auto/side/sleep panels currently *are* written into `PersistedPanel` and pushed on every now-advance, so an idle session syncs ~once per scheduler tick (the per-tick sync-chip chatter). The intended state is that engine-tick reschedules neither mark the state dirty nor push; only the authoritative changes above do.
+
 ## Account scripts
 The desktop DB is a SQLite file (`scheduler-state.db`; one `app_state` row + per-unit `history_unit` rows) under a per-run **state dir**, so accounts don't share data: account 1 → `~/.omniapp-acc1`, account 2 → `~/.omniapp-acc2`, account 3 (the auto-start release) → `~/.omniapp-release`. Running without an override (`-Pomniapp.stateDir` / `OMNIAPP_STATE_DIR`) uses the default `~/.omniapp`.
 

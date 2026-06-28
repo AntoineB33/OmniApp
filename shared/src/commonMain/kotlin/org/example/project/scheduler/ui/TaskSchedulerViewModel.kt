@@ -91,7 +91,15 @@ class TaskSchedulerViewModel(
         scheduleSave()
     }
 
-    /** Schedules a debounced persist of the current state, replacing any pending one. */
+    /**
+     * Schedules a debounced persist of the current state, replacing any pending one.
+     *
+     * NOTE (reconstructibility rule — see CLAUDE.md): this currently runs for *every* state change,
+     * including engine-tick reschedules that only re-derive the auto/side/sleep panels (a pure function of
+     * `now` + the tree + sleep/side config). Those are recomputable and ideally should neither mark the
+     * state dirty nor push — only authoritative changes (tree edits, records, pinned panels, chores, sleep
+     * settings, history) should. Until that split lands, an idle session syncs ~once per scheduler tick.
+     */
     private fun scheduleSave() {
         val store = store ?: return
         savePending = true

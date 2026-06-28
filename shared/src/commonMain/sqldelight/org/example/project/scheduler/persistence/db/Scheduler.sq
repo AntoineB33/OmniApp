@@ -38,6 +38,20 @@ CREATE TABLE sync_meta (
     email TEXT
 );
 
+-- Floating-window geometry (position/size) and visibility, persisted LOCALLY ONLY. This is deliberately
+-- NOT part of `app_state`/PersistedSnapshot: it must never sync across devices and never produce an
+-- Undo/Redo History Unit. One row per managed window, keyed by the `FloatingWindow` enum name. `width`/
+-- `height` of 0 means "use the window's intrinsic size" (most windows are fixed-size today). Added in
+-- migration 2.sqm; existing DBs (schema v2) gain it on upgrade.
+CREATE TABLE window_placement (
+    window_id TEXT NOT NULL PRIMARY KEY,
+    x REAL NOT NULL,
+    y REAL NOT NULL,
+    width REAL NOT NULL DEFAULT 0,
+    height REAL NOT NULL DEFAULT 0,
+    visible INTEGER NOT NULL
+);
+
 selectAppState:
 SELECT payload FROM app_state WHERE id = 0;
 
@@ -73,3 +87,10 @@ upsertSyncMeta:
 INSERT OR REPLACE INTO sync_meta(
     id, device_id, last_known_revision, dirty, access_token, refresh_token, user_id, email
 ) VALUES (0, ?, ?, ?, ?, ?, ?, ?);
+
+selectAllPlacements:
+SELECT window_id, x, y, width, height, visible FROM window_placement;
+
+upsertPlacement:
+INSERT OR REPLACE INTO window_placement(window_id, x, y, width, height, visible)
+VALUES (?, ?, ?, ?, ?, ?);

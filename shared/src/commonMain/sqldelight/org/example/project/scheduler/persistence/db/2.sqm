@@ -1,0 +1,12 @@
+-- Schema v2 -> v3: add the local-only floating-window geometry table.
+-- Existing on-disk DBs (app_state + history_unit + history_pointer + sync_meta) gain window_placement
+-- on open; fresh DBs get it from Scheduler.sq directly. This table is never synced and never produces a
+-- History Unit (see Scheduler.sq for the rationale).
+CREATE TABLE window_placement (
+    window_id TEXT NOT NULL PRIMARY KEY,
+    x REAL NOT NULL,
+    y REAL NOT NULL,
+    width REAL NOT NULL DEFAULT 0,
+    height REAL NOT NULL DEFAULT 0,
+    visible INTEGER NOT NULL
+);

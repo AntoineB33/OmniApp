@@ -12,13 +12,17 @@ interface PresenceGateway {
     /** Whether a signed-in session is available (presence calls are no-ops otherwise). */
     val signedIn: Boolean
 
-    /** Upserts this device's presence row (heartbeat): its [kind] and whether its [screenActive] now. */
+    /** Upserts this device's presence row (a pose-window beacon): its [kind] and whether its [screenActive] now. */
     suspend fun publishPresence(kind: DeviceKind, screenActive: Boolean)
 
     /**
-     * Whether any device **other than this one** on the account has a fresh (newer than [staleMillis])
-     * heartbeat reporting an active screen. A device that slept/crashed without posting `screen_active=false`
-     * ages out via the freshness check, so it cannot read as active forever. `false` when signed out/offline.
+     * Whether any device **other than this one** on the account has a fresh (newer than [staleMillis]) presence
+     * row reporting an active screen. A device that slept/crashed without posting a fresh beacon ages out via
+     * the freshness check, so it cannot read as active forever.
+     *
+     * Returns `false` when signed out (a definitive "no peer"), and **`null` on a transport failure** (the
+     * answer is unknown) so the caller can retry within its own budget rather than mistaking a network blip
+     * for "no peer active".
      */
-    suspend fun activePeersExist(staleMillis: Long): Boolean
+    suspend fun activePeersExistOrNull(staleMillis: Long): Boolean?
 }

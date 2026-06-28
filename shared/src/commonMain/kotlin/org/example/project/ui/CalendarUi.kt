@@ -596,6 +596,8 @@ fun ChoresManagerWindow(
     modifier: Modifier = Modifier,
     /** Initial position relative to centered; staggered per window so they open in a clickable cascade. */
     initialOffset: Offset = Offset.Zero,
+    /** Persists the window's new drag position when a drag gesture ends (local-only geometry). */
+    onOffsetChange: (Offset) -> Unit = {},
     /** Raise this window to the top of the layers — fired on a press anywhere inside it. */
     onRaise: () -> Unit = {},
     /**
@@ -743,7 +745,7 @@ fun ChoresManagerWindow(
                     .fillMaxWidth()
                     .background(CalColors.menuBackground)
                     .pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
+                        detectDragGestures(onDragEnd = { onOffsetChange(offset) }) { change, dragAmount ->
                             change.consume()
                             offset += dragAmount
                         }
@@ -963,6 +965,8 @@ fun HistoryManagerWindow(
     modifier: Modifier = Modifier,
     /** Initial position relative to centered; staggered per window so they open in a clickable cascade. */
     initialOffset: Offset = Offset.Zero,
+    /** Persists the window's new drag position when a drag gesture ends (local-only geometry). */
+    onOffsetChange: (Offset) -> Unit = {},
     /** Raise this window to the top of the layers — fired on a press anywhere inside it. */
     onRaise: () -> Unit = {},
 ) {
@@ -999,7 +1003,7 @@ fun HistoryManagerWindow(
                         .fillMaxWidth()
                         .background(CalColors.menuBackground)
                         .pointerInput(Unit) {
-                            detectDragGestures { change, dragAmount ->
+                            detectDragGestures(onDragEnd = { onOffsetChange(offset) }) { change, dragAmount ->
                                 change.consume()
                                 offset += dragAmount
                             }
@@ -1575,8 +1579,12 @@ fun CalendarFloatingWindow(
     /** PRD §8/§9 calendar history: Ctrl+Z / Ctrl+Y while the calendar holds keyboard focus. */
     onUndo: () -> Unit = {},
     onRedo: () -> Unit = {},
+    /** Initial (persisted) drag position; centered by default. */
+    initialOffset: Offset = Offset.Zero,
+    /** Persists the window's new drag position when a drag gesture ends (local-only geometry). */
+    onOffsetChange: (Offset) -> Unit = {},
 ) {
-    var offset by remember { mutableStateOf(Offset.Zero) }
+    var offset by remember { mutableStateOf(initialOffset) }
     // Keep the title bar (the only drag handle) reachable: this window has a fixed [requiredSize] that, on a
     // small screen (e.g. Android), is taller than the content area it is centered in. Centering an over-tall
     // window puts its head above the top edge, where it can't be grabbed to move it. We track the parent /
@@ -1683,7 +1691,7 @@ fun CalendarFloatingWindow(
                     .onSizeChanged { headerHeightPx = it.height }
                     .background(CalColors.menuBackground)
                     .pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
+                        detectDragGestures(onDragEnd = { onOffsetChange(offset) }) { change, dragAmount ->
                             change.consume()
                             // Clamp the vertical drag so the header can't be dragged off the top/bottom edge.
                             offset = Offset(offset.x + dragAmount.x, clampOffsetY(offset.y + dragAmount.y))
