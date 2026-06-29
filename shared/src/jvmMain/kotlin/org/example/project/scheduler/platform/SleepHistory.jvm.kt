@@ -55,3 +55,58 @@ actual fun lastWakeAfterLongSleepMillis(minSleepMillis: Long): Long? = runCatchi
         .mapNotNull { it.trim().toLongOrNull() }
         .firstOrNull()
 }.getOrNull()
+
+/**
+ * PRD §15 (desktop / Windows): read every Kernel-Power sleep/wake cycle from the System event log via the
+ * same non-elevated PowerShell `Get-WinEvent` query as [lastWakeAfterLongSleepMillis], and return each cycle
+ * whose **wake** is at or after [sinceMillis] as an exact `[sleep_start, sleep_end]` pair (epoch millis),
+ * oldest first. Returns an empty list on any failure (a non-Windows desktop with no `powershell`, a timeout,
+ * or no qualifying cycle) so the caller falls back to the coarse tick-gap interval.
+ *
+ * The two event kinds are merged into ONE time-ordered timeline and walked oldest→newest, pairing each wake
+ * with the most recent unmatched sleep — the exact pairing rationale in [lastWakeAfterLongSleepMillis]. Each
+ * line of output is `sleepStartMillis,wakeMillis`.
+ */
+actual fun recentSleepGaps(sinceMillis: Long): List<DeviceSleepGap> = runCatching {
+    // PowerShell variables are written as ${'$'}name so Kotlin doesn't try to interpolate them.
+    val script =
+        """
+        ${'$'}enter = Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-Kernel-Power';ID=42,506} -MaxEvents 120 -ErrorAction SilentlyContinue
+        ${'$'}exit  = Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-Kernel-Power';ID=1,131,507} -MaxEvents 120 -ErrorAction SilentlyContinue
+        ${'$'}all = @()
+        foreach (${'$'}e in ${'$'}enter) { ${'$'}all += [pscustomobject]@{ t = ${'$'}e.TimeCreated; sleep = ${'$'}true } }
+        foreach (${'$'}e in ${'$'}exit)  { ${'$'}all += [pscustomobject]@{ t = ${'$'}e.TimeCreated; sleep = ${'$'}false } }
+        ${'$'}all = ${'$'}all | Sort-Object t
+        ${'$'}lastSleep = ${'$'}null
+        foreach (${'$'}e in ${'$'}all) {
+            if (${'$'}e.sleep) {
+                if (${'$'}null -eq ${'$'}lastSleep) { ${'$'}lastSleep = ${'$'}e.t }
+            } else {
+                if (${'$'}null -ne ${'$'}lastSleep) {
+                    ${'$'}s = [long]([DateTimeOffset]${'$'}lastSleep).ToUnixTimeMilliseconds()
+                    ${'$'}w = [long]([DateTimeOffset]${'$'}e.t).ToUnixTimeMilliseconds()
+                    if (${'$'}w -ge $sinceMillis) { "${'$'}s,${'$'}w" }
+                    ${'$'}lastSleep = ${'$'}null
+                }
+            }
+        }
+        """.trimIndent()
+    val process =
+        ProcessBuilder("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+            .redirectErrorStream(true)
+            .start()
+    if (!process.waitFor(8, TimeUnit.SECONDS)) {
+        process.destroyForcibly()
+        return@runCatching emptyList()
+    }
+    process.inputStream.bufferedReader().readText()
+        .lineSequence()
+        .mapNotNull { line ->
+            val parts = line.trim().split(',')
+            if (parts.size != 2) return@mapNotNull null
+            val start = parts[0].toLongOrNull() ?: return@mapNotNull null
+            val end = parts[1].toLongOrNull() ?: return@mapNotNull null
+            if (end > start) DeviceSleepGap(start, end) else null
+        }
+        .toList()
+}.getOrElse { emptyList() }

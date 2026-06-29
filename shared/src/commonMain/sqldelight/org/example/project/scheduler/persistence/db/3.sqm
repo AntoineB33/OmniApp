@@ -1,0 +1,12 @@
+-- Schema v3 -> v4: add the device-sleep gaps table (PRD §15 exact pauses).
+-- Existing on-disk DBs (app_state + history_unit + history_pointer + sync_meta + window_placement) gain
+-- device_sleep_gap on open; fresh DBs get it from Scheduler.sq directly. This table is synced per-row
+-- across the account but is never part of the PersistedSnapshot and never produces a History Unit (see
+-- Scheduler.sq for the rationale).
+CREATE TABLE device_sleep_gap (
+    device_id   TEXT NOT NULL,
+    sleep_start INTEGER NOT NULL,
+    sleep_end   INTEGER NOT NULL,
+    recorded_at INTEGER NOT NULL,
+    PRIMARY KEY (device_id, sleep_start)
+);

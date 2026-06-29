@@ -52,6 +52,23 @@ CREATE TABLE window_placement (
     visible INTEGER NOT NULL
 );
 
+-- PRD §15 device-sleep gaps: the exact `[sleep_start, sleep_end]` intervals (epoch millis) a device was
+-- asleep, read from the OS on wake (Windows Kernel-Power events). This is authoritative device-sleep
+-- history — an INPUT to the schedule (a sleep is the user taking a pause), not derivable from other state —
+-- so it is synced across the account (each device records its own rows; every device pulls all of them).
+-- It is deliberately NOT part of `app_state`/PersistedSnapshot: it must never enter the Undo/Redo history
+-- and must merge per-device rather than be clobbered by another device's whole-document snapshot (same
+-- separation rationale as window_placement/sync_meta). `device_id` is the recording device; `recorded_at`
+-- is when the row was written (freshness / "apply once" bookkeeping). Added in migration 3.sqm; existing
+-- DBs (schema v3) gain it on open.
+CREATE TABLE device_sleep_gap (
+    device_id   TEXT NOT NULL,
+    sleep_start INTEGER NOT NULL,
+    sleep_end   INTEGER NOT NULL,
+    recorded_at INTEGER NOT NULL,
+    PRIMARY KEY (device_id, sleep_start)
+);
+
 selectAppState:
 SELECT payload FROM app_state WHERE id = 0;
 
@@ -94,3 +111,10 @@ SELECT window_id, x, y, width, height, visible FROM window_placement;
 upsertPlacement:
 INSERT OR REPLACE INTO window_placement(window_id, x, y, width, height, visible)
 VALUES (?, ?, ?, ?, ?, ?);
+
+selectAllSleepGaps:
+SELECT device_id, sleep_start, sleep_end, recorded_at FROM device_sleep_gap ORDER BY sleep_start;
+
+upsertSleepGap:
+INSERT OR REPLACE INTO device_sleep_gap(device_id, sleep_start, sleep_end, recorded_at)
+VALUES (?, ?, ?, ?);

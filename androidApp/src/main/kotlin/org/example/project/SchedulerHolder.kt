@@ -7,6 +7,7 @@ import kotlinx.coroutines.SupervisorJob
 import org.example.project.scheduler.engine.AppSchedulerHost
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.persistence.AndroidSchedulerStoreHolder
+import org.example.project.scheduler.persistence.DeviceSleepGapStore
 import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.state.SchedulerReducer
@@ -39,7 +40,15 @@ object SchedulerHolder {
         val store = createDefaultSchedulerStore()
         val syncEngine = (store as? SyncMetaStore)?.let { SchedulerSyncEngine(RemoteSnapshotClient(), it) }
         val vm = TaskSchedulerViewModel(store = store, syncEngine = syncEngine)
-        val engine = SchedulerEngine(vm = vm, clock = SystemAppClock, scope = scope, presence = vm.presence)
+        val engine =
+            SchedulerEngine(
+                vm = vm,
+                clock = SystemAppClock,
+                scope = scope,
+                presence = vm.presence,
+                sleepGapStore = store as? DeviceSleepGapStore,
+                sleepGaps = vm.sleepGaps,
+            )
         engine.start()
         return AppSchedulerHost(vm, engine).also { host = it }
     }

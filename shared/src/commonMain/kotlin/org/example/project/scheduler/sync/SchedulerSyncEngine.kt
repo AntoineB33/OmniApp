@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.time.Instant
 import kotlinx.serialization.json.Json
 import org.example.project.scheduler.persistence.PersistedSnapshot
+import org.example.project.scheduler.persistence.SleepGapRecord
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.platform.DeviceKind
@@ -52,7 +53,7 @@ class SchedulerSyncEngine(
     private val client: RemoteSnapshotClient,
     private val metaStore: SyncMetaStore,
     private val json: Json = Json { ignoreUnknownKeys = true },
-) : PresenceGateway {
+) : PresenceGateway, SleepGapGateway {
     private val mutex = Mutex()
     private var session: SupabaseSession? = null
 
@@ -236,5 +237,25 @@ class SchedulerSyncEngine(
                     updated != null && now - updated < staleMillis
                 }
         }
+    }
+
+    // ---- PRD §15 device-sleep gaps (SleepGapGateway) ----
+    //
+    // Like presence, these run outside [mutex]: gaps are an independent per-row side channel, never blocking
+    // — or blocked by — a whole-document snapshot reconcile.
+
+    override val deviceId: String get() = meta().deviceId
+
+    override suspend fun pushSleepGaps(records: List<SleepGapRecord>) {
+        val current = session ?: return
+        if (records.isEmpty()) return
+        val rows = records.map { SleepGapRow(it.deviceId, it.startMillis, it.endMillis, it.recordedAtMillis) }
+        runCatching { withAuth(current) { client.upsertSleepGaps(it, rows) } }
+    }
+
+    override suspend fun fetchSleepGaps(): List<SleepGapRecord>? {
+        val current = session ?: return emptyList()
+        val rows = runCatching { withAuth(current) { client.fetchSleepGaps(it) } }.getOrNull() ?: return null
+        return rows.map { SleepGapRecord(it.deviceId, it.sleepStart, it.sleepEnd, it.recordedAt) }
     }
 }

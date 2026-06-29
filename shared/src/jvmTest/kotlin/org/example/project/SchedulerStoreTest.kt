@@ -3,6 +3,7 @@ package org.example.project
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.persistence.SchedulerStateCodec
+import org.example.project.scheduler.persistence.SleepGapRecord
 import org.example.project.scheduler.persistence.SqlDelightSchedulerStore
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.WindowPlacement
@@ -264,6 +265,110 @@ class SchedulerStoreTest {
             assertTrue(store.loadPlacements().isEmpty())
             store.savePlacement("Calendar", WindowPlacement(x = 7f, y = 8f, visible = true))
             assertEquals(WindowPlacement(x = 7f, y = 8f, visible = true), store.loadPlacements()["Calendar"])
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
+    }
+
+    @Test
+    fun sleep_gaps_round_trip() {
+        val store = newStore()
+        assertTrue(store.loadSleepGaps().isEmpty())
+
+        store.saveSleepGaps(
+            listOf(
+                SleepGapRecord(deviceId = "desk", startMillis = 1_000, endMillis = 2_000, recordedAtMillis = 9_000),
+                SleepGapRecord(deviceId = "desk", startMillis = 5_000, endMillis = 6_000, recordedAtMillis = 9_000),
+            ),
+        )
+        assertEquals(2, store.loadSleepGaps().size)
+        assertEquals(
+            SleepGapRecord("desk", 1_000, 2_000, 9_000),
+            store.loadSleepGaps().first(),
+        )
+
+        // Upsert on (deviceId, startMillis): re-recording the same interval replaces the row, not adds one.
+        store.saveSleepGaps(listOf(SleepGapRecord("desk", 1_000, 2_500, 9_500)))
+        val gaps = store.loadSleepGaps()
+        assertEquals(2, gaps.size)
+        assertEquals(SleepGapRecord("desk", 1_000, 2_500, 9_500), gaps.first { it.startMillis == 1_000L })
+
+        // A different device's identical start is a distinct row.
+        store.saveSleepGaps(listOf(SleepGapRecord("phone", 1_000, 2_000, 9_000)))
+        assertEquals(3, store.loadSleepGaps().size)
+    }
+
+    /**
+     * Sleep gaps are synced per-row OUTSIDE the snapshot (like window geometry): saving gaps must not change
+     * the [org.example.project.scheduler.persistence.PersistedSnapshot] the store loads.
+     */
+    @Test
+    fun sleep_gaps_do_not_affect_persisted_snapshot() {
+        val store = newStore()
+        store.save(SchedulerStateCodec.encodeSnapshot(stateWithHistory()))
+        val before = store.load()!!
+
+        store.saveSleepGaps(listOf(SleepGapRecord("desk", 1_000, 2_000, 9_000)))
+
+        assertEquals(before, store.load()!!)
+    }
+
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by the *previous* schema (v3: app_state + history_unit
+     * + history_pointer + sync_meta + window_placement, no device_sleep_gap) must still load after this feature
+     * ships, with the 3.sqm migration adding device_sleep_gap on open. Reproduces the on-disk v3 shape, then
+     * opens it with the current schema and asserts old data survives and gap storage is usable.
+     */
+    @Test
+    fun upgrades_pre_sleep_gap_v3_db_and_preserves_data() {
+        val dbFile = File.createTempFile("scheduler-v3", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            val raw = JdbcSqliteDriver(url, Properties())
+            raw.execute(null, "CREATE TABLE app_state (id INTEGER NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+            raw.execute(
+                null,
+                "CREATE TABLE history_unit (category TEXT NOT NULL, ordinal INTEGER NOT NULL, " +
+                    "time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, debug_tainted INTEGER NOT NULL, " +
+                    "delta TEXT NOT NULL, PRIMARY KEY (category, ordinal))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE history_pointer (category TEXT NOT NULL PRIMARY KEY, pointer INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
+                    "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
+                    "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE window_placement (window_id TEXT NOT NULL PRIMARY KEY, x REAL NOT NULL, " +
+                    "y REAL NOT NULL, width REAL NOT NULL DEFAULT 0, height REAL NOT NULL DEFAULT 0, " +
+                    "visible INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(null, "INSERT INTO app_state(id, payload) VALUES (0, ?)", 1) {
+                bindString(0, payload)
+            }
+            raw.execute(null, "PRAGMA user_version = 3", 0)
+            raw.close()
+
+            // Open with the current schema: the v3 -> v4 migration must run (adding device_sleep_gap) without
+            // dropping the app_state row.
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            assertEquals(payload, store.load()!!.statePayload)
+            assertTrue(store.loadSleepGaps().isEmpty())
+            store.saveSleepGaps(listOf(SleepGapRecord("desk", 1_000, 2_000, 9_000)))
+            assertEquals(SleepGapRecord("desk", 1_000, 2_000, 9_000), store.loadSleepGaps().single())
             driver.close()
         } finally {
             dbFile.delete()

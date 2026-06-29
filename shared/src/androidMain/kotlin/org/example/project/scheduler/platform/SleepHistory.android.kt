@@ -7,3 +7,9 @@ package org.example.project.scheduler.platform
  * non-Windows desktop.
  */
 actual fun lastWakeAfterLongSleepMillis(minSleepMillis: Long): Long? = null
+
+/**
+ * PRD §15 (Android): no readable system sleep/wake event log (see [lastWakeAfterLongSleepMillis]), so the
+ * phone records no gaps of its own — it only pulls the desktop's exact pause gaps from the synced table.
+ */
+actual fun recentSleepGaps(sinceMillis: Long): List<DeviceSleepGap> = emptyList()

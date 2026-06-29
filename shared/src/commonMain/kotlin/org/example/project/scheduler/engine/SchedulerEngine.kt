@@ -20,14 +20,19 @@ import kotlinx.datetime.toLocalDateTime
 import org.example.project.DebugFlags
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.persistence.DeviceSleepGapStore
+import org.example.project.scheduler.persistence.SleepGapRecord
 import org.example.project.scheduler.platform.DeviceKind
+import org.example.project.scheduler.platform.DeviceSleepGap
 import org.example.project.scheduler.platform.currentDeviceKind
 import org.example.project.scheduler.platform.isScreenActive
 import org.example.project.scheduler.platform.sendSystemNotification
 import org.example.project.scheduler.platform.lastWakeAfterLongSleepMillis
+import org.example.project.scheduler.platform.recentSleepGaps as platformRecentSleepGaps
 import org.example.project.scheduler.platform.speak as platformSpeak
 import org.example.project.scheduler.platform.stopSpeaking
 import org.example.project.scheduler.sync.PresenceGateway
+import org.example.project.scheduler.sync.SleepGapGateway
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
@@ -78,6 +83,15 @@ private const val POSE_FINISH_RETRY_MILLIS: Long = 2L * 1_000
 // voice cue, so a mid-wait sim-speed change is picked up promptly (cf. [LOOK_AWAY_RESUME_POLL_MILLIS]).
 private const val POSE_FINISH_POLL_MILLIS: Long = 1_000
 
+// PRD §15 device-sleep gaps: how far before a detected sleep's coarse start the OS sleep/wake log is scanned
+// for the EXACT interval(s) to record. A margin past the tick-gap boundary so a sleep that began a little
+// before the last tick (up to one tick cadence) is still captured.
+private const val GAP_QUERY_MARGIN_MILLIS: Long = 5L * 60 * 1_000
+
+// PRD §15: stand-in device id for gaps recorded while sync is disabled / signed out, so a local-only install
+// still tags its rows with something stable (it never reaches the remote table).
+private const val LOCAL_DEVICE_ID: String = "local"
+
 /**
  * Bundle of the single process-shared [TaskSchedulerViewModel] + its already-started [SchedulerEngine],
  * handed to `App()` so the Android foreground service and the Activity render/drive one source of truth
@@ -122,6 +136,12 @@ class SchedulerEngine(
     private val screenActive: () -> Boolean = ::isScreenActive,
     // PRD §15: the voice sink (defaults to the platform TTS); injectable so cues are assertable in tests.
     private val speak: (String) -> Unit = ::platformSpeak,
+    // PRD §15 device-sleep gaps: local store for the exact pause intervals; null disables gap recording/pull.
+    private val sleepGapStore: DeviceSleepGapStore? = null,
+    // PRD §15 device-sleep gaps: the push/pull channel (the sync engine); null disables remote gap sync.
+    private val sleepGaps: SleepGapGateway? = null,
+    // PRD §15: the OS sleep/wake-log query (defaults to the platform reader); injectable for tests.
+    private val sleepGapQuery: (Long) -> List<DeviceSleepGap> = ::platformRecentSleepGaps,
 ) {
     private val _nowMillis = MutableStateFlow(clock.nowMillis())
 
@@ -162,6 +182,8 @@ class SchedulerEngine(
         launchWindDownNotification()
         launchPosePresenceBeacon()
         launchPoseFinishVoiceCue()
+        // PRD §15: trigger #1 — on startup, pull every device's exact pause gaps into the local DB.
+        pullSleepGaps()
     }
 
     // PRD §9: the single "time has advanced to `now`" step — see the original `advanceTo` in App.kt.
@@ -197,7 +219,12 @@ class SchedulerEngine(
             val realNow = SystemAppClock.nowMillis()
             val now = clock.nowMillis()
             if (realNow - lastRealTick > DEVICE_SLEEP_THRESHOLD_MILLIS) {
+                // The schedule resumes immediately from the coarse tick boundaries (unchanged); separately,
+                // the OS sleep/wake log is queried off-thread for the EXACT pause interval(s) to record and
+                // sync (PRD §15) — so a ping that was due mid-pause but never sent (the machine was down)
+                // becomes an exact gap other devices can pull.
                 reportTimeGap(lastClockTick, now)
+                recordExactSleepGaps(lastClockTick, now)
             } else {
                 advanceTo(now)
             }
@@ -493,6 +520,9 @@ class SchedulerEngine(
             if (!gateway.signedIn) return@launch
             sleepUntilSim(endMillis - POSE_FINISH_CHECK_LEAD_MILLIS)
             if (screenActive()) return@launch
+            // PRD §15: trigger #3 — ~1 min before the pose ends, also pull the latest exact gaps so the
+            // local DB reflects any pause another device just recorded.
+            pullSleepGaps()
             val peersActive = readPeersActiveWithRetry(gateway, endMillis)
             if (!poseFinishEligible(isPhone = deviceKind == DeviceKind.Phone, signedIn = gateway.signedIn,
                     screenActive = screenActive(), peersActive = peersActive)) {
@@ -530,6 +560,47 @@ class SchedulerEngine(
             if (attempt < POSE_FINISH_READ_ATTEMPTS - 1 && clock.nowMillis() < endMillis) delay(POSE_FINISH_RETRY_MILLIS)
         }
         return false
+    }
+
+    // PRD §15 device-sleep gaps: after a sleep is detected, query the OS sleep/wake log off-thread for the
+    // EXACT interval(s) of the pause that was just missed and record them into the synced gaps table (local
+    // store + remote push). Best-effort: an unsupported platform / failed query returns nothing and the
+    // coarse tick-gap hole already kept the schedule correct. Idempotent — the store/remote upsert keys on
+    // (deviceId, sleepStart), so re-recording the same interval (or backfilling earlier ones) is harmless.
+    private fun recordExactSleepGaps(approxStart: Long, approxEnd: Long) {
+        if (sleepGapStore == null && sleepGaps == null) return
+        scope.launch {
+            val gaps = withContext(Dispatchers.Default) {
+                runCatching { sleepGapQuery(approxStart - GAP_QUERY_MARGIN_MILLIS) }.getOrDefault(emptyList())
+            }.filter { it.endMillis > it.startMillis && it.endMillis <= approxEnd + GAP_QUERY_MARGIN_MILLIS }
+            if (gaps.isEmpty()) return@launch
+            val deviceId = sleepGaps?.deviceId ?: LOCAL_DEVICE_ID
+            val recordedAt = SystemAppClock.nowMillis()
+            val records = gaps.map { SleepGapRecord(deviceId, it.startMillis, it.endMillis, recordedAt) }
+            sleepGapStore?.saveSleepGaps(records)
+            withContext(Dispatchers.Default) { runCatching { sleepGaps?.pushSleepGaps(records) } }
+        }
+    }
+
+    /**
+     * PRD §15: trigger #2 (manual button) — pull every device's exact pause gaps from the remote table into
+     * the local DB. Public so a "fetch now" control can drive it; also called at startup and ~1 min before a
+     * pose ends. No-op when sync/gap storage is disabled or signed out; a transport failure is swallowed
+     * (a `null` fetch) so the next trigger retries.
+     */
+    fun fetchRemoteGapsNow() = pullSleepGaps()
+
+    private fun pullSleepGaps() {
+        val gateway = sleepGaps ?: return
+        val store = sleepGapStore ?: return
+        scope.launch {
+            val remote =
+                withContext(Dispatchers.Default) { runCatching { gateway.fetchSleepGaps() }.getOrNull() }
+                    ?: return@launch
+            val known = store.loadSleepGaps().mapTo(mutableSetOf()) { it.deviceId to it.startMillis }
+            val fresh = remote.filter { (it.deviceId to it.startMillis) !in known }
+            if (fresh.isNotEmpty()) store.saveSleepGaps(fresh)
+        }
     }
 
     companion object {

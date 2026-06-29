@@ -64,6 +64,8 @@ fun SignInDialog(
     onSignUp: (email: String, password: String) -> Unit,
     onSignOut: () -> Unit,
     onDismiss: () -> Unit,
+    // PRD §15: manual "fetch from server" (pulls the snapshot + every device's exact pause gaps). Null hides it.
+    onFetch: (() -> Unit)? = null,
 ) {
     val signedIn = state != null && state != SyncState.SignedOut
     var email by remember { mutableStateOf("") }
@@ -83,6 +85,12 @@ fun SignInDialog(
                         },
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                    if (onFetch != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = { onFetch() }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Fetch from server")
+                        }
+                    }
                 } else {
                     OutlinedTextField(
                         value = email,

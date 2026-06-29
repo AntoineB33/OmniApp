@@ -42,6 +42,18 @@ data class DevicePresence(
     @SerialName("updated_at") val updatedAt: String,
 )
 
+/**
+ * PRD §15 device-sleep gaps: one device's exact pause interval row in the `device_sleep_gap` table. Mirrors
+ * [org.example.project.scheduler.persistence.SleepGapRecord]; the column names match PostgREST.
+ */
+@Serializable
+data class SleepGapRow(
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("sleep_start") val sleepStart: Long,
+    @SerialName("sleep_end") val sleepEnd: Long,
+    @SerialName("recorded_at") val recordedAt: Long,
+)
+
 /** Raised when Supabase returns a non-success response we did not specifically handle. */
 class SupabaseException(val status: Int, message: String) : Exception("Supabase $status: $message")
 
@@ -176,6 +188,38 @@ class RemoteSnapshotClient(
         return json.decodeFromString<List<DevicePresence>>(response.bodyAsText())
     }
 
+    // ---- Device-sleep gaps (PostgREST, PRD §15) ----
+
+    /**
+     * Upserts this device's gap [rows] keyed by `(user_id, device_id, sleep_start)`. `merge-duplicates`
+     * makes a repeat of the same interval update its existing row rather than conflict. A no-op for an empty
+     * list (PostgREST rejects an empty insert body).
+     */
+    suspend fun upsertSleepGaps(session: SupabaseSession, rows: List<SleepGapRow>) {
+        if (rows.isEmpty()) return
+        val body = rows.map { GapUpsert(session.userId, it.deviceId, it.sleepStart, it.sleepEnd, it.recordedAt) }
+        val response =
+            http.post("${config.restUrl}/device_sleep_gap") {
+                authHeaders(session)
+                header("Prefer", "resolution=merge-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(body))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
+    /** Returns every gap row for this account (all of the user's devices). */
+    suspend fun fetchSleepGaps(session: SupabaseSession): List<SleepGapRow> {
+        val response =
+            http.get("${config.restUrl}/device_sleep_gap") {
+                authHeaders(session)
+                url.parameters.append("user_id", "eq.${session.userId}")
+                url.parameters.append("select", "device_id,sleep_start,sleep_end,recorded_at")
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        return json.decodeFromString<List<SleepGapRow>>(response.bodyAsText())
+    }
+
     fun close() = http.close()
 
     private fun io.ktor.client.request.HttpRequestBuilder.authHeaders(session: SupabaseSession) {
@@ -223,4 +267,13 @@ private data class PresenceUpsert(
     @SerialName("device_id") val deviceId: String,
     val kind: String,
     @SerialName("screen_active") val screenActive: Boolean,
+)
+
+@Serializable
+private data class GapUpsert(
+    @SerialName("user_id") val userId: String,
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("sleep_start") val sleepStart: Long,
+    @SerialName("sleep_end") val sleepEnd: Long,
+    @SerialName("recorded_at") val recordedAt: Long,
 )

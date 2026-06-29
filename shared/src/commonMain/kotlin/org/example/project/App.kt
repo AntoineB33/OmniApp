@@ -40,6 +40,7 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStore
+import org.example.project.scheduler.persistence.DeviceSleepGapStore
 import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.persistence.WindowPlacement
 import org.example.project.scheduler.persistence.WindowPlacementStore
@@ -140,7 +141,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val engineScope = rememberCoroutineScope()
         val engine: SchedulerEngine = remember(host) {
             host?.engine
-                ?: SchedulerEngine(vm = vm, clock = clock, scope = engineScope, tz = tz, presence = vm.presence)
+                ?: SchedulerEngine(
+                    vm = vm,
+                    clock = clock,
+                    scope = engineScope,
+                    tz = tz,
+                    presence = vm.presence,
+                    sleepGapStore = store as? DeviceSleepGapStore,
+                    sleepGaps = vm.sleepGaps,
+                )
         }
         LaunchedEffect(engine) { if (host == null) engine.start() }
         val nowMillis by engine.nowMillis.collectAsState()
@@ -667,6 +676,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onSignUp = { e, p -> vm.signUp(e, p) },
                     onSignOut = { vm.signOut() },
                     onDismiss = { showSignIn = false },
+                    // PRD §15: manual server check — pull the snapshot and every device's exact pause gaps.
+                    onFetch = { vm.syncNow(); engine.fetchRemoteGapsNow() },
                 )
             }
         }

@@ -75,3 +75,30 @@ drop trigger if exists touch_device_presence on public.device_presence;
 create trigger touch_device_presence
     before insert or update on public.device_presence
     for each row execute function public.touch_device_presence();
+
+-- ---------------------------------------------------------------------------
+-- PRD §15 device-sleep gaps (device_sleep_gap).
+--
+-- One row per (user, device, sleep_start) holds the EXACT interval a device was asleep, read from the OS on
+-- wake (Windows Kernel-Power events). It is authoritative device-sleep history — an input to the schedule (a
+-- sleep is the user taking a pause), not derivable from other state — synced per-row so every device pulls
+-- the exact pause times the others observed (e.g. the phone learns the desktop's exact pause). Same RLS
+-- model as the other tables: a signed-in user can only see and write their own devices' rows.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.device_sleep_gap (
+    user_id     uuid not null references auth.users (id) on delete cascade,
+    device_id   text not null,
+    sleep_start bigint not null,
+    sleep_end   bigint not null,
+    recorded_at bigint not null,
+    primary key (user_id, device_id, sleep_start)
+);
+
+alter table public.device_sleep_gap enable row level security;
+
+drop policy if exists "own sleep gaps" on public.device_sleep_gap;
+create policy "own sleep gaps" on public.device_sleep_gap
+    for all
+    using (auth.uid() = user_id)
+    with check (auth.uid() = user_id);

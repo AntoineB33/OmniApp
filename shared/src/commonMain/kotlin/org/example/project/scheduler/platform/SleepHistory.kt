@@ -8,3 +8,18 @@ package org.example.project.scheduler.platform
  * slept through is shown next at its due time rather than overdue; null leaves it overdue at the now-line.
  */
 expect fun lastWakeAfterLongSleepMillis(minSleepMillis: Long): Long?
+
+/**
+ * PRD §15 device-sleep gaps: one exact interval the machine was asleep — went to sleep at [startMillis],
+ * woke at [endMillis] (epoch millis), read from the OS sleep/wake history.
+ */
+data class DeviceSleepGap(val startMillis: Long, val endMillis: Long)
+
+/**
+ * PRD §15: every device-sleep interval the OS recorded whose **wake** is at or after [sinceMillis], oldest
+ * first. On wake the scheduler queries this to record the *exact* `[sleep_start, sleep_end]` of the pause it
+ * just missed (rather than the coarse tick-gap boundaries) into the synced gaps table, so other devices pull
+ * exact pause times. Returns an empty list when it can't be determined (unsupported platform, no permission,
+ * or nothing on record) — the caller then falls back to the inexact tick-gap interval.
+ */
+expect fun recentSleepGaps(sinceMillis: Long): List<DeviceSleepGap>
