@@ -21,6 +21,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.sync.PresenceGateway
 import org.example.project.scheduler.sync.SchedulerSyncEngine
+import org.example.project.scheduler.sync.ServerSyncThrottle
 import org.example.project.scheduler.sync.SleepGapGateway
 import org.example.project.scheduler.sync.StartupLogin
 import org.example.project.scheduler.sync.SyncState
@@ -59,6 +60,14 @@ class TaskSchedulerViewModel(
     // of one per keystroke.
     private val saveScope = CoroutineScope(SupervisorJob() + saveDispatcher)
     private var saveJob: Job? = null
+
+    // ARCHITECTURE.md §8: the local SQLite write coalesces on the small [SAVE_DEBOUNCE_MILLIS] debounce, but
+    // the network push that mirrors it to Supabase is rate-limited to at most once per minute (idle → sent
+    // immediately). Only created when sync is enabled.
+    private val serverSync: ServerSyncThrottle? =
+        syncEngine?.let { engine ->
+            ServerSyncThrottle(saveScope, SERVER_SYNC_INTERVAL_MILLIS) { engine.reconcile() }
+        }
 
     // True while there are state changes not yet written by the debounced save (so [flush] knows whether a
     // close-within-the-debounce-window left unpushed work to flag for the next launch's reconcile).
@@ -113,10 +122,12 @@ class TaskSchedulerViewModel(
                 delay(SAVE_DEBOUNCE_MILLIS)
                 store.save(SchedulerStateCodec.encodeSnapshot(_state.value))
                 savePending = false
-                // PRD §5 sync: local change persisted → flag it and push (LWW). No-op when signed out/offline.
+                // PRD §5 sync: local change persisted → flag it (immediately, so a close before the push still
+                // reconciles next launch) and request a push. The push itself is throttled to once per minute
+                // (ARCHITECTURE.md §8); markDirty keeps the change durable until it actually goes out.
                 syncEngine?.let { engine ->
                     engine.markDirty()
-                    engine.reconcile()
+                    serverSync?.request()
                 }
             }
     }
@@ -171,6 +182,12 @@ class TaskSchedulerViewModel(
     companion object {
         /** PRD §5: how long edits must be quiet before the debounced write to SQLite fires. */
         private const val SAVE_DEBOUNCE_MILLIS = 400L
+
+        /**
+         * ARCHITECTURE.md §8: minimum spacing between **server** pushes. A change ≥ this long after the
+         * previous push goes out immediately; a burst within the window coalesces into one deferred push.
+         */
+        private const val SERVER_SYNC_INTERVAL_MILLIS = 60_000L
 
         /** PRD §5: reload persisted state; an interrupted Edit Mode session is canceled. */
         fun loadInitialState(store: SchedulerStore?, initial: SchedulerState): SchedulerState =
