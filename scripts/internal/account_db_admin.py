@@ -12,12 +12,12 @@ Config comes from the environment (the .bat exports it from accounts.env), falli
 values baked into shared SupabaseConfig.kt:
   SUPABASE_URL, SUPABASE_ANON_KEY, LOGIN_DOMAIN
 
-The `empty` DELETEs run under the user's own JWT, so the Supabase tables need a row-owner DELETE policy.
-If yours lack one, paste this once into the Supabase SQL editor:
+The `empty` DELETEs run under the user's own JWT, so each table needs a row-owner DELETE policy. This is
+already covered by the `for all` policies in supabase/migrations/ (a Postgres `for all` policy applies to
+SELECT/INSERT/UPDATE/DELETE), so a standard setup needs nothing extra. Only if you replaced those with
+narrower per-command policies that omit DELETE, add one back, e.g.:
 
   create policy "own delete" on public.scheduler_snapshot for delete using (auth.uid() = user_id);
-  create policy "own delete" on public.device_presence  for delete using (auth.uid() = user_id);
-  create policy "own delete" on public.device_sleep_gap  for delete using (auth.uid() = user_id);
 
 Stdlib only (urllib) -- no pip installs. Exit code 0 on success, non-zero on failure.
 """

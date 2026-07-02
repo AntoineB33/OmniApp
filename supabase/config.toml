@@ -1,0 +1,9 @@
+# Supabase CLI project config. `project_id` is the project ref (the subdomain of your project URL:
+# https://<ref>.supabase.co). Used by `supabase link` / `supabase db push` / `supabase functions deploy`.
+# This is not a secret. Override for a different project by re-linking: supabase link --project-ref <ref>.
+project_id = "itoaqbftjemovkzswiyu"
+
+[functions.pause-cue]
+# The pause-end voice cue Edge Function verifies its own JWT (it is called by Postgres pg_net with the
+# service-role key), so the platform gateway must not reject unauthenticated invocations.
+verify_jwt = false

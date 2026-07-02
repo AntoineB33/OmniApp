@@ -1,7 +1,7 @@
 // PRD §15 / ARCHITECTURE.md §8 — the "function edge trigger" that delivers the pause-end voice cue.
 //
 // This is the ONLY server→device channel (there is never a WebSocket). It is invoked two ways, both from
-// Postgres via pg_net (see supabase/schema.sql):
+// Postgres via pg_net (see supabase/migrations/):
 //   • action:'schedule' — from `tick_pause_cues()`, ~1 min before a pose ends, when the next cue was set by a
 //     device OTHER than the last phone. Tells the last phone to schedule its local "pause is over" cue at
 //     `due_at`. (When the phone itself set the schedule, the cron job skips this — the phone already

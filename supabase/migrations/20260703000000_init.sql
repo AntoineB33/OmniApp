@@ -1,5 +1,9 @@
--- OmniApp cross-device sync — Supabase setup (PRD §5, Phase 1 whole-document sync).
--- Run this once in the Supabase SQL Editor (Dashboard > SQL Editor > New query > paste > Run).
+-- OmniApp cross-device sync — Supabase schema (PRD §5, Phase 1 whole-document sync).
+--
+-- This is the initial migration. Apply it with the Supabase CLI:  supabase db push
+-- (or scripts/deploy-supabase.bat, which also deploys the pause-cue Edge Function). Every statement
+-- is idempotent (create ... if not exists / drop ... if exists) so re-applying is safe. You can still
+-- paste it into the Dashboard SQL Editor by hand if you prefer — the CLI is just the no-copy-paste path.
 --
 -- One row per user holds the whole serialized PersistedSnapshot (app_state + history) as text, versioned
 -- by `revision` for optimistic-concurrency. Row-Level Security ensures a signed-in user can only read and
@@ -116,7 +120,7 @@ create policy "own sleep gaps" on public.device_sleep_gap
 -- NOTE: this needs (1) the `pg_cron` and `pg_net` extensions enabled, (2) the `pause-cue` Edge Function
 -- deployed with FCM_* / APNS_* secrets, and (3) each phone registering its push token (native, follow-up).
 -- Until those exist the tables are inert — the desktop client writes `pause_cue_schedule` / `account_last_phone`
--- but no push goes out.
+-- but no push goes out. See the "manual, one-time" steps at the bottom of this file.
 -- ---------------------------------------------------------------------------
 
 -- One push token per device so the server can reach it (platform = 'fcm' on Android, 'apns' on iOS).
@@ -208,3 +212,11 @@ begin
     end loop;
 end;
 $$;
+
+-- ===========================================================================
+-- Project-level bits `supabase db push` does NOT do (extensions / GUCs / cron are not table DDL, and the
+-- service-role key is a secret that must not be committed) live in `supabase/pause-cue-setup.sql`, applied
+-- by scripts/deploy-supabase.bat via `supabase db query` with the key injected from scripts/accounts.env.
+-- Only the Edge Function's FCM_/APNS_ secrets (`supabase secrets set ...`) and native push-token
+-- registration remain a follow-up. Until those exist the tables above are inert.
+-- ===========================================================================

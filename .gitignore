@@ -27,3 +27,7 @@ node_modules/
 # Per-account sync credentials for the account{1,2,3}-* scripts (secrets; never committed).
 # scripts/accounts.env.example is the committed template.
 scripts/accounts.env
+
+# Supabase CLI transient state (linked project ref, temp files). The schema
+# lives in supabase/migrations/ and config in supabase/config.toml (both committed).
+supabase/.temp/
