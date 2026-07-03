@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.math.abs
 import kotlin.time.Instant
+import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
@@ -45,6 +46,9 @@ import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.persistence.WindowPlacement
 import org.example.project.scheduler.persistence.WindowPlacementStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
+import org.example.project.scheduler.platform.installPauseCuePushBridge
+import org.example.project.scheduler.platform.localPauseCueDeliveryPlatform
+import org.example.project.scheduler.platform.scheduleLocalPauseCuePlatform
 import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.state.AppWindow
@@ -150,9 +154,30 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     sleepGapStore = store as? DeviceSleepGapStore,
                     sleepGaps = vm.sleepGaps,
                     pauseCue = vm.pauseCue,
+                    // PRD §15 / ARCHITECTURE.md §8: the OS-scheduled local cue seam for the engine App() builds
+                    // itself (iOS delivers via UNUserNotificationCenter; desktop/web are inert). Android does not
+                    // reach here — it injects an AlarmManager seam via SchedulerHolder.
+                    scheduleLocalPauseCue = ::scheduleLocalPauseCuePlatform,
+                    localPauseCueDelivery = localPauseCueDeliveryPlatform,
                 )
         }
         LaunchedEffect(engine) { if (host == null) engine.start() }
+        // PRD §15 / ARCHITECTURE.md §8 (iOS APNs, reqs #2/#6): give the platform's native push layer its two
+        // callbacks — publish this phone's APNs token, and route a received pause-cue push into the engine.
+        // A no-op off iOS (Android uses its FirebaseMessagingService instead; desktop/web have no push layer).
+        LaunchedEffect(engine) {
+            installPauseCuePushBridge(
+                registerApnsToken = { token ->
+                    engineScope.launch { vm.pauseCue?.registerPushToken("phone", "apns", token) }
+                },
+                onRemotePush = { action, dueAtIso ->
+                    val dueMillis =
+                        dueAtIso?.takeIf { it.isNotBlank() }
+                            ?.let { runCatching { Instant.parse(it).toEpochMilliseconds() }.getOrNull() }
+                    engine.onPauseCuePush(action, dueMillis)
+                },
+            )
+        }
         val nowMillis by engine.nowMillis.collectAsState()
 
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view

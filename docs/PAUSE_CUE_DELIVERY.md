@@ -19,7 +19,7 @@ PRD §15 for the design; this file is the operational runbook.
 | Client transport for `device_push_token` | ✅ `SchedulerSyncEngine.registerPushToken` (still needs a *native token* to feed it — steps 2/3) |
 | Local-cue seam + push entry (`scheduleLocalPauseCue` / `onPauseCuePush` / `onPauseCueFire`) | ✅ shared seam + eligibility gate wired |
 | Android: FCM receiver + AlarmManager local cue (wire the seam) | ✅ `PauseCueMessagingService` / `PauseCueAlarmReceiver` / `PauseCueScheduler`; `SchedulerHolder` wires the seam + `localPauseCueDelivery=true` |
-| iOS: APNs registration + local notification cue (wire the seam) | ⛔ **TODO — step 3** |
+| iOS: APNs registration + local notification cue (wire the seam) | 🟡 **Code written, UNVERIFIED** — `iosMain` actuals (`PauseCueLocal.ios` + missing `Voice`/`DeviceInfo`/`SystemNotifier`/`SleepHistory`) + `IosPushBridge` + Swift `AppDelegate`; needs a **Mac build** to compile, and the pre-existing `CalendarUi.kt` Native-portability bug must be fixed first (blocks all Native/JS). See step 3. |
 | Firebase project + `google-services.json` + APNs key + secrets deployed | ⛔ **TODO — steps 4/5 (your credentials)** |
 
 Two design decisions baked into the steps below (change them if you disagree):
@@ -175,20 +175,50 @@ server→phone push (requirement #2) needs Firebase.
 
 ---
 
-## Step 3 — iOS: APNs + local notification (`iosApp`)
+## Step 3 — iOS: APNs + local notification (`iosApp`) 🟡 CODE WRITTEN, UNVERIFIED
 
-1. In Xcode: enable the **Push Notifications** capability and **Background Modes → Remote notifications** on
-   the app target. Note the **bundle id** (→ `APNS_BUNDLE_ID`).
-2. Add an `AppDelegate` (via `@UIApplicationDelegateAdaptor` in `iOSApp.swift`):
-   - `didFinishLaunching` → `UNUserNotificationCenter.current().requestAuthorization([.alert,.sound])` and
-     `application.registerForRemoteNotifications()`.
-   - `didRegisterForRemoteNotificationsWithDeviceToken` → hex-encode the token, hand to shared
-     `pauseCue.registerPushToken("apns", token)`.
-   - `didReceiveRemoteNotification` (content-available background push) → read `action`/`due_at`, call the
-     shared `onPauseCuePush(...)`.
-3. `schedulePauseEndCue` actual (iosMain) → `UNTimeIntervalNotificationTrigger` or a `UNCalendarNotificationTrigger`
-   at `due_at` whose handler runs `poseFinishEligible` then speaks via `AVSpeechSynthesizer` (the existing iOS
-   `Voice` actual). `cancelPauseEndCue` → `removePendingNotificationRequests`.
+> **Why unverified:** Kotlin/Native iOS targets can only be compiled on **macOS + Xcode** — not on the Windows
+> dev machine where this was written. So none of the iOS Kotlin below has been compiled; expect Objective-C
+> interop fixups on the first Mac build. It is also gated by a **pre-existing blocker** (see 3a).
+
+**3a. Prerequisite blocker — `CalendarUi.kt` Native portability.** `shared/.../ui/CalendarUi.kt` uses JVM-only
+stdlib (`sortedSetOf`, `String.compareTo` used as an operator, `size(...)`) that does not exist on Kotlin/Native
+or Kotlin/JS, so **every** Native/JS target currently fails to compile (this is why `:shared:check` is red — see
+the `shared-check-jvmtest-gate` note). iOS cannot link until this is ported off JVM-only stdlib. This is
+unrelated to the pause cue and was not fixed here.
+
+**3b. What was written (all in the repo, compile-verified only on JVM/Android, not Native):**
+- `shared/src/iosMain/.../scheduler/platform/`:
+  - `PauseCueLocal.ios.kt` — `scheduleLocalPauseCuePlatform(dueAtMillis)` schedules/cancels a
+    `UNTimeIntervalNotificationTrigger` (id `omniapp-pause-cue`, cancel-and-reschedule);
+    `localPauseCueDeliveryPlatform = true`; `installPauseCuePushBridge(...)` → `IosPushBridge`.
+  - `IosPushBridge.kt` — the Swift-callable object (`IosPushBridge.shared`): `registerToken(token)` /
+    `deliverPush(action, dueAtIso)`, backed by the callbacks `App()` installs.
+  - The previously-**missing** actuals that blocked iOS at all: `Voice.ios.kt` (`AVSpeechSynthesizer`),
+    `DeviceInfo.ios.kt` (`currentDeviceKind = Phone`, `isScreenActive = false`), `SystemNotifier.ios.kt`
+    (`UNUserNotificationCenter`), `SleepHistory.ios.kt` (no OS sleep log → `null`/empty).
+- `shared/commonMain/App.kt` — passes `scheduleLocalPauseCue = ::scheduleLocalPauseCuePlatform` +
+  `localPauseCueDelivery = localPauseCueDeliveryPlatform` to the engine it builds, and calls
+  `installPauseCuePushBridge { registerApnsToken → pauseCue.registerPushToken("phone","apns",token);
+  onRemotePush → onPauseCuePush(action, parse(due_at)) }`. No-op on non-iOS.
+- `iosApp/iosApp/AppDelegate.swift` (new) + `iOSApp.swift` (`@UIApplicationDelegateAdaptor`) —
+  requests authorization, `registerForRemoteNotifications`, hex-encodes the APNs token →
+  `IosPushBridge.shared.registerToken`, and routes `{type:pause_cue, action, due_at}` background pushes →
+  `IosPushBridge.shared.deliverPush`.
+
+**3c. Remaining Mac-only steps to make it run:**
+1. Fix 3a (port `CalendarUi.kt`), then `./gradlew :shared:compileKotlinIosSimulatorArm64` and fix any interop
+   errors in the `iosMain` actuals above (method/property names, enum constants).
+2. In Xcode: add **Push Notifications** capability and **Background Modes → Remote notifications** to the
+   `iosApp` target; confirm `AppDelegate.swift` is a member of the target (if the project uses explicit file
+   references rather than a synchronized folder group, add it). Note the **bundle id** (→ `APNS_BUNDLE_ID`).
+3. For audio to play while backgrounded / ringer silent, configure an `AVAudioSession` (playback category) and
+   add **Background Modes → Audio** — otherwise rely on the notification sound (the default cue has one).
+
+> **iOS gate caveat:** iOS cannot run app code at a local notification's fire time, so unlike Android the
+> presence/screen-off gate (`poseFinishEligible`) is **not** re-checked at delivery — the system just plays the
+> scheduled notification. The server-side origin check still suppresses redundant pushes; the eligibility gate
+> is best-effort on iOS only.
 
 ---
 
@@ -250,6 +280,9 @@ Watch `supabase functions logs pause-cue --project-ref <ref>` throughout — eve
 `FCM …`/`APNs …` error is logged there.
 
 ## Testing B — simulated iPhone (⚠️ receipt only, not end-to-end)
+
+**Prerequisite:** the iOS app must first *compile and run*, which today it does not — fix step **3a**
+(`CalendarUi.kt` Native portability) and the interop fixups in step 3c on a Mac before any of this is reachable.
 
 **Hard limitation:** the iOS **Simulator cannot receive a network APNs push** from Supabase — it has no APNs
 connection. It *can* receive a **locally-injected** push (Xcode 14+/iOS 16+), which is enough to test the
