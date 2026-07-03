@@ -200,10 +200,33 @@ class SchedulerSyncEngine(
             block(session)
         } catch (e: SupabaseException) {
             if (e.status != 401) throw e
-            val refreshed = client.refresh(session.refreshToken)
-            this.session = refreshed
+            block(refreshSession(session))
+        }
+
+    // Serializes token refreshes independently of [mutex]: reconcile runs under [mutex], but presence/gap/cue
+    // calls run off it, so two of them can hit an expired access token at the same tick.
+    private val refreshMutex = Mutex()
+
+    /**
+     * Exchanges an expired [stale] session for a fresh one. Supabase rotates refresh tokens on every use and
+     * rejects the previous one with `400 refresh token not found`, so two concurrent 401s must not each spend
+     * the same token. This serializes refreshes and, if another caller — or another process sharing this
+     * account's local DB — already rotated the token (the persisted refresh token no longer matches [stale]),
+     * adopts the persisted session instead of refreshing again with the already-consumed token.
+     */
+    private suspend fun refreshSession(stale: SupabaseSession): SupabaseSession =
+        refreshMutex.withLock {
+            val persisted = metaStore.loadSyncMeta()
+            if (persisted?.refreshToken != null && persisted.accessToken != null && persisted.userId != null &&
+                persisted.refreshToken != stale.refreshToken
+            ) {
+                return@withLock SupabaseSession(persisted.accessToken, persisted.refreshToken, persisted.userId)
+                    .also { session = it }
+            }
+            val refreshed = client.refresh(stale.refreshToken)
+            session = refreshed
             setMeta(meta().copy(accessToken = refreshed.accessToken, refreshToken = refreshed.refreshToken))
-            block(refreshed)
+            refreshed
         }
 
     // ---- PRD §15 cross-device presence (PresenceGateway) ----
