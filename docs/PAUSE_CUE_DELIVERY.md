@@ -19,7 +19,7 @@ PRD §15 for the design; this file is the operational runbook.
 | Client transport for `device_push_token` | ✅ `SchedulerSyncEngine.registerPushToken` (still needs a *native token* to feed it — steps 2/3) |
 | Local-cue seam + push entry (`scheduleLocalPauseCue` / `onPauseCuePush` / `onPauseCueFire`) | ✅ shared seam + eligibility gate wired |
 | Android: FCM receiver + AlarmManager local cue (wire the seam) | ✅ `PauseCueMessagingService` / `PauseCueAlarmReceiver` / `PauseCueScheduler`; `SchedulerHolder` wires the seam + `localPauseCueDelivery=true` |
-| iOS: APNs registration + local notification cue (wire the seam) | 🟡 **Code written, UNVERIFIED** — `iosMain` actuals (`PauseCueLocal.ios` + missing `Voice`/`DeviceInfo`/`SystemNotifier`/`SleepHistory`) + `IosPushBridge` + Swift `AppDelegate`; needs a **Mac build** to compile, and the pre-existing `CalendarUi.kt` Native-portability bug must be fixed first (blocks all Native/JS). See step 3. |
+| iOS: APNs registration + local notification cue (wire the seam) | 🟡 **Code written, UNVERIFIED** — `iosMain` actuals (`PauseCueLocal.ios` + `Voice`/`DeviceInfo`/`SystemNotifier`/`SleepHistory`) + `IosPushBridge` + Swift `AppDelegate`; needs a **Mac build** to compile the Kotlin/Native interop. The former `CalendarUi.kt` commonMain portability blocker is **fixed** (`sortedSetOf` → `mutableSetOf().sorted()`; `:shared:compileCommonMainKotlinMetadata` green), so common code no longer blocks the iOS compile. See step 3. |
 | Firebase project + `google-services.json` + APNs key + secrets deployed | ⛔ **TODO — steps 4/5 (your credentials)** |
 
 Two design decisions baked into the steps below (change them if you disagree):
@@ -181,11 +181,15 @@ server→phone push (requirement #2) needs Firebase.
 > dev machine where this was written. So none of the iOS Kotlin below has been compiled; expect Objective-C
 > interop fixups on the first Mac build. It is also gated by a **pre-existing blocker** (see 3a).
 
-**3a. Prerequisite blocker — `CalendarUi.kt` Native portability.** `shared/.../ui/CalendarUi.kt` uses JVM-only
-stdlib (`sortedSetOf`, `String.compareTo` used as an operator, `size(...)`) that does not exist on Kotlin/Native
-or Kotlin/JS, so **every** Native/JS target currently fails to compile (this is why `:shared:check` is red — see
-the `shared-check-jvmtest-gate` note). iOS cannot link until this is ported off JVM-only stdlib. This is
-unrelated to the pause cue and was not fixed here.
+**3a. Prerequisite blocker — `CalendarUi.kt` Native portability. ✅ FIXED.** `shared/.../ui/CalendarUi.kt`
+used JVM-only `sortedSetOf` (backed by `java.util.TreeSet`) in `overlapLayout`/`weightHandles`, which does not
+exist on Kotlin/Native or Kotlin/JS, so **every** Native/JS target failed the commonMain compile. It is now
+`mutableSetOf<Float>()` + `.sorted()` (behaviour-identical: distinct boundaries, ascending). Verified on Windows
+with `./gradlew :shared:compileCommonMainKotlinMetadata` (green). commonMain no longer blocks the iOS compile.
+
+> The JS target still fails for an **unrelated, pre-existing** reason — `Voice`/`DeviceInfo`/`SleepHistory`/
+> `SystemNotifier` have no `jsMain` actual (JS was never wired for these platform features). iOS is unaffected:
+> its `iosMain` actuals exist. Don't chase the JS errors when checking iOS portability — check the metadata task.
 
 **3b. What was written (all in the repo, compile-verified only on JVM/Android, not Native):**
 - `shared/src/iosMain/.../scheduler/platform/`:
@@ -281,8 +285,9 @@ Watch `supabase functions logs pause-cue --project-ref <ref>` throughout — eve
 
 ## Testing B — simulated iPhone (⚠️ receipt only, not end-to-end)
 
-**Prerequisite:** the iOS app must first *compile and run*, which today it does not — fix step **3a**
-(`CalendarUi.kt` Native portability) and the interop fixups in step 3c on a Mac before any of this is reachable.
+**Prerequisite:** the iOS app must first *compile and run*, which requires a **Mac build** — step 3a
+(`CalendarUi.kt` Native portability) is now fixed, so on a Mac the remaining work is only the step 3c interop
+fixups + Xcode capabilities before any of this is reachable.
 
 **Hard limitation:** the iOS **Simulator cannot receive a network APNs push** from Supabase — it has no APNs
 connection. It *can* receive a **locally-injected** push (Xcode 14+/iOS 16+), which is enough to test the

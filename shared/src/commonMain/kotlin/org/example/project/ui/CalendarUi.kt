@@ -303,12 +303,14 @@ private fun approxEq(a: Float, b: Float): Boolean = kotlin.math.abs(a - b) < 1e-
  */
 fun overlapLayout(blocks: List<PlacedRecord>): Map<String, List<PanelSlice>> {
     if (blocks.isEmpty()) return emptyMap()
-    val boundaries = sortedSetOf<Float>()
+    val boundaries = mutableSetOf<Float>()
     for (b in blocks) {
         boundaries.add(b.startHour)
         boundaries.add(b.endHour)
     }
-    val bounds = boundaries.toList()
+    // `sortedSetOf` is JVM-only (java.util.TreeSet); collect distinct boundaries then sort so this
+    // file also compiles for the Kotlin/Native (iOS) and JS targets.
+    val bounds = boundaries.sorted()
     val raw = HashMap<String, MutableList<PanelSlice>>()
     for (i in 0 until bounds.size - 1) {
         val a = bounds[i]
@@ -353,12 +355,14 @@ data class WeightHandle(
  */
 fun weightHandles(blocks: List<PlacedRecord>): List<WeightHandle> {
     if (blocks.size < 2) return emptyList()
-    val boundaries = sortedSetOf<Float>()
+    val boundaries = mutableSetOf<Float>()
     for (b in blocks) {
         boundaries.add(b.startHour)
         boundaries.add(b.endHour)
     }
-    val bounds = boundaries.toList()
+    // `sortedSetOf` is JVM-only (java.util.TreeSet); collect distinct boundaries then sort so this
+    // file also compiles for the Kotlin/Native (iOS) and JS targets.
+    val bounds = boundaries.sorted()
     val out = mutableListOf<WeightHandle>()
     for (i in 0 until bounds.size - 1) {
         val a = bounds[i]
