@@ -1,5 +1,9 @@
 @echo off
-setlocal EnableDelayedExpansion
+REM DisableDelayedExpansion (not Enable): credentials from accounts.env may contain '!', which
+REM EnableDelayedExpansion silently eats — both when load-accounts-env.bat reads the file inside this
+REM scope and when %ACC3_PASS% is expanded on the `am start` line — sending the app a wrong password
+REM (Supabase then returns "400 invalid login credentials"). This script uses no !var! expansion.
+setlocal DisableDelayedExpansion
 
 REM =====================================================================
 REM  account3-deploy-android.bat - build a SIGNED release APK, install it on

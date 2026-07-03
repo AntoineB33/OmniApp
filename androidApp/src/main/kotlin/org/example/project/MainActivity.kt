@@ -17,6 +17,10 @@ import org.example.project.scheduler.sync.StartupLogin
 
 class MainActivity : ComponentActivity() {
 
+    // Lint's InvalidFragmentVersionForActivityResult only applies to FragmentActivity/Fragment (old
+    // androidx.fragment had a broken onRequestPermissionsResult). This is a ComponentActivity using
+    // androidx.activity 1.13.0's registerForActivityResult directly, so the check is a false positive.
+    @Suppress("InvalidFragmentVersionForActivityResult")
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* best-effort */ }
 
