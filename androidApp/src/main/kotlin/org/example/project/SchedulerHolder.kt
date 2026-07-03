@@ -1,9 +1,11 @@
 package org.example.project
 
 import android.content.Context
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.example.project.scheduler.engine.AppSchedulerHost
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.persistence.AndroidSchedulerStoreHolder
@@ -40,6 +42,7 @@ object SchedulerHolder {
         val store = createDefaultSchedulerStore()
         val syncEngine = (store as? SyncMetaStore)?.let { SchedulerSyncEngine(RemoteSnapshotClient(), it) }
         val vm = TaskSchedulerViewModel(store = store, syncEngine = syncEngine)
+        val appContext = context.applicationContext
         val engine =
             SchedulerEngine(
                 vm = vm,
@@ -48,8 +51,29 @@ object SchedulerHolder {
                 presence = vm.presence,
                 sleepGapStore = store as? DeviceSleepGapStore,
                 sleepGaps = vm.sleepGaps,
+                pauseCue = vm.pauseCue,
+                // PRD §15 / ARCHITECTURE.md §8: deliver the pause-end cue as an OS-scheduled alarm (fires even
+                // if the app was killed). This replaces the in-app cue on Android, so pass
+                // localPauseCueDelivery = true to avoid a double-speak.
+                scheduleLocalPauseCue = { dueAtMillis -> PauseCueScheduler.apply(appContext, dueAtMillis) },
+                localPauseCueDelivery = true,
             )
         engine.start()
+        registerFcmToken(vm)
         return AppSchedulerHost(vm, engine).also { host = it }
+    }
+
+    /**
+     * Registers this device's FCM token with the sync backend so the pause-cue Edge Function can reach it.
+     * A no-op (swallowed) when sync is off or Firebase isn't configured (no google-services.json ⇒
+     * [FirebaseMessaging] has no default app), so a build without a Firebase project still runs.
+     */
+    private fun registerFcmToken(vm: TaskSchedulerViewModel) {
+        val pauseCue = vm.pauseCue ?: return
+        runCatching {
+            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+                scope.launch { runCatching { pauseCue.registerPushToken("phone", "fcm", token) } }
+            }
+        }
     }
 }

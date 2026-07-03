@@ -149,6 +149,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     presence = vm.presence,
                     sleepGapStore = store as? DeviceSleepGapStore,
                     sleepGaps = vm.sleepGaps,
+                    pauseCue = vm.pauseCue,
                 )
         }
         LaunchedEffect(engine) { if (host == null) engine.start() }

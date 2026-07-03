@@ -19,7 +19,9 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.DebugFlags
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.SideTask
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.persistence.DeviceSleepGapStore
 import org.example.project.scheduler.persistence.SleepGapRecord
 import org.example.project.scheduler.platform.DeviceKind
@@ -31,6 +33,7 @@ import org.example.project.scheduler.platform.lastWakeAfterLongSleepMillis
 import org.example.project.scheduler.platform.recentSleepGaps as platformRecentSleepGaps
 import org.example.project.scheduler.platform.speak as platformSpeak
 import org.example.project.scheduler.platform.stopSpeaking
+import org.example.project.scheduler.sync.PauseCueGateway
 import org.example.project.scheduler.sync.PresenceGateway
 import org.example.project.scheduler.sync.SleepGapGateway
 import org.example.project.scheduler.state.SchedulerIntent
@@ -142,6 +145,20 @@ class SchedulerEngine(
     private val sleepGaps: SleepGapGateway? = null,
     // PRD §15: the OS sleep/wake-log query (defaults to the platform reader); injectable for tests.
     private val sleepGapQuery: (Long) -> List<DeviceSleepGap> = ::platformRecentSleepGaps,
+    // PRD §15 / ARCHITECTURE.md §8 pause-end cue delivery: the server channel (write next-cue instant / claim
+    // last phone / register token). Null disables it; the desktop still publishes the schedule so the phone's
+    // push fires, but only a phone claims last-phone (see [launchPauseCueSchedule]).
+    private val pauseCue: PauseCueGateway? = null,
+    // PRD §15: the platform OS-scheduled local cue seam — schedule the "pause is over" alarm at the given
+    // instant, or cancel the pending one when null. Default no-op (desktop/tests); the phone wires AlarmManager
+    // / UNUserNotificationCenter here (see docs/PAUSE_CUE_DELIVERY.md steps 2/3). The alarm's fire handler runs
+    // [poseFinishEligible] before speaking, so the presence/screen-off gate is still honored at delivery.
+    private val scheduleLocalPauseCue: (Long?) -> Unit = {},
+    // PRD §15: true on a platform that delivers the pause-end cue via [scheduleLocalPauseCue] + [onPauseCueFire]
+    // (the OS-scheduled alarm, which fires even if the app was killed). When true the older in-app
+    // [launchPoseFinishVoiceCue] is skipped so the phone never speaks the cue twice. Default false keeps the
+    // in-app path for desktop / not-yet-wired platforms.
+    private val localPauseCueDelivery: Boolean = false,
 ) {
     private val _nowMillis = MutableStateFlow(clock.nowMillis())
 
@@ -181,9 +198,15 @@ class SchedulerEngine(
         launchLookAwayCues()
         launchWindDownNotification()
         launchPosePresenceBeacon()
-        launchPoseFinishVoiceCue()
+        // The in-app cue is the delivery path only where the OS-scheduled alarm isn't wired; otherwise the
+        // alarm ([onPauseCueFire]) speaks, so running both would double-speak.
+        if (!localPauseCueDelivery) launchPoseFinishVoiceCue()
+        launchPauseCueSchedule()
         // PRD §15: trigger #1 — on startup, pull every device's exact pause gaps into the local DB.
         pullSleepGaps()
+        // PRD §15 / ARCHITECTURE.md §8: requirement #6 — a phone's startup becomes the account's last phone,
+        // which pushes `cancel` to the previous phone. Piggybacks the ViewModel's startup reconcile.
+        claimLastPhoneOnStartup()
     }
 
     // PRD §9: the single "time has advanced to `now`" step — see the original `advanceTo` in App.kt.
@@ -603,7 +626,85 @@ class SchedulerEngine(
         }
     }
 
+    // PRD §15 / ARCHITECTURE.md §8: publish the account's next pause-end cue instant whenever it changes — on
+    // ANY device, because the desktop's write is exactly what the server pushes the phone from ~1 min before
+    // (requirement #2). On a phone, ALSO (re)schedule the local OS cue at that instant and cancel the previous,
+    // so a phone-originated change is honored with no server round-trip (requirement #5). A no-pose horizon
+    // clears the schedule and cancels the local cue. The publish is a tiny per-row upsert, deliberately NOT on
+    // the 60-s whole-snapshot throttle.
+    private fun launchPauseCueSchedule() = scope.launch {
+        val gateway = pauseCue ?: return@launch
+        combine(_nowMillis, vm.state.map { it.panels }.distinctUntilChanged()) { now, panels ->
+            nextRestPoseEndMillis(panels, vm.state.value.sideTasks, now)
+        }
+            .distinctUntilChanged()
+            .collectLatest { nextEnd ->
+                if (deviceKind == DeviceKind.Phone) scheduleLocalPauseCue(nextEnd)
+                withContext(Dispatchers.Default) {
+                    runCatching {
+                        if (nextEnd != null) gateway.publishPauseCueSchedule(nextEnd) else gateway.clearPauseCueSchedule()
+                    }
+                }
+            }
+    }
+
+    // PRD §15 / ARCHITECTURE.md §8: requirement #6 — a phone's startup claims the account's last phone, whose
+    // change pushes `cancel` to the previous phone. Phones only; a no-op when sync is disabled/signed out.
+    private fun claimLastPhoneOnStartup() {
+        val gateway = pauseCue ?: return
+        if (deviceKind != DeviceKind.Phone) return
+        scope.launch { withContext(Dispatchers.Default) { runCatching { gateway.claimLastPhone() } } }
+    }
+
+    /**
+     * PRD §15 / ARCHITECTURE.md §8: the native push receiver (an FCM/APNs data message) calls this — schedule
+     * the local OS cue at [dueAtMillis] on `"schedule"` (requirement #2: a change on another device reaches
+     * this phone), or cancel the pending one on `"cancel"` (the cancel half of requirement #6). The scheduled
+     * cue's fire handler still runs [poseFinishEligible] before speaking.
+     */
+    fun onPauseCuePush(action: String, dueAtMillis: Long?) {
+        when (action) {
+            "schedule" -> if (dueAtMillis != null) scheduleLocalPauseCue(dueAtMillis)
+            "cancel" -> scheduleLocalPauseCue(null)
+        }
+    }
+
+    /**
+     * PRD §15: the platform local cue fired at the pause-end instant (an AlarmManager alarm / a delivered
+     * `UNNotification`) calls this — run the presence/screen-off eligibility gate ([poseFinishEligible]) and,
+     * if it passes, speak. Reads presence once, failing **open** (speak) on a transport error, so a real pause
+     * is never left silent. Inert unless this is a signed-in phone with its screen off and no active peer.
+     */
+    suspend fun onPauseCueFire() {
+        val gateway = presence
+        val peersActive: Boolean =
+            gateway?.let { g ->
+                withContext(Dispatchers.Default) { g.activePeersExistOrNull(POSE_PRESENCE_FRESH_MILLIS) }
+            } ?: false
+        if (poseFinishEligible(
+                isPhone = deviceKind == DeviceKind.Phone,
+                signedIn = gateway?.signedIn == true,
+                screenActive = screenActive(),
+                peersActive = peersActive,
+            )
+        ) {
+            speak("Your pause is over. You can resume your work.")
+        }
+    }
+
     companion object {
+        /**
+         * PRD §15: the end instant of the next 5/15-min rest pose strictly after [now], or null if none is
+         * scheduled. A pose is a `sideTask` panel whose title matches a `restBreak` side task (mirrors the
+         * occurrence scan in [launchPoseFinishVoiceCue]).
+         */
+        internal fun nextRestPoseEndMillis(panels: List<TaskPanel>, sideTasks: List<SideTask>, now: Long): Long? =
+            panels.asSequence()
+                .filter { p -> p.sideTask && sideTasks.any { it.restBreak && it.title == p.title } }
+                .map { it.endEpochMillis }
+                .filter { it > now }
+                .minOrNull()
+
         /**
          * PRD §15: the gate for the phone's "pause finished" voice cue — true only when this is the phone,
          * a session is available, this device's screen is off, and no other device reports an active screen.

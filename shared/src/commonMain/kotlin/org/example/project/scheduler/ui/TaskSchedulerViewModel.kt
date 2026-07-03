@@ -19,6 +19,7 @@ import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.sync.PauseCueGateway
 import org.example.project.scheduler.sync.PresenceGateway
 import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.sync.ServerSyncThrottle
@@ -54,6 +55,9 @@ class TaskSchedulerViewModel(
 
     /** PRD §15 device-sleep gaps channel (push/pull exact pauses) for the engine; null when sync is disabled. */
     val sleepGaps: SleepGapGateway? get() = syncEngine
+
+    /** PRD §15 / ARCHITECTURE.md §8 pause-end cue delivery channel for the engine; null when sync is disabled. */
+    val pauseCue: PauseCueGateway? get() = syncEngine
 
     // PRD §5 Persistence: every change updates the in-memory state immediately; the SQLite DB is then
     // updated on a debounce so a burst of edits (e.g. typing a cell) collapses into one write instead

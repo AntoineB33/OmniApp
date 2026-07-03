@@ -3,6 +3,7 @@ package org.example.project.scheduler.sync
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.patch
@@ -220,6 +221,66 @@ class RemoteSnapshotClient(
         return json.decodeFromString<List<SleepGapRow>>(response.bodyAsText())
     }
 
+    // ---- Pause-end cue delivery (PostgREST, PRD §15 / ARCHITECTURE.md §8) ----
+
+    /**
+     * Upserts the account's next pause-end cue instant (keyed by `user_id`). [originDeviceId] records which
+     * device's change set it, so the `tick_pause_cues()` cron can skip the server push when the origin is the
+     * last phone (it already scheduled the cue locally). `merge-duplicates` overwrites the single per-user row.
+     */
+    suspend fun upsertPauseCueSchedule(session: SupabaseSession, dueAtIso: String, originDeviceId: String) {
+        val response =
+            http.post("${config.restUrl}/pause_cue_schedule") {
+                authHeaders(session)
+                header("Prefer", "resolution=merge-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(PauseCueUpsert(session.userId, dueAtIso, originDeviceId)))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
+    /** Clears the account's pause-end cue schedule (no upcoming pose), so the cron stops pushing. */
+    suspend fun deletePauseCueSchedule(session: SupabaseSession) {
+        val response =
+            http.delete("${config.restUrl}/pause_cue_schedule") {
+                authHeaders(session)
+                url.parameters.append("user_id", "eq.${session.userId}")
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
+    /**
+     * Claims [deviceId] as the account's last-logged-in phone (the single device that voices the cue). The
+     * `account_last_phone` UPDATE fires the DB trigger that pushes `cancel` to the *previous* phone, so only
+     * one phone ever speaks. `merge-duplicates` overwrites the single per-user row.
+     */
+    suspend fun claimLastPhone(session: SupabaseSession, deviceId: String) {
+        val response =
+            http.post("${config.restUrl}/account_last_phone") {
+                authHeaders(session)
+                header("Prefer", "resolution=merge-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(LastPhoneUpsert(session.userId, deviceId)))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
+    /**
+     * Registers this device's push token (keyed by `(user_id, device_id)`) so the `pause-cue` Edge Function can
+     * reach it. [platform] is `"fcm"` on Android / `"apns"` on iOS. `merge-duplicates` refreshes the token on
+     * rotation.
+     */
+    suspend fun upsertPushToken(session: SupabaseSession, deviceId: String, kind: String, platform: String, token: String) {
+        val response =
+            http.post("${config.restUrl}/device_push_token") {
+                authHeaders(session)
+                header("Prefer", "resolution=merge-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(PushTokenUpsert(session.userId, deviceId, kind, platform, token)))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
     fun close() = http.close()
 
     private fun io.ktor.client.request.HttpRequestBuilder.authHeaders(session: SupabaseSession) {
@@ -276,4 +337,26 @@ private data class GapUpsert(
     @SerialName("sleep_start") val sleepStart: Long,
     @SerialName("sleep_end") val sleepEnd: Long,
     @SerialName("recorded_at") val recordedAt: Long,
+)
+
+@Serializable
+private data class PauseCueUpsert(
+    @SerialName("user_id") val userId: String,
+    @SerialName("due_at") val dueAt: String,
+    @SerialName("origin_device_id") val originDeviceId: String,
+)
+
+@Serializable
+private data class LastPhoneUpsert(
+    @SerialName("user_id") val userId: String,
+    @SerialName("device_id") val deviceId: String,
+)
+
+@Serializable
+private data class PushTokenUpsert(
+    @SerialName("user_id") val userId: String,
+    @SerialName("device_id") val deviceId: String,
+    val kind: String,
+    val platform: String,
+    val token: String,
 )

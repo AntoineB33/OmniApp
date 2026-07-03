@@ -18,8 +18,20 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)
 
+    // PRD §15 / ARCHITECTURE.md §8 pause-end cue delivery. The dependency is always present (so the FCM
+    // service / token code compiles); the google-services plugin below is what activates it, and is applied
+    // only when a google-services.json is dropped in — until then FirebaseMessaging calls are guarded no-ops.
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
+
     implementation(libs.compose.uiToolingPreview)
     debugImplementation(libs.compose.uiTooling)
+}
+
+// Apply the google-services plugin only when the config file exists, so a fresh checkout without a Firebase
+// project still builds (the pause-cue push is then simply inert). See docs/PAUSE_CUE_DELIVERY.md.
+if (rootProject.file("androidApp/google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }
 
 // Release signing read from local.properties (gitignored) or env vars, both populated by

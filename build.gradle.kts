@@ -7,4 +7,7 @@ plugins {
     alias(libs.plugins.composeCompiler) apply false
     alias(libs.plugins.kotlinJvm) apply false
     alias(libs.plugins.kotlinMultiplatform) apply false
+    // On the classpath for :androidApp, but applied only when androidApp/google-services.json exists (the
+    // pause-cue FCM push is optional — see docs/PAUSE_CUE_DELIVERY.md).
+    alias(libs.plugins.googleServices) apply false
 }

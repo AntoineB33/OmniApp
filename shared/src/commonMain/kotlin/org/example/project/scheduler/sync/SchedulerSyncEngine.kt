@@ -53,7 +53,7 @@ class SchedulerSyncEngine(
     private val client: RemoteSnapshotClient,
     private val metaStore: SyncMetaStore,
     private val json: Json = Json { ignoreUnknownKeys = true },
-) : PresenceGateway, SleepGapGateway {
+) : PresenceGateway, SleepGapGateway, PauseCueGateway {
     private val mutex = Mutex()
     private var session: SupabaseSession? = null
 
@@ -257,5 +257,31 @@ class SchedulerSyncEngine(
         val current = session ?: return emptyList()
         val rows = runCatching { withAuth(current) { client.fetchSleepGaps(it) } }.getOrNull() ?: return null
         return rows.map { SleepGapRecord(it.deviceId, it.sleepStart, it.sleepEnd, it.recordedAt) }
+    }
+
+    // ---- PRD §15 / ARCHITECTURE.md §8 pause-end cue delivery (PauseCueGateway) ----
+    //
+    // Like presence/gaps, these run outside [mutex]: each is an independent per-row side channel, never
+    // blocking — or blocked by — a whole-document snapshot reconcile.
+
+    override suspend fun publishPauseCueSchedule(dueAtMillis: Long) {
+        val current = session ?: return
+        val dueAtIso = Instant.fromEpochMilliseconds(dueAtMillis).toString()
+        runCatching { withAuth(current) { client.upsertPauseCueSchedule(it, dueAtIso, meta().deviceId) } }
+    }
+
+    override suspend fun clearPauseCueSchedule() {
+        val current = session ?: return
+        runCatching { withAuth(current) { client.deletePauseCueSchedule(it) } }
+    }
+
+    override suspend fun claimLastPhone() {
+        val current = session ?: return
+        runCatching { withAuth(current) { client.claimLastPhone(it, meta().deviceId) } }
+    }
+
+    override suspend fun registerPushToken(kind: String, platform: String, token: String) {
+        val current = session ?: return
+        runCatching { withAuth(current) { client.upsertPushToken(it, meta().deviceId, kind, platform, token) } }
     }
 }
