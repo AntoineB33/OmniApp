@@ -1023,6 +1023,32 @@ object SchedulerDomain {
     fun isSideTaskOverdue(side: SideTask, nowMillis: Long): Boolean =
         side.lastRestMillis + side.intervalMillis <= nowMillis
 
+    /**
+     * PRD §15: fold device-sleep [gaps] (each `start..end` epoch millis) into each side task's last-rest time.
+     * A pause of length L counts as having taken every side task whose duration ≤ L (a long pause satisfies the
+     * shorter poses too), so a task's [SideTask.lastRestMillis] advances to the **latest** qualifying gap's end.
+     *
+     * This is the batch form of the per-gap rule in `reduceReportDeviceSleep`, and the one that closes the
+     * cross-device divergence: a device-sleep gap is authoritative account-wide evidence that the user paused
+     * (no device was active), so a peer's synced gap must seed the rest poses here even though **this** device
+     * never slept — e.g. an Android phone (which can't read its own OS sleep log) inherits the desktop's rests
+     * and stops showing a rest pose pinned to the now-line that the desktop doesn't have. It only advances
+     * `lastRestMillis`; it does NOT append work records or carve panels — that belongs to the device that was
+     * actually asleep when it recorded the gap.
+     */
+    fun seedSideTasksFromGaps(sideTasks: List<SideTask>, gaps: List<TaskTimeRange>): List<SideTask> {
+        if (gaps.isEmpty()) return sideTasks
+        return sideTasks.map { side ->
+            if (side.durationMillis <= 0) return@map side
+            val latestRest = gaps.asSequence()
+                .filter { it.endEpochMillis - it.startEpochMillis >= side.durationMillis }
+                .map { it.endEpochMillis }
+                .filter { it > side.lastRestMillis }
+                .maxOrNull()
+            if (latestRest != null) side.copy(lastRestMillis = latestRest) else side
+        }
+    }
+
     /** Safety cap on the side-task projection loop (far above the ~700 occurrences a week-long horizon holds). */
     private const val SIDE_TASK_PROJECTION_LIMIT: Int = 200_000
 

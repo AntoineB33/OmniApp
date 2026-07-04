@@ -22,6 +22,7 @@ import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.SideTask
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
+import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.DeviceSleepGapStore
 import org.example.project.scheduler.persistence.SleepGapRecord
 import org.example.project.scheduler.platform.DeviceKind
@@ -90,6 +91,11 @@ private const val POSE_FINISH_POLL_MILLIS: Long = 1_000
 // for the EXACT interval(s) to record. A margin past the tick-gap boundary so a sleep that began a little
 // before the last tick (up to one tick cadence) is still captured.
 private const val GAP_QUERY_MARGIN_MILLIS: Long = 5L * 60 * 1_000
+
+// PRD §15 device-sleep gaps: how far back the launch backfill scans this device's OS sleep/wake log to publish
+// past sleeps as synced gaps. Only the most-recent qualifying rest actually reseeds a pose (the 5/15-min poses
+// recur ≤2h apart), so a few days amply covers "the sleep that seeded my poses" while staying idempotent.
+private const val SLEEP_GAP_BACKFILL_HORIZON_MILLIS: Long = 3L * 24 * 60 * 60 * 1_000
 
 // PRD §15: stand-in device id for gaps recorded while sync is disabled / signed out, so a local-only install
 // still tags its rows with something stable (it never reaches the remote table).
@@ -202,7 +208,9 @@ class SchedulerEngine(
         // alarm ([onPauseCueFire]) speaks, so running both would double-speak.
         if (!localPauseCueDelivery) launchPoseFinishVoiceCue()
         launchPauseCueSchedule()
-        // PRD §15: trigger #1 — on startup, pull every device's exact pause gaps into the local DB.
+        // PRD §15: on startup, publish this device's own recent OS-recorded sleeps as synced gaps so peers can
+        // inherit the rests, then pull every device's exact pause gaps into the local DB (trigger #1).
+        backfillSleepGaps()
         pullSleepGaps()
         // PRD §15 / ARCHITECTURE.md §8: requirement #6 — a phone's startup becomes the account's last phone,
         // which pushes `cancel` to the previous phone. Piggybacks the ViewModel's startup reconcile.
@@ -257,11 +265,14 @@ class SchedulerEngine(
         }
     }
 
-    // PRD §15: at launch, seed each side task's last-rest time from the last qualifying device sleep.
+    // PRD §15: at launch, seed each side task's last-rest time from the last qualifying pause — this device's
+    // OS sleep log (Windows) AND every device's synced sleep gaps already in the local store. The gap seeding is
+    // what a phone (no readable OS sleep log) relies on to inherit the account's rests instead of showing a rest
+    // pose pinned to the now-line the desktop doesn't have. Side-task config is recomputed, never persisted.
     private fun launchSideTaskSeeding() = scope.launch {
         val before = vm.state.value.sideTasks
         val restedTasks = withContext(Dispatchers.Default) {
-            before.map { side ->
+            val fromOsLog = before.map { side ->
                 if (side.durationMillis <= 0) {
                     side
                 } else {
@@ -269,9 +280,26 @@ class SchedulerEngine(
                     if (lastRest != null) side.copy(lastRestMillis = lastRest) else side
                 }
             }
+            SchedulerDomain.seedSideTasksFromGaps(fromOsLog, loadStoredGaps())
         }
-        if (restedTasks != before) {
-            vm.dispatch(SchedulerIntent.SetSideTasks(restedTasks))
+        applySeededSideTasks(before, restedTasks)
+    }
+
+    // PRD §15: after a pull brings in another device's exact sleep gaps, re-seed the rest poses from every gap now
+    // in the local store — advancing `lastRestMillis` only (no work records / panel carving; see
+    // [SchedulerDomain.seedSideTasksFromGaps]). This is the account-wide-pause signal reaching a device that never
+    // slept, so its derived 5/15-min poses line up with the peer that recorded the sleep.
+    private fun reseedSideTasksFromGaps() {
+        val before = vm.state.value.sideTasks
+        applySeededSideTasks(before, SchedulerDomain.seedSideTasksFromGaps(before, loadStoredGaps()))
+    }
+
+    private fun loadStoredGaps(): List<TaskTimeRange> =
+        sleepGapStore?.loadSleepGaps()?.map { TaskTimeRange(it.startMillis, it.endMillis) } ?: emptyList()
+
+    private fun applySeededSideTasks(before: List<SideTask>, rested: List<SideTask>) {
+        if (rested != before) {
+            vm.dispatch(SchedulerIntent.SetSideTasks(rested))
             vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
         }
     }
@@ -605,6 +633,29 @@ class SchedulerEngine(
         }
     }
 
+    // PRD §15 device-sleep gaps: at launch, publish this device's recent OS-recorded sleeps into the synced gaps
+    // table so a peer that never witnessed them inherits the account's rests. [recordExactSleepGaps] only covers
+    // sleeps this device sees LIVE while running; a freshly-opened desktop seeds its own poses from the OS log
+    // (e.g. last night's sleep) but, without this, never pushes that sleep — so a phone (no readable OS log)
+    // would keep showing a rest pose pinned to the now-line the desktop doesn't have. Best-effort and idempotent
+    // (upsert keys on (deviceId, sleepStart)); no-op on a platform whose OS log is empty (e.g. Android/iOS).
+    private fun backfillSleepGaps() {
+        if (sleepGapStore == null && sleepGaps == null) return
+        scope.launch {
+            val since = clock.nowMillis() - SLEEP_GAP_BACKFILL_HORIZON_MILLIS
+            val gaps = withContext(Dispatchers.Default) {
+                runCatching { sleepGapQuery(since) }.getOrDefault(emptyList())
+            }.filter { it.endMillis > it.startMillis }
+            if (gaps.isEmpty()) return@launch
+            val deviceId = sleepGaps?.deviceId ?: LOCAL_DEVICE_ID
+            val recordedAt = SystemAppClock.nowMillis()
+            val records = gaps.map { SleepGapRecord(deviceId, it.startMillis, it.endMillis, recordedAt) }
+            sleepGapStore?.saveSleepGaps(records)
+            withContext(Dispatchers.Default) { runCatching { sleepGaps?.pushSleepGaps(records) } }
+            reseedSideTasksFromGaps()
+        }
+    }
+
     /**
      * PRD §15: trigger #2 (manual button) — pull every device's exact pause gaps from the remote table into
      * the local DB. Public so a "fetch now" control can drive it; also called at startup and ~1 min before a
@@ -622,7 +673,12 @@ class SchedulerEngine(
                     ?: return@launch
             val known = store.loadSleepGaps().mapTo(mutableSetOf()) { it.deviceId to it.startMillis }
             val fresh = remote.filter { (it.deviceId to it.startMillis) !in known }
-            if (fresh.isNotEmpty()) store.saveSleepGaps(fresh)
+            if (fresh.isNotEmpty()) {
+                store.saveSleepGaps(fresh)
+                // The freshly pulled gaps are authoritative account-wide pauses; fold them into the rest poses so
+                // this device's derived schedule matches the peer that recorded the sleep (PRD §15).
+                reseedSideTasksFromGaps()
+            }
         }
     }
 
@@ -650,7 +706,18 @@ class SchedulerEngine(
 
     // PRD §15 / ARCHITECTURE.md §8: requirement #6 — a phone's startup claims the account's last phone, whose
     // change pushes `cancel` to the previous phone. Phones only; a no-op when sync is disabled/signed out.
-    private fun claimLastPhoneOnStartup() {
+    private fun claimLastPhoneOnStartup() = claimLastPhone()
+
+    /**
+     * PRD §15 / ARCHITECTURE.md §8: scenario #3 — a phone that BECOMES the active app (re)claims the account's
+     * last phone. Call this on app-foreground as well as startup: on Android the foreground service keeps the
+     * process (and [start]) alive across resumes, so a phone re-opened after another phone was used would never
+     * re-claim from [start] alone. Claiming is idempotent — the `account_last_phone` trigger only pushes `cancel`
+     * to the previous phone when the device id actually changes, so re-claiming the same phone is a no-op.
+     */
+    fun onAppForegrounded() = claimLastPhone()
+
+    private fun claimLastPhone() {
         val gateway = pauseCue ?: return
         if (deviceKind != DeviceKind.Phone) return
         scope.launch { withContext(Dispatchers.Default) { runCatching { gateway.claimLastPhone() } } }

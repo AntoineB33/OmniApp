@@ -1,6 +1,7 @@
 package org.example.project
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +17,8 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
+import org.example.project.time.AppClock
+import org.example.project.time.SimAppClock
 import org.example.project.time.SystemAppClock
 
 /**
@@ -43,10 +46,18 @@ object SchedulerHolder {
         val syncEngine = (store as? SyncMetaStore)?.let { SchedulerSyncEngine(RemoteSnapshotClient(), it) }
         val vm = TaskSchedulerViewModel(store = store, syncEngine = syncEngine)
         val appContext = context.applicationContext
+        // Debug time-link (docs/PAUSE_CUE_DELIVERY.md "Testing C"): on a debuggable build, drive the engine's
+        // `now` from a SimAppClock that TimeLinkClient re-anchors from a plugged-in desktop's accelerated clock.
+        // Until a desktop is attached the SimAppClock runs at 1× ≡ real wall time, so behaviour is unchanged.
+        // Release builds (and non-debuggable) keep SystemAppClock. History-unit timestamps stay on real time
+        // (SchedulerReducer.clock above) — only the schedule/now that the pause-cue path depends on is driven.
+        val debuggable = (appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        val clock: AppClock =
+            if (debuggable) SimAppClock().also { TimeLinkClient.start(scope, it) } else SystemAppClock
         val engine =
             SchedulerEngine(
                 vm = vm,
-                clock = SystemAppClock,
+                clock = clock,
                 scope = scope,
                 presence = vm.presence,
                 sleepGapStore = store as? DeviceSleepGapStore,

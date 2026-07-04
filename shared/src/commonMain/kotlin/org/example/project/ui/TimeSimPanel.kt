@@ -49,6 +49,12 @@ fun TimeSimPanel(
      * will revert (PRD §6). Drives the red "will be reverted on restart" warning.
      */
     pendingRollback: Boolean = false,
+    /**
+     * Debug time-link status (docs/PAUSE_CUE_DELIVERY.md "Testing C"): number of phones receiving this clock,
+     * or -1 when the link server isn't running. Drives the "phone link" banner. Warn-only — the controls stay
+     * usable when disconnected (acceleration then applies to the desktop alone).
+     */
+    linkedCount: Int = -1,
     modifier: Modifier = Modifier,
 ) {
     val tz = remember { TimeZone.currentSystemDefault() }
@@ -72,6 +78,19 @@ fun TimeSimPanel(
                 color = panelAccent,
                 fontWeight = FontWeight.Bold,
             )
+            // Debug time-link status: green when ≥1 phone shares this accelerated clock, amber warning when the
+            // link is up but no phone is attached (acceleration then applies to the desktop only).
+            if (linkedCount >= 0) {
+                val connected = linkedCount > 0
+                Text(
+                    text =
+                        if (connected) "● Phone link: connected ($linkedCount)"
+                        else "⚠ Phone link: not connected — acceleration is desktop-only",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (connected) Color(0xFF2E7D32) else Color(0xFFEF6C00),
+                    fontWeight = FontWeight.Bold,
+                )
+            }
             Text(
                 text = formatDateTime(dt.year, dt.monthNumber, dt.dayOfMonth, dt.hour, dt.minute, dt.second),
                 style = MaterialTheme.typography.titleSmall,

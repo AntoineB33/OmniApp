@@ -45,6 +45,8 @@ import org.example.project.scheduler.persistence.DeviceSleepGapStore
 import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.persistence.WindowPlacement
 import org.example.project.scheduler.persistence.WindowPlacementStore
+import org.example.project.scheduler.debug.TimeLink
+import org.example.project.scheduler.debug.startTimeLink
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.platform.installPauseCuePushBridge
 import org.example.project.scheduler.platform.localPauseCueDeliveryPlatform
@@ -124,6 +126,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // now-line and day rollovers can be exercised in seconds), else the real wall clock.
         val simClock = remember { SimAppClock() }
         val clock: AppClock = if (DebugFlags.TIME_SIMULATION) simClock else SystemAppClock
+        // Debug time-link (docs/PAUSE_CUE_DELIVERY.md "Testing C"): on the desktop under time-sim, stream this
+        // accelerated clock to a plugged-in phone (adb) so both share one `now`. Null off desktop / when
+        // sim is off; `linkedCount` (-1 = no server) drives the panel's "phone link" status.
+        var timeLink by remember { mutableStateOf<TimeLink?>(null) }
+        DisposableEffect(Unit) {
+            val link = if (DebugFlags.TIME_SIMULATION) startTimeLink(simClock) else null
+            timeLink = link
+            onDispose { link?.close(); timeLink = null }
+        }
+        val timeLinkCount = timeLink?.linkedCount?.collectAsState()?.value ?: -1
         // PRD §6: History Units are timestamped from the same clock the rest of the app reads, so under
         // time simulation their times match the (accelerated) calendar.
         SideEffect {
@@ -176,6 +188,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             ?.let { runCatching { Instant.parse(it).toEpochMilliseconds() }.getOrNull() }
                     engine.onPauseCuePush(action, dueMillis)
                 },
+                // PRD §15 scenario #3: the phone became active — re-claim the account's last phone (the DB
+                // trigger then cancels the previous phone's cue). No-op off iOS.
+                onForegrounded = { engine.onAppForegrounded() },
             )
         }
         val nowMillis by engine.nowMillis.collectAsState()
@@ -666,6 +681,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         TimeSimPanel(
                             clock = simClock,
                             nowMillis = nowMillis,
+                            linkedCount = timeLinkCount,
                             // Debug: simulate taking a pause — leap virtual time over it, then feed the gap
                             // through the same [onTimeGap] handler a real device sleep uses, so the side-task
                             // rhythm and schedule resume by the exact same logic as a real ≥duration pause.

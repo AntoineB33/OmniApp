@@ -49,6 +49,18 @@ class SimAppClock(
         anchorReal = realNowMillis()
     }
 
+    /**
+     * Debug time-link (desktop→phone): adopt a virtual instant + speed pushed from another device, re-anchored
+     * to THIS device's real clock so it keeps advancing at [newSpeed] between frames and each frame cancels
+     * drift. See `scheduler/debug/TimeLink` and docs/PAUSE_CUE_DELIVERY.md (Testing C). Cross-device wall-clock
+     * skew is folded in on adoption (the phone deliberately takes the desktop's time as authoritative).
+     */
+    fun adopt(virtualNowMillis: Long, newSpeed: Double) {
+        anchorVirtual = virtualNowMillis
+        anchorReal = realNowMillis()
+        speed = newSpeed
+    }
+
     /** Snap back to real wall-clock time at 1× speed. */
     fun reset() {
         anchorVirtual = realNowMillis()

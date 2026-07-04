@@ -45,6 +45,18 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * PRD §15 / ARCHITECTURE.md §8, scenario #3: this phone became the active app — (re)claim the account's
+     * last-logged-in phone so the previous phone is told to cancel its scheduled pause-end cue and only this
+     * phone speaks. Done on every resume (not just onCreate) because the foreground service keeps the process
+     * — and the already-started engine — alive across resumes, so onCreate alone would miss a resume-handoff.
+     * Idempotent: re-claiming the same phone fires no cancel push (the DB trigger keys on a device-id change).
+     */
+    override fun onResume() {
+        super.onResume()
+        SchedulerHolder.ensure(applicationContext).engine.onAppForegrounded()
+    }
+
+    /**
      * Stages `omniapp_login_user`/`omniapp_login_pass` launch-Intent extras for the shared VM's auto-login.
      * Only the very first signed-in launch needs these — the session is then cached in the on-device DB and
      * restored on later (e.g. boot) launches, which carry no extras.

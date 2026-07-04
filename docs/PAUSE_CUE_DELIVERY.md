@@ -11,11 +11,12 @@ PRD §15 for the design; this file is the operational runbook.
 | --- | --- |
 | 1-min **server-sync debounce** (batch per event-loop turn, immediate when idle ≥1 min) | ✅ `scheduler/sync/ServerSyncThrottle`, wired in `TaskSchedulerViewModel` (`SERVER_SYNC_INTERVAL_MILLIS = 60_000`) |
 | Supabase schema: `device_push_token` / `account_last_phone` / `pause_cue_schedule` | ✅ `supabase/migrations/20260703000000_init.sql` |
-| `tick_pause_cues()` cron (push ~1 min before, **skip when origin == last phone**) | ✅ same migration + `supabase/pause-cue-setup.sql` |
-| `on_last_phone_change` trigger (cancel push to the **previous** phone) | ✅ same migration |
+| `on_pause_cue_schedule_change` trigger — **immediate** push (cancel+reschedule) when a non-phone device moves the next pose-end (scenario #2), **skip when origin == last phone** | ✅ `supabase/migrations/20260704000000_pause_cue_immediate_push.sql` |
+| `tick_pause_cues()` cron (push ~1 min before, **skip when origin == last phone**) — now a **backstop** to the immediate trigger | ✅ `20260703000000_init.sql` + `supabase/pause-cue-setup.sql` |
+| `on_last_phone_change` trigger (cancel push to the **previous** phone) | ✅ `20260703000000_init.sql` |
 | Edge Function real **FCM v1 / APNs HTTP/2** send | ✅ `supabase/functions/pause-cue/index.ts` (needs secrets) |
 | Client writes `pause_cue_schedule` when the next pose-end changes | ✅ `SchedulerEngine.launchPauseCueSchedule` → `SchedulerSyncEngine.publishPauseCueSchedule` |
-| Client claims `account_last_phone` on startup (phones only) | ✅ `SchedulerEngine.claimLastPhoneOnStartup` |
+| Client claims `account_last_phone` on startup **and on every app-foreground** (phones only; scenario #3) | ✅ `SchedulerEngine.claimLastPhoneOnStartup` / `onAppForegrounded` (Android `MainActivity.onResume`, iOS `applicationDidBecomeActive`) |
 | Client transport for `device_push_token` | ✅ `SchedulerSyncEngine.registerPushToken` (still needs a *native token* to feed it — steps 2/3) |
 | Local-cue seam + push entry (`scheduleLocalPauseCue` / `onPauseCuePush` / `onPauseCueFire`) | ✅ shared seam + eligibility gate wired |
 | Android: FCM receiver + AlarmManager local cue (wire the seam) | ✅ `PauseCueMessagingService` / `PauseCueAlarmReceiver` / `PauseCueScheduler`; `SchedulerHolder` wires the seam + `localPauseCueDelivery=true` |
@@ -207,8 +208,9 @@ with `./gradlew :shared:compileCommonMainKotlinMetadata` (green). commonMain no 
   onRemotePush → onPauseCuePush(action, parse(due_at)) }`. No-op on non-iOS.
 - `iosApp/iosApp/AppDelegate.swift` (new) + `iOSApp.swift` (`@UIApplicationDelegateAdaptor`) —
   requests authorization, `registerForRemoteNotifications`, hex-encodes the APNs token →
-  `IosPushBridge.shared.registerToken`, and routes `{type:pause_cue, action, due_at}` background pushes →
-  `IosPushBridge.shared.deliverPush`.
+  `IosPushBridge.shared.registerToken`, routes `{type:pause_cue, action, due_at}` background pushes →
+  `IosPushBridge.shared.deliverPush`, and (scenario #3) calls `IosPushBridge.shared.notifyForegrounded()` from
+  `applicationDidBecomeActive` → `SchedulerEngine.onAppForegrounded()` re-claims the account's last phone.
 
 **3c. Remaining Mac-only steps to make it run:**
 1. Fix 3a (port `CalendarUi.kt`), then `./gradlew :shared:compileKotlinIosSimulatorArm64` and fix any interop
@@ -269,16 +271,23 @@ observable; a single phone exercises the local-schedule path.
    `restBreak` pose is imminent. Confirm `pause_cue_schedule.origin_device_id == the phone` and that the phone
    speaks *"Your pause is over…"* at the pose end. The cron should **not** push (origin == last phone) — check
    the Edge Function logs (`supabase functions logs pause-cue`) show no `schedule` call for this cue.
-4. **Desktop-caused schedule (requirement #2, server push):** on the **desktop** (account 1), make a change
-   that moves the next pose-end (e.g. edit the sleep schedule / add a pinned panel). Desktop syncs; within a
-   minute the desktop's `pause_cue_schedule` row shows `origin_device_id == desktop`. ~1 min before the
-   pose-end, `tick_pause_cues()` fires → Edge logs show a `schedule` push → the phone gets the data message,
-   schedules the local alarm, and speaks at the exact instant. (Kill the app first to prove it still fires.)
+4. **Desktop-caused schedule (scenario/requirement #2, server push):** on the **desktop** (account 1), make a
+   change that moves the next pose-end (e.g. edit the sleep schedule / add a pinned panel). Desktop syncs; the
+   desktop's `pause_cue_schedule` row shows `origin_device_id == desktop`. The `on_pause_cue_schedule_change`
+   trigger fires **immediately** → Edge logs show a `schedule` push → the phone gets the data message,
+   (cancels any stale alarm and) schedules the local alarm at the new instant, and speaks at the exact instant.
+   (Kill the app first to prove it still fires.) `tick_pause_cues()` re-affirms the same push ~1 min before as a
+   backstop (idempotent — same instant, same alarm id). To see the immediate trigger matter, set the pose-end
+   *earlier*, let the phone schedule, then *postpone* it on the desktop: without the immediate push the phone
+   would speak at the old, earlier instant.
 5. **Presence suppression:** repeat step 4 but keep the phone screen **on** through the final minute — it must
    **stay silent** (the `poseFinishEligible` gate). Turn the screen off → it speaks.
-6. **Last-phone handoff / cancel (requirement #6):** sign a **second** phone into account 1 and launch it. Its
-   startup reconcile claims `account_last_phone`; the `on_last_phone_change` trigger pushes `cancel` to phone
-   #1 (Edge logs show a `cancel` call) → phone #1 cancels its pending alarm; only phone #2 speaks the next cue.
+6. **Last-phone handoff / cancel (scenario/requirement #3):** sign a **second** phone into account 1 and launch
+   it. Its startup — and every later app-foreground (`onAppForegrounded`, Android `onResume` / iOS
+   `applicationDidBecomeActive`) — claims `account_last_phone`; the `on_last_phone_change` trigger pushes
+   `cancel` to phone #1 (Edge logs show a `cancel` call) → phone #1 cancels its pending alarm; only phone #2
+   speaks the next cue. Verify the **foreground** (not just cold-start) path too: with both apps already running,
+   background phone #2 and foreground phone #1 → phone #1 re-claims and phone #2 is cancelled.
 
 Watch `supabase functions logs pause-cue --project-ref <ref>` throughout — every `schedule`/`cancel` and any
 `FCM …`/`APNs …` error is logged there.
@@ -309,6 +318,49 @@ app-side schedule/cancel + speak path, just not the server→APNs leg.
    cue speaks.
 4. For a **true** server→APNs end-to-end iOS test you need a **real device** with a dev build and
    `APNS_HOST=api.sandbox.push.apple.com`; the flow then mirrors Testing A.
+
+---
+
+## Testing C — accelerated cross-device (the desktop→phone time-link)
+
+**Problem it solves:** time acceleration lives only on the desktop (`omniapp.timeSim`; the Android build runs on
+the real wall clock). An accelerated desktop clock produces `due_at` values far in the *real* future, so pure
+time-accel is great for watching the push get *emitted* but never makes a phone *speak soon*. The **time-link**
+streams the desktop's accelerated clock to a plugged-in Android debug app so both share one `now` — the phone's
+schedule, `pause_cue_schedule` writes, alarms and cue actually run in accelerated time.
+
+**How it works** (`shared/.../scheduler/debug/TimeLink*` + `androidApp/.../TimeLinkClient.kt`): the desktop (under
+time-sim) runs a loopback TCP server on port **47615** and keeps `adb reverse tcp:47615 tcp:47615` set up; the
+debuggable Android app dials `127.0.0.1:47615` and re-anchors its `SimAppClock` (`SimAppClock.adopt`) from each
+`"<virtualNow> <speed>"` frame. The desktop **Time** panel shows the link status: **● Phone link: connected (N)**
+or an amber **⚠ Phone link: not connected — acceleration is desktop-only** (warn-only; the controls stay usable
+so single-device desktop sim still works). Transport is adb-only and debuggable-only — nothing runs in a release
+build; there is still never a WebSocket to the server.
+
+**Steps:**
+1. Plug in the phone (USB with debugging on, or an Android-Studio emulator) — confirm `adb devices` lists it.
+   Deploy the debug app: `scripts\account1-deploy-android.bat`.
+2. Launch the desktop under time-sim: `scripts\account1-empty-and-open.bat` (`:run` sets `omniapp.timeSim=true`).
+   The **Time** panel should flip to **● Phone link: connected (1)** within a few seconds. If it stays amber,
+   check `adb devices` and that `adb` is on `PATH` or under the SDK `platform-tools` (the server auto-locates it;
+   otherwise run `adb reverse tcp:47615 tcp:47615` yourself).
+3. On the desktop panel, set speed **60×** (or hit **simulate pause + leap → 5min**). Watch the phone: its
+   now-line / calendar advance in lockstep, and a rest pose arrives in seconds instead of an hour.
+4. Now the whole of **Testing A** runs accelerated and end-to-end on the real phone:
+   - **Scenario #2 (desktop postpones):** make a desktop change that moves the next pose-end → `pause_cue_schedule`
+     shows `origin_device_id == desktop`, Edge logs show the **immediate** `schedule` push, and because the phone
+     now shares the accelerated clock it schedules the alarm at an instant that is genuinely seconds away →
+     **it speaks**. `adb shell dumpsys alarm | Select-String org.example.project` shows the alarm move.
+   - **Scenario #1 (phone-origin):** the phone reschedules locally with no server push (origin == last phone).
+   - **Scenario #3 (handoff):** foreground a second phone → the previous phone gets the `cancel` push.
+5. When done, hit **reset to real time** on the panel (or close the desktop) — the link's `adb reverse` is removed
+   on dispose, and the phone's clock falls back to real time (the `SimAppClock` stops being re-anchored).
+
+**Caveats:** the phone adopts the desktop's wall time as authoritative, so a large clock skew between the two
+machines shifts the phone's schedule by that skew (keep both NTP-synced). Accelerated state can sync to Supabase
+via the LWW snapshot, so use a throwaway/test account. Two phones need a per-device `adb -s <serial> reverse
+tcp:47615 tcp:47615` (the auto-reconcile targets the default device). On Android, history-unit timestamps stay on
+real time by design — only the schedule/`now` the cue path depends on is driven.
 
 ---
 

@@ -1,13 +1,16 @@
 // PRD §15 / ARCHITECTURE.md §8 — the "function edge trigger" that delivers the pause-end voice cue.
 //
-// This is the ONLY server→device channel (there is never a WebSocket). It is invoked two ways, both from
-// Postgres via pg_net (see supabase/migrations/):
-//   • action:'schedule' — from `tick_pause_cues()`, ~1 min before a pose ends, when the next cue was set by a
-//     device OTHER than the last phone. Tells the last phone to schedule its local "pause is over" cue at
-//     `due_at`. (When the phone itself set the schedule, the cron job skips this — the phone already
-//     scheduled it locally, so no push is sent.)
-//   • action:'cancel'  — from the `account_last_phone` change trigger, telling the PREVIOUS phone to cancel
-//     its scheduled cue so only one phone ever speaks.
+// This is the ONLY server→device channel (there is never a WebSocket). It is invoked from Postgres via pg_net
+// (see supabase/migrations/) with two actions:
+//   • action:'schedule' — tells the last phone to (cancel any stale local cue and) schedule its "pause is over"
+//     cue at `due_at`. Fired by BOTH (a) the `on_pause_cue_schedule_change` trigger, IMMEDIATELY when a device
+//     OTHER than the last phone moves the next pause-end (scenario #2 — e.g. the desktop postpones it), so a
+//     backgrounded phone holding an alarm at the OLD instant is corrected before it speaks early; and (b)
+//     `tick_pause_cues()` ~1 min before the pose ends, as a backstop. Both SKIP the push when the phone itself
+//     set the schedule (origin == last phone) — it already scheduled the cue locally.
+//   • action:'cancel'  — telling a phone to cancel its scheduled cue. Fired by the `account_last_phone` change
+//     trigger for the PREVIOUS phone (scenario #3, so only one phone ever speaks), and by
+//     `on_pause_cue_schedule_change` on DELETE when the schedule is cleared (no upcoming pose).
 //
 // The phone receives a DATA / background push (not a display notification) and does the scheduling/cancelling
 // itself: Android schedules an AlarmManager exact alarm, iOS a UNTimeIntervalNotificationTrigger.

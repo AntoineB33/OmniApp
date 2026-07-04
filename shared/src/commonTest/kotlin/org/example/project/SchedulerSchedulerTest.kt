@@ -395,6 +395,38 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun seed_side_tasks_from_gaps_advances_rest_poses_so_a_peer_sleep_lines_up_across_devices() {
+        val now = 1_000_000_000_000L
+        // The phone's derived poses with no local rest (Android has no readable OS sleep log): both overdue,
+        // so both would be pinned to the now-line — the phantom "15-min pause" the desktop doesn't show.
+        val poses = listOf(
+            SideTask("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = 0L),
+            SideTask("15min", intervalMillis = 2 * HOUR_MS, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = 0L),
+        )
+        assertEquals(now, SchedulerDomain.sideTaskNextStart(poses[0], now))
+        assertEquals(now, SchedulerDomain.sideTaskNextStart(poses[1], now))
+
+        // The desktop synced a 20-min sleep that ended 30 min ago. A 20-min pause satisfies both the 5- and
+        // 15-min poses (duration ≤ gap length), so both last-rest times advance to the gap's END.
+        val gapEnd = now - 30 * MIN
+        val gaps = listOf(TaskTimeRange(gapEnd - 20 * MIN, gapEnd))
+        val seeded = SchedulerDomain.seedSideTasksFromGaps(poses, gaps)
+        assertEquals(gapEnd, seeded[0].lastRestMillis)
+        assertEquals(gapEnd, seeded[1].lastRestMillis)
+
+        // With the inherited rest, the 15-min pose is now scheduled ~2h out — no longer at the now-line, so the
+        // phone stops showing a pause the desktop doesn't have.
+        assertEquals(gapEnd + 2 * HOUR_MS, SchedulerDomain.sideTaskNextStart(seeded[1], now))
+        assertFalse(SchedulerDomain.isSideTaskOverdue(seeded[1], now))
+
+        // A gap SHORTER than a pose's duration does not satisfy it (a 10-min sleep isn't a 15-min rest), and a
+        // gap OLDER than the current last-rest never moves it backward.
+        val shortGap = listOf(TaskTimeRange(now - 10 * MIN, now))
+        assertEquals(0L, SchedulerDomain.seedSideTasksFromGaps(poses, shortGap)[1].lastRestMillis)
+        assertEquals(seeded, SchedulerDomain.seedSideTasksFromGaps(seeded, listOf(TaskTimeRange(gapEnd - 90 * MIN, gapEnd - 60 * MIN))))
+    }
+
+    @Test
     fun a_cadence_side_task_recurs_an_interval_after_it_starts() {
         // PRD §15: the look-away (non-rest) recurs an interval after it STARTS (its length is negligible).
         val now = 1_000_000_000_000L

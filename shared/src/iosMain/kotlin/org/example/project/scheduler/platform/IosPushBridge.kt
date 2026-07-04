@@ -11,13 +11,16 @@ package org.example.project.scheduler.platform
 object IosPushBridge {
     private var registerApnsToken: ((String) -> Unit)? = null
     private var onRemotePush: ((String, String?) -> Unit)? = null
+    private var onForegrounded: (() -> Unit)? = null
 
     fun install(
         registerApnsToken: (String) -> Unit,
         onRemotePush: (String, String?) -> Unit,
+        onForegrounded: () -> Unit,
     ) {
         this.registerApnsToken = registerApnsToken
         this.onRemotePush = onRemotePush
+        this.onForegrounded = onForegrounded
     }
 
     /** Swift: call from `didRegisterForRemoteNotificationsWithDeviceToken` with the token as a hex string. */
@@ -28,5 +31,13 @@ object IosPushBridge {
     /** Swift: call from the remote-notification handler with the push's `action` and ISO-8601 `due_at`. */
     fun deliverPush(action: String, dueAtIso: String?) {
         onRemotePush?.invoke(action, dueAtIso)
+    }
+
+    /**
+     * Swift: call from `applicationDidBecomeActive` (scenario #3). Re-claims the account's last phone so a phone
+     * re-opened after another phone was used tells the server to cancel the previous phone's scheduled cue.
+     */
+    fun notifyForegrounded() {
+        onForegrounded?.invoke()
     }
 }

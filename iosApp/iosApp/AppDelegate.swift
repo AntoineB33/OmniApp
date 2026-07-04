@@ -39,6 +39,13 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         // Best-effort: with no token the account simply has no APNs target until a later successful registration.
     }
 
+    /// PRD §15 / ARCHITECTURE.md §8, scenario #3: this phone became active — re-claim the account's last phone
+    /// so the previously-active phone is told (via the server) to cancel its scheduled pause-end cue and only
+    /// this phone speaks. Idempotent (re-claiming the same phone sends no cancel push).
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        IosPushBridge.shared.notifyForegrounded()
+    }
+
     func application(
         _ application: UIApplication,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],

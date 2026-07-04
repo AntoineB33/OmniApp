@@ -7,8 +7,10 @@ actual fun scheduleLocalPauseCuePlatform(dueAtMillis: Long?) = Unit
 
 actual val localPauseCueDeliveryPlatform: Boolean = false
 
-// Android routes token registration / remote pushes through PauseCueMessagingService, not this bridge.
+// Android routes token registration / remote pushes through PauseCueMessagingService and the last-phone
+// re-claim through MainActivity.onResume, not this bridge.
 actual fun installPauseCuePushBridge(
     registerApnsToken: (token: String) -> Unit,
     onRemotePush: (action: String, dueAtIso: String?) -> Unit,
+    onForegrounded: () -> Unit,
 ) = Unit
