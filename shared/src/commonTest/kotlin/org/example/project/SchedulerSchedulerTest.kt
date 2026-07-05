@@ -427,6 +427,30 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun rest_seeding_is_forward_only_so_a_slow_seeder_cannot_re_pin_a_pose() {
+        // Reported empty-account anomaly: on a freshly-opened account the leading account-wide "Inactivity"
+        // pause ends at the now-line, so the derived-pause seed advances the 5-min pose's last-rest to `now`
+        // (next pose 1 h out, NOT pinned). The OS sleep-log seed — computed off-thread from the startup state
+        // where lastRestMillis == 0 — then lands LATER carrying the older morning wake. A wholesale overwrite
+        // would drag the rest backward and re-pin the pose to now; advanceRestsForward must keep `now`.
+        val now = 1_000_000_000_000L
+        val morningWake = now - 3 * HOUR_MS
+        val derivedSeed = listOf(
+            SideTask("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now),
+        )
+        val osLogSeedFromStale = listOf(
+            SideTask("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = morningWake),
+        )
+        // Derived-pause seed applied first (live = now); the stale OS-log seed lands second and must NOT win.
+        val merged = SchedulerDomain.advanceRestsForward(derivedSeed, osLogSeedFromStale)
+        assertEquals(now, merged[0].lastRestMillis)
+        assertEquals(now + 60 * MIN, SchedulerDomain.sideTaskNextStart(merged[0], now))
+        assertFalse(SchedulerDomain.isSideTaskOverdue(merged[0], now))
+        // Symmetric: a fresher seed applied over an older live value DOES advance it forward.
+        assertEquals(now, SchedulerDomain.advanceRestsForward(osLogSeedFromStale, derivedSeed)[0].lastRestMillis)
+    }
+
+    @Test
     fun a_cadence_side_task_recurs_an_interval_after_it_starts() {
         // PRD §15: the look-away (non-rest) recurs an interval after it STARTS (its length is negligible).
         val now = 1_000_000_000_000L

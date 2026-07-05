@@ -335,7 +335,7 @@ class SchedulerEngine(
             }
             SchedulerDomain.seedSideTasksFromGaps(fromOsLog, loadStoredGaps())
         }
-        applySeededSideTasks(before, restedTasks)
+        applySeededSideTasks(restedTasks)
     }
 
     // PRD §15: after a pull brings in another device's exact sleep gaps, re-seed the rest poses from every gap now
@@ -344,7 +344,7 @@ class SchedulerEngine(
     // slept, so its derived 5/15-min poses line up with the peer that recorded the sleep.
     private fun reseedSideTasksFromGaps() {
         val before = vm.state.value.sideTasks
-        applySeededSideTasks(before, SchedulerDomain.seedSideTasksFromGaps(before, loadStoredGaps()))
+        applySeededSideTasks(SchedulerDomain.seedSideTasksFromGaps(before, loadStoredGaps()))
     }
 
     private fun loadStoredGaps(): List<TaskTimeRange> =
@@ -480,7 +480,7 @@ class SchedulerEngine(
             val pauses = fromServer ?: withContext(Dispatchers.Default) { localDerivedPauses(since, until) }
             _inactivityGaps.value = pauses
             val before = vm.state.value.sideTasks
-            applySeededSideTasks(before, SchedulerDomain.seedSideTasksFromGaps(before, pauses))
+            applySeededSideTasks(SchedulerDomain.seedSideTasksFromGaps(before, pauses))
         }
     }
 
@@ -490,9 +490,20 @@ class SchedulerEngine(
         return SchedulerDomain.derivePauses(sessions, since, until)
     }
 
-    private fun applySeededSideTasks(before: List<SideTask>, rested: List<SideTask>) {
-        if (rested != before) {
-            vm.dispatch(SchedulerIntent.SetSideTasks(rested))
+    // PRD §15: install freshly-seeded rest times. Rest evidence only ever reveals a MORE-RECENT rest, so this
+    // is **monotonic** — it folds [rested] into the LIVE side tasks and never moves a pose's `lastRestMillis`
+    // backward. This is essential because the two seeders run concurrently and off-thread against a snapshot
+    // captured when they started: the slow OS-log query ([launchSideTaskSeeding], an up-to-8s PowerShell call
+    // built from the startup state where `lastRestMillis == 0`) can land AFTER [refreshDerivedPauses] has
+    // already advanced the poses to `now` (the leading account-wide pause on a freshly-opened account ends at
+    // the now-line). A wholesale overwrite would then drag `lastRestMillis` back to the morning wake and
+    // re-pin the 5-/15-min pose to the now-line — the reported empty-account anomaly. Merging forward makes
+    // the apply order irrelevant.
+    private fun applySeededSideTasks(rested: List<SideTask>) {
+        val live = vm.state.value.sideTasks
+        val merged = SchedulerDomain.advanceRestsForward(live, rested)
+        if (merged != live) {
+            vm.dispatch(SchedulerIntent.SetSideTasks(merged))
             vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
         }
     }

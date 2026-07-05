@@ -2220,11 +2220,14 @@ private fun DayColumn(
         // clear why nothing is scheduled there. Past pauses (PRD §15 device-sleep gaps) render as the same
         // greyed band, only labeled "Inactivity".
         (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to "Inactivity" }).forEach { (band, label) ->
+            // PRD §8: like every other block, hovering the band pops the title + true (un-clipped) start–end times.
+            val timeRange = "${formatHm(band.fullStartMillis, tz)} – ${formatHm(band.fullEndMillis, tz)}"
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .offset(y = hourHeight * band.startHour)
                     .height(hourHeight * (band.endHour - band.startHour))
+                    .calendarTitleHover(label, hoverScope, subtitle = timeRange)
                     .background(CalColors.muted.copy(alpha = 0.16f)),
                 contentAlignment = Alignment.TopCenter,
             ) {

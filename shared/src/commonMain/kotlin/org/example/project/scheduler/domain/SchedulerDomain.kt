@@ -1088,6 +1088,24 @@ object SchedulerDomain {
     }
 
     /**
+     * PRD §15: fold freshly [seeded] rest times into the [current] side tasks, advancing each pose's
+     * [SideTask.lastRestMillis] **forward only** (never backward). Rest evidence can only ever reveal a
+     * more-recent rest, so a later signal never "un-rests" a pose.
+     *
+     * This guards the two rest-pose seeders — the device's OS sleep log and the server-derived account-wide
+     * pauses — which both run off-thread against a snapshot captured when they started and can therefore land
+     * out of order. Without a forward-only merge, the slow OS-log seed (built from the startup state where
+     * `lastRestMillis == 0`) landing after the derived-pause seed has advanced a pose to `now` would drag it
+     * back to the morning wake and re-pin the 5-/15-min pose to the now-line on a freshly-opened account.
+     * Index-aligned: both lists derive from [DEFAULT_SIDE_TASKS].
+     */
+    fun advanceRestsForward(current: List<SideTask>, seeded: List<SideTask>): List<SideTask> =
+        current.mapIndexed { i, side ->
+            val s = seeded.getOrNull(i)
+            if (s != null && s.lastRestMillis > side.lastRestMillis) side.copy(lastRestMillis = s.lastRestMillis) else side
+        }
+
+    /**
      * PRD §15 server-derived pauses: the account-wide pauses implied by every device's **active** intervals.
      * A pause is a window when NO device was active (app running + signed in + screen unlocked), so it is the
      * complement of the *union* of all devices' active intervals — computed here over `[sinceMillis, untilMillis]`.
