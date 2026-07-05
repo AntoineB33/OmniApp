@@ -494,7 +494,9 @@ fun LateralMenu(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // First element: page navigation (persistent across all feature pages).
+        // First element: page navigation (persistent across all feature pages), styled like the buttons below.
+        // The collapse toggle is NOT here — it's a bookmark on this menu's right border (in App), so it stays
+        // visible after the whole menu (this button included) slides off-screen.
         PageNavButton(page = page, onPageSelected = onPageSelected)
 
         // Shown only while a floating window is open: closes every floating window at once.
@@ -1388,6 +1390,11 @@ private fun parseTimeOfDay(text: String): Int {
     return (hours * 60 + mins).coerceIn(0, 24 * 60 - 1)
 }
 
+/**
+ * The feature-page navigation dropdown — the first item in the lateral menu, styled and sized exactly like
+ * the other menu buttons (Calendar, etc.). It never moves relative to the menu; only the menu itself moves
+ * (it collapses off-screen via the bookmark toggle in App).
+ */
 @Composable
 private fun PageNavButton(page: OmniPage, onPageSelected: (OmniPage) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
@@ -1404,6 +1411,28 @@ private fun PageNavButton(page: OmniPage, onPageSelected: (OmniPage) -> Unit) {
                 )
             }
         }
+    }
+}
+
+/**
+ * A compact, self-sizing menu button — used for the lateral-menu collapse control (`«`) and its floating
+ * re-open button (`☰`). Unlike [MenuButton] it does not stretch to fill its parent's width.
+ */
+@Composable
+fun IconMenuButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(CalColors.menuBackground)
+            .border(1.dp, CalColors.grid, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 

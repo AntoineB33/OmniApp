@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeContentPadding
 import androidx.compose.material3.MaterialTheme
@@ -70,6 +71,7 @@ import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.ChoresManagerWindow
 import org.example.project.ui.HistoryManagerWindow
+import org.example.project.ui.IconMenuButton
 import org.example.project.ui.raiseOnPress
 import org.example.project.ui.LateralMenu
 import org.example.project.ui.ManualEntryEditWindow
@@ -91,6 +93,9 @@ private enum class FloatingWindow { Calendar, Reminders, History, Sleep, TimeSim
 fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedulerHost? = null) {
     MaterialTheme {
         var page by remember { mutableStateOf(OmniPage.TaskScheduler) }
+        // Lateral-menu collapse: when true the whole menu (the page-nav dropdown and all) is not rendered — it
+        // has slid fully off to the left; only the bookmark toggle remains, at the far-left edge, to pull it back.
+        var menuCollapsed by remember { mutableStateOf(false) }
 
         // PRD §5 cross-device sync: when the local store can also hold sync bookkeeping (the SQLite store
         // implements SyncMetaStore), build the Supabase-backed engine. Web's localStorage store does not yet,
@@ -390,7 +395,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 .fillMaxSize()
         ) {
             Row(modifier = Modifier.fillMaxSize()) {
-                LateralMenu(
+                // The lateral menu is omitted entirely while collapsed, so the content takes the full width
+                // ("completely disappear to the left"). The collapse toggle lives outside it (see below).
+                if (!menuCollapsed) LateralMenu(
                     page = page,
                     onPageSelected = { page = it },
                     calendarOpen = calendarOpen,
@@ -731,6 +738,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     }
                 }
             }
+
+            // The menu's collapse toggle: a bookmark/tab sticking out of the menu's top-right border,
+            // straddling into the content (offset by the menu's own width — 188dp, or 248dp while the calendar
+            // month grid widens it). Points « to push the whole menu off-screen; when collapsed the menu is
+            // gone and only this bookmark remains, at the far-left edge, now pointing » to pull it back.
+            val menuWidth = if (calendarOpen) 248.dp else 188.dp
+            IconMenuButton(
+                label = if (menuCollapsed) "»" else "«",
+                onClick = { menuCollapsed = !menuCollapsed },
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = if (menuCollapsed) 0.dp else menuWidth, y = 12.dp)
+                    .zIndex(130f),
+            )
 
             // PRD §5 cross-device sync: account/status chip + sign-in dialog (top-right overlay, above the
             // floating windows). Renders nothing when sync is disabled (chip hides on a null state).
