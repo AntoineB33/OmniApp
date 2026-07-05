@@ -23,6 +23,7 @@ import org.example.project.scheduler.sync.PauseCueGateway
 import org.example.project.scheduler.sync.PresenceGateway
 import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.sync.ServerSyncThrottle
+import org.example.project.scheduler.sync.ActiveSessionGateway
 import org.example.project.scheduler.sync.SleepGapGateway
 import org.example.project.scheduler.sync.StartupLogin
 import org.example.project.scheduler.sync.SyncState
@@ -55,6 +56,9 @@ class TaskSchedulerViewModel(
 
     /** PRD §15 device-sleep gaps channel (push/pull exact pauses) for the engine; null when sync is disabled. */
     val sleepGaps: SleepGapGateway? get() = syncEngine
+
+    /** PRD §15 device-active sessions channel (push activity / pull server-derived pauses); null when sync is off. */
+    val activeSessions: ActiveSessionGateway? get() = syncEngine
 
     /** PRD §15 / ARCHITECTURE.md §8 pause-end cue delivery channel for the engine; null when sync is disabled. */
     val pauseCue: PauseCueGateway? get() = syncEngine

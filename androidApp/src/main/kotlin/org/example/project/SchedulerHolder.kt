@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import org.example.project.scheduler.engine.AppSchedulerHost
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.persistence.AndroidSchedulerStoreHolder
+import org.example.project.scheduler.persistence.ActiveSessionStore
 import org.example.project.scheduler.persistence.DeviceSleepGapStore
 import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
@@ -62,6 +63,8 @@ object SchedulerHolder {
                 presence = vm.presence,
                 sleepGapStore = store as? DeviceSleepGapStore,
                 sleepGaps = vm.sleepGaps,
+                activeSessionStore = store as? ActiveSessionStore,
+                activeSessions = vm.activeSessions,
                 pauseCue = vm.pauseCue,
                 // PRD §15 / ARCHITECTURE.md §8: deliver the pause-end cue as an OS-scheduled alarm (fires even
                 // if the app was killed). This replaces the in-app cue on Android, so pass

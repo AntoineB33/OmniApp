@@ -12,6 +12,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Instant
 import kotlinx.serialization.json.Json
+import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.scheduler.persistence.ActiveSessionRecord
 import org.example.project.scheduler.persistence.PersistedSnapshot
 import org.example.project.scheduler.persistence.SleepGapRecord
 import org.example.project.scheduler.persistence.SyncMeta
@@ -53,7 +55,7 @@ class SchedulerSyncEngine(
     private val client: RemoteSnapshotClient,
     private val metaStore: SyncMetaStore,
     private val json: Json = Json { ignoreUnknownKeys = true },
-) : PresenceGateway, SleepGapGateway, PauseCueGateway {
+) : PresenceGateway, SleepGapGateway, ActiveSessionGateway, PauseCueGateway {
     private val mutex = Mutex()
     private var session: SupabaseSession? = null
 
@@ -280,6 +282,26 @@ class SchedulerSyncEngine(
         val current = session ?: return emptyList()
         val rows = runCatching { withAuth(current) { client.fetchSleepGaps(it) } }.getOrNull() ?: return null
         return rows.map { SleepGapRecord(it.deviceId, it.sleepStart, it.sleepEnd, it.recordedAt) }
+    }
+
+    // ---- PRD §15 device-active sessions + server-derived pauses (ActiveSessionGateway) ----
+    //
+    // Like presence/gaps, these run outside [mutex]: each is an independent per-row side channel, never
+    // blocking — or blocked by — a whole-document snapshot reconcile.
+
+    override suspend fun pushActiveSessions(records: List<ActiveSessionRecord>) {
+        val current = session ?: return
+        if (records.isEmpty()) return
+        val rows = records.map { ActiveSessionRow(it.deviceId, it.startMillis, it.endMillis, it.updatedAtMillis) }
+        runCatching { withAuth(current) { client.upsertActiveSessions(it, rows) } }
+    }
+
+    override suspend fun fetchDerivedPauses(sinceMillis: Long, untilMillis: Long): List<TaskTimeRange>? {
+        val current = session ?: return emptyList()
+        val rows =
+            runCatching { withAuth(current) { client.fetchDerivedPauses(it, sinceMillis, untilMillis) } }
+                .getOrNull() ?: return null
+        return rows.map { TaskTimeRange(it.startMs, it.endMs) }
     }
 
     // ---- PRD §15 / ARCHITECTURE.md §8 pause-end cue delivery (PauseCueGateway) ----

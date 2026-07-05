@@ -684,6 +684,32 @@ object SchedulerDomain {
     }
 
     /**
+     * Subtract [regions] from each of [ranges], returning the surviving sub-ranges (sorted per input range,
+     * split where a region carves out a middle piece, dropped where a region fully covers it). Pure and used
+     * to keep the §15 "Inactivity" bands from overlapping the §17 "Sleep" bands — a sleep window is already
+     * labelled Sleep, so the pause underneath it is not also drawn as Inactivity. Zero-length remnants are
+     * dropped.
+     */
+    fun subtractRegions(ranges: List<TaskTimeRange>, regions: List<TaskTimeRange>): List<TaskTimeRange> {
+        if (regions.isEmpty()) return ranges.filter { it.endEpochMillis > it.startEpochMillis }
+        val cuts = mergeOccupied(regions)
+        val result = mutableListOf<TaskTimeRange>()
+        for (range in ranges) {
+            var cursor = range.startEpochMillis
+            val end = range.endEpochMillis
+            for (cut in cuts) {
+                if (cut.endEpochMillis <= cursor) continue
+                if (cut.startEpochMillis >= end) break
+                if (cut.startEpochMillis > cursor) result += TaskTimeRange(cursor, cut.startEpochMillis)
+                cursor = maxOf(cursor, cut.endEpochMillis)
+                if (cursor >= end) break
+            }
+            if (cursor < end) result += TaskTimeRange(cursor, end)
+        }
+        return result.filter { it.endEpochMillis > it.startEpochMillis }
+    }
+
+    /**
      * PRD §8 "Two task panels with the same task are automatically merged unless one is pinned and the
      * other not pinned": fuse touching/overlapping panels that share a (non-null) [TaskPanel.taskId]
      * **and** the same [TaskPanel.pinned] flag into one panel spanning both. A null taskId (a calendar-
@@ -900,6 +926,18 @@ object SchedulerDomain {
     /** PRD §9 Scheduling: the auto fill materializes panels out to this far ahead of `now` (168 hours). */
     const val SCHEDULE_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1000
 
+    /**
+     * PRD §15: shortest account-wide pause worth drawing as an "Inactivity" band (90 s). Below this a
+     * derived pause is noise, not a real away-from-every-device period — it is finer than the activity
+     * heartbeat's own resolution (matches the engine's `DEVICE_SLEEP_THRESHOLD_MILLIS`, the gap length that
+     * counts as a real device suspension). The reference case: a freshly-opened account whose first session
+     * starts a few seconds after the §17 scheduled wake leaves a sub-minute sliver between the "Sleep" band
+     * (ending at the scheduled wake) and the first activity, which would otherwise render as a tiny
+     * "20-second pause right after sleep". Applied to the *displayed* bands only — pose seeding still folds in
+     * every pause (a 20-s away IS a valid look-away rest).
+     */
+    const val MIN_INACTIVITY_BAND_MILLIS: Long = 90L * 1000
+
     // ----- PRD §15 Side tasks -----------------------------------------------------------------
 
     /**
@@ -1049,6 +1087,50 @@ object SchedulerDomain {
         }
     }
 
+    /**
+     * PRD §15 server-derived pauses: the account-wide pauses implied by every device's **active** intervals.
+     * A pause is a window when NO device was active (app running + signed in + screen unlocked), so it is the
+     * complement of the *union* of all devices' active intervals — computed here over `[sinceMillis, untilMillis]`.
+     *
+     * Each interval in [active] is clipped to the window and the overlapping/adjacent ones are merged into
+     * maximal active spans; the pauses are the gaps NOT covered by any span. Crucially the **leading** gap
+     * (window start → first activity) IS emitted: an account with no recorded activity — a freshly emptied
+     * account where no app was ever active — must show the whole window as a pause, and a device that has been
+     * running only a short while shows the long stretch before it started as a pause. Only the **trailing** gap
+     * (last activity → `untilMillis` = now) is dropped, because the tail is either the still-open current
+     * session (whose end lags `now` by the heartbeat/push and would flicker a phantom band at the now-line) or a
+     * pause that is still ongoing rather than a *past* pause.
+     *
+     * This is the reference the server SQL `derive_pauses` mirrors (the server is authoritative at runtime; this
+     * exists so the algorithm is unit-tested and used as the offline/signed-out and RPC-unavailable fallback).
+     * Pure and deterministic.
+     *
+     * A **zero-length** active interval is kept as a boundary *point* (the filter is `end >= start`, not `>`):
+     * a session that has only just opened — e.g. the one this device opens right after waking from a sleep, or
+     * right after the debug "simulate pause" carves a hole — reads as an active point that correctly bounds the
+     * *preceding* pause so the band shows immediately instead of waiting for the session to grow.
+     */
+    fun derivePauses(active: List<TaskTimeRange>, sinceMillis: Long, untilMillis: Long): List<TaskTimeRange> {
+        if (untilMillis <= sinceMillis) return emptyList()
+        val clipped = active.asSequence()
+            .map { TaskTimeRange(maxOf(it.startEpochMillis, sinceMillis), minOf(it.endEpochMillis, untilMillis)) }
+            .filter { it.endEpochMillis >= it.startEpochMillis }
+            .sortedBy { it.startEpochMillis }
+            .toList()
+        // No activity at all in the window: the whole window is one pause (a freshly emptied account where no
+        // app was ever active). This is the only case the trailing edge up to `now` IS included, since there is
+        // no current session to phantom-band the now-line.
+        if (clipped.isEmpty()) return listOf(TaskTimeRange(sinceMillis, untilMillis))
+        val pauses = mutableListOf<TaskTimeRange>()
+        var cursor = sinceMillis
+        for (span in clipped) {
+            if (span.startEpochMillis > cursor) pauses += TaskTimeRange(cursor, span.startEpochMillis)
+            cursor = maxOf(cursor, span.endEpochMillis)
+        }
+        // Trailing gap [cursor, untilMillis] intentionally NOT emitted once there is any activity (see docstring).
+        return pauses
+    }
+
     /** Safety cap on the side-task projection loop (far above the ~700 occurrences a week-long horizon holds). */
     private const val SIDE_TASK_PROJECTION_LIMIT: Int = 200_000
 
@@ -1180,11 +1262,16 @@ object SchedulerDomain {
             val task = sideTasks[nextIndex]
             val start = due.getValue(nextIndex)
 
-            // Sleep: an occurrence whose start falls in a sleep window is skipped; its cadence resumes at
-            // wake (the window's end), so nothing is projected while the user is asleep.
+            // Sleep: an occurrence whose start falls in a sleep window is skipped, so nothing is projected
+            // while the user is asleep. A sleep window is itself the longest possible rest — it satisfies
+            // this pose (and every shorter one), so the cadence resumes an *interval after* wake, exactly
+            // like placing any longer pause re-anchors the shorter ones (below). Resuming AT wake would draw
+            // a rest pose the instant the user wakes, even though the whole night was a rest.
             val sleepCover = sleepRegions.firstOrNull { it.startEpochMillis <= start && start < it.endEpochMillis }
             if (sleepCover != null) {
-                due[nextIndex] = sleepCover.endEpochMillis
+                val wake = sleepCover.endEpochMillis
+                reanchorSmaller(wake, sleepCover.endEpochMillis - sleepCover.startEpochMillis)
+                due[nextIndex] = wake + task.intervalMillis
                 continue
             }
 

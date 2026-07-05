@@ -55,6 +55,25 @@ data class SleepGapRow(
     @SerialName("recorded_at") val recordedAt: Long,
 )
 
+/**
+ * PRD §15 device-active sessions: one device's active interval row in the `device_active_session` table.
+ * Mirrors [org.example.project.scheduler.persistence.ActiveSessionRecord]; the column names match PostgREST.
+ */
+@Serializable
+data class ActiveSessionRow(
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("start_ms") val startMs: Long,
+    @SerialName("end_ms") val endMs: Long,
+    @SerialName("updated_at") val updatedAt: Long,
+)
+
+/** PRD §15: one account-wide pause interval returned by the `derive_pauses` RPC. */
+@Serializable
+data class PauseRow(
+    @SerialName("start_ms") val startMs: Long,
+    @SerialName("end_ms") val endMs: Long,
+)
+
 /** Raised when Supabase returns a non-success response we did not specifically handle. */
 class SupabaseException(val status: Int, message: String) : Exception("Supabase $status: $message")
 
@@ -221,6 +240,43 @@ class RemoteSnapshotClient(
         return json.decodeFromString<List<SleepGapRow>>(response.bodyAsText())
     }
 
+    // ---- Device-active sessions + server-derived pauses (PostgREST, PRD §15) ----
+
+    /**
+     * Upserts this device's active-session [rows] keyed by `(user_id, device_id, start_ms)`.
+     * `merge-duplicates` makes a repeat of the same session (its `end_ms` extended by a later heartbeat)
+     * update its existing row rather than conflict. A no-op for an empty list (PostgREST rejects an empty
+     * insert body).
+     */
+    suspend fun upsertActiveSessions(session: SupabaseSession, rows: List<ActiveSessionRow>) {
+        if (rows.isEmpty()) return
+        val body = rows.map { ActiveSessionUpsert(session.userId, it.deviceId, it.startMs, it.endMs, it.updatedAt) }
+        val response =
+            http.post("${config.restUrl}/device_active_session") {
+                authHeaders(session)
+                header("Prefer", "resolution=merge-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(body))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
+    /**
+     * Calls the `derive_pauses(p_since, p_until)` RPC — the server unions every device's active intervals for
+     * this account and returns the interior gaps (the account-wide pauses) over the window. RLS scopes the
+     * function to the caller's own rows.
+     */
+    suspend fun fetchDerivedPauses(session: SupabaseSession, sinceMillis: Long, untilMillis: Long): List<PauseRow> {
+        val response =
+            http.post("${config.restUrl}/rpc/derive_pauses") {
+                authHeaders(session)
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(DerivePausesArgs(sinceMillis, untilMillis)))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        return json.decodeFromString<List<PauseRow>>(response.bodyAsText())
+    }
+
     // ---- Pause-end cue delivery (PostgREST, PRD §15 / ARCHITECTURE.md §8) ----
 
     /**
@@ -337,6 +393,21 @@ private data class GapUpsert(
     @SerialName("sleep_start") val sleepStart: Long,
     @SerialName("sleep_end") val sleepEnd: Long,
     @SerialName("recorded_at") val recordedAt: Long,
+)
+
+@Serializable
+private data class ActiveSessionUpsert(
+    @SerialName("user_id") val userId: String,
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("start_ms") val startMs: Long,
+    @SerialName("end_ms") val endMs: Long,
+    @SerialName("updated_at") val updatedAt: Long,
+)
+
+@Serializable
+private data class DerivePausesArgs(
+    @SerialName("p_since") val pSince: Long,
+    @SerialName("p_until") val pUntil: Long,
 )
 
 @Serializable

@@ -133,6 +133,28 @@ class SchedulerSleepTest {
     }
 
     @Test
+    fun a_night_of_sleep_re_anchors_rest_poses_so_none_is_placed_at_wake() {
+        // A night of sleep is the longest possible rest: the first rest pose after it must resume an
+        // interval AFTER wake, not the instant the user wakes (the "15-min pause right after the 8h
+        // sleep" anomaly on a freshly-emptied account).
+        val now = utc(2024, 1, 1, 10, 0)
+        val to = now + 2L * 24 * HOUR_MS
+        val regions = SchedulerDomain.sleepRegions(SchedulerDomain.DEFAULT_SLEEP, now, to, tz)
+        val sides = SchedulerDomain.sideTaskPanels(SchedulerDomain.DEFAULT_SIDE_TASKS, now, to, regions)
+        regions.forEach { region ->
+            val wake = region.endEpochMillis
+            // No rest pose (5-/15-min) may start at wake or within its own interval after wake.
+            SchedulerDomain.DEFAULT_SIDE_TASKS.filter { it.restBreak }.forEach { pose ->
+                val poseStarts = sides.filter { it.title == pose.title }.map { it.startEpochMillis }
+                assertFalse(
+                    poseStarts.any { it in wake until (wake + pose.intervalMillis) },
+                    "${pose.title} starts within an interval of wake=$wake: $poseStarts",
+                )
+            }
+        }
+    }
+
+    @Test
     fun a_sleep_window_breaks_the_display_merge_even_when_side_task_gaps_are_bridged() {
         // Two same-task panels straddling tonight's [23:00, 07:30] sleep window.
         val taskId = TaskId("t")

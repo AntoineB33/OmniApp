@@ -1,0 +1,13 @@
+-- Schema v4 -> v5: add the device-active sessions table (PRD §15 server-derived pauses).
+-- Existing on-disk DBs (app_state + history_unit + history_pointer + sync_meta + window_placement +
+-- device_sleep_gap) gain device_active_session on open; fresh DBs get it from Scheduler.sq directly. Each
+-- row is one interval this device was active (app running + signed in + screen unlocked); the server unions
+-- every device's rows and the complement over the recent horizon is the account-wide pauses. Synced per-row
+-- across the account but never part of the PersistedSnapshot and never a History Unit (see Scheduler.sq).
+CREATE TABLE device_active_session (
+    device_id  TEXT NOT NULL,
+    start_ms   INTEGER NOT NULL,
+    end_ms     INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (device_id, start_ms)
+);

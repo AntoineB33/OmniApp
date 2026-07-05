@@ -185,6 +185,12 @@ data class CalendarRecord(
     val sideTask: Boolean = false,
     /** The user's sleep window, drawn as a labeled greyed band behind the task blocks. */
     val sleep: Boolean = false,
+    /**
+     * PRD §15 device-sleep gaps: a past pause (the user was away/the device slept), drawn as a labeled
+     * greyed band exactly like [sleep] but reading "Inactivity". Derived from the synced sleep-gap store,
+     * so it is display-only (never edited/scheduled).
+     */
+    val inactivity: Boolean = false,
 )
 
 /** A [CalendarRecord] clipped to a single day, as start/end hour-of-day fractions in `[0, 24]`. */
@@ -213,6 +219,8 @@ data class PlacedRecord(
     val sideTask: Boolean = false,
     /** The user's sleep window, rendered as a labeled greyed band over [startHour, endHour]. */
     val sleep: Boolean = false,
+    /** PRD §15 device-sleep gaps: a past pause, rendered as a labeled greyed band reading "Inactivity". */
+    val inactivity: Boolean = false,
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
     val fullEndMillis: Long = 0L,
@@ -255,6 +263,7 @@ fun recordsForDay(
             checkedAtMillis = record.checkedAtMillis,
             sideTask = record.sideTask,
             sleep = record.sleep,
+            inactivity = record.inactivity,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
         )
@@ -1895,7 +1904,7 @@ private fun WeekView(
     // PRD §8 "there must not be overlaps" (default mode): every block on the calendar (records,
     // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live. Reminder tags
     // (zero-duration, §14) and side-task markers (§15) are not blocks and are excluded.
-    val allBlocks = records.filterNot { it.reminder || it.sideTask || it.sleep }.map { calendarBlockKey(it) to it.range }
+    val allBlocks = records.filterNot { it.reminder || it.sideTask || it.sleep || it.inactivity }.map { calendarBlockKey(it) to it.range }
 
     // PRD §8 hover title: the block/side-task under the cursor, reported up from each element so a single
     // non-interactive overlay (below) draws the bubble. [viewportCoords] anchors the bubble in viewport
@@ -2092,7 +2101,8 @@ private fun DayColumn(
     val reminderTags = records.filter { it.reminder }
     val sideTaskMarkers = records.filter { it.sideTask }
     val sleepBands = records.filter { it.sleep }
-    val blockRecords = records.filterNot { it.reminder || it.sideTask || it.sleep }
+    val inactivityBands = records.filter { it.inactivity }
+    val blockRecords = records.filterNot { it.reminder || it.sideTask || it.sleep || it.inactivity }
     // The right-click position (in this column's local pixels) that anchors the contextual menu; null
     // when no menu is open. [menuTarget] is the block the click landed on (null = empty space).
     var menuOffset by remember { mutableStateOf<Offset?>(null) }
@@ -2207,8 +2217,9 @@ private fun DayColumn(
         }
 
         // The user's sleep windows: a greyed band labeled "Sleep" drawn behind the task blocks so it is
-        // clear why nothing is scheduled there.
-        sleepBands.forEach { band ->
+        // clear why nothing is scheduled there. Past pauses (PRD §15 device-sleep gaps) render as the same
+        // greyed band, only labeled "Inactivity".
+        (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to "Inactivity" }).forEach { (band, label) ->
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2218,7 +2229,7 @@ private fun DayColumn(
                 contentAlignment = Alignment.TopCenter,
             ) {
                 Text(
-                    text = "Sleep",
+                    text = label,
                     style = MaterialTheme.typography.labelSmall,
                     color = CalColors.muted,
                     modifier = Modifier.padding(top = 2.dp),

@@ -69,6 +69,22 @@ CREATE TABLE device_sleep_gap (
     PRIMARY KEY (device_id, sleep_start)
 );
 
+-- PRD §15 device-active sessions: the exact `[start_ms, end_ms]` intervals (epoch millis) this device was
+-- ACTIVE — app running, signed in, screen unlocked/interactive — sampled by a heartbeat. This is the
+-- authoritative activity history the server needs to deduce the account-wide pauses (the windows when NO
+-- device was active); it is synced across the account (each device records its own rows; the server unions
+-- them). Like device_sleep_gap it is NOT part of `app_state`/PersistedSnapshot and never a History Unit
+-- (per-row merge, not whole-document LWW). `device_id` is the recording device; `updated_at` is when the row
+-- was last extended (a live session's `end_ms` advances each heartbeat). Added in migration 4.sqm; existing
+-- DBs (schema v4) gain it on open.
+CREATE TABLE device_active_session (
+    device_id  TEXT NOT NULL,
+    start_ms   INTEGER NOT NULL,
+    end_ms     INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (device_id, start_ms)
+);
+
 selectAppState:
 SELECT payload FROM app_state WHERE id = 0;
 
@@ -117,4 +133,11 @@ SELECT device_id, sleep_start, sleep_end, recorded_at FROM device_sleep_gap ORDE
 
 upsertSleepGap:
 INSERT OR REPLACE INTO device_sleep_gap(device_id, sleep_start, sleep_end, recorded_at)
+VALUES (?, ?, ?, ?);
+
+selectAllActiveSessions:
+SELECT device_id, start_ms, end_ms, updated_at FROM device_active_session ORDER BY start_ms;
+
+upsertActiveSession:
+INSERT OR REPLACE INTO device_active_session(device_id, start_ms, end_ms, updated_at)
 VALUES (?, ?, ?, ?);

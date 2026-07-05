@@ -2,6 +2,7 @@ package org.example.project
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import org.example.project.scheduler.model.CellId
+import org.example.project.scheduler.persistence.ActiveSessionRecord
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SleepGapRecord
 import org.example.project.scheduler.persistence.SqlDelightSchedulerStore
@@ -369,6 +370,77 @@ class SchedulerStoreTest {
             assertTrue(store.loadSleepGaps().isEmpty())
             store.saveSleepGaps(listOf(SleepGapRecord("desk", 1_000, 2_000, 9_000)))
             assertEquals(SleepGapRecord("desk", 1_000, 2_000, 9_000), store.loadSleepGaps().single())
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
+    }
+
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by the *previous* schema (v4: everything through
+     * device_sleep_gap, no device_active_session) must still load after this feature ships, with the 4.sqm
+     * migration adding device_active_session on open. Reproduces the on-disk v4 shape, then opens it with the
+     * current schema and asserts old data survives and active-session storage is usable.
+     */
+    @Test
+    fun upgrades_pre_active_session_v4_db_and_preserves_data() {
+        val dbFile = File.createTempFile("scheduler-v4", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            val raw = JdbcSqliteDriver(url, Properties())
+            raw.execute(null, "CREATE TABLE app_state (id INTEGER NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+            raw.execute(
+                null,
+                "CREATE TABLE history_unit (category TEXT NOT NULL, ordinal INTEGER NOT NULL, " +
+                    "time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, debug_tainted INTEGER NOT NULL, " +
+                    "delta TEXT NOT NULL, PRIMARY KEY (category, ordinal))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE history_pointer (category TEXT NOT NULL PRIMARY KEY, pointer INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
+                    "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
+                    "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE window_placement (window_id TEXT NOT NULL PRIMARY KEY, x REAL NOT NULL, " +
+                    "y REAL NOT NULL, width REAL NOT NULL DEFAULT 0, height REAL NOT NULL DEFAULT 0, " +
+                    "visible INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_sleep_gap (device_id TEXT NOT NULL, sleep_start INTEGER NOT NULL, " +
+                    "sleep_end INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY (device_id, sleep_start))",
+                0,
+            )
+            raw.execute(null, "INSERT INTO app_state(id, payload) VALUES (0, ?)", 1) {
+                bindString(0, payload)
+            }
+            raw.execute(null, "PRAGMA user_version = 4", 0)
+            raw.close()
+
+            // Open with the current schema: the v4 -> v5 migration must run (adding device_active_session)
+            // without dropping the app_state row.
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            assertEquals(payload, store.load()!!.statePayload)
+            assertTrue(store.loadActiveSessions().isEmpty())
+            val session = ActiveSessionRecord("desk", 1_000, 2_000, 9_000)
+            store.saveActiveSessions(listOf(session))
+            assertEquals(session, store.loadActiveSessions().single())
+            // The upsert keys on (device_id, start_ms): re-saving the same session with a later end replaces it.
+            store.saveActiveSessions(listOf(session.copy(endMillis = 3_000, updatedAtMillis = 9_500)))
+            assertEquals(3_000, store.loadActiveSessions().single().endMillis)
             driver.close()
         } finally {
             dbFile.delete()

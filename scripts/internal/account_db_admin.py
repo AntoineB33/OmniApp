@@ -5,8 +5,8 @@ Two subcommands, both taking a username + password (the username is an arbitrary
 
   signup <user> <pass>   Create the account (idempotent: "already registered" is treated as success).
   empty  <user> <pass>   Sign in, then DELETE this account's synced data so every device for it goes
-                         empty -- the `scheduler_snapshot` row, all `device_presence` rows, and all
-                         `device_sleep_gap` rows.
+                         empty -- the `scheduler_snapshot` row, all `device_presence` rows, all
+                         `device_sleep_gap` rows, and all `device_active_session` rows.
 
 Config comes from the environment (the .bat exports it from accounts.env), falling back to the public
 values baked into shared SupabaseConfig.kt:
@@ -95,7 +95,7 @@ def cmd_empty(user, password):
     base, key, domain = cfg()
     email = username_to_email(user, domain)
     token, uid = sign_in(base, key, email, password)
-    for table in ("scheduler_snapshot", "device_presence", "device_sleep_gap"):
+    for table in ("scheduler_snapshot", "device_presence", "device_sleep_gap", "device_active_session"):
         url = "{}/rest/v1/{}?user_id=eq.{}".format(base, table, uid)
         status, payload = _request("DELETE", url, key, token=token)
         if status in (200, 204):

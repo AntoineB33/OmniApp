@@ -41,6 +41,7 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStore
+import org.example.project.scheduler.persistence.ActiveSessionStore
 import org.example.project.scheduler.persistence.DeviceSleepGapStore
 import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.persistence.WindowPlacement
@@ -165,6 +166,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     presence = vm.presence,
                     sleepGapStore = store as? DeviceSleepGapStore,
                     sleepGaps = vm.sleepGaps,
+                    activeSessionStore = store as? ActiveSessionStore,
+                    activeSessions = vm.activeSessions,
                     pauseCue = vm.pauseCue,
                     // PRD §15 / ARCHITECTURE.md §8: the OS-scheduled local cue seam for the engine App() builds
                     // itself (iOS delivers via UNUserNotificationCenter; desktop/web are inert). Android does not
@@ -194,6 +197,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             )
         }
         val nowMillis by engine.nowMillis.collectAsState()
+        // PRD §15 device-sleep gaps: past pauses drawn as greyed "Inactivity" bands (display-only; see the engine).
+        val inactivityGaps by engine.inactivityGaps.collectAsState()
 
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
@@ -296,19 +301,26 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val focusedWeekEndMillis =
             startOfWeek(selectedDate).plus(7, DateTimeUnit.DAY).atStartOfDayIn(tz).toEpochMilliseconds()
         val sideTaskHorizonMillis = maxOf(nowMillis + SchedulerDomain.SCHEDULE_HORIZON_MILLIS, focusedWeekEndMillis)
-        // The user's sleep windows across the displayed range — shown as "Sleep" blocks and avoided by the
-        // side-task projection (so neither tasks nor side tasks appear while asleep).
+        // The user's sleep windows — shown as "Sleep" blocks and avoided by the side-task projection (so
+        // neither tasks nor side tasks appear while asleep). Generated back over the past 168h too (the same
+        // horizon the §15 inactivity bands use), so past nights render as "Sleep" and the inactivity bands can
+        // be carved around them (a night is labelled Sleep, not Inactivity).
         val displaySleepPanels =
-            SchedulerDomain.sleepPanels(schedulerState.sleep, nowMillis, sideTaskHorizonMillis, tz)
+            SchedulerDomain.sleepPanels(
+                schedulerState.sleep, nowMillis - SchedulerDomain.SCHEDULE_HORIZON_MILLIS, sideTaskHorizonMillis, tz,
+            )
         val displaySleepRegions =
             displaySleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        // The scheduler only avoids sleep windows from `now` forward; past windows are display-only, so keep
+        // the projection's obstacle set to future/in-progress windows (identical to the pre-past behaviour).
+        val schedulerSleepRegions = displaySleepRegions.filter { it.endEpochMillis > nowMillis }
         val displaySidePanels =
-            SchedulerDomain.sideTaskPanels(schedulerState.sideTasks, nowMillis, sideTaskHorizonMillis, displaySleepRegions)
+            SchedulerDomain.sideTaskPanels(schedulerState.sideTasks, nowMillis, sideTaskHorizonMillis, schedulerSleepRegions)
 
         // PRD §15 (20s look-away): show the manual "Look away now" button only when the most recent past
         // side task before the now-line is a 20s look-away (a non-rest-break side task), not a rest pose.
         val showLookAwayButton =
-            SchedulerDomain.lastSideTaskBefore(schedulerState.sideTasks, nowMillis, displaySleepRegions)
+            SchedulerDomain.lastSideTaskBefore(schedulerState.sideTasks, nowMillis, schedulerSleepRegions)
                 ?.let { panel -> schedulerState.sideTasks.any { !it.restBreak && it.title == panel.title } }
                 ?: false
 
@@ -334,7 +346,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             } + mergePanelsForDisplay(
                 schedulerState.panels, displayReminderPanels, displaySidePanels, displaySleepPanels,
                 schedulerState.showSideTasks, schedulerState.showReminders,
-            )
+            ) + SchedulerDomain.subtractRegions(inactivityGaps, displaySleepRegions)
+                // Sub-minute remnants are noise, not a real away-from-every-device pause — e.g. the few
+                // seconds between the §17 scheduled wake (where "Sleep" ends) and the first session of a
+                // freshly-opened account, which would otherwise show as a tiny "20-second pause right after
+                // sleep" (see [SchedulerDomain.MIN_INACTIVITY_BAND_MILLIS]).
+                .filter { it.endEpochMillis - it.startEpochMillis >= SchedulerDomain.MIN_INACTIVITY_BAND_MILLIS }
+                .map { gap ->
+                    // PRD §15: recorded past pauses render as greyed "Inactivity" bands, drawn like the sleep
+                    // window but carved around the §17 sleep windows (already "Sleep"), so the two never overlap.
+                    CalendarRecord(
+                        title = "Inactivity",
+                        range = gap,
+                        inactivity = true,
+                    )
+                }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
         var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
         // PRD §8 Manual add: a not-yet-committed default panel shown in the edit window with a Save
@@ -688,7 +714,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onSimulatePause = { durationMillis ->
                                 val sleepStart = clock.nowMillis()
                                 simClock.leap(durationMillis)
-                                engine.reportTimeGap(sleepStart, clock.nowMillis())
+                                val sleepEnd = clock.nowMillis()
+                                engine.reportTimeGap(sleepStart, sleepEnd)
+                                // Record the pause as a synced gap too (the OS-log path can't see a simulated
+                                // leap), so it shows as an "Inactivity" band exactly like a real device sleep.
+                                engine.recordInactivityGap(sleepStart, sleepEnd)
                             },
                             pendingRollback = schedulerState.histories.hasPendingDebugRollback,
                             modifier = Modifier
