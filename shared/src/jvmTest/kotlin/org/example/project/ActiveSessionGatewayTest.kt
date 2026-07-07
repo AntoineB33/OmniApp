@@ -97,6 +97,12 @@ class ActiveSessionGatewayTest {
         assertEquals("self", first["device_id"]!!.jsonPrimitive.content)
         assertEquals(1_000L, first["start_ms"]!!.jsonPrimitive.long)
         assertEquals(2_000L, first["end_ms"]!!.jsonPrimitive.long)
+        // updated_at must go out as a bare epoch-millis number (the column is `bigint`, matching the local
+        // SQLite INTEGER and device_sleep_gap.recorded_at). A quoted/ISO string here would make Postgres
+        // reject the upsert with 22008 — the original 400-on-every-heartbeat bug. isString guards that.
+        val updatedAt = first["updated_at"]!!.jsonPrimitive
+        assertTrue(!updatedAt.isString, "updated_at must be a JSON number, not a string")
+        assertEquals(9_000L, updatedAt.long)
     }
 
     @Test

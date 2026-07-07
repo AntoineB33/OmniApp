@@ -21,7 +21,10 @@ create table if not exists public.device_active_session (
     device_id  text not null,
     start_ms   bigint not null,
     end_ms     bigint not null,
-    updated_at timestamptz not null default now(),
+    -- Epoch millis supplied by the client (like device_sleep_gap.recorded_at), NOT a timestamptz: the client
+    -- reports its device clock as a bigint, so a timestamptz here rejects the upsert with 22008. See the
+    -- 20260706 follow-up migration that converts already-deployed tables.
+    updated_at bigint not null,
     primary key (user_id, device_id, start_ms)
 );
 
