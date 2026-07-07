@@ -40,6 +40,7 @@ import org.example.project.scheduler.platform.speak as platformSpeak
 import org.example.project.scheduler.platform.stopSpeaking
 import org.example.project.scheduler.sync.ActiveSessionGateway
 import org.example.project.scheduler.sync.PauseCueGateway
+import org.example.project.scheduler.sync.PauseCuePushScheduler
 import org.example.project.scheduler.sync.PresenceGateway
 import org.example.project.scheduler.sync.SleepGapGateway
 import org.example.project.scheduler.state.SchedulerIntent
@@ -157,6 +158,13 @@ private fun formatClockTime(dateTime: LocalDateTime): String {
  * [org.example.project.time.SystemAppClock]); [scope] outlives the UI (the service scope on Android, the
  * app-lifetime composition scope on desktop). Call [start] exactly once.
  */
+// PRD §15 / ARCHITECTURE.md §8 (requirement #4): the deferred pause-cue push margins. 2 s when the cue moves
+// LATER (the server still holds the earlier instant, so the last phone must be told to CANCEL its stale alarm —
+// ~1 s for the upsert's trigger → edge push to reach the phone, plus ~1 s of slack); 1 s otherwise (nothing to
+// cancel — the cue is just moving earlier, or it is the first publish). See [PauseCuePushScheduler].
+private const val PAUSE_CUE_CANCEL_MARGIN_MILLIS: Long = 2_000
+private const val PAUSE_CUE_PUBLISH_MARGIN_MILLIS: Long = 1_000
+
 class SchedulerEngine(
     private val vm: TaskSchedulerViewModel,
     private val clock: AppClock,
@@ -890,25 +898,37 @@ class SchedulerEngine(
         }
     }
 
-    // PRD §15 / ARCHITECTURE.md §8: publish the account's next pause-end cue instant whenever it changes — on
-    // ANY device, because the desktop's write is exactly what the server pushes the phone from ~1 min before
-    // (requirement #2). On a phone, ALSO (re)schedule the local OS cue at that instant and cancel the previous,
-    // so a phone-originated change is honored with no server round-trip (requirement #5). A no-pose horizon
-    // clears the schedule and cancels the local cue. The publish is a tiny per-row upsert, deliberately NOT on
-    // the 60-s whole-snapshot throttle.
+    // PRD §15 / ARCHITECTURE.md §8: split the two halves of the next pause-end cue instant.
+    //  • Phone-local OS cue (requirement #5): (re)scheduled IMMEDIATELY when this device's prediction (d2)
+    //    changes, so a phone-originated change is honored with no server round-trip.
+    //  • Server upsert (requirements #2/#4): DEFERRED to the last responsible moment — min(d1, d2) minus a
+    //    small margin — by [PauseCuePushScheduler], so an idle session never chatters. d1 is the instant the
+    //    server currently holds (seeded from the row at startup, then tracked); no push at all in steady state
+    //    (d1 == d2). The server's `tick_pause_cues` cron remains the ~1-min-before backstop.
+    // d2 is effectively always non-null (every app state has an upcoming pause); if it is ever null (no pose in
+    // the horizon) there is nothing to push and no server round-trip is made.
     private fun launchPauseCueSchedule() = scope.launch {
         val gateway = pauseCue ?: return@launch
+        val pusher =
+            PauseCuePushScheduler(
+                scope = scope,
+                nowMillis = clock::nowMillis,
+                cancelMarginMillis = PAUSE_CUE_CANCEL_MARGIN_MILLIS,
+                publishMarginMillis = PAUSE_CUE_PUBLISH_MARGIN_MILLIS,
+                push = { dueAt ->
+                    withContext(Dispatchers.Default) { runCatching { gateway.publishPauseCueSchedule(dueAt) } }
+                },
+            )
+        // Seed d1 from what the server already holds so the first deferred push compares against reality
+        // instead of pushing unconditionally. Best-effort; an absent/failed read leaves d1 null (1-s margin).
+        pusher.seed(withContext(Dispatchers.Default) { runCatching { gateway.fetchPauseCueSchedule() }.getOrNull() })
         combine(_nowMillis, vm.state.map { it.panels }.distinctUntilChanged()) { now, panels ->
             nextRestPoseEndMillis(panels, vm.state.value.sideTasks, now)
         }
             .distinctUntilChanged()
-            .collectLatest { nextEnd ->
-                if (deviceKind == DeviceKind.Phone) scheduleLocalPauseCue(nextEnd)
-                withContext(Dispatchers.Default) {
-                    runCatching {
-                        if (nextEnd != null) gateway.publishPauseCueSchedule(nextEnd) else gateway.clearPauseCueSchedule()
-                    }
-                }
+            .collectLatest { d2 ->
+                if (deviceKind == DeviceKind.Phone) scheduleLocalPauseCue(d2)
+                if (d2 != null) pusher.onPrediction(d2)
             }
     }
 

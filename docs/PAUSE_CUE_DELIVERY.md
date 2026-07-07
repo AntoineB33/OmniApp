@@ -15,7 +15,7 @@ PRD §15 for the design; this file is the operational runbook.
 | `tick_pause_cues()` cron (push ~1 min before, **skip when origin == last phone**) — now a **backstop** to the immediate trigger | ✅ `20260703000000_init.sql` + `supabase/pause-cue-setup.sql` |
 | `on_last_phone_change` trigger (cancel push to the **previous** phone) | ✅ `20260703000000_init.sql` |
 | Edge Function real **FCM v1 / APNs HTTP/2** send | ✅ `supabase/functions/pause-cue/index.ts` (needs secrets) |
-| Client writes `pause_cue_schedule` when the next pose-end changes | ✅ `SchedulerEngine.launchPauseCueSchedule` → `SchedulerSyncEngine.publishPauseCueSchedule` |
+| Client writes `pause_cue_schedule` at the **last responsible moment** — deferred to `min(d1,d2) − margin`, **no per-change chatter, zero writes in steady state** | ✅ `scheduler/sync/PauseCuePushScheduler` (d1/d2 compare + 2 s / 1 s margins), driven by `SchedulerEngine.launchPauseCueSchedule` → `SchedulerSyncEngine.publishPauseCueSchedule`; the phone's own local OS cue is still (re)scheduled **immediately** |
 | Client claims `account_last_phone` on startup **and on every app-foreground** (phones only; scenario #3) | ✅ `SchedulerEngine.claimLastPhoneOnStartup` / `onAppForegrounded` (Android `MainActivity.onResume`, iOS `applicationDidBecomeActive`) |
 | Client transport for `device_push_token` | ✅ `SchedulerSyncEngine.registerPushToken` (still needs a *native token* to feed it — steps 2/3) |
 | Local-cue seam + push entry (`scheduleLocalPauseCue` / `onPauseCuePush` / `onPauseCueFire`) | ✅ shared seam + eligibility gate wired |
@@ -29,18 +29,44 @@ Two design decisions baked into the steps below (change them if you disagree):
    user at a screen is never told. The last-phone/FCM path only decides *which* phone gets the alarm.
 2. **Credentials assumed absent.** Code is written to be inert until you add Firebase/Apple secrets.
 
+### Deferred, last-responsible-moment server write (no heartbeat, no per-tick chatter)
+
+There is **no heartbeat** and the client does **not** upsert `pause_cue_schedule` on every prediction change.
+`scheduler/sync/PauseCuePushScheduler` (driven by `SchedulerEngine.launchPauseCueSchedule`) compares two
+instants and defers the single write to the last responsible moment:
+
+- **d1** — the instant the **server** already holds. Seeded once at startup from the `pause_cue_schedule` row
+  (`fetchPauseCueSchedule`), then tracked locally: after each push `d1 := d2`.
+- **d2** — this device's **current** next rest-pose end (`nextRestPoseEndMillis`). Effectively never null —
+  every app state has an upcoming pause; a (theoretical) null just means "nothing to push".
+
+The upsert fires at **`min(d1, d2) − margin`**:
+
+| Case | Target | Margin | Why |
+| --- | --- | --- | --- |
+| `d2 == d1` | — | — | **No write.** Steady state — the server is already correct. An idle session makes **zero** cue writes. |
+| `d2 > d1` (cue postponed) | `d1` | **2 s** | The server still holds the *earlier* `d1`, so the last phone has a stale alarm that would speak **too early** and must be **cancelled**. The upsert's DB trigger (`on_pause_cue_schedule_change`) fires an immediate edge push that needs ~1 s to reach the phone, + ~1 s slack before `d1` would have fired. |
+| `d2 < d1`, or first publish (`d1` unknown) | `d2` | **1 s** | Nothing stale to cancel (the cue is moving *earlier*, or the server has nothing yet) — one propagation margin is enough. |
+
+Each new prediction re-arms the single timer (cancelling the prior one); the phone's own local OS cue is still
+(re)scheduled **immediately**, independent of this deferred server write. The `tick_pause_cues()` cron
+(~1 min before) stays the backstop for schedules another device set. Unit-tested by
+`shared/jvmTest/.../PauseCuePushSchedulerTest` (virtual clock; all four rows + re-arm + fire-inside-margin).
+
 ---
 
 ## Step 1 — Shared Kotlin: transport + schedule/claim wiring ✅ DONE
 
 Implemented in `shared/commonMain` + tests in `shared/jvmTest` (`./gradlew :shared:jvmTest` green):
-- `RemoteSnapshotClient`: `upsertPauseCueSchedule` / `deletePauseCueSchedule` / `claimLastPhone` /
+- `RemoteSnapshotClient`: `upsertPauseCueSchedule` / `fetchPauseCueSchedule` / `claimLastPhone` /
   `upsertPushToken` (+ payloads). Covered by `PauseCueGatewayTest`.
 - `PauseCueGateway` (new) implemented by `SchedulerSyncEngine`; exposed as `TaskSchedulerViewModel.pauseCue`.
 - `SchedulerEngine`:
-  - `launchPauseCueSchedule()` — on every change of the next rest-pose end (`nextRestPoseEndMillis`, covered by
-    `PauseCueScheduleTest`) publishes `pause_cue_schedule` (origin = self) on any device, clears it when no pose
-    remains, and on a **phone** also calls the local-cue seam. This is requirements #2/#5.
+  - `launchPauseCueSchedule()` — tracks the next rest-pose end (`nextRestPoseEndMillis`, covered by
+    `PauseCueScheduleTest`) and, on a **phone**, (re)schedules the local-cue seam immediately; the server
+    `pause_cue_schedule` upsert (origin = self) is **deferred** to the last responsible moment by
+    `PauseCuePushScheduler` (see "Deferred, last-responsible-moment server write" above). This is
+    requirements #2/#5. Because d2 is effectively never null there is no clear-on-no-pose path.
   - `claimLastPhoneOnStartup()` — phones claim `account_last_phone` at launch (requirement #6).
   - `scheduleLocalPauseCue: (Long?) -> Unit` constructor seam (schedule at instant / cancel on null) and
     `onPauseCuePush(action, dueAtMillis)` public entry — **both default to no-op**; steps 2/3 supply the real
@@ -67,11 +93,15 @@ suspend fun upsertPauseCueSchedule(session: SupabaseSession, dueAtIso: String, o
     if (!res.status.isSuccess()) throw res.toException()
 }
 
-suspend fun deletePauseCueSchedule(session: SupabaseSession) {
-    val res = http.delete("${config.restUrl}/pause_cue_schedule") {
-        authHeaders(session); url.parameters.append("user_id", "eq.${session.userId}")
+// Read the instant the server currently holds — seeds d1 for the deferred push (PauseCuePushScheduler).
+suspend fun fetchPauseCueSchedule(session: SupabaseSession): Long? {
+    val res = http.get("${config.restUrl}/pause_cue_schedule") {
+        authHeaders(session)
+        url.parameters.append("user_id", "eq.${session.userId}"); url.parameters.append("select", "due_at")
     }
     if (!res.status.isSuccess()) throw res.toException()
+    return json.decodeFromString<List<PauseCueRow>>(res.bodyAsText()).firstOrNull()?.dueAt
+        ?.let { Instant.parse(it).toEpochMilliseconds() }
 }
 
 // Claim this device as the account's last-logged-in phone. The account_last_phone UPDATE fires the DB
@@ -98,7 +128,7 @@ suspend fun upsertPushToken(session: SupabaseSession, deviceId: String, kind: St
 ```
 Add the `@Serializable` payloads (`PauseCueUpsert(user_id, due_at, origin_device_id)`,
 `LastPhoneUpsert(user_id, device_id)`, `PushTokenUpsert(user_id, device_id, kind, platform, token)`) next to
-the existing `PresenceUpsert`/`GapUpsert`. Import `io.ktor.client.request.delete`.
+the existing `PresenceUpsert`/`GapUpsert`.
 
 **1b. New `PauseCueGateway` interface** (sibling of `PresenceGateway`/`SleepGapGateway`), implemented by
 `SchedulerSyncEngine` (which owns the session), all calls `runCatching`-wrapped and off `mutex`:
@@ -108,8 +138,8 @@ interface PauseCueGateway {
     val deviceId: String
     /** Write the next cue instant with origin = this device (the phone then also schedules it locally). */
     suspend fun publishPauseCueSchedule(dueAtMillis: Long)
-    /** No upcoming pose: clear the row so the cron stops pushing. */
-    suspend fun clearPauseCueSchedule()
+    /** Read the instant the server currently holds — seeds d1 for the deferred push. */
+    suspend fun fetchPauseCueSchedule(): Long?
     /** Phone startup: become the account's last phone (fires the cancel-push to the previous phone). */
     suspend fun claimLastPhone()
     /** Register this device's FCM/APNs token so the Edge Function can reach it. */
@@ -124,11 +154,10 @@ Implement in `SchedulerSyncEngine` using `withAuth(current) { client.upsertPause
   `if (deviceKind == DeviceKind.Phone) scope.launch { runCatching { pauseCue?.claimLastPhone() } }`. This is
   requirement #6 (the startup reconcile already runs in the ViewModel; this piggybacks the last-phone claim).
 - **Next-pose-end tracking:** add a `collectLatest` over `(_nowMillis, panels)` that computes
-  `nextPoseEnd = poses.map { it.endEpochMillis }.filter { it > now }.minOrNull()`. On change: if non-null,
-  `pauseCue?.publishPauseCueSchedule(nextPoseEnd)` **and** (phone only) schedule the local alarm at that
-  instant + cancel the previous; if null, `pauseCue?.clearPauseCueSchedule()` + cancel the local alarm. This
-  is requirements #2/#5. Because the write goes through the same 60-s throttle path only for the *snapshot*,
-  call the cue-schedule write directly (it is a tiny per-row upsert, not the whole-doc push).
+  `nextPoseEnd = poses.map { it.endEpochMillis }.filter { it > now }.minOrNull()` (d2). On change, (phone only)
+  (re)schedule the local alarm at that instant immediately; the server `publishPauseCueSchedule` upsert is
+  **deferred** to `min(d1,d2) − margin` by `PauseCuePushScheduler`, not written on every change. This is
+  requirements #2/#5. The cue-schedule write is a tiny per-row upsert, independent of the 60-s snapshot throttle.
 - **Local alarm (phone):** add `expect fun schedulePauseEndCue(dueAtMillis: Long)` / `expect fun
   cancelPauseEndCue()` in `scheduler/platform`, actual per target (below). The alarm, when it fires, calls the
   **existing** `poseFinishEligible` gate before `speak(...)`.
@@ -137,7 +166,7 @@ Implement in `SchedulerSyncEngine` using `withAuth(current) { client.upsertPause
 calls a new `SchedulerEngine.onPauseCuePush(action, dueAtMillis)` that schedules or cancels the local alarm.
 
 **1e. Tests** (`shared/jvmTest`): next-pose-end computation; that a schedule change with origin==self writes
-`origin_device_id == deviceId`; that clearing on no-pose calls `clearPauseCueSchedule`. Run with
+`origin_device_id == deviceId`; the deferred d1/d2 margins (`PauseCuePushSchedulerTest`). Run with
 `./gradlew :shared:jvmTest` (per the `shared-check-jvmtest-gate` note, `:shared:check` is red on JS/Native for
 an unrelated CalendarUi issue — verify with `:shared:jvmTest`).
 
@@ -272,14 +301,15 @@ observable; a single phone exercises the local-schedule path.
    speaks *"Your pause is over…"* at the pose end. The cron should **not** push (origin == last phone) — check
    the Edge Function logs (`supabase functions logs pause-cue`) show no `schedule` call for this cue.
 4. **Desktop-caused schedule (scenario/requirement #2, server push):** on the **desktop** (account 1), make a
-   change that moves the next pose-end (e.g. edit the sleep schedule / add a pinned panel). Desktop syncs; the
-   desktop's `pause_cue_schedule` row shows `origin_device_id == desktop`. The `on_pause_cue_schedule_change`
-   trigger fires **immediately** → Edge logs show a `schedule` push → the phone gets the data message,
-   (cancels any stale alarm and) schedules the local alarm at the new instant, and speaks at the exact instant.
-   (Kill the app first to prove it still fires.) `tick_pause_cues()` re-affirms the same push ~1 min before as a
-   backstop (idempotent — same instant, same alarm id). To see the immediate trigger matter, set the pose-end
-   *earlier*, let the phone schedule, then *postpone* it on the desktop: without the immediate push the phone
-   would speak at the old, earlier instant.
+   change that moves the next pose-end (e.g. edit the sleep schedule / add a pinned panel). **The desktop does
+   NOT write `pause_cue_schedule` right away** — the write is deferred to `min(d1,d2) − margin` (see
+   "Deferred, last-responsible-moment server write" above and **Testing D**), so watch the row change *near the
+   cue*, not at the moment of the edit. When it does write, the row shows `origin_device_id == desktop`; the
+   `on_pause_cue_schedule_change` trigger fires **immediately** → Edge logs show a `schedule` push → the phone
+   gets the data message, (cancels any stale alarm and) schedules the local alarm at the new instant, and speaks
+   at the exact instant. (Kill the app first to prove it still fires.) `tick_pause_cues()` is the ~1-min-before
+   backstop for a schedule that was already on the server. To make the deferred write arrive in seconds rather
+   than up to an hour, run this under the **Testing C** time-link (accelerated clock).
 5. **Presence suppression:** repeat step 4 but keep the phone screen **on** through the final minute — it must
    **stay silent** (the `poseFinishEligible` gate). Turn the screen off → it speaks.
 6. **Last-phone handoff / cancel (scenario/requirement #3):** sign a **second** phone into account 1 and launch
@@ -361,6 +391,53 @@ machines shifts the phone's schedule by that skew (keep both NTP-synced). Accele
 via the LWW snapshot, so use a throwaway/test account. Two phones need a per-device `adb -s <serial> reverse
 tcp:47615 tcp:47615` (the auto-reconcile targets the default device). On Android, history-unit timestamps stay on
 real time by design — only the schedule/`now` the cue path depends on is driven.
+
+---
+
+## Testing D — the deferred, last-responsible-moment write (d1/d2 margins)
+
+Goal: prove the client makes **zero** `pause_cue_schedule` writes while idle, and that when the next pose-end
+moves it writes **once**, at `min(d1,d2) − margin`, with the right margin. Run it under the **Testing C**
+time-link so the deferred instant arrives in seconds; keep three panes open:
+
+- **Supabase → Table editor → `pause_cue_schedule`** (watch `due_at` / `origin_device_id` / `updated_at`).
+- **`supabase functions logs pause-cue --project-ref <ref>`** (each `schedule`/`cancel` push).
+- The desktop **Time** panel (drive `now`) — and, optionally, the desktop DB write log.
+
+**Automated first.** The pure timing logic is unit-tested — run it before touching hardware:
+```
+./gradlew :shared:jvmTest --tests "org.example.project.PauseCuePushSchedulerTest"
+```
+It asserts all four table rows (steady-state no-write, postpone→2 s-before-`d1`, advance→1 s-before-`d2`, first
+publish→1 s), timer re-arm, and the fire-inside-the-margin immediate push, on a virtual clock.
+
+**Manual, end-to-end.** With the time-link connected and the phone signed in as last phone:
+
+1. **Steady state = zero writes.** Let the app sit with a stable schedule for a simulated ≥1 min. `updated_at`
+   on the `pause_cue_schedule` row must **not** change and the Edge logs must show **no** new `schedule` push.
+   (`d1 == d2` ⇒ no write — this is the whole point: an idle session never chatters.)
+2. **Postpone (`d2 > d1`, expect a write 2 s before the OLD instant).** With a cue pending at `d1`, make a
+   desktop change that pushes the next pose-end **later** (e.g. extend the current task / delete the imminent
+   pose). Nothing should hit `pause_cue_schedule` yet. As the accelerated `now` approaches **`d1 − 2 s`**, watch
+   the row's `due_at` jump to the new later instant and `origin_device_id == desktop`; the Edge log shows one
+   `schedule` push for the new `due_at` ~1 s later. On a backgrounded phone the stale `d1` alarm is replaced
+   before it fires (no early "your pause is over"). `dumpsys alarm | Select-String org.example.project` shows
+   the alarm move.
+3. **Advance / first publish (expect a write 1 s before the NEW instant).** From a clean row (empty
+   `pause_cue_schedule`, or a cue that you now move **earlier**), the write must land at **`d2 − 1 s`**, not
+   before — `due_at` appears/updates one accelerated second ahead of the cue, Edge log shows one `schedule`
+   push. (First publish has `d1` unknown ⇒ same 1 s margin.)
+4. **Change-inside-the-margin ⇒ immediate.** Move the pose-end to an instant already within a second of `now`.
+   The write should fire **at once** (no negative wait), and the phone still speaks at the instant.
+
+**Reading the margins from logs:** compare the `pause_cue_schedule.updated_at` (server receive time) against the
+row's `due_at`. Postpone cases land ~2 s before the *previous* `due_at`; advance/first cases ~1 s before the
+*new* `due_at`. Because both `nowMillis` and the delay use the same (accelerated) clock, the gap you observe is
+in **accelerated** seconds — divide by the time-link speed for wall-clock.
+
+> Caveat (documented in `PauseCuePushScheduler`): under accelerated sim the sync clock and the coroutine `delay`
+> clock can diverge, so the deferred write is best-effort in sim — treat the *ordering* and *which margin* as the
+> assertions, and use the unit test for exact-millisecond timing.
 
 ---
 

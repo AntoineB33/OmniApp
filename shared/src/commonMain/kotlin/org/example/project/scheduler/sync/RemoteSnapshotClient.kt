@@ -3,7 +3,6 @@ package org.example.project.scheduler.sync
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.patch
@@ -16,6 +15,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
+import kotlin.time.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -295,14 +295,20 @@ class RemoteSnapshotClient(
         if (!response.status.isSuccess()) throw response.toException()
     }
 
-    /** Clears the account's pause-end cue schedule (no upcoming pose), so the cron stops pushing. */
-    suspend fun deletePauseCueSchedule(session: SupabaseSession) {
+    /**
+     * Reads the account's currently-stored next pause-end instant (epoch millis), or null if no row exists.
+     * Seeds `d1` for the deferred cue push ([org.example.project.scheduler.sync.PauseCuePushScheduler]).
+     */
+    suspend fun fetchPauseCueSchedule(session: SupabaseSession): Long? {
         val response =
-            http.delete("${config.restUrl}/pause_cue_schedule") {
+            http.get("${config.restUrl}/pause_cue_schedule") {
                 authHeaders(session)
                 url.parameters.append("user_id", "eq.${session.userId}")
+                url.parameters.append("select", "due_at")
             }
         if (!response.status.isSuccess()) throw response.toException()
+        val rows = json.decodeFromString<List<PauseCueRow>>(response.bodyAsText())
+        return rows.firstOrNull()?.dueAt?.let { Instant.parse(it).toEpochMilliseconds() }
     }
 
     /**
@@ -416,6 +422,8 @@ private data class PauseCueUpsert(
     @SerialName("due_at") val dueAt: String,
     @SerialName("origin_device_id") val originDeviceId: String,
 )
+
+@Serializable private data class PauseCueRow(@SerialName("due_at") val dueAt: String)
 
 @Serializable
 private data class LastPhoneUpsert(

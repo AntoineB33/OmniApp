@@ -25,8 +25,8 @@ import org.example.project.scheduler.sync.SupabaseConfig
  * Exercises PRD §15 / ARCHITECTURE.md §8 pause-end cue delivery through [SchedulerSyncEngine]'s
  * [PauseCueGateway][org.example.project.scheduler.sync.PauseCueGateway] impl against a Ktor [MockEngine].
  * Covers each PostgREST write's method/path/body shape (schedule upsert carries the ISO `due_at` + this
- * device as `origin_device_id`; clear is a DELETE; last-phone/token carry the device id), and that every call
- * is a no-op while signed out (never reaches the server).
+ * device as `origin_device_id`; last-phone/token carry the device id), and that every call is a no-op while
+ * signed out (never reaches the server).
  */
 class PauseCueGatewayTest {
     private val json = Json { ignoreUnknownKeys = true }
@@ -83,15 +83,6 @@ class PauseCueGatewayTest {
     }
 
     @Test
-    fun clear_schedule_deletes() = runTest {
-        val cap = Captured()
-        signedIn(cap).clearPauseCueSchedule()
-
-        assertEquals("DELETE", cap.method)
-        assertTrue(cap.path!!.endsWith("/pause_cue_schedule"))
-    }
-
-    @Test
     fun claim_last_phone_writes_this_device() = runTest {
         val cap = Captured()
         signedIn(cap).claimLastPhone()
@@ -119,7 +110,6 @@ class PauseCueGatewayTest {
         val cap = Captured()
         val engine = SchedulerSyncEngine(harness(cap), FakeMetaStore(SyncMeta(deviceId = "self")), json)
         engine.publishPauseCueSchedule(1L)
-        engine.clearPauseCueSchedule()
         engine.claimLastPhone()
         engine.registerPushToken("phone", "fcm", "t")
         // Signed out: nothing reached the server.

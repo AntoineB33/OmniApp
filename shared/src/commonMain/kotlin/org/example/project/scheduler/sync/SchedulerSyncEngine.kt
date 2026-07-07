@@ -315,9 +315,9 @@ class SchedulerSyncEngine(
         runCatching { withAuth(current) { client.upsertPauseCueSchedule(it, dueAtIso, meta().deviceId) } }
     }
 
-    override suspend fun clearPauseCueSchedule() {
-        val current = session ?: return
-        runCatching { withAuth(current) { client.deletePauseCueSchedule(it) } }
+    override suspend fun fetchPauseCueSchedule(): Long? {
+        val current = session ?: return null
+        return runCatching { withAuth(current) { client.fetchPauseCueSchedule(it) } }.getOrNull()
     }
 
     override suspend fun claimLastPhone() {

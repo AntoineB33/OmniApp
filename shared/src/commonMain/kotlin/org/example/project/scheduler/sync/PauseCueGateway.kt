@@ -24,8 +24,12 @@ interface PauseCueGateway {
      */
     suspend fun publishPauseCueSchedule(dueAtMillis: Long)
 
-    /** No upcoming pose: clears the account's cue schedule so the cron stops pushing. Best-effort. */
-    suspend fun clearPauseCueSchedule()
+    /**
+     * Reads the account's currently-stored next pause-end instant (epoch millis), or null if no row is set or
+     * the read fails. Used to seed **d1** at startup so the deferred push ([PauseCuePushScheduler]) compares
+     * this device's prediction against what the server already holds instead of pushing unconditionally.
+     */
+    suspend fun fetchPauseCueSchedule(): Long?
 
     /**
      * Phone startup: becomes the account's last-logged-in phone. The `account_last_phone` change fires the DB
