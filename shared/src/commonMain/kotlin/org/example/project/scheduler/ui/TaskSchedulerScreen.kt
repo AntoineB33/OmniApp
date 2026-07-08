@@ -429,11 +429,15 @@ fun TaskSchedulerScreen(
         Text(
             text = "Task Scheduler",
             style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = { vm.dispatch(SchedulerIntent.ClearSelection) },
-            ),
+            // Shifted right so the lateral-menu collapse bookmark («/»), which straddles the content's
+            // left edge, doesn't cover the start of the title.
+            modifier = Modifier
+                .padding(start = 40.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = { vm.dispatch(SchedulerIntent.ClearSelection) },
+                ),
         )
         Spacer(Modifier.height(12.dp))
 
