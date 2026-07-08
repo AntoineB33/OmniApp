@@ -65,12 +65,29 @@ REM ---- The build above is done once; only these on-device steps retry.
 echo [2/6] Checking for a connected device...
 "%ADB%" start-server >nul 2>&1
 "%ADB%" devices | findstr /r /c:"	device$" >nul
-if errorlevel 1 (
-  echo [x] No authorized device found. Plug in via USB with USB debugging on,
-  echo     or connect wifi-adb ^("%ADB% connect ^<phone-ip^>:5555"^).
-  "%ADB%" devices
+if not errorlevel 1 goto device_ok
+
+REM ---- Not in the ready "device" state. Distinguish WHY so the retry prompt is
+REM ---- accurate: "unlock the phone" is wrong for an offline/unauthorized device
+REM ---- (unlocking never fixes those - you re-accept the RSA prompt or reconnect adb).
+"%ADB%" devices | findstr /r /c:"	unauthorized$" >nul && (
+  echo [x] Device is UNAUTHORIZED. On the PHONE, accept the "Allow USB debugging?"
+  echo     prompt ^(tick "Always allow from this computer" =^> Allow^), then retry.
   goto deploy_failed
 )
+"%ADB%" devices | findstr /r /c:"	offline$" >nul && (
+  echo [x] Device is OFFLINE ^(stale connection - not a lock^). Restarting adb server...
+  "%ADB%" kill-server >nul 2>&1
+  "%ADB%" start-server >nul 2>&1
+  echo     If it stays offline: replug USB or re-toggle USB debugging, then retry.
+  goto deploy_failed
+)
+echo [x] No device found. Plug in via USB with USB debugging on,
+echo     or connect wifi-adb ^("%ADB% connect ^<phone-ip^>:5555"^).
+"%ADB%" devices
+goto deploy_failed
+
+:device_ok
 
 REM ---- [3/6] Uninstall first to WIPE local data, so the next launch signs in
 REM ---- fresh as this account (auto-login is skipped once a session is cached).
@@ -99,9 +116,9 @@ goto deploy_done
 
 :deploy_failed
 echo.
-echo [!] The app could not be deployed - the phone may be locked.
-echo     Unlock the phone (and accept any USB-debugging prompt), then
-set /p "_RETRY=    press Enter to retry (or Ctrl+C to abort)... "
+echo [!] The on-device step failed - see the reason above (a locked phone can also
+echo     cause install/launch to fail; if so, unlock it now).
+set /p "_RETRY=    Fix the above, then press Enter to retry (or Ctrl+C to abort)... "
 echo.
 goto deploy_retry
 

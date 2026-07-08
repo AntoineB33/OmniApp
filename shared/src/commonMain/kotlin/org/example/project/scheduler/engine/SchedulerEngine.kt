@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -116,6 +118,21 @@ private const val LOCAL_DEVICE_ID: String = "local"
 // pause-cue push) — see [pushOwnActiveSessions] and [refreshDerivedPauses]'s callers.
 private const val ACTIVE_SESSION_BEAT_MILLIS_SIM: Long = 1_000
 private const val ACTIVE_SESSION_BEAT_MILLIS_PROD: Long = 30L * 1_000
+
+// The now-line display cadence while time is ACCELERATED. Fine enough that the now-line glides instead of
+// jumping once per schedule tick (the reported x300 "jumps" anomaly) — on the phone as well as the desktop.
+// The phone's clock is accelerated via the desktop time-link even though DebugFlags.TIME_SIMULATION is off
+// there, so every accelerated cadence keys off the clock's actual speed ([timeAccelerated]), not the flag.
+private const val ADVANCE_DISPLAY_MILLIS_ACCEL: Long = 50
+// The now-line display cadence at REAL time (1×): the production advance/poll cadence.
+private const val ADVANCE_TICK_MILLIS_PROD: Long = 30L * 1_000
+// The finer cadence used for the schedule-advance dispatch and the horizon/active-session polls while
+// accelerated (the display now-line moves faster still, every [ADVANCE_DISPLAY_MILLIS_ACCEL]).
+private const val ADVANCE_TICK_MILLIS_ACCEL: Long = 1_000
+// Coarsest sim-time between schedule advances (banking auto records / re-deriving panels). The display
+// now-line moves every display tick; the heavier advance only needs ~1 s-of-sim granularity — banking
+// records at sub-second sim resolution is pointless and just churns the reducer.
+private const val SCHEDULE_ADVANCE_STEP_MILLIS: Long = 1_000
 
 // PRD §12/§15: the window the server derivation (and its local fallback) considers — the last 168 hours, the
 // same horizon §9/§12 use for "the calendar the user can change". Older pauses age out of the bands.
@@ -272,9 +289,38 @@ class SchedulerEngine(
         claimLastPhoneOnStartup()
     }
 
-    // PRD §9: the single "time has advanced to `now`" step — see the original `advanceTo` in App.kt.
+    // True when the now-line advances faster than real time — the desktop time-sim, OR a phone whose clock is
+    // driven above 1× by the desktop time-link (where DebugFlags.TIME_SIMULATION is off). It drives the fine
+    // tick cadences so the now-line/schedule keep up smoothly instead of jumping once per production tick. The
+    // desktop debug flag forces it true even at 1× so the sim panel's manual leaps still refresh promptly. Read
+    // per loop-iteration because the user changes the speed (e.g. clicks x300) at runtime.
+    private fun timeAccelerated(): Boolean =
+        DebugFlags.TIME_SIMULATION || ((clock as? SimAppClock)?.speed ?: 1.0) > 1.0
+
+    // Delay [millis], but wake early when the clock is reconfigured (a speed change or leap — e.g. the desktop
+    // pushing x300 to the phone over the time-link). A poll loop that chose the coarse production cadence at 1×
+    // would otherwise finish a full ~30 s sleep before noticing acceleration turned on and switching to the
+    // fine display cadence — the reported "the phone's now-line lags the desktop's by ~30 s" anomaly. Reading
+    // the generation before the wait then waiting for it to differ never misses a bump raced in between
+    // (a StateFlow replays its current value to a fresh collector). No-op fallback on a non-sim clock.
+    private suspend fun tickDelay(millis: Long) {
+        val sim = clock as? SimAppClock ?: return delay(millis)
+        val gen = sim.reconfigured.value
+        withTimeoutOrNull(millis) { sim.reconfigured.first { it != gen } }
+    }
+
+    // PRD §9: the single "time has advanced to `now`" step — see the original `advanceTo` in App.kt. Moves the
+    // display now-line AND advances the schedule (the leap/device-sleep path wants both at once).
     private fun advanceTo(now: Long) {
         _nowMillis.value = now
+        dispatchScheduleAdvance(now)
+    }
+
+    // PRD §9: bank elapsed auto records / re-derive panels up to `now`. Split out from [advanceTo] so the fluid
+    // display tick can move the now-line every frame while dispatching this heavier step only every
+    // [SCHEDULE_ADVANCE_STEP_MILLIS]. The reducer no-ops (returns the same state) until a panel actually elapses,
+    // so an over-eager call is cheap; the step guard just keeps the reducer from churning under acceleration.
+    private fun dispatchScheduleAdvance(now: Long) {
         val current = vm.state.value
         val sideTaskDue =
             current.automaticSchedule &&
@@ -297,10 +343,18 @@ class SchedulerEngine(
     }
 
     // PRD §9: the advance tick + PRD §12 device-sleep detection (real-time gap → inject a hole).
+    //
+    // Two cadences, so an accelerated now-line GLIDES instead of jumping once per tick (the x300 "jumps"
+    // anomaly, worst on the phone where the production 30 s tick made each jump ~2.5 h of sim time):
+    //  • the display now-line ([_nowMillis], which the UI collects) moves every [ADVANCE_DISPLAY_MILLIS_ACCEL];
+    //  • the heavier schedule advance (banking auto records / re-deriving panels) fires only once the clock has
+    //    moved [SCHEDULE_ADVANCE_STEP_MILLIS] of sim time — no point banking records at sub-second sim res.
+    // At real time (1×) both collapse to the single production cadence, so production behaviour is unchanged.
     private fun launchAdvanceTick() = scope.launch {
-        val interval: Long = if (DebugFlags.TIME_SIMULATION) 1_000 else 30_000
         var lastRealTick = SystemAppClock.nowMillis()
         var lastClockTick = clock.nowMillis()
+        // Seed one step behind so the first non-sleep iteration dispatches immediately (as the old tick did).
+        var lastScheduleAdvance = lastClockTick - SCHEDULE_ADVANCE_STEP_MILLIS
         while (true) {
             val realNow = SystemAppClock.nowMillis()
             val now = clock.nowMillis()
@@ -311,12 +365,19 @@ class SchedulerEngine(
                 // becomes an exact gap other devices can pull.
                 reportTimeGap(lastClockTick, now)
                 recordExactSleepGaps(lastClockTick, now)
+                lastScheduleAdvance = now
             } else {
-                advanceTo(now)
+                // Display: always glide the now-line to the current clock instant.
+                _nowMillis.value = now
+                // Schedule: bank records / re-derive panels only on the coarser sim-time step.
+                if (now - lastScheduleAdvance >= SCHEDULE_ADVANCE_STEP_MILLIS) {
+                    dispatchScheduleAdvance(now)
+                    lastScheduleAdvance = now
+                }
             }
             lastRealTick = realNow
             lastClockTick = now
-            delay(interval)
+            tickDelay(if (timeAccelerated()) ADVANCE_DISPLAY_MILLIS_ACCEL else ADVANCE_TICK_MILLIS_PROD)
         }
     }
 
@@ -363,14 +424,16 @@ class SchedulerEngine(
     // suspension ends the session at its pre-sleep end and the post-wake session opens after the gap, exactly
     // like the §12 device-sleep detection; a fast sim tick just extends the session across the leaped clock time.
     private fun launchActiveSessionTracking() = scope.launch {
-        val interval = if (DebugFlags.TIME_SIMULATION) ACTIVE_SESSION_BEAT_MILLIS_SIM else ACTIVE_SESSION_BEAT_MILLIS_PROD
         var lastRealBeat = SystemAppClock.nowMillis()
         while (true) {
             val realNow = SystemAppClock.nowMillis()
             val suspended = realNow - lastRealBeat > DEVICE_SLEEP_THRESHOLD_MILLIS
             advanceActiveSession(clock.nowMillis(), screenActive(), suspended)
             lastRealBeat = realNow
-            delay(interval)
+            // Beat faster while accelerated (re-checked each pass — the speed changes at runtime) so the session
+            // timeline tracks the racing `now` finely; keys off the clock's actual speed so the phone beats fast
+            // too under the desktop time-link, where DebugFlags.TIME_SIMULATION is off.
+            tickDelay(if (timeAccelerated()) ACTIVE_SESSION_BEAT_MILLIS_SIM else ACTIVE_SESSION_BEAT_MILLIS_PROD)
         }
     }
 
@@ -561,9 +624,10 @@ class SchedulerEngine(
             val target =
                 SchedulerDomain.firstFreeMoment(panels, clock.nowMillis()) -
                     SchedulerDomain.SCHEDULE_HORIZON_MILLIS
-            val pollInterval: Long = if (DebugFlags.TIME_SIMULATION) 1_000 else 30_000
+            // Poll faster while accelerated (re-checked each pass — the user changes speed at runtime) so the
+            // refill isn't reached late when `now` races ahead; the phone keys off the clock's actual speed too.
             while (clock.nowMillis() < target) {
-                delay(pollInterval)
+                tickDelay(if (timeAccelerated()) ADVANCE_TICK_MILLIS_ACCEL else ADVANCE_TICK_MILLIS_PROD)
             }
             if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
             else pendingReschedule = true
