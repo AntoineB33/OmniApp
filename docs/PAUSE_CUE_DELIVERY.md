@@ -62,9 +62,18 @@ The same burst that fires this write also does the account's other last-responsi
 `flushActiveSession()`, `refreshDerivedPauses()`, and — new — the cross-device **presence** write
 (`publishPosePresenceIfActive`, only when signed in + screen on + inside a rest pose). That replaces the old
 per-60 s `device_presence` beacon: in the scenario "now-line inside a 5/15-min pose, `screenActive()` true,
-signed in", the pose end is re-pinned to the now-line so `d2` moves constantly, but the write still fires only
-at `min(d1,d2) − margin` — **not** once per minute. An idle session (stable pose end) makes no presence write
-at all.
+signed in", the pose end is re-pinned to the now-line so `d2 = now + duration` moves constantly — **yet no
+write fires per minute or per tick**. Each tick's new `d2` re-arms the *single* deferred timer with
+`wait = duration − margin` (≈299 s for the 5-min pose), which is far longer than the ≤30 s advance-tick
+cadence, so the timer is cancelled and re-armed long *before* it could fire. On a freshly-emptied account
+(`d1` null, e.g. right after `account1-empty-and-open`) the burst therefore **never fires while the pose keeps
+sliding** — so `pause_cue_schedule`, `device_presence`, `device_active_session`, and the derived-pause pull all
+stay at **zero writes** for as long as the user works through the pose and changes nothing. Only when `d2`
+stabilises on a real upcoming pause (the user actually rests, or the now-line moves past the pinned pose) does
+the timer survive to fire, landing exactly one burst at `d2 − 1 s`. So after `account1-empty-and-open`'s
+startup sync, the Supabase write count is **guaranteed constant** in this scenario. (Guaranteed by
+`PauseCuePushSchedulerTest.a_pose_pinned_to_the_now_line_never_pushes`; see also **Testing D → step 5**.) An
+idle session with a *stable* pose end makes no presence write at all.
 
 ---
 
@@ -442,6 +451,15 @@ publish→1 s), timer re-arm, and the fire-inside-the-margin immediate push, on 
    push. (First publish has `d1` unknown ⇒ same 1 s margin.)
 4. **Change-inside-the-margin ⇒ immediate.** Move the pose-end to an instant already within a second of `now`.
    The write should fire **at once** (no negative wait), and the phone still speaks at the instant.
+5. **Pose pinned to the now-line = zero writes (the `account1-empty-and-open` guarantee).** Empty the account
+   (`account1-empty-and-open.bat`) so `pause_cue_schedule` starts **empty** (`d1` null), then park the now-line
+   **inside** a 5/15-min rest pose with the screen **active** and take no action. The pose is pinned to the
+   now-line, so `d2 = now + duration` climbs every tick, but the deferred timer is re-armed (`wait = duration −
+   margin` ≈ 299 s) faster than it can fire. Fast-forward the accelerated clock through many ticks: after the
+   one startup sync, `pause_cue_schedule`, `device_presence`, and `device_active_session` must show **no new
+   writes** and the Edge log **no** `schedule` push — the row count is constant. It only breaks when `d2`
+   stabilises (let the pose actually be taken, or advance `now` past it): then exactly one burst lands at
+   `d2 − 1 s`. This is the case unit-tested by `a_pose_pinned_to_the_now_line_never_pushes`.
 
 **Reading the margins from logs:** compare the `pause_cue_schedule.updated_at` (server receive time) against the
 row's `due_at`. Postpone cases land ~2 s before the *previous* `due_at`; advance/first cases ~1 s before the

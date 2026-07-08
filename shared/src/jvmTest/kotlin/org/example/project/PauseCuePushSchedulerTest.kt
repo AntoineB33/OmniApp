@@ -117,6 +117,42 @@ class PauseCuePushSchedulerTest {
     }
 
     @Test
+    fun a_pose_pinned_to_the_now_line_never_pushes() {
+        // The account1-empty-and-open guarantee. Scenario: the now-line sits inside a 5/15-min rest pose the
+        // user is working through (screenActive() true) on a freshly-emptied account, so (a) the server holds
+        // nothing → d1 = null, and (b) the pose is pinned to the now-line → its end d2 = now + duration climbs
+        // on every engine tick. Each new prediction re-arms the single deferred timer with wait = duration −
+        // margin (≈ 299 s for the 5-min pose), which is far longer than the ≤30 s advance-tick cadence, so the
+        // timer is cancelled and re-armed long before it could fire. Result: NOT one write per minute (nor per
+        // tick) — zero pause_cue_schedule writes for as long as the pose keeps sliding and the user is idle.
+        val dispatcher = StandardTestDispatcher()
+        runTest(dispatcher) {
+            val pushes = mutableListOf<Long>()
+            val scope = CoroutineScope(dispatcher)
+            val s =
+                PauseCuePushScheduler(
+                    scope = scope,
+                    nowMillis = { dispatcher.scheduler.currentTime },
+                    cancelMarginMillis = cancelMargin,
+                    publishMarginMillis = publishMargin,
+                    push = { pushes += it },
+                )
+            s.seed(null) // freshly-emptied account: the server holds no cue instant
+
+            val poseDurationMillis = 5L * 60 * 1_000 // the shortest rest pose (5 min)
+            val tickMillis = 30_000L // production advance-tick cadence (the worst case — fewest re-arms)
+            repeat(120) { // ~1 h of ticks
+                s.onPrediction(dispatcher.scheduler.currentTime + poseDurationMillis) // d2 re-pinned to now + duration
+                advanceTimeBy(tickMillis)
+                runCurrent()
+            }
+
+            assertEquals(emptyList(), pushes, "a pose pinned to the now-line (sliding d2, empty server) never pushes")
+            scope.cancel() // drop the still-pending deferred timer so runTest's end-of-test drain doesn't fire it
+        }
+    }
+
+    @Test
     fun a_newer_prediction_re_arms_and_only_it_pushes() {
         val dispatcher = StandardTestDispatcher()
         runTest(dispatcher) {
