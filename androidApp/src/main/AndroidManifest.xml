@@ -18,7 +18,8 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:exported="true"
-            android:name=".MainActivity">
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density|uiMode|navigation|keyboard|fontScale|layoutDirection|locale">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
