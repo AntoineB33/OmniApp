@@ -113,7 +113,7 @@ private const val LOCAL_DEVICE_ID: String = "local"
 // current session in the LOCAL store. Mirrors the advance-tick cadence (1 s under sim / 30 s in production) so
 // the session timeline tracks the same `now` the schedule does. This loop no longer talks to the server: the
 // remote push/pull happens only at the three sync moments (startup, manual fetch, coalesced with the deferred
-// pause-cue push) — see [flushActiveSession] and [refreshDerivedPauses]'s callers.
+// pause-cue push) — see [pushOwnActiveSessions] and [refreshDerivedPauses]'s callers.
 private const val ACTIVE_SESSION_BEAT_MILLIS_SIM: Long = 1_000
 private const val ACTIVE_SESSION_BEAT_MILLIS_PROD: Long = 30L * 1_000
 
@@ -215,7 +215,7 @@ class SchedulerEngine(
 
     // PRD §15 server-derived pauses: this device's currently-open active session (null while inactive), tracked
     // in the LOCAL store only. Mutated only under [activeSessionMutex] because the beat loop, the debug carve
-    // ([recordInactivityGap]), and [flushActiveSession] all advance it.
+    // ([recordInactivityGap]), and [freshenOpenSession] all advance it.
     private var currentSession: ActiveSessionRecord? = null
     private val activeSessionMutex = Mutex()
 
@@ -261,11 +261,11 @@ class SchedulerEngine(
         backfillSleepGaps()
         pullSleepGaps()
         // PRD §15 server-derived pauses: track this device's active sessions LOCALLY, then do the startup sync
-        // moment — push this device's current session and pull the account-wide pauses the server derives from
-        // every device's activity (the "Inactivity" bands). No periodic remote refresh: the only other syncs are
-        // the manual fetch and the deferred pause-cue push (see [flushActiveSession] / [launchPauseCueSchedule]).
+        // moment — [refreshDerivedPauses] pushes this device's full active history and pulls the account-wide
+        // pauses the server derives from every device's activity (the "Inactivity" bands). No periodic remote
+        // refresh: the only other syncs are the manual fetch and the deferred pause-cue push (see
+        // [pushOwnActiveSessions] / [launchPauseCueSchedule]).
         launchActiveSessionTracking()
-        flushActiveSession()
         refreshDerivedPauses()
         // PRD §15 / ARCHITECTURE.md §8: requirement #6 — a phone's startup becomes the account's last phone,
         // which pushes `cancel` to the previous phone. Piggybacks the ViewModel's startup reconcile.
@@ -358,7 +358,7 @@ class SchedulerEngine(
 
     // PRD §15: track this device's activity in the LOCAL store. Each beat samples `screenActive()` and either
     // opens, extends, or finalizes the current session, persisting it locally — it never talks to the server
-    // (the remote push is deferred to [flushActiveSession], fired only at the three sync moments). `suspended`
+    // (the remote push is deferred to [pushOwnActiveSessions], fired only at the sync moments). `suspended`
     // is judged from REAL elapsed time between beats — NOT the (possibly accelerated) clock — so a real process
     // suspension ends the session at its pre-sleep end and the post-wake session opens after the gap, exactly
     // like the §12 device-sleep detection; a fast sim tick just extends the session across the leaped clock time.
@@ -409,35 +409,58 @@ class SchedulerEngine(
         activeSessionStore?.saveActiveSessions(listOf(session))
     }
 
-    // PRD §15: push this device's current active session to the server. This is the ONLY active-session remote
-    // write — fired only at the three sync moments (startup, manual fetch, coalesced with the deferred pause-cue
-    // push), never on a beat. Opens a session at `now` if the screen is active and none is open, so the flush
-    // always reports live activity. Best-effort; swallows transport errors.
-    private fun flushActiveSession() {
-        val gateway = activeSessions ?: return
-        scope.launch {
-            val session =
-                activeSessionMutex.withLock {
-                    currentSession ?: run {
-                        if (!screenActive()) return@withLock null
-                        val now = clock.nowMillis()
-                        ActiveSessionRecord(activeSessionDeviceId, now, now, SystemAppClock.nowMillis()).also {
-                            currentSession = it
-                            persistSessionLocked(it)
-                        }
-                    }
-                } ?: return@launch
-            withContext(Dispatchers.Default) { runCatching { gateway.pushActiveSessions(listOf(session)) } }
+    // PRD §15: freshen the open session up to `now`, opening one if the screen is active and none is open, and
+    // persist it locally so a subsequent load/push reports activity right up to the present. No-op when the
+    // screen is inactive (the beat finalizes it; masking a just-started pause here would hide a real pause).
+    private suspend fun freshenOpenSession() {
+        activeSessionMutex.withLock {
+            if (!screenActive()) return@withLock
+            val now = clock.nowMillis()
+            val realNow = SystemAppClock.nowMillis()
+            val cur = currentSession
+            val updated =
+                cur?.copy(endMillis = maxOf(cur.endMillis, now), updatedAtMillis = realNow)
+                    ?: ActiveSessionRecord(activeSessionDeviceId, now, now, realNow)
+            currentSession = updated
+            persistSessionLocked(updated)
         }
+    }
+
+    // PRD §15: push this device's active-session history to the server — freshened up to `now` and covering the
+    // whole derive horizon, NOT just the currently-open session. This is the active-session remote write, fired
+    // only at the sync moments ([refreshDerivedPauses]'s callers: startup, manual fetch, coalesced with the
+    // deferred pause-cue push), never on a beat.
+    //
+    // Pushing the FULL local history (not just the current session) is what keeps `derive_pauses` honest: the
+    // server deduces the account-wide pauses as the complement of the UNION of every device's active intervals,
+    // so any finalized session we never uploaded — an idle-screen finalize, or an earlier fragment — becomes a
+    // phantom pause on OTHER devices (and on our own next server re-derive). This device's local store is the
+    // complete truth of when it was active; publishing it lets a peer's pull only ever SHRINK a pause over time
+    // we were demonstrably active, never fabricate one. Best-effort; swallows transport errors.
+    private suspend fun pushOwnActiveSessions() {
+        val gateway = activeSessions ?: return
+        freshenOpenSession()
+        val horizonStart = clock.nowMillis() - PAUSE_DERIVE_HORIZON_MILLIS
+        val stored = activeSessionStore?.loadActiveSessions()
+        val sessions =
+            when {
+                // A store-backed install: the durable history is the source of truth (includes the freshly
+                // persisted open session). Only rows still within the derive horizon are relevant.
+                stored != null -> stored.filter { it.endMillis >= horizonStart }
+                // A store-less install (e.g. web's in-memory store): fall back to the single open session.
+                else -> activeSessionMutex.withLock { currentSession }?.let { listOf(it) } ?: emptyList()
+            }
+        if (sessions.isEmpty()) return
+        withContext(Dispatchers.Default) { runCatching { gateway.pushActiveSessions(sessions) } }
     }
 
     /**
      * PRD §15 / §16: carve a pause `[startMillis, endMillis]` into THIS device's active timeline — finalize the
      * open session at [startMillis] and open a fresh one at [endMillis] — so the derivation yields the pause the
      * same way a real device sleep would (a real sleep produces this hole naturally; a debug "simulate pause"
-     * leaps the clock, which the beat can't see as a suspension, so this reproduces it). Then flush the carve to
-     * the server and re-derive the bands — a debug control counts as an explicit sync moment. Public for the
-     * debug "simulate pause" control.
+     * leaps the clock, which the beat can't see as a suspension, so this reproduces it). Then re-derive the bands
+     * (which pushes the carve to the server first) — a debug control counts as an explicit sync moment. Public
+     * for the debug "simulate pause" control.
      */
     fun recordInactivityGap(startMillis: Long, endMillis: Long) {
         if (endMillis <= startMillis) return
@@ -452,7 +475,6 @@ class SchedulerEngine(
                 currentSession = reopened
                 persistSessionLocked(reopened)
             }
-            flushActiveSession()
             refreshDerivedPauses()
         }
     }
@@ -465,9 +487,18 @@ class SchedulerEngine(
      * nothing (for a single device the local answer equals the server's anyway). The freshly derived pauses
      * also seed the §15 rest poses (advancing `lastRestMillis` only) — the account-wide-pause signal reaching a
      * device that never slept.
+     *
+     * Order matters: this device's own activity is PUSHED first, then the server pauses are pulled. Publishing
+     * before deriving means the server never hands us (or a peer) a pause over a window this device was active
+     * but hadn't yet uploaded — the "if the server's Inactivity block is bigger than the app's, reduce it"
+     * rule. As a same-coroutine belt to that suspenders, the pulled pauses then have this device's own local
+     * sessions SUBTRACTED before display/seeding: a device must never render a pause over time it knows it was
+     * active, even if its push lost a race or a peer's clock is skewed (a pause is, by definition, a window when
+     * NO device — including this one — was active, so our own activity legitimately cancels it).
      */
     private fun refreshDerivedPauses() {
         scope.launch {
+            pushOwnActiveSessions()
             val until = clock.nowMillis()
             val since = until - PAUSE_DERIVE_HORIZON_MILLIS
             val gateway = activeSessions
@@ -477,7 +508,13 @@ class SchedulerEngine(
                 } else {
                     null
                 }
-            val pauses = fromServer ?: withContext(Dispatchers.Default) { localDerivedPauses(since, until) }
+            val serverPauses = fromServer ?: withContext(Dispatchers.Default) { localDerivedPauses(since, until) }
+            val ownActive =
+                withContext(Dispatchers.Default) {
+                    activeSessionStore?.loadActiveSessions()?.map { TaskTimeRange(it.startMillis, it.endMillis) }
+                        ?: emptyList()
+                }
+            val pauses = SchedulerDomain.subtractRegions(serverPauses, ownActive)
             _inactivityGaps.value = pauses
             val before = vm.state.value.sideTasks
             applySeededSideTasks(SchedulerDomain.seedSideTasksFromGaps(before, pauses))
@@ -857,7 +894,6 @@ class SchedulerEngine(
      * out; a transport failure is swallowed so the next trigger retries.
      */
     fun fetchRemoteGapsNow() {
-        flushActiveSession()
         pullSleepGaps()
         refreshDerivedPauses()
     }
@@ -904,8 +940,8 @@ class SchedulerEngine(
                     // as the cue publish, so an idle session's only remote traffic is here (plus startup / manual
                     // fetch) — never a periodic heartbeat or a 60 s presence poll. Publishing presence here, ~2 s
                     // (or 1 s) before the pose end, is exactly when the phone reads it to gate its cue.
+                    // [refreshDerivedPauses] pushes this device's active history before pulling.
                     publishPosePresenceIfActive()
-                    flushActiveSession()
                     refreshDerivedPauses()
                 },
             )

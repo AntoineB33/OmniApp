@@ -118,6 +118,29 @@ class DerivePausesTest {
         )
     }
 
+    // ----- Reconciliation: a device never shows a pause over time IT was active -------------------
+
+    @Test
+    fun own_active_sessions_cancel_a_phantom_server_pause() {
+        // The reported cross-device anomaly: the desktop was active [40,90] but had only uploaded a stale/sparse
+        // slice of it, so the server derived a pause [40,90] and handed it back. The engine subtracts THIS
+        // device's own local active sessions from the server pauses before display, so a window this device
+        // knows it was active can never render as Inactivity — it can only ever SHRINK the band. Here the
+        // genuine leading pause [0,40] survives; the phantom [40,90] over our own activity is removed.
+        val serverPauses = listOf(r(0, 40), r(40, 90))
+        val ownActive = listOf(r(40, 90))
+        assertEquals(listOf(r(0, 40)), SchedulerDomain.subtractRegions(serverPauses, ownActive))
+    }
+
+    @Test
+    fun own_activity_trims_only_the_overlapped_part_of_a_pause() {
+        // A partial overlap: the server pause is [40,120] but we were active [70,100]; only that middle slice is
+        // demonstrably not a pause, so the band splits into [40,70] and [100,120] rather than vanishing.
+        val serverPauses = listOf(r(40, 120))
+        val ownActive = listOf(r(70, 100))
+        assertEquals(listOf(r(40, 70), r(100, 120)), SchedulerDomain.subtractRegions(serverPauses, ownActive))
+    }
+
     @Test
     fun a_genuine_multi_minute_pause_survives_the_band_filter() {
         // A real 30-minute daytime gap between two sessions stays a band (the filter only drops noise).
