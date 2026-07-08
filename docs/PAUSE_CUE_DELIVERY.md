@@ -24,9 +24,14 @@ PRD §15 for the design; this file is the operational runbook.
 | Firebase project + `google-services.json` + APNs key + secrets deployed | ⛔ **TODO — steps 4/5 (your credentials)** |
 
 Two design decisions baked into the steps below (change them if you disagree):
-1. **Presence gate is kept.** The push/alarm is the *delivery*; the phone still runs the existing
-   screen-off + no-active-peer check (`SchedulerEngine.poseFinishEligible`) before it actually speaks, so a
-   user at a screen is never told. The last-phone/FCM path only decides *which* phone gets the alarm.
+1. **Presence gate is kept — but not the presence poll.** The push/alarm is the *delivery*; the phone still
+   runs the existing screen-off + no-active-peer check (`SchedulerEngine.poseFinishEligible`) before it
+   actually speaks, so a user at a screen is never told. The last-phone/FCM path only decides *which* phone
+   gets the alarm. The peer's "active screen" that gate reads is **no longer written by a 60 s beacon**: a
+   device with an active screen inside a pose publishes `device_presence` **once**, coalesced into the deferred
+   pause-cue push burst below (`min(d1,d2) − margin`, right before the pose end the phone reads it at) — see
+   `SchedulerEngine.publishPosePresenceIfActive`. So an idle/working session makes **zero** `device_presence`
+   writes outside those bursts.
 2. **Credentials assumed absent.** Code is written to be inert until you add Firebase/Apple secrets.
 
 ### Deferred, last-responsible-moment server write (no heartbeat, no per-tick chatter)
@@ -52,6 +57,14 @@ Each new prediction re-arms the single timer (cancelling the prior one); the pho
 (re)scheduled **immediately**, independent of this deferred server write. The `tick_pause_cues()` cron
 (~1 min before) stays the backstop for schedules another device set. Unit-tested by
 `shared/jvmTest/.../PauseCuePushSchedulerTest` (virtual clock; all four rows + re-arm + fire-inside-margin).
+
+The same burst that fires this write also does the account's other last-responsible-moment traffic:
+`flushActiveSession()`, `refreshDerivedPauses()`, and — new — the cross-device **presence** write
+(`publishPosePresenceIfActive`, only when signed in + screen on + inside a rest pose). That replaces the old
+per-60 s `device_presence` beacon: in the scenario "now-line inside a 5/15-min pose, `screenActive()` true,
+signed in", the pose end is re-pinned to the now-line so `d2` moves constantly, but the write still fires only
+at `min(d1,d2) − margin` — **not** once per minute. An idle session (stable pose end) makes no presence write
+at all.
 
 ---
 

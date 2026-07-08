@@ -70,18 +70,20 @@ private const val LOOK_AWAY_RESUME_POLL_MILLIS: Long = 200
 // gap at every speed.
 private const val DEVICE_SLEEP_THRESHOLD_MILLIS: Long = 90L * 1_000
 
-// PRD §15 cross-device presence: instead of a constant heartbeat, a device with an active screen announces
-// itself only WHILE the now-line sits inside a 5/15-min rest pose — the one window the phone's "pause
-// finished" cue needs to know whether another device is in use. First ping is one interval in (so a user who
-// closes the machine to take the pause never announces), then one every interval it stays in the pose.
-private const val POSE_BEACON_INTERVAL_MILLIS: Long = 60L * 1_000
+// PRD §15 cross-device presence: there is NO periodic beacon. A device with an active screen inside a 5/15-min
+// rest pose announces itself once, coalesced into the SAME last-responsible-moment burst as the deferred
+// pause-cue push ([launchPauseCueSchedule]'s push lambda) — i.e. at min(d1,d2) − margin, right before the pose
+// end the phone reads presence at. The phone gets *when* to speak from the Edge push; presence only supplies
+// the screen-off suppression gate at that read, so a single fresh write there is enough — a 60 s poll (the
+// former beacon) would just chatter one `device_presence` upsert per minute on an otherwise-idle session.
 
 // PRD §15: how long before a pose's end the phone reads presence to decide the cue — a 1-min lead that
 // doubles as a buffer to retry the read on a flaky connection before the pose actually ends.
 private const val POSE_FINISH_CHECK_LEAD_MILLIS: Long = 60L * 1_000
 
-// PRD §15: a presence row older than this no longer counts as an active screen. ~2.5× the beacon interval, so
-// a live machine that dropped a single beacon still reads as present at the pre-end check.
+// PRD §15: a presence row older than this no longer counts as an active screen. Wide enough that the single
+// presence write coalesced with the deferred pause-cue push (near the pose end) still reads fresh at the
+// phone's pre-end / fire-time check.
 private const val POSE_PRESENCE_FRESH_MILLIS: Long = 150L * 1_000
 
 // PRD §15: how many times the pre-end presence read is retried (and the real-time gap between tries) before
@@ -249,7 +251,6 @@ class SchedulerEngine(
         launchSidePoseNotification()
         launchLookAwayCues()
         launchWindDownNotification()
-        launchPosePresenceBeacon()
         // The in-app cue is the delivery path only where the OS-scheduled alarm isn't wired; otherwise the
         // alarm ([onPauseCueFire]) speaks, so running both would double-speak.
         if (!localPauseCueDelivery) launchPoseFinishVoiceCue()
@@ -689,29 +690,18 @@ class SchedulerEngine(
         }
     }
 
-    // PRD §15 cross-device presence: announce this device's active screen ONLY while the now-line is inside a
-    // 5/15-min rest pose — the only window the phone's "pause finished" cue needs to know whether another
-    // device is in use (so an idle/working session writes nothing outside poses, staying well within the free
-    // tier). Keyed on the boolean "now is in a rest pose" so re-placing the pose at the now-line (the user
-    // working through it) does NOT reset the loop. First ping is one interval in, so a user who closes the
-    // machine to take the pause never announces; thereafter one per interval while still in the pose with the
-    // screen on. A closed/asleep machine's coroutine isn't running, so it simply stops announcing.
-    private fun launchPosePresenceBeacon() = scope.launch {
-        val gateway = presence ?: return@launch
-        combine(_nowMillis, vm.state) { now, st -> inRestPose(st, now) }
-            .distinctUntilChanged()
-            .collectLatest { inPose ->
-                if (!inPose) return@collectLatest
-                while (true) {
-                    delay(POSE_BEACON_INTERVAL_MILLIS)
-                    if (!inRestPose(vm.state.value, clock.nowMillis())) break
-                    if (gateway.signedIn && screenActive()) {
-                        withContext(Dispatchers.Default) {
-                            runCatching { gateway.publishPresence(deviceKind, screenActive = true) }
-                        }
-                    }
-                }
+    // PRD §15 cross-device presence: publish this device's "active screen" once, at the deferred
+    // last-responsible-moment burst (see [launchPauseCueSchedule]), NOT on a periodic poll. Only announces
+    // while the now-line is inside a 5/15-min rest pose and the screen is on — the one window the phone's
+    // "pause finished" cue needs to know whether another device is in use. A closed/asleep machine simply
+    // never reaches the burst, so it stops announcing.
+    private suspend fun publishPosePresenceIfActive() {
+        val gateway = presence ?: return
+        if (gateway.signedIn && screenActive() && inRestPose(vm.state.value, clock.nowMillis())) {
+            withContext(Dispatchers.Default) {
+                runCatching { gateway.publishPresence(deviceKind, screenActive = true) }
             }
+        }
     }
 
     /** Whether the panel covering [now] is a 5/15-min rest pose (a `restBreak` side task). */
@@ -909,9 +899,12 @@ class SchedulerEngine(
                 publishMarginMillis = PAUSE_CUE_PUBLISH_MARGIN_MILLIS,
                 push = { dueAt ->
                     withContext(Dispatchers.Default) { runCatching { gateway.publishPauseCueSchedule(dueAt) } }
-                    // Third sync moment: coalesce this device's active-session push and the derived-pause pull
-                    // into the same last-responsible-moment burst as the cue publish, so an idle session's only
-                    // remote traffic is here (plus startup / manual fetch) — never a periodic heartbeat.
+                    // Third sync moment: coalesce this device's active-session push, the derived-pause pull, and
+                    // the cross-device "active screen" presence write into the same last-responsible-moment burst
+                    // as the cue publish, so an idle session's only remote traffic is here (plus startup / manual
+                    // fetch) — never a periodic heartbeat or a 60 s presence poll. Publishing presence here, ~2 s
+                    // (or 1 s) before the pose end, is exactly when the phone reads it to gate its cue.
+                    publishPosePresenceIfActive()
                     flushActiveSession()
                     refreshDerivedPauses()
                 },
