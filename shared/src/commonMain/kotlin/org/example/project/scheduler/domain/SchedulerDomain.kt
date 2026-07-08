@@ -1183,22 +1183,19 @@ object SchedulerDomain {
         sideTasks: List<SideTask>,
         nowMillis: Long,
         horizonMillis: Long = nowMillis + SCHEDULE_HORIZON_MILLIS,
-        // The user's sleep windows: an occurrence whose start lands inside one is skipped, its cadence
-        // resuming at wake (the window's end). Empty by default so existing callers/tests are unchanged.
-        sleepRegions: List<TaskTimeRange> = emptyList(),
     ): List<TaskPanel> {
         val horizon = maxOf(horizonMillis, nowMillis)
         val valid = sideTasks.withIndex().filter { isValidSideTask(it.value) }
         if (valid.isEmpty()) return emptyList()
         // Seed each task at its due time (or `now` when overdue) and run the shared projection engine forward.
         val seedDue = valid.associate { (i, t) -> i to sideTaskNextStart(t, nowMillis) }
-        return simulateSideTasks(sideTasks, seedDue, horizon, sleepRegions)
+        return simulateSideTasks(sideTasks, seedDue, horizon)
     }
 
     /**
      * PRD §15: the most recent side-task occurrence whose start is strictly before [nowMillis] (the
      * "last past side task before the now-line"), or null when none. Reuses the same interleaving /
-     * merge / re-anchor / sleep engine the forward [sideTaskPanels] uses, but seeds each task's grid at a
+     * merge / re-anchor engine the forward [sideTaskPanels] uses, but seeds each task's grid at a
      * point a full longest-interval (+ longest duration) before `now` and runs only up to `now`. That
      * lookback is wide enough that any pose able to re-anchor a look-away inside the window is itself
      * placed first, so the reconstructed recent cadence matches what the forward projection would have
@@ -1208,7 +1205,6 @@ object SchedulerDomain {
     fun lastSideTaskBefore(
         sideTasks: List<SideTask>,
         nowMillis: Long,
-        sleepRegions: List<TaskTimeRange> = emptyList(),
     ): TaskPanel? {
         val valid = sideTasks.withIndex().filter { isValidSideTask(it.value) }
         if (valid.isEmpty()) return null
@@ -1222,7 +1218,7 @@ object SchedulerDomain {
             val base = t.lastRestMillis + t.intervalMillis
             i to (if (base >= from) base else base + ((from - base) / step) * step)
         }
-        return simulateSideTasks(sideTasks, seedDue, nowMillis, sleepRegions)
+        return simulateSideTasks(sideTasks, seedDue, nowMillis)
             .filter { it.startEpochMillis < nowMillis }
             .maxByOrNull { it.startEpochMillis }
     }
@@ -1237,7 +1233,6 @@ object SchedulerDomain {
         sideTasks: List<SideTask>,
         seedDue: Map<Int, Long>,
         horizon: Long,
-        sleepRegions: List<TaskTimeRange>,
     ): List<TaskPanel> {
         if (seedDue.isEmpty()) return emptyList()
         // The rest poses (restBreak) absorb any shorter pause whose window they fall inside (the 5↔15 merge
@@ -1280,18 +1275,13 @@ object SchedulerDomain {
             val task = sideTasks[nextIndex]
             val start = due.getValue(nextIndex)
 
-            // Sleep: an occurrence whose start falls in a sleep window is skipped, so nothing is projected
-            // while the user is asleep. A sleep window is itself the longest possible rest — it satisfies
-            // this pose (and every shorter one), so the cadence resumes an *interval after* wake, exactly
-            // like placing any longer pause re-anchors the shorter ones (below). Resuming AT wake would draw
-            // a rest pose the instant the user wakes, even though the whole night was a rest.
-            val sleepCover = sleepRegions.firstOrNull { it.startEpochMillis <= start && start < it.endEpochMillis }
-            if (sleepCover != null) {
-                val wake = sleepCover.endEpochMillis
-                reanchorSmaller(wake, sleepCover.endEpochMillis - sleepCover.startEpochMillis)
-                due[nextIndex] = wake + task.intervalMillis
-                continue
-            }
+            // Side tasks are projected straight through the nightly sleep windows too — a user who works at
+            // the computer during the night still needs the eye-rest / pose cues, so the cadence never pauses
+            // for sleep and the markers render over the "Sleep" band (PRD §15). A device that is *actually*
+            // asleep advances each task's lastRestMillis over the real device-sleep gap
+            // ([seedSideTasksFromGaps] / reduceReportDeviceSleep), which re-anchors the poses past the gap on
+            // its own — so the "don't nag me the instant I wake" case is handled by real sleep evidence, not
+            // by skipping the scheduled window here.
 
             // Merge (PRD §15): a strictly-longer rest pose coming due within this occurrence's window absorbs
             // it — the occurrence "becomes" that pose, which then starts here (at this occurrence's start) and
@@ -1488,8 +1478,9 @@ object SchedulerDomain {
         val leaves = schedulableLeaves(state)
         // PRD §15: side tasks materialize regardless of whether there are leaf tasks to fill around them.
         // Each one places its next occurrence at its due time (or the now-line when overdue), with the
-        // 5-min↔15-min merge applied and sleep windows skipped (see [sideTaskPanels]).
-        val sidePanels = sideTaskPanels(state.sideTasks, nowMillis, sleepRegions = sleepRanges)
+        // 5-min↔15-min merge applied. They project straight through the sleep windows too, so the eye-rest /
+        // pose cues still fire (and render over the "Sleep" band) for a user working through the night.
+        val sidePanels = sideTaskPanels(state.sideTasks, nowMillis)
         if (leaves.isEmpty()) return (kept + sidePanels + sleepPanels).sortedBy { it.startEpochMillis }
 
         val priorities = absoluteTaskPriorities(state)

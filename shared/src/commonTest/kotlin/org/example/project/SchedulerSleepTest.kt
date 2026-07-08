@@ -2,7 +2,6 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.datetime.LocalDateTime
@@ -116,41 +115,20 @@ class SchedulerSleepTest {
     }
 
     @Test
-    fun side_tasks_are_not_projected_into_a_sleep_window() {
+    fun side_tasks_are_projected_across_a_sleep_window() {
+        // PRD §15: a user may work at the computer during the night, so the eye-rest / pose cues keep firing
+        // straight through the nightly sleep windows (and render over the "Sleep" band). The projection no
+        // longer skips sleep, so at least one side task starts inside each night's window.
         val now = utc(2024, 1, 1, 10, 0)
         val to = now + 2L * 24 * HOUR_MS
         val regions = SchedulerDomain.sleepRegions(SchedulerDomain.DEFAULT_SLEEP, now, to, tz)
-        val sides = SchedulerDomain.sideTaskPanels(SchedulerDomain.DEFAULT_SIDE_TASKS, now, to, regions)
-        assertTrue(sides.isNotEmpty())
-        sides.forEach { p ->
-            regions.forEach { r ->
-                assertFalse(
-                    p.startEpochMillis >= r.startEpochMillis && p.startEpochMillis < r.endEpochMillis,
-                    "side task starts inside a sleep window",
-                )
-            }
-        }
-    }
-
-    @Test
-    fun a_night_of_sleep_re_anchors_rest_poses_so_none_is_placed_at_wake() {
-        // A night of sleep is the longest possible rest: the first rest pose after it must resume an
-        // interval AFTER wake, not the instant the user wakes (the "15-min pause right after the 8h
-        // sleep" anomaly on a freshly-emptied account).
-        val now = utc(2024, 1, 1, 10, 0)
-        val to = now + 2L * 24 * HOUR_MS
-        val regions = SchedulerDomain.sleepRegions(SchedulerDomain.DEFAULT_SLEEP, now, to, tz)
-        val sides = SchedulerDomain.sideTaskPanels(SchedulerDomain.DEFAULT_SIDE_TASKS, now, to, regions)
-        regions.forEach { region ->
-            val wake = region.endEpochMillis
-            // No rest pose (5-/15-min) may start at wake or within its own interval after wake.
-            SchedulerDomain.DEFAULT_SIDE_TASKS.filter { it.restBreak }.forEach { pose ->
-                val poseStarts = sides.filter { it.title == pose.title }.map { it.startEpochMillis }
-                assertFalse(
-                    poseStarts.any { it in wake until (wake + pose.intervalMillis) },
-                    "${pose.title} starts within an interval of wake=$wake: $poseStarts",
-                )
-            }
+        assertTrue(regions.isNotEmpty())
+        val sides = SchedulerDomain.sideTaskPanels(SchedulerDomain.DEFAULT_SIDE_TASKS, now, to)
+        regions.forEach { r ->
+            assertTrue(
+                sides.any { it.startEpochMillis >= r.startEpochMillis && it.startEpochMillis < r.endEpochMillis },
+                "no side task projected inside the sleep window [${r.startEpochMillis},${r.endEpochMillis}]",
+            )
         }
     }
 

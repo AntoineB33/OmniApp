@@ -306,26 +306,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val focusedWeekEndMillis =
             startOfWeek(selectedDate).plus(7, DateTimeUnit.DAY).atStartOfDayIn(tz).toEpochMilliseconds()
         val sideTaskHorizonMillis = maxOf(nowMillis + SchedulerDomain.SCHEDULE_HORIZON_MILLIS, focusedWeekEndMillis)
-        // The user's sleep windows — shown as "Sleep" blocks and avoided by the side-task projection (so
-        // neither tasks nor side tasks appear while asleep). Generated back over the past 168h too (the same
-        // horizon the §15 inactivity bands use), so past nights render as "Sleep" and the inactivity bands can
-        // be carved around them (a night is labelled Sleep, not Inactivity).
+        // The user's sleep windows — shown as "Sleep" blocks and avoided by the regular task fill (so no task
+        // is scheduled while asleep). Side tasks, by contrast, DO project across sleep so their eye-rest / pose
+        // cues still render over the "Sleep" band for a user working through the night (PRD §15). Generated
+        // back over the past 168h too (the same horizon the §15 inactivity bands use), so past nights render as
+        // "Sleep" and the inactivity bands can be carved around them (a night is labelled Sleep, not Inactivity).
         val displaySleepPanels =
             SchedulerDomain.sleepPanels(
                 schedulerState.sleep, nowMillis - SchedulerDomain.SCHEDULE_HORIZON_MILLIS, sideTaskHorizonMillis, tz,
             )
         val displaySleepRegions =
             displaySleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
-        // The scheduler only avoids sleep windows from `now` forward; past windows are display-only, so keep
-        // the projection's obstacle set to future/in-progress windows (identical to the pre-past behaviour).
-        val schedulerSleepRegions = displaySleepRegions.filter { it.endEpochMillis > nowMillis }
         val displaySidePanels =
-            SchedulerDomain.sideTaskPanels(schedulerState.sideTasks, nowMillis, sideTaskHorizonMillis, schedulerSleepRegions)
+            SchedulerDomain.sideTaskPanels(schedulerState.sideTasks, nowMillis, sideTaskHorizonMillis)
 
         // PRD §15 (20s look-away): show the manual "Look away now" button only when the most recent past
         // side task before the now-line is a 20s look-away (a non-rest-break side task), not a rest pose.
         val showLookAwayButton =
-            SchedulerDomain.lastSideTaskBefore(schedulerState.sideTasks, nowMillis, schedulerSleepRegions)
+            SchedulerDomain.lastSideTaskBefore(schedulerState.sideTasks, nowMillis)
                 ?.let { panel -> schedulerState.sideTasks.any { !it.restBreak && it.title == panel.title } }
                 ?: false
 

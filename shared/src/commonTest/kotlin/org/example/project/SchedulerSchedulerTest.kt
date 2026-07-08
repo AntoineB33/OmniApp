@@ -517,19 +517,16 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun last_side_task_before_skips_an_occurrence_inside_a_sleep_window() {
-        // PRD §15: an occurrence whose start lands in a sleep region is not placed, so it can't be the
-        // "last past side task". With the only recent grid point swallowed by sleep, the result is the
-        // prior one outside the window (or null when none).
+    fun last_side_task_before_returns_an_occurrence_even_inside_a_sleep_window() {
+        // PRD §15: side tasks project straight through sleep windows now, so an occurrence whose start lands
+        // in what would be a sleep window is still a real "last past side task" (a user working overnight).
         val now = 1_000_000_000_000L
         // Grid points (lastRest 45 min ago, 20-min interval): now-25min, now-5min, now+15min(future).
         val sides = listOf(SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 45 * MIN))
-        // Sleep covers the now-5min grid point, which must therefore not be the returned occurrence.
-        val sleep = listOf(TaskTimeRange(now - 6 * MIN, now - 1 * MIN))
-        val last = SchedulerDomain.lastSideTaskBefore(sides, now, sleep)
+        val last = SchedulerDomain.lastSideTaskBefore(sides, now)
         assertNotNull(last)
-        assertTrue(last.startEpochMillis < now)
-        assertFalse(last.startEpochMillis in (now - 6 * MIN) until (now - 1 * MIN))
+        // The most recent grid point before now (now-5min) is returned, not the earlier one.
+        assertEquals(now - 5 * MIN, last.startEpochMillis)
     }
 
     @Test
