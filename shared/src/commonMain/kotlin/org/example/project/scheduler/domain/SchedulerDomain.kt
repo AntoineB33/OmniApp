@@ -1452,6 +1452,20 @@ object SchedulerDomain {
      * side-task time (a 45-min task crossing a 5-min side task occupies a 50-min wall-clock span). A pinned
      * obstacle, by contrast, truncates the chunk (the minimum is cut). Side panels regenerate every fill.
      */
+    /**
+     * CLAUDE.md reconstructibility rule: true for a panel [fillSchedule] **regenerates** deterministically
+     * from `now` + the tree + the sleep/side config — the side-task and sleep obstacle panels and the
+     * non-pinned auto-fill panels. These carry no authoritative user state, so a re-derive that only moves
+     * them is not a syncable change. Pinned panels (user-fixed) and reminder tags (`chore`, which carry the
+     * authoritative `checked` state) are NOT regenerated and so are never treated as derived. Mirrors the
+     * `kept` filter in [fillSchedule] (sideTask/sleep always cut; everything else kept when fixed or a
+     * reminder). Used by [org.example.project.scheduler.persistence.SchedulerStateCodec.syncFingerprint] to
+     * exclude derived panels from the sync fingerprint, so an engine-tick reschedule that only re-derives
+     * them neither marks state dirty nor pushes ("known deviation" fix).
+     */
+    fun isRegeneratedPanel(panel: TaskPanel): Boolean =
+        panel.sideTask || panel.sleep || (panel.auto && !panel.pinned && !panel.chore)
+
     fun fillSchedule(
         state: SchedulerState,
         nowMillis: Long,

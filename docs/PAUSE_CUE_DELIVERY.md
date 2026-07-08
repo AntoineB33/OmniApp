@@ -441,8 +441,42 @@ in **accelerated** seconds — divide by the time-link speed for wall-clock.
 
 ---
 
+## Testing E — the `scheduler_snapshot` heartbeat is gone (idle = zero writes)
+
+Separate from the pause-cue push path above: the whole-document `scheduler_snapshot` sync used to fire on
+**every** engine tick, because a re-derived auto/side/sleep panel counted as a change (the old "known
+deviation" — this is what shows up as regular `GET`/`PATCH /rest/v1/scheduler_snapshot` in the Supabase logs
+of an account with no visible app open, e.g. the always-on account-3 release). It is now gated on
+`SchedulerStateCodec.syncFingerprint` (the persisted snapshot minus the regenerated panels — see
+`SchedulerDomain.isRegeneratedPanel`), so a tick that only re-derives those panels neither marks the state
+dirty nor pushes.
+
+**Automated first:**
+```
+./gradlew :shared:jvmTest --tests "org.example.project.SyncFingerprintGateTest"
+```
+Asserts (a) regenerated auto/side/sleep panels don't move the fingerprint while records / pinned panels /
+reminder-checks / tree edits do, and (b) via the ViewModel: a `RefreshSchedule` tick does **not** mark dirty
+while a `FocusWindow` change does.
+
+**Manual, end-to-end** (a signed-in desktop is enough; watch the Supabase **API logs** for the account's
+`user_id`):
+1. **Idle = silent.** Sign in, leave the app open with a stable schedule and **make no edits** for several
+   minutes (use the **Time** panel to fast-forward `now` so many scheduler ticks fire). There must be **no**
+   `PATCH /rest/v1/scheduler_snapshot` in the logs across those ticks — the now-line advances, panels
+   re-derive, nothing syncs. (Before the fix this PATCHed roughly once per throttle interval.)
+2. **A real edit still syncs.** Now make an authoritative change (rename a task, pin/move a calendar panel,
+   check a reminder). Within the 60-s server-sync window a single `PATCH /rest/v1/scheduler_snapshot`
+   (revision +1) appears. One edit → one write.
+3. **Banked work still syncs.** Let the now-line cross the end of an auto-scheduled work block (so
+   `advanceSchedule` records `[start,end]` as completed work). That record is authoritative, so it *does*
+   PATCH — this is expected, not chatter: it is a genuine data change, one write per elapsed block, not a
+   per-tick heartbeat.
+
 ## Notes
 - Everything is inert until the two secrets exist and a phone registers a `device_push_token` row — the Edge
   Function returns `no push token for device` (200) and the cron pushes nothing.
-- The 1-minute server-sync debounce (requirement #1) is already live and unrelated to the push path; it only
-  governs how often a change is mirrored to `scheduler_snapshot`.
+- The 1-minute server-sync debounce (requirement #1) is the push *rate limit*; **which** changes push is now
+  gated by `syncFingerprint` (Testing E). Together: an idle session makes zero `scheduler_snapshot` writes, and
+  an authoritative change is mirrored at most once per minute. The pause-cue push path (`pause_cue_schedule`)
+  is independent of both.

@@ -81,6 +81,15 @@ class TaskSchedulerViewModel(
     // close-within-the-debounce-window left unpushed work to flag for the next launch's reconcile).
     private var savePending = false
 
+    // CLAUDE.md reconstructibility rule: the authoritative projection ([SchedulerStateCodec.syncFingerprint])
+    // last flagged for a server push. A state change whose fingerprint equals this carries no new
+    // authoritative data — an engine-tick reschedule that only re-derived the auto/side/sleep panels — so it
+    // must NOT mark state dirty or push (the "known deviation": an idle session was syncing once per tick).
+    // Seeded from the loaded state so a launch that matches the server pushes nothing; refreshed on every
+    // decided push and after a pulled remote snapshot (local then equals remote). Only tracked when sync is on.
+    private var lastSyncedFingerprint: PersistedSnapshot? =
+        if (syncEngine != null) SchedulerStateCodec.syncFingerprint(_state.value) else null
+
     init {
         syncEngine?.let { engine ->
             // Break the engine<->ViewModel cycle: the engine reads/writes our state through these.
@@ -115,11 +124,13 @@ class TaskSchedulerViewModel(
     /**
      * Schedules a debounced persist of the current state, replacing any pending one.
      *
-     * NOTE (reconstructibility rule — see CLAUDE.md): this currently runs for *every* state change,
-     * including engine-tick reschedules that only re-derive the auto/side/sleep panels (a pure function of
-     * `now` + the tree + sleep/side config). Those are recomputable and ideally should neither mark the
-     * state dirty nor push — only authoritative changes (tree edits, records, pinned panels, chores, sleep
-     * settings, history) should. Until that split lands, an idle session syncs ~once per scheduler tick.
+     * The local SQLite write always runs (it is the source of truth and cheap on the debounce). The *server*
+     * push, however, is gated on an authoritative change (reconstructibility rule — see CLAUDE.md): a state
+     * change that only re-derived the auto/side/sleep panels (an engine-tick reschedule — a pure function of
+     * `now` + the tree + sleep/side config) leaves [SchedulerStateCodec.syncFingerprint] unchanged and so
+     * neither marks the state dirty nor pushes. Only authoritative changes (tree edits, records, pinned/user
+     * panels, reminders, sleep settings, history) move the fingerprint. This is what stops an idle session
+     * from syncing once per scheduler tick (the "known deviation").
      */
     private fun scheduleSave() {
         val store = store ?: return
@@ -130,14 +141,27 @@ class TaskSchedulerViewModel(
                 delay(SAVE_DEBOUNCE_MILLIS)
                 store.save(SchedulerStateCodec.encodeSnapshot(_state.value))
                 savePending = false
-                // PRD §5 sync: local change persisted → flag it (immediately, so a close before the push still
-                // reconciles next launch) and request a push. The push itself is throttled to once per minute
-                // (ARCHITECTURE.md §8); markDirty keeps the change durable until it actually goes out.
-                syncEngine?.let { engine ->
-                    engine.markDirty()
-                    serverSync?.request()
-                }
+                // PRD §5 sync: flag + request a push only when the authoritative projection actually changed
+                // (immediately, so a close before the push still reconciles next launch). The push itself is
+                // throttled to once per minute (ARCHITECTURE.md §8); markDirty keeps it durable until it goes out.
+                pushIfAuthoritativeChanged(requestPush = true)
             }
+    }
+
+    /**
+     * Marks the sync engine dirty and (optionally) requests a push, but only when the authoritative
+     * projection of the current state ([SchedulerStateCodec.syncFingerprint]) differs from what was last
+     * flagged. A no-op when sync is disabled or when nothing authoritative changed — which is the case for an
+     * engine-tick reschedule that only re-derived the auto/side/sleep panels. [requestPush] is false from
+     * [flush] (at close there is no time to push; the persisted dirty flag drives the next launch's reconcile).
+     */
+    private fun pushIfAuthoritativeChanged(requestPush: Boolean) {
+        val engine = syncEngine ?: return
+        val fingerprint = SchedulerStateCodec.syncFingerprint(_state.value)
+        if (fingerprint == lastSyncedFingerprint) return
+        lastSyncedFingerprint = fingerprint
+        engine.markDirty()
+        if (requestPush) serverSync?.request()
     }
 
     /**
@@ -149,11 +173,12 @@ class TaskSchedulerViewModel(
         saveJob?.cancel()
         saveJob = null
         store.save(SchedulerStateCodec.encodeSnapshot(_state.value))
-        // A change within the debounce window never reached the push above; flag it so the next launch's
-        // reconcile sends it. (No-op when the debounced save already pushed — savePending is then false.)
+        // A change within the debounce window never reached the push above; flag it (only if it was an
+        // authoritative change) so the next launch's reconcile sends it. No-op when the debounced save already
+        // accounted for it (savePending false) or nothing authoritative changed.
         if (savePending) {
             savePending = false
-            syncEngine?.markDirty()
+            pushIfAuthoritativeChanged(requestPush = false)
         }
     }
 
@@ -179,6 +204,9 @@ class TaskSchedulerViewModel(
         val prepared = prepareLoadedState(decoded)
         _state.value = prepared
         store?.save(SchedulerStateCodec.encodeSnapshot(prepared))
+        // Local state now equals the remote we just pulled — reset the sync baseline so the next tick-only
+        // reschedule is (correctly) seen as no authoritative change and does not immediately push back.
+        if (syncEngine != null) lastSyncedFingerprint = SchedulerStateCodec.syncFingerprint(prepared)
     }
 
     override fun onCleared() {

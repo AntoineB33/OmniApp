@@ -68,6 +68,35 @@ Open both: `scripts\account1-empty-and-open.bat` (clean account 1) **and** `scri
 - [ ] Refresh-token longevity: leave a session idle >1h, then make a change → it still syncs, no
       "400 refresh token not found" (`sync-refresh-token-rotation` note).
 
+### Counting API requests (Supabase logs)
+
+To verify a run made **exactly** the requests you expect (e.g. after `account1-empty-and-open.bat` then
+`account1-deploy-android.bat`), count them in **Dashboard → Logs**:
+
+- [ ] Source = **API Gateway / Edge** (`edge_logs`) — **one row per HTTP request** (`path`, `method`,
+      `status_code`). **Do not** add **PostgREST** logs: those are the lower-level PostgREST *process* diag for
+      the same calls, so mixing them in double-counts. Use PostgREST logs only to debug *why* a query failed.
+- [ ] Scope the time-range picker to just the run, else earlier traffic inflates the count. Retention on the
+      free plan is **1 day** — query soon after.
+- [ ] Filter to your own calls: `request.path like '/rest/v1/%'` (table + `/rpc/` RPC), `/auth/v1/%` for login.
+      Exclude the Studio UI's own REST calls (don't click around Table Editor while measuring).
+- [ ] Exact grouped count — **Logs Explorer**:
+      ```sql
+      select request.path as path, request.method as method,
+             response.status_code as status, count(*) as n
+      from edge_logs
+      cross join unnest(metadata) as m
+      cross join unnest(m.request) as request
+      cross join unnest(m.response) as response
+      where request.path like '/rest/v1/%'
+      group by path, method, status order by n desc
+      ```
+- [ ] **Free-plan impact:** filtering is **view-only** — it never changes what's metered. The free plan does
+      **not** meter raw request count anyway; it meters **egress** (5 GB/mo), **Edge Function invocations**
+      (`pause-cue`, 500K/mo), Realtime messages, MAU, and DB size. So counting `/rest/v1/…` rows verifies *app
+      behaviour* (e.g. the per-tick sync-chip chatter is gone), not a quota. For the actual quota meters see
+      **Reports → Usage**. Edge Function (`pause-cue`) invocations are counted regardless of any log filter.
+
 ---
 
 ## 4. Inactivity bands (server-derived pauses)

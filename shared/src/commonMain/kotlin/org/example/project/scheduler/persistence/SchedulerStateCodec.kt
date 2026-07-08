@@ -95,6 +95,20 @@ object SchedulerStateCodec {
         return PersistedSnapshot(statePayload, rows, pointers)
     }
 
+    /**
+     * The **authoritative projection** of [state] for cross-device sync (CLAUDE.md reconstructibility rule):
+     * the same [PersistedSnapshot] [encodeSnapshot] produces, but with the derived (regenerated) panels
+     * removed (see [SchedulerDomain.isRegeneratedPanel]). Two states with an equal fingerprint carry
+     * identical authoritative data — task tree, records, pinned/user panels, reminders, sleep, settings,
+     * history — so there is nothing to sync between them. An engine-tick reschedule that only re-derives the
+     * auto/side/sleep panels leaves the fingerprint unchanged, which is how the ViewModel avoids marking
+     * state dirty / pushing on every tick (the "known deviation"). Because transient, non-persisted fields
+     * (selection, clipboard, edit session…) are already absent from the encoded snapshot, they never count
+     * as an authoritative change either.
+     */
+    fun syncFingerprint(state: SchedulerState): PersistedSnapshot =
+        encodeSnapshot(state.copy(panels = state.panels.filterNot(SchedulerDomain::isRegeneratedPanel)))
+
     /** Rebuilds a [SchedulerState] from a [PersistedSnapshot], or `null` if the payload is corrupt. */
     fun decodeSnapshot(snapshot: PersistedSnapshot): SchedulerState? =
         runCatching {
