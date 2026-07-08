@@ -81,6 +81,12 @@ class TaskSchedulerViewModel(
     // close-within-the-debounce-window left unpushed work to flag for the next launch's reconcile).
     private var savePending = false
 
+    // True when at least one change in the current debounce window was authoritative (user-authored) and so
+    // may push. A window of only schedule-advance ticks (which re-derive panels + bank auto records another
+    // device recomputes) leaves this false, so the debounced flush pushes nothing. Sticky across the window so
+    // a user edit followed within the debounce by an engine tick still pushes (the tick can't cancel its push).
+    private var syncPending = false
+
     // CLAUDE.md reconstructibility rule: the authoritative projection ([SchedulerStateCodec.syncFingerprint])
     // last flagged for a server push. A state change whose fingerprint equals this carries no new
     // authoritative data — an engine-tick reschedule that only re-derived the auto/side/sleep panels — so it
@@ -118,8 +124,28 @@ class TaskSchedulerViewModel(
         // instance; skip the state push and persist so the timer doesn't churn storage.
         if (next === current) return
         _state.value = next
-        scheduleSave()
+        scheduleSave(syncable = intent.syncsToServer())
     }
+
+    /**
+     * CLAUDE.md reconstructibility rule: the schedule-advance intents only re-derive state that another device
+     * recomputes by advancing its own now-line over the synced task tree — the auto/side/sleep panels AND the
+     * completed-work **records** [org.example.project.scheduler.state.SchedulerReducer] banks as auto panels
+     * elapse (`AdvanceSchedule`/`RefreshSchedule`) or as a device sleep cuts them (`ReportDeviceSleep`). None of
+     * that is a user-authored change another device can't deduce, so it must NEVER trigger a server push on its
+     * own — an always-running device would otherwise `scheduler_snapshot`-write all day just from time passing.
+     * (Any such record still rides along with the next authoritative push; the snapshot is whole-document.)
+     * Every other intent — tree edits, pinned/user panels, reminders, sleep/settings, history, and the MANUAL
+     * record edits `RemoveRecordPeriod` / `PinRecordAsPanel` — is authoritative and syncs (subject to the
+     * fingerprint gate in [pushIfAuthoritativeChanged]).
+     */
+    private fun SchedulerIntent.syncsToServer(): Boolean =
+        when (this) {
+            is SchedulerIntent.AdvanceSchedule,
+            is SchedulerIntent.RefreshSchedule,
+            is SchedulerIntent.ReportDeviceSleep -> false
+            else -> true
+        }
 
     /**
      * Schedules a debounced persist of the current state, replacing any pending one.
@@ -128,23 +154,33 @@ class TaskSchedulerViewModel(
      * push, however, is gated on an authoritative change (reconstructibility rule — see CLAUDE.md): a state
      * change that only re-derived the auto/side/sleep panels (an engine-tick reschedule — a pure function of
      * `now` + the tree + sleep/side config) leaves [SchedulerStateCodec.syncFingerprint] unchanged and so
-     * neither marks the state dirty nor pushes. Only authoritative changes (tree edits, records, pinned/user
-     * panels, reminders, sleep settings, history) move the fingerprint. This is what stops an idle session
-     * from syncing once per scheduler tick (the "known deviation").
+     * neither marks the state dirty nor pushes. Only authoritative changes (tree edits, MANUAL record edits,
+     * pinned/user panels, reminders, sleep settings, history) move the fingerprint. This — together with
+     * [syncsToServer] gating out the schedule-advance ticks — is what stops a running session from syncing on
+     * every scheduler tick (the "known deviation") and from `scheduler_snapshot`-writing as auto records bank.
+     *
+     * [syncable] is false for a schedule-advance tick (see [syncsToServer]): the local SQLite write still runs
+     * (records are kept locally, recomputed on load) but the server push is skipped. The flag is sticky across
+     * the debounce window so a user edit is never robbed of its push by a tick that lands within the window.
      */
-    private fun scheduleSave() {
+    private fun scheduleSave(syncable: Boolean = true) {
         val store = store ?: return
         savePending = true
+        if (syncable) syncPending = true
         saveJob?.cancel()
         saveJob =
             saveScope.launch {
                 delay(SAVE_DEBOUNCE_MILLIS)
                 store.save(SchedulerStateCodec.encodeSnapshot(_state.value))
                 savePending = false
-                // PRD §5 sync: flag + request a push only when the authoritative projection actually changed
-                // (immediately, so a close before the push still reconciles next launch). The push itself is
-                // throttled to once per minute (ARCHITECTURE.md §8); markDirty keeps it durable until it goes out.
-                pushIfAuthoritativeChanged(requestPush = true)
+                // PRD §5 sync: flag + request a push only when an authoritative (user-authored) change occurred
+                // in this window AND the authoritative projection actually changed (immediately, so a close
+                // before the push still reconciles next launch). The push itself is throttled to once per minute
+                // (ARCHITECTURE.md §8); markDirty keeps it durable until it goes out.
+                if (syncPending) {
+                    syncPending = false
+                    pushIfAuthoritativeChanged(requestPush = true)
+                }
             }
     }
 
@@ -174,12 +210,14 @@ class TaskSchedulerViewModel(
         saveJob = null
         store.save(SchedulerStateCodec.encodeSnapshot(_state.value))
         // A change within the debounce window never reached the push above; flag it (only if it was an
-        // authoritative change) so the next launch's reconcile sends it. No-op when the debounced save already
-        // accounted for it (savePending false) or nothing authoritative changed.
-        if (savePending) {
-            savePending = false
+        // authoritative, user-authored change) so the next launch's reconcile sends it. No-op when the debounced
+        // save already accounted for it (savePending false), when only schedule-advance ticks ran (syncPending
+        // false), or when nothing authoritative changed.
+        if (savePending && syncPending) {
             pushIfAuthoritativeChanged(requestPush = false)
         }
+        savePending = false
+        syncPending = false
     }
 
     // ---- PRD §5 cross-device sync controls (no-ops when sync is disabled) ----

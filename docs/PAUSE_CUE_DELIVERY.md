@@ -487,9 +487,10 @@ dirty nor pushes.
 ```
 ./gradlew :shared:jvmTest --tests "org.example.project.SyncFingerprintGateTest"
 ```
-Asserts (a) regenerated auto/side/sleep panels don't move the fingerprint while records / pinned panels /
-reminder-checks / tree edits do, and (b) via the ViewModel: a `RefreshSchedule` tick does **not** mark dirty
-while a `FocusWindow` change does.
+Asserts (a) regenerated auto/side/sleep panels don't move the fingerprint while pinned panels /
+reminder-checks / tree edits / manual record edits do, and (b) via the ViewModel: a `RefreshSchedule` tick and
+an `AdvanceSchedule` tick that **banks an auto record** do **not** mark dirty, while a `FocusWindow` change and
+a manual `RemoveRecordPeriod` do.
 
 **Manual, end-to-end** (a signed-in desktop is enough; watch the Supabase **API logs** for the account's
 `user_id`):
@@ -500,10 +501,12 @@ while a `FocusWindow` change does.
 2. **A real edit still syncs.** Now make an authoritative change (rename a task, pin/move a calendar panel,
    check a reminder). Within the 60-s server-sync window a single `PATCH /rest/v1/scheduler_snapshot`
    (revision +1) appears. One edit → one write.
-3. **Banked work still syncs.** Let the now-line cross the end of an auto-scheduled work block (so
-   `advanceSchedule` records `[start,end]` as completed work). That record is authoritative, so it *does*
-   PATCH — this is expected, not chatter: it is a genuine data change, one write per elapsed block, not a
-   per-tick heartbeat.
+3. **Auto-banked work does NOT sync on its own.** Let the now-line cross the end of an auto-scheduled work
+   block (so `advanceSchedule` records `[start,end]` as completed work). There must be **no**
+   `PATCH /rest/v1/scheduler_snapshot` for that — the record is *derived* (every device recomputes it by
+   advancing its own now-line over the synced tree), kept only in the local DB, and it rides along with the
+   next authoritative push. A **manual** record edit (`RemoveRecordPeriod` — "Remove" on a record block) *does*
+   PATCH: that is a user decision no other device can deduce.
 
 ## Notes
 - Everything is inert until the two secrets exist and a phone registers a `device_push_token` row — the Edge

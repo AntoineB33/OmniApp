@@ -77,10 +77,12 @@ class SyncFingerprintGateTest {
         assertNotEquals(fp(base), fp(reminder), "a reminder tag is not a derived panel")
         assertNotEquals(fp(reminder), fp(reminderChecked), "checking a reminder off is an authoritative change")
 
-        // A completed-work record is authoritative (it is exactly what an elapsing auto panel banks on a tick).
+        // A completed-work record is in the fingerprint so that a MANUAL record edit (RemoveRecordPeriod) is
+        // detectable and syncs. (An AUTO-banked record still moves the fingerprint here, but the schedule-advance
+        // intent that banks it is gated out of the push by TaskSchedulerViewModel.syncsToServer — see below.)
         val (tid, task) = base.tasks.entries.first()
         val withRecord = base.copy(tasks = base.tasks + (tid to task.copy(record = listOf(TaskTimeRange(0, 1_000)))))
-        assertNotEquals(fp(base), fp(withRecord), "a completed-work record must sync")
+        assertNotEquals(fp(base), fp(withRecord), "a record is in the fingerprint so a manual record edit syncs")
     }
 
     // ---- The account1-empty-and-open guarantee: an idle empty account never moves the fingerprint ----
@@ -153,6 +155,48 @@ class SyncFingerprintGateTest {
             advanceTimeBy(500)
             runCurrent()
             assertEquals(true, meta.loadSyncMeta()?.dirty, "an authoritative change must push")
+        }
+    }
+
+    @Test
+    fun an_auto_banked_record_does_not_push_but_a_manual_record_edit_does() {
+        val dispatcher = StandardTestDispatcher()
+        runTest(dispatcher) {
+            val meta = FakeMetaStore()
+            val start = 1_700_000_000_000L
+            val base = SchedulerState.empty()
+            val (tid, task) = base.tasks.entries.first()
+            // The synced baseline already holds one completed-work record; plus an elapsed auto panel for the
+            // same task, sitting just before the now we will advance to.
+            val seeded = TaskTimeRange(start - 10_000, start - 5_000)
+            val initial =
+                base.copy(
+                    tasks = base.tasks + (tid to task.copy(record = listOf(seeded))),
+                    panels = listOf(TaskPanel(id = "auto/0", taskId = tid, title = task.title, startEpochMillis = start, endEpochMillis = start + 1_000, auto = true)),
+                )
+            val vm = TaskSchedulerViewModel(
+                initial = initial,
+                store = NullStore(),
+                saveDispatcher = dispatcher,
+                syncEngine = signedOutEngine(meta),
+                startupLogin = { null },
+            )
+            runCurrent()
+
+            // (1) The now-line passes the auto panel → advanceSchedule banks [start, start+1000] as completed
+            // work. That record is derived (another device re-banks it by advancing its own now-line over the
+            // synced tree), so the schedule-advance tick must NOT push — even though task.record changed.
+            vm.dispatch(SchedulerIntent.AdvanceSchedule(nowMillis = start + 2_000))
+            advanceTimeBy(500)
+            runCurrent()
+            assertEquals(2, vm.state.value.tasks[tid]?.record?.size, "the tick banked the elapsed panel as a record")
+            assertNotEquals(true, meta.loadSyncMeta()?.dirty, "an auto-banked completed-work record must not push")
+
+            // (2) Manually removing a completed-work block is a user decision no other device can deduce → push.
+            vm.dispatch(SchedulerIntent.RemoveRecordPeriod(tid, seeded.startEpochMillis, seeded.endEpochMillis))
+            advanceTimeBy(500)
+            runCurrent()
+            assertEquals(true, meta.loadSyncMeta()?.dirty, "removing a completed-work block is authoritative and must push")
         }
     }
 }
