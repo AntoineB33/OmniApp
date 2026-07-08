@@ -1472,9 +1472,10 @@ object SchedulerDomain {
             !it.sideTask && !it.sleep &&
                 (isSchedulerFixed(it) || it.chore || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon)
         }
-        // The user's sleep windows: obstacle panels the fill and the side tasks must avoid (rendered too).
+        // The user's sleep windows: rendered as "Sleep" bands, but NO LONGER task obstacles. The work plan
+        // projects straight through them (like the side tasks) so a user working at night still sees the
+        // priority-ordered plan; those panels render tinted, under the "Sleep" band (see CalendarUi).
         val sleepPanels = sleepPanels(state.sleep, nowMillis, horizon, timeZone)
-        val sleepRanges = sleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
         val leaves = schedulableLeaves(state)
         // PRD §15: side tasks materialize regardless of whether there are leaf tasks to fill around them.
         // Each one places its next occurrence at its due time (or the now-line when overdue), with the
@@ -1488,13 +1489,11 @@ object SchedulerDomain {
         var working = state.copy(panels = kept)
         val start = firstFreeMoment(kept, nowMillis)
 
-        // PRD §15 + sleep: the side-task and sleep occupied regions (merged) the regular fill must skip
-        // over. The regular task resumes after each region without its minimum being charged. The sleep
-        // region is extended one hour earlier here — no task is scheduled in the wind-down hour before bed
-        // (side tasks and the rendered Sleep block keep the raw sleep window).
-        val taskSleepRanges =
-            sleepRanges.map { TaskTimeRange(it.startEpochMillis - NO_TASK_BEFORE_BED_MILLIS, it.endEpochMillis) }
-        val sideRegions = mergeOccupied(sidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) } + taskSleepRanges)
+        // PRD §15: only the side-task occupied regions are obstacles the regular fill skips over (the
+        // regular task resumes after each region without its minimum being charged). Sleep windows are NOT
+        // in this set anymore — the plan is scheduled through the night (and the wind-down hour), so the
+        // user can see the best work plan for the priority parameters even during sleep.
+        val sideRegions = mergeOccupied(sidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
         fun sideRegionCovering(t: Long): TaskTimeRange? =
             sideRegions.firstOrNull { it.startEpochMillis <= t && t < it.endEpochMillis }
         fun nextSideRegionStart(t: Long): Long? =

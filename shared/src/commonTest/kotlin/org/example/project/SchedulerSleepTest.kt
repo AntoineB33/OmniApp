@@ -76,42 +76,38 @@ class SchedulerSleepTest {
     // ----- Scheduler avoidance ------------------------------------------------------------------
 
     @Test
-    fun fill_schedule_never_places_a_task_inside_a_sleep_window() {
+    fun fill_schedule_projects_the_work_plan_through_a_sleep_window() {
+        // Sleep windows are no longer task obstacles: the priority-ordered plan projects straight through
+        // them (like the side tasks) so a user working overnight still sees the best work plan. The panels
+        // are rendered tinted, under the "Sleep" band (see CalendarUi), but they are real auto panels here.
         val now = utc(2024, 1, 1, 10, 0)
         val state = soloTask().copy(sleep = SchedulerDomain.DEFAULT_SLEEP)
         val panels = SchedulerDomain.fillSchedule(state, now, tz)
         val autos = panels.filter { it.auto }
         val sleeps = panels.filter { it.sleep }
         assertTrue(autos.isNotEmpty() && sleeps.isNotEmpty())
-        // Every auto panel sits entirely outside every sleep window (split + resumed after, not overlapping).
-        autos.forEach { a ->
-            sleeps.forEach { s ->
-                assertTrue(
-                    a.endEpochMillis <= s.startEpochMillis || a.startEpochMillis >= s.endEpochMillis,
-                    "auto [${a.startEpochMillis},${a.endEpochMillis}] overlaps sleep [${s.startEpochMillis},${s.endEpochMillis}]",
-                )
-            }
+        // At least one auto panel overlaps each night's sleep window (the plan is no longer cut at sleep).
+        sleeps.forEach { s ->
+            assertTrue(
+                autos.any { a -> a.startEpochMillis < s.endEpochMillis && a.endEpochMillis > s.startEpochMillis },
+                "no auto panel projected through sleep [${s.startEpochMillis},${s.endEpochMillis}]",
+            )
         }
-        // A continuous solo task resumes at wake: some auto panel starts exactly at a window's end.
-        assertTrue(autos.any { a -> sleeps.any { it.endEpochMillis == a.startEpochMillis } })
     }
 
     @Test
-    fun no_task_is_scheduled_in_the_hour_before_bed() {
+    fun the_work_plan_fills_the_wind_down_hour_and_the_sleep_window() {
         val now = utc(2024, 1, 1, 10, 0)
         val state = soloTask().copy(sleep = SchedulerDomain.DEFAULT_SLEEP)
         val autos = SchedulerDomain.fillSchedule(state, now, tz).filter { it.auto }
-        // Tonight's no-task window: [22:00 (bedtime − 1h), 07:30 next day (wake)].
+        // The window formerly left empty: [22:00 (bedtime − 1h wind-down), 07:30 next day (wake)]. A
+        // continuous task now runs straight through the wind-down hour AND the sleep window (no gap).
         val windDownStart = utc(2024, 1, 1, 22, 0)
         val wake = utc(2024, 1, 2, 7, 30)
-        autos.forEach { a ->
-            assertTrue(
-                a.endEpochMillis <= windDownStart || a.startEpochMillis >= wake,
-                "auto [${a.startEpochMillis},${a.endEpochMillis}] intrudes on the wind-down hour or sleep",
-            )
-        }
-        // A task still runs right up to the start of the wind-down hour.
-        assertTrue(autos.any { it.endEpochMillis == windDownStart })
+        assertTrue(
+            autos.any { it.startEpochMillis <= windDownStart && it.endEpochMillis >= wake },
+            "the work plan does not project continuously across the wind-down hour + sleep window",
+        )
     }
 
     @Test

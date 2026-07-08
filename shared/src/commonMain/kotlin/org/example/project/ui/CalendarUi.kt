@@ -142,6 +142,9 @@ private object CalColors {
     val event = Color(0xFF1A73E8) // Google-blue calendar event
 }
 
+/** Opacity of the greyed "Sleep"/"Inactivity" band overlay (and the matching tint on blocks under it). */
+private const val SLEEP_BAND_ALPHA = 0.16f
+
 private val WEEKDAY_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 private val WEEKDAY_INITIAL = listOf("M", "T", "W", "T", "F", "S", "S")
 
@@ -2132,6 +2135,11 @@ private fun DayColumn(
     val sleepBands = records.filter { it.sleep }
     val inactivityBands = records.filter { it.inactivity }
     val blockRecords = records.filterNot { it.reminder || it.sideTask || it.sleep || it.inactivity }
+    // PRD §17: the fill schedules the work plan straight through the nightly sleep windows, so a block may
+    // land (partly) inside one. The overlapping sub-range is greyed "as if under the Sleep band" while the
+    // block stays a normal interactive block. Bands and blocks are both clipped to this day, so hour ranges
+    // compare directly.
+    val sleepHourRanges = sleepBands.map { it.startHour..it.endHour }
     // The right-click position (in this column's local pixels) that anchors the contextual menu; null
     // when no menu is open. [menuTarget] is the block the click landed on (null = empty space).
     var menuOffset by remember { mutableStateOf<Offset?>(null) }
@@ -2245,9 +2253,11 @@ private fun DayColumn(
             )
         }
 
-        // The user's sleep windows: a greyed band labeled "Sleep" drawn behind the task blocks so it is
-        // clear why nothing is scheduled there. Past pauses (PRD §15 device-sleep gaps) render as the same
-        // greyed band, only labeled "Inactivity".
+        // The user's sleep windows: a greyed band drawn behind the task blocks so sleep time reads as
+        // greyed even in the gaps between blocks. Past pauses (PRD §15 device-sleep gaps) render as the
+        // same band. The blocks the fill now schedules through the window are drawn on top, each greying
+        // its own sleep sub-range to match (see CalendarBlock's sleepHourRanges); the band's
+        // "Sleep"/"Inactivity" label is drawn on top of them below, so it stays legible at the band's start.
         (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to "Inactivity" }).forEach { (band, label) ->
             // PRD §8: like every other block, hovering the band pops the title + true (un-clipped) start–end times.
             val timeRange = "${formatHm(band.fullStartMillis, tz)} – ${formatHm(band.fullEndMillis, tz)}"
@@ -2257,16 +2267,8 @@ private fun DayColumn(
                     .offset(y = hourHeight * band.startHour)
                     .height(hourHeight * (band.endHour - band.startHour))
                     .calendarTitleHover(label, hoverScope, subtitle = timeRange)
-                    .background(CalColors.muted.copy(alpha = 0.16f)),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = CalColors.muted,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-            }
+                    .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA)),
+            )
         }
 
         // PRD §8 contextual menu, anchored at the right-click position. A block gets Edit/Remove; both a
@@ -2323,6 +2325,7 @@ private fun DayColumn(
                 hourHeight = hourHeight,
                 // Every other block — everything but itself — so a non-overlap drag/resize snaps around them.
                 others = allBlocks.filter { it.first != key }.map { it.second },
+                sleepHourRanges = sleepHourRanges,
                 overlapArmed = overlapArmed,
                 // Hide the resting (gesture-holding) slices while any move/resize preview overlay shows.
                 previewActive = previewActive,
@@ -2405,6 +2408,8 @@ private fun DayColumn(
                                 .height(hourHeight * (slice.bottomHour - slice.topHour))
                                 .padding(horizontal = 1.dp),
                         ) {
+                            // Transient drag preview: left untinted; the resting block greys its sleep
+                            // sub-range on release (see [CalendarBlock]'s sleepHourRanges overlay).
                             CalendarBlockBody(CalColors.event, rec.title, showTitle = idx == 0)
                         }
                     }
@@ -2479,6 +2484,26 @@ private fun DayColumn(
                         SideTaskBand(marker, slice, hourHeight, colWidth, tz, hoverScope)
                     }
                 }
+            }
+        }
+
+        // The "Sleep"/"Inactivity" band label, drawn ON TOP of everything so it stays legible at the start
+        // of the band even though the work plan now projects tinted blocks through the window. Non-
+        // interactive (a plain Text Box consumes no pointer events), so the blocks beneath stay clickable.
+        (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to "Inactivity" }).forEach { (band, label) ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset(y = hourHeight * band.startHour)
+                    .height(hourHeight * (band.endHour - band.startHour)),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CalColors.muted,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
             }
         }
     }
@@ -2695,6 +2720,12 @@ private fun CalendarBlock(
     slices: List<PanelSlice>,
     hourHeight: Dp,
     others: List<TaskTimeRange>,
+    /**
+     * PRD §17: this day's sleep windows as hour-of-day ranges. Where a block overlaps one, only that
+     * sub-range is greyed (as if under the "Sleep" band) — so a block spanning day + a sleep sliver isn't
+     * tinted whole. The block stays a normal, fully interactive block drawn on top of the band.
+     */
+    sleepHourRanges: List<ClosedFloatingPointRange<Float>> = emptyList(),
     overlapArmed: Boolean,
     /** True while a move/resize preview overlay is showing — hide these (gesture-only) resting slices. */
     previewActive: Boolean,
@@ -2849,6 +2880,23 @@ private fun CalendarBlock(
                 Box(Modifier.fillMaxSize().calendarTitleHover(record.title, hoverScope, subtitle = timeRange)) {
                     // The title is written only on the topmost slice so a stepped block reads as one.
                     CalendarBlockBody(color, record.title, showTitle = isFirst)
+                    // PRD §17: grey the sub-range of this slice that falls inside a sleep window (the fill now
+                    // projects the plan through the night). A plain overlay Box with no pointer handler, so
+                    // the block underneath stays clickable/moveable — the block reads "as if under the band".
+                    sleepHourRanges.forEach { sleepRange ->
+                        val top = maxOf(slice.topHour, sleepRange.start)
+                        val bottom = minOf(slice.bottomHour, sleepRange.endInclusive)
+                        if (bottom > top) {
+                            Box(
+                                Modifier
+                                    .offset(y = hourHeight * (top - slice.topHour))
+                                    .fillMaxWidth()
+                                    .height(hourHeight * (bottom - top))
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA)),
+                            )
+                        }
+                    }
                 }
                 // PRD §8 extend/shorten: a thin hover zone on the block's true top/bottom edge shows the
                 // standard resize cursor, indicating the user can grab the edge to resize.
