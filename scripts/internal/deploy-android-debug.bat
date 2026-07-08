@@ -19,10 +19,12 @@ REM  installed, `install -r` clashes and we uninstall + clean-install instead
 REM  (removing that release install and its on-device data).
 REM
 REM  Accounts 1 and 2 share the one app install on a phone (single package), so
-REM  each deploy `pm clear`s local data first: auto-login only runs when signed
-REM  out, so without the wipe a relaunch would stay on whichever account was
-REM  already cached. This is the Android analog of the desktop scripts' separate
-REM  per-account state dirs. Remote Supabase data is untouched.
+REM  each deploy uninstalls + reinstalls to wipe local data first: auto-login only
+REM  runs when signed out, so without the wipe a relaunch would stay on whichever
+REM  account was already cached. (We uninstall rather than `pm clear` because MIUI
+REM  and some other OEM ROMs deny `adb shell pm clear` for third-party packages.)
+REM  This is the Android analog of the desktop scripts' separate per-account state
+REM  dirs. Remote Supabase data is untouched.
 REM
 REM  Contract (set by the caller before `call`-ing this):
 REM    OMNIAPP_DEPLOY_USER / OMNIAPP_DEPLOY_PASS - sign-in credentials
@@ -55,30 +57,35 @@ call gradlew.bat :androidApp:assembleDebug
 if errorlevel 1 (echo [x] Build failed.& exit /b 1)
 if not exist "%APK%" (echo [x] APK not found at %APK%.& exit /b 1)
 
+REM ---- Deploy/launch loop. A locked phone makes install / pm clear / am start
+REM ---- fail; rather than abort we prompt to unlock and retry (infinite).
+REM ---- The build above is done once; only these on-device steps retry.
+:deploy_retry
+
 echo [2/6] Checking for a connected device...
 "%ADB%" start-server >nul 2>&1
 "%ADB%" devices | findstr /r /c:"	device$" >nul
 if errorlevel 1 (
   echo [x] No authorized device found. Plug in via USB with USB debugging on,
-  echo     or connect wifi-adb ^("%ADB% connect ^<phone-ip^>:5555"^), then re-run.
+  echo     or connect wifi-adb ^("%ADB% connect ^<phone-ip^>:5555"^).
   "%ADB%" devices
-  exit /b 1
+  goto deploy_failed
 )
 
-echo [3/6] Installing the debug app...
-"%ADB%" install -r "%APK%"
-if errorlevel 1 (
-  echo       install -r failed ^(usually a signature clash with an installed release build^);
-  echo       uninstalling and doing a clean install...
-  "%ADB%" uninstall "%APP_ID%" >nul 2>&1
-  "%ADB%" install "%APK%"
-  if errorlevel 1 (echo [x] Install failed.& exit /b 1)
-)
+REM ---- [3/6] Uninstall first to WIPE local data, so the next launch signs in
+REM ---- fresh as this account (auto-login is skipped once a session is cached).
+REM ---- We uninstall rather than `pm clear` because MIUI/HyperOS (and some other
+REM ---- OEM ROMs) deny `adb shell pm clear` for third-party packages with a
+REM ---- "does not have permission CLEAR_APP_USER_DATA" SecurityException;
+REM ---- uninstall wipes the data too and needs no special permission. It also
+REM ---- makes the old release-signature clash a non-issue (the app is gone).
+echo [3/6] Removing any existing install ^(wipes local data for a fresh sign-in as %LABEL%^)...
+"%ADB%" uninstall "%APP_ID%" >nul 2>&1
+REM  (a "not installed" failure here is fine - we install fresh next.)
 
-REM ---- [4/6] Wipe local data so the next launch signs in fresh as this
-REM ---- account (auto-login is skipped once a session is cached on-device).
-echo [4/6] Clearing local app data ^(fresh sign-in as %LABEL%^)...
-"%ADB%" shell pm clear "%APP_ID%" >nul
+echo [4/6] Installing the debug app fresh...
+"%ADB%" install "%APK%"
+if errorlevel 1 (echo [x] Install failed.& goto deploy_failed)
 
 REM ---- [5/6] Force-stop so the next launch is a fresh process. The shared
 REM ---- scheduler VM is a process singleton; it must be (re)built with the
@@ -86,8 +93,19 @@ REM ---- credentials present, so kill any running instance before relaunching.
 echo [5/6] Launching auto-signed-in as %OMNIAPP_DEPLOY_USER%...
 "%ADB%" shell am force-stop "%APP_ID%"
 "%ADB%" shell am start -n "%LAUNCH_ACTIVITY%" --es omniapp_login_user "%OMNIAPP_DEPLOY_USER%" --es omniapp_login_pass "%OMNIAPP_DEPLOY_PASS%" >nul
-if errorlevel 1 (echo [x] Launch with login extras failed.& exit /b 1)
+if errorlevel 1 (echo [x] Launch with login extras failed.& goto deploy_failed)
 
+goto deploy_done
+
+:deploy_failed
+echo.
+echo [!] The app could not be deployed - the phone may be locked.
+echo     Unlock the phone (and accept any USB-debugging prompt), then
+set /p "_RETRY=    press Enter to retry (or Ctrl+C to abort)... "
+echo.
+goto deploy_retry
+
+:deploy_done
 echo [6/6] Done.
 echo.
 echo   Installed APK: %APK%

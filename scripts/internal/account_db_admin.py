@@ -8,7 +8,10 @@ Three subcommands, all taking a username + password (the username is an arbitrar
                          the account signs itself out on its next reconcile (dropping the session, pushing
                          nothing). Run this BEFORE `empty` so a still-running device can't re-seed the data
                          the empty deletes. An app that logs in afterwards reads the new marker as its
-                         baseline and is unaffected.
+                         baseline and is unaffected. Exits 3 (not 1) if the `account_logout` table is missing,
+                         so the caller can deploy-supabase.bat then retry. Pass --wait on that retry: right
+                         after a migration the table exists in Postgres but PostgREST answers PGRST205 until
+                         it reloads its schema cache, so --wait polls through that lag instead of failing.
   empty  <user> <pass>   Sign in, then DELETE this account's synced data so every device for it goes
                          empty -- the `scheduler_snapshot` row, all `device_presence` rows, all
                          `device_sleep_gap` rows, and all `device_active_session` rows. It deliberately does
@@ -31,6 +34,7 @@ Stdlib only (urllib) -- no pip installs. Exit code 0 on success, non-zero on fai
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -99,26 +103,48 @@ def cmd_signup(user, password):
     return 1
 
 
-def cmd_logout(user, password):
+# How long to keep retrying a "table missing" logout when --wait is set, and the gap between attempts.
+# A freshly-applied migration exists in Postgres immediately, but PostgREST answers PGRST205 ("not in the
+# schema cache") until it reloads its cache off the DDL event trigger -- normally within a few seconds.
+SCHEMA_CACHE_WAIT_SECS = 90
+SCHEMA_CACHE_POLL_SECS = 3
+
+
+def cmd_logout(user, password, wait_for_schema=False):
     base, key, domain = cfg()
     email = username_to_email(user, domain)
     token, uid = sign_in(base, key, email, password)
     # Upsert the single per-user row; the touch_account_logout trigger stamps logout_at = now() on insert AND
     # update, so merge-duplicates makes a repeat advance the marker rather than 409-conflict.
     url = "{}/rest/v1/account_logout".format(base)
-    status, payload = _request(
-        "POST", url, key, body={"user_id": uid}, token=token,
-        prefer="resolution=merge-duplicates,return=minimal",
-    )
-    if status in (200, 201, 204):
-        print("    Signed out all apps for {} (account_logout marked).".format(email))
-        return 0
-    code = payload.get("code") if isinstance(payload, dict) else None
-    if status == 404 or code == "PGRST205":
-        print("    [x] account_logout table missing -- apply supabase/migrations (deploy-supabase.bat).")
+    deadline = time.time() + (SCHEMA_CACHE_WAIT_SECS if wait_for_schema else 0)
+    announced_wait = False
+    while True:
+        status, payload = _request(
+            "POST", url, key, body={"user_id": uid}, token=token,
+            prefer="resolution=merge-duplicates,return=minimal",
+        )
+        if status in (200, 201, 204):
+            print("    Signed out all apps for {} (account_logout marked).".format(email))
+            return 0
+        code = payload.get("code") if isinstance(payload, dict) else None
+        table_missing = status == 404 or code == "PGRST205"
+        if table_missing and wait_for_schema and time.time() < deadline:
+            # The migration just ran; the table exists in Postgres but PostgREST hasn't reloaded its schema
+            # cache yet. Poll until it does (or the deadline lapses) instead of failing the whole script.
+            if not announced_wait:
+                print("    [~] account_logout not in PostgREST's schema cache yet -- waiting for reload...")
+                announced_wait = True
+            time.sleep(SCHEMA_CACHE_POLL_SECS)
+            continue
+        if table_missing:
+            # Distinct exit code 3 = "schema out of date"; the caller can auto-run deploy-supabase.bat and
+            # retry with --wait. (A generic failure below returns 1, which must NOT trigger an auto-deploy --
+            # e.g. a wrong password.)
+            print("    [x] account_logout table missing -- apply supabase/migrations (deploy-supabase.bat).")
+            return 3
+        print("    [x] failed to set logout marker ({}): {}".format(status, payload))
         return 1
-    print("    [x] failed to set logout marker ({}): {}".format(status, payload))
-    return 1
 
 
 def cmd_empty(user, password):
@@ -147,10 +173,11 @@ def main(argv):
         print("usage: account_db_admin.py <signup|logout|empty> <user> <pass>")
         return 2
     action, user, password = argv[1], argv[2], argv[3]
+    flags = argv[4:]
     if action == "signup":
         return cmd_signup(user, password)
     if action == "logout":
-        return cmd_logout(user, password)
+        return cmd_logout(user, password, wait_for_schema="--wait" in flags)
     if action == "empty":
         return cmd_empty(user, password)
     print("unknown action: {}".format(action))
