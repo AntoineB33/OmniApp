@@ -65,6 +65,7 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
                 refreshToken = row.refresh_token,
                 userId = row.user_id,
                 email = row.email,
+                acknowledgedLogoutAtMillis = row.acknowledged_logout_at,
             )
         }
 
@@ -77,6 +78,7 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
             refresh_token = meta.refreshToken,
             user_id = meta.userId,
             email = meta.email,
+            acknowledged_logout_at = meta.acknowledgedLogoutAtMillis,
         )
     }
 

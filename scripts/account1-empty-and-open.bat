@@ -28,21 +28,29 @@ if not defined ACC1_USER (echo [x] ACC1_USER/ACC1_PASS missing from accounts.env
 
 pushd "%SCRIPT_DIR%.." || (echo [x] Could not enter project root.& exit /b 1)
 
-REM ---- [1/4] Stop account 1's running instance (only) -----------------
+where python >nul 2>nul || (echo [x] 'python' is not on PATH - cannot reach the remote DB.& popd & exit /b 1)
+
+REM ---- [1/5] Tell the server to log out account 1's apps --------------
+REM  Must run FIRST: it bumps the account_logout marker so any OTHER device still signed in as account 1
+REM  signs itself out on its next reconcile (pushing nothing), instead of re-seeding the data we clear below.
+echo [1/5] Signing out account 1's apps server-side...
+python "%SCRIPT_DIR%internal\account_db_admin.py" logout "%ACC1_USER%" "%ACC1_PASS%"
+if errorlevel 1 (echo [x] Remote logout failed - aborting before the wipe.& popd & exit /b 1)
+
+REM ---- [2/5] Stop account 1's running instance (only) -----------------
 call "%SCRIPT_DIR%internal\kill-app-by-match.bat" ".omniapp-acc1"
 
-REM ---- [2/4] Empty the REMOTE data for account 1 ----------------------
-echo [2/4] Emptying account 1's remote data...
-where python >nul 2>nul || (echo [x] 'python' is not on PATH - cannot empty the remote DB.& popd & exit /b 1)
+REM ---- [3/5] Empty the REMOTE data for account 1 ----------------------
+echo [3/5] Emptying account 1's remote data...
 python "%SCRIPT_DIR%internal\account_db_admin.py" empty "%ACC1_USER%" "%ACC1_PASS%"
 if errorlevel 1 (echo [x] Remote empty failed - aborting before the app re-seeds it.& popd & exit /b 1)
 
-REM ---- [3/4] Wipe the LOCAL DB for account 1 --------------------------
-echo [3/4] Deleting local DB "%DB%" ...
+REM ---- [4/5] Wipe the LOCAL DB for account 1 --------------------------
+echo [4/5] Deleting local DB "%DB%" ...
 del /q "%DB%" "%DB%-wal" "%DB%-shm" 2>nul
 
-REM ---- [4/4] Launch logged in as account 1 ---------------------------
-echo [4/4] Launching the app logged in as "%ACC1_USER%" (state dir %STATE_DIR%)...
+REM ---- [5/5] Launch logged in as account 1 ---------------------------
+echo [5/5] Launching the app logged in as "%ACC1_USER%" (state dir %STATE_DIR%)...
 start "OmniApp acc1" cmd /c "gradlew.bat :desktopApp:run -Pomniapp.stateDir=%STATE_DIR% -Pomniapp.loginUser=%ACC1_USER% -Pomniapp.loginPass=%ACC1_PASS%"
 
 popd

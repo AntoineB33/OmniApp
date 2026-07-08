@@ -178,6 +178,24 @@ class RemoteSnapshotClient(
         return updated.isNotEmpty()
     }
 
+    /**
+     * Reads the account's server-side force-logout marker `account_logout.logout_at` (epoch millis), or null
+     * if no row exists. Set by the account-empty script (scripts/account1-empty-and-open.bat) BEFORE it
+     * clears the snapshot; [SchedulerSyncEngine] records it as a per-login baseline and signs the device out
+     * when it advances, so a still-running app can't re-seed the snapshot the empty just deleted.
+     */
+    suspend fun fetchLogoutAt(session: SupabaseSession): Long? {
+        val response =
+            http.get("${config.restUrl}/account_logout") {
+                authHeaders(session)
+                url.parameters.append("user_id", "eq.${session.userId}")
+                url.parameters.append("select", "logout_at")
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        val rows = json.decodeFromString<List<AccountLogoutRow>>(response.bodyAsText())
+        return rows.firstOrNull()?.logoutAt?.let { Instant.parse(it).toEpochMilliseconds() }
+    }
+
     // ---- Presence (PostgREST, PRD §15) ----
 
     /**
@@ -424,6 +442,8 @@ private data class PauseCueUpsert(
 )
 
 @Serializable private data class PauseCueRow(@SerialName("due_at") val dueAt: String)
+
+@Serializable private data class AccountLogoutRow(@SerialName("logout_at") val logoutAt: String)
 
 @Serializable
 private data class LastPhoneUpsert(

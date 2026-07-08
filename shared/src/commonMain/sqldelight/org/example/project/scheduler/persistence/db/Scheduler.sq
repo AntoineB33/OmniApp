@@ -35,7 +35,12 @@ CREATE TABLE sync_meta (
     access_token TEXT,
     refresh_token TEXT,
     user_id TEXT,
-    email TEXT
+    email TEXT,
+    -- The account's `account_logout.logout_at` (epoch millis) this session recorded at login: its baseline
+    -- for the remote force-logout. NULL = unknown (pre-feature session / a login whose fetch failed); 0 =
+    -- seen, no marker yet. On reconcile the device signs out if the server marker advanced past this. Added
+    -- in migration 5.sqm; existing DBs (schema v5) gain it (as NULL) on upgrade.
+    acknowledged_logout_at INTEGER
 );
 
 -- Floating-window geometry (position/size) and visibility, persisted LOCALLY ONLY. This is deliberately
@@ -113,13 +118,13 @@ insertPointer:
 INSERT INTO history_pointer(category, pointer) VALUES (?, ?);
 
 selectSyncMeta:
-SELECT device_id, last_known_revision, dirty, access_token, refresh_token, user_id, email
+SELECT device_id, last_known_revision, dirty, access_token, refresh_token, user_id, email, acknowledged_logout_at
 FROM sync_meta WHERE id = 0;
 
 upsertSyncMeta:
 INSERT OR REPLACE INTO sync_meta(
-    id, device_id, last_known_revision, dirty, access_token, refresh_token, user_id, email
-) VALUES (0, ?, ?, ?, ?, ?, ?, ?);
+    id, device_id, last_known_revision, dirty, access_token, refresh_token, user_id, email, acknowledged_logout_at
+) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?);
 
 selectAllPlacements:
 SELECT window_id, x, y, width, height, visible FROM window_placement;

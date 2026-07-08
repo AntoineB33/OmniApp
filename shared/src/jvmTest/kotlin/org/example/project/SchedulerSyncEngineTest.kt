@@ -17,6 +17,8 @@ import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.sync.SupabaseConfig
+import org.example.project.scheduler.sync.SyncState
+import kotlin.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -42,8 +44,11 @@ class SchedulerSyncEngineTest {
         }
     }
 
-    /** Mutable server-side row: the stored payload (a serialized [PersistedSnapshot]) and its revision. */
-    private class FakeServer(var payload: String? = null, var revision: Long = 0)
+    /**
+     * Mutable server-side row: the stored payload (a serialized [PersistedSnapshot]) and its revision, plus
+     * the account's `account_logout` marker ([logoutAtMillis], null = no row) the force-logout reads.
+     */
+    private class FakeServer(var payload: String? = null, var revision: Long = 0, var logoutAtMillis: Long? = null)
 
     private fun harness(server: FakeServer): RemoteSnapshotClient {
         val engine =
@@ -58,6 +63,13 @@ class SchedulerSyncEngineTest {
                             HttpStatusCode.OK,
                             jsonHeader,
                         )
+
+                    path.endsWith("/account_logout") && request.method == HttpMethod.Get -> {
+                        val arr =
+                            server.logoutAtMillis?.let { """[{"logout_at":"${Instant.fromEpochMilliseconds(it)}"}]""" }
+                                ?: "[]"
+                        respond(arr, HttpStatusCode.OK, jsonHeader)
+                    }
 
                     path.endsWith("/scheduler_snapshot") && request.method == HttpMethod.Get -> {
                         val arr =
@@ -152,6 +164,40 @@ class SchedulerSyncEngineTest {
         assertEquals(3, meta.loadSyncMeta()!!.lastKnownRevision)
         assertEquals(false, meta.loadSyncMeta()!!.dirty)
         assertNull(applied)
+    }
+
+    @Test
+    fun remote_logout_after_login_signs_out_and_does_not_reseed() = runTest {
+        // A device is signed in (its login recorded logout marker = none) and holds local data. The account is
+        // then force-logged-out server-side (the empty script bumps account_logout). The next reconcile must
+        // sign this device out and push NOTHING, so it can't re-seed the snapshot the empty deleted.
+        val server = FakeServer() // no snapshot on the server (it was just emptied)
+        val meta = FakeMetaStore()
+        val sync = engine(harness(server), meta, { snap("LOCAL") }, {})
+
+        sync.signIn("a@b.c", "pw") // baseline recorded: no marker yet (0)
+        server.logoutAtMillis = 5_000L // account emptied: logout marker set AFTER this device logged in
+        sync.reconcile()
+
+        assertNull(server.payload) // never re-seeded
+        assertEquals(SyncState.SignedOut, sync.state.value)
+        assertNull(meta.loadSyncMeta()!!.userId) // session dropped locally
+    }
+
+    @Test
+    fun login_after_a_logout_marker_records_it_as_baseline_and_does_not_self_sign_out() = runTest {
+        // A device that logs in AFTER a logout marker exists adopts it as its baseline, so the same value on the
+        // next reconcile is NOT a new logout — it stays signed in and syncs normally.
+        val server = FakeServer(logoutAtMillis = 5_000L)
+        val meta = FakeMetaStore()
+        val sync = engine(harness(server), meta, { snap("FRESH") }, {})
+
+        sync.signIn("a@b.c", "pw") // baseline recorded = 5000 (the existing marker)
+        sync.reconcile()
+
+        assertEquals("FRESH", json.decodeFromString<PersistedSnapshot>(server.payload!!).statePayload)
+        assertEquals(SyncState.Idle, sync.state.value)
+        assertEquals("user-1", meta.loadSyncMeta()!!.userId)
     }
 
     @Test

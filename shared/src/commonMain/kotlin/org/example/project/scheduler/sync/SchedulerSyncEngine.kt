@@ -104,6 +104,7 @@ class SchedulerSyncEngine(
                 val s = call()
                 session = s
                 persistSession(s, email)
+                recordLogoutBaseline(s)
                 _state.value = SyncState.Idle
             } catch (e: SupabaseException) {
                 _state.value = SyncState.Error(e.message ?: "auth failed")
@@ -136,7 +137,8 @@ class SchedulerSyncEngine(
             _state.value = SyncState.Syncing
             try {
                 runReconcile(current)
-                _state.value = SyncState.Idle
+                // runReconcile may have signed us out (remote force-logout); don't clobber SignedOut with Idle.
+                if (session != null) _state.value = SyncState.Idle
             } catch (e: SupabaseException) {
                 _state.value = SyncState.Error(e.message ?: "sync failed")
             } catch (e: Exception) {
@@ -147,6 +149,15 @@ class SchedulerSyncEngine(
     }
 
     private suspend fun runReconcile(session: SupabaseSession) {
+        // Remote force-logout (account-empty script, scripts/account1-empty-and-open.bat): if the account's
+        // server-side `account_logout` marker advanced past the baseline this device recorded at login, drop the
+        // session locally and push NOTHING — otherwise a still-running device would re-seed the snapshot the
+        // empty just deleted. `null` baseline = unknown (pre-feature / failed login fetch), which still logs out
+        // if a marker exists; `0` = seen with no marker at login. See CLAUDE.md "Account scripts".
+        if (isRemotelyLoggedOut(session)) {
+            signOut()
+            return
+        }
         var m = meta()
         val remote = withAuth(session) { client.fetch(it) }
 
@@ -190,6 +201,29 @@ class SchedulerSyncEngine(
 
     private fun persistSession(s: SupabaseSession, email: String) =
         setMeta(meta().copy(accessToken = s.accessToken, refreshToken = s.refreshToken, userId = s.userId, email = email))
+
+    /**
+     * Records the account's current `account_logout.logout_at` (epoch millis) as this login's baseline so a
+     * LATER server-side force-logout signs this device out but this fresh login itself does not. On a successful
+     * fetch the marker (or `0` when none exists) is stored; on a transport failure the baseline is left `null`
+     * (unknown) — the fetch shares the moment of a just-succeeded sign-in, so this is rare.
+     */
+    private suspend fun recordLogoutBaseline(s: SupabaseSession) {
+        val fetched = runCatching { withAuth(s) { client.fetchLogoutAt(it) } }
+        if (fetched.isSuccess) setMeta(meta().copy(acknowledgedLogoutAtMillis = fetched.getOrNull() ?: 0L))
+    }
+
+    /**
+     * True when the account's server-side logout marker has advanced past this session's login baseline.
+     * Fails **open**: a missing `account_logout` table (migration not yet applied) or any transport error
+     * counts as "not logged out" so it can never wedge normal syncing — the logout is simply honored on a
+     * later reconcile once the fetch succeeds. `null` (no row) likewise means no logout.
+     */
+    private suspend fun isRemotelyLoggedOut(session: SupabaseSession): Boolean {
+        val logoutAt = runCatching { withAuth(session) { client.fetchLogoutAt(it) } }.getOrNull() ?: return false
+        val baseline = meta().acknowledgedLogoutAtMillis
+        return baseline == null || logoutAt > baseline
+    }
 
     private fun setMeta(m: SyncMeta) = metaStore.saveSyncMeta(m)
 

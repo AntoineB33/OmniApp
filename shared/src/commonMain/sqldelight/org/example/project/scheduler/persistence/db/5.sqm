@@ -1,0 +1,7 @@
+-- Schema v5 -> v6: add the remote force-logout baseline to sync_meta.
+-- Existing on-disk DBs (app_state + history_unit + history_pointer + sync_meta + window_placement +
+-- device_sleep_gap + device_active_session) gain acknowledged_logout_at (as NULL = "unknown baseline") on
+-- open; fresh DBs get it from Scheduler.sq directly. It stores the account's `account_logout.logout_at`
+-- (epoch millis) this session saw at login; the client signs itself out when the server marker advances
+-- past it, so a still-running device can't re-seed a snapshot the account-empty script just deleted.
+ALTER TABLE sync_meta ADD COLUMN acknowledged_logout_at INTEGER;

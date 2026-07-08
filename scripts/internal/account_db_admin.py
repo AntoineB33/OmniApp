@@ -1,12 +1,18 @@
 """Supabase account admin for the per-account scripts (see scripts/account*-*.bat).
 
-Two subcommands, both taking a username + password (the username is an arbitrary handle, mapped to
+Three subcommands, all taking a username + password (the username is an arbitrary handle, mapped to
 "<user>@<LOGIN_DOMAIN>" to match the app's StartupLogin.usernameToEmail):
 
   signup <user> <pass>   Create the account (idempotent: "already registered" is treated as success).
+  logout <user> <pass>   Sign in, then bump this account's `account_logout` marker so every SIGNED-IN app on
+                         the account signs itself out on its next reconcile (dropping the session, pushing
+                         nothing). Run this BEFORE `empty` so a still-running device can't re-seed the data
+                         the empty deletes. An app that logs in afterwards reads the new marker as its
+                         baseline and is unaffected.
   empty  <user> <pass>   Sign in, then DELETE this account's synced data so every device for it goes
                          empty -- the `scheduler_snapshot` row, all `device_presence` rows, all
-                         `device_sleep_gap` rows, and all `device_active_session` rows.
+                         `device_sleep_gap` rows, and all `device_active_session` rows. It deliberately does
+                         NOT clear `account_logout`: that marker must survive so the running apps still see it.
 
 Config comes from the environment (the .bat exports it from accounts.env), falling back to the public
 values baked into shared SupabaseConfig.kt:
@@ -49,10 +55,12 @@ def username_to_email(user, domain):
     return user if "@" in user else "{}@{}".format(user, domain)
 
 
-def _request(method, url, key, body=None, token=None):
+def _request(method, url, key, body=None, token=None, prefer=None):
     headers = {"apikey": key, "Content-Type": "application/json"}
     if token:
         headers["Authorization"] = "Bearer " + token
+    if prefer:
+        headers["Prefer"] = prefer
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
@@ -91,6 +99,28 @@ def cmd_signup(user, password):
     return 1
 
 
+def cmd_logout(user, password):
+    base, key, domain = cfg()
+    email = username_to_email(user, domain)
+    token, uid = sign_in(base, key, email, password)
+    # Upsert the single per-user row; the touch_account_logout trigger stamps logout_at = now() on insert AND
+    # update, so merge-duplicates makes a repeat advance the marker rather than 409-conflict.
+    url = "{}/rest/v1/account_logout".format(base)
+    status, payload = _request(
+        "POST", url, key, body={"user_id": uid}, token=token,
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
+    if status in (200, 201, 204):
+        print("    Signed out all apps for {} (account_logout marked).".format(email))
+        return 0
+    code = payload.get("code") if isinstance(payload, dict) else None
+    if status == 404 or code == "PGRST205":
+        print("    [x] account_logout table missing -- apply supabase/migrations (deploy-supabase.bat).")
+        return 1
+    print("    [x] failed to set logout marker ({}): {}".format(status, payload))
+    return 1
+
+
 def cmd_empty(user, password):
     base, key, domain = cfg()
     email = username_to_email(user, domain)
@@ -114,11 +144,13 @@ def cmd_empty(user, password):
 
 def main(argv):
     if len(argv) < 4:
-        print("usage: account_db_admin.py <signup|empty> <user> <pass>")
+        print("usage: account_db_admin.py <signup|logout|empty> <user> <pass>")
         return 2
     action, user, password = argv[1], argv[2], argv[3]
     if action == "signup":
         return cmd_signup(user, password)
+    if action == "logout":
+        return cmd_logout(user, password)
     if action == "empty":
         return cmd_empty(user, password)
     print("unknown action: {}".format(action))
