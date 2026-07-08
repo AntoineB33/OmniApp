@@ -239,7 +239,11 @@ class TaskSchedulerViewModel(
     /** Decodes a pulled remote snapshot, prepares it like a fresh load, swaps it in, and mirrors it locally. */
     private fun applyRemoteSnapshot(snapshot: PersistedSnapshot) {
         val decoded = SchedulerStateCodec.decodeSnapshot(snapshot) ?: return
-        val prepared = prepareLoadedState(decoded)
+        // CLAUDE.md reconstructibility rule: the per-device view state (focused window, tree selection,
+        // calendar display switches, WindowNav/Selection history) is local-only and must never be adopted
+        // from another device — carry the current local values across the pull. (syncFingerprint likewise
+        // neutralizes them, so pushing them never happens in the first place.)
+        val prepared = prepareLoadedState(decoded.withLocalViewStateFrom(_state.value))
         _state.value = prepared
         store?.save(SchedulerStateCodec.encodeSnapshot(prepared))
         // Local state now equals the remote we just pulled — reset the sync baseline so the next tick-only

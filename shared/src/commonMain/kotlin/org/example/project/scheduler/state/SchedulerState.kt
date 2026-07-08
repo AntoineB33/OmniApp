@@ -219,6 +219,44 @@ data class SchedulerState(
     /** PRD §8: the calendar catches letter typing / routes Ctrl+Z/Y only while it is the focused window. */
     val calendarFocused: Boolean get() = focusedWindow == AppWindow.Calendar
 
+    /**
+     * CLAUDE.md reconstructibility rule: the per-device **view state** that must never sync — it is only
+     * useful to the local app, so switching it must not write the remote `scheduler_snapshot` and a pulled
+     * remote snapshot must not adopt another device's value. It covers:
+     *  - [focusedWindow] — PRD §7 window navigation (the tree vs. a floating window),
+     *  - [selection] — which tree cell(s) are highlighted (cleared as a side effect of navigating away),
+     *  - [showSideTasks] / [showReminders] — the calendar's cosmetic display switches,
+     *  - the [HistoryCategory.WindowNav] and [HistoryCategory.Selection] history that records those moves.
+     * (Calendar *zoom* is likewise local, but it lives only in Compose UI state and is never persisted.)
+     *
+     * [withLocalViewStateFrom] carries these fields from [other] (used when a remote pull replaces the rest
+     * of the state), and [withLocalViewStateNeutralized] resets them to canonical constants so
+     * [org.example.project.scheduler.persistence.SchedulerStateCodec.syncFingerprint] treats a view-only
+     * change as no authoritative change (no push).
+     */
+    fun withLocalViewStateFrom(other: SchedulerState): SchedulerState =
+        copy(
+            focusedWindow = other.focusedWindow,
+            selection = other.selection,
+            showSideTasks = other.showSideTasks,
+            showReminders = other.showReminders,
+            histories = histories
+                .withCategory(HistoryCategory.WindowNav, other.histories.forCategory(HistoryCategory.WindowNav))
+                .withCategory(HistoryCategory.Selection, other.histories.forCategory(HistoryCategory.Selection)),
+        )
+
+    /** See [withLocalViewStateFrom]: the local-only view state reset to canonical constants for the fingerprint. */
+    fun withLocalViewStateNeutralized(): SchedulerState =
+        copy(
+            focusedWindow = AppWindow.Tree,
+            selection = SchedulerSelection(),
+            showSideTasks = false,
+            showReminders = true,
+            histories = histories
+                .withCategory(HistoryCategory.WindowNav, SchedulerHistory())
+                .withCategory(HistoryCategory.Selection, SchedulerHistory()),
+        )
+
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots
     // (capture) and re-attached from the live tasks on restore (applyTree). Undo/Redo therefore
     // never reverts records, even though they live on the Task object.

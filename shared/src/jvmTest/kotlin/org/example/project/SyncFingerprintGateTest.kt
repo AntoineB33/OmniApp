@@ -20,6 +20,7 @@ import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
+import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
@@ -55,6 +56,26 @@ class SyncFingerprintGateTest {
             )
         // A tick that only (re)generated these panels is not a syncable change.
         assertEquals(fp(base), fp(withDerived), "regenerated panels must not move the sync fingerprint")
+    }
+
+    @Test
+    fun fingerprint_ignores_local_view_state() {
+        val base = SchedulerState.empty()
+
+        // PRD §7 window navigation is per-device view state — focusing a floating window (and the WindowNav
+        // history unit it records) must not move the fingerprint.
+        val navigated = SchedulerReducer.reduce(base, SchedulerIntent.FocusWindow(AppWindow.Calendar))
+        assertNotEquals(base.focusedWindow, navigated.focusedWindow, "sanity: navigation changed the state")
+        assertEquals(fp(base), fp(navigated), "navigating windows must not move the sync fingerprint")
+
+        // The calendar's cosmetic display switches are per-device view state.
+        val switched = base.copy(showSideTasks = !base.showSideTasks, showReminders = !base.showReminders)
+        assertEquals(fp(base), fp(switched), "the calendar display switches must not move the sync fingerprint")
+
+        // The tree selection (highlighted cell) is per-device view state — cleared as a side effect of
+        // navigating away, so it too must be invisible to the fingerprint.
+        val selected = base.copy(selection = SchedulerSelection(main = base.cells.keys.first()))
+        assertEquals(fp(base), fp(selected), "the tree selection must not move the sync fingerprint")
     }
 
     @Test
@@ -150,8 +171,21 @@ class SyncFingerprintGateTest {
             runCurrent()
             assertNotEquals(true, meta.loadSyncMeta()?.dirty, "a derived-only reschedule must not push")
 
-            // An authoritative change (the focused window is persisted state) must mark dirty.
+            // Local-only view state (window navigation + the calendar display switches) is per-device and must
+            // NOT push — it is neutralized in the sync fingerprint (CLAUDE.md reconstructibility rule).
             vm.dispatch(SchedulerIntent.FocusWindow(AppWindow.Calendar))
+            advanceTimeBy(500)
+            runCurrent()
+            assertNotEquals(true, meta.loadSyncMeta()?.dirty, "navigating windows must not push")
+
+            vm.dispatch(SchedulerIntent.SetShowSideTasks(show = true))
+            vm.dispatch(SchedulerIntent.SetShowReminders(show = false))
+            advanceTimeBy(500)
+            runCurrent()
+            assertNotEquals(true, meta.loadSyncMeta()?.dirty, "toggling a calendar display switch must not push")
+
+            // A real setting (auto-schedule switch) is authoritative and must mark dirty.
+            vm.dispatch(SchedulerIntent.SetAutomaticSchedule(enabled = false))
             advanceTimeBy(500)
             runCurrent()
             assertEquals(true, meta.loadSyncMeta()?.dirty, "an authoritative change must push")
