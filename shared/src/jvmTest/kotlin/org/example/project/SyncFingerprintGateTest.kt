@@ -19,6 +19,7 @@ import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
@@ -80,6 +81,29 @@ class SyncFingerprintGateTest {
         val (tid, task) = base.tasks.entries.first()
         val withRecord = base.copy(tasks = base.tasks + (tid to task.copy(record = listOf(TaskTimeRange(0, 1_000)))))
         assertNotEquals(fp(base), fp(withRecord), "a completed-work record must sync")
+    }
+
+    // ---- The account1-empty-and-open guarantee: an idle empty account never moves the fingerprint ----
+
+    @Test
+    fun empty_account_idle_now_advance_makes_zero_authoritative_changes() {
+        // On a freshly-emptied account (no leaf tasks — only the seeded side tasks + default sleep) an idle
+        // now-advance only re-derives the auto/side/sleep panels; it banks NO completed-work record, so the
+        // sync fingerprint never moves and TaskSchedulerViewModel pushes no `scheduler_snapshot` revision.
+        // Advancing across the 20-min look-away, the hourly 5-min pose, and the 2-hourly 15-min pose must all
+        // stay silent. (A NON-empty account does push as elapsing auto WORK panels bank records — that is
+        // authoritative by design, see fingerprint_changes_on_authoritative_panels_and_data.)
+        var state = TaskSchedulerViewModel.prepareLoadedState(SchedulerState.empty())
+        val start = 1_700_000_000_000L
+        state = SchedulerReducer.reduce(state, SchedulerIntent.RefreshSchedule(start))
+        val baseline = fp(state)
+        var now = start
+        val end = start + 3L * 60 * 60 * 1_000 // three hours of 30-s production ticks
+        while (now <= end) {
+            state = SchedulerReducer.reduce(state, SchedulerIntent.RefreshSchedule(now))
+            assertEquals(baseline, fp(state), "an idle now-advance to $now must not move the sync fingerprint")
+            now += 30_000L
+        }
     }
 
     // ---- The ViewModel actually consults the gate ----

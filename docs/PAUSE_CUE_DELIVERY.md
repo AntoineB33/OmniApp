@@ -14,6 +14,7 @@ PRD §15 for the design; this file is the operational runbook.
 | `on_pause_cue_schedule_change` trigger — **immediate** push (cancel+reschedule) when a non-phone device moves the next pose-end (scenario #2), **skip when origin == last phone** | ✅ `supabase/migrations/20260704000000_pause_cue_immediate_push.sql` |
 | `tick_pause_cues()` cron (push ~1 min before, **skip when origin == last phone**) — now a **backstop** to the immediate trigger | ✅ `20260703000000_init.sql` + `supabase/pause-cue-setup.sql` |
 | `on_last_phone_change` trigger (cancel push to the **previous** phone) | ✅ `20260703000000_init.sql` |
+| Push is **best-effort** — a client `pause_cue_schedule` / `account_last_phone` write never fails (`400`) when pg_net / the `app.settings.*` GUCs are unprovisioned; the trigger stays truly inert | ✅ `supabase/migrations/20260708000000_pause_cue_push_best_effort.sql` (all pushes routed through `public.omni_edge_push`) |
 | Edge Function real **FCM v1 / APNs HTTP/2** send | ✅ `supabase/functions/pause-cue/index.ts` (needs secrets) |
 | Client writes `pause_cue_schedule` at the **last responsible moment** — deferred to `min(d1,d2) − margin`, **no per-change chatter, zero writes in steady state** | ✅ `scheduler/sync/PauseCuePushScheduler` (d1/d2 compare + 2 s / 1 s margins), driven by `SchedulerEngine.launchPauseCueSchedule` → `SchedulerSyncEngine.publishPauseCueSchedule`; the phone's own local OS cue is still (re)scheduled **immediately** |
 | Client claims `account_last_phone` on startup **and on every app-foreground** (phones only; scenario #3) | ✅ `SchedulerEngine.claimLastPhoneOnStartup` / `onAppForegrounded` (Android `MainActivity.onResume`, iOS `applicationDidBecomeActive`) |
@@ -507,6 +508,12 @@ while a `FocusWindow` change does.
 ## Notes
 - Everything is inert until the two secrets exist and a phone registers a `device_push_token` row — the Edge
   Function returns `no push token for device` (200) and the cron pushes nothing.
+- **"Inert" means no push goes out — never a failed write.** The trigger/cron pushes route through
+  `public.omni_edge_push`, which no-ops when `app.settings.edge_base_url` is unset and swallows any `net.http_post`
+  error in a subtransaction. Before this (`20260708000000`), a `pause_cue_schedule` upsert from a non-phone device
+  on an account that already had a last phone would `400` when pg_net / the GUCs were unprovisioned, because the
+  AFTER-write trigger raised inside the writer's transaction. The push is best-effort; the once-a-minute
+  `tick_pause_cues` cron is the delivery backstop.
 - The 1-minute server-sync debounce (requirement #1) is the push *rate limit*; **which** changes push is now
   gated by `syncFingerprint` (Testing E). Together: an idle session makes zero `scheduler_snapshot` writes, and
   an authoritative change is mirrored at most once per minute. The pause-cue push path (`pause_cue_schedule`)
