@@ -9,7 +9,7 @@ actual fun currentDeviceKind(): DeviceKind = DeviceKind.Phone
 
 /**
  * PRD §15: the phone's screen is "active" when it is interactive (on and not in ambient/doze). Uses the
- * same application [Context] source as [speak]; returns `false` when the context is not yet available.
+ * same application [Context] source as the voice cues; returns `false` when the context is not yet available.
  */
 actual fun isScreenActive(): Boolean {
     val context = AndroidSchedulerStoreHolder.context ?: return false

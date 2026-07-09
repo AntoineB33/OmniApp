@@ -710,6 +710,44 @@ object SchedulerDomain {
     }
 
     /**
+     * PRD §15/§17: carve the display "Sleep" bands where the device/account was demonstrably ACTIVE — the
+     * user kept working through a scheduled sleep window, so that slice never happened as sleep and must show
+     * as a gap. Each panel in [sleepPanels] is split by [activeRegions] into its surviving asleep sub-pieces
+     * (a piece's id is suffixed so the pieces stay distinct); a panel fully covered by activity drops out.
+     *
+     * This is **display-only**: the scheduler's obstacle math still treats the whole window as sleep (no task
+     * is planned into it) — carving reflects what the past turned out to be, it does not re-plan. It is also
+     * **conservative**: only KNOWN activity punches a gap, so absent any activity evidence (e.g. every future
+     * window, or a past night with no session data) the band stays solid.
+     */
+    fun carveSleepPanels(sleepPanels: List<TaskPanel>, activeRegions: List<TaskTimeRange>): List<TaskPanel> {
+        if (activeRegions.isEmpty()) return sleepPanels
+        return sleepPanels.flatMap { panel ->
+            subtractRegions(listOf(TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)), activeRegions)
+                .mapIndexed { index, piece ->
+                    panel.copy(
+                        id = if (index == 0) panel.id else "${panel.id}#$index",
+                        startEpochMillis = piece.startEpochMillis,
+                        endEpochMillis = piece.endEpochMillis,
+                    )
+                }
+        }
+    }
+
+    /**
+     * PRD §15 device-sleep gaps: the epoch-millis instant from which the launch backfill should scan this
+     * device's OS sleep/wake log. It resumes from the last "scanned through" [checkpointMillis] so an
+     * already-examined stretch of the log isn't re-read on every launch; but it never starts earlier than the
+     * floor [nowMillis] − [horizonMillis] (the 3-day backfill horizon). A null checkpoint (first run ever) or
+     * one older than the floor (the device was offline a long time) both clamp to the floor — only the last
+     * few days can still reseed a pose (poses recur ≤2h apart), so re-reading further back is pointless.
+     */
+    fun sleepScanFloor(nowMillis: Long, checkpointMillis: Long?, horizonMillis: Long): Long {
+        val floor = nowMillis - horizonMillis
+        return if (checkpointMillis == null || checkpointMillis < floor) floor else checkpointMillis
+    }
+
+    /**
      * PRD §8 "Two task panels with the same task are automatically merged unless one is pinned and the
      * other not pinned": fuse touching/overlapping panels that share a (non-null) [TaskPanel.taskId]
      * **and** the same [TaskPanel.pinned] flag into one panel spanning both. A null taskId (a calendar-
@@ -768,8 +806,10 @@ object SchedulerDomain {
     fun groupSameTaskPanelsForDisplay(
         panels: List<TaskPanel>,
         bridgeGaps: Boolean = false,
-        // A bridged gap is never closed across one of these sleep windows — the sleep block is always
-        // visible, so it must cut the run even when side tasks are hidden.
+        // A bridged gap is not closed when one of these sleep windows sits *entirely within* it — the
+        // panels straddle the night and the always-visible sleep block must cut the run. A side-task gap
+        // *inside* a sleep window (work scheduled through the night) still bridges, so hiding side tasks
+        // doesn't leave a hole in the plan during sleep.
         sleepRegions: List<TaskTimeRange> = emptyList(),
     ): List<List<TaskPanel>> {
         if (panels.isEmpty()) return emptyList()
@@ -779,8 +819,13 @@ object SchedulerDomain {
             val group = groups.lastOrNull()
             val head = group?.first()
             val frontier = group?.maxOf { it.endEpochMillis } ?: Long.MIN_VALUE
-            val sleepInGap =
-                sleepRegions.any { it.startEpochMillis < panel.startEpochMillis && it.endEpochMillis > frontier }
+            // The run is cut only when a whole sleep window sits *inside* the gap — i.e. the two panels
+            // straddle the night (work up to bedtime, resuming at wake) with the always-visible "Sleep"
+            // band between them. A side-task gap that falls *within* a sleep window (continuous
+            // through-the-night work split by a pose cue) does NOT contain a whole sleep region, so it
+            // still bridges — otherwise hiding side tasks would leave a hole in the plan during sleep.
+            val sleepStraddled =
+                sleepRegions.any { it.startEpochMillis >= frontier && it.endEpochMillis <= panel.startEpochMillis }
             val mergeable = head != null &&
                 panel.taskId != null && head.taskId == panel.taskId &&
                 head.pinned == panel.pinned &&
@@ -789,7 +834,7 @@ object SchedulerDomain {
                 // auto panels. User-placed (pinned/manual) entries are deliberate distinct blocks: two
                 // pinned same-task panels days apart must NOT fuse into one block spanning the gap.
                 (panel.startEpochMillis <= frontier ||
-                    (bridgeGaps && !sleepInGap && head.auto && panel.auto))
+                    (bridgeGaps && !sleepStraddled && head.auto && panel.auto))
             if (mergeable) group!!.add(panel) else groups.add(mutableListOf(panel))
         }
         return groups
@@ -1111,13 +1156,15 @@ object SchedulerDomain {
      * complement of the *union* of all devices' active intervals — computed here over `[sinceMillis, untilMillis]`.
      *
      * Each interval in [active] is clipped to the window and the overlapping/adjacent ones are merged into
-     * maximal active spans; the pauses are the gaps NOT covered by any span. Crucially the **leading** gap
-     * (window start → first activity) IS emitted: an account with no recorded activity — a freshly emptied
-     * account where no app was ever active — must show the whole window as a pause, and a device that has been
-     * running only a short while shows the long stretch before it started as a pause. Only the **trailing** gap
-     * (last activity → `untilMillis` = now) is dropped, because the tail is either the still-open current
-     * session (whose end lags `now` by the heartbeat/push and would flicker a phantom band at the now-line) or a
-     * pause that is still ongoing rather than a *past* pause.
+     * maximal active spans; the pauses are **every** gap NOT covered by any span — leading (window start →
+     * first activity: a freshly emptied account shows the whole window as a pause, a short-running device the
+     * long stretch before it started), interior, AND trailing (last activity → `untilMillis` = now):
+     * "inactivity unless a device reported activity". The caller keeps the trailing gap honest by freshening
+     * the open session to `now` right before deriving (the engine's `freshenOpenSession` runs at every
+     * refresh), so an active device's trailing gap is empty rather than a phantom sliver at the now-line; a
+     * *finalized* last session leaves a genuine trailing pause, exactly as it should. (The server-side
+     * `derive_pauses` gets the same property from the `closed` flag: only a fresh open session is presumed
+     * active through `p_until`.)
      *
      * This is the reference the server SQL `derive_pauses` mirrors (the server is authoritative at runtime; this
      * exists so the algorithm is unit-tested and used as the offline/signed-out and RPC-unavailable fallback).
@@ -1136,8 +1183,7 @@ object SchedulerDomain {
             .sortedBy { it.startEpochMillis }
             .toList()
         // No activity at all in the window: the whole window is one pause (a freshly emptied account where no
-        // app was ever active). This is the only case the trailing edge up to `now` IS included, since there is
-        // no current session to phantom-band the now-line.
+        // app was ever active).
         if (clipped.isEmpty()) return listOf(TaskTimeRange(sinceMillis, untilMillis))
         val pauses = mutableListOf<TaskTimeRange>()
         var cursor = sinceMillis
@@ -1145,7 +1191,8 @@ object SchedulerDomain {
             if (span.startEpochMillis > cursor) pauses += TaskTimeRange(cursor, span.startEpochMillis)
             cursor = maxOf(cursor, span.endEpochMillis)
         }
-        // Trailing gap [cursor, untilMillis] intentionally NOT emitted once there is any activity (see docstring).
+        // Trailing gap: time after the last recorded activity is a pause too (see docstring).
+        if (untilMillis > cursor) pauses += TaskTimeRange(cursor, untilMillis)
         return pauses
     }
 

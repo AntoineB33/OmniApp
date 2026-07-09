@@ -90,6 +90,17 @@ CREATE TABLE device_active_session (
     PRIMARY KEY (device_id, start_ms)
 );
 
+-- PRD §15 device-sleep gaps: LOCAL-ONLY watermark of how far this device has already scanned its OS
+-- sleep/wake log for the launch backfill. `scanned_through` (epoch millis) means the log up to that instant
+-- was examined, so the next launch resumes from there instead of re-reading the full 3-day horizon. It is
+-- device-local scan progress — never synced, never a History Unit — and lives in its own single-row table
+-- (id always 0), kept SEPARATE from sync_meta so the sync engine's whole-row sync_meta writes can't clobber
+-- it. Added in migration 6.sqm; existing DBs (schema v6) gain it on open.
+CREATE TABLE sleep_scan_checkpoint (
+    id INTEGER NOT NULL PRIMARY KEY,
+    scanned_through INTEGER NOT NULL
+);
+
 selectAppState:
 SELECT payload FROM app_state WHERE id = 0;
 
@@ -146,3 +157,12 @@ SELECT device_id, start_ms, end_ms, updated_at FROM device_active_session ORDER 
 upsertActiveSession:
 INSERT OR REPLACE INTO device_active_session(device_id, start_ms, end_ms, updated_at)
 VALUES (?, ?, ?, ?);
+
+deleteActiveSessionsByDevice:
+DELETE FROM device_active_session WHERE device_id = ?;
+
+selectSleepScanCheckpoint:
+SELECT scanned_through FROM sleep_scan_checkpoint WHERE id = 0;
+
+upsertSleepScanCheckpoint:
+INSERT OR REPLACE INTO sleep_scan_checkpoint(id, scanned_through) VALUES (0, ?);

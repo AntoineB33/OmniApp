@@ -53,6 +53,9 @@ if "%LOGOUT_RC%"=="3" (
 REM ---- [2/5] Stop account 1's running instance (only) -----------------
 call "%SCRIPT_DIR%internal\kill-app-by-match.bat" ".omniapp-acc1"
 
+REM Kill any previous spawned console window that might be stuck
+taskkill /F /FI "WINDOWTITLE eq OmniApp acc1*" /T >nul 2>nul
+
 REM ---- [3/6] Empty the REMOTE data for account 1 ----------------------
 echo [3/6] Emptying account 1's remote data...
 python "%SCRIPT_DIR%internal\account_db_admin.py" empty "%ACC1_USER%" "%ACC1_PASS%"

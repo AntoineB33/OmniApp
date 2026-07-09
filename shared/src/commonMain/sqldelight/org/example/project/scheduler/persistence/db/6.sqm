@@ -1,0 +1,11 @@
+-- Schema v6 -> v7: add the LOCAL-ONLY OS-sleep-log scan checkpoint.
+-- Existing on-disk DBs (app_state + history_unit + history_pointer + sync_meta + window_placement +
+-- device_sleep_gap + device_active_session) gain sleep_scan_checkpoint on open; fresh DBs get it from
+-- Scheduler.sq directly. It stores how far this device has scanned its OS sleep/wake log for the launch
+-- backfill (`scanned_through`, epoch millis) so an already-examined stretch isn't re-read every launch. It is
+-- device-local scan progress: never synced, never a History Unit. Kept in its own table (not a sync_meta
+-- column) so the sync engine's whole-row sync_meta writes can never clobber it.
+CREATE TABLE sleep_scan_checkpoint (
+    id INTEGER NOT NULL PRIMARY KEY,
+    scanned_through INTEGER NOT NULL
+);

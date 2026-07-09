@@ -77,6 +77,18 @@ class SchedulerSyncEngine(
     private val _remoteApplied = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val remoteApplied: SharedFlow<Unit> = _remoteApplied.asSharedFlow()
 
+    /**
+     * The unified sync moments: emits after EVERY [reconcile] — startup, login completion, the manual sync
+     * button, and the debounced-change flush all funnel through [reconcile], so collecting this runs the
+     * side channels (push own active sessions / pull derived pauses / sleep gaps) at exactly the same
+     * moments the snapshot syncs. Emits even on a signed-out or failed reconcile: the side channels have
+     * their own signed-out fallbacks (e.g. local pause derivation) and swallow transport errors themselves.
+     * `replay = 1` so a collector that subscribes after the startup reconcile finished (engine start races
+     * the async auto-login) still observes that moment instead of silently missing it.
+     */
+    private val _syncMoments = MutableSharedFlow<Unit>(replay = 1)
+    val syncMoments: SharedFlow<Unit> = _syncMoments.asSharedFlow()
+
     /** Ensures a [SyncMeta] row exists (allocating a stable device id once), returning it. */
     private fun meta(): SyncMeta =
         metaStore.loadSyncMeta()
@@ -132,19 +144,25 @@ class SchedulerSyncEngine(
      * on network/server failure it records [SyncState.Error] and leaves local state untouched.
      */
     suspend fun reconcile() {
-        mutex.withLock {
-            val current = session ?: run { _state.value = SyncState.SignedOut; return }
-            _state.value = SyncState.Syncing
-            try {
-                runReconcile(current)
-                // runReconcile may have signed us out (remote force-logout); don't clobber SignedOut with Idle.
-                if (session != null) _state.value = SyncState.Idle
-            } catch (e: SupabaseException) {
-                _state.value = SyncState.Error(e.message ?: "sync failed")
-            } catch (e: Exception) {
-                // Offline / transport errors: stay calm, keep local state, retry on the next trigger.
-                _state.value = SyncState.Error(e.message ?: "offline")
+        try {
+            mutex.withLock {
+                val current = session ?: run { _state.value = SyncState.SignedOut; return }
+                _state.value = SyncState.Syncing
+                try {
+                    runReconcile(current)
+                    // runReconcile may have signed us out (remote force-logout); don't clobber SignedOut with Idle.
+                    if (session != null) _state.value = SyncState.Idle
+                } catch (e: SupabaseException) {
+                    _state.value = SyncState.Error(e.message ?: "sync failed")
+                } catch (e: Exception) {
+                    // Offline / transport errors: stay calm, keep local state, retry on the next trigger.
+                    _state.value = SyncState.Error(e.message ?: "offline")
+                }
             }
+        } finally {
+            // Unified sync moment (see [syncMoments]): fires on every outcome — including the signed-out
+            // early return above — so the side channels always run (or locally fall back) at this moment.
+            _syncMoments.tryEmit(Unit)
         }
     }
 
@@ -323,10 +341,21 @@ class SchedulerSyncEngine(
     // Like presence/gaps, these run outside [mutex]: each is an independent per-row side channel, never
     // blocking — or blocked by — a whole-document snapshot reconcile.
 
-    override suspend fun pushActiveSessions(records: List<ActiveSessionRecord>) {
+    override suspend fun pushActiveSessions(records: List<ActiveSessionRecord>, openSessionStartMillis: Long?) {
         val current = session ?: return
         if (records.isEmpty()) return
-        val rows = records.map { ActiveSessionRow(it.deviceId, it.startMillis, it.endMillis, it.updatedAtMillis) }
+        // Only the engine's currently-open session goes up open (closed = false) — the one row derive_pauses
+        // may presume still extends toward `now`. Everything else is finalized history and must read as
+        // exactly its recorded interval, so the time after it can derive as a pause.
+        val rows = records.map {
+            ActiveSessionRow(
+                it.deviceId,
+                it.startMillis,
+                it.endMillis,
+                it.updatedAtMillis,
+                closed = it.startMillis != openSessionStartMillis,
+            )
+        }
         runCatching { withAuth(current) { client.upsertActiveSessions(it, rows) } }
     }
 

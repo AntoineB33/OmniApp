@@ -14,6 +14,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -103,6 +104,32 @@ class ActiveSessionGatewayTest {
         val updatedAt = first["updated_at"]!!.jsonPrimitive
         assertTrue(!updatedAt.isString, "updated_at must be a JSON number, not a string")
         assertEquals(9_000L, updatedAt.long)
+        // No open-session start supplied -> every row uploads finalized (closed = true), the conservative
+        // reading: the server counts exactly the recorded interval and derives the time after it as a pause.
+        assertTrue(first["closed"]!!.jsonPrimitive.boolean)
+    }
+
+    @Test
+    fun only_the_open_session_pushes_closed_false() = runTest {
+        // PRD §15 "inactivity unless a device reported activity": the engine's currently-open session is the
+        // one row derive_pauses may presume still extends toward `now`; finalized history must upload closed
+        // so a genuine quiet window after it derives as a pause on every peer (the "band stops an hour before
+        // the now-line" incident regression guard).
+        val server = SessionServer()
+        signedInEngine(server).pushActiveSessions(
+            listOf(
+                ActiveSessionRecord(deviceId = "self", startMillis = 1_000, endMillis = 2_000, updatedAtMillis = 9_000),
+                ActiveSessionRecord(deviceId = "self", startMillis = 5_000, endMillis = 5_500, updatedAtMillis = 9_000),
+            ),
+            openSessionStartMillis = 5_000,
+        )
+
+        val body = json.parseToJsonElement(assertNotNull(server.lastUpsert)).jsonArray
+        val closedByStart =
+            body.associate {
+                it.jsonObject["start_ms"]!!.jsonPrimitive.long to it.jsonObject["closed"]!!.jsonPrimitive.boolean
+            }
+        assertEquals(mapOf(1_000L to true, 5_000L to false), closedByStart)
     }
 
     @Test

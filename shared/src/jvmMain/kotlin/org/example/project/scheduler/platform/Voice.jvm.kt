@@ -1,16 +1,19 @@
 package org.example.project.scheduler.platform
 
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import javax.sound.sampled.AudioInputStream
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.DataLine
 import javax.sound.sampled.SourceDataLine
+import kotlinx.coroutines.runBlocking
 
 /**
- * Single daemon worker that plays voice cues one at a time. Each [speak] enqueues onto it and returns
+ * Single daemon worker that plays voice cues one at a time. Each [playVoiceCue] enqueues onto it and returns
  * immediately (non-blocking to the UI), while the worker speaks each utterance to completion before the
  * next — so cues that come due together (e.g. a 20s look-away's "look away" and "resume" lines arriving in
  * the same tick under heavy time-acceleration) play back-to-back in FIFO order instead of talking over
@@ -66,24 +69,26 @@ private fun piperModel(): File? {
 }
 
 /**
- * PRD §15 (20s look-away) voice cue on the desktop. Prefers a local Piper neural voice (free, offline,
- * far less robotic than SAPI); see `scripts/setup-piper.ps1` to install it. If Piper isn't present or
- * fails, it falls back to the Windows SAPI synthesizer so cues still work out of the box.
+ * PRD §15 voice cue on the desktop. Plays the **bundled** pre-rendered Piper WAV for [cue] (the shared asset
+ * every platform now uses, so desktop and phone speak the identical voice). If the asset can't be loaded or
+ * played, it falls back to synthesizing the phrase **live** — Piper (`scripts/setup-piper.ps1`), then the
+ * Windows SAPI synthesizer — so cues still work even without the bundled resource.
  *
  * Enqueued on [speechQueue] so it never blocks the UI and cues are serialized; the whole body runs on the
- * worker and blocks until the utterance finishes so the next cue does not start mid-sentence. The cue
- * captures [speechGeneration] at submit time and bails if a [stopSpeaking] has since superseded it.
+ * worker and blocks until the clip finishes so the next cue does not start mid-sentence. The cue captures
+ * [speechGeneration] at submit time and bails if a [stopSpeaking] has since superseded it.
  */
-actual fun speak(text: String) {
-    val sanitized = text.replace('\n', ' ').trim()
-    if (sanitized.isEmpty()) return
-
+actual fun playVoiceCue(cue: VoiceCue) {
     val generation = speechGeneration.get()
     speechQueue.execute {
         if (generation != speechGeneration.get()) return@execute // superseded before this cue started
-        val spoke = runCatching { speakWithPiper(sanitized, generation) }.getOrDefault(false)
+        val bytes = runCatching { runBlocking { voiceCueBytes(cue) } }.getOrNull()
+        val played = bytes != null && runCatching { playWavBytes(bytes, generation) }.getOrDefault(false)
+        if (played || generation != speechGeneration.get()) return@execute
+        // Bundled asset missing/unplayable: synthesize the phrase live so the cue still speaks.
+        val spoke = runCatching { speakWithPiper(cue.fallbackText, generation) }.getOrDefault(false)
         if (!spoke && generation == speechGeneration.get()) {
-            runCatching { speakWithSapi(sanitized) }
+            runCatching { speakWithSapi(cue.fallbackText) }
         }
     }
 }
@@ -137,30 +142,44 @@ private fun speakWithPiper(text: String, generation: Long): Boolean {
 }
 
 /**
+ * Play the bundled cue WAV [bytes] on the default audio line (same path as [playWav], from memory). Returns
+ * `true` once played — or if a [stopSpeaking] superseded it mid-stream (so the caller does NOT fall back and
+ * re-speak). A malformed/empty payload throws, which the caller catches and treats as "not played".
+ */
+private fun playWavBytes(bytes: ByteArray, generation: Long): Boolean {
+    if (bytes.isEmpty()) return false
+    AudioSystem.getAudioInputStream(ByteArrayInputStream(bytes)).use { stream -> playStream(stream, generation) }
+    return true
+}
+
+/**
  * Stream a PCM WAV file to the default audio line, blocking until playback completes — or until
  * [stopSpeaking] bumps [generation], in which case the line is flushed (unblocking [write]) and we bail
  * without draining so the cue is cut.
  */
 private fun playWav(file: File, generation: Long) {
-    AudioSystem.getAudioInputStream(file).use { stream ->
-        val format = stream.format
-        val line = AudioSystem.getLine(DataLine.Info(SourceDataLine::class.java, format)) as SourceDataLine
-        line.open(format)
-        line.start()
-        currentLine = line
-        try {
-            val buffer = ByteArray(4096)
-            while (generation == speechGeneration.get()) {
-                val read = stream.read(buffer)
-                if (read < 0) break
-                line.write(buffer, 0, read)
-            }
-            if (generation == speechGeneration.get()) line.drain()
-        } finally {
-            currentLine = null
-            line.stop()
-            line.close()
+    AudioSystem.getAudioInputStream(file).use { stream -> playStream(stream, generation) }
+}
+
+/** Shared body of [playWav] / [playWavBytes]: stream an already-open [AudioInputStream] to the audio line. */
+private fun playStream(stream: AudioInputStream, generation: Long) {
+    val format = stream.format
+    val line = AudioSystem.getLine(DataLine.Info(SourceDataLine::class.java, format)) as SourceDataLine
+    line.open(format)
+    line.start()
+    currentLine = line
+    try {
+        val buffer = ByteArray(4096)
+        while (generation == speechGeneration.get()) {
+            val read = stream.read(buffer)
+            if (read < 0) break
+            line.write(buffer, 0, read)
         }
+        if (generation == speechGeneration.get()) line.drain()
+    } finally {
+        currentLine = null
+        line.stop()
+        line.close()
     }
 }
 

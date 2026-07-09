@@ -9,7 +9,7 @@ REM
 REM    [1] supabase db push            - applies supabase/migrations/*.sql
 REM    [2] supabase functions deploy   - deploys supabase/functions/pause-cue
 REM    [3] supabase db query           - applies supabase/pause-cue-setup.sql
-REM                                      (pg_cron/pg_net + app.settings.* + cron job), with the secret
+REM                                      (pg_cron/pg_net + Vault secrets + cron job), with the secret
 REM                                      service-role key injected from accounts.env. Skipped if unset.
 REM
 REM  Every statement is idempotent, so re-running is safe.
@@ -35,6 +35,8 @@ set "PROJECT_ROOT=%SCRIPT_DIR%.."
 REM ---- accounts.env is optional here (only for the two vars below) ----
 if exist "%SCRIPT_DIR%accounts.env" call "%SCRIPT_DIR%internal\load-accounts-env.bat"
 
+REM `call supabase ...` everywhere below: if PATH resolves supabase to a .cmd wrapper (e.g. an npm global
+REM install), invoking it without `call` transfers control and the rest of this script silently never runs.
 where supabase >nul 2>nul || (
   echo [x] The Supabase CLI is not on PATH.
   echo     Install it with update-supabase-cli.bat ^(downloads the standalone binary
@@ -55,29 +57,29 @@ if not exist "%PROJECT_ROOT%\supabase\.temp\project-ref" (
     exit /b 1
   )
   if defined SUPABASE_DB_PASSWORD (
-    supabase link --project-ref "%REF%" --password "%SUPABASE_DB_PASSWORD%" || (echo [x] link failed.& exit /b 1)
+    call supabase link --project-ref "%REF%" --password "%SUPABASE_DB_PASSWORD%" || (echo [x] link failed.& exit /b 1)
   ) else (
-    supabase link --project-ref "%REF%" || (echo [x] link failed.& exit /b 1)
+    call supabase link --project-ref "%REF%" || (echo [x] link failed.& exit /b 1)
   )
 )
 
 REM ---- [1/3] Apply the schema (migrations) ---------------------------
 echo [1/3] Applying DB migrations ^(supabase db push^)...
 if defined SUPABASE_DB_PASSWORD (
-  supabase db push --workdir "%PROJECT_ROOT%" --password "%SUPABASE_DB_PASSWORD%"
+  call supabase db push --workdir "%PROJECT_ROOT%" --password "%SUPABASE_DB_PASSWORD%"
 ) else (
-  supabase db push --workdir "%PROJECT_ROOT%"
+  call supabase db push --workdir "%PROJECT_ROOT%"
 )
 if errorlevel 1 (echo [x] db push failed.& exit /b 1)
 
 REM ---- [2/3] Deploy the pause-cue Edge Function ----------------------
 echo [2/3] Deploying Edge Function 'pause-cue'...
-supabase functions deploy pause-cue --workdir "%PROJECT_ROOT%"
+call supabase functions deploy pause-cue --workdir "%PROJECT_ROOT%"
 if errorlevel 1 (echo [x] functions deploy failed.& exit /b 1)
 
 REM ---- [3/3] Pause-cue project setup (extensions/GUCs/cron) ----------
 REM Optional: needs the SECRET service-role key, kept only in accounts.env (never committed). Runs the
-REM non-migration, project-level SQL (pg_cron/pg_net + app.settings.* + the cron job) via `supabase db query`,
+REM non-migration, project-level SQL (pg_cron/pg_net + the omni_* Vault secrets + the cron job) via `supabase db query`,
 REM injecting the key from the environment. Skipped when the key is absent (the rest of sync works without it).
 if defined SUPABASE_SERVICE_ROLE_KEY (
   echo [3/3] Applying pause-cue project setup ^(supabase/pause-cue-setup.sql^)...

@@ -19,8 +19,15 @@ interface ActiveSessionGateway {
     /** The stable id of THIS install — tags the active-session rows this device records. */
     val deviceId: String
 
-    /** Upserts this device's active-session [records] into the remote table. Best-effort; swallows transport errors. */
-    suspend fun pushActiveSessions(records: List<ActiveSessionRecord>)
+    /**
+     * Upserts this device's active-session [records] into the remote table. The record whose `startMillis`
+     * equals [openSessionStartMillis] (the engine's currently-open session) is uploaded with `closed = false`
+     * — the one row the server may presume still extends toward `now` — and every other record is marked
+     * `closed = true`, so the server counts exactly its recorded interval and the window after a *finalized*
+     * session correctly derives as a pause ("inactivity unless a device reported activity"). Best-effort;
+     * swallows transport errors.
+     */
+    suspend fun pushActiveSessions(records: List<ActiveSessionRecord>, openSessionStartMillis: Long? = null)
 
     /**
      * The account-wide pauses the server derives over `[sinceMillis, untilMillis]` (complement of the union of

@@ -11,8 +11,9 @@ import org.example.project.scheduler.model.TaskTimeRange
 
 /**
  * PRD §15 server-derived pauses: [SchedulerDomain.derivePauses] is the Kotlin reference the Supabase
- * `derive_pauses` RPC mirrors — the complement of the union of every device's active intervals, over a
- * window, emitting only the interior gaps. These cases pin the union/complement + clipping behaviour.
+ * `derive_pauses` RPC mirrors — the complement of the union of every device's active intervals over a
+ * window, emitting EVERY uncovered gap (leading, interior, and trailing): inactivity unless a device
+ * reported activity. These cases pin the union/complement + clipping behaviour.
  */
 class DerivePausesTest {
     private fun r(start: Long, end: Long) = TaskTimeRange(start, end)
@@ -46,11 +47,13 @@ class DerivePausesTest {
     }
 
     @Test
-    fun leading_and_interior_gaps_emitted_trailing_dropped() {
-        // Activity only in the middle: window [0,100], active [30,40][60,70]. The LEADING gap [0,30] and the
-        // interior [40,60] ARE pauses (nobody was active then); the trailing [70,100] up to `now` is dropped.
+    fun leading_interior_and_trailing_gaps_are_all_pauses() {
+        // Activity only in the middle: window [0,100], active [30,40][60,70]. The LEADING gap [0,30], the
+        // interior [40,60] AND the trailing [70,100] are all pauses — inactivity unless a device reported
+        // activity. (An ACTIVE device never leaves a trailing gap because its open session is freshened to
+        // `now` before deriving; a finalized last session at 70 genuinely means nobody was active after 70.)
         val pauses = SchedulerDomain.derivePauses(listOf(r(30, 40), r(60, 70)), 0, 100)
-        assertEquals(listOf(r(0, 30), r(40, 60)), pauses)
+        assertEquals(listOf(r(0, 30), r(40, 60), r(70, 100)), pauses)
     }
 
     @Test
@@ -75,10 +78,22 @@ class DerivePausesTest {
 
     @Test
     fun a_just_opened_zero_length_session_bounds_the_preceding_pause() {
-        // The device woke at 70 and its new session is still a point [70,70]; the pause [40,70] must show now,
+        // The device woke at 70 = now and its new session is still a point [70,70] (the engine freshens the
+        // open session to `now` before deriving, so `until` == the point); the pause [40,70] must show now,
         // not wait for the session to grow (this is the real-wake / debug simulate-pause immediacy case).
-        val pauses = SchedulerDomain.derivePauses(listOf(r(0, 40), r(70, 70)), 0, 120)
+        val pauses = SchedulerDomain.derivePauses(listOf(r(0, 40), r(70, 70)), 0, 70)
         assertEquals(listOf(r(40, 70)), pauses)
+    }
+
+    @Test
+    fun a_finalized_peer_session_leaves_the_quiet_window_before_a_later_device_as_a_pause() {
+        // The reported incident (desktop quiet 13:25→14:44, phone opens at 14:44): the peer's session is
+        // finalized at 30, this device opens at 90 (= now; its open session is freshened to `now` before
+        // deriving, here still a point). The quiet window [30,90] IS a pause. The old trailing-drop rule
+        // instead presumed it active — and the old startup adoption then wrote that presumption durably into
+        // the second device's store, hiding the pause forever.
+        val pauses = SchedulerDomain.derivePauses(listOf(r(10, 30), r(90, 90)), 0, 90)
+        assertEquals(listOf(r(0, 10), r(30, 90)), pauses)
     }
 
     @Test

@@ -217,7 +217,8 @@ Implemented in `androidApp` and verified with `./gradlew :androidApp:assembleDeb
 - `PauseCueScheduler` — the `scheduleLocalPauseCue` seam: `setExactAndAllowWhileIdle` (falls back to inexact
   when exact-alarm isn't granted) / `cancel`, one fixed-request-code `PendingIntent`.
 - `PauseCueAlarmReceiver` — fires at the instant → `engine.onPauseCueFire()` (the presence/screen-off gate +
-  TTS from `Voice.android.kt`), via `goAsync()`.
+  the shared bundled-WAV voice from `Voice.android.kt` — an `AudioTrack` playing the same pre-rendered Piper
+  cue as the desktop, not the device's built-in TTS), via `goAsync()`.
 - `SchedulerHolder` — wires the seam, sets `localPauseCueDelivery = true` (so the in-app cue is replaced, no
   double-speak), and registers the FCM token on `ensure` (guarded, so it's a no-op without Firebase).
 
@@ -512,11 +513,15 @@ a manual `RemoveRecordPeriod` do.
 - Everything is inert until the two secrets exist and a phone registers a `device_push_token` row — the Edge
   Function returns `no push token for device` (200) and the cron pushes nothing.
 - **"Inert" means no push goes out — never a failed write.** The trigger/cron pushes route through
-  `public.omni_edge_push`, which no-ops when `app.settings.edge_base_url` is unset and swallows any `net.http_post`
-  error in a subtransaction. Before this (`20260708000000`), a `pause_cue_schedule` upsert from a non-phone device
-  on an account that already had a last phone would `400` when pg_net / the GUCs were unprovisioned, because the
+  `public.omni_edge_push`, which no-ops when the config is unset and swallows any `net.http_post` error in a
+  subtransaction. Before this (`20260708000000`), a `pause_cue_schedule` upsert from a non-phone device
+  on an account that already had a last phone would `400` when pg_net / the config was unprovisioned, because the
   AFTER-write trigger raised inside the writer's transaction. The push is best-effort; the once-a-minute
   `tick_pause_cues` cron is the delivery backstop.
+- The config `omni_edge_push` reads is the **Vault secrets** `omni_edge_base_url` / `omni_service_role_key`
+  (upserted by `supabase/pause-cue-setup.sql`, i.e. deploy-supabase.bat step 3), falling back to the legacy
+  `app.settings.*` GUCs (`20260709020000`). It was moved off `alter database set app.settings.*` because
+  database-level custom GUCs are superuser-only on Postgres 15+ — Supabase denies them with `42501`.
 - The 1-minute server-sync debounce (requirement #1) is the push *rate limit*; **which** changes push is now
   gated by `syncFingerprint` (Testing E). Together: an idle session makes zero `scheduler_snapshot` writes, and
   an authoritative change is mirrored at most once per minute. The pause-cue push path (`pause_cue_schedule`)

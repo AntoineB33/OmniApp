@@ -31,4 +31,11 @@ interface ActiveSessionStore {
 
     /** Upserts the given sessions (a repeat of the same `(deviceId, startMillis)` replaces its row). */
     fun saveActiveSessions(records: List<ActiveSessionRecord>)
+
+    /**
+     * Deletes every session recorded under [deviceId]. Used by the startup heal that purges the legacy
+     * `remote-activity` adoption rows (presumed — not observed — activity an older build wrote; see
+     * [org.example.project.scheduler.engine.SchedulerEngine.REMOTE_ACTIVITY_DEVICE_ID]).
+     */
+    fun deleteActiveSessionsForDevice(deviceId: String)
 }

@@ -65,6 +65,10 @@ data class ActiveSessionRow(
     @SerialName("start_ms") val startMs: Long,
     @SerialName("end_ms") val endMs: Long,
     @SerialName("updated_at") val updatedAt: Long,
+    // False only for the pushing device's currently-open session — the one row `derive_pauses` may presume
+    // still extends toward `now` (within its staleness grace). Finalized sessions upload closed so the time
+    // after them derives as a pause. Default true = the conservative reading for any legacy writer.
+    @SerialName("closed") val closed: Boolean = true,
 )
 
 /** PRD §15: one account-wide pause interval returned by the `derive_pauses` RPC. */
@@ -268,7 +272,7 @@ class RemoteSnapshotClient(
      */
     suspend fun upsertActiveSessions(session: SupabaseSession, rows: List<ActiveSessionRow>) {
         if (rows.isEmpty()) return
-        val body = rows.map { ActiveSessionUpsert(session.userId, it.deviceId, it.startMs, it.endMs, it.updatedAt) }
+        val body = rows.map { ActiveSessionUpsert(session.userId, it.deviceId, it.startMs, it.endMs, it.updatedAt, it.closed) }
         val response =
             http.post("${config.restUrl}/device_active_session") {
                 authHeaders(session)
@@ -426,6 +430,7 @@ private data class ActiveSessionUpsert(
     @SerialName("start_ms") val startMs: Long,
     @SerialName("end_ms") val endMs: Long,
     @SerialName("updated_at") val updatedAt: Long,
+    @SerialName("closed") val closed: Boolean,
 )
 
 @Serializable

@@ -23,7 +23,10 @@ $edge = if ($env:EDGE_BASE_URL) { $env:EDGE_BASE_URL } else { "https://$ref.func
 
 $sql = (Get-Content -Raw $template).Replace('__SERVICE_ROLE_KEY__', $key).Replace('__EDGE_BASE_URL__', $edge)
 
-# Pass the SQL inline (single argument) so the resolved secret is never written to disk.
+# Pass the SQL inline (single argument) so the resolved secret is never written to disk. The template opens
+# with `--` line comments, which the CLI's parser would misread as a flag if the argument started with a dash
+# (and it doesn't honor a `--` end-of-options separator) — the leading block comment keeps it a positional arg.
+$sql = "/* pause-cue setup */`n" + $sql
 & supabase db query --linked --workdir "$projectRoot" $sql
 if ($LASTEXITCODE -ne 0) { Write-Error "supabase db query failed ($LASTEXITCODE)."; exit 1 }
 Write-Host '[OK] pause-cue project setup applied to the linked DB.'

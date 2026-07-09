@@ -11,7 +11,8 @@ import org.example.project.scheduler.persistence.db.SchedulerDatabase
  * memory (the units after the pointer) leaves no stale rows behind.
  */
 class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
-    SchedulerStore, SyncMetaStore, WindowPlacementStore, DeviceSleepGapStore, ActiveSessionStore {
+    SchedulerStore, SyncMetaStore, WindowPlacementStore, DeviceSleepGapStore, ActiveSessionStore,
+    SleepScanCheckpointStore {
     private val queries = database.schedulerQueries
 
     override fun load(): PersistedSnapshot? {
@@ -139,6 +140,10 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
             )
         }
 
+    override fun deleteActiveSessionsForDevice(deviceId: String) {
+        queries.deleteActiveSessionsByDevice(deviceId)
+    }
+
     override fun saveActiveSessions(records: List<ActiveSessionRecord>) {
         if (records.isEmpty()) return
         database.transaction {
@@ -151,6 +156,13 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
                 )
             }
         }
+    }
+
+    override fun loadSleepScanCheckpoint(): Long? =
+        queries.selectSleepScanCheckpoint().executeAsOneOrNull()
+
+    override fun saveSleepScanCheckpoint(scannedThroughMillis: Long) {
+        queries.upsertSleepScanCheckpoint(scannedThroughMillis)
     }
 }
 

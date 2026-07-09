@@ -11,6 +11,7 @@ import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
+import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -71,6 +72,46 @@ class SchedulerSleepTest {
         }
         // null schedule ⇒ no windows.
         assertTrue(SchedulerDomain.sleepPanels(null, now, now + HOUR_MS, tz).isEmpty())
+    }
+
+    // ----- Sleep-band carving by activity (working through a scheduled sleep window) -------------
+
+    @Test
+    fun carve_sleep_panels_splits_the_band_where_the_device_was_active() {
+        // One "Sleep" window [23:00, 07:30]; the user was active [01:00, 03:00] in the middle of it.
+        val start = utc(2024, 1, 1, 23, 0)
+        val end = utc(2024, 1, 2, 7, 30)
+        val panel = TaskPanel("sleep/1", null, "Sleep", start, end, sleep = true)
+        val active = listOf(TaskTimeRange(utc(2024, 1, 2, 1, 0), utc(2024, 1, 2, 3, 0)))
+        val carved = SchedulerDomain.carveSleepPanels(listOf(panel), active).sortedBy { it.startEpochMillis }
+        assertEquals(2, carved.size)
+        assertEquals(start, carved[0].startEpochMillis)
+        assertEquals(utc(2024, 1, 2, 1, 0), carved[0].endEpochMillis)
+        assertEquals(utc(2024, 1, 2, 3, 0), carved[1].startEpochMillis)
+        assertEquals(end, carved[1].endEpochMillis)
+        // The pieces stay distinct (id suffixed) so they don't collide as calendar entries.
+        assertEquals("sleep/1", carved[0].id)
+        assertTrue(carved[1].id != carved[0].id)
+        // No activity ⇒ the band is returned untouched (conservative: absent evidence, sleep stays solid).
+        assertEquals(listOf(panel), SchedulerDomain.carveSleepPanels(listOf(panel), emptyList()))
+        // Activity covering the whole window ⇒ the band drops out entirely.
+        assertTrue(SchedulerDomain.carveSleepPanels(listOf(panel), listOf(TaskTimeRange(start, end))).isEmpty())
+    }
+
+    // ----- Incremental OS-log backfill checkpoint ------------------------------------------------
+
+    @Test
+    fun sleep_scan_floor_resumes_from_the_checkpoint_but_clamps_to_the_three_day_floor() {
+        val now = utc(2024, 1, 10, 12, 0)
+        val horizon = 3L * 24 * HOUR_MS
+        val floor = now - horizon
+        // First run (no checkpoint) ⇒ the 3-day floor.
+        assertEquals(floor, SchedulerDomain.sleepScanFloor(now, null, horizon))
+        // A recent checkpoint (within the horizon) ⇒ resume from it, don't re-read older log.
+        val recent = now - HOUR_MS
+        assertEquals(recent, SchedulerDomain.sleepScanFloor(now, recent, horizon))
+        // A stale checkpoint (older than the floor, e.g. long offline) ⇒ clamp back up to the floor.
+        assertEquals(floor, SchedulerDomain.sleepScanFloor(now, now - 10L * 24 * HOUR_MS, horizon))
     }
 
     // ----- Scheduler avoidance ------------------------------------------------------------------
@@ -139,6 +180,19 @@ class SchedulerSleepTest {
         assertEquals(2, SchedulerDomain.groupSameTaskPanelsForDisplay(listOf(a, b), bridgeGaps = true, sleepRegions = sleep).size)
         // Without a sleep window in the gap, bridging fuses them into one block (the existing behavior).
         assertEquals(1, SchedulerDomain.groupSameTaskPanelsForDisplay(listOf(a, b), bridgeGaps = true).size)
+    }
+
+    @Test
+    fun a_side_task_gap_inside_a_sleep_window_still_bridges_when_side_tasks_are_hidden() {
+        // Regression: work is now scheduled straight through the night, so a same-task run inside the
+        // [23:00, 07:30] sleep window is split by pose-cue side tasks. Hiding side tasks must fuse those
+        // pieces into one continuous block — the sleep band overlaps the gap but does not sit *inside* it,
+        // so it must not cut the run (the previous "any sleep overlap" guard left a hole during sleep).
+        val taskId = TaskId("t")
+        val a = TaskPanel("a", taskId, "Solo", utc(2024, 1, 2, 1, 0), utc(2024, 1, 2, 2, 0), auto = true)
+        val b = TaskPanel("b", taskId, "Solo", utc(2024, 1, 2, 2, 5), utc(2024, 1, 2, 4, 0), auto = true)
+        val sleep = SchedulerDomain.sleepRegions(SchedulerDomain.DEFAULT_SLEEP, utc(2024, 1, 1, 20, 0), utc(2024, 1, 2, 9, 0), tz)
+        assertEquals(1, SchedulerDomain.groupSameTaskPanelsForDisplay(listOf(a, b), bridgeGaps = true, sleepRegions = sleep).size)
     }
 
     // ----- Persistence --------------------------------------------------------------------------

@@ -44,6 +44,7 @@ import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.persistence.ActiveSessionStore
 import org.example.project.scheduler.persistence.DeviceSleepGapStore
+import org.example.project.scheduler.persistence.SleepScanCheckpointStore
 import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.persistence.WindowPlacement
 import org.example.project.scheduler.persistence.WindowPlacementStore
@@ -171,9 +172,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     presence = vm.presence,
                     sleepGapStore = store as? DeviceSleepGapStore,
                     sleepGaps = vm.sleepGaps,
+                    sleepScanCheckpoint = store as? SleepScanCheckpointStore,
                     activeSessionStore = store as? ActiveSessionStore,
                     activeSessions = vm.activeSessions,
                     pauseCue = vm.pauseCue,
+                    syncMoments = vm.syncMoments,
                     // PRD §15 / ARCHITECTURE.md §8: the OS-scheduled local cue seam for the engine App() builds
                     // itself (iOS delivers via UNUserNotificationCenter; desktop/web are inert). Android does not
                     // reach here — it injects an AlarmManager seam via SchedulerHolder.
@@ -204,6 +207,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val nowMillis by engine.nowMillis.collectAsState()
         // PRD §15 device-sleep gaps: past pauses drawn as greyed "Inactivity" bands (display-only; see the engine).
         val inactivityGaps by engine.inactivityGaps.collectAsState()
+        // PRD §15/§17: start of this device's open active session (null while inactive) — carves the "Sleep" band
+        // to the now-line as the user keeps working through a scheduled sleep window (display-only, non-syncing).
+        val activeSince by engine.activeSince.collectAsState()
 
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
@@ -340,6 +346,26 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 schedulerState.panels, schedulerState.chores, todayStartMillis, reminderHorizonDays, nowMillis,
             ).filter { SchedulerDomain.isReminder(it) }
 
+        // PRD §15/§17: where the account was demonstrably ACTIVE in the past window, the "Sleep" band is carved
+        // to show a gap (the user kept working through the scheduled sleep). Account-wide past activity is the
+        // complement of the account-wide pauses over the derive window `[now − 168h, now]`; where there is no
+        // pause the account was active. The device's own OPEN session `[activeSince, now]` is added so the band
+        // retracts continuously to the now-line while the user works — a local-only, non-syncing display change.
+        //
+        // The complement is only trustworthy once real pause data exists: an EMPTY `inactivityGaps` means "no
+        // evidence yet" (the startup transient before the first derive, or a store-less web install), NOT "the
+        // account was active all week", so it must NOT carve every past night. Carving is conservative — only
+        // known activity (the derived pauses' complement when present, plus this device's live session) gaps it.
+        val pastActivityWindow = TaskTimeRange(nowMillis - SchedulerDomain.SCHEDULE_HORIZON_MILLIS, nowMillis)
+        val accountActiveRegions =
+            if (inactivityGaps.isEmpty()) {
+                emptyList()
+            } else {
+                SchedulerDomain.subtractRegions(listOf(pastActivityWindow), inactivityGaps)
+            }
+        val activeRegions =
+            accountActiveRegions +
+                (activeSince?.takeIf { it < nowMillis }?.let { listOf(TaskTimeRange(it, nowMillis)) } ?: emptyList())
         // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
         // user-authored, uniform blocks) drawn the same way; reminders (PRD §14) and side tasks (PRD §15)
         // span the focused week.
@@ -348,7 +374,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
             } + mergePanelsForDisplay(
                 schedulerState.panels, displayReminderPanels, displaySidePanels, displaySleepPanels,
-                schedulerState.showSideTasks, schedulerState.showReminders,
+                schedulerState.showSideTasks, schedulerState.showReminders, activeRegions,
             ) + SchedulerDomain.subtractRegions(inactivityGaps, displaySleepRegions)
                 // Sub-minute remnants are noise, not a real away-from-every-device pause — e.g. the few
                 // seconds between the §17 scheduled wake (where "Sleep" ends) and the first session of a
@@ -767,8 +793,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onSignUp = { e, p -> vm.signUp(e, p) },
                     onSignOut = { vm.signOut() },
                     onDismiss = { showSignIn = false },
-                    // PRD §15: manual server check — pull the snapshot and every device's exact pause gaps.
-                    onFetch = { vm.syncNow(); engine.fetchRemoteGapsNow() },
+                    // PRD §15: manual server check. The reconcile emits a unified sync moment, which also
+                    // runs the side channels (active sessions, derived pauses, exact pause gaps) — see
+                    // SchedulerEngine.launchSyncMomentSideChannels.
+                    onFetch = { vm.syncNow() },
                 )
             }
         }
@@ -840,6 +868,10 @@ private fun mergePanelsForDisplay(
     sleepPanels: List<TaskPanel>,
     showSideTasks: Boolean,
     showReminders: Boolean,
+    // PRD §15/§17: intervals the device/account was ACTIVE — the visible "Sleep" bands are carved here so a
+    // window the user worked through shows a gap. Bridging still uses the UNCARVED sleep windows (below), so
+    // hiding side tasks doesn't fuse task blocks across a night just because part of it was carved.
+    activeRegions: List<TaskTimeRange> = emptyList(),
 ): List<CalendarRecord> {
     // PRD §14/§15: reminder tags (zero-duration) and side tasks (very short real durations, e.g. a 20-second
     // look-away) are NOT height-proportional blocks — drawn at scale they'd be invisible. They render on
@@ -899,9 +931,10 @@ private fun mergePanelsForDisplay(
                 layoutWeight = head.layoutWeight,
             )
         }
-    // The sleep windows render as their own labeled band behind the task blocks (drawn first).
+    // The sleep windows render as their own labeled band behind the task blocks (drawn first), carved wherever
+    // the device/account was active so a night the user worked through shows a gap rather than a solid block.
     val sleepRecords =
-        sleepPanels.map { sleepPanel ->
+        SchedulerDomain.carveSleepPanels(sleepPanels, activeRegions).map { sleepPanel ->
             CalendarRecord(
                 title = sleepPanel.title,
                 range = TaskTimeRange(sleepPanel.startEpochMillis, sleepPanel.endEpochMillis),

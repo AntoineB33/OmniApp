@@ -105,10 +105,20 @@ A *pause* = a window when **no** account device was active (app running, signed 
 Derived server-side (`derive_pauses` RPC), never stored (`server-derived-pauses` note).
 
 - [ ] With one account signed in on one device, close it for a few minutes, reopen → a greyed **"Inactivity"**
-      band covers the gap (leading gap before first activity included; trailing gap to `now` excluded).
+      band covers the gap (every uncovered gap is a pause — leading, interior and trailing; a live device's
+      fresh **open** session is what keeps the band off the now-line, not a trailing-gap exclusion).
 - [ ] Two devices signed into the **same** account overlapping in time → **no** band for the overlap (one was
       active). A gap where **both** were closed → band appears after fetch.
 - [ ] Freshly emptied account (`account1-empty-and-open.bat`) shows the whole past as one pause on first load.
+- [ ] Startup agreement: after `account1-empty-and-open.bat`, open the Android app (account 1) some minutes
+      later while the desktop stays **in use** → **both** calendars show the Inactivity band ending at the
+      **desktop's** open instant (the desktop's fresh *open* session covers the window server-side — the
+      `closed` flag; no client-side adoption — ARCHITECTURE.md §8).
+- [ ] Quiet-peer pause (the "band stops an hour before the now-line" incident): sign in on the desktop, lock
+      the screen / let it go inactive for ≥ 5 min, then launch the phone (fresh install or after a fetch) →
+      both calendars show an Inactivity band from the desktop's **last activity** up to the **phone's**
+      launch. The finalize-push uploads the desktop's session end within a beat; the quiet window must never
+      render as activity on the phone.
 
 ---
 

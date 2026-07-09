@@ -448,6 +448,107 @@ class SchedulerStoreTest {
     }
 
     @Test
+    fun sleep_scan_checkpoint_round_trips() {
+        val store = newStore()
+        assertNull(store.loadSleepScanCheckpoint())
+
+        store.saveSleepScanCheckpoint(1_700_000_000_000)
+        assertEquals(1_700_000_000_000, store.loadSleepScanCheckpoint())
+
+        // Upsert: a second save replaces the single row rather than adding one.
+        store.saveSleepScanCheckpoint(1_700_000_500_000)
+        assertEquals(1_700_000_500_000, store.loadSleepScanCheckpoint())
+    }
+
+    /**
+     * The sleep-scan checkpoint is LOCAL-ONLY scan progress, orthogonal to the synced state: saving it must
+     * not change the [org.example.project.scheduler.persistence.PersistedSnapshot] the store loads (and syncs).
+     */
+    @Test
+    fun sleep_scan_checkpoint_does_not_affect_persisted_snapshot() {
+        val store = newStore()
+        store.save(SchedulerStateCodec.encodeSnapshot(stateWithHistory()))
+        val before = store.load()!!
+
+        store.saveSleepScanCheckpoint(1_700_000_000_000)
+
+        assertEquals(before, store.load()!!)
+    }
+
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by the *previous* schema (v6: everything through
+     * device_active_session + acknowledged_logout_at, no sleep_scan_checkpoint) must still load after this
+     * feature ships, with the 6.sqm migration adding sleep_scan_checkpoint on open. Reproduces the on-disk v6
+     * shape, then opens it with the current schema and asserts old data survives and the checkpoint is usable.
+     */
+    @Test
+    fun upgrades_pre_sleep_scan_checkpoint_v6_db_and_preserves_data() {
+        val dbFile = File.createTempFile("scheduler-v6", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            val raw = JdbcSqliteDriver(url, Properties())
+            raw.execute(null, "CREATE TABLE app_state (id INTEGER NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+            raw.execute(
+                null,
+                "CREATE TABLE history_unit (category TEXT NOT NULL, ordinal INTEGER NOT NULL, " +
+                    "time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, debug_tainted INTEGER NOT NULL, " +
+                    "delta TEXT NOT NULL, PRIMARY KEY (category, ordinal))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE history_pointer (category TEXT NOT NULL PRIMARY KEY, pointer INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
+                    "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
+                    "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT, acknowledged_logout_at INTEGER)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE window_placement (window_id TEXT NOT NULL PRIMARY KEY, x REAL NOT NULL, " +
+                    "y REAL NOT NULL, width REAL NOT NULL DEFAULT 0, height REAL NOT NULL DEFAULT 0, " +
+                    "visible INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_sleep_gap (device_id TEXT NOT NULL, sleep_start INTEGER NOT NULL, " +
+                    "sleep_end INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY (device_id, sleep_start))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_active_session (device_id TEXT NOT NULL, start_ms INTEGER NOT NULL, " +
+                    "end_ms INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (device_id, start_ms))",
+                0,
+            )
+            raw.execute(null, "INSERT INTO app_state(id, payload) VALUES (0, ?)", 1) {
+                bindString(0, payload)
+            }
+            raw.execute(null, "PRAGMA user_version = 6", 0)
+            raw.close()
+
+            // Open with the current schema: the v6 -> v7 migration must run (adding sleep_scan_checkpoint)
+            // without dropping the app_state row.
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            assertEquals(payload, store.load()!!.statePayload)
+            assertNull(store.loadSleepScanCheckpoint())
+            store.saveSleepScanCheckpoint(1_700_000_000_000)
+            assertEquals(1_700_000_000_000, store.loadSleepScanCheckpoint())
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
+    }
+
+    @Test
     fun file_backed_db_persists_across_reopen() {
         val dbFile = File.createTempFile("scheduler-test", ".db").also { it.delete() }
         try {

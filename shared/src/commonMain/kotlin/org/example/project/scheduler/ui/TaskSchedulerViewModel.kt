@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -62,6 +63,12 @@ class TaskSchedulerViewModel(
 
     /** PRD §15 / ARCHITECTURE.md §8 pause-end cue delivery channel for the engine; null when sync is disabled. */
     val pauseCue: PauseCueGateway? get() = syncEngine
+
+    /**
+     * The unified sync moments (every [SchedulerSyncEngine.reconcile]: startup, login, manual sync, debounced
+     * change) for the engine to hang its side-channel push/pull on; null when sync is disabled.
+     */
+    val syncMoments: SharedFlow<Unit>? get() = syncEngine?.syncMoments
 
     // PRD §5 Persistence: every change updates the in-memory state immediately; the SQLite DB is then
     // updated on a debounce so a burst of edits (e.g. typing a cell) collapses into one write instead
