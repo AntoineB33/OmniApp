@@ -53,6 +53,7 @@ import org.example.project.scheduler.persistence.WindowPlacementStore
 import org.example.project.scheduler.debug.TimeLink
 import org.example.project.scheduler.debug.startTimeLink
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
+import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.scheduler.platform.installPauseCuePushBridge
 import org.example.project.scheduler.platform.localPauseCueDeliveryPlatform
 import org.example.project.scheduler.platform.scheduleLocalPauseCuePlatform
@@ -381,6 +382,34 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val activeRegions =
             accountActiveRegions +
                 (activeSince?.takeIf { it < nowMillis }?.let { listOf(TaskTimeRange(it, nowMillis)) } ?: emptyList())
+        // PRD §15: recorded past pauses render as greyed "Inactivity" bands, carved around the §17 sleep
+        // windows (already "Sleep"), so the two never overlap. Sub-minute remnants are noise, not a real
+        // away-from-every-device pause — e.g. the few seconds between the §17 scheduled wake (where "Sleep"
+        // ends) and the first session of a freshly-opened account, which would otherwise show as a tiny
+        // "20-second pause right after sleep" (see [SchedulerDomain.MIN_INACTIVITY_BAND_MILLIS]).
+        val inactivityBands =
+            SchedulerDomain.subtractRegions(inactivityGaps, displaySleepRegions)
+                .filter { it.endEpochMillis - it.startEpochMillis >= SchedulerDomain.MIN_INACTIVITY_BAND_MILLIS }
+        // Diagnostics timeline (scripts/collect-diagnostics.bat): record the exact bands the calendar is
+        // about to render, so an anomaly is reconstructable after the fact without describing the screen.
+        // Keyed on a quantized INTERIOR-edge signature: the outermost edges track the sliding 168h window /
+        // now-line every tick and would spam a line per second, but any real change — a band appearing,
+        // vanishing, or a hole opening up inside the coverage — moves an interior edge or a count.
+        val carvedSleepHoles =
+            SchedulerDomain.subtractRegions(
+                displaySleepRegions.filter { it.startEpochMillis < nowMillis },
+                SchedulerDomain.carveSleepPanels(displaySleepPanels, activeRegions)
+                    .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
+            )
+        val bandSignature = diagnosticsBandSignature(inactivityBands, carvedSleepHoles)
+        LaunchedEffect(bandSignature) {
+            Diagnostics.log("calendar shows Inactivity bands: ${Diagnostics.formatRanges(inactivityBands)}")
+            if (carvedSleepHoles.isNotEmpty()) {
+                Diagnostics.log(
+                    "calendar Sleep bands carved by activity at: ${Diagnostics.formatRanges(carvedSleepHoles)}",
+                )
+            }
+        }
         // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
         // user-authored, uniform blocks) drawn the same way; reminders (PRD §14) and side tasks (PRD §15)
         // span the focused week.
@@ -390,21 +419,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             } + mergePanelsForDisplay(
                 schedulerState.panels, displayReminderPanels, displaySidePanels, displaySleepPanels,
                 schedulerState.showSideTasks, schedulerState.showReminders, activeRegions,
-            ) + SchedulerDomain.subtractRegions(inactivityGaps, displaySleepRegions)
-                // Sub-minute remnants are noise, not a real away-from-every-device pause — e.g. the few
-                // seconds between the §17 scheduled wake (where "Sleep" ends) and the first session of a
-                // freshly-opened account, which would otherwise show as a tiny "20-second pause right after
-                // sleep" (see [SchedulerDomain.MIN_INACTIVITY_BAND_MILLIS]).
-                .filter { it.endEpochMillis - it.startEpochMillis >= SchedulerDomain.MIN_INACTIVITY_BAND_MILLIS }
-                .map { gap ->
-                    // PRD §15: recorded past pauses render as greyed "Inactivity" bands, drawn like the sleep
-                    // window but carved around the §17 sleep windows (already "Sleep"), so the two never overlap.
-                    CalendarRecord(
-                        title = "Inactivity",
-                        range = gap,
-                        inactivity = true,
-                    )
-                }
+            ) + inactivityBands.map { gap ->
+                CalendarRecord(
+                    title = "Inactivity",
+                    range = gap,
+                    inactivity = true,
+                )
+            }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
         var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
         // PRD §8 Manual add: a not-yet-committed default panel shown in the edit window with a Save
@@ -894,6 +915,27 @@ private fun removeBlockIntent(block: PlacedRecord): SchedulerIntent? = when {
  * panels stay separate in state — auto panels are distinct scheduling sessions the reschedule must be
  * able to reshape — so this fusing is purely visual. A null-task ("New task") panel never merges.
  */
+
+/**
+ * Change-detection key for the diagnostics band log: the quantized (per-minute) INTERIOR edges of the
+ * rendered Inactivity bands + carved-sleep holes, plus their counts. The single outermost start and end
+ * are dropped because they track the sliding derive window and the advancing now-line — logging on those
+ * would emit a line per tick. Any real shape change (a band added/removed, a hole opening inside the
+ * coverage) moves an interior edge or a count and re-logs.
+ */
+private fun diagnosticsBandSignature(
+    inactivityBands: List<TaskTimeRange>,
+    carvedSleepHoles: List<TaskTimeRange>,
+): String {
+    val edges =
+        buildList {
+            inactivityBands.forEach { add(it.startEpochMillis); add(it.endEpochMillis) }
+            carvedSleepHoles.forEach { add(it.startEpochMillis); add(it.endEpochMillis) }
+        }.sorted()
+    val interior = if (edges.size > 2) edges.subList(1, edges.size - 1) else emptyList()
+    return "${inactivityBands.size}/${carvedSleepHoles.size}:" +
+        interior.joinToString(",") { (it / 60_000).toString() }
+}
 
 private fun mergePanelsForDisplay(
     panels: List<TaskPanel>,

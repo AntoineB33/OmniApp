@@ -35,6 +35,7 @@ import org.example.project.scheduler.persistence.SleepGapRecord
 import org.example.project.scheduler.persistence.SleepScanCheckpointStore
 import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.platform.DeviceSleepGap
+import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.scheduler.platform.currentDeviceKind
 import org.example.project.scheduler.platform.isScreenActive
 import org.example.project.scheduler.platform.sendSystemNotification
@@ -293,6 +294,7 @@ class SchedulerEngine(
     fun start() {
         if (started) return
         started = true
+        Diagnostics.log("engine started (device=$activeSessionDeviceId)")
         launchAdvanceTick()
         launchSideTaskSeeding()
         launchTreeChangeReschedule()
@@ -629,6 +631,12 @@ class SchedulerEngine(
         // extends toward `now`; every finalized session uploads closed, so the time after it can derive as a
         // pause on every peer.
         val openStart = activeSessionMutex.withLock { currentSession?.startMillis }
+        Diagnostics.log(
+            (if (gateway.signedIn) "pushing" else "NOT pushing (signed out)") +
+                " ${sessions.size} active session(s), open=" +
+                (openStart?.let(Diagnostics::formatInstant) ?: "none") + ": " +
+                Diagnostics.formatRanges(sessions.map { TaskTimeRange(it.startMillis, it.endMillis) }),
+        )
         withContext(Dispatchers.Default) { runCatching { gateway.pushActiveSessions(sessions, openStart) } }
     }
 
@@ -691,6 +699,17 @@ class SchedulerEngine(
                         ?: emptyList()
                 }
             val pauses = SchedulerDomain.subtractRegions(serverPauses, ownActive)
+            val source = when {
+                fromServer != null -> "server"
+                gateway?.signedIn == true -> "local fallback, RPC failed"
+                remote -> "local, signed out"
+                else -> "local, startup"
+            }
+            Diagnostics.log(
+                "pauses refreshed [$source] window=${Diagnostics.formatInstant(since)} → " +
+                    "${Diagnostics.formatInstant(until)}, ownActive=${ownActive.size} subtracted; " +
+                    "inactivity: ${Diagnostics.formatRanges(pauses)}",
+            )
             _inactivityGaps.value = pauses
             val before = vm.state.value.sideTasks
             applySeededSideTasks(SchedulerDomain.seedSideTasksFromGaps(before, pauses))

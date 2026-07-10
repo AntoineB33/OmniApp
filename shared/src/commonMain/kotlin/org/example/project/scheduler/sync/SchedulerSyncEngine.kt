@@ -19,6 +19,7 @@ import org.example.project.scheduler.persistence.SleepGapRecord
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.platform.DeviceKind
+import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.time.SystemAppClock
 
 /** Coarse status for a sync status indicator. */
@@ -102,6 +103,7 @@ class SchedulerSyncEngine(
         if (m.accessToken != null && m.refreshToken != null && m.userId != null) {
             session = SupabaseSession(m.accessToken, m.refreshToken, m.userId)
             _state.value = SyncState.Idle
+            Diagnostics.log("restored persisted session (${m.email ?: "unknown email"})")
         }
     }
 
@@ -118,6 +120,7 @@ class SchedulerSyncEngine(
                 persistSession(s, email)
                 recordLogoutBaseline(s)
                 _state.value = SyncState.Idle
+                Diagnostics.log("signed in as $email")
             } catch (e: SupabaseException) {
                 _state.value = SyncState.Error(e.message ?: "auth failed")
                 throw e
@@ -126,6 +129,7 @@ class SchedulerSyncEngine(
 
     /** Signs out: drops the cached session locally. Does not delete the remote snapshot. */
     fun signOut() {
+        Diagnostics.log("signed out")
         session = null
         val m = meta()
         metaStore.saveSyncMeta(m.copy(accessToken = null, refreshToken = null, userId = null))
@@ -173,6 +177,7 @@ class SchedulerSyncEngine(
         // empty just deleted. `null` baseline = unknown (pre-feature / failed login fetch), which still logs out
         // if a marker exists; `0` = seen with no marker at login. See CLAUDE.md "Account scripts".
         if (isRemotelyLoggedOut(session)) {
+            Diagnostics.log("remote force-logout detected — signing out, pushing nothing")
             signOut()
             return
         }
@@ -184,6 +189,7 @@ class SchedulerSyncEngine(
             remote == null -> {
                 val ok = withAuth(session) { client.insert(it, payload()) }
                 if (ok) {
+                    Diagnostics.log("reconcile: seeded remote snapshot (revision 1)")
                     setMeta(m.copy(lastKnownRevision = 1, dirty = false))
                 } else {
                     // Lost the race; another device inserted first — re-fetch and apply it.
@@ -196,6 +202,7 @@ class SchedulerSyncEngine(
             m.dirty -> {
                 val ok = withAuth(session) { client.update(it, payload(), m.lastKnownRevision) }
                 if (ok) {
+                    Diagnostics.log("reconcile: pushed local changes (revision ${m.lastKnownRevision + 1})")
                     setMeta(meta().copy(lastKnownRevision = m.lastKnownRevision + 1, dirty = false))
                 } else {
                     // The remote moved between fetch and patch; pull the newer revision.
@@ -208,6 +215,7 @@ class SchedulerSyncEngine(
     }
 
     private fun pull(remote: RemoteSnapshot) {
+        Diagnostics.log("reconcile: pulled remote snapshot (revision ${remote.revision})")
         val snapshot = json.decodeFromString<PersistedSnapshot>(remote.payload)
         checkNotNull(applyRemote) { "SchedulerSyncEngine.bind() not called" }(snapshot)
         setMeta(meta().copy(lastKnownRevision = remote.revision, dirty = false))
