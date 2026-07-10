@@ -108,6 +108,12 @@ object SchedulerStateCodec {
      * the fingerprint unchanged, which is how the ViewModel avoids marking state dirty / pushing (the "known
      * deviation"). Transient, non-persisted fields (clipboard, edit session…) are already absent from the
      * encoded snapshot, so they never count as an authoritative change either.
+     *
+     * This projection is also **the payload that goes over the wire**: the ViewModel binds it as the sync
+     * engine's `localSnapshot`, so a push ships only the irreducible data — never the regenerated panels or
+     * the per-device view state, which every device recomputes/keeps locally (bandwidth rule, ARCHITECTURE.md
+     * §8). A puller regenerates the panels on its next reschedule and carries its own view state across the
+     * pull (`withLocalViewStateFrom`), so nothing is lost by the stripping.
      */
     fun syncFingerprint(state: SchedulerState): PersistedSnapshot =
         encodeSnapshot(

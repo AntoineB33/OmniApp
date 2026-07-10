@@ -9,7 +9,7 @@ PRD §15 for the design; this file is the operational runbook.
 
 | Piece | Status |
 | --- | --- |
-| 1-min **server-sync debounce** (batch per event-loop turn, immediate when idle ≥1 min) | ✅ `scheduler/sync/ServerSyncThrottle`, wired in `TaskSchedulerViewModel` (`SERVER_SYNC_INTERVAL_MILLIS = 60_000`) |
+| 10-s **user-change sync debounce** (trailing: one push 10 s after the last change of a burst; one of the four sync moments — login, sync button, this debounce, the deferred cue burst) | ✅ `scheduler/sync/ServerPushDebounce`, wired in `TaskSchedulerViewModel` (`SERVER_PUSH_DEBOUNCE_MILLIS = 10_000`) |
 | Supabase schema: `device_push_token` / `account_last_phone` / `pause_cue_schedule` | ✅ `supabase/migrations/20260703000000_init.sql` |
 | `on_pause_cue_schedule_change` trigger — **immediate** push (cancel+reschedule) when a non-phone device moves the next pose-end (scenario #2), **skip when origin == last phone** | ✅ `supabase/migrations/20260704000000_pause_cue_immediate_push.sql` |
 | `tick_pause_cues()` cron (push ~1 min before, **skip when origin == last phone**) — now a **backstop** to the immediate trigger | ✅ `20260703000000_init.sql` + `supabase/pause-cue-setup.sql` |
@@ -59,8 +59,10 @@ Each new prediction re-arms the single timer (cancelling the prior one); the pho
 (~1 min before) stays the backstop for schedules another device set. Unit-tested by
 `shared/jvmTest/.../PauseCuePushSchedulerTest` (virtual clock; all four rows + re-arm + fire-inside-margin).
 
-The same burst that fires this write also does the account's other last-responsible-moment traffic:
-`flushActiveSession()`, `refreshDerivedPauses()`, and — new — the cross-device **presence** write
+The same burst that fires this write also does the account's other last-responsible-moment traffic — it is
+the **fourth sync moment** (ARCHITECTURE.md §8), the only one that recurs without a user action:
+`refreshDerivedPauses()` (push own active-session history — including any locally-finalized session, i.e. a
+walk-away — then pull the account-wide pauses) and the cross-device **presence** write
 (`publishPosePresenceIfActive`, only when signed in + screen on + inside a rest pose). That replaces the old
 per-60 s `device_presence` beacon: in the scenario "now-line inside a 5/15-min pose, `screenActive()` true,
 signed in", the pose end is re-pinned to the now-line so `d2 = now + duration` moves constantly — **yet no
@@ -180,7 +182,7 @@ Implement in `SchedulerSyncEngine` using `withAuth(current) { client.upsertPause
   `nextPoseEnd = poses.map { it.endEpochMillis }.filter { it > now }.minOrNull()` (d2). On change, (phone only)
   (re)schedule the local alarm at that instant immediately; the server `publishPauseCueSchedule` upsert is
   **deferred** to `min(d1,d2) − margin` by `PauseCuePushScheduler`, not written on every change. This is
-  requirements #2/#5. The cue-schedule write is a tiny per-row upsert, independent of the 60-s snapshot throttle.
+  requirements #2/#5. The cue-schedule write is a tiny per-row upsert, independent of the 10-s snapshot debounce.
 - **Local alarm (phone):** add `expect fun schedulePauseEndCue(dueAtMillis: Long)` / `expect fun
   cancelPauseEndCue()` in `scheduler/platform`, actual per target (below). The alarm, when it fires, calls the
   **existing** `poseFinishEligible` gate before `speak(...)`.
@@ -502,8 +504,9 @@ a manual `RemoveRecordPeriod` do.
    `PATCH /rest/v1/scheduler_snapshot` in the logs across those ticks — the now-line advances, panels
    re-derive, nothing syncs. (Before the fix this PATCHed roughly once per throttle interval.)
 2. **A real edit still syncs.** Now make an authoritative change (rename a task, pin/move a calendar panel,
-   check a reminder). Within the 60-s server-sync window a single `PATCH /rest/v1/scheduler_snapshot`
-   (revision +1) appears. One edit → one write.
+   check a reminder). ~10 s after the last edit of the burst a single `PATCH /rest/v1/scheduler_snapshot`
+   (revision +1) appears. One editing burst → one write — and the payload is the **stripped** authoritative
+   projection (no regenerated auto/side/sleep panels, no per-device view state; `SyncPayloadTest`).
 3. **Auto-banked work does NOT sync on its own.** Let the now-line cross the end of an auto-scheduled work
    block (so `advanceSchedule` records `[start,end]` as completed work). There must be **no**
    `PATCH /rest/v1/scheduler_snapshot` for that — the record is *derived* (every device recomputes it by
@@ -524,7 +527,7 @@ a manual `RemoveRecordPeriod` do.
   (upserted by `supabase/pause-cue-setup.sql`, i.e. deploy-supabase.bat step 3), falling back to the legacy
   `app.settings.*` GUCs (`20260709020000`). It was moved off `alter database set app.settings.*` because
   database-level custom GUCs are superuser-only on Postgres 15+ — Supabase denies them with `42501`.
-- The 1-minute server-sync debounce (requirement #1) is the push *rate limit*; **which** changes push is now
+- The 10-second user-change debounce (requirement #1) is the push *timing*; **which** changes push is
   gated by `syncFingerprint` (Testing E). Together: an idle session makes zero `scheduler_snapshot` writes, and
-  an authoritative change is mirrored at most once per minute. The pause-cue push path (`pause_cue_schedule`)
-  is independent of both.
+  a burst of authoritative changes is mirrored once, 10 s after its last edit. The pause-cue push path
+  (`pause_cue_schedule`, the fourth sync moment) is independent of both.

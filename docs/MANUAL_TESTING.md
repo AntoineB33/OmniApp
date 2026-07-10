@@ -58,9 +58,11 @@ via the manual fetch button (`ARCHITECTURE.md` §8).
 
 Open both: `scripts\account1-empty-and-open.bat` (clean account 1) **and** `scripts\account2-open.bat`.
 
-- [ ] Edit a task on account 1 → within the 1-minute server-sync debounce it pushes (watch the sync chip).
-- [ ] On account 2, hit **fetch from server** → the edit from account 1 appears. (Pulls are not throttled;
-      only the post-save push is — a change ≥1 min after the last push goes immediately.)
+- [ ] Edit a task on account 1 → ~10 s after the last edit it pushes once (the 10-s trailing user-change
+      debounce; watch the sync chip). A burst of edits = one push, not one per edit.
+- [ ] On account 2, hit **fetch from server** → the edit from account 1 appears. (The sync button is one of
+      the four sync moments — login, sync button, 10-s debounced change, pause-cue burst — and pulls
+      immediately.)
 - [ ] Make a change on **each** side, then fetch on both → last-writer-wins converges (Phase-1 whole-doc LWW,
       `scheduler-sync-architecture` note). No lost tree, no duplicate rows.
 - [ ] Kill account 1 mid-edit before its debounce fires → the local SQLite still has the change on relaunch
@@ -115,10 +117,11 @@ Derived server-side (`derive_pauses` RPC), never stored (`server-derived-pauses`
       **desktop's** open instant (the desktop's fresh *open* session covers the window server-side — the
       `closed` flag; no client-side adoption — ARCHITECTURE.md §8).
 - [ ] Quiet-peer pause (the "band stops an hour before the now-line" incident): sign in on the desktop, lock
-      the screen / let it go inactive for ≥ 5 min, then launch the phone (fresh install or after a fetch) →
-      both calendars show an Inactivity band from the desktop's **last activity** up to the **phone's**
-      launch. The finalize-push uploads the desktop's session end within a beat; the quiet window must never
-      render as activity on the phone.
+      the screen / let it go inactive, and wait past the desktop's next pause-cue burst (its next pose end —
+      the finalize rides that sync moment; there is no immediate finalize-push any more). Then launch the
+      phone (fresh install or after a fetch) → both calendars show an Inactivity band from the desktop's
+      **last activity** up to the **phone's** launch. Until that burst lands, a peer may briefly presume the
+      desktop still active — bounded to one pose cadence by design (ARCHITECTURE.md §8).
 
 ---
 

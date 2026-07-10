@@ -23,7 +23,7 @@ import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.sync.PauseCueGateway
 import org.example.project.scheduler.sync.PresenceGateway
 import org.example.project.scheduler.sync.SchedulerSyncEngine
-import org.example.project.scheduler.sync.ServerSyncThrottle
+import org.example.project.scheduler.sync.ServerPushDebounce
 import org.example.project.scheduler.sync.ActiveSessionGateway
 import org.example.project.scheduler.sync.SleepGapGateway
 import org.example.project.scheduler.sync.StartupLogin
@@ -77,11 +77,11 @@ class TaskSchedulerViewModel(
     private var saveJob: Job? = null
 
     // ARCHITECTURE.md §8: the local SQLite write coalesces on the small [SAVE_DEBOUNCE_MILLIS] debounce, but
-    // the network push that mirrors it to Supabase is rate-limited to at most once per minute (idle → sent
-    // immediately). Only created when sync is enabled.
-    private val serverSync: ServerSyncThrottle? =
+    // the network push that mirrors it to Supabase is deferred to [SERVER_PUSH_DEBOUNCE_MILLIS] after the
+    // LAST authoritative change (the user-change sync moment). Only created when sync is enabled.
+    private val serverSync: ServerPushDebounce? =
         syncEngine?.let { engine ->
-            ServerSyncThrottle(saveScope, SERVER_SYNC_INTERVAL_MILLIS) { engine.reconcile() }
+            ServerPushDebounce(saveScope, SERVER_PUSH_DEBOUNCE_MILLIS) { engine.reconcile() }
         }
 
     // True while there are state changes not yet written by the debounced save (so [flush] knows whether a
@@ -106,8 +106,12 @@ class TaskSchedulerViewModel(
     init {
         syncEngine?.let { engine ->
             // Break the engine<->ViewModel cycle: the engine reads/writes our state through these.
+            // The PUSHED payload is the authoritative projection ([SchedulerStateCodec.syncFingerprint]),
+            // not the full local snapshot: the regenerated auto/side/sleep panels and the per-device view
+            // state are recomputed/kept locally by every device, so shipping them would only spend
+            // bandwidth on data the puller discards or re-derives (CLAUDE.md reconstructibility rule).
             engine.bind(
-                localSnapshot = { SchedulerStateCodec.encodeSnapshot(_state.value) },
+                localSnapshot = { SchedulerStateCodec.syncFingerprint(_state.value) },
                 applyRemote = { snapshot -> applyRemoteSnapshot(snapshot) },
             )
             engine.restoreSession()
@@ -182,8 +186,8 @@ class TaskSchedulerViewModel(
                 savePending = false
                 // PRD §5 sync: flag + request a push only when an authoritative (user-authored) change occurred
                 // in this window AND the authoritative projection actually changed (immediately, so a close
-                // before the push still reconciles next launch). The push itself is throttled to once per minute
-                // (ARCHITECTURE.md §8); markDirty keeps it durable until it goes out.
+                // before the push still reconciles next launch). The push itself waits out the 10-s user-change
+                // debounce (ARCHITECTURE.md §8); markDirty keeps it durable until it goes out.
                 if (syncPending) {
                     syncPending = false
                     pushIfAuthoritativeChanged(requestPush = true)
@@ -269,10 +273,11 @@ class TaskSchedulerViewModel(
         private const val SAVE_DEBOUNCE_MILLIS = 400L
 
         /**
-         * ARCHITECTURE.md §8: minimum spacing between **server** pushes. A change ≥ this long after the
-         * previous push goes out immediately; a burst within the window coalesces into one deferred push.
+         * ARCHITECTURE.md §8: the user-change sync moment — an authoritative change reaches the server once
+         * the user has been quiet for this long (a trailing debounce; a burst collapses into one push fired
+         * 10 s after its last change).
          */
-        private const val SERVER_SYNC_INTERVAL_MILLIS = 60_000L
+        private const val SERVER_PUSH_DEBOUNCE_MILLIS = 10_000L
 
         /** PRD §5: reload persisted state; an interrupted Edit Mode session is canceled. */
         fun loadInitialState(store: SchedulerStore?, initial: SchedulerState): SchedulerState =
