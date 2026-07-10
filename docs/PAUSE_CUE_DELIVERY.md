@@ -386,7 +386,9 @@ schedule, `pause_cue_schedule` writes, alarms and cue actually run in accelerate
 **How it works** (`shared/.../scheduler/debug/TimeLink*` + `androidApp/.../TimeLinkClient.kt`): the desktop (under
 time-sim) runs a loopback TCP server on port **47615** and keeps `adb reverse tcp:47615 tcp:47615` set up; the
 debuggable Android app dials `127.0.0.1:47615` and re-anchors its `SimAppClock` (`SimAppClock.adopt`) from each
-`"<virtualNow> <speed>"` frame. The desktop **Time** panel shows the link status: **● Phone link: connected (N)**
+`"<virtualNow> <speed> <inactive01>"` frame (the trailing token is the "simulate pause + leap" forced-inactivity
+flag — while `1` the phone treats its screen as inactive, so a leap whose "inactive:" scope includes the phone
+makes it live the pause too). The desktop **Time** panel shows the link status: **● Phone link: connected (N)**
 or an amber **⚠ Phone link: not connected — acceleration is desktop-only** (warn-only; the controls stay usable
 so single-device desktop sim still works). Transport is adb-only and debuggable-only — nothing runs in a release
 build; there is still never a WebSocket to the server.

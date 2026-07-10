@@ -53,9 +53,10 @@ object SchedulerHolder {
         // Until a desktop is attached the SimAppClock runs at 1× ≡ real wall time, so behaviour is unchanged.
         // Release builds (and non-debuggable) keep SystemAppClock. History-unit timestamps stay on real time
         // (SchedulerReducer.clock above) — only the schedule/now that the pause-cue path depends on is driven.
+        // The client starts AFTER the engine below, because each frame also carries the desktop's "simulate
+        // pause + leap" forced-inactivity flag, which it feeds into the engine.
         val debuggable = (appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-        val clock: AppClock =
-            if (debuggable) SimAppClock().also { TimeLinkClient.start(scope, it) } else SystemAppClock
+        val clock: AppClock = if (debuggable) SimAppClock() else SystemAppClock
         val engine =
             SchedulerEngine(
                 vm = vm,
@@ -76,6 +77,9 @@ object SchedulerHolder {
                 localPauseCueDelivery = true,
             )
         engine.start()
+        if (clock is SimAppClock) {
+            TimeLinkClient.start(scope, clock) { inactive -> engine.setDebugForcedInactive(inactive) }
+        }
         registerFcmToken(vm)
         return AppSchedulerHost(vm, engine).also { host = it }
     }

@@ -256,10 +256,16 @@ class SchedulerEngine(
     val activeSince: StateFlow<Long?> = _activeSince.asStateFlow()
 
     // PRD §15 server-derived pauses: this device's currently-open active session (null while inactive), tracked
-    // in the LOCAL store only. Mutated only under [activeSessionMutex] because the beat loop, the debug carve
-    // ([recordInactivityGap]), and [freshenOpenSession] all advance it.
+    // in the LOCAL store only. Mutated only under [activeSessionMutex] because the beat loop, the debug
+    // forced-inactivity flip ([setDebugForcedInactive]), and [freshenOpenSession] all advance it.
     private var currentSession: ActiveSessionRecord? = null
     private val activeSessionMutex = Mutex()
+
+    // Debug "simulate pause + leap": while true, every screen-activity sample reads INACTIVE, exactly as if
+    // the user had walked away — the active-session beat finalizes the open session (so a pause derives),
+    // presence stops announcing, and the pose-finish gate sees the screen off. Set around the accelerated
+    // leap by the desktop debug control, and on a linked phone by the time-link frames' inactive flag.
+    private var debugForcedInactive = false
 
     // PRD §7: a §9 calculation event that comes due while "Auto schedule" is off is deferred and coalesced
     // into a single reschedule fired when the switch is turned back on.
@@ -412,9 +418,29 @@ class SchedulerEngine(
     }
 
     /**
+     * Debug "simulate pause + leap": force this device to read as screen-inactive (`true`) or return to the
+     * real platform sensor (`false`). Flipping it advances the active session immediately — finalizing the
+     * open session on `true` (with the structural finalize-push, like a real walk-away) and reopening one on
+     * `false` — so a 1-real-second accelerated leap never depends on the beat cadence to see the pause
+     * boundaries. Called by the desktop debug control, and per time-link frame on a linked phone (a same-value
+     * call is a no-op, so the 250 ms frames don't churn).
+     */
+    fun setDebugForcedInactive(inactive: Boolean) {
+        if (debugForcedInactive == inactive) return
+        debugForcedInactive = inactive
+        scope.launch {
+            val finalized = advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended = false)
+            if (finalized) pushOwnActiveSessions()
+        }
+    }
+
+    // The screen-activity sample every engine site reads: the real platform sensor, overridden to inactive
+    // while the debug leap forces it (see [setDebugForcedInactive]).
+    private fun effectiveScreenActive(): Boolean = !debugForcedInactive && screenActive()
+
+    /**
      * PRD §12: a gap in time `[sleepStart, sleepEnd]` — the process was suspended (real device sleep) or a
-     * debug leap jumped the clock over it. Public so the debug "simulate pause" control can feed a gap through
-     * the same path a real device sleep uses.
+     * debug leap jumped the clock over it.
      */
     fun reportTimeGap(sleepStart: Long, sleepEnd: Long) {
         vm.dispatch(SchedulerIntent.ReportDeviceSleep(sleepStart, sleepEnd))
@@ -507,7 +533,7 @@ class SchedulerEngine(
         while (true) {
             val realNow = SystemAppClock.nowMillis()
             val suspended = realNow - lastRealBeat > DEVICE_SLEEP_THRESHOLD_MILLIS
-            val finalized = advanceActiveSession(clock.nowMillis(), screenActive(), suspended)
+            val finalized = advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended)
             // A session END is a structural sync moment, symmetric with the open side (a fresh open already
             // rides the next coalesced burst within seconds): push the finalized bounds so the server stops
             // presuming this device active and the pause that just started can derive on every peer. Without
@@ -525,8 +551,8 @@ class SchedulerEngine(
 
     // PRD §15: advance the current active session to `now`, LOCAL store only. A suspension or an inactive
     // screen finalizes it; an active screen opens a new session (if none / after a finalize) or extends the
-    // open one. Serialized under [activeSessionMutex] because the beat and the debug carve both call it.
-    // Returns whether a session was finalized this beat, so the caller can fire the finalize-push.
+    // open one. Serialized under [activeSessionMutex] because the beat and the debug forced-inactivity flip
+    // both call it. Returns whether a session was finalized this beat, so the caller can fire the finalize-push.
     private suspend fun advanceActiveSession(now: Long, active: Boolean, suspended: Boolean): Boolean {
         var finalized = false
         activeSessionMutex.withLock {
@@ -567,7 +593,7 @@ class SchedulerEngine(
     // screen is inactive (the beat finalizes it; masking a just-started pause here would hide a real pause).
     private suspend fun freshenOpenSession() {
         activeSessionMutex.withLock {
-            if (!screenActive()) return@withLock
+            if (!effectiveScreenActive()) return@withLock
             val now = clock.nowMillis()
             val realNow = SystemAppClock.nowMillis()
             val cur = currentSession
@@ -617,32 +643,6 @@ class SchedulerEngine(
     }
 
     /**
-     * PRD §15 / §16: carve a pause `[startMillis, endMillis]` into THIS device's active timeline — finalize the
-     * open session at [startMillis] and open a fresh one at [endMillis] — so the derivation yields the pause the
-     * same way a real device sleep would (a real sleep produces this hole naturally; a debug "simulate pause"
-     * leaps the clock, which the beat can't see as a suspension, so this reproduces it). Then re-derive the bands
-     * (which pushes the carve to the server first) — a debug control counts as an explicit sync moment. Public
-     * for the debug "simulate pause" control.
-     */
-    fun recordInactivityGap(startMillis: Long, endMillis: Long) {
-        if (endMillis <= startMillis) return
-        scope.launch {
-            activeSessionMutex.withLock {
-                val realNow = SystemAppClock.nowMillis()
-                val open = currentSession
-                if (open != null && open.startMillis < startMillis) {
-                    finalizeSessionLocked(open.copy(endMillis = startMillis, updatedAtMillis = realNow))
-                }
-                val reopened = ActiveSessionRecord(activeSessionDeviceId, endMillis, endMillis, realNow)
-                currentSession = reopened
-                persistSessionLocked(reopened)
-                _activeSince.value = reopened.startMillis
-            }
-            refreshDerivedPauses()
-        }
-    }
-
-    /**
      * PRD §15: refresh the calendar's "Inactivity" bands from the account-wide pauses. When signed in the
      * SERVER is authoritative (the `derive_pauses` RPC over every device's active sessions). If the RPC is
      * unavailable — a transport blip, or the migration not yet deployed — OR the account is signed out, it falls
@@ -667,8 +667,11 @@ class SchedulerEngine(
      * sessions SUBTRACTED before display/seeding: a device must never render a pause over time it knows the
      * account was active, even if its push lost a race or a peer's clock is skewed (a pause is, by
      * definition, a window when NO device was active, so known activity legitimately cancels it).
+     *
+     * Public for the debug "simulate pause + leap" control: a debug leap counts as an explicit sync moment,
+     * so the bands / rest poses reflect the just-simulated pause without waiting for the next reconcile.
      */
-    private fun refreshDerivedPauses() {
+    fun refreshDerivedPauses() {
         scope.launch {
             val gateway = activeSessions
             pushOwnActiveSessions()
@@ -925,7 +928,7 @@ class SchedulerEngine(
     // never reaches the burst, so it stops announcing.
     private suspend fun publishPosePresenceIfActive() {
         val gateway = presence ?: return
-        if (gateway.signedIn && screenActive() && inRestPose(vm.state.value, clock.nowMillis())) {
+        if (gateway.signedIn && effectiveScreenActive() && inRestPose(vm.state.value, clock.nowMillis())) {
             withContext(Dispatchers.Default) {
                 runCatching { gateway.publishPresence(deviceKind, screenActive = true) }
             }
@@ -991,19 +994,19 @@ class SchedulerEngine(
         scope.launch {
             if (!gateway.signedIn) return@launch
             sleepUntilSim(endMillis - POSE_FINISH_CHECK_LEAD_MILLIS)
-            if (screenActive()) return@launch
+            if (effectiveScreenActive()) return@launch
             // PRD §15: trigger #3 — ~1 min before the pose ends, also pull the latest exact gaps and re-derive
             // the account-wide pauses so the local DB / bands reflect any pause another device just recorded.
             pullSleepGaps()
             refreshDerivedPauses()
             val peersActive = readPeersActiveWithRetry(gateway, endMillis)
             if (!poseFinishEligible(isPhone = deviceKind == DeviceKind.Phone, signedIn = gateway.signedIn,
-                    screenActive = screenActive(), peersActive = peersActive)) {
+                    screenActive = effectiveScreenActive(), peersActive = peersActive)) {
                 return@launch
             }
             sleepUntilSim(endMillis)
             // Re-check the local screen: the user may have picked up the phone during the final minute.
-            if (screenActive()) return@launch
+            if (effectiveScreenActive()) return@launch
             playCue(VoiceCue.PauseOver)
         }
     }
@@ -1200,7 +1203,7 @@ class SchedulerEngine(
         if (poseFinishEligible(
                 isPhone = deviceKind == DeviceKind.Phone,
                 signedIn = gateway?.signedIn == true,
-                screenActive = screenActive(),
+                screenActive = effectiveScreenActive(),
                 peersActive = peersActive,
             )
         ) {

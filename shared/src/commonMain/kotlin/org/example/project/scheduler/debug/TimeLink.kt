@@ -17,6 +17,14 @@ interface TimeLink {
     /** How many phone debug clients are currently connected (0 = link down; drives the panel's status). */
     val linkedCount: StateFlow<Int>
 
+    /**
+     * Debug "simulate pause + leap" scope: while `true`, every frame tells the connected phone(s) to treat
+     * their screen as INACTIVE (`SchedulerEngine.setDebugForcedInactive`), so a leap whose scope includes the
+     * phone makes it live the pause too. The flag rides the same frame as the speed, so the phone adopts the
+     * acceleration and the inactivity atomically.
+     */
+    fun setPhoneForcedInactive(inactive: Boolean)
+
     /** Stop the server + adb reconcile (called when the composition holding it is torn down). */
     fun close()
 }

@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.math.abs
 import kotlin.time.Instant
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
@@ -78,6 +80,7 @@ import org.example.project.ui.LateralMenu
 import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.PlacedRecord
 import org.example.project.ui.ReminderEditWindow
+import org.example.project.ui.SimPauseScope
 import org.example.project.ui.SleepWindow
 import org.example.project.ui.TimeSimPanel
 import org.example.project.ui.startOfWeek
@@ -88,6 +91,15 @@ enum class OmniPage(val label: String) {
 
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
 private enum class FloatingWindow { Calendar, Reminders, History, Sleep, TimeSim }
+
+// Debug "simulate pause + leap": the REAL time the whole simulated break is compressed into — the leap runs
+// the sim clock at durationMillis / this speed for this long, so a 20s / 5min / 15min pause elapses in
+// ~1 real second through the engine's own (release) loops instead of an instant jump.
+private const val SIM_PAUSE_LEAP_REAL_MILLIS: Double = 1_000.0
+
+// How often the leap coroutine polls the sim clock for the leap-end instant (real ms); small enough that the
+// overshoot past the requested duration stays a fraction of a second even at the 15-min leap's 900× speed.
+private const val SIM_PAUSE_LEAP_POLL_MILLIS: Long = 20
 
 @Composable
 @Preview
@@ -143,6 +155,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             onDispose { link?.close(); timeLink = null }
         }
         val timeLinkCount = timeLink?.linkedCount?.collectAsState()?.value ?: -1
+        // Debug "simulate pause + leap": the in-flight leap (see the TimeSimPanel below); clicks while one is
+        // running are ignored so two leaps never fight over the clock speed / forced-inactivity flags.
+        var pauseLeapJob by remember { mutableStateOf<Job?>(null) }
         // PRD §6: History Units are timestamped from the same clock the rest of the app reads, so under
         // time simulation their times match the (accelerated) calendar.
         SideEffect {
@@ -739,17 +754,36 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             clock = simClock,
                             nowMillis = nowMillis,
                             linkedCount = timeLinkCount,
-                            // Debug: simulate taking a pause — leap virtual time over it, then feed the gap
-                            // through the same [onTimeGap] handler a real device sleep uses, so the side-task
-                            // rhythm and schedule resume by the exact same logic as a real ≥duration pause.
-                            onSimulatePause = { durationMillis ->
-                                val sleepStart = clock.nowMillis()
-                                simClock.leap(durationMillis)
-                                val sleepEnd = clock.nowMillis()
-                                engine.reportTimeGap(sleepStart, sleepEnd)
-                                // Record the pause as a synced gap too (the OS-log path can't see a simulated
-                                // leap), so it shows as an "Inactivity" band exactly like a real device sleep.
-                                engine.recordInactivityGap(sleepStart, sleepEnd)
+                            // Debug: simulate taking a pause by ACCELERATING time so the whole break elapses in
+                            // ~1 real second — the engine's own loops (active-session beat, schedule advance,
+                            // derived-pause seeding) then live the pause exactly as the release logic would,
+                            // with the dropdown-selected device(s) forced to read as screen-inactive while it
+                            // lasts. On the phone the forced-inactivity flag rides the same time-link frames
+                            // as the acceleration, so it adopts both atomically.
+                            onSimulatePause = { durationMillis, pauseScope ->
+                                if (pauseLeapJob?.isActive != true) {
+                                    pauseLeapJob = engineScope.launch {
+                                        // Flags first, so no accelerated time passes while still "active".
+                                        if (pauseScope != SimPauseScope.PhoneOnly) {
+                                            engine.setDebugForcedInactive(true)
+                                        }
+                                        if (pauseScope != SimPauseScope.ComputerOnly) {
+                                            timeLink?.setPhoneForcedInactive(true)
+                                        }
+                                        val prevSpeed = simClock.speed
+                                        val leapEnd = simClock.nowMillis() + durationMillis
+                                        simClock.setSpeed(durationMillis / SIM_PAUSE_LEAP_REAL_MILLIS)
+                                        while (simClock.nowMillis() < leapEnd) delay(SIM_PAUSE_LEAP_POLL_MILLIS)
+                                        // Speed back first, so the session doesn't reopen while time still races.
+                                        simClock.setSpeed(prevSpeed)
+                                        engine.setDebugForcedInactive(false)
+                                        timeLink?.setPhoneForcedInactive(false)
+                                        // A debug control counts as an explicit sync moment: push the finalized
+                                        // sessions and re-derive the "Inactivity" bands / reseed the rest poses
+                                        // now instead of waiting for the next reconcile.
+                                        engine.refreshDerivedPauses()
+                                    }
+                                }
                             },
                             pendingRollback = schedulerState.histories.hasPendingDebugRollback,
                             modifier = Modifier

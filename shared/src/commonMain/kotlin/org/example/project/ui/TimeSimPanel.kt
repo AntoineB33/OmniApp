@@ -6,10 +6,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -18,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -33,6 +37,18 @@ private val SPEEDS = listOf(1.0, 10.0, 60.0, 300.0)
 private val panelAccent = Color(0xFF8E24AA) // distinct from the calendar's blue, to read as "debug"
 
 /**
+ * Debug "simulate pause + leap": which device(s) the leap treats as INACTIVE while the accelerated break
+ * elapses (the others keep reading their real screen state, so e.g. "only the phone" leaves the desktop's
+ * active session — and thus the account's activity — intact). "Only the phone" needs a phone on the
+ * time-link, so the dropdown's choices adapt to [TimeSimPanel]'s `linkedCount`.
+ */
+enum class SimPauseScope(val label: String) {
+    All("all"),
+    ComputerOnly("only the computer"),
+    PhoneOnly("only the phone"),
+}
+
+/**
  * Debug-only time-acceleration control (gated by [org.example.project.DebugFlags.TIME_SIMULATION]).
  * Drives a [SimAppClock] so the scheduler's deadlines, the calendar's now-line and day rollovers can
  * be exercised in seconds instead of hours. [nowMillis] is the live virtual instant (for the
@@ -42,8 +58,12 @@ private val panelAccent = Color(0xFF8E24AA) // distinct from the calendar's blue
 fun TimeSimPanel(
     clock: SimAppClock,
     nowMillis: Long,
-    /** Debug: simulate taking a pause of [durationMillis] (a device sleep) and leap virtual time over it. */
-    onSimulatePause: (durationMillis: Long) -> Unit = {},
+    /**
+     * Debug: simulate taking a pause of `durationMillis` by ACCELERATING time so the whole break elapses in
+     * ~1 real second, with the device(s) in `inactiveScope` forced to read as screen-inactive for its duration
+     * — the engine's own loops then live the pause exactly as the release logic would.
+     */
+    onSimulatePause: (durationMillis: Long, inactiveScope: SimPauseScope) -> Unit = { _, _ -> },
     /**
      * Whether the history currently holds changes made under the diverged clock that the next app start
      * will revert (PRD §6). Drives the red "will be reverted on restart" warning.
@@ -108,18 +128,63 @@ fun TimeSimPanel(
                     selectedSpeed = 0.0
                 }
             }
-            // PRD §15 debug: simulate taking a pause (a device sleep) and leap virtual time over it, so the
-            // side-task rhythm (look-away / poses) and the now-line can be exercised without waiting.
+            // PRD §15 debug: simulate taking a pause — accelerate time so the break elapses in ~1 real second
+            // with the selected device(s) reading as inactive, so the side-task rhythm (look-away / poses),
+            // the derived Inactivity bands and the now-line can be exercised without waiting.
             Text(
                 text = "simulate pause + leap",
                 style = MaterialTheme.typography.labelSmall,
                 color = panelAccent,
                 fontWeight = FontWeight.Bold,
             )
+            // Which device(s) the leap treats as inactive. "Only the phone" (and the distinction with "all")
+            // only exists while a phone is actually on the time-link, so the choices adapt to [linkedCount];
+            // a selection that loses its phone falls back to "all" without discarding the user's pick.
+            val scopes =
+                if (linkedCount > 0) SimPauseScope.entries.toList() else listOf(SimPauseScope.All)
+            var pauseScope by remember { mutableStateOf(SimPauseScope.All) }
+            val effectiveScope = if (pauseScope in scopes) pauseScope else SimPauseScope.All
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                PauseChip(label = "20s") { onSimulatePause(20L * 1_000) }
-                PauseChip(label = "5min") { onSimulatePause(5L * 60 * 1_000) }
-                PauseChip(label = "15min") { onSimulatePause(15L * 60 * 1_000) }
+                PauseChip(label = "20s") { onSimulatePause(20L * 1_000, effectiveScope) }
+                PauseChip(label = "5min") { onSimulatePause(5L * 60 * 1_000, effectiveScope) }
+                PauseChip(label = "15min") { onSimulatePause(15L * 60 * 1_000, effectiveScope) }
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "inactive:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Box {
+                    var menuOpen by remember { mutableStateOf(false) }
+                    Text(
+                        text = "${effectiveScope.label} ▾",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .border(BorderStroke(1.dp, panelAccent), RoundedCornerShape(6.dp))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { menuOpen = true }
+                            .padding(vertical = 2.dp, horizontal = 8.dp),
+                    )
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        scopes.forEach { scope ->
+                            DropdownMenuItem(
+                                text = { Text(scope.label, style = MaterialTheme.typography.labelMedium) },
+                                onClick = {
+                                    pauseScope = scope
+                                    menuOpen = false
+                                },
+                            )
+                        }
+                    }
+                }
             }
             // PRD §6: warn that any change made while time is diverged is debug-only and will be undone
             // on the next start, so the real saved data is never polluted by fast-forwarding.

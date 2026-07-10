@@ -21,7 +21,8 @@ import org.example.project.time.SimAppClock
 
 /**
  * Desktop half of the debug time-link (see [TimeLink]). Binds a loopback TCP server on [TIME_LINK_PORT],
- * streams `"<virtualNow> <speed>\n"` frames to each connected phone every [FRAME_INTERVAL_MILLIS], and keeps
+ * streams `"<virtualNow> <speed> <inactive01>\n"` frames to each connected phone every [FRAME_INTERVAL_MILLIS]
+ * (the trailing token is the "simulate pause + leap" forced-inactivity flag, `1`/`0`), and keeps
  * `adb reverse tcp:PORT tcp:PORT` set up so a plugged-in device's `localhost:PORT` reaches this server. Frames
  * are polled from [clock], so a `leap`/speed change is reflected within one interval and the phone re-anchors
  * on every frame. Failures are swallowed — it is a best-effort debug aid, never allowed to crash the app.
@@ -38,6 +39,14 @@ private class DesktopTimeLink(private val clock: SimAppClock) : TimeLink {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val server = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress("127.0.0.1", TIME_LINK_PORT)) }
+
+    // "simulate pause + leap" scope flag, polled by every per-client writer (set on the main thread, read on IO).
+    @Volatile
+    private var phoneForcedInactive = false
+
+    override fun setPhoneForcedInactive(inactive: Boolean) {
+        phoneForcedInactive = inactive
+    }
 
     init {
         scope.launch { acceptLoop() }
@@ -57,7 +66,7 @@ private class DesktopTimeLink(private val clock: SimAppClock) : TimeLink {
         try {
             val out = socket.getOutputStream().bufferedWriter()
             while (scope.isActive && !socket.isClosed) {
-                out.write("${clock.nowMillis()} ${clock.speed}\n")
+                out.write("${clock.nowMillis()} ${clock.speed} ${if (phoneForcedInactive) 1 else 0}\n")
                 out.flush() // throws once the phone closes/unplugs → drops out of the loop
                 delay(FRAME_INTERVAL_MILLIS)
             }
