@@ -6,6 +6,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -1897,12 +1899,14 @@ private fun WeekView(
     val zoomMutex = remember { Mutex() }
     // Apply a zoom [factor] keeping the time at [focal] (px from the viewport top) under that same pixel:
     // the content offset there is `scroll + focal`; after scaling it becomes `(scroll + focal) * f`, so the
-    // new scroll that puts it back under `focal` is `(scroll + focal) * f - focal`.
-    suspend fun applyZoom(factor: Float, focal: Float) = zoomMutex.withLock {
+    // new scroll that puts it back under `focal` is `(scroll + focal) * f - focal`. A pinch's centroid also
+    // travels between events (two-finger pan): [focalAfter] is where the anchored time must land, so the
+    // content follows the fingers; keyboard/wheel zooms leave it at [focal].
+    suspend fun applyZoom(factor: Float, focal: Float, focalAfter: Float = focal) = zoomMutex.withLock {
         val next = (zoom * factor).coerceIn(MIN_CALENDAR_ZOOM, MAX_CALENDAR_ZOOM)
-        if (next == zoom) return@withLock
         val f = next / zoom
-        val target = zoomAnchoredScroll(scrollState.value, focal, f)
+        val target = zoomAnchoredScroll(scrollState.value, focal, f) + (focal - focalAfter).roundToInt()
+        if (next == zoom && target == scrollState.value) return@withLock
         zoom = next
         // scrollTo clamps to the *current* scroll range, which only grows after the taller grid re-lays
         // out. So when zooming in (especially near the bottom, e.g. the evening) wait — bounded — for the
@@ -2014,6 +2018,21 @@ private fun WeekView(
                                     }
                                     event.changes.forEach { it.consume() }
                                 }
+                            }
+                            // PRD §8 pinch-to-zoom (touch — the only zoom input on Android): with two+
+                            // fingers down, zoom by the pinch ratio anchored at the fingers' centroid,
+                            // following the centroid's travel (two-finger pan). Consumed at Initial so the
+                            // grid's vertical scroll and the blocks' drag handles don't fight the pinch.
+                            if (event.type == PointerEventType.Move && event.changes.count { it.pressed } >= 2) {
+                                val pinch = event.calculateZoom()
+                                val oldFocal = event.calculateCentroid(useCurrent = false).y
+                                val newFocal = event.calculateCentroid(useCurrent = true).y
+                                if (oldFocal.isFinite() && newFocal.isFinite() &&
+                                    (pinch != 1f || newFocal != oldFocal)
+                                ) {
+                                    scope.launch { applyZoom(pinch, oldFocal, newFocal) }
+                                }
+                                event.changes.forEach { it.consume() }
                             }
                         }
                     }
