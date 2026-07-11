@@ -735,6 +735,33 @@ object SchedulerDomain {
     }
 
     /**
+     * PRD §15: the account-wide pauses for DISPLAY — the [derived] gaps plus the live tail of the pause this
+     * device observed locally but no derive has covered yet (derives only run at the sync moments). The tail
+     * starts at [inactiveSinceMillis] (the last session finalize — the walk-away instant) and grows with the
+     * now-line while the device stays inactive, so the "Inactivity" band renders live behind an advancing
+     * now-line (a real walk-away, or the debug pause-leap racing the clock) instead of popping in whole at
+     * the next derive. Once the user is back ([activeSinceMillis] non-null) the tail is capped at the
+     * reopened session's start — it then holds the just-ended pause until a derive re-covers it, so the band
+     * never flickers out between the return and the derive.
+     *
+     * Display-only and a local PRESUMPTION (this device cannot see a peer's activity between derives — the
+     * same bounded staleness the active-session push accepts, ARCHITECTURE.md §8): the next derive replaces
+     * it with the account-wide answer, shrinking it over any peer activity. It must never feed pose seeding
+     * or any persisted/synced state.
+     */
+    fun displayInactivityGaps(
+        derived: List<TaskTimeRange>,
+        inactiveSinceMillis: Long?,
+        activeSinceMillis: Long?,
+        nowMillis: Long,
+    ): List<TaskTimeRange> {
+        val tailStart = inactiveSinceMillis ?: return derived
+        val tailEnd = activeSinceMillis ?: nowMillis
+        if (tailStart >= tailEnd) return derived
+        return mergeOccupied(derived + TaskTimeRange(tailStart, tailEnd))
+    }
+
+    /**
      * PRD §15 device-sleep gaps: the epoch-millis instant from which the launch backfill should scan this
      * device's OS sleep/wake log. It resumes from the last "scanned through" [checkpointMillis] so an
      * already-examined stretch of the log isn't re-read on every launch; but it never starts earlier than the

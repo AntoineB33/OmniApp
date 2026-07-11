@@ -233,6 +233,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §15/§17: start of this device's open active session (null while inactive) — carves the "Sleep" band
         // to the now-line as the user keeps working through a scheduled sleep window (display-only, non-syncing).
         val activeSince by engine.activeSince.collectAsState()
+        // PRD §15: end of this device's last finalized session — the locally-observed start of a pause the
+        // derived gaps don't cover yet. Unioned in below so the "Inactivity" band grows live behind an
+        // advancing now-line (display-only, non-syncing; see SchedulerDomain.displayInactivityGaps).
+        val inactiveSince by engine.inactiveSince.collectAsState()
 
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
@@ -379,12 +383,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // evidence yet" (the startup transient before the first derive, or a store-less web install), NOT "the
         // account was active all week", so it must NOT carve every past night. Carving is conservative — only
         // known activity (the derived pauses' complement when present, plus this device's live session) gaps it.
+        // The gaps the calendar actually draws: the derived account-wide pauses plus the live tail of the
+        // pause THIS device is observing right now (from the last finalize to the now-line, capped at the
+        // reopened session once the user returns) — so the band grows behind an advancing now-line instead
+        // of appearing whole at the next derive. The tail also joins the complement below, so an ongoing
+        // pause is never mistaken for activity that would carve the "Sleep" band.
+        val displayInactivityGaps =
+            SchedulerDomain.displayInactivityGaps(inactivityGaps, inactiveSince, activeSince, nowMillis)
         val pastActivityWindow = TaskTimeRange(nowMillis - SchedulerDomain.SCHEDULE_HORIZON_MILLIS, nowMillis)
         val accountActiveRegions =
             if (inactivityGaps.isEmpty()) {
                 emptyList()
             } else {
-                SchedulerDomain.subtractRegions(listOf(pastActivityWindow), inactivityGaps)
+                SchedulerDomain.subtractRegions(listOf(pastActivityWindow), displayInactivityGaps)
             }
         val activeRegions =
             accountActiveRegions +
@@ -395,7 +406,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // ends) and the first session of a freshly-opened account, which would otherwise show as a tiny
         // "20-second pause right after sleep" (see [SchedulerDomain.MIN_INACTIVITY_BAND_MILLIS]).
         val inactivityBands =
-            SchedulerDomain.subtractRegions(inactivityGaps, displaySleepRegions)
+            SchedulerDomain.subtractRegions(displayInactivityGaps, displaySleepRegions)
                 .filter { it.endEpochMillis - it.startEpochMillis >= SchedulerDomain.MIN_INACTIVITY_BAND_MILLIS }
         // Diagnostics timeline (scripts/collect-diagnostics.bat): record the exact bands the calendar is
         // about to render, so an anomaly is reconstructable after the fact without describing the screen.

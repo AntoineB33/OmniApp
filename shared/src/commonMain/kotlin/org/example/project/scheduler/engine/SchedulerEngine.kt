@@ -258,6 +258,20 @@ class SchedulerEngine(
     /** Start of this device's open active session (null while inactive); the UI carves the "Sleep" band to now. */
     val activeSince: StateFlow<Long?> = _activeSince.asStateFlow()
 
+    // PRD §15: the end of this device's LAST FINALIZED session — the locally-observed start of a pause the
+    // derived gaps ([_inactivityGaps]) may not cover yet, because a derive only runs at the sync moments.
+    // The UI pairs it with the now-line (or, once the user is back, the reopened session's start) to render
+    // the "Inactivity" band growing live behind an advancing now-line — the mirror of [activeSince]'s live
+    // sleep retraction: display-only, non-syncing, moved only by a structural session event (a finalize),
+    // never per tick. Deliberately NOT cleared when a session reopens (the band would flicker out until the
+    // next derive re-covers the pause); instead the first derive that completes with a session open again
+    // retires it (see [refreshDerivedPausesNow]) — so a stale local presumption can never outlive the
+    // server's account-wide answer, which may legitimately exclude the window (a peer was active).
+    private val _inactiveSince = MutableStateFlow<Long?>(null)
+
+    /** End of this device's last finalized session — the live "Inactivity" tail's start (null = none pending). */
+    val inactiveSince: StateFlow<Long?> = _inactiveSince.asStateFlow()
+
     // PRD §15 server-derived pauses: this device's currently-open active session (null while inactive), tracked
     // in the LOCAL store only. Mutated only under [activeSessionMutex] because the beat loop, the debug
     // forced-inactivity flip ([setDebugForcedInactive]), and [freshenOpenSession] all advance it.
@@ -586,6 +600,8 @@ class SchedulerEngine(
             if ((suspended || !active) && open != null) {
                 finalizeSessionLocked(open)
                 currentSession = null
+                // The walk-away instant: the UI's live "Inactivity" tail grows from here (see [inactiveSince]).
+                _inactiveSince.value = open.endMillis
             }
             if (active) {
                 val cur = currentSession
@@ -769,6 +785,10 @@ class SchedulerEngine(
                 "inactivity: ${Diagnostics.formatRanges(pauses)}",
         )
         _inactivityGaps.value = pauses
+        // The freshly-derived pauses now cover (or, a peer having been active, legitimately exclude) any
+        // pause this device observed locally: retire the live "Inactivity" tail once a session is open
+        // again. While still inactive the tail stays, so the band keeps growing between derives.
+        activeSessionMutex.withLock { if (currentSession != null) _inactiveSince.value = null }
         val before = vm.state.value.sideTasks
         applySeededSideTasks(SchedulerDomain.seedSideTasksFromGaps(before, pauses))
     }
