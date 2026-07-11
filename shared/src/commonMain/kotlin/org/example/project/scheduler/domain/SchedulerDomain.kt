@@ -746,8 +746,11 @@ object SchedulerDomain {
      *
      * Display-only and a local PRESUMPTION (this device cannot see a peer's activity between derives — the
      * same bounded staleness the active-session push accepts, ARCHITECTURE.md §8): the next derive replaces
-     * it with the account-wide answer, shrinking it over any peer activity. It must never feed pose seeding
-     * or any persisted/synced state.
+     * it with the account-wide answer, shrinking it over any peer activity. It must never advance the
+     * **stored** [SideTask.lastRestMillis] or any persisted/synced state (the forward-only
+     * [advanceRestsForward] merge would make a wrong this-device-only advance permanent). The sanctioned
+     * derived use is the [sideTasksForPlacement] placement overlay, which folds the same live gap into
+     * side-task **placement** without touching the stored value.
      */
     fun displayInactivityGaps(
         derived: List<TaskTimeRange>,
@@ -1178,6 +1181,73 @@ object SchedulerDomain {
         }
 
     /**
+     * PRD §15: the LIVE rest evidence — the pause this device is observing right now (or the one it just
+     * finished, until a derive covers it). [gap] starts at the last session finalize (the walk-away
+     * instant) and, while the device stays inactive ([ongoing]), ends at the now-line, so it grows with
+     * `now` exactly like the display Inactivity tail ([displayInactivityGaps] draws the same range). Once
+     * the user is back the end freezes at the reopened session's start ([ongoing] = false) and the gap
+     * holds until a derive retires the tail. [ongoing] is what lets [sideTasksForPlacement] PRESUME an
+     * still-growing pause will run long enough to serve each side task (fluid placement), while a held
+     * gap only counts for what it actually contained.
+     */
+    data class LiveRest(val gap: TaskTimeRange, val ongoing: Boolean)
+
+    /**
+     * PRD §15: the device's pending local pause as [LiveRest] evidence — see [LiveRest]. Null when the
+     * device has no pending local pause (no walk-away instant, or the range is empty/inverted).
+     */
+    fun liveRestGap(inactiveSinceMillis: Long?, activeSinceMillis: Long?, nowMillis: Long): LiveRest? {
+        val start = inactiveSinceMillis ?: return null
+        val end = activeSinceMillis ?: nowMillis
+        return if (start < end) LiveRest(TaskTimeRange(start, end), ongoing = activeSinceMillis == null) else null
+    }
+
+    /**
+     * PRD §15: the side tasks as the schedule PLACEMENT must see them — with the live, still-underived rest
+     * evidence [liveRest] ([liveRestGap]) folded into every side task's anchor.
+     *
+     * An **ongoing** pause (the device is inactive right now) is PRESUMED to keep going until it has served
+     * each side task, so every anchor moves the moment the user walks away: the task's presumed rest end is
+     * `max(gapEnd, gapStart + duration)` — a *fixed* instant (`gapStart + duration`) while the pause is
+     * still younger than the task's duration, transitioning **continuously** into the *sliding* gap end
+     * (= the now-line) once the pause reaches it. This is what keeps the whole projected grid fluid under
+     * an accelerated leap: without the presumption, every occurrence downstream of a not-yet-served rest
+     * pose is re-anchored to that pose's frozen slot ([sideTaskPanels]' pause-re-anchors-shorter-pauses
+     * rule) and visibly waits for the leap's end to move. It also means the look-away's boundary can never
+     * be crossed mid-pause (the "20s break stayed still and fired during the simulated pause" anomaly).
+     *
+     * A **held** gap (the user is back; the tail awaits a derive) counts only for what it actually
+     * contained — the strict [seedSideTasksFromGaps] rule: length ≥ duration, anchored at the gap's end,
+     * which is exactly what the derive will bank, so placement doesn't snap when it lands. A pause aborted
+     * before reaching a pose's duration therefore RETRACTS that pose's presumption at the reopen instant —
+     * the pose is still owed, and its occurrence returns to its stored slot.
+     *
+     * Placement-only overlay: the stored [SideTask.lastRestMillis] is NOT advanced (the tail — and a
+     * fortiori the ongoing-pause presumption — is a local guess a peer's activity or an early return can
+     * falsify; [advanceRestsForward] could never take a wrong advance back). It is recomputed on every
+     * fill from `now` + the engine's session state, evaporating into the derive's account-wide answer, so
+     * it persists and syncs nothing (reconstructibility rule).
+     */
+    fun sideTasksForPlacement(sideTasks: List<SideTask>, liveRest: LiveRest?): List<SideTask> {
+        if (liveRest == null) return sideTasks
+        val gap = liveRest.gap
+        val restLength = gap.endEpochMillis - gap.startEpochMillis
+        return sideTasks.map { side ->
+            if (side.durationMillis <= 0) return@map side
+            val restEnd =
+                if (liveRest.ongoing) {
+                    // Presumed: the still-growing pause serves this task at gapStart + duration, then keeps
+                    // re-satisfying it (sliding gap end) for as long as the user stays away.
+                    maxOf(gap.endEpochMillis, gap.startEpochMillis + side.durationMillis)
+                } else {
+                    // Held: only a pause that actually lasted the task's duration counts.
+                    if (restLength >= side.durationMillis) gap.endEpochMillis else return@map side
+                }
+            if (restEnd > side.lastRestMillis) side.copy(lastRestMillis = restEnd) else side
+        }
+    }
+
+    /**
      * PRD §15 server-derived pauses: the account-wide pauses implied by every device's **active** intervals.
      * A pause is a window when NO device was active (app running + signed in + screen unlocked), so it is the
      * complement of the *union* of all devices' active intervals — computed here over `[sinceMillis, untilMillis]`.
@@ -1536,6 +1606,10 @@ object SchedulerDomain {
         // Sleep is local wall-clock, so the otherwise tz-pure fill needs a zone to place the nightly
         // sleep windows. Defaults to the system zone for production; tests pass empty/explicit sleep.
         timeZone: TimeZone = TimeZone.currentSystemDefault(),
+        // The device's live ongoing/held pause, if any ([liveRestGap]). Folded into side-task placement
+        // via [sideTasksForPlacement] so the side-task grid moves with a pause the derives haven't
+        // banked yet — placement-only; the stored lastRestMillis is untouched.
+        liveRest: LiveRest? = null,
     ): List<TaskPanel> {
         val horizon = nowMillis + SCHEDULE_HORIZON_MILLIS
         // Cut every non-pinned panel in [now, horizon]; keep fixed (pinned) panels, reminder tags (PRD
@@ -1555,7 +1629,7 @@ object SchedulerDomain {
         // Each one places its next occurrence at its due time (or the now-line when overdue), with the
         // 5-min↔15-min merge applied. They project straight through the sleep windows too, so the eye-rest /
         // pose cues still fire (and render over the "Sleep" band) for a user working through the night.
-        val sidePanels = sideTaskPanels(state.sideTasks, nowMillis)
+        val sidePanels = sideTaskPanels(sideTasksForPlacement(state.sideTasks, liveRest), nowMillis)
         if (leaves.isEmpty()) return (kept + sidePanels + sleepPanels).sortedBy { it.startEpochMillis }
 
         val priorities = absoluteTaskPriorities(state)

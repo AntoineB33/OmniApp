@@ -32,6 +32,18 @@ object SchedulerReducer {
      */
     var debugTainting: () -> Boolean = { false }
 
+    /**
+     * The device's live ongoing/held pause ([SchedulerDomain.liveRestGap]), folded into side-task
+     * placement by every [SchedulerDomain.fillSchedule] call site via
+     * [SchedulerDomain.sideTasksForPlacement] — so the projected side-task grid moves with a pause the
+     * derives haven't banked yet instead of letting the now-line cross a stale slot (spurious cue) or
+     * freezing every occurrence downstream of a not-yet-served pose. The engine injects a live provider
+     * over its inactiveSince/activeSince flows; defaults to `{ null }` (production shells without an
+     * engine / tests) = no overlay. Placement-only: the stored
+     * [org.example.project.scheduler.model.SideTask.lastRestMillis] is never advanced here.
+     */
+    var liveRestGap: () -> SchedulerDomain.LiveRest? = { null }
+
     fun reduce(state: SchedulerState, intent: SchedulerIntent): SchedulerState {
         return when (intent) {
             is SchedulerIntent.ClickCell -> reduceClick(state, intent)
@@ -1113,7 +1125,7 @@ object SchedulerReducer {
     private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
         val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis))
         if (!advanced.automaticSchedule) return advanced
-        val filled = SchedulerDomain.fillSchedule(advanced, nowMillis)
+        val filled = SchedulerDomain.fillSchedule(advanced, nowMillis, liveRest = liveRestGap())
         if (filled == advanced.panels) return advanced
         return advanced.copy(panels = filled)
     }
@@ -1134,7 +1146,7 @@ object SchedulerReducer {
         val updated = state.copy(sleep = anchored)
         // Refill so the nightly sleep window takes effect right away (when auto-scheduling is on).
         if (!updated.automaticSchedule) return updated
-        val filled = SchedulerDomain.fillSchedule(updated, clock.nowMillis())
+        val filled = SchedulerDomain.fillSchedule(updated, clock.nowMillis(), liveRest = liveRestGap())
         return updated.copy(panels = filled)
     }
 

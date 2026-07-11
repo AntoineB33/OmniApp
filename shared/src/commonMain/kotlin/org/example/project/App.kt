@@ -350,8 +350,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             )
         val displaySleepRegions =
             displaySleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        // The same live-pause placement overlay the reducer refill applies (SchedulerReducer.liveRestGap):
+        // the display projection folds this device's ongoing/held pause into the side-task grid, so the
+        // rendered markers match the engine's placement and move with the pause (an ongoing pause is
+        // presumed to serve each task — the whole grid re-places at walk-away and stays fluid under an
+        // accelerated leap) instead of letting the now-line cross a stale slot or freezing everything
+        // downstream of a not-yet-served pose. Placement-only — stored side-task state is untouched.
         val displaySidePanels =
-            SchedulerDomain.sideTaskPanels(schedulerState.sideTasks, nowMillis, sideTaskHorizonMillis)
+            SchedulerDomain.sideTaskPanels(
+                SchedulerDomain.sideTasksForPlacement(
+                    schedulerState.sideTasks,
+                    SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
+                ),
+                nowMillis,
+                sideTaskHorizonMillis,
+            )
 
         // PRD §15 (20s look-away): show the manual "Look away now" button only when the most recent past
         // side task before the now-line is a 20s look-away (a non-rest-break side task), not a rest pose.

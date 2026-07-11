@@ -50,6 +50,7 @@ import org.example.project.scheduler.sync.PauseCuePushScheduler
 import org.example.project.scheduler.sync.PresenceGateway
 import org.example.project.scheduler.sync.SleepGapGateway
 import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
@@ -324,6 +325,16 @@ class SchedulerEngine(
         if (started) return
         started = true
         Diagnostics.log("engine started (device=$activeSessionDeviceId)")
+        // PRD §15: every reducer refill folds this device's live ongoing/held pause into side-task
+        // PLACEMENT (SchedulerDomain.sideTasksForPlacement), so side-task panels slide with a pause the
+        // derives haven't banked yet — the now-line can no longer cross a stale look-away slot and fire a
+        // spurious cue mid-pause, and a rest pose re-places itself the moment the pause has lasted its
+        // duration (fluid under an accelerated leap; no post-leap snap when the derive lands). Placement-
+        // only: the stored lastRestMillis still advances only via the derives' forward-only seeding
+        // ([applySeededSideTasks]).
+        SchedulerReducer.liveRestGap = {
+            SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, clock.nowMillis())
+        }
         launchAdvanceTick()
         launchSideTaskSeeding()
         launchTreeChangeReschedule()
@@ -437,9 +448,18 @@ class SchedulerEngine(
     // so an over-eager call is cheap; the step guard just keeps the reducer from churning under acceleration.
     private fun dispatchScheduleAdvance(now: Long) {
         val current = vm.state.value
+        // A refill (not just an advance) is needed when a restBreak pose is overdue (it re-pins to the
+        // now-line), or when the live pause overlay would move a side task's placement — an ongoing gap
+        // keeps re-presuming/re-satisfying, so the projected grid moves ahead of the racing now-line
+        // instead of being crossed at (or frozen behind) a stale slot. RefreshSchedule is a non-syncing
+        // intent, so this refill makes zero server writes (sync-gating rule).
+        val liveRest = SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, now)
         val sideTaskDue =
             current.automaticSchedule &&
-                current.sideTasks.any { it.restBreak && SchedulerDomain.isSideTaskOverdue(it, now) }
+                (
+                    current.sideTasks.any { it.restBreak && SchedulerDomain.isSideTaskOverdue(it, now) } ||
+                        SchedulerDomain.sideTasksForPlacement(current.sideTasks, liveRest) != current.sideTasks
+                    )
         if (sideTaskDue) {
             vm.dispatch(SchedulerIntent.RefreshSchedule(now))
         } else {
@@ -940,29 +960,48 @@ class SchedulerEngine(
                         .forEach {
                             announcedStarts = announcedStarts + it.startEpochMillis
                             val latenessMillis = lookAwaySweep.realLatenessMillis(it.startEpochMillis)
-                            if (latenessMillis <= LOOK_AWAY_START_FRESH_MILLIS) {
-                                pendingEnds = pendingEnds + it.endEpochMillis
-                                notifyUser("Side task", it.title)
-                                if (voice) speakCue(VoiceCue.LookAway)
-                            } else {
+                            if (latenessMillis > LOOK_AWAY_START_FRESH_MILLIS) {
                                 Diagnostics.log(
                                     "look-away start ${Diagnostics.formatInstant(it.startEpochMillis)} swallowed: " +
                                         "crossed ~$latenessMillis ms (real) ago — process was suspended or engine " +
                                         "just started (budget $LOOK_AWAY_START_FRESH_MILLIS ms, speed ${speed}x)",
                                 )
+                            } else if (!effectiveScreenActive()) {
+                                // Eligibility rule at the boundary instant (like the pose cue's screen
+                                // gate, not a staleness heuristic): the user isn't at the screen, so
+                                // they're already resting — the break is being served by the pause
+                                // itself. Suppress the start cue and don't arm the resume cue. The
+                                // placement overlay normally moves the panel out of a pause at the
+                                // walk-away instant; this covers the race before the next refill picks
+                                // the pause up.
+                                Diagnostics.log(
+                                    "look-away start ${Diagnostics.formatInstant(it.startEpochMillis)} suppressed: " +
+                                        "screen inactive at crossing (user already resting; sim now=" +
+                                        "${Diagnostics.formatInstant(simNow)})",
+                                )
+                            } else {
+                                pendingEnds = pendingEnds + it.endEpochMillis
+                                notifyUser("Side task", it.title)
+                                if (voice) speakCue(VoiceCue.LookAway)
                             }
                         }
 
                     pendingEnds.filter { it <= simNow }.sorted().forEach { end ->
                         pendingEnds = pendingEnds - end
                         val latenessMillis = lookAwaySweep.realLatenessMillis(end)
-                        if (latenessMillis <= LOOK_AWAY_START_FRESH_MILLIS) {
-                            if (voice) speakCue(VoiceCue.ResumeWork)
-                        } else {
+                        if (latenessMillis > LOOK_AWAY_START_FRESH_MILLIS) {
                             Diagnostics.log(
                                 "look-away end ${Diagnostics.formatInstant(end)} resume cue swallowed: " +
                                     "crossed ~$latenessMillis ms (real) ago (budget $LOOK_AWAY_START_FRESH_MILLIS ms)",
                             )
+                        } else if (!effectiveScreenActive()) {
+                            // Same eligibility rule: no one is at the screen to resume work.
+                            Diagnostics.log(
+                                "look-away end ${Diagnostics.formatInstant(end)} resume cue suppressed: " +
+                                    "screen inactive at crossing",
+                            )
+                        } else if (voice) {
+                            speakCue(VoiceCue.ResumeWork)
                         }
                     }
 
