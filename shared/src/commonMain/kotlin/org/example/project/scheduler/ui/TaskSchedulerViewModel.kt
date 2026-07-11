@@ -65,8 +65,9 @@ class TaskSchedulerViewModel(
     val pauseCue: PauseCueGateway? get() = syncEngine
 
     /**
-     * The unified sync moments (every [SchedulerSyncEngine.reconcile]: startup, login, manual sync, debounced
-     * change) for the engine to hang its side-channel push/pull on; null when sync is disabled.
+     * The unified sync moments (every [SchedulerSyncEngine.reconcile]: startup, login, sign-out's farewell
+     * reconcile, manual sync, debounced change) for the engine to hang its side-channel push/pull on; null
+     * when sync is disabled.
      */
     val syncMoments: SharedFlow<Unit>? get() = syncEngine?.syncMoments
 
@@ -241,8 +242,27 @@ class TaskSchedulerViewModel(
     fun signUp(email: String, password: String) =
         saveScope.launch { runCatching { syncEngine?.signUp(email, password); syncEngine?.reconcile() } }
 
-    /** Forgets the local session (does not delete remote data). */
-    fun signOut() = syncEngine?.signOut()
+    /**
+     * Signs out after a **farewell sync** (ARCHITECTURE.md §8, the login/logout sync moment): any change
+     * still inside a debounce window is flushed and flagged, then one last [SchedulerSyncEngine.reconcile]
+     * pushes the pending local changes (or pulls a newer remote) before the session is dropped — so a device
+     * signed out right after an edit doesn't strand that edit locally until some later login. Best-effort:
+     * an offline/failed reconcile still signs out (the persisted dirty flag sends the change on the next
+     * login). Does not delete remote data; the remote force-logout path inside reconcile still pushes nothing.
+     */
+    fun signOut() {
+        val engine = syncEngine ?: return
+        saveScope.launch {
+            // The farewell reconcile carries any pending debounced push; nothing is left for the timer.
+            serverSync?.cancel()
+            runCatching {
+                flush()
+                engine.reconcile()
+            }
+            // reconcile() may already have signed us out (remote force-logout); don't "sign out" twice.
+            if (engine.isSignedIn) engine.signOut()
+        }
+    }
 
     /** Manual sync trigger (e.g. a "Sync now" button / window-focus). */
     fun syncNow() = saveScope.launch { syncEngine?.reconcile() }

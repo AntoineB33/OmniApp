@@ -16,7 +16,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
 import org.example.project.time.SimAppClock
 
 /**
@@ -44,8 +46,28 @@ private class DesktopTimeLink(private val clock: SimAppClock) : TimeLink {
     @Volatile
     private var phoneForcedInactive = false
 
+    // Leap-end acks: each phone writes one "pushed" line back over the link once its leap-end session push
+    // completed (see TimeLinkClient); [awaitPhoneLeapAcks] waits for the count captured at the flag's
+    // true→false flip, so the desktop's post-leap derive runs only after the phones' finalized sessions
+    // reached the server. A monotonic counter (not a reset-per-leap latch) so an ack that lands between the
+    // flip and the await is never lost.
+    private val ackCount = MutableStateFlow(0)
+    @Volatile
+    private var ackTarget = 0
+
     override fun setPhoneForcedInactive(inactive: Boolean) {
+        if (phoneForcedInactive && !inactive) {
+            // Leap just ended: expect one ack per phone currently on the link (they all carried the flag).
+            ackTarget = ackCount.value + linkedCount.value
+        }
         phoneForcedInactive = inactive
+    }
+
+    override suspend fun awaitPhoneLeapAcks(timeoutMillis: Long) {
+        val target = ackTarget
+        withTimeoutOrNull(timeoutMillis) { ackCount.first { it >= target } }
+        // A phone that never acked (dropped mid-push) must not make the NEXT leap's await inherit its ghost.
+        ackTarget = ackCount.value
     }
 
     init {
@@ -63,6 +85,17 @@ private class DesktopTimeLink(private val clock: SimAppClock) : TimeLink {
     // One writer per connected phone: stream the live virtual instant + speed until the socket drops.
     private suspend fun serveClient(socket: Socket) {
         _linkedCount.update { it + 1 }
+        // Read side of the otherwise one-way stream: the phone writes one "pushed" line after its leap-end
+        // session push. Blocking readLine on the IO scope; the socket close in the finally unblocks it.
+        val ackReader = scope.launch {
+            runCatching {
+                val reader = socket.getInputStream().bufferedReader()
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    if (line.trim() == "pushed") ackCount.update { it + 1 }
+                }
+            }
+        }
         try {
             val out = socket.getOutputStream().bufferedWriter()
             while (scope.isActive && !socket.isClosed) {
@@ -75,6 +108,7 @@ private class DesktopTimeLink(private val clock: SimAppClock) : TimeLink {
         } finally {
             _linkedCount.update { (it - 1).coerceAtLeast(0) }
             runCatching { socket.close() }
+            ackReader.cancel()
         }
     }
 

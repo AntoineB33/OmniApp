@@ -675,45 +675,71 @@ class SchedulerEngine(
      */
     fun refreshDerivedPauses() = refreshDerivedPauses(remote = true)
 
+    /**
+     * Debug "simulate pause + leap" on a linked phone: the same explicit sync moment as
+     * [refreshDerivedPauses], but awaitable — the time-link client acks the desktop only once this device's
+     * finalized sessions have actually reached the server, so the desktop's own post-leap derive can't read
+     * this phone's stale open row as activity covering the just-simulated pause. Still runs on the engine's
+     * own scope (the body touches the main-thread ViewModel); the caller merely waits for it.
+     */
+    suspend fun refreshDerivedPausesAndWait() {
+        scope.launch { refreshDerivedPausesNow(remote = true) }.join()
+    }
+
+    /**
+     * Debug "simulate pause + leap" on the desktop: publish this device's sessions (the leap-start finalize +
+     * the leap-end reopen) and wait for the upload, WITHOUT deriving. Runs between clearing this device's
+     * forced inactivity and clearing the phones' (the time-link flag), so by the time a linked phone sees the
+     * leap end and runs its own leap-end derive, this device's stale open row is already replaced on the
+     * server — otherwise the phone's pull presumes this device active through the now-line and the phone
+     * never derives (or seeds its rest poses from) the just-simulated pause, the mirror image of the
+     * desktop-side ordering [refreshDerivedPausesAndWait] exists for.
+     */
+    suspend fun pushOwnActiveSessionsAndWait() {
+        scope.launch { pushOwnActiveSessions() }.join()
+    }
+
     private fun refreshDerivedPauses(remote: Boolean) {
-        scope.launch {
-            val gateway = if (remote) activeSessions else null
-            if (remote) pushOwnActiveSessions()
-            // Signed out, pushOwnActiveSessions returns without freshening; freshen here so the local
-            // fallback's open session reaches `now` and its trailing gap is genuinely empty while active.
-            freshenOpenSession()
-            val until = clock.nowMillis()
-            val since = until - PAUSE_DERIVE_HORIZON_MILLIS
-            val fromServer =
-                if (gateway?.signedIn == true) {
-                    withContext(Dispatchers.Default) { runCatching { gateway.fetchDerivedPauses(since, until) }.getOrNull() }
-                } else {
-                    null
-                }
-            val serverPauses = fromServer ?: withContext(Dispatchers.Default) { localDerivedPauses(since, until) }
-            val ownActive =
-                withContext(Dispatchers.Default) {
-                    activeSessionStore?.loadActiveSessions()
-                        ?.filter { it.deviceId != REMOTE_ACTIVITY_DEVICE_ID }
-                        ?.map { TaskTimeRange(it.startMillis, it.endMillis) }
-                        ?: emptyList()
-                }
-            val pauses = SchedulerDomain.subtractRegions(serverPauses, ownActive)
-            val source = when {
-                fromServer != null -> "server"
-                gateway?.signedIn == true -> "local fallback, RPC failed"
-                remote -> "local, signed out"
-                else -> "local, startup"
+        scope.launch { refreshDerivedPausesNow(remote) }
+    }
+
+    private suspend fun refreshDerivedPausesNow(remote: Boolean) {
+        val gateway = if (remote) activeSessions else null
+        if (remote) pushOwnActiveSessions()
+        // Signed out, pushOwnActiveSessions returns without freshening; freshen here so the local
+        // fallback's open session reaches `now` and its trailing gap is genuinely empty while active.
+        freshenOpenSession()
+        val until = clock.nowMillis()
+        val since = until - PAUSE_DERIVE_HORIZON_MILLIS
+        val fromServer =
+            if (gateway?.signedIn == true) {
+                withContext(Dispatchers.Default) { runCatching { gateway.fetchDerivedPauses(since, until) }.getOrNull() }
+            } else {
+                null
             }
-            Diagnostics.log(
-                "pauses refreshed [$source] window=${Diagnostics.formatInstant(since)} → " +
-                    "${Diagnostics.formatInstant(until)}, ownActive=${ownActive.size} subtracted; " +
-                    "inactivity: ${Diagnostics.formatRanges(pauses)}",
-            )
-            _inactivityGaps.value = pauses
-            val before = vm.state.value.sideTasks
-            applySeededSideTasks(SchedulerDomain.seedSideTasksFromGaps(before, pauses))
+        val serverPauses = fromServer ?: withContext(Dispatchers.Default) { localDerivedPauses(since, until) }
+        val ownActive =
+            withContext(Dispatchers.Default) {
+                activeSessionStore?.loadActiveSessions()
+                    ?.filter { it.deviceId != REMOTE_ACTIVITY_DEVICE_ID }
+                    ?.map { TaskTimeRange(it.startMillis, it.endMillis) }
+                    ?: emptyList()
+            }
+        val pauses = SchedulerDomain.subtractRegions(serverPauses, ownActive)
+        val source = when {
+            fromServer != null -> "server"
+            gateway?.signedIn == true -> "local fallback, RPC failed"
+            remote -> "local, signed out"
+            else -> "local, startup"
         }
+        Diagnostics.log(
+            "pauses refreshed [$source] window=${Diagnostics.formatInstant(since)} → " +
+                "${Diagnostics.formatInstant(until)}, ownActive=${ownActive.size} subtracted; " +
+                "inactivity: ${Diagnostics.formatRanges(pauses)}",
+        )
+        _inactivityGaps.value = pauses
+        val before = vm.state.value.sideTasks
+        applySeededSideTasks(SchedulerDomain.seedSideTasksFromGaps(before, pauses))
     }
 
     // Startup heal for the retired adoption scheme: delete the [REMOTE_ACTIVITY_DEVICE_ID] rows an older

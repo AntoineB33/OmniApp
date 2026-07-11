@@ -22,17 +22,31 @@ import org.example.project.time.SimAppClock
  * `SchedulerEngine.setDebugForcedInactive`), so a leap that includes the phone makes it live the pause too.
  * Reconnects on drop.
  *
+ * The flag's `1→0` transition is the leap ending, and counts as an explicit sync moment on this phone too:
+ * [onLeapEnd] runs (pushing the session the leap-start finalize wrote — otherwise this phone's stale OPEN
+ * row on the server is presumed active through the now-line and hides the just-simulated pause from the
+ * desktop's post-leap derive), then one `"pushed"` ack line goes back over the socket; the desktop's leap
+ * job waits for the acks before deriving (`TimeLink.awaitPhoneLeapAcks`). Running it inline stalls frame
+ * adoption for the push's duration, which is fine — the leap's acceleration is already over.
+ *
  * Started only from a **debuggable** build ([SchedulerHolder]); a no-op transport when no desktop is attached
  * (the connect just keeps failing, the clock stays at real time). Reads on IO, applies on the Main thread
  * because [SimAppClock] is main-thread-only.
  */
 object TimeLinkClient {
-    fun start(scope: CoroutineScope, clock: SimAppClock, onForcedInactive: (Boolean) -> Unit = {}) {
+    fun start(
+        scope: CoroutineScope,
+        clock: SimAppClock,
+        onForcedInactive: (Boolean) -> Unit = {},
+        onLeapEnd: suspend () -> Unit = {},
+    ) {
         scope.launch(Dispatchers.IO) {
             while (isActive) {
                 try {
                     Socket("127.0.0.1", TIME_LINK_PORT).use { socket ->
                         val reader = socket.getInputStream().bufferedReader()
+                        val writer = socket.getOutputStream().bufferedWriter()
+                        var lastInactive = false
                         while (isActive) {
                             val line = reader.readLine() ?: break
                             val parts = line.trim().split(" ")
@@ -46,6 +60,15 @@ object TimeLinkClient {
                                     clock.adopt(virtualNow, speed)
                                     onForcedInactive(forcedInactive)
                                 }
+                                if (lastInactive && !forcedInactive) {
+                                    // Leap end: push this phone's finalized sessions, then ack the desktop.
+                                    runCatching { onLeapEnd() }
+                                    runCatching {
+                                        writer.write("pushed\n")
+                                        writer.flush()
+                                    }
+                                }
+                                lastInactive = forcedInactive
                             }
                         }
                     }

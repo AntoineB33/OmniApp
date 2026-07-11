@@ -40,4 +40,10 @@ class ServerPushDebounce(
                 push()
             }
     }
+
+    /** Drops any pending push (e.g. sign-out's farewell reconcile already carried the change). */
+    fun cancel() {
+        job?.cancel()
+        job = null
+    }
 }

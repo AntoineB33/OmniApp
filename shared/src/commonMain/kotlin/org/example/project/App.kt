@@ -102,6 +102,13 @@ private const val SIM_PAUSE_LEAP_REAL_MILLIS: Double = 1_000.0
 // overshoot past the requested duration stays a fraction of a second even at the 15-min leap's 900× speed.
 private const val SIM_PAUSE_LEAP_POLL_MILLIS: Long = 20
 
+// Real ms the leap waits after ending for each linked phone to ack its leap-end session push before the
+// desktop derives the pauses: the server presumes a fresh OPEN session active through the now-line, so
+// deriving while a phone's stale open row is still up there would read the whole leap window as activity and
+// hide the just-simulated pause. Bounded so a wedged phone can't hang the leap; on timeout the derive
+// proceeds best-effort and the next sync moment heals the bands.
+private const val SIM_PAUSE_LEAP_ACK_TIMEOUT_MILLIS: Long = 5_000
+
 @Composable
 @Preview
 fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedulerHost? = null) {
@@ -798,7 +805,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                         // Speed back first, so the session doesn't reopen while time still races.
                                         simClock.setSpeed(prevSpeed)
                                         engine.setDebugForcedInactive(false)
+                                        // Publish this desktop's sessions (leap-start finalize + the reopen
+                                        // just above) BEFORE the phones see the leap end: the phone's own
+                                        // leap-end derive would otherwise read this desktop's stale OPEN
+                                        // server row as activity covering the whole leap and never seed the
+                                        // pause — the mirror image of the desktop-side wait below.
+                                        engine.pushOwnActiveSessionsAndWait()
                                         timeLink?.setPhoneForcedInactive(false)
+                                        // Wait for each linked phone to push the session it finalized at leap
+                                        // start (it acks over the link once the push landed): deriving before
+                                        // that would read the phone's stale OPEN server row as activity
+                                        // covering the whole leap and hide the just-simulated pause — the
+                                        // "now-line drags the scheduled break" anomaly. No-op with no phone.
+                                        timeLink?.awaitPhoneLeapAcks(SIM_PAUSE_LEAP_ACK_TIMEOUT_MILLIS)
                                         // A debug control counts as an explicit sync moment: push the finalized
                                         // sessions and re-derive the "Inactivity" bands / reseed the rest poses
                                         // now instead of waiting for the next reconcile.

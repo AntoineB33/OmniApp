@@ -25,6 +25,18 @@ interface TimeLink {
      */
     fun setPhoneForcedInactive(inactive: Boolean)
 
+    /**
+     * Debug "simulate pause + leap" ordering: suspends until every phone that lived the just-ended leap has
+     * acked its leap-end session push (the phone's `TimeLinkClient` pushes its finalized sessions, then writes
+     * one ack line back over the link), or [timeoutMillis] elapses. The desktop's own post-leap derive must
+     * run AFTER those pushes: the server presumes a fresh OPEN session active through the now-line, so
+     * deriving while the phone's stale open row is still on the server reads the whole leap window as
+     * activity and hides the just-simulated pause (the "now-line drags the scheduled break" anomaly).
+     * Returns immediately when no phone was in the leap's scope. Default no-op — only the desktop host
+     * implements it.
+     */
+    suspend fun awaitPhoneLeapAcks(timeoutMillis: Long) {}
+
     /** Stop the server + adb reconcile (called when the composition holding it is torn down). */
     fun close()
 }

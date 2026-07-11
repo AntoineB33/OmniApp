@@ -390,7 +390,14 @@ time-sim) runs a loopback TCP server on port **47615** and keeps `adb reverse tc
 debuggable Android app dials `127.0.0.1:47615` and re-anchors its `SimAppClock` (`SimAppClock.adopt`) from each
 `"<virtualNow> <speed> <inactive01>"` frame (the trailing token is the "simulate pause + leap" forced-inactivity
 flag — while `1` the phone treats its screen as inactive, so a leap whose "inactive:" scope includes the phone
-makes it live the pause too). The desktop **Time** panel shows the link status: **● Phone link: connected (N)**
+makes it live the pause too). The flag's `1→0` transition (leap end) is an explicit sync moment **on the phone
+too**, and the leap end is sequenced so neither side derives against the other's stale *open* server row (which
+`derive_pauses` presumes active through the now-line, hiding the just-simulated pause — no Inactivity band, and
+the un-rested 5-min pose stays pinned to the now-line, visibly "dragged" by it): the desktop first **pushes its
+own sessions** (`SchedulerEngine.pushOwnActiveSessionsAndWait`), *then* clears the flag; the phone, on the `0`
+frame, pushes + derives + seeds (`refreshDerivedPausesAndWait`) and writes one `"pushed"` ack line back over the
+socket; the desktop waits for the acks (`TimeLink.awaitPhoneLeapAcks`, 5 s bound) before its own post-leap
+derive. The desktop **Time** panel shows the link status: **● Phone link: connected (N)**
 or an amber **⚠ Phone link: not connected — acceleration is desktop-only** (warn-only; the controls stay usable
 so single-device desktop sim still works). Transport is adb-only and debuggable-only — nothing runs in a release
 build; there is still never a WebSocket to the server.

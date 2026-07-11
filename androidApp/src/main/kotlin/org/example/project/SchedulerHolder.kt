@@ -78,7 +78,15 @@ object SchedulerHolder {
             )
         engine.start()
         if (clock is SimAppClock) {
-            TimeLinkClient.start(scope, clock) { inactive -> engine.setDebugForcedInactive(inactive) }
+            TimeLinkClient.start(
+                scope,
+                clock,
+                onForcedInactive = { inactive -> engine.setDebugForcedInactive(inactive) },
+                // Leap end is an explicit sync moment on this phone too: push the session the leap-start
+                // finalize wrote (awaited, so the ack the client sends back truly means "on the server"),
+                // letting the desktop's post-leap derive see the pause instead of this phone's stale open row.
+                onLeapEnd = { engine.refreshDerivedPausesAndWait() },
+            )
         }
         registerFcmToken(vm)
         return AppSchedulerHost(vm, engine).also { host = it }

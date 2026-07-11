@@ -127,7 +127,12 @@ class SchedulerSyncEngine(
             }
         }
 
-    /** Signs out: drops the cached session locally. Does not delete the remote snapshot. */
+    /**
+     * Signs out: drops the cached session locally. Does not delete the remote snapshot. This is only the
+     * local drop — the user-initiated sign-out's farewell pull/push happens in the caller
+     * ([org.example.project.scheduler.ui.TaskSchedulerViewModel.signOut] reconciles first), so the remote
+     * force-logout path in [runReconcile] can keep using this to sign out while pushing nothing.
+     */
     fun signOut() {
         Diagnostics.log("signed out")
         session = null
