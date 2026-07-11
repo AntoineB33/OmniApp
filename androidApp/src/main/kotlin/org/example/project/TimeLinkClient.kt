@@ -2,6 +2,7 @@ package org.example.project
 
 import java.io.IOException
 import java.net.Socket
+import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -10,7 +11,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import org.example.project.scheduler.debug.TIME_LINK_PORT
+import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.time.SimAppClock
+
+// Diagnostics: a frame that re-anchors the driven clock by at least this much sim time is a discontinuity
+// worth a timeline line — at 300× a 20-s break is only ~67 ms of real time, so one late-applied frame can
+// leap the engine clean over it (the cue sweeps then swallow the break as stale). Steady-state frame jitter
+// stays well below this; rate-limited so a busy main thread can't flood the log.
+private const val JUMP_LOG_THRESHOLD_MILLIS = 10_000L
+private const val JUMP_LOG_MIN_INTERVAL_MILLIS = 2_000L
 
 /**
  * Phone half of the debug time-link (see `scheduler/debug/TimeLink` + docs/PAUSE_CUE_DELIVERY.md "Testing C").
@@ -42,11 +51,16 @@ object TimeLinkClient {
     ) {
         scope.launch(Dispatchers.IO) {
             while (isActive) {
+                var wasConnected = false
                 try {
                     Socket("127.0.0.1", TIME_LINK_PORT).use { socket ->
+                        wasConnected = true
+                        Diagnostics.log("time-link connected — desktop clock drives this device")
                         val reader = socket.getInputStream().bufferedReader()
                         val writer = socket.getOutputStream().bufferedWriter()
                         var lastInactive = false
+                        var lastSpeed: Double? = null
+                        var lastJumpLogRealMillis = 0L
                         while (isActive) {
                             val line = reader.readLine() ?: break
                             val parts = line.trim().split(" ")
@@ -54,15 +68,36 @@ object TimeLinkClient {
                             val speed = parts.getOrNull(1)?.toDoubleOrNull()
                             val forcedInactive = parts.getOrNull(2) == "1"
                             if (virtualNow != null && speed != null) {
-                                withContext(Dispatchers.Main) {
+                                val jumpMillis = withContext(Dispatchers.Main) {
                                     // Adopt the clock FIRST so the inactivity flip (which finalizes/reopens the
                                     // active session at `clock.nowMillis()`) reads the post-frame virtual time.
+                                    val before = clock.nowMillis()
                                     clock.adopt(virtualNow, speed)
                                     onForcedInactive(forcedInactive)
+                                    virtualNow - before
+                                }
+                                if (speed != lastSpeed) {
+                                    Diagnostics.log(
+                                        "time-link speed ${lastSpeed ?: "?"}x → ${speed}x " +
+                                            "(frame re-anchored clock by $jumpMillis ms sim)",
+                                    )
+                                    lastSpeed = speed
+                                } else if (abs(jumpMillis) >= JUMP_LOG_THRESHOLD_MILLIS &&
+                                    System.currentTimeMillis() - lastJumpLogRealMillis >= JUMP_LOG_MIN_INTERVAL_MILLIS
+                                ) {
+                                    lastJumpLogRealMillis = System.currentTimeMillis()
+                                    Diagnostics.log(
+                                        "time-link frame re-anchored clock by $jumpMillis ms sim " +
+                                            "(speed ${speed}x — a jump this size can leap the engine over a short break)",
+                                    )
+                                }
+                                if (forcedInactive != lastInactive) {
+                                    Diagnostics.log("time-link forced-inactive → $forcedInactive")
                                 }
                                 if (lastInactive && !forcedInactive) {
                                     // Leap end: push this phone's finalized sessions, then ack the desktop.
                                     runCatching { onLeapEnd() }
+                                    Diagnostics.log("time-link leap end: finalized sessions pushed; acking desktop")
                                     runCatching {
                                         writer.write("pushed\n")
                                         writer.flush()
@@ -75,6 +110,9 @@ object TimeLinkClient {
                 } catch (_: IOException) {
                     // No desktop attached / link dropped — retry below.
                 } finally {
+                    if (wasConnected) {
+                        Diagnostics.log("time-link disconnected — clock continues at last adopted speed")
+                    }
                     // Link gone (drop/unplug): never leave the phone stuck "inactive" mid-leap. NonCancellable
                     // so the reset still runs if the finally is reached through the scope's own cancellation.
                     withContext(NonCancellable + Dispatchers.Main) { onForcedInactive(false) }

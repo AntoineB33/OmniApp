@@ -56,15 +56,18 @@ import org.example.project.time.AppClock
 import org.example.project.time.SimAppClock
 import org.example.project.time.SystemAppClock
 
-// PRD §15: the furthest back the look-away cue scan looks when the now-line advances in one step. It exceeds
-// a normal accelerated tick's reach (the fastest sim speed, 300×, advances 300 s over the 1 s tick) so smooth
-// fast-forward never clips a crossing, while a larger leap (manual time-leap, or waking from a long real
-// device sleep) is treated as a jump that announces at most the last few minutes — not a backlog of cues.
+// PRD §15: the furthest back (in sim time) the boundary sweeps scan, purely a scan/bookkeeping bound — it
+// exceeds the fastest sim speed's reach between sweeps (300× advances 300 s over the 1 s tick) so a live
+// fast-forward never clips a crossing out of the scan. Whether a scanned crossing actually FIRES is decided
+// separately, by its real-time age ([BoundarySweep] vs [LOOK_AWAY_START_FRESH_MILLIS]) — never by this cap.
 private const val LOOK_AWAY_SWEEP_CAP_MILLIS: Long = 10L * 60 * 1_000
 
-// How fresh a look-away occurrence's *start* must be — as a budget in **real** time — for its cues to fire.
-// See the long-form rationale this was lifted from in App.kt's history: a fixed sim-time window would shrink
-// to a few real ms under heavy acceleration and every just-reached start would be judged stale.
+// How fresh a boundary crossing must be — a budget in **real** time, measured DIRECTLY ([BoundarySweep]),
+// never approximated by sim distance — for its user-audible output (notification / voice cue) to fire.
+// A crossing older than this means the process could not run when it happened (device asleep, app
+// suspended), where a late cue is noise; a crossing the running engine merely *observed* late (accelerated
+// clock, a time-link re-anchor jump, a busy main thread) measures fresh by real age and always fires — the
+// trigger is a function of the timeline, not of how the sweep wake-ups align with the calendar.
 private const val LOOK_AWAY_START_FRESH_MILLIS: Long = 2_000
 
 // Real-time cap on each sleep while the manual "Look away now" rest counts down (see [restartLookAway]).
@@ -281,6 +284,18 @@ class SchedulerEngine(
     private var announcedWindDowns = setOf<Long>()
     private var manualLookAwayJob: Job? = null
 
+    // Real-time lateness bookkeeping, one per sweep loop (see [BoundarySweep]): the fire/stale decision for
+    // every crossed boundary is exact real-clock arithmetic, never a sim-distance heuristic, so the triggers
+    // do not depend on how the sweeps' wake-ups align with the calendar. Fields (not locals) so a
+    // collectLatest re-key never resets the previous-sweep anchor.
+    private val lookAwaySweep = BoundarySweep()
+    private val poseFinishSweep = BoundarySweep()
+    private val windDownSweep = BoundarySweep()
+
+    // The sim clock's reconfiguration generation (speed change / leap / time-link re-anchor); any constant
+    // for a non-sim clock, whose run is always continuous.
+    private fun clockGeneration(): Long = (clock as? SimAppClock)?.reconfigured?.value ?: 0L
+
     // PRD §15 (5/15-min pose "pause finished" cue): pose start instants already evaluated, so each pose is
     // only gated/scheduled once. Survives a collectLatest restart like [announcedStarts]/[pendingEnds].
     private var poseFinishHandled = setOf<Long>()
@@ -436,6 +451,22 @@ class SchedulerEngine(
     // The screen-activity sample every engine site reads: the real platform sensor, overridden to inactive
     // while the debug leap forces it (see [setDebugForcedInactive]).
     private fun effectiveScreenActive(): Boolean = !debugForcedInactive && screenActive()
+
+    // Diagnostics-instrumented seams for every user-audible output: each posted notification and played voice
+    // cue lands in the cross-device timeline with the sim instant it fired at, so "this device stayed silent
+    // through that break" is answerable from scripts/collect-diagnostics.bat instead of a live repro.
+    private fun notifyUser(title: String, message: String) {
+        Diagnostics.log(
+            "notification [$title] ${message.replace('\n', ' ')} " +
+                "(sim now=${Diagnostics.formatInstant(clock.nowMillis())})",
+        )
+        sendSystemNotification(title, message)
+    }
+
+    private fun speakCue(cue: VoiceCue) {
+        Diagnostics.log("voice cue ${cue.name} (sim now=${Diagnostics.formatInstant(clock.nowMillis())})")
+        playCue(cue)
+    }
 
     /**
      * PRD §12: a gap in time `[sleepStart, sleepEnd]` — the process was suspended (real device sleep) or a
@@ -833,7 +864,7 @@ class SchedulerEngine(
                     ) { deadline -> formatClockTime(Instant.fromEpochMilliseconds(deadline).toLocalDateTime(tz)) }
                         ?: return@collectLatest
                 lastNotifiedTaskId = taskId
-                sendSystemNotification("Task to do now", message)
+                notifyUser("Task to do now", message)
             }
     }
 
@@ -844,7 +875,7 @@ class SchedulerEngine(
             .collectLatest { title ->
                 if (title == null || title == lastNotifiedSideTitle) return@collectLatest
                 lastNotifiedSideTitle = title
-                sendSystemNotification("Side task", title)
+                notifyUser("Side task", title)
             }
     }
 
@@ -866,7 +897,15 @@ class SchedulerEngine(
                     val simNow = clock.nowMillis()
                     val speed = (clock as? SimAppClock)?.speed ?: 1.0
                     val voice = st.lookAwayVoiceEnabled
-                    announcedStarts = announcedStarts.filterTo(mutableSetOf()) { it >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS }
+                    // Fire/stale below is decided by the crossing's REAL age ([BoundarySweep]), so every
+                    // boundary the clock crossed — including a whole break a time-link re-anchor jumped
+                    // over (67 ms real at 300×) — fires exactly once; only a crossing the process was
+                    // genuinely unable to witness (device asleep) is swallowed.
+                    lookAwaySweep.beginSweep(simNow, speed, clockGeneration())
+                    // Scan floor, not a fixed cap off sim-now: consecutive scans tile the timeline with no
+                    // gaps, so a crossing can never be clipped out by one large clock jump.
+                    val scanFloor = lookAwaySweep.scanFloorMillis(LOOK_AWAY_SWEEP_CAP_MILLIS)
+                    announcedStarts = announcedStarts.filterTo(mutableSetOf()) { it >= scanFloor }
 
                     val occurrences = st.panels.filter { panel ->
                         panel.sideTask && st.sideTasks.any { !it.restBreak && it.title == panel.title }
@@ -874,25 +913,37 @@ class SchedulerEngine(
 
                     occurrences
                         .filter {
-                            it.startEpochMillis in (simNow - LOOK_AWAY_SWEEP_CAP_MILLIS)..simNow &&
+                            it.startEpochMillis in scanFloor..simNow &&
                                 it.startEpochMillis !in announcedStarts
                         }
                         .sortedBy { it.startEpochMillis }
                         .forEach {
                             announcedStarts = announcedStarts + it.startEpochMillis
-                            val durationMillis = it.endEpochMillis - it.startEpochMillis
-                            val freshWindow =
-                                (LOOK_AWAY_START_FRESH_MILLIS * speed).toLong().coerceAtMost(durationMillis - 1)
-                            if (it.startEpochMillis >= simNow - freshWindow) {
+                            val latenessMillis = lookAwaySweep.realLatenessMillis(it.startEpochMillis)
+                            if (latenessMillis <= LOOK_AWAY_START_FRESH_MILLIS) {
                                 pendingEnds = pendingEnds + it.endEpochMillis
-                                sendSystemNotification("Side task", it.title)
-                                if (voice) playCue(VoiceCue.LookAway)
+                                notifyUser("Side task", it.title)
+                                if (voice) speakCue(VoiceCue.LookAway)
+                            } else {
+                                Diagnostics.log(
+                                    "look-away start ${Diagnostics.formatInstant(it.startEpochMillis)} swallowed: " +
+                                        "crossed ~$latenessMillis ms (real) ago — process was suspended or engine " +
+                                        "just started (budget $LOOK_AWAY_START_FRESH_MILLIS ms, speed ${speed}x)",
+                                )
                             }
                         }
 
                     pendingEnds.filter { it <= simNow }.sorted().forEach { end ->
                         pendingEnds = pendingEnds - end
-                        if (end >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS && voice) playCue(VoiceCue.ResumeWork)
+                        val latenessMillis = lookAwaySweep.realLatenessMillis(end)
+                        if (latenessMillis <= LOOK_AWAY_START_FRESH_MILLIS) {
+                            if (voice) speakCue(VoiceCue.ResumeWork)
+                        } else {
+                            Diagnostics.log(
+                                "look-away end ${Diagnostics.formatInstant(end)} resume cue swallowed: " +
+                                    "crossed ~$latenessMillis ms (real) ago (budget $LOOK_AWAY_START_FRESH_MILLIS ms)",
+                            )
+                        }
                     }
 
                     val nextStart = occurrences.map { it.startEpochMillis }
@@ -913,16 +964,21 @@ class SchedulerEngine(
                     val st = vm.state.value
                     val simNow = clock.nowMillis()
                     val speed = (clock as? SimAppClock)?.speed ?: 1.0
-                    announcedWindDowns = announcedWindDowns.filterTo(mutableSetOf()) { it >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS }
+                    windDownSweep.beginSweep(simNow, speed, clockGeneration())
+                    val scanFloor = windDownSweep.scanFloorMillis(LOOK_AWAY_SWEEP_CAP_MILLIS)
+                    announcedWindDowns = announcedWindDowns.filterTo(mutableSetOf()) { it >= scanFloor }
                     val windDowns = st.panels
                         .filter { it.sleep }
                         .map { it.startEpochMillis - SchedulerDomain.NO_TASK_BEFORE_BED_MILLIS }
-                    windDowns.filter { it <= simNow && it !in announcedWindDowns }.sorted().forEach {
-                        announcedWindDowns = announcedWindDowns + it
-                        if (it >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS) {
-                            sendSystemNotification("Stop work", "Wind down — bedtime in 1 hour")
+                    windDowns
+                        .filter { it in scanFloor..simNow && it !in announcedWindDowns }
+                        .sorted()
+                        .forEach {
+                            announcedWindDowns = announcedWindDowns + it
+                            if (windDownSweep.realLatenessMillis(it) <= LOOK_AWAY_START_FRESH_MILLIS) {
+                                notifyUser("Stop work", "Wind down — bedtime in 1 hour")
+                            }
                         }
-                    }
                     val next = windDowns.filter { it > simNow && it !in announcedWindDowns }.minOrNull() ?: break
                     if (speed <= 0.0) break
                     delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
@@ -949,8 +1005,8 @@ class SchedulerEngine(
         if (st.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(now))
         val voice = st.lookAwayVoiceEnabled
         manualLookAwayJob = scope.launch {
-            sendSystemNotification("Side task", lookAway.title)
-            if (voice) playCue(VoiceCue.LookAway)
+            notifyUser("Side task", lookAway.title)
+            if (voice) speakCue(VoiceCue.LookAway)
             val resumeAt = clock.nowMillis() + lookAway.durationMillis
             while (clock.nowMillis() < resumeAt) {
                 val speed = (clock as? SimAppClock)?.speed ?: 1.0
@@ -958,7 +1014,7 @@ class SchedulerEngine(
                     if (speed > 0.0) ((resumeAt - clock.nowMillis()).toDouble() / speed).toLong() else Long.MAX_VALUE
                 delay(remainingReal.coerceIn(1L, LOOK_AWAY_RESUME_POLL_MILLIS))
             }
-            if (voice) playCue(VoiceCue.ResumeWork)
+            if (voice) speakCue(VoiceCue.ResumeWork)
         }
     }
 
@@ -995,7 +1051,9 @@ class SchedulerEngine(
                     val st = vm.state.value
                     val simNow = clock.nowMillis()
                     val speed = (clock as? SimAppClock)?.speed ?: 1.0
-                    poseFinishHandled = poseFinishHandled.filterTo(mutableSetOf()) { it >= simNow - LOOK_AWAY_SWEEP_CAP_MILLIS }
+                    poseFinishSweep.beginSweep(simNow, speed, clockGeneration())
+                    val scanFloor = poseFinishSweep.scanFloorMillis(LOOK_AWAY_SWEEP_CAP_MILLIS)
+                    poseFinishHandled = poseFinishHandled.filterTo(mutableSetOf()) { it >= scanFloor }
 
                     val poses = st.panels.filter { panel ->
                         panel.sideTask && st.sideTasks.any { it.restBreak && it.title == panel.title }
@@ -1003,18 +1061,21 @@ class SchedulerEngine(
 
                     poses
                         .filter {
-                            it.startEpochMillis in (simNow - LOOK_AWAY_SWEEP_CAP_MILLIS)..simNow &&
+                            it.startEpochMillis in scanFloor..simNow &&
                                 it.startEpochMillis !in poseFinishHandled
                         }
                         .sortedBy { it.startEpochMillis }
                         .forEach { pose ->
                             poseFinishHandled = poseFinishHandled + pose.startEpochMillis
-                            val durationMillis = pose.endEpochMillis - pose.startEpochMillis
-                            val freshWindow =
-                                (LOOK_AWAY_START_FRESH_MILLIS * speed).toLong()
-                                    .coerceAtMost((durationMillis - 1).coerceAtLeast(1))
-                            if (pose.startEpochMillis >= simNow - freshWindow) {
+                            val latenessMillis = poseFinishSweep.realLatenessMillis(pose.startEpochMillis)
+                            if (latenessMillis <= LOOK_AWAY_START_FRESH_MILLIS) {
                                 schedulePoseFinishCue(gateway, pose.endEpochMillis)
+                            } else {
+                                Diagnostics.log(
+                                    "rest-pose start ${Diagnostics.formatInstant(pose.startEpochMillis)} swallowed: " +
+                                        "crossed ~$latenessMillis ms (real) ago (budget $LOOK_AWAY_START_FRESH_MILLIS ms, " +
+                                        "speed ${speed}x); no pause-end cue committed",
+                                )
                             }
                         }
 
@@ -1035,7 +1096,12 @@ class SchedulerEngine(
         scope.launch {
             if (!gateway.signedIn) return@launch
             sleepUntilSim(endMillis - POSE_FINISH_CHECK_LEAD_MILLIS)
-            if (effectiveScreenActive()) return@launch
+            if (effectiveScreenActive()) {
+                Diagnostics.log(
+                    "pause-end cue for ${Diagnostics.formatInstant(endMillis)} skipped: own screen active at decision time",
+                )
+                return@launch
+            }
             // The presence read below is the cue's eligibility gate (the in-app analogue of [onPauseCueFire]'s
             // read at the OS alarm's fire time) — it is part of the cue decision, not an extra sync: the old
             // opportunistic gap-pull/pause-refresh that rode this moment is gone, since the side channels now
@@ -1043,12 +1109,22 @@ class SchedulerEngine(
             val peersActive = readPeersActiveWithRetry(gateway, endMillis)
             if (!poseFinishEligible(isPhone = deviceKind == DeviceKind.Phone, signedIn = gateway.signedIn,
                     screenActive = effectiveScreenActive(), peersActive = peersActive)) {
+                Diagnostics.log(
+                    "pause-end cue for ${Diagnostics.formatInstant(endMillis)} skipped: not eligible " +
+                        "(phone=${deviceKind == DeviceKind.Phone}, signedIn=${gateway.signedIn}, " +
+                        "screenActive=${effectiveScreenActive()}, peersActive=$peersActive)",
+                )
                 return@launch
             }
             sleepUntilSim(endMillis)
             // Re-check the local screen: the user may have picked up the phone during the final minute.
-            if (effectiveScreenActive()) return@launch
-            playCue(VoiceCue.PauseOver)
+            if (effectiveScreenActive()) {
+                Diagnostics.log(
+                    "pause-end cue for ${Diagnostics.formatInstant(endMillis)} skipped: screen became active before the end",
+                )
+                return@launch
+            }
+            speakCue(VoiceCue.PauseOver)
         }
     }
 
@@ -1251,7 +1327,13 @@ class SchedulerEngine(
                 peersActive = peersActive,
             )
         ) {
-            playCue(VoiceCue.PauseOver)
+            speakCue(VoiceCue.PauseOver)
+        } else {
+            Diagnostics.log(
+                "OS pause-cue alarm fired but suppressed (phone=${deviceKind == DeviceKind.Phone}, " +
+                    "signedIn=${gateway?.signedIn == true}, screenActive=${effectiveScreenActive()}, " +
+                    "peersActive=$peersActive)",
+            )
         }
     }
 

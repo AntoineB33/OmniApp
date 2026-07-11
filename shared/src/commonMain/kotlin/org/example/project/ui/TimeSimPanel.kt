@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.time.SimAppClock
 
 private val SPEEDS = listOf(1.0, 10.0, 60.0, 300.0)
@@ -119,11 +120,15 @@ fun TimeSimPanel(
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 SPEEDS.forEach { sp ->
                     SpeedChip(label = "${sp.toInt()}x", active = selectedSpeed == sp) {
+                        // Diagnostics: bracket the accelerated window in the cross-device timeline, so "the
+                        // phone missed the first break after I clicked 300x" reads with its trigger in place.
+                        Diagnostics.log("sim panel: speed set to ${sp.toInt()}x")
                         clock.setSpeed(sp)
                         selectedSpeed = sp
                     }
                 }
                 SpeedChip(label = "❚❚", active = selectedSpeed == 0.0) {
+                    Diagnostics.log("sim panel: time paused (speed 0)")
                     clock.setSpeed(0.0)
                     selectedSpeed = 0.0
                 }
@@ -144,10 +149,16 @@ fun TimeSimPanel(
                 if (linkedCount > 0) SimPauseScope.entries.toList() else listOf(SimPauseScope.All)
             var pauseScope by remember { mutableStateOf(SimPauseScope.All) }
             val effectiveScope = if (pauseScope in scopes) pauseScope else SimPauseScope.All
+            val simulatePause = { durationMillis: Long ->
+                Diagnostics.log(
+                    "sim panel: simulate pause ${durationMillis / 1_000}s + leap (inactive=${effectiveScope.label})",
+                )
+                onSimulatePause(durationMillis, effectiveScope)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                PauseChip(label = "20s") { onSimulatePause(20L * 1_000, effectiveScope) }
-                PauseChip(label = "5min") { onSimulatePause(5L * 60 * 1_000, effectiveScope) }
-                PauseChip(label = "15min") { onSimulatePause(15L * 60 * 1_000, effectiveScope) }
+                PauseChip(label = "20s") { simulatePause(20L * 1_000) }
+                PauseChip(label = "5min") { simulatePause(5L * 60 * 1_000) }
+                PauseChip(label = "15min") { simulatePause(15L * 60 * 1_000) }
             }
             Row(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -206,6 +217,7 @@ fun TimeSimPanel(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                     ) {
+                        Diagnostics.log("sim panel: reset to real time")
                         clock.reset()
                         selectedSpeed = 1.0
                     }

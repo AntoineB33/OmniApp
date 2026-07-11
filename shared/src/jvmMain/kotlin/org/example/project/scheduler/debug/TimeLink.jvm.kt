@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeoutOrNull
+import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.time.SimAppClock
 
 /**
@@ -56,6 +57,9 @@ private class DesktopTimeLink(private val clock: SimAppClock) : TimeLink {
     private var ackTarget = 0
 
     override fun setPhoneForcedInactive(inactive: Boolean) {
+        if (phoneForcedInactive != inactive) {
+            Diagnostics.log("time-link phone forced-inactive → $inactive (${linkedCount.value} phone(s) linked)")
+        }
         if (phoneForcedInactive && !inactive) {
             // Leap just ended: expect one ack per phone currently on the link (they all carried the flag).
             ackTarget = ackCount.value + linkedCount.value
@@ -65,7 +69,13 @@ private class DesktopTimeLink(private val clock: SimAppClock) : TimeLink {
 
     override suspend fun awaitPhoneLeapAcks(timeoutMillis: Long) {
         val target = ackTarget
-        withTimeoutOrNull(timeoutMillis) { ackCount.first { it >= target } }
+        val acked = withTimeoutOrNull(timeoutMillis) { ackCount.first { it >= target } } != null
+        if (!acked) {
+            Diagnostics.log(
+                "time-link leap-end acks TIMED OUT after $timeoutMillis ms (got ${ackCount.value}, wanted $target) " +
+                    "— post-leap derive may read a phone's stale open session",
+            )
+        }
         // A phone that never acked (dropped mid-push) must not make the NEXT leap's await inherit its ghost.
         ackTarget = ackCount.value
     }
@@ -85,6 +95,7 @@ private class DesktopTimeLink(private val clock: SimAppClock) : TimeLink {
     // One writer per connected phone: stream the live virtual instant + speed until the socket drops.
     private suspend fun serveClient(socket: Socket) {
         _linkedCount.update { it + 1 }
+        Diagnostics.log("time-link phone connected (${_linkedCount.value} linked)")
         // Read side of the otherwise one-way stream: the phone writes one "pushed" line after its leap-end
         // session push. Blocking readLine on the IO scope; the socket close in the finally unblocks it.
         val ackReader = scope.launch {
@@ -107,6 +118,7 @@ private class DesktopTimeLink(private val clock: SimAppClock) : TimeLink {
             // Phone disconnected; fall through to cleanup.
         } finally {
             _linkedCount.update { (it - 1).coerceAtLeast(0) }
+            Diagnostics.log("time-link phone disconnected (${_linkedCount.value} linked)")
             runCatching { socket.close() }
             ackReader.cancel()
         }
