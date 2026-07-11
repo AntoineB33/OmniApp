@@ -493,7 +493,7 @@ fun LateralMenu(
     Column(
         modifier = modifier
             .fillMaxHeight()
-            .width(if (calendarOpen) 248.dp else 188.dp)
+            .width(188.dp)
             .background(CalColors.menuBackground)
             .border(1.dp, CalColors.grid)
             .padding(12.dp),

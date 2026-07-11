@@ -862,10 +862,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
 
             // The menu's collapse toggle: a bookmark/tab sticking out of the menu's top-right border,
-            // straddling into the content (offset by the menu's own width — 188dp, or 248dp while the calendar
-            // month grid widens it). Points « to push the whole menu off-screen; when collapsed the menu is
-            // gone and only this bookmark remains, at the far-left edge, now pointing » to pull it back.
-            val menuWidth = if (calendarOpen) 248.dp else 188.dp
+            // straddling into the content (offset by the menu's own fixed width — 188dp). Points « to push
+            // the whole menu off-screen; when collapsed the menu is gone and only this bookmark remains,
+            // at the far-left edge, now pointing » to pull it back.
+            val menuWidth = 188.dp
             IconMenuButton(
                 label = if (menuCollapsed) "»" else "«",
                 onClick = { menuCollapsed = !menuCollapsed },
