@@ -9,7 +9,7 @@ PRD §15 for the design; this file is the operational runbook.
 
 | Piece | Status |
 | --- | --- |
-| 10-s **user-change sync debounce** (trailing: one push 10 s after the last change of a burst; one of the four sync moments — login, sync button, this debounce, the deferred cue burst) | ✅ `scheduler/sync/ServerPushDebounce`, wired in `TaskSchedulerViewModel` (`SERVER_PUSH_DEBOUNCE_MILLIS = 10_000`) |
+| 10-s **user-change sync throttle** (leading-scheduled: one push 10 s after the *first* change of a burst, later changes absorbed without restarting the countdown; one of the five sync moments — login, sync button, this throttle, the deferred cue burst, the device-inactivity finalize) | ✅ `scheduler/sync/ServerPushDebounce`, wired in `TaskSchedulerViewModel` (`SERVER_PUSH_DEBOUNCE_MILLIS = 10_000`) |
 | Supabase schema: `device_push_token` / `account_last_phone` / `pause_cue_schedule` | ✅ `supabase/migrations/20260703000000_init.sql` |
 | `on_pause_cue_schedule_change` trigger — **immediate** push (cancel+reschedule) when a non-phone device moves the next pose-end (scenario #2), **skip when origin == last phone** | ✅ `supabase/migrations/20260704000000_pause_cue_immediate_push.sql` |
 | `tick_pause_cues()` cron (push ~1 min before, **skip when origin == last phone**) — now a **backstop** to the immediate trigger | ✅ `20260703000000_init.sql` + `supabase/pause-cue-setup.sql` |

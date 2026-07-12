@@ -75,6 +75,9 @@ object SchedulerHolder {
                 // localPauseCueDelivery = true to avoid a double-speak.
                 scheduleLocalPauseCue = { dueAtMillis -> PauseCueScheduler.apply(appContext, dueAtMillis) },
                 localPauseCueDelivery = true,
+                // ARCHITECTURE.md §8 sync moment #5: reconcile when the wake-up heartbeat spots the device was
+                // inactive (a finalized session peers can't re-derive) — in practice the phone's Doze wake.
+                requestSyncMoment = { vm.syncNow() },
             )
         engine.start()
         if (clock is SimAppClock) {

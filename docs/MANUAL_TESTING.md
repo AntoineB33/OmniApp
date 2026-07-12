@@ -58,11 +58,15 @@ via the manual fetch button (`ARCHITECTURE.md` §8).
 
 Open both: `scripts\account1-empty-and-open.bat` (clean account 1) **and** `scripts\account2-open.bat`.
 
-- [ ] Edit a task on account 1 → ~10 s after the last edit it pushes once (the 10-s trailing user-change
-      debounce; watch the sync chip). A burst of edits = one push, not one per edit.
+- [ ] Edit a task on account 1 → ~10 s after the *first* edit of a burst it pushes once (the 10-s
+      leading-scheduled user-change throttle; watch the sync chip). A burst of edits = one push, not one per
+      edit; a non-stop editor still syncs every ~10 s (the countdown is not restarted by later edits).
 - [ ] On account 2, hit **fetch from server** → the edit from account 1 appears. (The sync button is one of
-      the four sync moments — login, sync button, 10-s debounced change, pause-cue burst — and pulls
-      immediately.)
+      the five sync moments — login, sync button, 10-s throttled change, pause-cue burst, device-inactivity
+      finalize — and pulls immediately.)
+- [ ] Walk away from account 1 through a scheduled 5-min break (or lock the screen) → when the app's
+      heartbeat finds the device went inactive it finalizes the session and syncs (moment 5); account 2's
+      **fetch** then shows the Inactivity band without waiting for the pause-cue burst.
 - [ ] Make a change on **each** side, then fetch on both → last-writer-wins converges (Phase-1 whole-doc LWW,
       `scheduler-sync-architecture` note). No lost tree, no duplicate rows.
 - [ ] Kill account 1 mid-edit before its debounce fires → the local SQLite still has the change on relaunch

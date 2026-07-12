@@ -205,6 +205,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // reach here — it injects an AlarmManager seam via SchedulerHolder.
                     scheduleLocalPauseCue = ::scheduleLocalPauseCuePlatform,
                     localPauseCueDelivery = localPauseCueDeliveryPlatform,
+                    // ARCHITECTURE.md §8 sync moment #5: reconcile when the heartbeat finds the device went
+                    // inactive (a finalized session peers can't re-derive).
+                    requestSyncMoment = { vm.syncNow() },
                 )
         }
         LaunchedEffect(engine) { if (host == null) engine.start() }

@@ -234,6 +234,13 @@ class SchedulerEngine(
     // [launchPoseFinishVoiceCue] is skipped so the phone never speaks the cue twice. Default false keeps the
     // in-app path for desktop / not-yet-wired platforms.
     private val localPauseCueDelivery: Boolean = false,
+    // ARCHITECTURE.md §8 sync moment #5 (device inactivity): request a unified sync moment (a full snapshot
+    // reconcile — pull remote changes, integrate, push local; its emitted [syncMoments] then run the side
+    // channels) the instant the heartbeat's device check finds the device had gone inactive and finalizes an
+    // open active session. That finalized interval is an authoritative DB change peers cannot re-derive, so it
+    // must reach the server now rather than only riding the next of the other four moments. Wired to
+    // [TaskSchedulerViewModel.syncNow] by the app; default no-op for sync-disabled builds and tests.
+    private val requestSyncMoment: () -> Unit = {},
 ) {
     private val _nowMillis = MutableStateFlow(clock.nowMillis())
 
@@ -486,7 +493,11 @@ class SchedulerEngine(
     fun setDebugForcedInactive(inactive: Boolean) {
         if (debugForcedInactive == inactive) return
         debugForcedInactive = inactive
-        scope.launch { advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended = false) }
+        // syncOnInactive = false: the debug control drives its own sequenced sync (pushOwnActiveSessionsAndWait
+        // / refreshDerivedPausesAndWait) around the leap; a stray reconcile here would race that ordering.
+        scope.launch {
+            advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended = false, syncOnInactive = false)
+        }
     }
 
     // The screen-activity sample every engine site reads: the real platform sensor, overridden to inactive
@@ -597,15 +608,14 @@ class SchedulerEngine(
     private val activeSessionDeviceId: String get() = activeSessions?.deviceId ?: LOCAL_DEVICE_ID
 
     // PRD §15: track this device's activity in the LOCAL store. Each beat samples `screenActive()` and either
-    // opens, extends, or finalizes the current session, persisting it locally — it NEVER talks to the server:
-    // the remote push is [pushOwnActiveSessions], fired only at the four sync moments. A finalize (the user
-    // walked away) therefore reaches the server at the next moment — in practice the deferred pause-cue burst
-    // that lands 1–2 s before the next pose end, so a peer over-presumes this device active for at most one
-    // pose cadence (bounded server-side by the open-session freshness grace). That bounded staleness is the
-    // deliberate trade for "the four moments are the only communications" (ARCHITECTURE.md §8). `suspended`
-    // is judged from REAL elapsed time between beats — NOT the (possibly accelerated) clock — so a real process
-    // suspension ends the session at its pre-sleep end and the post-wake session opens after the gap, exactly
-    // like the §12 device-sleep detection; a fast sim tick just extends the session across the leaped clock time.
+    // opens, extends, or finalizes the current session, persisting it locally. Opens and extends NEVER talk to
+    // the server (they ride the next moment); a FINALIZE — the beat's device check finding the device went
+    // inactive — is authoritative and not reconstructible by a peer, so it fires sync moment #5 right then
+    // ([advanceActiveSession] → [requestSyncMoment]) rather than only riding the next of the other four moments
+    // (ARCHITECTURE.md §8). `suspended` is judged from REAL elapsed time between beats — NOT the (possibly
+    // accelerated) clock — so a real process suspension ends the session at its pre-sleep end and the post-wake
+    // session opens after the gap, exactly like the §12 device-sleep detection; a fast sim tick just extends the
+    // session across the leaped clock time.
     private fun launchActiveSessionTracking() = scope.launch {
         var lastRealBeat = SystemAppClock.nowMillis()
         while (true) {
@@ -623,8 +633,15 @@ class SchedulerEngine(
     // PRD §15: advance the current active session to `now`, LOCAL store only. A suspension or an inactive
     // screen finalizes it; an active screen opens a new session (if none / after a finalize) or extends the
     // open one. Serialized under [activeSessionMutex] because the beat and the debug forced-inactivity flip
-    // both call it. Local-only in every branch — a finalize rides the next sync moment, never its own push.
-    private suspend fun advanceActiveSession(now: Long, active: Boolean, suspended: Boolean) {
+    // both call it. The store write is local-only in every branch; [syncOnInactive] (the real heartbeat, not
+    // the debug leap) additionally fires sync moment #5 when this call is the one that finalizes the session.
+    private suspend fun advanceActiveSession(
+        now: Long,
+        active: Boolean,
+        suspended: Boolean,
+        syncOnInactive: Boolean = true,
+    ) {
+        var becameInactive = false
         activeSessionMutex.withLock {
             val open = currentSession
             if ((suspended || !active) && open != null) {
@@ -632,6 +649,7 @@ class SchedulerEngine(
                 currentSession = null
                 // The walk-away instant: the UI's live "Inactivity" tail grows from here (see [inactiveSince]).
                 _inactiveSince.value = open.endMillis
+                becameInactive = true
             }
             if (active) {
                 val cur = currentSession
@@ -647,7 +665,21 @@ class SchedulerEngine(
             }
             _activeSince.value = currentSession?.startMillis
         }
+        // ARCHITECTURE.md §8 sync moment #5: the heartbeat's device check just found the device had gone
+        // inactive (screen off, or the process was suspended and this is the wake-up beat that spots the gap),
+        // finalizing the open session. That finalized interval is authoritative and NOT reconstructible by a
+        // peer — without it a peer over-presumes this device active up to its own now-line — so reconcile now
+        // (push-then-pull) instead of merely riding the next moment. Fired OUTSIDE the mutex so the reconcile
+        // never blocks the beat, and only once per active→inactive transition (the next beat finds no open
+        // session, so a screen that stays off does not re-fire). Skipped for the debug forced-inactivity flip,
+        // whose control already runs its own explicit, sequenced refresh (see [setDebugForcedInactive]).
+        if (becameInactive && syncOnInactive) requestSyncMoment()
     }
+
+    // Visible for tests: drive one heartbeat sample exactly as [launchActiveSessionTracking]'s beat does
+    // (open/extend/finalize + sync moment #5 on a finalize), without standing up the full [start] loop set.
+    internal suspend fun heartbeatSampleForTest(active: Boolean, suspended: Boolean) =
+        advanceActiveSession(clock.nowMillis(), active, suspended)
 
     // Finalize a session: persist its final bounds locally. Caller holds [activeSessionMutex].
     private fun finalizeSessionLocked(session: ActiveSessionRecord) {
