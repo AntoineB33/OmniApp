@@ -1154,10 +1154,24 @@ object SchedulerDomain {
      * The **5↔15 merge** is honored without panels: when both poses are reached at the now-line the longer
      * pose absorbs the shorter, so a reached pose is omitted if a strictly longer-duration rest pose is also
      * reached (only the longer pose is announced). Invalid rows are skipped.
+     *
+     * A pose with **no known rest anchor** (`lastRestMillis == 0`) is deliberately NOT announced: its due
+     * `0 + interval` is a 1970 sentinel, not an instant derived from the rules, so firing on it would violate
+     * the "keys on a fixed rules-derived boundary" contract. This is the pre-seed transient every load starts
+     * in — `DEFAULT_SIDE_TASKS` seed at `lastRestMillis == 0` and the startup derive anchors them a moment
+     * later (a fresh account's whole past is inactivity, so every pose is served at startup ⇒ anchor ≈ now;
+     * a returning account's poses anchor to their real last rest). Announcing on the sentinel before that
+     * seed lands is the "a freshly-emptied account spoke *take a 15min pose* the instant it opened" bug: the
+     * cue sweep sampled the poses in the ~90 ms window between seeding `DEFAULT_SIDE_TASKS` and the first
+     * `pauses refreshed [local, startup]` derive. Once anchored, the real due (`anchor + interval`) drives
+     * the cue normally, so the only effect is suppressing the un-anchored sentinel fire.
      */
     fun reachedRestPoseDueByTitle(sideTasks: List<SideTask>, nowMillis: Long): Map<String, Long> {
         val reached = sideTasks
-            .filter { it.restBreak && isValidSideTask(it) && it.lastRestMillis + it.intervalMillis <= nowMillis }
+            .filter {
+                it.restBreak && isValidSideTask(it) &&
+                    it.lastRestMillis > 0 && it.lastRestMillis + it.intervalMillis <= nowMillis
+            }
         return reached
             .filter { task -> reached.none { it.durationMillis > task.durationMillis } }
             .associate { it.title to it.lastRestMillis + it.intervalMillis }
@@ -1404,6 +1418,18 @@ object SchedulerDomain {
      * re-anchor a look-away inside the window is itself placed first (the same widening [lastSideTaskBefore]
      * relies on). Callers test `restBreak` of a returned panel's source task to tell a 20s look-away apart
      * from a rest pose.
+     *
+     * **Dragging-pose shadow.** The static engine places an overdue rest pose at its FIXED due and re-anchors
+     * the look-away to that pose's fixed end (`due + duration + interval`), emitting one look-away just past
+     * the pose. But an overdue-**unserved** pose does not sit at its due — it SLIDES to the now-line
+     * ([sideTaskNextStart] = `maxOf(due, now)`), and dragging there it perpetually re-anchors every shorter
+     * task to `now + interval`, a slot that recedes as fast as `now` advances and that the now-line therefore
+     * never crosses. So while a pose is overdue and unserved, NO look-away is a fixed crossable boundary after
+     * its due; the one the static engine emits is a phantom (the reported "a 20s break fired right after the
+     * 5-min pose I never took — I only accelerated time, so the pose was just dragged"). Look-aways whose
+     * start is at/after the earliest overdue-unserved pose's due are dropped here (the pose's own due cue is
+     * the level [reachedRestPoseDueByTitle], unaffected; a genuinely-served pose is not overdue — its
+     * `lastRestMillis` advanced — so it casts no shadow and the look-away legitimately resumes 20 min after it).
      */
     fun sideTaskOccurrencesBetween(
         sideTasks: List<SideTask>,
@@ -1416,6 +1442,11 @@ object SchedulerDomain {
         val maxInterval = valid.maxOf { it.value.intervalMillis }
         val maxDuration = valid.maxOf { it.value.durationMillis }
         val from = fromMillis - maxInterval - maxDuration
+        // The earliest overdue-unserved rest-pose due (anchored, i.e. `lastRestMillis > 0` — an un-anchored
+        // pose is the pre-seed transient, not a drag). Look-aways at/after it are shadowed — see the docstring.
+        val overduePoseDue = valid
+            .filter { (_, t) -> t.restBreak && t.lastRestMillis > 0 && t.lastRestMillis + t.intervalMillis <= toMillis }
+            .minOfOrNull { (_, t) -> t.lastRestMillis + t.intervalMillis }
         val seedDue = valid.associate { (i, t) ->
             // A pose recurs over a (duration + interval) cycle; the look-away every interval. Seed at the
             // grid point at/just before the widened [from] so the loop reconstructs every occurrence up to
@@ -1426,6 +1457,12 @@ object SchedulerDomain {
         }
         return simulateSideTasks(sideTasks, seedDue, toMillis)
             .filter { it.startEpochMillis in fromMillis..toMillis }
+            .filterNot { panel ->
+                // Drop a look-away shadowed by a dragging (overdue-unserved) pose — see the docstring.
+                overduePoseDue != null &&
+                    panel.startEpochMillis >= overduePoseDue &&
+                    sideTasks.any { !it.restBreak && it.title == panel.title }
+            }
     }
 
     /** PRD §15: a cue boundary the now-line crossed — the atom of the engine's single ordered cue sweep. */

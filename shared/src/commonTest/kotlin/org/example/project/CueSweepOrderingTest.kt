@@ -128,4 +128,51 @@ class CueSweepOrderingTest {
         val la = lookAway.copy(lastRestMillis = 0)
         assertTrue(SchedulerDomain.sideTaskOccurrencesBetween(listOf(la), 62 * MIN, 55 * MIN).isEmpty())
     }
+
+    @Test
+    fun a_dragging_overdue_pose_casts_no_phantom_look_away_after_its_due() {
+        // The reported x300 scenario: the user only ACCELERATED time (never actually paused), so the 5-min pose
+        // came due and, unserved, DRAGS at the now-line. The static engine would place it at its fixed due and
+        // re-anchor the look-away to pose-end+20 — but that slot recedes with `now` (the pose slides), so the
+        // now-line never crosses it: no look-away must fire after the pose's due.
+        // Both anchored at 5 min (the startup derive seeds a fresh account's poses to ~startup): the look-away
+        // grid is 25/45/65/85 min and the pose is due at 5 + 60 = 65 min, coincident with the 65-min look-away.
+        val anchor = 5 * MIN
+        val la = lookAway.copy(lastRestMillis = anchor) // grid: 25, 45, 65, 85… min
+        val p5 = pose5.copy(lastRestMillis = anchor) // due = 65 min, overdue+unserved at now = 90 min
+
+        // The look-aways the now-line actually crossed by 90 min are 25 and 45 only — the 65 is absorbed by the
+        // coincident pose and the re-anchored 85+ are phantoms that recede with the dragging pose.
+        val lookAways = SchedulerDomain.sideTaskOccurrencesBetween(listOf(la, p5), 0, 90 * MIN)
+            .filter { it.title == la.title }
+            .map { it.startEpochMillis }
+        assertEquals(listOf(25 * MIN, 45 * MIN), lookAways)
+
+        // And through the full cue path: after the pose's 65-min due, no LookAwayStart crossing is emitted.
+        val crossings = SchedulerDomain.cueCrossings(
+            sideTasks = listOf(la, p5),
+            windDownInstants = emptyList(),
+            automaticSchedule = true,
+            alreadyNotifiedPoseDues = emptyMap(),
+            fromMillis = 50 * MIN, // sweep window that already saw the 65-min pose due
+            toMillis = 90 * MIN,
+        )
+        assertTrue(crossings.none { it.kind == SchedulerDomain.CueKind.LookAwayStart })
+        // The pose's own due is still reported (level rule), so the pose cue is unaffected.
+        assertTrue(crossings.any { it.kind == SchedulerDomain.CueKind.RestPoseDue && it.instant == 65 * MIN })
+    }
+
+    @Test
+    fun a_served_pose_does_not_shadow_the_look_away_that_resumes_after_it() {
+        // Contrast: a pose that was actually TAKEN advances lastRest, so it is not overdue and casts no shadow.
+        // Here the pose was taken at 60 min (lastRest = 60), so its next due is 60 + 60 = 120 (future) and the
+        // look-away legitimately resumes 20 min after the pose ended.
+        val la = lookAway.copy(lastRestMillis = 65 * MIN) // re-anchored to the pose end (device-sleep seeding)
+        val p5 = pose5.copy(lastRestMillis = 60 * MIN) // taken at 60 min; next due 120 min (not overdue at 90)
+
+        val lookAways = SchedulerDomain.sideTaskOccurrencesBetween(listOf(la, p5), 60 * MIN, 90 * MIN)
+            .filter { it.title == la.title }
+            .map { it.startEpochMillis }
+        assertEquals(listOf(85 * MIN), lookAways) // 65 + 20 = 85, a real crossable boundary
+    }
 }

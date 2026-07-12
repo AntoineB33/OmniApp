@@ -51,11 +51,13 @@ class RestPoseNotificationRuleTest {
     @Test
     fun both_poses_reached_the_longer_absorbs_the_shorter_5_15_merge() {
         // Both due at the same now-line: only the 15-min pose is announced (it absorbs the coincident 5-min).
-        val t5 = pose5.copy(lastRestMillis = 0)
-        val t15 = pose15.copy(lastRestMillis = 0)
-        val now = 10L * 24 * 60 * MIN
+        val anchor = 9L * 24 * 60 * MIN
+        val t5 = pose5.copy(lastRestMillis = anchor)
+        val t15 = pose15.copy(lastRestMillis = anchor)
+        // now = anchor + the LONGER interval, so both poses' dues have been reached.
+        val now = anchor + t15.intervalMillis
         assertEquals(
-            mapOf(t15.title to t15.intervalMillis),
+            mapOf(t15.title to anchor + t15.intervalMillis),
             SchedulerDomain.reachedRestPoseDueByTitle(listOf(t5, t15), now),
         )
     }
@@ -72,11 +74,25 @@ class RestPoseNotificationRuleTest {
     }
 
     @Test
-    fun a_never_rested_pose_is_due_immediately() {
+    fun an_un_anchored_pose_is_not_announced_until_it_is_seeded() {
+        // The freshly-emptied-account bug: `DEFAULT_SIDE_TASKS` load with `lastRestMillis == 0` and the cue
+        // sweep can sample them in the ~90 ms before the startup derive anchors them. Their due `0 + interval`
+        // is a 1970 sentinel, not a real crossed boundary, so nothing is announced — this is what stopped the
+        // "take a 15min pose" cue from firing the instant the account opened.
         val now = 5L * 24 * 60 * MIN
+        assertTrue(SchedulerDomain.reachedRestPoseDueByTitle(listOf(pose5, pose15), now).isEmpty())
+    }
+
+    @Test
+    fun once_seeded_the_pose_announces_at_its_real_due_not_at_startup() {
+        // The startup derive anchors a fresh account's poses to ~now (its whole past is inactivity). The 15-min
+        // pose is then silent until its real due `anchor + 2h`, NOT at the anchor instant itself.
+        val anchor = 5L * 24 * 60 * MIN // stands in for "startup", set by the derive
+        val seeded = pose15.copy(lastRestMillis = anchor)
+        assertTrue(SchedulerDomain.reachedRestPoseDueByTitle(listOf(seeded), anchor).isEmpty())
         assertEquals(
-            mapOf(pose5.title to pose5.intervalMillis),
-            SchedulerDomain.reachedRestPoseDueByTitle(listOf(pose5), now),
+            mapOf(seeded.title to anchor + seeded.intervalMillis),
+            SchedulerDomain.reachedRestPoseDueByTitle(listOf(seeded), anchor + seeded.intervalMillis),
         )
     }
 
