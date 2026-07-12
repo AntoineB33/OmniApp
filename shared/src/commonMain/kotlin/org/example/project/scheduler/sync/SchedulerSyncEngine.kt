@@ -90,6 +90,13 @@ class SchedulerSyncEngine(
     private val _syncMoments = MutableSharedFlow<Unit>(replay = 1)
     val syncMoments: SharedFlow<Unit> = _syncMoments.asSharedFlow()
 
+    /**
+     * Every Supabase HTTP call the transport made (see [SupabaseUsageEvent]) — forwarded straight from the
+     * [RemoteSnapshotClient], which is where every request funnels through. The ViewModel collects this into the
+     * local-only History-window "Supabase usage" column; it is a per-device diagnostic and syncs nothing.
+     */
+    val supabaseUsage: SharedFlow<SupabaseUsageEvent> get() = client.usageEvents
+
     /** Ensures a [SyncMeta] row exists (allocating a stable device id once), returning it. */
     private fun meta(): SyncMeta =
         metaStore.loadSyncMeta()

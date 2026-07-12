@@ -123,6 +123,25 @@ data class NotificationLogEntry(
     val message: String,
 )
 
+/**
+ * One line in the History Manager's **Supabase usage** column: a single Supabase HTTP call the app made, with
+ * the free-plan [resource] bucket it draws down, a compact [operation] label, the response [status], and the
+ * best-effort request/response byte counts (egress **bandwidth** is itself a free-plan limit). A bounded,
+ * per-device **diagnostic** log — a **rolling tail** capped at [SchedulerState.MAX_SUPABASE_USAGE_LOG] (the most
+ * RECENT that many; unlike [NotificationLogEntry]'s first-N audit, this tracks ongoing consumption). Derived /
+ * local-only: recorded via the non-syncing
+ * [org.example.project.scheduler.state.SchedulerIntent.RecordSupabaseUsage], stripped from the sync fingerprint,
+ * and carried across a remote pull ([SchedulerState.withLocalViewStateFrom]) so a peer's snapshot never touches it.
+ */
+data class SupabaseUsageEntry(
+    val timeMillis: Long,
+    val resource: String,
+    val operation: String,
+    val requestBytes: Long,
+    val responseBytes: Long,
+    val status: Int,
+)
+
 sealed interface Delta {
     /** PRD §5/§6 History Manager: a short human-readable name for this unit (shown in the history window). */
     val label: String
@@ -237,6 +256,14 @@ data class SchedulerState(
      * never affects the sync fingerprint and is never adopted from a remote pull.
      */
     val notificationLog: List<NotificationLogEntry> = emptyList(),
+    /**
+     * A bounded, local-only diagnostic log of every Supabase HTTP call the app made, shown as the History
+     * Manager's **Supabase usage** column so the account's draw-down on the Supabase **free-plan** limits
+     * (egress bandwidth, Auth MAU, request count) is visible at a glance. A **rolling tail** capped at
+     * [MAX_SUPABASE_USAGE_LOG] — the most recent that many are kept (see [SupabaseUsageEntry]). Derived /
+     * local-only: it never affects the sync fingerprint and is never adopted from a remote pull.
+     */
+    val supabaseUsageLog: List<SupabaseUsageEntry> = emptyList(),
 ) {
     /** PRD §8: the calendar catches letter typing / routes Ctrl+Z/Y only while it is the focused window. */
     val calendarFocused: Boolean get() = focusedWindow == AppWindow.Calendar
@@ -249,7 +276,8 @@ data class SchedulerState(
      *  - [selection] — which tree cell(s) are highlighted (cleared as a side effect of navigating away),
      *  - [showSideTasks] / [showReminders] — the calendar's cosmetic display switches,
      *  - the [HistoryCategory.WindowNav] and [HistoryCategory.Selection] history that records those moves,
-     *  - [notificationLog] — the per-device diagnostic notification log (never synced, never adopted).
+     *  - [notificationLog] — the per-device diagnostic notification log (never synced, never adopted),
+     *  - [supabaseUsageLog] — the per-device Supabase-usage diagnostic log (never synced, never adopted).
      * (Calendar *zoom* is likewise local, but it lives only in Compose UI state and is never persisted.)
      *
      * [withLocalViewStateFrom] carries these fields from [other] (used when a remote pull replaces the rest
@@ -264,6 +292,7 @@ data class SchedulerState(
             showSideTasks = other.showSideTasks,
             showReminders = other.showReminders,
             notificationLog = other.notificationLog,
+            supabaseUsageLog = other.supabaseUsageLog,
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, other.histories.forCategory(HistoryCategory.WindowNav))
                 .withCategory(HistoryCategory.Selection, other.histories.forCategory(HistoryCategory.Selection)),
@@ -277,6 +306,7 @@ data class SchedulerState(
             showSideTasks = false,
             showReminders = true,
             notificationLog = emptyList(),
+            supabaseUsageLog = emptyList(),
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, SchedulerHistory())
                 .withCategory(HistoryCategory.Selection, SchedulerHistory()),
@@ -329,6 +359,13 @@ data class SchedulerState(
          * after (see [NotificationLogEntry]). A fixed audit of the earliest notifications, not a rolling tail.
          */
         const val MAX_NOTIFICATION_LOG = 1000
+
+        /**
+         * Cap on [supabaseUsageLog]: a **rolling tail** — the app keeps the most RECENT this-many calls and
+         * drops the oldest (see [SupabaseUsageEntry]). A running view of ongoing free-plan consumption, not a
+         * frozen first-N audit like [MAX_NOTIFICATION_LOG].
+         */
+        const val MAX_SUPABASE_USAGE_LOG = 2000
 
         /** Ensures [nextCellCounter] stays above every numeric suffix already used in persisted cell ids. */
         fun deriveNextCellCounter(cells: Collection<CellId>): Int {

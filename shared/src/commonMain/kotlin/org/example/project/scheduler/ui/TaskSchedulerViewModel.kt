@@ -106,6 +106,25 @@ class TaskSchedulerViewModel(
 
     init {
         syncEngine?.let { engine ->
+            // History-window "Supabase usage" column (local-only diagnostic): record every Supabase HTTP call
+            // the transport makes. Subscribed FIRST — before restoreSession/reconcile below drive the launch's
+            // login/reconcile traffic — and the source flow replays, so those first calls are still captured.
+            // Stamped on the same clock the History units use ([SchedulerReducer.clock]); non-syncing (never
+            // pushes — see [syncsToServer]), so this never feeds back into more network usage.
+            saveScope.launch {
+                engine.supabaseUsage.collect { event ->
+                    dispatch(
+                        SchedulerIntent.RecordSupabaseUsage(
+                            resource = event.resource,
+                            operation = event.operation,
+                            requestBytes = event.requestBytes,
+                            responseBytes = event.responseBytes,
+                            status = event.status,
+                            timeMillis = SchedulerReducer.clock.nowMillis(),
+                        ),
+                    )
+                }
+            }
             // Break the engine<->ViewModel cycle: the engine reads/writes our state through these.
             // The PUSHED payload is the authoritative projection ([SchedulerStateCodec.syncFingerprint]),
             // not the full local snapshot: the regenerated auto/side/sleep panels and the per-device view
@@ -158,7 +177,10 @@ class TaskSchedulerViewModel(
             is SchedulerIntent.ReportDeviceSleep,
             // The notification log is a per-device diagnostic (see SchedulerState.notificationLog); recording
             // one persists locally but is never an authoritative change, so it must not request a server push.
-            is SchedulerIntent.RecordNotification -> false
+            is SchedulerIntent.RecordNotification,
+            // Likewise the Supabase-usage log (see SchedulerState.supabaseUsageLog) — a per-device diagnostic
+            // that must never push (and a push would ironically log even more usage, i.e. never terminate).
+            is SchedulerIntent.RecordSupabaseUsage -> false
             else -> true
         }
 

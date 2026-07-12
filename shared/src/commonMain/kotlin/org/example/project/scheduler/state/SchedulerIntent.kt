@@ -449,6 +449,22 @@ sealed interface SchedulerIntent {
         val timeMillis: Long,
     ) : SchedulerIntent
 
+    /**
+     * Append one completed Supabase HTTP call to the local-only diagnostic log shown in the History Manager's
+     * **Supabase usage** column. Dispatched by [org.example.project.scheduler.ui.TaskSchedulerViewModel] as it
+     * collects [org.example.project.scheduler.sync.RemoteSnapshotClient.usageEvents]. Non-syncing (derived,
+     * per-device); a rolling tail capped at
+     * [org.example.project.scheduler.state.SchedulerState.MAX_SUPABASE_USAGE_LOG].
+     */
+    data class RecordSupabaseUsage(
+        val resource: String,
+        val operation: String,
+        val requestBytes: Long,
+        val responseBytes: Long,
+        val status: Int,
+        val timeMillis: Long,
+    ) : SchedulerIntent
+
     /** Ctrl+Z / Ctrl+Y — undo/redo the content history (Edit Mode while editing, else "the rest"). */
     data object Undo : SchedulerIntent
     data object Redo : SchedulerIntent

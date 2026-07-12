@@ -128,6 +128,7 @@ object SchedulerReducer {
             SchedulerIntent.CopySelection -> reduceCopySelection(state)
             is SchedulerIntent.PasteTree -> reducePasteTree(state, intent.text)
             is SchedulerIntent.RecordNotification -> reduceRecordNotification(state, intent)
+            is SchedulerIntent.RecordSupabaseUsage -> reduceRecordSupabaseUsage(state, intent)
             SchedulerIntent.Undo -> undo(state, contentCategory(state))
             SchedulerIntent.Redo -> redo(state, contentCategory(state))
             SchedulerIntent.UndoSelection -> undo(state, HistoryCategory.Selection)
@@ -161,6 +162,34 @@ object SchedulerReducer {
             notificationLog = state.notificationLog +
                 NotificationLogEntry(intent.timeMillis, intent.title, intent.message),
         )
+    }
+
+    /**
+     * Append one Supabase call to [SchedulerState.supabaseUsageLog], a **rolling tail** that keeps only the most
+     * recent [SchedulerState.MAX_SUPABASE_USAGE_LOG] entries (drops the oldest). Unlike the notification log this
+     * never saturates to a no-op — it always reflects the latest traffic — but it is likewise a per-device,
+     * non-syncing diagnostic (see [SchedulerIntent.RecordSupabaseUsage]).
+     */
+    private fun reduceRecordSupabaseUsage(
+        state: SchedulerState,
+        intent: SchedulerIntent.RecordSupabaseUsage,
+    ): SchedulerState {
+        val appended = state.supabaseUsageLog +
+            SupabaseUsageEntry(
+                timeMillis = intent.timeMillis,
+                resource = intent.resource,
+                operation = intent.operation,
+                requestBytes = intent.requestBytes,
+                responseBytes = intent.responseBytes,
+                status = intent.status,
+            )
+        val capped =
+            if (appended.size > SchedulerState.MAX_SUPABASE_USAGE_LOG) {
+                appended.takeLast(SchedulerState.MAX_SUPABASE_USAGE_LOG)
+            } else {
+                appended
+            }
+        return state.copy(supabaseUsageLog = capped)
     }
 
     private fun reduceBeginEdit(state: SchedulerState, intent: SchedulerIntent.BeginEdit): SchedulerState {

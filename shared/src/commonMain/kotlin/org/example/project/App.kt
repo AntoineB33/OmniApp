@@ -768,6 +768,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         HistoryManagerWindow(
                             histories = schedulerState.histories,
                             notificationLog = schedulerState.notificationLog,
+                            supabaseUsageLog = schedulerState.supabaseUsageLog,
                             onDismiss = { historyManagerOpen = false },
                             // Cascade: open down-right of center so the Reminders / calendar windows stay reachable.
                             initialOffset = historyOffset,

@@ -129,6 +129,7 @@ import org.example.project.scheduler.state.CalendarEdge
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.NotificationLogEntry
+import org.example.project.scheduler.state.SupabaseUsageEntry
 import org.example.project.scheduler.state.SchedulerHistories
 import org.example.project.scheduler.state.SchedulerHistory
 import org.example.project.scheduler.state.SchedulerState
@@ -985,8 +986,10 @@ fun HistoryManagerWindow(
     histories: SchedulerHistories,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-    /** The local-only diagnostic notification log, shown as the rightmost "Notifications" column. */
+    /** The local-only diagnostic notification log, shown as the "Notifications" column. */
     notificationLog: List<NotificationLogEntry> = emptyList(),
+    /** The local-only Supabase-usage diagnostic log, shown as the rightmost "Supabase usage" column. */
+    supabaseUsageLog: List<SupabaseUsageEntry> = emptyList(),
     /** Initial position relative to centered; staggered per window so they open in a clickable cascade. */
     initialOffset: Offset = Offset.Zero,
     /** Persists the window's new drag position when a drag gesture ends (local-only geometry). */
@@ -1015,8 +1018,8 @@ fun HistoryManagerWindow(
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
             // requiredSize (not size) so the window keeps its fixed size and does not adapt to the app's
             // width when the content area is narrower than it. Wider than the category-only layout to make
-            // room for the rightmost Notifications column.
-            .requiredSize(width = 1180.dp, height = 520.dp)
+            // room for the Notifications and Supabase-usage diagnostic columns.
+            .requiredSize(width = 1480.dp, height = 520.dp)
             // Raise on press AFTER the offset so the hit region tracks the (possibly dragged) window.
             .raiseOnPress(onRaise),
     ) {
@@ -1073,6 +1076,13 @@ fun HistoryManagerWindow(
                     // than the others because it carries the notification text.
                     NotificationLogSection(
                         log = notificationLog,
+                        modifier = Modifier.weight(2f).fillMaxHeight(),
+                    )
+                    Box(Modifier.fillMaxHeight().width(1.dp).background(CalColors.grid))
+                    // The local-only Supabase-usage log — a diagnostic column tracking the account's draw-down
+                    // on the Supabase free-plan limits (egress bandwidth, Auth MAU, request count).
+                    SupabaseUsageSection(
+                        log = supabaseUsageLog,
                         modifier = Modifier.weight(2f).fillMaxHeight(),
                     )
                 }
@@ -1212,6 +1222,97 @@ private fun NotificationLogRow(entry: NotificationLogEntry) {
         }
     }
 }
+
+/**
+ * The History Manager's **Supabase usage** column: a read-only, local-only diagnostic list of every Supabase
+ * HTTP call the app has made (see [org.example.project.scheduler.state.SchedulerState.supabaseUsageLog]) — the
+ * account's draw-down on the Supabase **free-plan** limits (egress bandwidth, Auth MAU, request count). Newest
+ * at the top; the header shows the count against the rolling cap
+ * ([org.example.project.scheduler.state.SchedulerState.MAX_SUPABASE_USAGE_LOG]) plus the total bytes over the
+ * kept window. Each row shows the fire time, the resource + operation, and the up/down byte counts with status.
+ */
+@Composable
+private fun SupabaseUsageSection(
+    log: List<SupabaseUsageEntry>,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Supabase usage",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${log.size} / ${SchedulerState.MAX_SUPABASE_USAGE_LOG}",
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.muted,
+            )
+        }
+        if (log.isEmpty()) {
+            Text(text = "(none)", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
+        } else {
+            // Running total of the bytes over the kept (rolling) window — a rough egress/ingress gauge.
+            val totalUp = log.sumOf { it.requestBytes }
+            val totalDown = log.sumOf { it.responseBytes }
+            Text(
+                text = "Σ ↑${formatBytes(totalUp)}  ↓${formatBytes(totalDown)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.muted,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Newest at the top, oldest at the bottom: walk the entries in reverse.
+                items(log.size) { row ->
+                    SupabaseUsageRow(entry = log[log.lastIndex - row])
+                }
+            }
+        }
+    }
+}
+
+/** One Supabase-usage entry: its fire time above the resource/operation, then the byte counts + status below. */
+@Composable
+private fun SupabaseUsageRow(entry: SupabaseUsageEntry) {
+    // A non-2xx status is worth flagging (a failed call still spends bandwidth).
+    val ok = entry.status in 200..299
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(1.dp),
+    ) {
+        Text(
+            text = formatHistoryTime(entry.timeMillis),
+            style = MaterialTheme.typography.labelSmall,
+            color = CalColors.muted,
+        )
+        Text(
+            text = "${entry.resource} · ${entry.operation}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = "↑${formatBytes(entry.requestBytes)}  ↓${formatBytes(entry.responseBytes)}  ·  ${entry.status}",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (ok) CalColors.muted else MaterialTheme.colorScheme.error,
+        )
+    }
+}
+
+/** Human-readable byte count (B / KB / MB) for the Supabase-usage column. */
+private fun formatBytes(bytes: Long): String =
+    when {
+        bytes < 1_024 -> "$bytes B"
+        bytes < 1_024 * 1_024 -> "${(bytes * 10 / 1_024) / 10.0} KB"
+        else -> "${(bytes * 10 / (1_024 * 1_024)) / 10.0} MB"
+    }
 
 /**
  * One History Unit as a **single clickable row** (PRD §6): its position, label, and the current-pointer

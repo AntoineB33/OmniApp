@@ -29,6 +29,7 @@ import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.NoOpDelta
 import org.example.project.scheduler.state.NotificationLogEntry
+import org.example.project.scheduler.state.SupabaseUsageEntry
 import org.example.project.scheduler.state.PanelDelta
 import org.example.project.scheduler.state.RecordDelta
 import org.example.project.scheduler.state.SchedulerEditSession
@@ -222,6 +223,10 @@ object SchedulerStateCodec {
             histories = histories.toPersisted(),
             sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
             notificationLog = notificationLog.map { PersistedNotificationEntry(it.timeMillis, it.title, it.message) },
+            supabaseUsageLog =
+                supabaseUsageLog.map {
+                    PersistedSupabaseUsageEntry(it.timeMillis, it.resource, it.operation, it.requestBytes, it.responseBytes, it.status)
+                },
         )
 
     private fun SchedulerHistories.toPersisted(): PersistedHistories =
@@ -440,6 +445,10 @@ object SchedulerStateCodec {
             histories = histories?.toHistories() ?: SchedulerHistories(),
             sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
             notificationLog = notificationLog.map { NotificationLogEntry(it.timeMillis, it.title, it.message) },
+            supabaseUsageLog =
+                supabaseUsageLog.map {
+                    SupabaseUsageEntry(it.timeMillis, it.resource, it.operation, it.requestBytes, it.responseBytes, it.status)
+                },
         )
     }
 
@@ -621,6 +630,9 @@ private data class PersistedState(
     // The local-only diagnostic notification log; a missing value decodes to empty (payloads written before
     // the History Manager's Notifications column existed). Local-only — stripped from the sync fingerprint.
     val notificationLog: List<PersistedNotificationEntry> = emptyList(),
+    // The local-only Supabase-usage diagnostic log; a missing value decodes to empty (payloads written before
+    // the History Manager's "Supabase usage" column existed). Local-only — stripped from the sync fingerprint.
+    val supabaseUsageLog: List<PersistedSupabaseUsageEntry> = emptyList(),
 )
 
 @Serializable
@@ -628,6 +640,16 @@ private data class PersistedNotificationEntry(
     val timeMillis: Long,
     val title: String,
     val message: String,
+)
+
+@Serializable
+private data class PersistedSupabaseUsageEntry(
+    val timeMillis: Long,
+    val resource: String,
+    val operation: String,
+    val requestBytes: Long,
+    val responseBytes: Long,
+    val status: Int,
 )
 
 @Serializable

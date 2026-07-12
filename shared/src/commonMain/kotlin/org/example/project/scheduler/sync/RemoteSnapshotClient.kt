@@ -2,7 +2,9 @@ package org.example.project.scheduler.sync
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.HttpSend
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.plugin
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.patch
@@ -12,10 +14,16 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentLength
 import io.ktor.http.contentType
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import kotlin.time.Instant
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -82,6 +90,42 @@ data class PauseRow(
 class SupabaseException(val status: Int, message: String) : Exception("Supabase $status: $message")
 
 /**
+ * One completed Supabase HTTP call — the raw material for the History window's **Supabase usage** column, a
+ * per-device diagnostic of the account's draw-down on the Supabase **free-plan** limits. Every call this
+ * client makes consumes egress **bandwidth** (request + response bytes); auth calls also count toward Monthly
+ * Active Users, and the sheer request count matters too. [RemoteSnapshotClient] emits one of these for every
+ * request via [RemoteSnapshotClient.usageEvents]; the ViewModel turns each into a local-only log entry. Byte
+ * counts are best-effort (from `Content-Length`; a chunked/absent length reads 0) — indicative, not billing-exact.
+ *
+ * The Edge Function invocations (`pause-cue`) are triggered server-side by pg_cron / DB triggers, not by this
+ * client, so they are not visible here — only the client's own HTTP traffic is.
+ */
+data class SupabaseUsageEvent(
+    val method: String,
+    /** The URL path of the call, e.g. `/rest/v1/scheduler_snapshot`, `/auth/v1/token`, `/rest/v1/rpc/derive_pauses`. */
+    val path: String,
+    val status: Int,
+    val requestBytes: Long,
+    val responseBytes: Long,
+) {
+    /** The free-plan resource bucket this call draws down (every REST/RPC call also spends egress bandwidth). */
+    val resource: String
+        get() = when {
+            path.startsWith("/auth/") -> "Auth"
+            "/rpc/" in path -> "Database RPC"
+            path.startsWith("/rest/") -> "Database"
+            else -> "REST"
+        }
+
+    /** A compact `METHOD table` label for the row, e.g. `POST scheduler_snapshot`, `POST rpc/derive_pauses`. */
+    val operation: String
+        get() {
+            val tail = path.substringAfter("/v1/", missingDelimiterValue = path.substringAfterLast('/'))
+            return "$method ${tail.ifBlank { path }}"
+        }
+}
+
+/**
  * Thin Ktor client over Supabase's GoTrue (`/auth/v1`) and PostgREST (`/rest/v1`) HTTP APIs — the
  * transport half of cross-device sync. It is intentionally stateless about *which* snapshot is current:
  * it exposes auth + four data primitives ([fetch], [insert], [update]) and lets
@@ -97,6 +141,40 @@ class RemoteSnapshotClient(
     private val http: HttpClient = defaultHttpClient(),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+
+    // Every Supabase HTTP call this client makes (the only calls the app makes) is surfaced here so the History
+    // window's local-only "Supabase usage" column can show the account's draw-down on the free-plan limits.
+    // replay so the collector, wired slightly after construction by the ViewModel, still catches the launch's
+    // login/reconcile traffic; DROP_OLDEST so a stalled collector can never block a request (emits are tryEmit).
+    private val _usageEvents =
+        MutableSharedFlow<SupabaseUsageEvent>(
+            replay = 64,
+            extraBufferCapacity = 256,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+
+    /** Every completed Supabase HTTP call (see [SupabaseUsageEvent]); collected by the ViewModel into the usage log. */
+    val usageEvents: SharedFlow<SupabaseUsageEvent> = _usageEvents.asSharedFlow()
+
+    init {
+        // One interception point over the whole client covers every endpoint below (auth + PostgREST), so the
+        // usage log stays complete even as new calls are added. Reading Content-Length does not consume the body.
+        http.plugin(HttpSend).intercept { request ->
+            val requestBytes = (request.body as? OutgoingContent)?.contentLength ?: 0L
+            val path = request.url.build().encodedPath
+            val call = execute(request)
+            _usageEvents.tryEmit(
+                SupabaseUsageEvent(
+                    method = request.method.value,
+                    path = path,
+                    status = call.response.status.value,
+                    requestBytes = requestBytes,
+                    responseBytes = call.response.contentLength() ?: 0L,
+                ),
+            )
+            call
+        }
+    }
 
     // ---- Auth (GoTrue) ----
 
