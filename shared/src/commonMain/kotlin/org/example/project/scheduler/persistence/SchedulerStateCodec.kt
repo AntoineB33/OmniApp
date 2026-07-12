@@ -28,6 +28,7 @@ import org.example.project.scheduler.state.FocusDelta
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.NoOpDelta
+import org.example.project.scheduler.state.NotificationLogEntry
 import org.example.project.scheduler.state.PanelDelta
 import org.example.project.scheduler.state.RecordDelta
 import org.example.project.scheduler.state.SchedulerEditSession
@@ -220,6 +221,7 @@ object SchedulerStateCodec {
             focusedWindow = focusedWindow.name,
             histories = histories.toPersisted(),
             sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
+            notificationLog = notificationLog.map { PersistedNotificationEntry(it.timeMillis, it.title, it.message) },
         )
 
     private fun SchedulerHistories.toPersisted(): PersistedHistories =
@@ -437,6 +439,7 @@ object SchedulerStateCodec {
             focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),
             histories = histories?.toHistories() ?: SchedulerHistories(),
             sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
+            notificationLog = notificationLog.map { NotificationLogEntry(it.timeMillis, it.title, it.message) },
         )
     }
 
@@ -615,6 +618,16 @@ private data class PersistedState(
     // The user's sleep schedule; a missing value decodes to null (payloads written before the sleep
     // window existed) and the ViewModel then seeds the default.
     val sleep: PersistedSleep? = null,
+    // The local-only diagnostic notification log; a missing value decodes to empty (payloads written before
+    // the History Manager's Notifications column existed). Local-only — stripped from the sync fingerprint.
+    val notificationLog: List<PersistedNotificationEntry> = emptyList(),
+)
+
+@Serializable
+private data class PersistedNotificationEntry(
+    val timeMillis: Long,
+    val title: String,
+    val message: String,
 )
 
 @Serializable

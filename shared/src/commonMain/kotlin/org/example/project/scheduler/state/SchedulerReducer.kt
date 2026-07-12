@@ -127,6 +127,7 @@ object SchedulerReducer {
             SchedulerIntent.SelectAllVisibleCells -> reduceSelectAllVisible(state)
             SchedulerIntent.CopySelection -> reduceCopySelection(state)
             is SchedulerIntent.PasteTree -> reducePasteTree(state, intent.text)
+            is SchedulerIntent.RecordNotification -> reduceRecordNotification(state, intent)
             SchedulerIntent.Undo -> undo(state, contentCategory(state))
             SchedulerIntent.Redo -> redo(state, contentCategory(state))
             SchedulerIntent.UndoSelection -> undo(state, HistoryCategory.Selection)
@@ -145,6 +146,22 @@ object SchedulerReducer {
             state.calendarFocused -> HistoryCategory.Calendar
             else -> HistoryCategory.Main
         }
+
+    /**
+     * Append a posted notification to [SchedulerState.notificationLog], keeping only the FIRST
+     * [SchedulerState.MAX_NOTIFICATION_LOG] entries. Once the log is full this is a no-op (returns the same
+     * state instance), so the ViewModel skips the persist and no further notifications are recorded.
+     */
+    private fun reduceRecordNotification(
+        state: SchedulerState,
+        intent: SchedulerIntent.RecordNotification,
+    ): SchedulerState {
+        if (state.notificationLog.size >= SchedulerState.MAX_NOTIFICATION_LOG) return state
+        return state.copy(
+            notificationLog = state.notificationLog +
+                NotificationLogEntry(intent.timeMillis, intent.title, intent.message),
+        )
+    }
 
     private fun reduceBeginEdit(state: SchedulerState, intent: SchedulerIntent.BeginEdit): SchedulerState {
         if (!SchedulerDomain.isSelectableCell(state, intent.cellId)) return state

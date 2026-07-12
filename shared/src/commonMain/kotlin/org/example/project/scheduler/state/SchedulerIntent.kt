@@ -437,6 +437,18 @@ sealed interface SchedulerIntent {
      */
     data object ToggleCalendarOverlap : SchedulerIntent
 
+    /**
+     * Append a posted notification's text to the local-only diagnostic log shown in the History Manager's
+     * Notifications column. Dispatched by [org.example.project.scheduler.engine.SchedulerEngine.notifyUser]
+     * every time a system notification is shown. Non-syncing (derived, per-device) and capped at
+     * [org.example.project.scheduler.state.SchedulerState.MAX_NOTIFICATION_LOG] — a no-op once full.
+     */
+    data class RecordNotification(
+        val title: String,
+        val message: String,
+        val timeMillis: Long,
+    ) : SchedulerIntent
+
     /** Ctrl+Z / Ctrl+Y — undo/redo the content history (Edit Mode while editing, else "the rest"). */
     data object Undo : SchedulerIntent
     data object Redo : SchedulerIntent

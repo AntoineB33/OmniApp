@@ -128,8 +128,10 @@ import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.state.CalendarEdge
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.HistoryUnit
+import org.example.project.scheduler.state.NotificationLogEntry
 import org.example.project.scheduler.state.SchedulerHistories
 import org.example.project.scheduler.state.SchedulerHistory
+import org.example.project.scheduler.state.SchedulerState
 
 /** PRD §7: visual language shared by the lateral menu and the calendar. */
 private object CalColors {
@@ -983,6 +985,8 @@ fun HistoryManagerWindow(
     histories: SchedulerHistories,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The local-only diagnostic notification log, shown as the rightmost "Notifications" column. */
+    notificationLog: List<NotificationLogEntry> = emptyList(),
     /** Initial position relative to centered; staggered per window so they open in a clickable cascade. */
     initialOffset: Offset = Offset.Zero,
     /** Persists the window's new drag position when a drag gesture ends (local-only geometry). */
@@ -1010,8 +1014,9 @@ fun HistoryManagerWindow(
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
             // requiredSize (not size) so the window keeps its fixed size and does not adapt to the app's
-            // width when the content area is narrower than it.
-            .requiredSize(width = 940.dp, height = 520.dp)
+            // width when the content area is narrower than it. Wider than the category-only layout to make
+            // room for the rightmost Notifications column.
+            .requiredSize(width = 1180.dp, height = 520.dp)
             // Raise on press AFTER the offset so the hit region tracks the (possibly dragged) window.
             .raiseOnPress(onRaise),
     ) {
@@ -1048,13 +1053,13 @@ fun HistoryManagerWindow(
                 }
                 Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
 
-                // The four category lists sit side by side so every list's head is aligned at the top
-                // (PRD §5/§6). Each column scrolls its units independently.
+                // The category lists sit side by side so every list's head is aligned at the top (PRD §5/§6),
+                // with the local-only Notifications diagnostic column last. Each column scrolls independently.
                 Row(
                     modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    sections.forEachIndexed { index, (title, category) ->
+                    sections.forEach { (title, category) ->
                         HistoryCategorySection(
                             title = title,
                             history = histories.forCategory(category),
@@ -1062,10 +1067,14 @@ fun HistoryManagerWindow(
                             onSelectUnit = { infoUnit = it },
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                         )
-                        if (index < sections.lastIndex) {
-                            Box(Modifier.fillMaxHeight().width(1.dp).background(CalColors.grid))
-                        }
+                        Box(Modifier.fillMaxHeight().width(1.dp).background(CalColors.grid))
                     }
+                    // The local-only notification log — a diagnostic column (not a history category), wider
+                    // than the others because it carries the notification text.
+                    NotificationLogSection(
+                        log = notificationLog,
+                        modifier = Modifier.weight(2f).fillMaxHeight(),
+                    )
                 }
             }
 
@@ -1129,6 +1138,77 @@ private fun HistoryCategorySection(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * The History Manager's **Notifications** column: a read-only, local-only diagnostic list of the notification
+ * text the app has posted (see [org.example.project.scheduler.state.SchedulerState.notificationLog]). Newest
+ * at the top; the header shows how many of the capped
+ * [org.example.project.scheduler.state.SchedulerState.MAX_NOTIFICATION_LOG] entries have been recorded. Each
+ * row shows the fire time, the notification title, and its message text.
+ */
+@Composable
+private fun NotificationLogSection(
+    log: List<NotificationLogEntry>,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Notifications",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${log.size} / ${SchedulerState.MAX_NOTIFICATION_LOG}",
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.muted,
+            )
+        }
+        if (log.isEmpty()) {
+            Text(text = "(none)", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Newest at the top, oldest at the bottom: walk the entries in reverse.
+                items(log.size) { row ->
+                    NotificationLogRow(entry = log[log.lastIndex - row])
+                }
+            }
+        }
+    }
+}
+
+/** One notification-log entry: its fire time above the title, then the message text below (PRD-adjacent diagnostic). */
+@Composable
+private fun NotificationLogRow(entry: NotificationLogEntry) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(1.dp),
+    ) {
+        Text(
+            text = formatHistoryTime(entry.timeMillis),
+            style = MaterialTheme.typography.labelSmall,
+            color = CalColors.muted,
+        )
+        Text(
+            text = entry.title,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        if (entry.message.isNotBlank()) {
+            Text(
+                text = entry.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = CalColors.muted,
+            )
         }
     }
 }

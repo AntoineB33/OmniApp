@@ -108,6 +108,21 @@ data class HistoryUnit(
     val debugTainted: Boolean = false,
 )
 
+/**
+ * One line in the History Manager's **Notifications** column: the text of a notification the app posted,
+ * with the (sim) wall-clock instant it fired at. A bounded, per-device **diagnostic** log — capped at
+ * [SchedulerState.MAX_NOTIFICATION_LOG]; the app keeps the *first* that many notifications and ignores every
+ * one after (a fixed audit of the earliest notifications, not a rolling tail). Derived / local-only: recorded
+ * via the non-syncing [org.example.project.scheduler.state.SchedulerIntent.RecordNotification], stripped from
+ * the sync fingerprint, and carried across a remote pull ([SchedulerState.withLocalViewStateFrom]) so a
+ * peer's snapshot never overwrites it.
+ */
+data class NotificationLogEntry(
+    val timeMillis: Long,
+    val title: String,
+    val message: String,
+)
+
 sealed interface Delta {
     /** PRD §5/§6 History Manager: a short human-readable name for this unit (shown in the history window). */
     val label: String
@@ -215,6 +230,13 @@ data class SchedulerState(
      * [org.example.project.scheduler.ui.TaskSchedulerViewModel]. Persisted; not undoable.
      */
     val sleep: org.example.project.scheduler.model.SleepSchedule? = null,
+    /**
+     * A bounded, local-only diagnostic log of the notification text the app has posted, shown as the
+     * History Manager's **Notifications** column. Capped at [MAX_NOTIFICATION_LOG] — the earliest that
+     * many entries are kept and the rest ignored (see [NotificationLogEntry]). Derived / local-only: it
+     * never affects the sync fingerprint and is never adopted from a remote pull.
+     */
+    val notificationLog: List<NotificationLogEntry> = emptyList(),
 ) {
     /** PRD §8: the calendar catches letter typing / routes Ctrl+Z/Y only while it is the focused window. */
     val calendarFocused: Boolean get() = focusedWindow == AppWindow.Calendar
@@ -226,7 +248,8 @@ data class SchedulerState(
      *  - [focusedWindow] — PRD §7 window navigation (the tree vs. a floating window),
      *  - [selection] — which tree cell(s) are highlighted (cleared as a side effect of navigating away),
      *  - [showSideTasks] / [showReminders] — the calendar's cosmetic display switches,
-     *  - the [HistoryCategory.WindowNav] and [HistoryCategory.Selection] history that records those moves.
+     *  - the [HistoryCategory.WindowNav] and [HistoryCategory.Selection] history that records those moves,
+     *  - [notificationLog] — the per-device diagnostic notification log (never synced, never adopted).
      * (Calendar *zoom* is likewise local, but it lives only in Compose UI state and is never persisted.)
      *
      * [withLocalViewStateFrom] carries these fields from [other] (used when a remote pull replaces the rest
@@ -240,6 +263,7 @@ data class SchedulerState(
             selection = other.selection,
             showSideTasks = other.showSideTasks,
             showReminders = other.showReminders,
+            notificationLog = other.notificationLog,
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, other.histories.forCategory(HistoryCategory.WindowNav))
                 .withCategory(HistoryCategory.Selection, other.histories.forCategory(HistoryCategory.Selection)),
@@ -252,6 +276,7 @@ data class SchedulerState(
             selection = SchedulerSelection(),
             showSideTasks = false,
             showReminders = true,
+            notificationLog = emptyList(),
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, SchedulerHistory())
                 .withCategory(HistoryCategory.Selection, SchedulerHistory()),
@@ -299,6 +324,12 @@ data class SchedulerState(
     }
 
     companion object {
+        /**
+         * Cap on [notificationLog]: the app keeps the FIRST this-many notifications and ignores every one
+         * after (see [NotificationLogEntry]). A fixed audit of the earliest notifications, not a rolling tail.
+         */
+        const val MAX_NOTIFICATION_LOG = 1000
+
         /** Ensures [nextCellCounter] stays above every numeric suffix already used in persisted cell ids. */
         fun deriveNextCellCounter(cells: Collection<CellId>): Int {
             val maxSuffix =

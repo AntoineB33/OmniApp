@@ -155,7 +155,10 @@ class TaskSchedulerViewModel(
         when (this) {
             is SchedulerIntent.AdvanceSchedule,
             is SchedulerIntent.RefreshSchedule,
-            is SchedulerIntent.ReportDeviceSleep -> false
+            is SchedulerIntent.ReportDeviceSleep,
+            // The notification log is a per-device diagnostic (see SchedulerState.notificationLog); recording
+            // one persists locally but is never an authoritative change, so it must not request a server push.
+            is SchedulerIntent.RecordNotification -> false
             else -> true
         }
 

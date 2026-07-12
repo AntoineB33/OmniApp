@@ -494,10 +494,13 @@ class SchedulerEngine(
     // cue lands in the cross-device timeline with the sim instant it fired at, so "this device stayed silent
     // through that break" is answerable from scripts/collect-diagnostics.bat instead of a live repro.
     private fun notifyUser(title: String, message: String) {
+        val now = clock.nowMillis()
         Diagnostics.log(
             "notification [$title] ${message.replace('\n', ' ')} " +
-                "(sim now=${Diagnostics.formatInstant(clock.nowMillis())})",
+                "(sim now=${Diagnostics.formatInstant(now)})",
         )
+        // Append to the History Manager's local-only Notifications column (capped, non-syncing).
+        vm.dispatch(SchedulerIntent.RecordNotification(title, message, now))
         sendSystemNotification(title, message)
     }
 
