@@ -1110,43 +1110,52 @@ private fun HistoryCategorySection(
     onSelectUnit: (HistoryUnit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(text = title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-            // pointer is 0-based on the last applied unit; `pointer + 1` units can be undone.
-            Text(
-                text = "${history.pointer + 1} / ${history.units.size}",
-                style = MaterialTheme.typography.labelSmall,
-                color = CalColors.muted,
-            )
-        }
-        if (history.units.isEmpty()) {
-            Text(
-                text = "(empty)",
-                style = MaterialTheme.typography.bodySmall,
-                color = CalColors.muted,
-            )
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+    // Wrap the whole column (header + rows) in a SelectionContainer so all of its text is
+    // selectable/copyable and a single drag can select the whole column. Per the note on
+    // SupabaseUsageSection, the list MUST be a plain scrollable Column, not a LazyColumn:
+    // selection holds references to the composed row nodes, and a LazyColumn disposes rows
+    // scrolled out of view — so the selection can't extend as you scroll and a shift+click onto
+    // a recycled anchor row crashes. Composing every row keeps the whole column selectable
+    // (bounded by SchedulerHistory's MAX_HISTORY_UNITS).
+    SelectionContainer(modifier = modifier) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Newest at the top, oldest at the bottom: walk the units in reverse.
-                items(history.units.size) { row ->
-                    val index = history.units.lastIndex - row
-                    val unit = history.units[index]
-                    val applied = index <= history.pointer
-                    val isCurrent = index == history.pointer
-                    HistoryUnitRow(
-                        position = index + 1,
-                        unit = unit,
-                        applied = applied,
-                        isCurrent = isCurrent,
-                        onClick = { onSelectUnit(unit) },
-                    )
+                Text(text = title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                // pointer is 0-based on the last applied unit; `pointer + 1` units can be undone.
+                Text(
+                    text = "${history.pointer + 1} / ${history.units.size}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CalColors.muted,
+                )
+            }
+            if (history.units.isEmpty()) {
+                Text(
+                    text = "(empty)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = CalColors.muted,
+                )
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // Newest at the top, oldest at the bottom: walk the units in reverse.
+                    for (row in history.units.indices) {
+                        val index = history.units.lastIndex - row
+                        val unit = history.units[index]
+                        val applied = index <= history.pointer
+                        val isCurrent = index == history.pointer
+                        HistoryUnitRow(
+                            position = index + 1,
+                            unit = unit,
+                            applied = applied,
+                            isCurrent = isCurrent,
+                            onClick = { onSelectUnit(unit) },
+                        )
+                    }
                 }
             }
         }
@@ -1165,32 +1174,38 @@ private fun NotificationLogSection(
     log: List<NotificationLogEntry>,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Notifications",
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = "${log.size} / ${SchedulerState.MAX_NOTIFICATION_LOG}",
-                style = MaterialTheme.typography.labelSmall,
-                color = CalColors.muted,
-            )
-        }
-        if (log.isEmpty()) {
-            Text(text = "(none)", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+    // Wrap the whole column in a SelectionContainer so all of its text is selectable/copyable and a
+    // single drag can select the whole column. Same constraint as SupabaseUsageSection: the list is a
+    // plain scrollable Column, not a LazyColumn, because selection can't survive row recycling
+    // (composing every row is bounded by MAX_NOTIFICATION_LOG).
+    SelectionContainer(modifier = modifier) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Newest at the top, oldest at the bottom: walk the entries in reverse.
-                items(log.size) { row ->
-                    NotificationLogRow(entry = log[log.lastIndex - row])
+                Text(
+                    text = "Notifications",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "${log.size} / ${SchedulerState.MAX_NOTIFICATION_LOG}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CalColors.muted,
+                )
+            }
+            if (log.isEmpty()) {
+                Text(text = "(none)", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // Newest at the top, oldest at the bottom: walk the entries in reverse.
+                    for (row in log.indices) {
+                        NotificationLogRow(entry = log[log.lastIndex - row])
+                    }
                 }
             }
         }
@@ -1237,42 +1252,41 @@ private fun SupabaseUsageSection(
     log: List<SupabaseUsageEntry>,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Supabase usage",
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = "${log.size} / ${SchedulerState.MAX_SUPABASE_USAGE_LOG}",
-                style = MaterialTheme.typography.labelSmall,
-                color = CalColors.muted,
-            )
-        }
-        if (log.isEmpty()) {
-            Text(text = "(none)", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
-        } else {
-            // Running total of the bytes over the kept (rolling) window — a rough egress/ingress gauge.
-            val totalUp = log.sumOf { it.requestBytes }
-            val totalDown = log.sumOf { it.responseBytes }
-            Text(
-                text = "Σ ↑${formatBytes(totalUp)}  ↓${formatBytes(totalDown)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = CalColors.muted,
-                modifier = Modifier.padding(bottom = 4.dp),
-            )
-            // Wrap the rows in a SelectionContainer so the whole column of entries is
-            // selectable/copyable — a single drag can select across all rows. This MUST be a
-            // plain scrollable Column, not a LazyColumn: text selection holds references to the
-            // composed row nodes, but a LazyColumn disposes rows scrolled out of view — so the
-            // selection can't extend as you scroll, and a shift+click onto a recycled anchor row
-            // dereferences a disposed selectable and crashes. Composing every row keeps the whole
-            // column selectable (bounded by MAX_SUPABASE_USAGE_LOG).
-            SelectionContainer {
+    // Wrap the whole column (header + total + rows) in a SelectionContainer so all of its text is
+    // selectable/copyable and a single drag can select the whole column. This MUST be a plain
+    // scrollable Column, not a LazyColumn: text selection holds references to the composed row
+    // nodes, but a LazyColumn disposes rows scrolled out of view — so the selection can't extend as
+    // you scroll, and a shift+click onto a recycled anchor row dereferences a disposed selectable and
+    // crashes. Composing every row keeps the whole column selectable (bounded by MAX_SUPABASE_USAGE_LOG).
+    SelectionContainer(modifier = modifier) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Supabase usage",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "${log.size} / ${SchedulerState.MAX_SUPABASE_USAGE_LOG}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CalColors.muted,
+                )
+            }
+            if (log.isEmpty()) {
+                Text(text = "(none)", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
+            } else {
+                // Running total of the bytes over the kept (rolling) window — a rough egress/ingress gauge.
+                val totalUp = log.sumOf { it.requestBytes }
+                val totalDown = log.sumOf { it.responseBytes }
+                Text(
+                    text = "Σ ↑${formatBytes(totalUp)}  ↓${formatBytes(totalDown)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CalColors.muted,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
                 Column(
                     modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
