@@ -1137,6 +1137,33 @@ object SchedulerDomain {
         side.lastRestMillis + side.intervalMillis <= nowMillis
 
     /**
+     * PRD §15: which **rest poses** ([SideTask.restBreak], the 5-/15-min breaks) the now-line has reached at
+     * [nowMillis] and should be **notified** — each mapped to its stable DUE instant `lastRest + interval`.
+     *
+     * This is the pure mathematical rule behind the rest-pose notification, deliberately a function of only
+     * `now` vs each task's due — **no drawn panels, no now-inside-a-window sampling**. Both of those are
+     * heartbeat-fragile under an accelerated / time-link-re-anchoring clock: a large sim jump leaps clean over
+     * a pose window (a sampled tick never lands inside it) and the drawn panel is not regenerated over the
+     * fast-moving now-line at the crossing instant, so the reach is silently skipped. `now >= due` is instead
+     * a **level** condition — once the now-line passes `due` it stays true however far the clock jumped, so a
+     * reach can never be missed — and `due` is fixed while the break is unserved (it only steps forward when a
+     * pause advances `lastRestMillis`), which is why the caller can dedupe on it to fire exactly once per
+     * break and stay silent as an overdue pose slides along the now-line ([sideTaskNextStart] = `maxOf(due,
+     * now)`).
+     *
+     * The **5↔15 merge** is honored without panels: when both poses are reached at the now-line the longer
+     * pose absorbs the shorter, so a reached pose is omitted if a strictly longer-duration rest pose is also
+     * reached (only the longer pose is announced). Invalid rows are skipped.
+     */
+    fun reachedRestPoseDueByTitle(sideTasks: List<SideTask>, nowMillis: Long): Map<String, Long> {
+        val reached = sideTasks
+            .filter { it.restBreak && isValidSideTask(it) && it.lastRestMillis + it.intervalMillis <= nowMillis }
+        return reached
+            .filter { task -> reached.none { it.durationMillis > task.durationMillis } }
+            .associate { it.title to it.lastRestMillis + it.intervalMillis }
+    }
+
+    /**
      * PRD §15: fold device-sleep [gaps] (each `start..end` epoch millis) into each side task's last-rest time.
      * A pause of length L counts as having taken every side task whose duration ≤ L (a long pause satisfies the
      * shorter poses too), so a task's [SideTask.lastRestMillis] advances to the **latest** qualifying gap's end.

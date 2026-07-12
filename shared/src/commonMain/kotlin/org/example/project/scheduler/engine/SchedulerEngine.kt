@@ -291,12 +291,16 @@ class SchedulerEngine(
 
     // PRD §11/§15 notification de-dupe (see the long-form rationale in git history of App.kt).
     private var lastNotifiedTaskId: TaskId? = null
-    private var lastNotifiedSideTitle: String? = null
 
     // PRD §15 (20s look-away) / wind-down bookkeeping; survives a collectLatest restart like the old remember.
     private var announcedStarts = setOf<Long>()
     private var pendingEnds = setOf<Long>()
     private var announcedWindDowns = setOf<Long>()
+    // PRD §15 (5/15-min rest-pose notification): the DUE instant (`lastRest + interval`) already notified per
+    // rest-pose title, so a break fires once when the now-line reaches it and stays silent as its panel drags
+    // along the now-line — the next cue comes only after `due` steps forward (the break is served). See
+    // [launchSidePoseNotification].
+    private var sidePoseNotifiedDue = mapOf<String, Long>()
     private var manualLookAwayJob: Job? = null
 
     // Real-time lateness bookkeeping, one per sweep loop (see [BoundarySweep]): the fire/stale decision for
@@ -908,14 +912,51 @@ class SchedulerEngine(
             }
     }
 
-    // PRD §15 Notifications: a *rest pose* that becomes the current activity is notified by its title.
+    // PRD §15 Notifications: a *rest pose* (5/15-min break) reaching the now-line is notified by its title,
+    // exactly ONCE per due cycle. The trigger is PURELY the pose's mathematical DUE instant,
+    // `due = lastRest + interval` ([SchedulerDomain.isSideTaskOverdue]) versus the now-line — it reads NO
+    // panels and does no now-line-inside-a-window sampling, because both of those are heartbeat-fragile:
+    //  • Sampling `distinctUntilChanged(currentPoseTitle(now))` (original) needed a tick to land INSIDE the
+    //    pose window, which a 300× / time-link-re-anchor leap jumps clean over → the "phone silent on the
+    //    5-min break" anomaly.
+    //  • Keying on the drawn panel's start re-fired every frame, because an overdue-but-unserved pose slides
+    //    its start to the now-line every refill (`sideTaskNextStart = maxOf(due, now)`) → the "infinite rapid
+    //    rest-break notifications" anomaly (the "clamping to now re-places it every tick ⇒ repeat
+    //    indefinitely" trap `sideTaskNextStart` calls out for the look-away).
+    //  • Gating on "a drawn pose currently contains the now-line" was STILL sampling: under a big leap the
+    //    panel isn't regenerated over the fast-moving now-line at the crossing tick, so the crossing was
+    //    missed until the clock returned to 1× and the now-line crawled back into a panel (the reported
+    //    "phone fires the 5-min pose a minute late, only after dropping to 1×").
+    // `now >= due` is a LEVEL condition: once the now-line passes `due` it stays true no matter how fast or
+    // far the clock jumped, so it can never be leapt over; `due` is fixed while the break is unserved and only
+    // steps forward when a rest is actually taken (a pause advances `lastRest`), so a per-title `title → due`
+    // dedupe fires once at the reach and stays silent as the pose drags with the now-line. The 5↔15 pose
+    // merge is honored without panels: when both are reached at the now-line the longer pose absorbs the
+    // shorter, so a reached pose is suppressed if a longer-duration rest pose is also reached. Gated on
+    // `automaticSchedule` (no poses are scheduled when auto-schedule is off).
     private fun launchSidePoseNotification() = scope.launch {
-        combine(_nowMillis, vm.state) { now, st -> currentPoseTitle(st, now) }
-            .distinctUntilChanged()
-            .collectLatest { title ->
-                if (title == null || title == lastNotifiedSideTitle) return@collectLatest
-                lastNotifiedSideTitle = title
-                notifyUser("Side task", title)
+        combine(_nowMillis, vm.state) { now, st -> now to st }
+            .collect { (now, st) ->
+                // Pure mathematical rule (reached rest poses by their stable due, 5↔15 merge resolved) — no
+                // panels, no now-inside-window sampling, so an accelerated / re-anchoring clock can't skip a
+                // reach. Auto-schedule off ⇒ nothing is scheduled ⇒ announce nothing.
+                val reached = if (st.automaticSchedule) {
+                    SchedulerDomain.reachedRestPoseDueByTitle(st.sideTasks, now)
+                } else {
+                    emptyMap()
+                }
+                val notified = sidePoseNotifiedDue.toMutableMap()
+                for ((title, due) in reached) {
+                    // `due` is fixed while the break is unserved, so this fires once at the reach and stays
+                    // silent as the pose slides along the now-line; it re-fires only after a rest advances due.
+                    if (notified[title] != due) {
+                        notified[title] = due
+                        notifyUser("Side task", title)
+                    }
+                }
+                // Keep the dedupe map bounded: retain only still-existing rest-pose titles (drop renamed/removed).
+                val restTitles = st.sideTasks.filter { it.restBreak }.map { it.title }.toSet()
+                sidePoseNotifiedDue = notified.filterKeys { it in restTitles }
             }
     }
 
