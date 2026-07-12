@@ -299,7 +299,7 @@ class SchedulerEngine(
     // PRD §15 (5/15-min rest-pose notification): the DUE instant (`lastRest + interval`) already notified per
     // rest-pose title, so a break fires once when the now-line reaches it and stays silent as its panel drags
     // along the now-line — the next cue comes only after `due` steps forward (the break is served). See
-    // [launchSidePoseNotification].
+    // [launchCueSweep].
     private var sidePoseNotifiedDue = mapOf<String, Long>()
     private var manualLookAwayJob: Job? = null
 
@@ -307,9 +307,10 @@ class SchedulerEngine(
     // every crossed boundary is exact real-clock arithmetic, never a sim-distance heuristic, so the triggers
     // do not depend on how the sweeps' wake-ups align with the calendar. Fields (not locals) so a
     // collectLatest re-key never resets the previous-sweep anchor.
-    private val lookAwaySweep = BoundarySweep()
+    // One sweep for the whole ordered cue pass (look-away, wind-down; the rest-pose is a level reach with no
+    // staleness gate). [poseFinishSweep] stays separate — it is the phone-only pause-end cue's own loop.
+    private val cueSweep = BoundarySweep()
     private val poseFinishSweep = BoundarySweep()
-    private val windDownSweep = BoundarySweep()
 
     // The sim clock's reconfiguration generation (speed change / leap / time-link re-anchor); any constant
     // for a non-sim clock, whose run is always continuous.
@@ -344,10 +345,12 @@ class SchedulerEngine(
         launchTreeChangeReschedule()
         launchHorizonReschedule()
         launchPendingRescheduleOnSwitch()
-        launchTaskSwitchNotification()
-        launchSidePoseNotification()
-        launchLookAwayCues()
-        launchWindDownNotification()
+        // PRD §15 / CLAUDE.md "each fires exactly once, in order": ONE now-line sweep drives the
+        // task-switch, look-away, rest-pose and wind-down cues, ordered by their true boundary instants —
+        // so a single accelerated leap that crosses several boundaries fires them chronologically (the
+        // look-away whose boundary precedes a rest-pose due is announced first), instead of racing four
+        // independent collectors.
+        launchCueSweep()
         // The in-app cue is the delivery path only where the OS-scheduled alarm isn't wired; otherwise the
         // alarm ([onPauseCueFire]) speaks, so running both would double-speak.
         if (!localPauseCueDelivery) launchPoseFinishVoiceCue()
@@ -895,71 +898,190 @@ class SchedulerEngine(
 
     // PRD §11/§13 Notifications: whenever "the task to do now" changes to a DIFFERENT task, post a system
     // notification naming it (with each schedule-unit step's deadline when present).
-    private fun launchTaskSwitchNotification() = scope.launch {
-        combine(_nowMillis, vm.state) { now, st -> SchedulerDomain.currentPanel(st, now)?.taskId }
-            .distinctUntilChanged()
-            .collectLatest { taskId ->
-                if (taskId == null || taskId == lastNotifiedTaskId) return@collectLatest
-                val st = vm.state.value
-                val currentPanel = SchedulerDomain.currentPanel(st, _nowMillis.value) ?: return@collectLatest
-                if (currentPanel.taskId != taskId) return@collectLatest
-                val message =
-                    SchedulerDomain.taskSwitchNotificationMessage(
-                        state = st,
-                        taskId = taskId,
-                        startMillis = currentPanel.startEpochMillis,
-                    ) { deadline -> formatClockTime(Instant.fromEpochMilliseconds(deadline).toLocalDateTime(tz)) }
-                        ?: return@collectLatest
-                lastNotifiedTaskId = taskId
-                notifyUser("Task to do now", message)
-            }
-    }
+    // PRD §15 / CLAUDE.md "each fires exactly once, in order": the ONE ordered cue sweep. Every now-line
+    // advance recomputes the cue boundaries the clock crossed since the previous sweep and fires them in the
+    // chronological order of their boundary instants — collapsing the task-switch, look-away, rest-pose and
+    // wind-down cues that used to run as four independent now-line collectors. That independence was the
+    // reported bug: a single 300× leap could cross a 20s look-away start (earlier) and a 5-min rest-pose due
+    // (later) in one tick, and the racing collectors announced the pose first, then the look-away, though the
+    // look-away's boundary came first. Here they share one [cueSweep] window and one sorted firing list.
+    //
+    // Leap-safety per cue is preserved and unified in [SchedulerDomain.cueCrossings]: look-away starts come
+    // from the mathematical [SchedulerDomain.sideTaskOccurrencesBetween] reconstruction (NOT `state.panels`,
+    // whose forward projection drops an occurrence the instant `now` passes it — the earlier look-away that
+    // vanished in the report), and the rest-pose is the level `now >= due` reach that a jump can't skip.
+    // Real-age staleness ([BoundarySweep.realLatenessMillis]), the screen-active gate, resume-cue arming and
+    // the once-only de-dupe stay here (this owns the clock and the fired-boundary memory).
+    private fun launchCueSweep() = scope.launch {
+        combine(_nowMillis, vm.state.map { it.panels }.distinctUntilChanged()) { _, panels -> panels }
+            .collectLatest {
+                while (true) {
+                    val st = vm.state.value
+                    val simNow = clock.nowMillis()
+                    val speed = (clock as? SimAppClock)?.speed ?: 1.0
+                    val voice = st.lookAwayVoiceEnabled
+                    // Fire/stale is decided by each crossing's REAL age ([BoundarySweep]); the scan floor (not
+                    // a fixed cap off sim-now) tiles consecutive sweeps so no crossing is clipped by a jump.
+                    cueSweep.beginSweep(simNow, speed, clockGeneration())
+                    val scanFloor = cueSweep.scanFloorMillis(LOOK_AWAY_SWEEP_CAP_MILLIS)
+                    announcedStarts = announcedStarts.filterTo(mutableSetOf()) { it >= scanFloor }
+                    announcedWindDowns = announcedWindDowns.filterTo(mutableSetOf()) { it >= scanFloor }
 
-    // PRD §15 Notifications: a *rest pose* (5/15-min break) reaching the now-line is notified by its title,
-    // exactly ONCE per due cycle. The trigger is PURELY the pose's mathematical DUE instant,
-    // `due = lastRest + interval` ([SchedulerDomain.isSideTaskOverdue]) versus the now-line — it reads NO
-    // panels and does no now-line-inside-a-window sampling, because both of those are heartbeat-fragile:
-    //  • Sampling `distinctUntilChanged(currentPoseTitle(now))` (original) needed a tick to land INSIDE the
-    //    pose window, which a 300× / time-link-re-anchor leap jumps clean over → the "phone silent on the
-    //    5-min break" anomaly.
-    //  • Keying on the drawn panel's start re-fired every frame, because an overdue-but-unserved pose slides
-    //    its start to the now-line every refill (`sideTaskNextStart = maxOf(due, now)`) → the "infinite rapid
-    //    rest-break notifications" anomaly (the "clamping to now re-places it every tick ⇒ repeat
-    //    indefinitely" trap `sideTaskNextStart` calls out for the look-away).
-    //  • Gating on "a drawn pose currently contains the now-line" was STILL sampling: under a big leap the
-    //    panel isn't regenerated over the fast-moving now-line at the crossing tick, so the crossing was
-    //    missed until the clock returned to 1× and the now-line crawled back into a panel (the reported
-    //    "phone fires the 5-min pose a minute late, only after dropping to 1×").
-    // `now >= due` is a LEVEL condition: once the now-line passes `due` it stays true no matter how fast or
-    // far the clock jumped, so it can never be leapt over; `due` is fixed while the break is unserved and only
-    // steps forward when a rest is actually taken (a pause advances `lastRest`), so a per-title `title → due`
-    // dedupe fires once at the reach and stays silent as the pose drags with the now-line. The 5↔15 pose
-    // merge is honored without panels: when both are reached at the now-line the longer pose absorbs the
-    // shorter, so a reached pose is suppressed if a longer-duration rest pose is also reached. Gated on
-    // `automaticSchedule` (no poses are scheduled when auto-schedule is off).
-    private fun launchSidePoseNotification() = scope.launch {
-        combine(_nowMillis, vm.state) { now, st -> now to st }
-            .collect { (now, st) ->
-                // Pure mathematical rule (reached rest poses by their stable due, 5↔15 merge resolved) — no
-                // panels, no now-inside-window sampling, so an accelerated / re-anchoring clock can't skip a
-                // reach. Auto-schedule off ⇒ nothing is scheduled ⇒ announce nothing.
-                val reached = if (st.automaticSchedule) {
-                    SchedulerDomain.reachedRestPoseDueByTitle(st.sideTasks, now)
-                } else {
-                    emptyMap()
-                }
-                val notified = sidePoseNotifiedDue.toMutableMap()
-                for ((title, due) in reached) {
-                    // `due` is fixed while the break is unserved, so this fires once at the reach and stays
-                    // silent as the pose slides along the now-line; it re-fires only after a rest advances due.
-                    if (notified[title] != due) {
-                        notified[title] = due
-                        notifyUser("Side task", title)
+                    val windDownInstants = st.panels
+                        .filter { it.sleep }
+                        .map { it.startEpochMillis - SchedulerDomain.NO_TASK_BEFORE_BED_MILLIS }
+                    val crossings = SchedulerDomain.cueCrossings(
+                        sideTasks = st.sideTasks,
+                        windDownInstants = windDownInstants,
+                        automaticSchedule = st.automaticSchedule,
+                        alreadyNotifiedPoseDues = sidePoseNotifiedDue,
+                        fromMillis = scanFloor,
+                        toMillis = simNow,
+                    )
+
+                    // Each fire as (instant, tie, action); executed in boundary order below. `tie` only
+                    // orders cues that share an instant (task context, then look-away start, then its resume,
+                    // then rest-pose due, then wind-down).
+                    data class Firing(val instant: Long, val tie: Int, val run: () -> Unit)
+                    val firings = mutableListOf<Firing>()
+
+                    // Task-switch (PRD §11/§13) — level: the task the now-line currently sits in, announced
+                    // once when it changes ([lastNotifiedTaskId]); ordered by that panel's start.
+                    val currentPanel = SchedulerDomain.currentPanel(st, simNow)
+                    val currentTaskId = currentPanel?.taskId
+                    if (currentTaskId != null && currentTaskId != lastNotifiedTaskId) {
+                        val message = SchedulerDomain.taskSwitchNotificationMessage(
+                            state = st,
+                            taskId = currentTaskId,
+                            startMillis = currentPanel.startEpochMillis,
+                        ) { deadline -> formatClockTime(Instant.fromEpochMilliseconds(deadline).toLocalDateTime(tz)) }
+                        if (message != null) {
+                            firings += Firing(currentPanel.startEpochMillis, 0) {
+                                lastNotifiedTaskId = currentTaskId
+                                notifyUser("Task to do now", message)
+                            }
+                        }
                     }
+
+                    for (crossing in crossings) {
+                        when (crossing.kind) {
+                            SchedulerDomain.CueKind.LookAwayStart -> {
+                                val start = crossing.instant
+                                if (start in announcedStarts) continue
+                                val end = crossing.endInstant
+                                val title = crossing.title
+                                // Decide the start's fate now (reads are synchronous and stable across this
+                                // sweep): a crossing older than the real-age budget was slept through, and a
+                                // screen-inactive user is already resting (no cue, no resume armed).
+                                val lateness = cueSweep.realLatenessMillis(start)
+                                val stale = lateness > LOOK_AWAY_START_FRESH_MILLIS
+                                val screenActive = effectiveScreenActive()
+                                val startFires = !stale && screenActive
+                                firings += Firing(start, 1) {
+                                    announcedStarts = announcedStarts + start
+                                    when {
+                                        stale -> Diagnostics.log(
+                                            "look-away start ${Diagnostics.formatInstant(start)} swallowed: " +
+                                                "crossed ~$lateness ms (real) ago — process was suspended or engine " +
+                                                "just started (budget $LOOK_AWAY_START_FRESH_MILLIS ms, speed ${speed}x)",
+                                        )
+                                        !screenActive -> Diagnostics.log(
+                                            "look-away start ${Diagnostics.formatInstant(start)} suppressed: " +
+                                                "screen inactive at crossing (user already resting; sim now=" +
+                                                "${Diagnostics.formatInstant(simNow)})",
+                                        )
+                                        else -> {
+                                            notifyUser("Side task", title)
+                                            if (voice) speakCue(VoiceCue.LookAway)
+                                            // Resume fires at `end`: same tick if the whole break was leaped
+                                            // (queued below, sorted after this start); else armed for later.
+                                            if (end > simNow) pendingEnds = pendingEnds + end
+                                        }
+                                    }
+                                }
+                                if (startFires && end <= simNow) {
+                                    firings += Firing(end, 2) {
+                                        if (voice &&
+                                            cueSweep.realLatenessMillis(end) <= LOOK_AWAY_START_FRESH_MILLIS &&
+                                            effectiveScreenActive()
+                                        ) {
+                                            speakCue(VoiceCue.ResumeWork)
+                                        }
+                                    }
+                                }
+                            }
+                            SchedulerDomain.CueKind.RestPoseDue -> {
+                                // Level reach — NO staleness gate (a break announces however late the clock
+                                // finally crossed its due). De-duped on the stable due, so a sliding overdue
+                                // pose fires once and stays silent until a rest advances the due.
+                                val due = crossing.instant
+                                val title = crossing.title
+                                firings += Firing(due, 3) {
+                                    sidePoseNotifiedDue = sidePoseNotifiedDue + (title to due)
+                                    notifyUser("Side task", title)
+                                }
+                            }
+                            SchedulerDomain.CueKind.WindDown -> {
+                                val wd = crossing.instant
+                                if (wd in announcedWindDowns) continue
+                                firings += Firing(wd, 4) {
+                                    announcedWindDowns = announcedWindDowns + wd
+                                    if (cueSweep.realLatenessMillis(wd) <= LOOK_AWAY_START_FRESH_MILLIS) {
+                                        notifyUser("Stop work", "Wind down — bedtime in 1 hour")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Resume cues armed on a PREVIOUS sweep whose end the now-line has now reached.
+                    pendingEnds.filter { it <= simNow }.forEach { end ->
+                        firings += Firing(end, 2) {
+                            pendingEnds = pendingEnds - end
+                            val lateness = cueSweep.realLatenessMillis(end)
+                            when {
+                                lateness > LOOK_AWAY_START_FRESH_MILLIS -> Diagnostics.log(
+                                    "look-away end ${Diagnostics.formatInstant(end)} resume cue swallowed: " +
+                                        "crossed ~$lateness ms (real) ago (budget $LOOK_AWAY_START_FRESH_MILLIS ms)",
+                                )
+                                !effectiveScreenActive() -> Diagnostics.log(
+                                    "look-away end ${Diagnostics.formatInstant(end)} resume cue suppressed: " +
+                                        "screen inactive at crossing",
+                                )
+                                voice -> speakCue(VoiceCue.ResumeWork)
+                            }
+                        }
+                    }
+
+                    // Fire everything in true boundary order (CLAUDE.md "in order").
+                    firings.sortedWith(compareBy({ it.instant }, { it.tie })).forEach { it.run() }
+
+                    // Keep the pose de-dupe map bounded: retain only still-existing rest-pose titles.
+                    val restTitles = st.sideTasks.filter { it.restBreak }.map { it.title }.toSet()
+                    sidePoseNotifiedDue = sidePoseNotifiedDue.filterKeys { it in restTitles }
+
+                    // Self-delay to the next boundary across every cue kind, so a cue fires at its instant and
+                    // not up to a tick late (the outer collectLatest also re-keys each tick). The forward
+                    // look-away / wind-down come from the projection, which keeps FUTURE occurrences; the next
+                    // pose due is arithmetic.
+                    val nextStart = st.panels
+                        .filter { p -> p.sideTask && st.sideTasks.any { !it.restBreak && it.title == p.title } }
+                        .map { it.startEpochMillis }
+                        .filter { it > simNow && it !in announcedStarts }.minOrNull()
+                    val nextEnd = pendingEnds.filter { it > simNow }.minOrNull()
+                    val nextWind = windDownInstants.filter { it > simNow && it !in announcedWindDowns }.minOrNull()
+                    val nextPose = if (st.automaticSchedule) {
+                        st.sideTasks
+                            .filter { it.restBreak && it.intervalMillis > 0 && it.durationMillis > 0 && it.title.isNotBlank() }
+                            .map { it.lastRestMillis + it.intervalMillis }
+                            .filter { it > simNow }.minOrNull()
+                    } else {
+                        null
+                    }
+                    val next = listOfNotNull(nextStart, nextEnd, nextWind, nextPose).minOrNull() ?: break
+                    if (speed <= 0.0) break
+                    delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
                 }
-                // Keep the dedupe map bounded: retain only still-existing rest-pose titles (drop renamed/removed).
-                val restTitles = st.sideTasks.filter { it.restBreak }.map { it.title }.toSet()
-                sidePoseNotifiedDue = notified.filterKeys { it in restTitles }
             }
     }
 
@@ -969,125 +1091,6 @@ class SchedulerEngine(
                 panel.sideTask && st.sideTasks.any { it.restBreak && it.title == panel.title }
             }
             ?.title
-
-    // PRD §15 (20s look-away): schedule each cue at the real instant the (possibly accelerated) clock reaches
-    // its boundary. Re-keys on (now, panels) to pick up newly projected occurrences and clock-speed changes;
-    // [announcedStarts]/[pendingEnds] survive the re-key so nothing fires twice.
-    private fun launchLookAwayCues() = scope.launch {
-        combine(_nowMillis, vm.state.map { it.panels }.distinctUntilChanged()) { _, panels -> panels }
-            .collectLatest {
-                while (true) {
-                    val st = vm.state.value
-                    val simNow = clock.nowMillis()
-                    val speed = (clock as? SimAppClock)?.speed ?: 1.0
-                    val voice = st.lookAwayVoiceEnabled
-                    // Fire/stale below is decided by the crossing's REAL age ([BoundarySweep]), so every
-                    // boundary the clock crossed — including a whole break a time-link re-anchor jumped
-                    // over (67 ms real at 300×) — fires exactly once; only a crossing the process was
-                    // genuinely unable to witness (device asleep) is swallowed.
-                    lookAwaySweep.beginSweep(simNow, speed, clockGeneration())
-                    // Scan floor, not a fixed cap off sim-now: consecutive scans tile the timeline with no
-                    // gaps, so a crossing can never be clipped out by one large clock jump.
-                    val scanFloor = lookAwaySweep.scanFloorMillis(LOOK_AWAY_SWEEP_CAP_MILLIS)
-                    announcedStarts = announcedStarts.filterTo(mutableSetOf()) { it >= scanFloor }
-
-                    val occurrences = st.panels.filter { panel ->
-                        panel.sideTask && st.sideTasks.any { !it.restBreak && it.title == panel.title }
-                    }
-
-                    occurrences
-                        .filter {
-                            it.startEpochMillis in scanFloor..simNow &&
-                                it.startEpochMillis !in announcedStarts
-                        }
-                        .sortedBy { it.startEpochMillis }
-                        .forEach {
-                            announcedStarts = announcedStarts + it.startEpochMillis
-                            val latenessMillis = lookAwaySweep.realLatenessMillis(it.startEpochMillis)
-                            if (latenessMillis > LOOK_AWAY_START_FRESH_MILLIS) {
-                                Diagnostics.log(
-                                    "look-away start ${Diagnostics.formatInstant(it.startEpochMillis)} swallowed: " +
-                                        "crossed ~$latenessMillis ms (real) ago — process was suspended or engine " +
-                                        "just started (budget $LOOK_AWAY_START_FRESH_MILLIS ms, speed ${speed}x)",
-                                )
-                            } else if (!effectiveScreenActive()) {
-                                // Eligibility rule at the boundary instant (like the pose cue's screen
-                                // gate, not a staleness heuristic): the user isn't at the screen, so
-                                // they're already resting — the break is being served by the pause
-                                // itself. Suppress the start cue and don't arm the resume cue. The
-                                // placement overlay normally moves the panel out of a pause at the
-                                // walk-away instant; this covers the race before the next refill picks
-                                // the pause up.
-                                Diagnostics.log(
-                                    "look-away start ${Diagnostics.formatInstant(it.startEpochMillis)} suppressed: " +
-                                        "screen inactive at crossing (user already resting; sim now=" +
-                                        "${Diagnostics.formatInstant(simNow)})",
-                                )
-                            } else {
-                                pendingEnds = pendingEnds + it.endEpochMillis
-                                notifyUser("Side task", it.title)
-                                if (voice) speakCue(VoiceCue.LookAway)
-                            }
-                        }
-
-                    pendingEnds.filter { it <= simNow }.sorted().forEach { end ->
-                        pendingEnds = pendingEnds - end
-                        val latenessMillis = lookAwaySweep.realLatenessMillis(end)
-                        if (latenessMillis > LOOK_AWAY_START_FRESH_MILLIS) {
-                            Diagnostics.log(
-                                "look-away end ${Diagnostics.formatInstant(end)} resume cue swallowed: " +
-                                    "crossed ~$latenessMillis ms (real) ago (budget $LOOK_AWAY_START_FRESH_MILLIS ms)",
-                            )
-                        } else if (!effectiveScreenActive()) {
-                            // Same eligibility rule: no one is at the screen to resume work.
-                            Diagnostics.log(
-                                "look-away end ${Diagnostics.formatInstant(end)} resume cue suppressed: " +
-                                    "screen inactive at crossing",
-                            )
-                        } else if (voice) {
-                            speakCue(VoiceCue.ResumeWork)
-                        }
-                    }
-
-                    val nextStart = occurrences.map { it.startEpochMillis }
-                        .filter { it > simNow && it !in announcedStarts }.minOrNull()
-                    val nextEnd = pendingEnds.filter { it > simNow }.minOrNull()
-                    val next = listOfNotNull(nextStart, nextEnd).minOrNull() ?: break
-                    if (speed <= 0.0) break
-                    delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
-                }
-            }
-    }
-
-    // Wind-down: notify to stop work when the now-line reaches each sleep window's bedtime − 1h.
-    private fun launchWindDownNotification() = scope.launch {
-        combine(_nowMillis, vm.state.map { it.panels }.distinctUntilChanged()) { _, panels -> panels }
-            .collectLatest {
-                while (true) {
-                    val st = vm.state.value
-                    val simNow = clock.nowMillis()
-                    val speed = (clock as? SimAppClock)?.speed ?: 1.0
-                    windDownSweep.beginSweep(simNow, speed, clockGeneration())
-                    val scanFloor = windDownSweep.scanFloorMillis(LOOK_AWAY_SWEEP_CAP_MILLIS)
-                    announcedWindDowns = announcedWindDowns.filterTo(mutableSetOf()) { it >= scanFloor }
-                    val windDowns = st.panels
-                        .filter { it.sleep }
-                        .map { it.startEpochMillis - SchedulerDomain.NO_TASK_BEFORE_BED_MILLIS }
-                    windDowns
-                        .filter { it in scanFloor..simNow && it !in announcedWindDowns }
-                        .sorted()
-                        .forEach {
-                            announcedWindDowns = announcedWindDowns + it
-                            if (windDownSweep.realLatenessMillis(it) <= LOOK_AWAY_START_FRESH_MILLIS) {
-                                notifyUser("Stop work", "Wind down — bedtime in 1 hour")
-                            }
-                        }
-                    val next = windDowns.filter { it > simNow && it !in announcedWindDowns }.minOrNull() ?: break
-                    if (speed <= 0.0) break
-                    delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
-                }
-            }
-    }
 
     /**
      * PRD §15 (20s look-away) manual redo: re-run the 20s pause now, superseding any look-away cue still
@@ -1142,7 +1145,7 @@ class SchedulerEngine(
      * PRD §15: when the now-line reaches the **start** of a 5- or 15-minute pose and **no device on the
      * account has an active screen** (this phone's screen is off and no peer reports one), the **phone**
      * speaks at the pose's **end** to say the pause is over. Eligibility is decided at the start; only the
-     * phone ever speaks this cue, so it is inert on desktop. Mirrors [launchLookAwayCues]' occurrence scan,
+     * phone ever speaks this cue, so it is inert on desktop. Mirrors [launchCueSweep]'s look-away occurrence scan,
      * filtered to the `restBreak` poses; [poseFinishHandled] survives the re-key so each pose fires once.
      */
     private fun launchPoseFinishVoiceCue() = scope.launch {

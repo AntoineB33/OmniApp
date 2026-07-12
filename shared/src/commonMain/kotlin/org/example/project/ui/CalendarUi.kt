@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -1264,13 +1265,22 @@ private fun SupabaseUsageSection(
                 color = CalColors.muted,
                 modifier = Modifier.padding(bottom = 4.dp),
             )
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                // Newest at the top, oldest at the bottom: walk the entries in reverse.
-                items(log.size) { row ->
-                    SupabaseUsageRow(entry = log[log.lastIndex - row])
+            // Wrap the rows in a SelectionContainer so the whole column of entries is
+            // selectable/copyable — a single drag can select across all rows. This MUST be a
+            // plain scrollable Column, not a LazyColumn: text selection holds references to the
+            // composed row nodes, but a LazyColumn disposes rows scrolled out of view — so the
+            // selection can't extend as you scroll, and a shift+click onto a recycled anchor row
+            // dereferences a disposed selectable and crashes. Composing every row keeps the whole
+            // column selectable (bounded by MAX_SUPABASE_USAGE_LOG).
+            SelectionContainer {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // Newest at the top, oldest at the bottom: walk the entries in reverse.
+                    for (row in log.indices) {
+                        SupabaseUsageRow(entry = log[log.lastIndex - row])
+                    }
                 }
             }
         }

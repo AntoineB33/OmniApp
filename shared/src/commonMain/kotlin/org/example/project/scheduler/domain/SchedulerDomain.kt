@@ -1381,17 +1381,115 @@ object SchedulerDomain {
         if (valid.isEmpty()) return null
         val maxInterval = valid.maxOf { it.value.intervalMillis }
         val maxDuration = valid.maxOf { it.value.durationMillis }
-        val from = nowMillis - maxInterval - maxDuration
+        return sideTaskOccurrencesBetween(sideTasks, nowMillis - maxInterval - maxDuration, nowMillis)
+            .filter { it.startEpochMillis < nowMillis }
+            .maxByOrNull { it.startEpochMillis }
+    }
+
+    /**
+     * PRD §15: every side-task occurrence whose **start** lies in `[fromMillis, toMillis]`, reconstructed
+     * from the fixed grid via the same interleave / merge / re-anchor engine [sideTaskPanels] uses — but
+     * seeded from the PAST so it reproduces occurrences the forward projection has already discarded.
+     *
+     * This is the **leap-safe** source for the look-away cue. The forward [sideTaskPanels] seeds each task
+     * at [sideTaskNextStart], which **steps the grid past any occurrence `now` has already crossed**, so a
+     * look-away the clock jumped over is simply absent from `state.panels`; a panel-based cue can then never
+     * fire it — the reported "the 20s break was notified *after* the 5-min pose, it should have been before":
+     * the earlier look-away was dropped from the projection and only the next (re-anchored past the pose) one
+     * remained. Reconstructing over the sweep's `[scanFloor, now]` window instead tiles the timeline, so no
+     * crossed boundary is clipped (mirrors the level `now >= due` leap-proofing of the rest-pose cue in
+     * [reachedRestPoseDueByTitle]).
+     *
+     * Each participating task is seeded a full recurrence step at/before [fromMillis] so any pose able to
+     * re-anchor a look-away inside the window is itself placed first (the same widening [lastSideTaskBefore]
+     * relies on). Callers test `restBreak` of a returned panel's source task to tell a 20s look-away apart
+     * from a rest pose.
+     */
+    fun sideTaskOccurrencesBetween(
+        sideTasks: List<SideTask>,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<TaskPanel> {
+        if (toMillis < fromMillis) return emptyList()
+        val valid = sideTasks.withIndex().filter { isValidSideTask(it.value) }
+        if (valid.isEmpty()) return emptyList()
+        val maxInterval = valid.maxOf { it.value.intervalMillis }
+        val maxDuration = valid.maxOf { it.value.durationMillis }
+        val from = fromMillis - maxInterval - maxDuration
         val seedDue = valid.associate { (i, t) ->
             // A pose recurs over a (duration + interval) cycle; the look-away every interval. Seed at the
-            // grid point at/just before [from] so the loop reconstructs every occurrence up to `now`.
+            // grid point at/just before the widened [from] so the loop reconstructs every occurrence up to
+            // [toMillis] with the re-anchoring poses already placed.
             val step = if (t.restBreak) t.durationMillis + t.intervalMillis else t.intervalMillis
             val base = t.lastRestMillis + t.intervalMillis
             i to (if (base >= from) base else base + ((from - base) / step) * step)
         }
-        return simulateSideTasks(sideTasks, seedDue, nowMillis)
-            .filter { it.startEpochMillis < nowMillis }
-            .maxByOrNull { it.startEpochMillis }
+        return simulateSideTasks(sideTasks, seedDue, toMillis)
+            .filter { it.startEpochMillis in fromMillis..toMillis }
+    }
+
+    /** PRD §15: a cue boundary the now-line crossed — the atom of the engine's single ordered cue sweep. */
+    enum class CueKind { LookAwayStart, RestPoseDue, WindDown }
+
+    /**
+     * A single cue crossing: fire the [kind] cue for [title] at [instant]. [endInstant] is the look-away's
+     * resume moment (`start + duration`) for [CueKind.LookAwayStart], else equal to [instant].
+     */
+    data class CueCrossing(
+        val instant: Long,
+        val kind: CueKind,
+        val title: String,
+        val endInstant: Long,
+    )
+
+    /**
+     * PRD §15 / CLAUDE.md "each fires exactly once, **in order**": the cue boundaries the clock crossed in a
+     * sweep window, as a single list sorted by their true boundary [CueCrossing.instant]. This is the pure
+     * core the engine's one cue sweep drives — collapsing the previously independent look-away / rest-pose /
+     * wind-down coroutines, whose separate now-line collectors could fire a leap's crossings in the wrong
+     * order (the reported "20s look-away announced after the 5-min pose, but its boundary was earlier").
+     *
+     * The three kinds are gathered by their own leap-safe rules and then merged/sorted:
+     * - **Look-away starts** — [sideTaskOccurrencesBetween] over `[fromMillis, toMillis]` (not the forward
+     *   projection, which drops an already-crossed occurrence). Each carries its resume instant as
+     *   [CueCrossing.endInstant].
+     * - **Rest-pose dues** — [reachedRestPoseDueByTitle] at [toMillis] (a **level** reach, so a jump can't
+     *   skip it), keyed on the stable due; a due already in [alreadyNotifiedPoseDues] is omitted, so a pose
+     *   sliding along the now-line announces once. The crossing's instant is the DUE, so it orders against a
+     *   look-away by which boundary was actually earlier — even an overdue due that predates [fromMillis].
+     * - **Wind-downs** — the caller's precomputed bedtime−1h instants that fall in the window.
+     *
+     * Staleness (real age), the screen-active gate and the once-only de-dupe stay in the engine, which owns
+     * the clock and the fired-boundary memory; this function is a pure function of the schedule and window.
+     */
+    fun cueCrossings(
+        sideTasks: List<SideTask>,
+        windDownInstants: List<Long>,
+        automaticSchedule: Boolean,
+        alreadyNotifiedPoseDues: Map<String, Long>,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<CueCrossing> {
+        val out = mutableListOf<CueCrossing>()
+        // 20s look-away starts (leap-safe reconstruction; a pose-merged/absorbed occurrence never surfaces).
+        for (occ in sideTaskOccurrencesBetween(sideTasks, fromMillis, toMillis)) {
+            if (sideTasks.any { !it.restBreak && it.title == occ.title }) {
+                out += CueCrossing(occ.startEpochMillis, CueKind.LookAwayStart, occ.title, occ.endEpochMillis)
+            }
+        }
+        // 5/15-min rest-pose dues reached at the now-line (level; the stable due is the ordering key).
+        if (automaticSchedule) {
+            for ((title, due) in reachedRestPoseDueByTitle(sideTasks, toMillis)) {
+                if (alreadyNotifiedPoseDues[title] != due) {
+                    out += CueCrossing(due, CueKind.RestPoseDue, title, due)
+                }
+            }
+        }
+        // Wind-down (bedtime − 1h) instants that fall in the window.
+        for (wd in windDownInstants) {
+            if (wd in fromMillis..toMillis) out += CueCrossing(wd, CueKind.WindDown, "", wd)
+        }
+        return out.sortedWith(compareBy({ it.instant }, { it.kind.ordinal }))
     }
 
     /**

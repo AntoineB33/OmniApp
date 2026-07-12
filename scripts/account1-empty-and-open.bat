@@ -2,6 +2,15 @@
 setlocal EnableDelayedExpansion
 
 REM =====================================================================
+REM  Kill any previous instance of this script that might be stuck
+REM  (e.g., waiting for the user to press enter to retry Android deployment).
+REM  We do this by terminating the unique window title of the old run 
+REM  before claiming that title for this current run.
+REM =====================================================================
+taskkill /F /FI "WINDOWTITLE eq OmniApp_Account1_Empty_And_Open" /T >nul 2>nul
+title OmniApp_Account1_Empty_And_Open
+
+REM =====================================================================
 REM  account1-empty-and-open.bat - empty account 1's synced data, then open
 REM  the desktop app already logged in as account 1.
 REM
