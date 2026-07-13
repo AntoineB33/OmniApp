@@ -110,13 +110,6 @@ private enum class FloatingWindow { Calendar, Reminders, History, Sleep, TimeSim
 // those loops within a display frame, so this is a comfortable margin, not a tight race.
 private const val SIM_PAUSE_LEAP_SETTLE_MILLIS: Long = 350
 
-// Real ms the leap waits after ending for each linked phone to ack its leap-end session push before the
-// desktop derives the pauses: the server presumes a fresh OPEN session active through the now-line, so
-// deriving while a phone's stale open row is still up there would read the whole leap window as activity and
-// hide the just-simulated pause. Bounded so a wedged phone can't hang the leap; on timeout the derive
-// proceeds best-effort and the next sync moment heals the bands.
-private const val SIM_PAUSE_LEAP_ACK_TIMEOUT_MILLIS: Long = 5_000
-
 @Composable
 @Preview
 fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedulerHost? = null) {
@@ -200,22 +193,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     clock = clock,
                     scope = engineScope,
                     tz = tz,
-                    presence = vm.presence,
                     sleepGapStore = store as? DeviceSleepGapStore,
-                    sleepGaps = vm.sleepGaps,
                     sleepScanCheckpoint = store as? SleepScanCheckpointStore,
                     activeSessionStore = store as? ActiveSessionStore,
-                    activeSessions = vm.activeSessions,
                     pauseCue = vm.pauseCue,
-                    syncMoments = vm.syncMoments,
-                    // PRD §15 / ARCHITECTURE.md §8: the OS-scheduled local cue seam for the engine App() builds
-                    // itself (iOS delivers via UNUserNotificationCenter; desktop/web are inert). Android does not
-                    // reach here — it injects an AlarmManager seam via SchedulerHolder.
+                    // PRD §15: the OS-scheduled local cue seam for the engine App() builds itself (iOS delivers
+                    // via UNUserNotificationCenter; desktop/web are inert). Android does not reach here — it
+                    // injects an AlarmManager seam via SchedulerHolder.
                     scheduleLocalPauseCue = ::scheduleLocalPauseCuePlatform,
                     localPauseCueDelivery = localPauseCueDeliveryPlatform,
-                    // ARCHITECTURE.md §8 sync moment #5: reconcile when the heartbeat finds the device went
-                    // inactive (a finalized session peers can't re-derive).
-                    requestSyncMoment = { vm.syncNow() },
                 )
         }
         LaunchedEffect(engine) { if (host == null) engine.start() }
@@ -521,6 +507,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onLookAwayNow = { engine.restartLookAway() },
                     sleepWindowOpen = sleepWindowOpen,
                     onToggleSleep = { onMenuWindowClicked(FloatingWindow.Sleep) { sleepWindowOpen = it } },
+                    sleeping = schedulerState.isSleeping(nowMillis),
+                    onToggleSleepWork = {
+                        if (schedulerState.isSleeping(clock.nowMillis())) {
+                            vm.setSleepMode(null)
+                        } else {
+                            vm.setSleepMode(
+                                SchedulerDomain.nextWakeInstantMillis(schedulerState.sleep, clock.nowMillis(), tz),
+                            )
+                        }
+                    },
                     anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen,
                     onCloseAllWindows = {
                         calendarOpen = false
@@ -850,22 +846,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                         // through" them) instead of firing in a burst when the session reopens.
                                         delay(SIM_PAUSE_LEAP_SETTLE_MILLIS)
                                         engine.setDebugForcedInactive(false)
-                                        // Publish this desktop's sessions (leap-start finalize + the reopen
-                                        // just above) BEFORE the phones see the leap end: the phone's own
-                                        // leap-end derive would otherwise read this desktop's stale OPEN
-                                        // server row as activity covering the whole leap and never seed the
-                                        // pause — the mirror image of the desktop-side wait below.
-                                        engine.pushOwnActiveSessionsAndWait()
+                                        // A linked phone lives the leap via the time-link frames and derives its
+                                        // own LOCAL bands; activity is no longer synced, so there is nothing to
+                                        // push or ack — just clear the phone flag and re-derive this device's
+                                        // own "Inactivity" bands / reseed the rest poses from the simulated pause.
                                         timeLink?.setPhoneForcedInactive(false)
-                                        // Wait for each linked phone to push the session it finalized at leap
-                                        // start (it acks over the link once the push landed): deriving before
-                                        // that would read the phone's stale OPEN server row as activity
-                                        // covering the whole leap and hide the just-simulated pause — the
-                                        // "now-line drags the scheduled break" anomaly. No-op with no phone.
-                                        timeLink?.awaitPhoneLeapAcks(SIM_PAUSE_LEAP_ACK_TIMEOUT_MILLIS)
-                                        // A debug control counts as an explicit sync moment: push the finalized
-                                        // sessions and re-derive the "Inactivity" bands / reseed the rest poses
-                                        // now instead of waiting for the next reconcile.
                                         engine.refreshDerivedPauses()
                                     }
                                 }

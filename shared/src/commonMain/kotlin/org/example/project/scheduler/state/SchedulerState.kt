@@ -250,6 +250,16 @@ data class SchedulerState(
      */
     val sleep: org.example.project.scheduler.model.SleepSchedule? = null,
     /**
+     * The Sleep/Work toggle (left-menu control): when the user presses **Sleep** (deliberately going away),
+     * this is set to the next scheduled wake instant (epoch millis) — the button then reads **Work**. `null`
+     * means working (the button reads **Sleep**). On launch the ViewModel resets it to `null` if the wake
+     * instant has passed (see [org.example.project.scheduler.ui.TaskSchedulerViewModel]); until then a restart
+     * keeps the sleeping state so the user needn't re-press Sleep. The external Realtime listener reads the
+     * account's mode (mirrored to the `account_state` table on every toggle) to suppress the pause-end cue
+     * while sleeping. Persisted + synced (authoritative, user-authored); not undoable.
+     */
+    val sleepingUntilMillis: Long? = null,
+    /**
      * A bounded, local-only diagnostic log of the notification text the app has posted, shown as the
      * History Manager's **Notifications** column. Capped at [MAX_NOTIFICATION_LOG] — the earliest that
      * many entries are kept and the rest ignored (see [NotificationLogEntry]). Derived / local-only: it
@@ -267,6 +277,13 @@ data class SchedulerState(
 ) {
     /** PRD §8: the calendar catches letter typing / routes Ctrl+Z/Y only while it is the focused window. */
     val calendarFocused: Boolean get() = focusedWindow == AppWindow.Calendar
+
+    /**
+     * Sleep/Work toggle: true when the user has pressed **Sleep** and the scheduled wake instant
+     * ([sleepingUntilMillis]) has not yet passed at [nowMillis]. The button reads **Work** while sleeping and
+     * **Sleep** while working.
+     */
+    fun isSleeping(nowMillis: Long): Boolean = sleepingUntilMillis?.let { nowMillis < it } ?: false
 
     /**
      * CLAUDE.md reconstructibility rule: the per-device **view state** that must never sync — it is only

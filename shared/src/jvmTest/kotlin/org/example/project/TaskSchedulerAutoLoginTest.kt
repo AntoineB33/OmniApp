@@ -25,8 +25,10 @@ import kotlin.test.assertNull
 /**
  * The per-account `/scripts` launch the app with credentials so it opens already signed in. This verifies
  * [TaskSchedulerViewModel] consumes its injected startup credentials: when no session is cached it signs in
- * (synthesizing the email from the username) and the first reconcile seeds the remote — and that with no
- * credentials it never touches auth.
+ * (synthesizing the email from the username) — and that with no credentials it never touches auth.
+ *
+ * Sync is BUTTON-ONLY: signing in does NOT reconcile, so nothing is pushed/pulled at launch (the remote is
+ * seeded only when the user presses Sync). The assertion therefore observes the completed sign-in, not a seed.
  *
  * Auto-login is fire-and-forget (a coroutine off the save dispatcher), so these run it on a real dispatcher
  * and await the observable result rather than virtual-time stepping a launched-then-suspended HTTP call.
@@ -105,10 +107,10 @@ class TaskSchedulerAutoLoginTest {
             startupLogin = { StartupLogin("account1", "pw") },
         )
 
-        // The first reconcile seeds the remote, which only happens after signIn() succeeds.
-        assertEquals(true, awaitUntil { server.revision == 1L }, "auto-login did not complete")
+        // Sign-in completes (userId cached) but does NOT reconcile — the remote stays unseeded (button-only).
+        assertEquals(true, awaitUntil { meta.loadSyncMeta()?.userId == "user-1" }, "auto-login did not complete")
         assertEquals("account1@omniapp.local", server.lastEmail)
-        assertEquals("user-1", meta.loadSyncMeta()!!.userId)
+        assertEquals(0L, server.revision, "sign-in must not push/seed the remote (sync is button-only)")
     }
 
     @Test

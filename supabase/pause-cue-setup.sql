@@ -41,5 +41,14 @@ begin
 end;
 $$;
 
--- Run the pause-cue tick every minute (upserts by the 'pause-cue-tick' jobname if already scheduled).
-select cron.schedule('pause-cue-tick', '* * * * *', $$ select public.tick_pause_cues() $$);
+-- The pause-cue tick cron is RETIRED: the external Realtime listener (see /listener) now decides when to fire
+-- the pause-cue Edge Function, so pg_cron no longer polls a pause_cue_schedule table (that table + tick_pause_cues
+-- were dropped in migration 20260713000000). Unschedule the old job if a previous deploy created it.
+do $$
+begin
+    perform cron.unschedule('pause-cue-tick');
+exception when others then
+    -- No such job (never scheduled, or already removed) — nothing to do.
+    null;
+end;
+$$;

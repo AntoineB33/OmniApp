@@ -1056,6 +1056,28 @@ object SchedulerDomain {
     }
 
     /**
+     * The next scheduled wake instant strictly after [nowMillis] — the first local day's
+     * `startOfDay + effectiveWakeMinutes` that is still in the future. Used by the Sleep/Work toggle to decide
+     * how long a "Sleep" press keeps the account in sleeping mode (the button auto-resets to "Sleep" once this
+     * instant passes). Falls back to `now + 24h` when [sleep] is null (no schedule to derive a wake time from).
+     */
+    fun nextWakeInstantMillis(sleep: SleepSchedule?, nowMillis: Long, timeZone: TimeZone): Long {
+        if (sleep == null) return nowMillis + 24L * 60 * MILLIS_PER_MINUTE
+        var date = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone).date
+        repeat(2) {
+            val wakeMillis =
+                date.atStartOfDayIn(timeZone).toEpochMilliseconds() +
+                    effectiveWakeMinutes(sleep, date.toEpochDays().toLong()).toLong() * MILLIS_PER_MINUTE
+            if (wakeMillis > nowMillis) return wakeMillis
+            date = date.plus(DatePeriod(days = 1))
+        }
+        // Both today's and tomorrow's wake already passed relative to `now` (only possible at a day boundary
+        // corner); one more day is always in the future.
+        return date.atStartOfDayIn(timeZone).toEpochMilliseconds() +
+            effectiveWakeMinutes(sleep, date.toEpochDays().toLong()).toLong() * MILLIS_PER_MINUTE
+    }
+
+    /**
      * The nightly sleep windows `[wake(day) − duration, wake(day))` (one per local day whose window
      * intersects `[fromMillis, toMillis)`) as obstacle panels (`sleep = true`, null taskId, "Sleep").
      * The wake time per day follows [effectiveWakeMinutes] so the window drifts with the goal. Empty when

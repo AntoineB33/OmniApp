@@ -480,6 +480,13 @@ fun LateralMenu(
     /** Sleep schedule window: whether it is open + toggle callback. */
     sleepWindowOpen: Boolean = false,
     onToggleSleep: () -> Unit = {},
+    /**
+     * Sleep/Work toggle: whether the user is currently in "sleeping" mode (pressed **Sleep**). The button reads
+     * **Work** while sleeping and **Sleep** while working; pressing it flips the mode ([onToggleSleepWork]) and
+     * tells the server so the pause-end cue is suppressed while the user is deliberately away.
+     */
+    sleeping: Boolean = false,
+    onToggleSleepWork: () -> Unit = {},
     /** PRD §15 (20s look-away): whether the spoken voice cue is enabled + toggle callback. */
     lookAwayVoiceEnabled: Boolean = true,
     onToggleLookAwayVoice: (Boolean) -> Unit = {},
@@ -570,9 +577,17 @@ fun LateralMenu(
             onClick = onToggleHistoryManager,
         )
 
+        // Sleep/Work toggle: "Sleep" when working (press it when going away), "Work" when sleeping (press it
+        // when resuming). Tells the server so the phone's pause-end cue is suppressed while deliberately away.
+        MenuButton(
+            label = if (sleeping) "Work" else "Sleep",
+            active = sleeping,
+            onClick = onToggleSleepWork,
+        )
+
         // Sleep schedule: toggles the floating window for the nightly sleep window the scheduler avoids.
         MenuButton(
-            label = "Sleep",
+            label = "Sleep schedule",
             active = sleepWindowOpen,
             onClick = onToggleSleep,
         )

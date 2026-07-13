@@ -11,7 +11,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -44,11 +43,10 @@ import org.example.project.scheduler.platform.recentSleepGaps as platformRecentS
 import org.example.project.scheduler.platform.VoiceCue
 import org.example.project.scheduler.platform.playVoiceCue as platformPlayVoiceCue
 import org.example.project.scheduler.platform.stopSpeaking
-import org.example.project.scheduler.sync.ActiveSessionGateway
 import org.example.project.scheduler.sync.PauseCueGateway
-import org.example.project.scheduler.sync.PauseCuePushScheduler
-import org.example.project.scheduler.sync.PresenceGateway
-import org.example.project.scheduler.sync.SleepGapGateway
+import org.example.project.scheduler.sync.PresenceState
+import org.example.project.scheduler.sync.RealtimePresence
+import org.example.project.scheduler.sync.RealtimePresenceClient
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
@@ -80,31 +78,6 @@ private const val LOOK_AWAY_RESUME_POLL_MILLIS: Long = 200
 // gap at every speed.
 private const val DEVICE_SLEEP_THRESHOLD_MILLIS: Long = 90L * 1_000
 
-// PRD §15 cross-device presence: there is NO periodic beacon. A device with an active screen inside a 5/15-min
-// rest pose announces itself once, coalesced into the SAME last-responsible-moment burst as the deferred
-// pause-cue push ([launchPauseCueSchedule]'s push lambda) — i.e. at min(d1,d2) − margin, right before the pose
-// end the phone reads presence at. The phone gets *when* to speak from the Edge push; presence only supplies
-// the screen-off suppression gate at that read, so a single fresh write there is enough — a 60 s poll (the
-// former beacon) would just chatter one `device_presence` upsert per minute on an otherwise-idle session.
-
-// PRD §15: how long before a pose's end the phone reads presence to decide the cue — a 1-min lead that
-// doubles as a buffer to retry the read on a flaky connection before the pose actually ends.
-private const val POSE_FINISH_CHECK_LEAD_MILLIS: Long = 60L * 1_000
-
-// PRD §15: a presence row older than this no longer counts as an active screen. Wide enough that the single
-// presence write coalesced with the deferred pause-cue push (near the pose end) still reads fresh at the
-// phone's pre-end / fire-time check.
-private const val POSE_PRESENCE_FRESH_MILLIS: Long = 150L * 1_000
-
-// PRD §15: how many times the pre-end presence read is retried (and the real-time gap between tries) before
-// giving up. A give-up is treated as "no peer active" (fail-open: a real pause still gets its end cue).
-private const val POSE_FINISH_READ_ATTEMPTS: Int = 3
-private const val POSE_FINISH_RETRY_MILLIS: Long = 2L * 1_000
-
-// PRD §15: real-time cap on each sleep while waiting for a 5/15-min pose to end before the "pause finished"
-// voice cue, so a mid-wait sim-speed change is picked up promptly (cf. [LOOK_AWAY_RESUME_POLL_MILLIS]).
-private const val POSE_FINISH_POLL_MILLIS: Long = 1_000
-
 // PRD §15 device-sleep gaps: how far before a detected sleep's coarse start the OS sleep/wake log is scanned
 // for the EXACT interval(s) to record. A margin past the tick-gap boundary so a sleep that began a little
 // before the last tick (up to one tick cadence) is still captured.
@@ -119,11 +92,10 @@ private const val SLEEP_GAP_BACKFILL_HORIZON_MILLIS: Long = 3L * 24 * 60 * 60 * 
 // still tags its rows with something stable (it never reaches the remote table).
 private const val LOCAL_DEVICE_ID: String = "local"
 
-// PRD §15 server-derived pauses: how often the active-session beat samples `isScreenActive()` and extends the
-// current session in the LOCAL store. Mirrors the advance-tick cadence (1 s under sim / 30 s in production) so
-// the session timeline tracks the same `now` the schedule does. The beat NEVER talks to the server — opens,
-// extends, and finalizes are all local-only; the rows ride the next of the four sync moments (login, the sync
-// button, the 10-s user-change debounce, the deferred pause-cue burst) — see [pushOwnActiveSessions].
+// PRD §15: how often the active-session beat samples `isScreenActive()` and extends the current session in the
+// LOCAL store. Mirrors the advance-tick cadence (1 s under sim / 30 s in production) so the session timeline
+// tracks the same `now` the schedule does. The beat NEVER talks to the server — opens, extends and finalizes
+// are all local-only, feeding only this device's own Inactivity bands / Sleep-carve (activity is never synced).
 private const val ACTIVE_SESSION_BEAT_MILLIS_SIM: Long = 1_000
 private const val ACTIVE_SESSION_BEAT_MILLIS_PROD: Long = 30L * 1_000
 
@@ -177,22 +149,11 @@ private fun formatClockTime(dateTime: LocalDateTime): String {
  * [org.example.project.time.SystemAppClock]); [scope] outlives the UI (the service scope on Android, the
  * app-lifetime composition scope on desktop). Call [start] exactly once.
  */
-// PRD §15 / ARCHITECTURE.md §8 (requirement #4): the deferred pause-cue push margins. Delivery is the
-// `tick_pause_cues()` cron, which polls once a MINUTE — so the lead is minute-scale, not second-scale: a
-// second-scale push can miss the very cron tick that would deliver it. 2 MIN when the cue moves LATER (the
-// server still holds the earlier instant, so the last phone must be told to CANCEL its stale alarm before the
-// cron tick that would fire it — a full poll cycle of slack); ½ MIN otherwise (nothing to cancel — the cue is
-// just moving earlier, or it is the first publish). See [PauseCuePushScheduler].
-private const val PAUSE_CUE_CANCEL_MARGIN_MILLIS: Long = 2 * 60_000
-private const val PAUSE_CUE_PUBLISH_MARGIN_MILLIS: Long = 30_000
-
 class SchedulerEngine(
     private val vm: TaskSchedulerViewModel,
     private val clock: AppClock,
     private val scope: CoroutineScope,
     private val tz: TimeZone = TimeZone.currentSystemDefault(),
-    // PRD §15 cross-device presence: the heartbeat/peer-query channel (the sync engine); null disables it.
-    private val presence: PresenceGateway? = null,
     // PRD §15: what kind of device this is — only the phone speaks the "pause finished" cue. Injectable for tests.
     private val deviceKind: DeviceKind = currentDeviceKind(),
     // PRD §15: whether this device's screen is active right now. Injectable for tests.
@@ -200,49 +161,33 @@ class SchedulerEngine(
     // PRD §15: the voice sink (defaults to the platform player of the bundled shared cue audio); injectable so
     // cues are assertable in tests.
     private val playCue: (VoiceCue) -> Unit = ::platformPlayVoiceCue,
-    // PRD §15 device-sleep gaps: local store for the exact pause intervals; null disables gap recording/pull.
+    // PRD §15 device-sleep gaps: LOCAL-ONLY store for the exact pause intervals read from the OS sleep log;
+    // null disables gap recording. These feed this device's own rest-pose seeding / Inactivity bands only —
+    // they are NEVER synced any more (the cross-device sleep-gap channel is retired; see CLAUDE.md).
     private val sleepGapStore: DeviceSleepGapStore? = null,
-    // PRD §15 device-sleep gaps: the push/pull channel (the sync engine); null disables remote gap sync.
-    private val sleepGaps: SleepGapGateway? = null,
     // PRD §15: the OS sleep/wake-log query (defaults to the platform reader); injectable for tests.
     private val sleepGapQuery: (Long) -> List<DeviceSleepGap> = ::platformRecentSleepGaps,
     // PRD §15 device-sleep gaps: LOCAL-ONLY watermark of how far the OS sleep/wake log has been scanned, so the
     // launch backfill resumes instead of re-reading the full 3-day horizon each launch; null re-scans it fully.
     private val sleepScanCheckpoint: SleepScanCheckpointStore? = null,
-    // PRD §15 server-derived pauses: local store for this device's active-session intervals; null disables
-    // active-session tracking (the heartbeat still runs but persists nothing / renders no bands).
+    // PRD §15: LOCAL-ONLY store for this device's active-session intervals — the input to this device's own
+    // "Inactivity" bands / "Sleep"-band carve / live-rest placement. Null disables activity tracking. Activity
+    // is no longer synced; cross-device presence is Supabase Realtime, watched by the external listener.
     private val activeSessionStore: ActiveSessionStore? = null,
-    // PRD §15 server-derived pauses: the report-activity / pull-derived-pauses channel (the sync engine); null
-    // falls back to deriving pauses from THIS device's own sessions locally (single-device / signed-out).
-    private val activeSessions: ActiveSessionGateway? = null,
-    // PRD §15 / ARCHITECTURE.md §8 pause-end cue delivery: the server channel (write next-cue instant / claim
-    // last phone / register token). Null disables it; the desktop still publishes the schedule so the phone's
-    // push fires, but only a phone claims last-phone (see [launchPauseCueSchedule]).
+    // Push-token / last-phone channel (the sync engine) for the Realtime-presence + listener cue delivery:
+    // only a phone registers its FCM/APNs token and claims the account's last phone so the listener can reach
+    // it. Null disables it. This is the ONLY remaining server side-channel and is event-driven, never a timer.
     private val pauseCue: PauseCueGateway? = null,
-    // The unified sync moments (every snapshot reconcile: startup, login, manual sync, debounced change) —
-    // the engine runs its side-channel push/pull on each emission (see [launchSyncMomentSideChannels]), so
-    // the activity/gap channels sync at exactly the moments the snapshot does. Notably this is what makes a
-    // fresh-credential launch push its open session AFTER the async auto-login lands (engine start alone
-    // raced it, so the push was silently dropped and peers derived a too-long Inactivity band). Null when
-    // sync is disabled.
-    private val syncMoments: SharedFlow<Unit>? = null,
     // PRD §15: the platform OS-scheduled local cue seam — schedule the "pause is over" alarm at the given
     // instant, or cancel the pending one when null. Default no-op (desktop/tests); the phone wires AlarmManager
-    // / UNUserNotificationCenter here (see docs/PAUSE_CUE_DELIVERY.md steps 2/3). The alarm's fire handler runs
-    // [poseFinishEligible] before speaking, so the presence/screen-off gate is still honored at delivery.
+    // / UNUserNotificationCenter here (see docs/PAUSE_CUE_DELIVERY.md). Driven by the listener's push
+    // ([onPauseCuePush]); the alarm's fire handler runs [onPauseCueFire] before speaking.
     private val scheduleLocalPauseCue: (Long?) -> Unit = {},
     // PRD §15: true on a platform that delivers the pause-end cue via [scheduleLocalPauseCue] + [onPauseCueFire]
     // (the OS-scheduled alarm, which fires even if the app was killed). When true the older in-app
-    // [launchPoseFinishVoiceCue] is skipped so the phone never speaks the cue twice. Default false keeps the
-    // in-app path for desktop / not-yet-wired platforms.
+    // pose-finish cue is skipped so the phone never speaks the cue twice. Default false keeps the in-app path
+    // for desktop / not-yet-wired platforms.
     private val localPauseCueDelivery: Boolean = false,
-    // ARCHITECTURE.md §8 sync moment #5 (device inactivity): request a unified sync moment (a full snapshot
-    // reconcile — pull remote changes, integrate, push local; its emitted [syncMoments] then run the side
-    // channels) the instant the heartbeat's device check finds the device had gone inactive and finalizes an
-    // open active session. That finalized interval is an authoritative DB change peers cannot re-derive, so it
-    // must reach the server now rather than only riding the next of the other four moments. Wired to
-    // [TaskSchedulerViewModel.syncNow] by the app; default no-op for sync-disabled builds and tests.
-    private val requestSyncMoment: () -> Unit = {},
 ) {
     private val _nowMillis = MutableStateFlow(clock.nowMillis())
 
@@ -317,21 +262,18 @@ class SchedulerEngine(
     // do not depend on how the sweeps' wake-ups align with the calendar. Fields (not locals) so a
     // collectLatest re-key never resets the previous-sweep anchor.
     // One sweep for the whole ordered cue pass (look-away, wind-down; the rest-pose is a level reach with no
-    // staleness gate). [poseFinishSweep] stays separate — it is the phone-only pause-end cue's own loop.
+    // staleness gate).
     private val cueSweep = BoundarySweep()
-    private val poseFinishSweep = BoundarySweep()
 
     // The sim clock's reconfiguration generation (speed change / leap / time-link re-anchor); any constant
     // for a non-sim clock, whose run is always continuous.
     private fun clockGeneration(): Long = (clock as? SimAppClock)?.reconfigured?.value ?: 0L
 
-    // PRD §15 (5/15-min pose "pause finished" cue): pose start instants already evaluated, so each pose is
-    // only gated/scheduled once. Survives a collectLatest restart like [announcedStarts]/[pendingEnds].
-    private var poseFinishHandled = setOf<Long>()
-
-    // Whether the once-per-process last-phone claim on the first unified sync moment has fired
-    // (see [launchSyncMomentSideChannels]).
-    private var lastPhoneClaimedAtSyncMoment = false
+    // PRD §15: the Realtime-Presence publisher — this device announces itself active (with its next break-end)
+    // over a WebSocket while signed in + screen-on, so the external listener knows the account's live activity.
+    // Constructed in [start] from the [pauseCue] gateway (which carries the Realtime URL/key + session auth);
+    // null when sync is disabled or on a platform without an injected gateway.
+    private var realtimePresence: RealtimePresence? = null
 
     private var started = false
 
@@ -339,6 +281,15 @@ class SchedulerEngine(
         if (started) return
         started = true
         Diagnostics.log("engine started (device=$activeSessionDeviceId)")
+        pauseCue?.let { gateway ->
+            realtimePresence = RealtimePresenceClient(
+                scope = scope,
+                realtimeUrl = gateway.realtimeUrl,
+                apiKey = gateway.realtimeApiKey,
+                deviceId = gateway.deviceId,
+                auth = { gateway.realtimeAuth() },
+            ).also { it.start() }
+        }
         // PRD §15: every reducer refill folds this device's live ongoing/held pause into side-task
         // PLACEMENT (SchedulerDomain.sideTasksForPlacement), so side-task panels slide with a pause the
         // derives haven't banked yet — the now-line can no longer cross a stale look-away slot and fire a
@@ -360,75 +311,29 @@ class SchedulerEngine(
         // look-away whose boundary precedes a rest-pose due is announced first), instead of racing four
         // independent collectors.
         launchCueSweep()
-        // The in-app cue is the delivery path only where the OS-scheduled alarm isn't wired; otherwise the
-        // alarm ([onPauseCueFire]) speaks, so running both would double-speak.
-        if (!localPauseCueDelivery) launchPoseFinishVoiceCue()
-        launchPauseCueSchedule()
-        // PRD §15: on startup, scan this device's OS sleep log into the LOCAL gaps store (the recorded gaps
-        // ride the next sync moment; nothing is pushed or pulled here — the login reconcile's sync moment,
-        // which fires moments later, does the remote leg via [launchSyncMomentSideChannels]).
+        // PRD §15: on startup, scan this device's OS sleep log into the LOCAL gaps store, which seeds this
+        // device's own rest poses / Inactivity bands. Local-only — nothing is pushed or pulled (the
+        // cross-device sleep-gap channel is retired).
         backfillSleepGaps()
-        // PRD §15 server-derived pauses: track this device's active sessions LOCALLY. The server knows which
-        // peer sessions are still OPEN (the `closed` flag) and presumes only those active up to the now-line,
-        // so there is no pull-first ordering and no "adopt the unknown window as remote activity" step any
-        // more — [purgeLegacyAdoptedRows] deletes what an older build adopted. There is NO periodic remote
-        // refresh and NO startup one-shot fetch: the side channels push/pull only on the four sync moments —
-        // every snapshot reconcile (login incl. this launch's, the sync button, the 10-s user-change
-        // debounce; see [launchSyncMomentSideChannels]) plus the deferred pause-cue burst
-        // ([launchPauseCueSchedule]). The local-only refresh below just gives a prompt first render (and the
-        // sync-disabled install its only derivation) from this device's own stored sessions while the
-        // startup reconcile is still in flight.
+        // PRD §15: track this device's active sessions LOCALLY (the only input to its own "Inactivity" bands /
+        // "Sleep"-band carve / live-rest placement). Never synced. [purgeLegacyAdoptedRows] heals old DBs that
+        // still hold the retired adopted remote-activity rows.
         purgeLegacyAdoptedRows()
         launchActiveSessionTracking()
-        launchSyncMomentSideChannels()
-        refreshDerivedPauses(remote = false)
-        // PRD §15 / ARCHITECTURE.md §8: requirement #6 — a phone's startup becomes the account's last phone,
-        // which pushes `cancel` to the previous phone. Kept for the sync-disabled/no-moments path; the
-        // fresh-credential launch (auto-login still in flight here, so this no-ops) is healed by the claim on
-        // the first sync moment in [launchSyncMomentSideChannels].
+        refreshDerivedPauses()
+        // PRD §15 / listener cue delivery: a phone's startup claims the account's last phone so the external
+        // listener knows which phone to push. Phones only; a no-op when sync is disabled / signed out.
         claimLastPhoneOnStartup()
+        resolveSleepModeOnStartup()
     }
 
-    /**
-     * The unified sync moments: on every snapshot reconcile (startup, login completion, the manual sync
-     * button, the debounced-change flush) re-run the side-channel push/pull — this device's active sessions
-     * and sleep gaps up, the account-wide derived pauses and peer gaps down. One schedule for every channel:
-     * a moment that syncs the snapshot syncs everything, so a channel can no longer miss a trigger the other
-     * ran on (the desktop-active-since-21:28-but-Android-shows-21:31 anomaly: engine start raced the async
-     * auto-login, the startup session push no-oped signed-out, and no later moment retried it).
-     *
-     * The re-push of the own recent sleep gaps is also THE upload path for what [backfillSleepGaps] and
-     * [recordExactSleepGaps] record — those scans write the local store only, so the gaps reach the server
-     * exclusively here (bandwidth rule: no side-channel write outside the sync moments). The upserts are
-     * idempotent (keyed on device + start), so re-pushing is cheap.
-     */
-    private fun launchSyncMomentSideChannels() {
-        val moments = syncMoments ?: return
-        scope.launch {
-            moments.collect {
-                // Phones: (re)claim last-phone once per process on the first moment — by then the auto-login
-                // has resolved, unlike [claimLastPhoneOnStartup]. Not on EVERY moment: a background service's
-                // debounced pushes must not steal the claim from the phone the user actually holds
-                // ([onAppForegrounded] is the deliberate re-claim path).
-                if (!lastPhoneClaimedAtSyncMoment) {
-                    lastPhoneClaimedAtSyncMoment = true
-                    claimLastPhone()
-                }
-                pushOwnRecentSleepGaps()
-                pullSleepGaps()
-                refreshDerivedPauses()
-            }
-        }
-    }
-
-    // PRD §15: re-upsert this device's own recent exact sleep gaps (see [launchSyncMomentSideChannels]).
-    private suspend fun pushOwnRecentSleepGaps() {
-        val gateway = sleepGaps ?: return
-        val store = sleepGapStore ?: return
-        val since = clock.nowMillis() - PAUSE_DERIVE_HORIZON_MILLIS
-        val own = store.loadSleepGaps().filter { it.deviceId == gateway.deviceId && it.endMillis >= since }
-        if (own.isEmpty()) return
-        withContext(Dispatchers.Default) { runCatching { gateway.pushSleepGaps(own) } }
+    // Sleep/Work toggle: if the user pressed "Sleep" and the scheduled wake instant has already passed by the
+    // time the app (re)starts, reset the button to "Sleep" (working) and tell the server. While the wake
+    // instant is still in the future the sleeping state persists across the restart, so the user needn't
+    // re-press "Sleep" after briefly reopening the app during the night (see the CLAUDE.md sleep-button note).
+    private fun resolveSleepModeOnStartup() {
+        val until = vm.state.value.sleepingUntilMillis ?: return
+        if (clock.nowMillis() >= until) vm.setSleepMode(null)
     }
 
     // True when the now-line advances faster than real time — the desktop time-sim, OR a phone whose clock is
@@ -487,18 +392,16 @@ class SchedulerEngine(
      * Debug "simulate pause + leap": force this device to read as screen-inactive (`true`) or return to the
      * real platform sensor (`false`). Flipping it advances the active session immediately — finalizing the
      * open session on `true` (locally, like a real walk-away) and reopening one on `false` — so the debug
-     * instant leap never depends on the beat cadence to see the pause boundaries. The
-     * finalized bounds reach the server via the debug control's explicit [refreshDerivedPauses] after the
-     * leap (a debug leap counts as an explicit sync moment). Called by the desktop debug control, and per
-     * time-link frame on a linked phone (a same-value call is a no-op, so the 250 ms frames don't churn).
+     * instant leap never depends on the beat cadence to see the pause boundaries. The finalized bounds feed
+     * this device's own Inactivity bands via the debug control's explicit [refreshDerivedPauses] after the
+     * leap. Called by the desktop debug control, and per time-link frame on a linked phone (a same-value call
+     * is a no-op, so the 250 ms frames don't churn).
      */
     fun setDebugForcedInactive(inactive: Boolean) {
         if (debugForcedInactive == inactive) return
         debugForcedInactive = inactive
-        // syncOnInactive = false: the debug control drives its own sequenced sync (pushOwnActiveSessionsAndWait
-        // / refreshDerivedPausesAndWait) around the leap; a stray reconcile here would race that ordering.
         scope.launch {
-            advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended = false, syncOnInactive = false)
+            advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended = false)
         }
     }
 
@@ -605,9 +508,9 @@ class SchedulerEngine(
     private fun loadStoredGaps(): List<TaskTimeRange> =
         sleepGapStore?.loadSleepGaps()?.map { TaskTimeRange(it.startMillis, it.endMillis) } ?: emptyList()
 
-    // ---- PRD §15 server-derived pauses: active-session tracking + derived-pause refresh ----
+    // ---- PRD §15 LOCAL active-session tracking + local derived-pause refresh (never synced) ----
 
-    private val activeSessionDeviceId: String get() = activeSessions?.deviceId ?: LOCAL_DEVICE_ID
+    private val activeSessionDeviceId: String get() = pauseCue?.deviceId ?: LOCAL_DEVICE_ID
 
     // PRD §15: track this device's activity in the LOCAL store. Each beat samples `screenActive()` and either
     // opens, extends, or finalizes the current session, persisting it locally. Opens and extends NEVER talk to
@@ -635,15 +538,12 @@ class SchedulerEngine(
     // PRD §15: advance the current active session to `now`, LOCAL store only. A suspension or an inactive
     // screen finalizes it; an active screen opens a new session (if none / after a finalize) or extends the
     // open one. Serialized under [activeSessionMutex] because the beat and the debug forced-inactivity flip
-    // both call it. The store write is local-only in every branch; [syncOnInactive] (the real heartbeat, not
-    // the debug leap) additionally fires sync moment #5 when this call is the one that finalizes the session.
+    // both call it. The store write is local-only in every branch — activity is never synced.
     private suspend fun advanceActiveSession(
         now: Long,
         active: Boolean,
         suspended: Boolean,
-        syncOnInactive: Boolean = true,
     ) {
-        var becameInactive = false
         activeSessionMutex.withLock {
             val open = currentSession
             if ((suspended || !active) && open != null) {
@@ -651,7 +551,6 @@ class SchedulerEngine(
                 currentSession = null
                 // The walk-away instant: the UI's live "Inactivity" tail grows from here (see [inactiveSince]).
                 _inactiveSince.value = open.endMillis
-                becameInactive = true
             }
             if (active) {
                 val cur = currentSession
@@ -667,15 +566,32 @@ class SchedulerEngine(
             }
             _activeSince.value = currentSession?.startMillis
         }
-        // ARCHITECTURE.md §8 sync moment #5: the heartbeat's device check just found the device had gone
-        // inactive (screen off, or the process was suspended and this is the wake-up beat that spots the gap),
-        // finalizing the open session. That finalized interval is authoritative and NOT reconstructible by a
-        // peer — without it a peer over-presumes this device active up to its own now-line — so reconcile now
-        // (push-then-pull) instead of merely riding the next moment. Fired OUTSIDE the mutex so the reconcile
-        // never blocks the beat, and only once per active→inactive transition (the next beat finds no open
-        // session, so a screen that stays off does not re-fire). Skipped for the debug forced-inactivity flip,
-        // whose control already runs its own explicit, sequenced refresh (see [setDebugForcedInactive]).
-        if (becameInactive && syncOnInactive) requestSyncMoment()
+        updatePresence()
+    }
+
+    // PRD §15: publish this device's Realtime presence — active (with its next ≥5-min break end) while the
+    // screen is on and signed in, cleared otherwise. Driven from every active-session beat, so a walk-away
+    // (screen off) or a break passing is reflected within a beat; the StateFlow behind [setPresence] dedupes,
+    // so an unchanged state sends nothing.
+    private fun updatePresence() {
+        val gateway = pauseCue ?: return
+        val presence = realtimePresence ?: return
+        val active = effectiveScreenActive() && gateway.signedIn
+        presence.setPresence(
+            if (active) {
+                PresenceState(
+                    deviceId = gateway.deviceId,
+                    kind = deviceKind.name.lowercase(),
+                    nextBreakEndMillis = nextRestPoseEndMillis(
+                        vm.state.value.panels,
+                        vm.state.value.sideTasks,
+                        clock.nowMillis(),
+                    ),
+                )
+            } else {
+                null
+            },
+        )
     }
 
     // Visible for tests: drive one heartbeat sample exactly as [launchActiveSessionTracking]'s beat does
@@ -710,148 +626,40 @@ class SchedulerEngine(
         }
     }
 
-    // PRD §15: push this device's active-session history to the server — freshened up to `now` and covering the
-    // whole derive horizon, NOT just the currently-open session. This is the ONLY active-session remote write,
-    // fired exclusively at the four sync moments ([refreshDerivedPauses]'s remote callers: every unified sync
-    // moment — login/manual sync/10-s debounced change, see [launchSyncMomentSideChannels] — and coalesced
-    // with the deferred pause-cue burst). Never on a beat, an open, or a finalize — those are local-only and
-    // ride the next moment.
-    //
-    // Pushing the FULL local history (not just the current session) is what keeps `derive_pauses` honest: the
-    // server deduces the account-wide pauses as the complement of the UNION of every device's active intervals,
-    // so any finalized session we never uploaded — an idle-screen finalize, or an earlier fragment — becomes a
-    // phantom pause on OTHER devices (and on our own next server re-derive). This device's local store is the
-    // complete truth of when it was active; publishing it lets a peer's pull only ever SHRINK a pause over time
-    // we were demonstrably active, never fabricate one. Best-effort; swallows transport errors.
-    private suspend fun pushOwnActiveSessions() {
-        val gateway = activeSessions ?: return
-        freshenOpenSession()
-        val horizonStart = clock.nowMillis() - PAUSE_DERIVE_HORIZON_MILLIS
-        val stored = activeSessionStore?.loadActiveSessions()
-        val sessions =
-            when {
-                // A store-backed install: the durable history is the source of truth (includes the freshly
-                // persisted open session). Only rows still within the derive horizon are relevant, and the
-                // legacy adopted remote-activity rows are LOCAL-ONLY (see [pushableActiveSessions]).
-                stored != null -> pushableActiveSessions(stored, horizonStart)
-                // A store-less install (e.g. web's in-memory store): fall back to the single open session.
-                else -> activeSessionMutex.withLock { currentSession }?.let { listOf(it) } ?: emptyList()
-            }
-        if (sessions.isEmpty()) return
-        // The open session (if any) uploads with closed = false — the one row the server may presume still
-        // extends toward `now`; every finalized session uploads closed, so the time after it can derive as a
-        // pause on every peer.
-        val openStart = activeSessionMutex.withLock { currentSession?.startMillis }
-        Diagnostics.log(
-            (if (gateway.signedIn) "pushing" else "NOT pushing (signed out)") +
-                " ${sessions.size} active session(s), open=" +
-                (openStart?.let(Diagnostics::formatInstant) ?: "none") + ": " +
-                Diagnostics.formatRanges(sessions.map { TaskTimeRange(it.startMillis, it.endMillis) }),
-        )
-        withContext(Dispatchers.Default) { runCatching { gateway.pushActiveSessions(sessions, openStart) } }
+    /**
+     * PRD §15: refresh the calendar's "Inactivity" bands from THIS device's own pauses. Activity is no longer
+     * synced (Realtime Presence + the external listener replaced the derived-pause channel), so the bands are a
+     * purely LOCAL derivation over this device's stored active sessions — the complement of when it was active.
+     * The freshly derived pauses also seed the §15 rest poses (advancing `lastRestMillis` only). Public for the
+     * debug "simulate pause + leap" control so the bands / rest poses reflect the just-simulated pause at once.
+     */
+    fun refreshDerivedPauses() {
+        scope.launch { refreshDerivedPausesNow() }
     }
 
     /**
-     * PRD §15: refresh the calendar's "Inactivity" bands from the account-wide pauses. When signed in the
-     * SERVER is authoritative (the `derive_pauses` RPC over every device's active sessions). If the RPC is
-     * unavailable — a transport blip, or the migration not yet deployed — OR the account is signed out, it falls
-     * back to deriving from THIS device's own stored sessions, so the past still fills instead of showing
-     * nothing (for a single device the local answer equals the server's anyway). The freshly derived pauses
-     * also seed the §15 rest poses (advancing `lastRestMillis` only) — the account-wide-pause signal reaching a
-     * device that never slept.
-     *
-     * Always PUSH first, then pull: publishing before deriving means the server never hands us (or a peer) a
-     * pause over a window this device was active but hadn't yet uploaded — the "if the server's Inactivity
-     * block is bigger than the app's, reduce it" rule — and a pause this device just bounded by becoming
-     * active again is returned (and seeds the rest poses) immediately. The push marks this device's open
-     * session `closed = false`; the server presumes only fresh OPEN sessions active up to the now-line and
-     * returns everything else — including the trailing window after every finalized session — as pauses
-     * ("inactivity unless a device reported activity"). That is what lets startup be push-first with no
-     * special ordering: our own just-opened point never bounds a live peer's window, because the peer's open
-     * row covers it server-side. The old scheme instead presumed the whole trailing window active and DURABLY
-     * ADOPTED it into the local store at startup, which fabricated activity over genuine pauses whose
-     * finalize hadn't been uploaded yet (see [purgeLegacyAdoptedRows]).
-     *
-     * As a same-coroutine belt to those suspenders, the pulled pauses then have this device's own local
-     * sessions SUBTRACTED before display/seeding: a device must never render a pause over time it knows the
-     * account was active, even if its push lost a race or a peer's clock is skewed (a pause is, by
-     * definition, a window when NO device was active, so known activity legitimately cancels it).
-     *
-     * Public for the debug "simulate pause + leap" control: a debug leap counts as an explicit sync moment,
-     * so the bands / rest poses reflect the just-simulated pause without waiting for the next reconcile.
-     *
-     * `remote = false` (the startup one-shot) makes it a purely LOCAL derivation — no push, no fetch — so a
-     * launch renders the bands promptly from this device's own stored sessions without adding a server
-     * round-trip outside the four sync moments (the login reconcile's moment follows and does the remote leg).
-     */
-    fun refreshDerivedPauses() = refreshDerivedPauses(remote = true)
-
-    /**
-     * Debug "simulate pause + leap" on a linked phone: the same explicit sync moment as
-     * [refreshDerivedPauses], but awaitable — the time-link client acks the desktop only once this device's
-     * finalized sessions have actually reached the server, so the desktop's own post-leap derive can't read
-     * this phone's stale open row as activity covering the just-simulated pause. Still runs on the engine's
-     * own scope (the body touches the main-thread ViewModel); the caller merely waits for it.
+     * Debug "simulate pause + leap": the same LOCAL derive as [refreshDerivedPauses], but awaitable so the
+     * debug control's post-leap step runs only after the bands were recomputed. Runs on the engine's own scope
+     * (the body touches the main-thread ViewModel); the caller merely waits for it.
      */
     suspend fun refreshDerivedPausesAndWait() {
-        scope.launch { refreshDerivedPausesNow(remote = true) }.join()
+        scope.launch { refreshDerivedPausesNow() }.join()
     }
 
-    /**
-     * Debug "simulate pause + leap" on the desktop: publish this device's sessions (the leap-start finalize +
-     * the leap-end reopen) and wait for the upload, WITHOUT deriving. Runs between clearing this device's
-     * forced inactivity and clearing the phones' (the time-link flag), so by the time a linked phone sees the
-     * leap end and runs its own leap-end derive, this device's stale open row is already replaced on the
-     * server — otherwise the phone's pull presumes this device active through the now-line and the phone
-     * never derives (or seeds its rest poses from) the just-simulated pause, the mirror image of the
-     * desktop-side ordering [refreshDerivedPausesAndWait] exists for.
-     */
-    suspend fun pushOwnActiveSessionsAndWait() {
-        scope.launch { pushOwnActiveSessions() }.join()
-    }
-
-    private fun refreshDerivedPauses(remote: Boolean) {
-        scope.launch { refreshDerivedPausesNow(remote) }
-    }
-
-    private suspend fun refreshDerivedPausesNow(remote: Boolean) {
-        val gateway = if (remote) activeSessions else null
-        if (remote) pushOwnActiveSessions()
-        // Signed out, pushOwnActiveSessions returns without freshening; freshen here so the local
-        // fallback's open session reaches `now` and its trailing gap is genuinely empty while active.
+    private suspend fun refreshDerivedPausesNow() {
+        // Freshen the open session up to `now` so its trailing gap is genuinely empty while active.
         freshenOpenSession()
         val until = clock.nowMillis()
         val since = until - PAUSE_DERIVE_HORIZON_MILLIS
-        val fromServer =
-            if (gateway?.signedIn == true) {
-                withContext(Dispatchers.Default) { runCatching { gateway.fetchDerivedPauses(since, until) }.getOrNull() }
-            } else {
-                null
-            }
-        val serverPauses = fromServer ?: withContext(Dispatchers.Default) { localDerivedPauses(since, until) }
-        val ownActive =
-            withContext(Dispatchers.Default) {
-                activeSessionStore?.loadActiveSessions()
-                    ?.filter { it.deviceId != REMOTE_ACTIVITY_DEVICE_ID }
-                    ?.map { TaskTimeRange(it.startMillis, it.endMillis) }
-                    ?: emptyList()
-            }
-        val pauses = SchedulerDomain.subtractRegions(serverPauses, ownActive)
-        val source = when {
-            fromServer != null -> "server"
-            gateway?.signedIn == true -> "local fallback, RPC failed"
-            remote -> "local, signed out"
-            else -> "local, startup"
-        }
+        val pauses = withContext(Dispatchers.Default) { localDerivedPauses(since, until) }
         Diagnostics.log(
-            "pauses refreshed [$source] window=${Diagnostics.formatInstant(since)} → " +
-                "${Diagnostics.formatInstant(until)}, ownActive=${ownActive.size} subtracted; " +
-                "inactivity: ${Diagnostics.formatRanges(pauses)}",
+            "pauses refreshed [local] window=${Diagnostics.formatInstant(since)} → " +
+                "${Diagnostics.formatInstant(until)}; inactivity: ${Diagnostics.formatRanges(pauses)}",
         )
         _inactivityGaps.value = pauses
-        // The freshly-derived pauses now cover (or, a peer having been active, legitimately exclude) any
-        // pause this device observed locally: retire the live "Inactivity" tail once a session is open
-        // again. While still inactive the tail stays, so the band keeps growing between derives.
+        // The freshly-derived pauses now cover any pause this device observed locally: retire the live
+        // "Inactivity" tail once a session is open again. While still inactive the tail stays, so the band
+        // keeps growing between derives.
         activeSessionMutex.withLock { if (currentSession != null) _inactiveSince.value = null }
         val before = vm.state.value.sideTasks
         applySeededSideTasks(SchedulerDomain.seedSideTasksFromGaps(before, pauses))
@@ -1119,13 +927,6 @@ class SchedulerEngine(
             }
     }
 
-    private fun currentPoseTitle(st: SchedulerState, now: Long): String? =
-        SchedulerDomain.currentPanel(st, now)
-            ?.takeIf { panel ->
-                panel.sideTask && st.sideTasks.any { it.restBreak && it.title == panel.title }
-            }
-            ?.title
-
     /**
      * PRD §15 (20s look-away) manual redo: re-run the 20s pause now, superseding any look-away cue still
      * sounding or pending. Mirrors the old `restartLookAway` in App.kt (the cue scope is now [scope]).
@@ -1158,143 +959,6 @@ class SchedulerEngine(
         }
     }
 
-    // PRD §15 cross-device presence: publish this device's "active screen" once, at the deferred
-    // last-responsible-moment burst (see [launchPauseCueSchedule]), NOT on a periodic poll. Only announces
-    // while the now-line is inside a 5/15-min rest pose and the screen is on — the one window the phone's
-    // "pause finished" cue needs to know whether another device is in use. A closed/asleep machine simply
-    // never reaches the burst, so it stops announcing.
-    private suspend fun publishPosePresenceIfActive() {
-        val gateway = presence ?: return
-        if (gateway.signedIn && effectiveScreenActive() && inRestPose(vm.state.value, clock.nowMillis())) {
-            withContext(Dispatchers.Default) {
-                runCatching { gateway.publishPresence(deviceKind, screenActive = true) }
-            }
-        }
-    }
-
-    /** Whether the panel covering [now] is a 5/15-min rest pose (a `restBreak` side task). */
-    private fun inRestPose(st: SchedulerState, now: Long): Boolean = currentPoseTitle(st, now) != null
-
-    /**
-     * PRD §15: when the now-line reaches the **start** of a 5- or 15-minute pose and **no device on the
-     * account has an active screen** (this phone's screen is off and no peer reports one), the **phone**
-     * speaks at the pose's **end** to say the pause is over. Eligibility is decided at the start; only the
-     * phone ever speaks this cue, so it is inert on desktop. Mirrors [launchCueSweep]'s look-away occurrence scan,
-     * filtered to the `restBreak` poses; [poseFinishHandled] survives the re-key so each pose fires once.
-     */
-    private fun launchPoseFinishVoiceCue() = scope.launch {
-        val gateway = presence ?: return@launch
-        if (deviceKind != DeviceKind.Phone) return@launch
-        combine(_nowMillis, vm.state.map { it.panels }.distinctUntilChanged()) { _, panels -> panels }
-            .collectLatest {
-                while (true) {
-                    val st = vm.state.value
-                    val simNow = clock.nowMillis()
-                    val speed = (clock as? SimAppClock)?.speed ?: 1.0
-                    poseFinishSweep.beginSweep(simNow, speed, clockGeneration())
-                    val scanFloor = poseFinishSweep.scanFloorMillis(LOOK_AWAY_SWEEP_CAP_MILLIS)
-                    poseFinishHandled = poseFinishHandled.filterTo(mutableSetOf()) { it >= scanFloor }
-
-                    val poses = st.panels.filter { panel ->
-                        panel.sideTask && st.sideTasks.any { it.restBreak && it.title == panel.title }
-                    }
-
-                    poses
-                        .filter {
-                            it.startEpochMillis in scanFloor..simNow &&
-                                it.startEpochMillis !in poseFinishHandled
-                        }
-                        .sortedBy { it.startEpochMillis }
-                        .forEach { pose ->
-                            poseFinishHandled = poseFinishHandled + pose.startEpochMillis
-                            val latenessMillis = poseFinishSweep.realLatenessMillis(pose.startEpochMillis)
-                            if (latenessMillis <= LOOK_AWAY_START_FRESH_MILLIS) {
-                                schedulePoseFinishCue(gateway, pose.endEpochMillis)
-                            } else {
-                                Diagnostics.log(
-                                    "rest-pose start ${Diagnostics.formatInstant(pose.startEpochMillis)} swallowed: " +
-                                        "crossed ~$latenessMillis ms (real) ago (budget $LOOK_AWAY_START_FRESH_MILLIS ms, " +
-                                        "speed ${speed}x); no pause-end cue committed",
-                                )
-                            }
-                        }
-
-                    val next = poses.map { it.startEpochMillis }
-                        .filter { it > simNow && it !in poseFinishHandled }.minOrNull() ?: break
-                    if (speed <= 0.0) break
-                    delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
-                }
-            }
-    }
-
-    // PRD §15: committed at a pose's start but DECIDED ~1 min before its end — late enough that a machine the
-    // user kept working on has beaconed within the freshness window (so the phone stays silent), early enough
-    // to leave a buffer to retry the read on a flaky connection. Launched on [scope] (not the collectLatest
-    // job) so a panel/now re-key never cancels a committed cue. A read that never succeeds is treated as "no
-    // peer" (fail-open) so a real pause is never left without its end cue.
-    private fun schedulePoseFinishCue(gateway: PresenceGateway, endMillis: Long) {
-        scope.launch {
-            if (!gateway.signedIn) return@launch
-            sleepUntilSim(endMillis - POSE_FINISH_CHECK_LEAD_MILLIS)
-            if (effectiveScreenActive()) {
-                Diagnostics.log(
-                    "pause-end cue for ${Diagnostics.formatInstant(endMillis)} skipped: own screen active at decision time",
-                )
-                return@launch
-            }
-            // The presence read below is the cue's eligibility gate (the in-app analogue of [onPauseCueFire]'s
-            // read at the OS alarm's fire time) — it is part of the cue decision, not an extra sync: the old
-            // opportunistic gap-pull/pause-refresh that rode this moment is gone, since the side channels now
-            // sync only at the four sync moments.
-            val peersActive = readPeersActiveWithRetry(gateway, endMillis)
-            if (!poseFinishEligible(isPhone = deviceKind == DeviceKind.Phone, signedIn = gateway.signedIn,
-                    screenActive = effectiveScreenActive(), peersActive = peersActive)) {
-                Diagnostics.log(
-                    "pause-end cue for ${Diagnostics.formatInstant(endMillis)} skipped: not eligible " +
-                        "(phone=${deviceKind == DeviceKind.Phone}, signedIn=${gateway.signedIn}, " +
-                        "screenActive=${effectiveScreenActive()}, peersActive=$peersActive)",
-                )
-                return@launch
-            }
-            sleepUntilSim(endMillis)
-            // Re-check the local screen: the user may have picked up the phone during the final minute.
-            if (effectiveScreenActive()) {
-                Diagnostics.log(
-                    "pause-end cue for ${Diagnostics.formatInstant(endMillis)} skipped: screen became active before the end",
-                )
-                return@launch
-            }
-            speakCue(VoiceCue.PauseOver)
-        }
-    }
-
-    /** Suspends (sim-speed aware, so a mid-wait speed change is honored) until the clock reaches [targetMillis]. */
-    private suspend fun sleepUntilSim(targetMillis: Long) {
-        while (clock.nowMillis() < targetMillis) {
-            val speed = (clock as? SimAppClock)?.speed ?: 1.0
-            if (speed <= 0.0) {
-                delay(POSE_FINISH_POLL_MILLIS)
-                continue
-            }
-            val remainingReal = ((targetMillis - clock.nowMillis()).toDouble() / speed).toLong()
-            delay(remainingReal.coerceIn(1L, POSE_FINISH_POLL_MILLIS))
-        }
-    }
-
-    /**
-     * Reads whether any peer device currently has an active screen, retrying on a transport failure (a `null`
-     * answer) up to [POSE_FINISH_READ_ATTEMPTS] times within the pre-end buffer. A definitive `true`/`false`
-     * returns immediately; persistent failure returns `false` (fail-open — the phone speaks the end cue).
-     */
-    private suspend fun readPeersActiveWithRetry(gateway: PresenceGateway, endMillis: Long): Boolean {
-        repeat(POSE_FINISH_READ_ATTEMPTS) { attempt ->
-            val answer = withContext(Dispatchers.Default) { gateway.activePeersExistOrNull(POSE_PRESENCE_FRESH_MILLIS) }
-            if (answer != null) return answer
-            if (attempt < POSE_FINISH_READ_ATTEMPTS - 1 && clock.nowMillis() < endMillis) delay(POSE_FINISH_RETRY_MILLIS)
-        }
-        return false
-    }
-
     // PRD §15 device-sleep gaps: after a sleep is detected, query the OS sleep/wake log off-thread for the
     // EXACT interval(s) of the pause that was just missed and record them into the LOCAL gaps store. No
     // remote push here — the recorded gaps ride the next sync moment ([pushOwnRecentSleepGaps]). Best-effort:
@@ -1302,16 +966,15 @@ class SchedulerEngine(
     // schedule correct. Idempotent — the store/remote upsert keys on (deviceId, sleepStart), so re-recording
     // the same interval (or backfilling earlier ones) is harmless.
     private fun recordExactSleepGaps(approxStart: Long, approxEnd: Long) {
-        if (sleepGapStore == null && sleepGaps == null) return
+        val store = sleepGapStore ?: return
         scope.launch {
             val gaps = withContext(Dispatchers.Default) {
                 runCatching { sleepGapQuery(approxStart - GAP_QUERY_MARGIN_MILLIS) }.getOrDefault(emptyList())
             }.filter { it.endMillis > it.startMillis && it.endMillis <= approxEnd + GAP_QUERY_MARGIN_MILLIS }
             if (gaps.isEmpty()) return@launch
-            val deviceId = sleepGaps?.deviceId ?: LOCAL_DEVICE_ID
             val recordedAt = SystemAppClock.nowMillis()
-            val records = gaps.map { SleepGapRecord(deviceId, it.startMillis, it.endMillis, recordedAt) }
-            sleepGapStore?.saveSleepGaps(records)
+            val records = gaps.map { SleepGapRecord(activeSessionDeviceId, it.startMillis, it.endMillis, recordedAt) }
+            store.saveSleepGaps(records)
         }
     }
 
@@ -1329,7 +992,7 @@ class SchedulerEngine(
     // checkpoint afterward (see [SchedulerDomain.sleepScanFloor]). The floor still clamps the first run / a long
     // gap offline to 3 days.
     private fun backfillSleepGaps() {
-        if (sleepGapStore == null && sleepGaps == null) return
+        val store = sleepGapStore ?: return
         scope.launch {
             val now = clock.nowMillis()
             // Resume from the last "scanned through" checkpoint so an already-examined stretch of the OS log
@@ -1346,78 +1009,16 @@ class SchedulerEngine(
             // a re-scan that the checkpoint elides costs nothing — it just avoids the up-to-8s OS-log query.
             withContext(Dispatchers.Default) { runCatching { sleepScanCheckpoint?.saveSleepScanCheckpoint(now) } }
             if (gaps.isEmpty()) return@launch
-            val deviceId = sleepGaps?.deviceId ?: LOCAL_DEVICE_ID
             val recordedAt = SystemAppClock.nowMillis()
-            val records = gaps.map { SleepGapRecord(deviceId, it.startMillis, it.endMillis, recordedAt) }
-            sleepGapStore?.saveSleepGaps(records)
+            val records = gaps.map { SleepGapRecord(activeSessionDeviceId, it.startMillis, it.endMillis, recordedAt) }
+            store.saveSleepGaps(records)
             reseedSideTasksFromGaps()
         }
     }
 
-    private fun pullSleepGaps() {
-        val gateway = sleepGaps ?: return
-        val store = sleepGapStore ?: return
-        scope.launch {
-            val remote =
-                withContext(Dispatchers.Default) { runCatching { gateway.fetchSleepGaps() }.getOrNull() }
-                    ?: return@launch
-            val known = store.loadSleepGaps().mapTo(mutableSetOf()) { it.deviceId to it.startMillis }
-            val fresh = remote.filter { (it.deviceId to it.startMillis) !in known }
-            if (fresh.isNotEmpty()) {
-                store.saveSleepGaps(fresh)
-                // The freshly pulled gaps are authoritative account-wide pauses; fold them into the rest poses so
-                // this device's derived schedule matches the peer that recorded the sleep (PRD §15).
-                reseedSideTasksFromGaps()
-            }
-        }
-    }
-
-    // PRD §15 / ARCHITECTURE.md §8: split the two halves of the next pause-end cue instant.
-    //  • Phone-local OS cue (requirement #5): (re)scheduled IMMEDIATELY when this device's prediction (d2)
-    //    changes, so a phone-originated change is honored with no server round-trip.
-    //  • Server upsert (requirements #2/#4): DEFERRED to the last responsible moment — min(d1, d2) minus a
-    //    small margin — by [PauseCuePushScheduler], so an idle session never chatters. d1 is the instant the
-    //    server currently holds (seeded from the row at startup, then tracked); no push at all in steady state
-    //    (d1 == d2). The server's `tick_pause_cues` cron remains the ~1-min-before backstop.
-    // d2 is effectively always non-null (every app state has an upcoming pause); if it is ever null (no pose in
-    // the horizon) there is nothing to push and no server round-trip is made.
-    private fun launchPauseCueSchedule() = scope.launch {
-        val gateway = pauseCue ?: return@launch
-        val pusher =
-            PauseCuePushScheduler(
-                scope = scope,
-                nowMillis = clock::nowMillis,
-                cancelMarginMillis = PAUSE_CUE_CANCEL_MARGIN_MILLIS,
-                publishMarginMillis = PAUSE_CUE_PUBLISH_MARGIN_MILLIS,
-                push = { dueAt ->
-                    withContext(Dispatchers.Default) { runCatching { gateway.publishPauseCueSchedule(dueAt) } }
-                    // The fourth sync moment (min(d1,d2) − margin): coalesce this device's active-session push,
-                    // the derived-pause pull, and the cross-device "active screen" presence write into the same
-                    // last-responsible-moment burst as the cue publish, so an idle session's only remote traffic
-                    // is here (the other three moments — login, sync button, 10-s debounced change — all require
-                    // a user action) — never a periodic heartbeat or a 60 s presence poll. Publishing presence
-                    // here, ~2 s (or 1 s) before the pose end, is exactly when the phone reads it to gate its
-                    // cue. This burst is also what carries a session finalize (the user walked away) to the
-                    // server, via [refreshDerivedPauses]'s push-then-pull.
-                    publishPosePresenceIfActive()
-                    refreshDerivedPauses()
-                },
-            )
-        // Seed d1 from what the server already holds so the first deferred push compares against reality
-        // instead of pushing unconditionally. Best-effort; an absent/failed read leaves d1 null (1-s margin).
-        pusher.seed(withContext(Dispatchers.Default) { runCatching { gateway.fetchPauseCueSchedule() }.getOrNull() })
-        combine(_nowMillis, vm.state.map { it.panels }.distinctUntilChanged()) { now, panels ->
-            nextRestPoseEndMillis(panels, vm.state.value.sideTasks, now)
-        }
-            .distinctUntilChanged()
-            .collectLatest { d2 ->
-                if (deviceKind == DeviceKind.Phone) scheduleLocalPauseCue(d2)
-                if (d2 != null) pusher.onPrediction(d2)
-            }
-    }
-
-    // PRD §15 / ARCHITECTURE.md §8: requirement #6 — a phone's startup claims the account's last phone, whose
-    // change pushes `cancel` to the previous phone. Phones only; a no-op when sync is disabled/signed out.
+    // PRD §15 / listener cue delivery: a phone's startup claims the account's last phone so the external
+    // listener knows which phone to push (its change also cancels the previous phone's pending cue). Phones
+    // only; a no-op when sync is disabled/signed out.
     private fun claimLastPhoneOnStartup() = claimLastPhone()
 
     /**
@@ -1436,10 +1037,10 @@ class SchedulerEngine(
     }
 
     /**
-     * PRD §15 / ARCHITECTURE.md §8: the native push receiver (an FCM/APNs data message) calls this — schedule
-     * the local OS cue at [dueAtMillis] on `"schedule"` (requirement #2: a change on another device reaches
-     * this phone), or cancel the pending one on `"cancel"` (the cancel half of requirement #6). The scheduled
-     * cue's fire handler still runs [poseFinishEligible] before speaking.
+     * PRD §15 / listener cue delivery: the native push receiver (an FCM/APNs data message from the external
+     * listener) calls this — schedule the local OS cue at [dueAtMillis] on `"schedule"`, or cancel the pending
+     * one on `"cancel"`. The scheduled cue's fire handler ([onPauseCueFire]) re-checks the local screen before
+     * speaking.
      */
     fun onPauseCuePush(action: String, dueAtMillis: Long?) {
         when (action) {
@@ -1450,29 +1051,22 @@ class SchedulerEngine(
 
     /**
      * PRD §15: the platform local cue fired at the pause-end instant (an AlarmManager alarm / a delivered
-     * `UNNotification`) calls this — run the presence/screen-off eligibility gate ([poseFinishEligible]) and,
-     * if it passes, speak. Reads presence once, failing **open** (speak) on a transport error, so a real pause
-     * is never left silent. Inert unless this is a signed-in phone with its screen off and no active peer.
+     * `UNNotification`) calls this — the external listener already decided the whole account was inactive when
+     * it scheduled the cue, so the phone only re-checks its OWN screen (the user may have picked the phone up)
+     * and speaks if it is still off. Inert unless this is a signed-in phone with its screen off.
      */
     suspend fun onPauseCueFire() {
-        val gateway = presence
-        val peersActive: Boolean =
-            gateway?.let { g ->
-                withContext(Dispatchers.Default) { g.activePeersExistOrNull(POSE_PRESENCE_FRESH_MILLIS) }
-            } ?: false
         if (poseFinishEligible(
                 isPhone = deviceKind == DeviceKind.Phone,
-                signedIn = gateway?.signedIn == true,
+                signedIn = pauseCue?.signedIn == true,
                 screenActive = effectiveScreenActive(),
-                peersActive = peersActive,
             )
         ) {
             speakCue(VoiceCue.PauseOver)
         } else {
             Diagnostics.log(
                 "OS pause-cue alarm fired but suppressed (phone=${deviceKind == DeviceKind.Phone}, " +
-                    "signedIn=${gateway?.signedIn == true}, screenActive=${effectiveScreenActive()}, " +
-                    "peersActive=$peersActive)",
+                    "signedIn=${pauseCue?.signedIn == true}, screenActive=${effectiveScreenActive()})",
             )
         }
     }
@@ -1480,8 +1074,9 @@ class SchedulerEngine(
     companion object {
         /**
          * PRD §15: the end instant of the next 5/15-min rest pose strictly after [now], or null if none is
-         * scheduled. A pose is a `sideTask` panel whose title matches a `restBreak` side task (mirrors the
-         * occurrence scan in [launchPoseFinishVoiceCue]).
+         * scheduled — the `next_break_end_ms` this device publishes in its Realtime presence so the external
+         * listener can fire the pause-end cue at that instant. A pose is a `sideTask` panel whose title matches
+         * a `restBreak` side task.
          */
         internal fun nextRestPoseEndMillis(panels: List<TaskPanel>, sideTasks: List<SideTask>, now: Long): Long? =
             panels.asSequence()
@@ -1491,37 +1086,22 @@ class SchedulerEngine(
                 .minOrNull()
 
         /**
-         * PRD §15: the gate for the phone's "pause finished" voice cue — true only when this is the phone,
-         * a session is available, this device's screen is off, and no other device reports an active screen.
+         * PRD §15: the gate for the phone's "pause finished" voice cue — true only when this is the phone, a
+         * signed-in session is available, and this device's screen is off. (Whether any OTHER device is active
+         * was already decided by the external listener before it pushed this phone.)
          */
         internal fun poseFinishEligible(
             isPhone: Boolean,
             signedIn: Boolean,
             screenActive: Boolean,
-            peersActive: Boolean,
-        ): Boolean = isPhone && signedIn && !screenActive && !peersActive
+        ): Boolean = isPhone && signedIn && !screenActive
 
         /**
          * PRD §15 (legacy): the reserved `deviceId` of the LOCAL-ONLY rows the RETIRED startup adoption wrote
-         * into the active-session store — account activity presumed from the server's old trailing-drop
-         * answer rather than observed by any device. The closed-flag `derive_pauses` made adoption
-         * unnecessary (and it fabricated activity over genuine pauses), so these rows are now deleted at
-         * startup ([purgeLegacyAdoptedRows]), excluded from the own-activity subtraction, and — as always —
-         * never pushed ([pushableActiveSessions]). The constant remains so old DBs heal. Real device ids are
-         * UUIDs (or `LOCAL_DEVICE_ID` while signed out), so it can never collide.
+         * into the active-session store — account activity presumed from the server rather than observed by
+         * any device. These rows are deleted at startup ([purgeLegacyAdoptedRows]); the constant remains so old
+         * DBs heal. Real device ids are UUIDs (or `LOCAL_DEVICE_ID` while signed out), so it can never collide.
          */
         const val REMOTE_ACTIVITY_DEVICE_ID: String = "remote-activity"
-
-        /**
-         * PRD §15: the subset of the locally stored [sessions] that [pushOwnActiveSessions] may upload — rows
-         * still inside the derive horizon, EXCLUDING any legacy [REMOTE_ACTIVITY_DEVICE_ID] rows not yet
-         * purged. Adopted rows were hearsay (derived from the server's own answer): uploading them would
-         * assert activity to the server as if observed, poisoning every peer's derived pauses.
-         */
-        internal fun pushableActiveSessions(
-            sessions: List<ActiveSessionRecord>,
-            horizonStartMillis: Long,
-        ): List<ActiveSessionRecord> =
-            sessions.filter { it.deviceId != REMOTE_ACTIVITY_DEVICE_ID && it.endMillis >= horizonStartMillis }
     }
 }

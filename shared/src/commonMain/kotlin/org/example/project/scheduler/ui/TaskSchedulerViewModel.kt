@@ -9,7 +9,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -21,11 +20,7 @@ import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.sync.PauseCueGateway
-import org.example.project.scheduler.sync.PresenceGateway
 import org.example.project.scheduler.sync.SchedulerSyncEngine
-import org.example.project.scheduler.sync.ServerPushDebounce
-import org.example.project.scheduler.sync.ActiveSessionGateway
-import org.example.project.scheduler.sync.SleepGapGateway
 import org.example.project.scheduler.sync.StartupLogin
 import org.example.project.scheduler.sync.SyncState
 import org.example.project.scheduler.sync.startupLoginCredentials
@@ -52,38 +47,20 @@ class TaskSchedulerViewModel(
     /** PRD §5 sync status for an indicator; null when sync is disabled. */
     val syncState: StateFlow<SyncState>? = syncEngine?.state
 
-    /** PRD §15 cross-device presence channel for the scheduler engine; null when sync is disabled. */
-    val presence: PresenceGateway? get() = syncEngine
-
-    /** PRD §15 device-sleep gaps channel (push/pull exact pauses) for the engine; null when sync is disabled. */
-    val sleepGaps: SleepGapGateway? get() = syncEngine
-
-    /** PRD §15 device-active sessions channel (push activity / pull server-derived pauses); null when sync is off. */
-    val activeSessions: ActiveSessionGateway? get() = syncEngine
-
-    /** PRD §15 / ARCHITECTURE.md §8 pause-end cue delivery channel for the engine; null when sync is disabled. */
-    val pauseCue: PauseCueGateway? get() = syncEngine
-
     /**
-     * The unified sync moments (every [SchedulerSyncEngine.reconcile]: startup, login, sign-out's farewell
-     * reconcile, manual sync, debounced change) for the engine to hang its side-channel push/pull on; null
-     * when sync is disabled.
+     * Push-token / last-phone channel for the Realtime-presence + listener cue delivery: the phone registers
+     * its FCM/APNs token and claims the account's last phone so the external listener can reach it. This is the
+     * ONLY remaining server side-channel — event-driven (startup / token refresh / foreground), never a timer.
+     * Null when sync is disabled. (The old presence/sleep-gap/active-session/derived-pause channels are gone —
+     * activity is now Supabase Realtime Presence, watched by the listener; see CLAUDE.md.)
      */
-    val syncMoments: SharedFlow<Unit>? get() = syncEngine?.syncMoments
+    val pauseCue: PauseCueGateway? get() = syncEngine
 
     // PRD §5 Persistence: every change updates the in-memory state immediately; the SQLite DB is then
     // updated on a debounce so a burst of edits (e.g. typing a cell) collapses into one write instead
     // of one per keystroke.
     private val saveScope = CoroutineScope(SupervisorJob() + saveDispatcher)
     private var saveJob: Job? = null
-
-    // ARCHITECTURE.md §8: the local SQLite write coalesces on the small [SAVE_DEBOUNCE_MILLIS] debounce, but
-    // the network push that mirrors it to Supabase is deferred to [SERVER_PUSH_DEBOUNCE_MILLIS] after the
-    // LAST authoritative change (the user-change sync moment). Only created when sync is enabled.
-    private val serverSync: ServerPushDebounce? =
-        syncEngine?.let { engine ->
-            ServerPushDebounce(saveScope, SERVER_PUSH_DEBOUNCE_MILLIS) { engine.reconcile() }
-        }
 
     // True while there are state changes not yet written by the debounced save (so [flush] knows whether a
     // close-within-the-debounce-window left unpushed work to flag for the next launch's reconcile).
@@ -136,14 +113,10 @@ class TaskSchedulerViewModel(
             )
             engine.restoreSession()
             // Non-interactive launch (per-account `/scripts`): when no session was restored and startup
-            // credentials were supplied, sign in to that account. signIn() reconciles, so we skip the plain
-            // reconcile below in that case.
-            val creds = if (!engine.isSignedIn) startupLogin() else null
-            if (creds != null) {
-                signIn(usernameToEmail(creds.username), creds.password)
-            } else {
-                // PRD §5 Initialization: pull any newer remote state on launch (no-op when signed out/offline).
-                saveScope.launch { engine.reconcile() }
+            // credentials were supplied, sign in to that account. Sync is BUTTON-ONLY now, so signing in does
+            // NOT pull — a fresh device shows local state until the user presses Sync (see [syncNow]).
+            if (!engine.isSignedIn) {
+                startupLogin()?.let { creds -> signIn(usernameToEmail(creds.username), creds.password) }
             }
         }
     }
@@ -216,25 +189,24 @@ class TaskSchedulerViewModel(
                 // debounce (ARCHITECTURE.md §8); markDirty keeps it durable until it goes out.
                 if (syncPending) {
                     syncPending = false
-                    pushIfAuthoritativeChanged(requestPush = true)
+                    markDirtyIfAuthoritativeChanged()
                 }
             }
     }
 
     /**
-     * Marks the sync engine dirty and (optionally) requests a push, but only when the authoritative
-     * projection of the current state ([SchedulerStateCodec.syncFingerprint]) differs from what was last
-     * flagged. A no-op when sync is disabled or when nothing authoritative changed — which is the case for an
-     * engine-tick reschedule that only re-derived the auto/side/sleep panels. [requestPush] is false from
-     * [flush] (at close there is no time to push; the persisted dirty flag drives the next launch's reconcile).
+     * Marks the sync engine dirty when the authoritative projection of the current state
+     * ([SchedulerStateCodec.syncFingerprint]) differs from what was last flagged, so the next Sync-button
+     * [reconcile] pushes it. Sync is BUTTON-ONLY: this never triggers a server push on its own — it only sets
+     * the durable dirty flag. A no-op when sync is disabled or when nothing authoritative changed (an
+     * engine-tick reschedule that only re-derived the auto/side/sleep panels leaves the fingerprint unchanged).
      */
-    private fun pushIfAuthoritativeChanged(requestPush: Boolean) {
+    private fun markDirtyIfAuthoritativeChanged() {
         val engine = syncEngine ?: return
         val fingerprint = SchedulerStateCodec.syncFingerprint(_state.value)
         if (fingerprint == lastSyncedFingerprint) return
         lastSyncedFingerprint = fingerprint
         engine.markDirty()
-        if (requestPush) serverSync?.request()
     }
 
     /**
@@ -246,51 +218,61 @@ class TaskSchedulerViewModel(
         saveJob?.cancel()
         saveJob = null
         store.save(SchedulerStateCodec.encodeSnapshot(_state.value))
-        // A change within the debounce window never reached the push above; flag it (only if it was an
-        // authoritative, user-authored change) so the next launch's reconcile sends it. No-op when the debounced
-        // save already accounted for it (savePending false), when only schedule-advance ticks ran (syncPending
-        // false), or when nothing authoritative changed.
+        // A change within the debounce window never reached the dirty-flag above; flag it (only if it was an
+        // authoritative, user-authored change) so the next Sync-button reconcile sends it. No-op when the
+        // debounced save already accounted for it (savePending false), when only schedule-advance ticks ran
+        // (syncPending false), or when nothing authoritative changed.
         if (savePending && syncPending) {
-            pushIfAuthoritativeChanged(requestPush = false)
+            markDirtyIfAuthoritativeChanged()
         }
         savePending = false
         syncPending = false
     }
 
     // ---- PRD §5 cross-device sync controls (no-ops when sync is disabled) ----
+    //
+    // Sync is BUTTON-ONLY: sign-in / sign-up / sign-out never reconcile on their own. Local edits persist to
+    // SQLite on the save debounce and are marked dirty; they reach the server only when the user presses Sync
+    // ([syncNow]). A fresh device therefore shows local state until the first manual sync.
 
-    /** Signs in and immediately reconciles. Errors surface via [syncState]; never throws to the caller. */
+    /** Signs in (no automatic pull). Errors surface via [syncState]; never throws to the caller. */
     fun signIn(email: String, password: String) =
-        saveScope.launch { runCatching { syncEngine?.signIn(email, password); syncEngine?.reconcile() } }
+        saveScope.launch { runCatching { syncEngine?.signIn(email, password) } }
 
-    /** Registers a new account, then reconciles. Errors surface via [syncState]. */
+    /** Registers a new account (no automatic pull). Errors surface via [syncState]. */
     fun signUp(email: String, password: String) =
-        saveScope.launch { runCatching { syncEngine?.signUp(email, password); syncEngine?.reconcile() } }
+        saveScope.launch { runCatching { syncEngine?.signUp(email, password) } }
 
     /**
-     * Signs out after a **farewell sync** (ARCHITECTURE.md §8, the login/logout sync moment): any change
-     * still inside a debounce window is flushed and flagged, then one last [SchedulerSyncEngine.reconcile]
-     * pushes the pending local changes (or pulls a newer remote) before the session is dropped — so a device
-     * signed out right after an edit doesn't strand that edit locally until some later login. Best-effort:
-     * an offline/failed reconcile still signs out (the persisted dirty flag sends the change on the next
-     * login). Does not delete remote data; the remote force-logout path inside reconcile still pushes nothing.
+     * Signs out — a pure LOCAL drop of the cached session (no farewell push, per button-only sync). Any change
+     * still inside the save debounce is flushed to the local SQLite first (nothing is lost locally) and left
+     * marked dirty for the next login's Sync button. Does not delete remote data.
      */
     fun signOut() {
         val engine = syncEngine ?: return
         saveScope.launch {
-            // The farewell reconcile carries any pending debounced push; nothing is left for the timer.
-            serverSync?.cancel()
-            runCatching {
-                flush()
-                engine.reconcile()
-            }
-            // reconcile() may already have signed us out (remote force-logout); don't "sign out" twice.
-            if (engine.isSignedIn) engine.signOut()
+            runCatching { flush() }
+            engine.signOut()
         }
     }
 
-    /** Manual sync trigger (e.g. a "Sync now" button / window-focus). */
+    /** The manual sync trigger — the ONLY thing that reconciles (push local dirty / pull remote). */
     fun syncNow() = saveScope.launch { syncEngine?.reconcile() }
+
+    /**
+     * Sleep/Work toggle: set the account's sleeping-until instant (null = working) locally AND mirror the mode
+     * to the `account_state` table immediately, so the external listener suppresses the pause-end cue while the
+     * user is deliberately away. Pass the next scheduled wake instant when pressing **Sleep**, or null when
+     * pressing **Work** (or when the wake instant lapses on launch). The local dispatch persists on the save
+     * debounce and marks the snapshot dirty for the next Sync; the account_state write is its own targeted,
+     * event-driven call (not the snapshot reconcile).
+     */
+    fun setSleepMode(sleepingUntilMillis: Long?) {
+        dispatch(SchedulerIntent.SetSleepMode(sleepingUntilMillis))
+        saveScope.launch {
+            runCatching { pauseCue?.publishAccountState(sleepingUntilMillis != null, sleepingUntilMillis) }
+        }
+    }
 
     /** Decodes a pulled remote snapshot, prepares it like a fresh load, swaps it in, and mirrors it locally. */
     private fun applyRemoteSnapshot(snapshot: PersistedSnapshot) {
@@ -316,13 +298,6 @@ class TaskSchedulerViewModel(
     companion object {
         /** PRD §5: how long edits must be quiet before the debounced write to SQLite fires. */
         private const val SAVE_DEBOUNCE_MILLIS = 400L
-
-        /**
-         * ARCHITECTURE.md §8: the user-change sync moment — an authoritative change reaches the server once
-         * the user has been quiet for this long (a trailing debounce; a burst collapses into one push fired
-         * 10 s after its last change).
-         */
-        private const val SERVER_PUSH_DEBOUNCE_MILLIS = 10_000L
 
         /** PRD §5: reload persisted state; an interrupted Edit Mode session is canceled. */
         fun loadInitialState(store: SchedulerStore?, initial: SchedulerState): SchedulerState =

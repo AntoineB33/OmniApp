@@ -10,7 +10,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlin.time.Instant
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -22,11 +21,11 @@ import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.sync.SupabaseConfig
 
 /**
- * Exercises PRD §15 / ARCHITECTURE.md §8 pause-end cue delivery through [SchedulerSyncEngine]'s
+ * Exercises PRD §15 pause-end cue delivery through [SchedulerSyncEngine]'s
  * [PauseCueGateway][org.example.project.scheduler.sync.PauseCueGateway] impl against a Ktor [MockEngine].
- * Covers each PostgREST write's method/path/body shape (schedule upsert carries the ISO `due_at` + this
- * device as `origin_device_id`; last-phone/token carry the device id), and that every call is a no-op while
- * signed out (never reaches the server).
+ * Covers each PostgREST write's method/path/body shape (last-phone / push-token carry the device id), and that
+ * every call is a no-op while signed out (never reaches the server). The cue's *timing* moved off the client
+ * to the external Realtime listener, so there is no next-cue-instant write any more.
  */
 class PauseCueGatewayTest {
     private val json = Json { ignoreUnknownKeys = true }
@@ -68,21 +67,6 @@ class PauseCueGatewayTest {
             .also { it.signIn("a@b.c", "pw") }
 
     @Test
-    fun publish_schedule_writes_due_and_origin() = runTest {
-        val cap = Captured()
-        signedIn(cap).publishPauseCueSchedule(1_800_000_000_000L)
-
-        assertEquals("POST", cap.method)
-        assertTrue(cap.path!!.endsWith("/pause_cue_schedule"))
-        val body = json.parseToJsonElement(cap.body!!).jsonObject
-        assertEquals("self", body["origin_device_id"]!!.jsonPrimitive.content)
-        assertEquals(
-            Instant.fromEpochMilliseconds(1_800_000_000_000L).toString(),
-            body["due_at"]!!.jsonPrimitive.content,
-        )
-    }
-
-    @Test
     fun claim_last_phone_writes_this_device() = runTest {
         val cap = Captured()
         signedIn(cap).claimLastPhone()
@@ -106,12 +90,36 @@ class PauseCueGatewayTest {
     }
 
     @Test
+    fun publish_account_state_writes_sleeping_mode_and_wake() = runTest {
+        val cap = Captured()
+        signedIn(cap).publishAccountState(sleeping = true, wakeAtMillis = 1_800_000_000_000L)
+
+        assertEquals("POST", cap.method)
+        assertTrue(cap.path!!.endsWith("/account_state"))
+        val body = json.parseToJsonElement(cap.body!!).jsonObject
+        assertEquals("sleeping", body["mode"]!!.jsonPrimitive.content)
+        assertEquals(
+            kotlin.time.Instant.fromEpochMilliseconds(1_800_000_000_000L).toString(),
+            body["wake_at"]!!.jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun publish_account_state_working_has_null_wake() = runTest {
+        val cap = Captured()
+        signedIn(cap).publishAccountState(sleeping = false, wakeAtMillis = null)
+
+        assertEquals("working", json.parseToJsonElement(cap.body!!).jsonObject["mode"]!!.jsonPrimitive.content)
+        assertTrue(cap.body!!.contains("\"wake_at\":null"))
+    }
+
+    @Test
     fun signed_out_is_a_no_op() = runTest {
         val cap = Captured()
         val engine = SchedulerSyncEngine(harness(cap), FakeMetaStore(SyncMeta(deviceId = "self")), json)
-        engine.publishPauseCueSchedule(1L)
         engine.claimLastPhone()
         engine.registerPushToken("phone", "fcm", "t")
+        engine.publishAccountState(sleeping = true, wakeAtMillis = 1L)
         // Signed out: nothing reached the server.
         assertNull(cap.method)
     }

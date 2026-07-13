@@ -62,22 +62,15 @@ object SchedulerHolder {
                 vm = vm,
                 clock = clock,
                 scope = scope,
-                presence = vm.presence,
                 sleepGapStore = store as? DeviceSleepGapStore,
-                sleepGaps = vm.sleepGaps,
                 sleepScanCheckpoint = store as? SleepScanCheckpointStore,
                 activeSessionStore = store as? ActiveSessionStore,
-                activeSessions = vm.activeSessions,
                 pauseCue = vm.pauseCue,
-                syncMoments = vm.syncMoments,
-                // PRD §15 / ARCHITECTURE.md §8: deliver the pause-end cue as an OS-scheduled alarm (fires even
-                // if the app was killed). This replaces the in-app cue on Android, so pass
-                // localPauseCueDelivery = true to avoid a double-speak.
+                // PRD §15: deliver the pause-end cue as an OS-scheduled alarm (fires even if the app was
+                // killed). This replaces the in-app cue on Android, so pass localPauseCueDelivery = true to
+                // avoid a double-speak.
                 scheduleLocalPauseCue = { dueAtMillis -> PauseCueScheduler.apply(appContext, dueAtMillis) },
                 localPauseCueDelivery = true,
-                // ARCHITECTURE.md §8 sync moment #5: reconcile when the wake-up heartbeat spots the device was
-                // inactive (a finalized session peers can't re-derive) — in practice the phone's Doze wake.
-                requestSyncMoment = { vm.syncNow() },
             )
         engine.start()
         if (clock is SimAppClock) {
@@ -85,9 +78,7 @@ object SchedulerHolder {
                 scope,
                 clock,
                 onForcedInactive = { inactive -> engine.setDebugForcedInactive(inactive) },
-                // Leap end is an explicit sync moment on this phone too: push the session the leap-start
-                // finalize wrote (awaited, so the ack the client sends back truly means "on the server"),
-                // letting the desktop's post-leap derive see the pause instead of this phone's stale open row.
+                // Leap end: re-derive this phone's own LOCAL Inactivity bands (activity is no longer synced).
                 onLeapEnd = { engine.refreshDerivedPausesAndWait() },
             )
         }

@@ -10,17 +10,11 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlin.time.Instant
 import kotlinx.serialization.json.Json
-import org.example.project.scheduler.model.TaskTimeRange
-import org.example.project.scheduler.persistence.ActiveSessionRecord
 import org.example.project.scheduler.persistence.PersistedSnapshot
-import org.example.project.scheduler.persistence.SleepGapRecord
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.SyncMetaStore
-import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.platform.Diagnostics
-import org.example.project.time.SystemAppClock
 
 /** Coarse status for a sync status indicator. */
 sealed interface SyncState {
@@ -56,7 +50,7 @@ class SchedulerSyncEngine(
     private val client: RemoteSnapshotClient,
     private val metaStore: SyncMetaStore,
     private val json: Json = Json { ignoreUnknownKeys = true },
-) : PresenceGateway, SleepGapGateway, ActiveSessionGateway, PauseCueGateway {
+) : PauseCueGateway {
     private val mutex = Mutex()
     private var session: SupabaseSession? = null
 
@@ -303,105 +297,22 @@ class SchedulerSyncEngine(
             refreshed
         }
 
-    // ---- PRD §15 cross-device presence (PresenceGateway) ----
+    // ---- PRD §15 pause-end cue delivery (PauseCueGateway) ----
     //
-    // These run outside [mutex] (the reconcile lock): presence is an independent, best-effort side channel,
-    // so a heartbeat/peer-query never blocks — or is blocked by — a snapshot reconcile.
+    // These run outside [mutex] (the reconcile lock): each is an independent, best-effort per-row side channel,
+    // never blocking — or blocked by — a whole-document snapshot reconcile. This is the ONLY remaining server
+    // side-channel: the phone registers its push token and claims the account's last phone so the external
+    // Realtime listener can reach it. (The old presence / sleep-gap / active-session / derived-pause and
+    // next-cue-instant channels are retired; activity is Supabase Realtime Presence, watched by the listener.)
 
     override val signedIn: Boolean get() = session != null
 
-    override suspend fun publishPresence(kind: DeviceKind, screenActive: Boolean) {
-        val current = session ?: return
-        val deviceId = meta().deviceId
-        runCatching { withAuth(current) { client.upsertPresence(it, deviceId, kind.name.lowercase(), screenActive) } }
-    }
-
-    /** Fail-open convenience: a transport failure (`null`) counts as "no active peer". */
-    suspend fun activePeersExist(staleMillis: Long): Boolean = activePeersExistOrNull(staleMillis) ?: false
-
-    override suspend fun activePeersExistOrNull(staleMillis: Long): Boolean? {
-        val current = session ?: return false
-        val selfId = meta().deviceId
-        // A transport failure returns null (unknown) so the caller can retry, rather than masquerading as "no peer".
-        val rows = runCatching { withAuth(current) { client.fetchPresence(it) } }.getOrNull() ?: return null
-        val now = SystemAppClock.nowMillis()
-        return rows.any { row ->
-            row.deviceId != selfId &&
-                row.screenActive &&
-                run {
-                    // A future timestamp (server clock ahead of ours) is the freshest possible, so allow it.
-                    val updated = runCatching { Instant.parse(row.updatedAt).toEpochMilliseconds() }.getOrNull()
-                    updated != null && now - updated < staleMillis
-                }
-        }
-    }
-
-    // ---- PRD §15 device-sleep gaps (SleepGapGateway) ----
-    //
-    // Like presence, these run outside [mutex]: gaps are an independent per-row side channel, never blocking
-    // — or blocked by — a whole-document snapshot reconcile.
-
     override val deviceId: String get() = meta().deviceId
 
-    override suspend fun pushSleepGaps(records: List<SleepGapRecord>) {
-        val current = session ?: return
-        if (records.isEmpty()) return
-        val rows = records.map { SleepGapRow(it.deviceId, it.startMillis, it.endMillis, it.recordedAtMillis) }
-        runCatching { withAuth(current) { client.upsertSleepGaps(it, rows) } }
-    }
+    override val realtimeUrl: String get() = client.config.realtimeUrl
+    override val realtimeApiKey: String get() = client.config.anonKey
 
-    override suspend fun fetchSleepGaps(): List<SleepGapRecord>? {
-        val current = session ?: return emptyList()
-        val rows = runCatching { withAuth(current) { client.fetchSleepGaps(it) } }.getOrNull() ?: return null
-        return rows.map { SleepGapRecord(it.deviceId, it.sleepStart, it.sleepEnd, it.recordedAt) }
-    }
-
-    // ---- PRD §15 device-active sessions + server-derived pauses (ActiveSessionGateway) ----
-    //
-    // Like presence/gaps, these run outside [mutex]: each is an independent per-row side channel, never
-    // blocking — or blocked by — a whole-document snapshot reconcile.
-
-    override suspend fun pushActiveSessions(records: List<ActiveSessionRecord>, openSessionStartMillis: Long?) {
-        val current = session ?: return
-        if (records.isEmpty()) return
-        // Only the engine's currently-open session goes up open (closed = false) — the one row derive_pauses
-        // may presume still extends toward `now`. Everything else is finalized history and must read as
-        // exactly its recorded interval, so the time after it can derive as a pause.
-        val rows = records.map {
-            ActiveSessionRow(
-                it.deviceId,
-                it.startMillis,
-                it.endMillis,
-                it.updatedAtMillis,
-                closed = it.startMillis != openSessionStartMillis,
-            )
-        }
-        runCatching { withAuth(current) { client.upsertActiveSessions(it, rows) } }
-    }
-
-    override suspend fun fetchDerivedPauses(sinceMillis: Long, untilMillis: Long): List<TaskTimeRange>? {
-        val current = session ?: return emptyList()
-        val rows =
-            runCatching { withAuth(current) { client.fetchDerivedPauses(it, sinceMillis, untilMillis) } }
-                .getOrNull() ?: return null
-        return rows.map { TaskTimeRange(it.startMs, it.endMs) }
-    }
-
-    // ---- PRD §15 / ARCHITECTURE.md §8 pause-end cue delivery (PauseCueGateway) ----
-    //
-    // Like presence/gaps, these run outside [mutex]: each is an independent per-row side channel, never
-    // blocking — or blocked by — a whole-document snapshot reconcile.
-
-    override suspend fun publishPauseCueSchedule(dueAtMillis: Long) {
-        val current = session ?: return
-        val dueAtIso = Instant.fromEpochMilliseconds(dueAtMillis).toString()
-        runCatching { withAuth(current) { client.upsertPauseCueSchedule(it, dueAtIso, meta().deviceId) } }
-    }
-
-    override suspend fun fetchPauseCueSchedule(): Long? {
-        val current = session ?: return null
-        return runCatching { withAuth(current) { client.fetchPauseCueSchedule(it) } }.getOrNull()
-    }
+    override fun realtimeAuth(): Pair<String, String>? = session?.let { it.userId to it.accessToken }
 
     override suspend fun claimLastPhone() {
         val current = session ?: return
@@ -411,5 +322,10 @@ class SchedulerSyncEngine(
     override suspend fun registerPushToken(kind: String, platform: String, token: String) {
         val current = session ?: return
         runCatching { withAuth(current) { client.upsertPushToken(it, meta().deviceId, kind, platform, token) } }
+    }
+
+    override suspend fun publishAccountState(sleeping: Boolean, wakeAtMillis: Long?) {
+        val current = session ?: return
+        runCatching { withAuth(current) { client.upsertAccountState(it, sleeping, wakeAtMillis) } }
     }
 }

@@ -77,6 +77,7 @@ kotlin {
             implementation(libs.kotlinx.coroutinesCore)
             implementation(libs.sqldelight.runtime)
             implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.websockets)
             implementation(libs.ktor.client.contentNegotiation)
             implementation(libs.ktor.serialization.kotlinxJson)
         }

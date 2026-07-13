@@ -19,6 +19,9 @@ data class SupabaseConfig(
     /** PostgREST endpoint base, e.g. `https://<ref>.supabase.co/rest/v1`. */
     val restUrl: String get() = "${baseUrl.trimEnd('/')}/rest/v1"
 
+    /** Realtime WebSocket endpoint, e.g. `wss://<ref>.supabase.co/realtime/v1/websocket` (http→ws, https→wss). */
+    val realtimeUrl: String get() = baseUrl.trimEnd('/').replaceFirst("http", "ws") + "/realtime/v1/websocket"
+
     companion object {
         /** The OmniApp Supabase project. */
         val DEFAULT =

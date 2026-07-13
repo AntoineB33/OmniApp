@@ -95,6 +95,9 @@ object SchedulerReducer {
                 if (state.lookAwayVoiceEnabled == intent.enabled) state
                 else state.copy(lookAwayVoiceEnabled = intent.enabled)
             is SchedulerIntent.SetSleepSchedule -> reduceSetSleepSchedule(state, intent.sleep, intent.todayEpochDay)
+            is SchedulerIntent.SetSleepMode ->
+                if (state.sleepingUntilMillis == intent.sleepingUntilMillis) state
+                else state.copy(sleepingUntilMillis = intent.sleepingUntilMillis)
             is SchedulerIntent.ReportDeviceSleep ->
                 commitRecordChanges(
                     state,
