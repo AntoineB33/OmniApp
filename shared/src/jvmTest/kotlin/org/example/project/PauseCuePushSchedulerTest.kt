@@ -14,8 +14,11 @@ import kotlin.test.assertEquals
 
 /**
  * PRD §15 / ARCHITECTURE.md §8 (requirement #4): the last-responsible-moment pause-cue push. The server upsert
- * fires at `min(d1, d2) − margin` (2 s when the cue moves later, 1 s otherwise), never in steady state, and a
- * new prediction re-arms the single timer. Uses the test scheduler's virtual clock for both `nowMillis` and
+ * fires at `min(d1, d2) − margin` (the larger margin when the cue moves later, the smaller otherwise), never in
+ * steady state, and a new prediction re-arms the single timer. The margins here (2 s / 1 s) are illustrative
+ * fixtures chosen to keep the virtual-clock instants small; production uses minute-scale margins
+ * (`PAUSE_CUE_CANCEL_MARGIN_MILLIS` = 2 min, `PAUSE_CUE_PUBLISH_MARGIN_MILLIS` = ½ min) — this test exercises
+ * the d1/d2 logic, which is margin-agnostic. Uses the test scheduler's virtual clock for both `nowMillis` and
  * `delay`, mirroring production where both are real wall time.
  */
 @OptIn(ExperimentalCoroutinesApi::class)

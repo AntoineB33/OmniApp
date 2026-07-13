@@ -16,7 +16,7 @@ PRD §15 for the design; this file is the operational runbook.
 | `on_last_phone_change` trigger (cancel push to the **previous** phone) | ✅ `20260703000000_init.sql` |
 | Push is **best-effort** — a client `pause_cue_schedule` / `account_last_phone` write never fails (`400`) when pg_net / the `app.settings.*` GUCs are unprovisioned; the trigger stays truly inert | ✅ `supabase/migrations/20260708000000_pause_cue_push_best_effort.sql` (all pushes routed through `public.omni_edge_push`) |
 | Edge Function real **FCM v1 / APNs HTTP/2** send | ✅ `supabase/functions/pause-cue/index.ts` (needs secrets) |
-| Client writes `pause_cue_schedule` at the **last responsible moment** — deferred to `min(d1,d2) − margin`, **no per-change chatter, zero writes in steady state** | ✅ `scheduler/sync/PauseCuePushScheduler` (d1/d2 compare + 2 s / 1 s margins), driven by `SchedulerEngine.launchPauseCueSchedule` → `SchedulerSyncEngine.publishPauseCueSchedule`; the phone's own local OS cue is still (re)scheduled **immediately** |
+| Client writes `pause_cue_schedule` at the **last responsible moment** — deferred to `min(d1,d2) − margin`, **no per-change chatter, zero writes in steady state** | ✅ `scheduler/sync/PauseCuePushScheduler` (d1/d2 compare + minute-scale margins: 2 min / ½ min), driven by `SchedulerEngine.launchPauseCueSchedule` → `SchedulerSyncEngine.publishPauseCueSchedule`; the phone's own local OS cue is still (re)scheduled **immediately** |
 | Client claims `account_last_phone` on startup **and on every app-foreground** (phones only; scenario #3) | ✅ `SchedulerEngine.claimLastPhoneOnStartup` / `onAppForegrounded` (Android `MainActivity.onResume`, iOS `applicationDidBecomeActive`) |
 | Client transport for `device_push_token` | ✅ `SchedulerSyncEngine.registerPushToken` (still needs a *native token* to feed it — steps 2/3) |
 | Local-cue seam + push entry (`scheduleLocalPauseCue` / `onPauseCuePush` / `onPauseCueFire`) | ✅ shared seam + eligibility gate wired |
@@ -46,13 +46,15 @@ instants and defers the single write to the last responsible moment:
 - **d2** — this device's **current** next rest-pose end (`nextRestPoseEndMillis`). Effectively never null —
   every app state has an upcoming pause; a (theoretical) null just means "nothing to push".
 
-The upsert fires at **`min(d1, d2) − margin`**:
+The upsert fires at **`min(d1, d2) − margin`**. The margins are **minute-scale**, not second-scale, because
+delivery is the `tick_pause_cues()` cron polling **once a minute** — a push landing seconds before the due
+instant can miss the very cron tick that would deliver it:
 
 | Case | Target | Margin | Why |
 | --- | --- | --- | --- |
 | `d2 == d1` | — | — | **No write.** Steady state — the server is already correct. An idle session makes **zero** cue writes. |
-| `d2 > d1` (cue postponed) | `d1` | **2 s** | The server still holds the *earlier* `d1`, so the last phone has a stale alarm that would speak **too early** and must be **cancelled**. The upsert's DB trigger (`on_pause_cue_schedule_change`) fires an immediate edge push that needs ~1 s to reach the phone, + ~1 s slack before `d1` would have fired. |
-| `d2 < d1`, or first publish (`d1` unknown) | `d2` | **1 s** | Nothing stale to cancel (the cue is moving *earlier*, or the server has nothing yet) — one propagation margin is enough. |
+| `d2 > d1` (cue postponed) | `d1` | **2 min** | The server still holds the *earlier* `d1`, so the last phone has a stale alarm that would speak **too early** and must be **cancelled** before the cron tick that would fire it — a full poll cycle of slack. |
+| `d2 < d1`, or first publish (`d1` unknown) | `d2` | **½ min** | Nothing stale to cancel (the cue is moving *earlier*, or the server has nothing yet) — a single lead margin is enough. |
 
 Each new prediction re-arms the single timer (cancelling the prior one); the phone's own local OS cue is still
 (re)scheduled **immediately**, independent of this deferred server write. The `tick_pause_cues()` cron
@@ -67,13 +69,13 @@ walk-away — then pull the account-wide pauses) and the cross-device **presence
 per-60 s `device_presence` beacon: in the scenario "now-line inside a 5/15-min pose, `screenActive()` true,
 signed in", the pose end is re-pinned to the now-line so `d2 = now + duration` moves constantly — **yet no
 write fires per minute or per tick**. Each tick's new `d2` re-arms the *single* deferred timer with
-`wait = duration − margin` (≈299 s for the 5-min pose), which is far longer than the ≤30 s advance-tick
+`wait = duration − margin` (≈270 s for the 5-min pose), which is far longer than the ≤30 s advance-tick
 cadence, so the timer is cancelled and re-armed long *before* it could fire. On a freshly-emptied account
 (`d1` null, e.g. right after `account1-empty-and-open`) the burst therefore **never fires while the pose keeps
 sliding** — so `pause_cue_schedule`, `device_presence`, `device_active_session`, and the derived-pause pull all
 stay at **zero writes** for as long as the user works through the pose and changes nothing. Only when `d2`
 stabilises on a real upcoming pause (the user actually rests, or the now-line moves past the pinned pose) does
-the timer survive to fire, landing exactly one burst at `d2 − 1 s`. So after `account1-empty-and-open`'s
+the timer survive to fire, landing exactly one burst at `d2 − ½ min`. So after `account1-empty-and-open`'s
 startup sync, the Supabase write count is **guaranteed constant** in this scenario. (Guaranteed by
 `PauseCuePushSchedulerTest.a_pose_pinned_to_the_now_line_never_pushes`; see also **Testing D → step 5**.) An
 idle session with a *stable* pose end makes no presence write at all.
@@ -443,8 +445,9 @@ time-link so the deferred instant arrives in seconds; keep three panes open:
 ```
 ./gradlew :shared:jvmTest --tests "org.example.project.PauseCuePushSchedulerTest"
 ```
-It asserts all four table rows (steady-state no-write, postpone→2 s-before-`d1`, advance→1 s-before-`d2`, first
-publish→1 s), timer re-arm, and the fire-inside-the-margin immediate push, on a virtual clock.
+It asserts all four table rows (steady-state no-write, postpone→cancel-margin-before-`d1`, advance→publish-margin-before-`d2`,
+first publish→publish-margin), timer re-arm, and the fire-inside-the-margin immediate push, on a virtual clock.
+(The test uses small illustrative fixture margins; production uses 2 min / ½ min — see the test's KDoc.)
 
 **Manual, end-to-end.** With the time-link connected and the phone signed in as last phone:
 

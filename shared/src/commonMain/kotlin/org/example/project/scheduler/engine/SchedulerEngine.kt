@@ -177,12 +177,14 @@ private fun formatClockTime(dateTime: LocalDateTime): String {
  * [org.example.project.time.SystemAppClock]); [scope] outlives the UI (the service scope on Android, the
  * app-lifetime composition scope on desktop). Call [start] exactly once.
  */
-// PRD §15 / ARCHITECTURE.md §8 (requirement #4): the deferred pause-cue push margins. 2 s when the cue moves
-// LATER (the server still holds the earlier instant, so the last phone must be told to CANCEL its stale alarm —
-// ~1 s for the upsert's trigger → edge push to reach the phone, plus ~1 s of slack); 1 s otherwise (nothing to
-// cancel — the cue is just moving earlier, or it is the first publish). See [PauseCuePushScheduler].
-private const val PAUSE_CUE_CANCEL_MARGIN_MILLIS: Long = 2_000
-private const val PAUSE_CUE_PUBLISH_MARGIN_MILLIS: Long = 1_000
+// PRD §15 / ARCHITECTURE.md §8 (requirement #4): the deferred pause-cue push margins. Delivery is the
+// `tick_pause_cues()` cron, which polls once a MINUTE — so the lead is minute-scale, not second-scale: a
+// second-scale push can miss the very cron tick that would deliver it. 2 MIN when the cue moves LATER (the
+// server still holds the earlier instant, so the last phone must be told to CANCEL its stale alarm before the
+// cron tick that would fire it — a full poll cycle of slack); ½ MIN otherwise (nothing to cancel — the cue is
+// just moving earlier, or it is the first publish). See [PauseCuePushScheduler].
+private const val PAUSE_CUE_CANCEL_MARGIN_MILLIS: Long = 2 * 60_000
+private const val PAUSE_CUE_PUBLISH_MARGIN_MILLIS: Long = 30_000
 
 class SchedulerEngine(
     private val vm: TaskSchedulerViewModel,

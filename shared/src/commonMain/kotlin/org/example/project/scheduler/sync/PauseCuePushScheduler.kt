@@ -14,12 +14,14 @@ import kotlinx.coroutines.launch
  * - **d2** = this device's current prediction ([onPrediction], the next rest-pose end; always non-null in
  *   practice — every app state has an upcoming pause).
  *
- * The push fires at `min(d1, d2) − margin`:
- * - **d2 > d1 → [cancelMarginMillis] (2 s).** The server still holds the *earlier* d1, so the last phone has a
- *   stale, too-early alarm that **must be cancelled**; the upsert's DB trigger → edge push needs ~1 s to reach
- *   the phone plus ~1 s of slack before d1 would have fired.
- * - **otherwise → [publishMarginMillis] (1 s).** Nothing stale to cancel — the cue is moving earlier, or this
- *   is the first publish (d1 unknown) — so one propagation margin suffices.
+ * The push fires at `min(d1, d2) − margin`. The margins are **minute-scale**, not second-scale, because
+ * delivery is the `tick_pause_cues()` cron polling **once a minute** — a push landing seconds before the due
+ * instant can miss the very cron tick that would deliver it:
+ * - **d2 > d1 → [cancelMarginMillis] (2 min).** The server still holds the *earlier* d1, so the last phone has
+ *   a stale, too-early alarm that **must be cancelled** before the cron tick that would fire it — a full poll
+ *   cycle of slack.
+ * - **otherwise → [publishMarginMillis] (½ min).** Nothing stale to cancel — the cue is moving earlier, or this
+ *   is the first publish (d1 unknown) — so a single lead margin suffices.
  * - **d2 == d1 → no push.** Steady state: the server is already correct.
  *
  * Each distinct prediction re-arms a single timer (cancelling the prior one). After a push, d1 := d2, so the
