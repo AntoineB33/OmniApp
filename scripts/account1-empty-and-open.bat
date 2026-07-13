@@ -2,12 +2,29 @@
 setlocal EnableDelayedExpansion
 
 REM =====================================================================
-REM  Kill any previous instance of this script that might be stuck
-REM  (e.g., waiting for the user to press enter to retry Android deployment).
-REM  We do this by terminating the unique window title of the old run 
-REM  before claiming that title for this current run.
+REM  Kill any previous instance of THIS script that is still running
+REM  (e.g. stuck at the Android-deploy "press Enter to retry" prompt).
+REM
+REM  We do NOT use `taskkill /FI "WINDOWTITLE eq ..."`: the window-title
+REM  filter is unreliable - under Windows Terminal it can't read the tab
+REM  title, and any child process that retitled the console breaks the
+REM  match - so the old stuck cmd.exe used to survive. Instead each run
+REM  records its own cmd.exe PID in a lock file and the next run kills that
+REM  PID (and its child tree) directly. The `IMAGENAME eq cmd.exe` guard
+REM  keeps a recycled PID from taking out an unrelated process.
 REM =====================================================================
-taskkill /F /FI "WINDOWTITLE eq OmniApp_Account1_Empty_And_Open" /T >nul 2>nul
+set "LOCK=%TEMP%\omniapp-account1-empty-and-open.pid"
+if exist "%LOCK%" (
+  set "OLDPID="
+  set /p OLDPID=<"%LOCK%"
+  if defined OLDPID taskkill /F /T /FI "PID eq !OLDPID!" /FI "IMAGENAME eq cmd.exe" >nul 2>nul
+)
+REM Record THIS run's own cmd.exe PID so the next run can kill it. We launch PowerShell
+REM DIRECTLY (not via `for /f`, which runs it under a throwaway `cmd.exe /c` whose PID dies
+REM instantly - the reason the first attempt never killed anything) so PowerShell's parent
+REM IS this script's cmd.exe; PowerShell writes that PID to the lock file itself.
+REM Get-CimInstance, not WMIC (removed on Win11 24H2+).
+powershell -NoProfile -Command "$pp=(Get-CimInstance Win32_Process -Filter ('ProcessId='+$PID)).ParentProcessId; Set-Content -LiteralPath '%LOCK%' -Value $pp -Encoding ASCII" >nul 2>nul
 title OmniApp_Account1_Empty_And_Open
 
 REM =====================================================================
@@ -90,6 +107,9 @@ echo [6/6] Deploying the Android debug APK signed in as "%ACC1_USER%"...
 call :diag "deploying Android debug APK (uninstall+reinstall)"
 call "%SCRIPT_DIR%account1-deploy-android.bat"
 call :diag "account1-empty-and-open: DONE (Android deploy returned)"
+
+REM Clean completion: drop our PID lock so the next run doesn't target a dead/recycled PID.
+del /q "%LOCK%" 2>nul
 
 popd
 endlocal

@@ -354,7 +354,7 @@ class SchedulerEngine(
         launchPendingRescheduleOnSwitch()
         // PRD §15 / CLAUDE.md "each fires exactly once, in order": ONE now-line sweep drives the
         // task-switch, look-away, rest-pose and wind-down cues, ordered by their true boundary instants —
-        // so a single accelerated leap that crosses several boundaries fires them chronologically (the
+        // so a single leap that crosses several boundaries fires them chronologically (the
         // look-away whose boundary precedes a rest-pose due is announced first), instead of racing four
         // independent collectors.
         launchCueSweep()
@@ -484,8 +484,8 @@ class SchedulerEngine(
     /**
      * Debug "simulate pause + leap": force this device to read as screen-inactive (`true`) or return to the
      * real platform sensor (`false`). Flipping it advances the active session immediately — finalizing the
-     * open session on `true` (locally, like a real walk-away) and reopening one on `false` — so a
-     * 1-real-second accelerated leap never depends on the beat cadence to see the pause boundaries. The
+     * open session on `true` (locally, like a real walk-away) and reopening one on `false` — so the debug
+     * instant leap never depends on the beat cadence to see the pause boundaries. The
      * finalized bounds reach the server via the debug control's explicit [refreshDerivedPauses] after the
      * leap (a debug leap counts as an explicit sync moment). Called by the desktop debug control, and per
      * time-link frame on a linked phone (a same-value call is a no-op, so the 250 ms frames don't churn).

@@ -60,9 +60,9 @@ fun TimeSimPanel(
     clock: SimAppClock,
     nowMillis: Long,
     /**
-     * Debug: simulate taking a pause of `durationMillis` by ACCELERATING time so the whole break elapses in
-     * ~1 real second, with the device(s) in `inactiveScope` forced to read as screen-inactive for its duration
-     * — the engine's own loops then live the pause exactly as the release logic would.
+     * Debug: simulate taking a pause of `durationMillis` by INSTANTLY jumping the sim clock forward by the whole
+     * break (the now-line leaps to its end), with the device(s) in `inactiveScope` forced to read as
+     * screen-inactive across the jumped-over window — the engine's own loops then live it as the release logic would.
      */
     onSimulatePause: (durationMillis: Long, inactiveScope: SimPauseScope) -> Unit = { _, _ -> },
     /**
@@ -133,9 +133,9 @@ fun TimeSimPanel(
                     selectedSpeed = 0.0
                 }
             }
-            // PRD §15 debug: simulate taking a pause — accelerate time so the break elapses in ~1 real second
-            // with the selected device(s) reading as inactive, so the side-task rhythm (look-away / poses),
-            // the derived Inactivity bands and the now-line can be exercised without waiting.
+            // PRD §15 debug: simulate taking a pause — instantly jump the sim clock forward by the break with
+            // the selected device(s) reading as inactive, so the side-task rhythm (look-away / poses), the
+            // derived Inactivity bands and the now-line can be exercised without waiting.
             Text(
                 text = "simulate pause + leap",
                 style = MaterialTheme.typography.labelSmall,

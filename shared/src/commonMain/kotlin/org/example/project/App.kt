@@ -93,14 +93,22 @@ enum class OmniPage(val label: String) {
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
 private enum class FloatingWindow { Calendar, Reminders, History, Sleep, TimeSim }
 
-// Debug "simulate pause + leap": the REAL time the whole simulated break is compressed into — the leap runs
-// the sim clock at durationMillis / this speed for this long, so a 20s / 5min / 15min pause elapses in
-// ~1 real second through the engine's own (release) loops instead of an instant jump.
-private const val SIM_PAUSE_LEAP_REAL_MILLIS: Double = 1_000.0
+// Debug "simulate pause + leap": pressing a break chip INSTANTLY jumps the sim clock forward by the whole
+// break ([SimAppClock.leap]) — the now-line leaps to the break's end rather than gliding there over ~1 real
+// second. This mirrors the real logic: a break is time in which the device's heartbeat (which runs on a
+// fixed REAL cadence, so it never fires during an instant sim jump) simply observes no activity — i.e. pure
+// inactivity — exactly the second inactivity path (the first being a heartbeat gap the running app detects).
+// The engine's own release loops then live the jumped-over window as they would in production: the selected
+// device(s) read as screen-inactive across it (finalizing their active session at the walk-away instant),
+// and the post-leap teardown talks to the server to publish those sessions and re-derive the Inactivity bands.
 
-// How often the leap coroutine polls the sim clock for the leap-end instant (real ms); small enough that the
-// overshoot past the requested duration stays a fraction of a second even at the 15-min leap's 900× speed.
-private const val SIM_PAUSE_LEAP_POLL_MILLIS: Long = 20
+// Real ms to let the forced-inactivity state settle around the instant jump: (1) before the leap, long enough
+// for a linked phone to receive one pre-leap inactive frame (> the 250 ms time-link frame interval) and
+// finalize its session at the walk-away instant, not after the jump; (2) after the leap, long enough for the
+// engine's cue sweep to scan the jumped-over window while the screen still reads inactive (suppressing the
+// look-away cues the user "slept through") before the session reopens. The clock's `reconfigured` bump wakes
+// those loops within a display frame, so this is a comfortable margin, not a tight race.
+private const val SIM_PAUSE_LEAP_SETTLE_MILLIS: Long = 350
 
 // Real ms the leap waits after ending for each linked phone to ack its leap-end session push before the
 // desktop derives the pauses: the server presumes a fresh OPEN session active through the now-line, so
@@ -811,28 +819,36 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             clock = simClock,
                             nowMillis = nowMillis,
                             linkedCount = timeLinkCount,
-                            // Debug: simulate taking a pause by ACCELERATING time so the whole break elapses in
-                            // ~1 real second — the engine's own loops (active-session beat, schedule advance,
-                            // derived-pause seeding) then live the pause exactly as the release logic would,
-                            // with the dropdown-selected device(s) forced to read as screen-inactive while it
-                            // lasts. On the phone the forced-inactivity flag rides the same time-link frames
-                            // as the acceleration, so it adopts both atomically.
+                            // Debug: simulate taking a pause by INSTANTLY jumping the sim clock forward by the
+                            // whole break (the now-line leaps to its end) — the engine's own loops (active-session
+                            // beat, schedule advance, derived-pause seeding) then live the jumped-over window
+                            // exactly as the release logic would, with the dropdown-selected device(s) forced to
+                            // read as screen-inactive across it. On the phone the forced-inactivity flag rides the
+                            // same time-link frames as the leaped clock, so it adopts both atomically.
                             onSimulatePause = { durationMillis, pauseScope ->
                                 if (pauseLeapJob?.isActive != true) {
                                     pauseLeapJob = engineScope.launch {
-                                        // Flags first, so no accelerated time passes while still "active".
+                                        // Force inactivity FIRST, at the pre-leap (walk-away) instant, so the
+                                        // selected device(s) finalize their active session there and not after
+                                        // the jump. The desktop finalize is synchronous ([setDebugForcedInactive]);
+                                        // a linked phone only finalizes once it receives the inactive frame, so
+                                        // give it one frame to arrive before the clock jumps out from under it.
                                         if (pauseScope != SimPauseScope.PhoneOnly) {
                                             engine.setDebugForcedInactive(true)
                                         }
                                         if (pauseScope != SimPauseScope.ComputerOnly) {
                                             timeLink?.setPhoneForcedInactive(true)
+                                            if (timeLinkCount > 0) delay(SIM_PAUSE_LEAP_SETTLE_MILLIS)
                                         }
-                                        val prevSpeed = simClock.speed
-                                        val leapEnd = simClock.nowMillis() + durationMillis
-                                        simClock.setSpeed(durationMillis / SIM_PAUSE_LEAP_REAL_MILLIS)
-                                        while (simClock.nowMillis() < leapEnd) delay(SIM_PAUSE_LEAP_POLL_MILLIS)
-                                        // Speed back first, so the session doesn't reopen while time still races.
-                                        simClock.setSpeed(prevSpeed)
+                                        // Instantly jump the now-line forward by the whole break (no acceleration
+                                        // ramp). The clock's `reconfigured` bump wakes the engine loops within a
+                                        // frame: the schedule advance banks the elapsed records in one step, and
+                                        // the cue sweep scans the jumped-over window.
+                                        simClock.leap(durationMillis)
+                                        // Let that sweep run while the screen still reads inactive, so the
+                                        // look-away cues inside the jumped window are suppressed (the user "slept
+                                        // through" them) instead of firing in a burst when the session reopens.
+                                        delay(SIM_PAUSE_LEAP_SETTLE_MILLIS)
                                         engine.setDebugForcedInactive(false)
                                         // Publish this desktop's sessions (leap-start finalize + the reopen
                                         // just above) BEFORE the phones see the leap end: the phone's own
