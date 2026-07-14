@@ -15,8 +15,9 @@ Edge Function; this worker only decides *when* and *who*.
 
 ## How it works
 
-- Subscribes to `presence:<user_id>` for every account that has a row in `account_last_phone` (rescanned every
-  60 s). Active clients publish presence with `{ device_id, kind, next_break_end_ms }` while signed-in + screen-on.
+- Subscribes to `presence:<user_id>` for every account (enumerated via the service-role admin API, rescanned
+  every 60 s — so a desktop-only account is watched too; it just won't get a cue until a phone registers).
+  Active clients publish presence with `{ device_id, kind, next_break_end_ms }` while signed-in + screen-on.
 - On each presence change, per account:
   - **≥1 device present** → cancel any pending cue (and push `cancel` to the phone if one was already scheduled).
   - **0 devices present** → read `account_state`; if `mode = 'sleeping'` and `wake_at` is in the future, do

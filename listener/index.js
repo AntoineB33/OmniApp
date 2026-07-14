@@ -48,18 +48,26 @@ async function main() {
   setInterval(() => refreshAccounts().catch((e) => console.error("account refresh failed:", e)), ACCOUNT_REFRESH_MS);
 }
 
-/** Subscribe to any account (with a registered phone) we're not already watching. */
+// Subscribe to any account we're not already watching. We use the service-role admin API to enumerate ALL
+// accounts (not `account_last_phone`) so a desktop-only account — which never claims last-phone — is still
+// watched; the account just won't get a cue until a phone has registered (account_last_phone + push token).
 async function refreshAccounts() {
-  const { data, error } = await supabase.from("account_last_phone").select("user_id, device_id");
-  if (error) throw error;
-  for (const row of data ?? []) {
-    if (!accounts.has(row.user_id)) watchAccount(row.user_id);
+  let page = 1;
+  while (true) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) throw error;
+    const users = data?.users ?? [];
+    for (const user of users) {
+      if (!accounts.has(user.id)) watchAccount(user.id);
+    }
+    if (users.length < 200) break;
+    page += 1;
   }
 }
 
 function watchAccount(userId) {
   console.log(`watching account ${userId}`);
-  const state = { channel: null, timer: null, pushedDueAt: null, lastBreakEndMs: null };
+  const state = { channel: null, timer: null, pushedDueAt: null, lastBreakEndMs: null, lastActiveCount: -1 };
   accounts.set(userId, state);
 
   // Public presence channel (the clients join it with `private: false`); the topic matches the Kotlin client's
@@ -90,6 +98,13 @@ async function evaluate(userId) {
   const deviceMetas = Object.entries(presence)
     .filter(([key]) => key !== "listener")
     .flatMap(([, metas]) => metas);
+
+  // Visible feedback: log whenever the number of active devices changes.
+  if (state.lastActiveCount !== deviceMetas.length) {
+    state.lastActiveCount = deviceMetas.length;
+    const kinds = deviceMetas.map((m) => m.kind ?? "?").join(", ");
+    console.log(`account ${userId}: ${deviceMetas.length} device(s) active${kinds ? ` [${kinds}]` : ""}`);
+  }
 
   // Remember the earliest future break end published by any present device, so a 'leave' that has already
   // pruned the departing metas can still fall back to the last value seen while the device was here.

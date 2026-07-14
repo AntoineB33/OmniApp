@@ -288,6 +288,7 @@ class SchedulerEngine(
                 apiKey = gateway.realtimeApiKey,
                 deviceId = gateway.deviceId,
                 auth = { gateway.realtimeAuth() },
+                refreshAuth = { gateway.refreshRealtimeAuth() },
             ).also { it.start() }
         }
         // PRD §15: every reducer refill folds this device's live ongoing/held pause into side-task

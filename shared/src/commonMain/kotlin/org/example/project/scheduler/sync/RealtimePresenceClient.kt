@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -15,7 +16,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -65,6 +65,9 @@ class RealtimePresenceClient(
     private val deviceId: String,
     /** (userId, accessToken) for the Realtime join, or null while signed out. */
     private val auth: () -> Pair<String, String>?,
+    /** Forces a session-token refresh (via the sync engine's serialized path) — called when the join is
+     * rejected for an expired/invalid JWT, after which [auth] returns the fresh token on reconnect. */
+    private val refreshAuth: suspend () -> Unit = {},
     private val httpClient: HttpClient = HttpClient { install(WebSockets) },
 ) : RealtimePresence {
     private val desired = MutableStateFlow<PresenceState?>(null)
@@ -107,8 +110,10 @@ class RealtimePresenceClient(
             suspend fun emit(build: (ref: Long) -> String) = sendMutex.withLock { send(Frame.Text(build(++ref))) }
 
             val joinRef = sendMutex.withLock { ++ref }
-            sendMutex.withLock { send(Frame.Text(RealtimePhoenix.joinFrame(topic, accessToken, deviceId, joinRef))) }
-            Diagnostics.log("realtime presence joined $topic (device=$deviceId)")
+            val joinFrame = RealtimePhoenix.joinFrame(topic, accessToken, deviceId, joinRef)
+            sendMutex.withLock { send(Frame.Text(joinFrame)) }
+            // TEMP (presence bring-up): dump the exact wire bytes so the format is verifiable. Token elided.
+            Diagnostics.log("realtime presence sent join: ${joinFrame.replace(accessToken, "<token>").take(400)}")
 
             val heartbeat = launch {
                 while (isActive) {
@@ -125,9 +130,22 @@ class RealtimePresenceClient(
             try {
                 // Drain incoming (join/heartbeat replies, presence diffs) — we only publish, so ignore them.
                 // The loop ends when the socket closes, returning from webSocket{} to trigger a reconnect.
+                // TEMP (presence bring-up): log the first few server frames so a rejected phx_join is visible.
+                var logged = 0
                 for (frame in incoming) {
-                    // no-op
+                    if (frame !is Frame.Text) continue
+                    val text = frame.readText()
+                    if (logged < 8) {
+                        logged++
+                        Diagnostics.log("realtime presence recv: ${text.take(600)}")
+                    }
+                    if (isAuthRejection(text)) {
+                        Diagnostics.log("realtime presence join rejected for auth — refreshing token + reconnecting")
+                        refreshAuth()
+                        break // reconnect; auth() then returns the freshly-refreshed token
+                    }
                 }
+                Diagnostics.log("realtime presence incoming stream closed")
             } finally {
                 heartbeat.cancel()
                 publisher.cancel()
@@ -135,16 +153,23 @@ class RealtimePresenceClient(
         }
     }
 
+    // A `phx_reply` rejecting our join because the JWT is expired/invalid — the cue to refresh + reconnect.
+    private fun isAuthRejection(text: String): Boolean =
+        text.contains("phx_reply") && text.contains("\"status\":\"error\"") &&
+            (text.contains("JWT", ignoreCase = true) || text.contains("token has expired", ignoreCase = true))
+
     companion object {
         // Phoenix drops a channel that misses heartbeats ~60 s apart; 25 s keeps a comfortable margin.
         private const val HEARTBEAT_MILLIS = 25_000L
-        private const val RECONNECT_BACKOFF_MILLIS = 5_000L
+        private const val RECONNECT_BACKOFF_MILLIS = 3_000L
     }
 }
 
 /**
- * Pure builders for the Phoenix (Supabase Realtime, protocol vsn 1.0.0) message envelopes this client sends.
- * Object format: `{"topic","event","payload","ref"[,"join_ref"]}`. Extracted from [RealtimePresenceClient] so
+ * Pure builders for the Phoenix (Supabase Realtime) message envelopes this client sends. The socket connects
+ * with `vsn=1.0.0`, which selects Phoenix's **V1 object** serializer on the server — so messages are
+ * `{"topic","event","payload","ref"[,"join_ref"]}` (matching `@supabase/realtime-js`, which `JSON.stringify`s
+ * the same object shape; the V2 array form is only for `vsn=2.0.0`). Extracted from [RealtimePresenceClient] so
  * the wire shape is unit-testable without a live socket.
  */
 internal object RealtimePhoenix {
@@ -183,22 +208,22 @@ internal object RealtimePhoenix {
             put("event", "untrack")
         }
 
+    // Supabase (vsn=1.0.0 / Phoenix V1) wire shape: {topic, event, payload, ref[, join_ref]}. refs are strings;
+    // the heartbeat (a non-channel message) omits join_ref.
     private fun envelope(
         topic: String,
         event: String,
         ref: Long,
         joinRef: Long?,
         payload: JsonObjectBuilderScope,
-    ): String {
-        val obj: JsonObject = buildJsonObject {
+    ): String =
+        buildJsonObject {
             put("topic", topic)
             put("event", event)
             put("payload", buildJsonObject(payload))
             put("ref", ref.toString())
             if (joinRef != null) put("join_ref", joinRef.toString())
-        }
-        return obj.toString()
-    }
+        }.toString()
 }
 
 // Alias for the trailing-lambda payload builder passed to [RealtimePhoenix.envelope].

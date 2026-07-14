@@ -314,6 +314,13 @@ class SchedulerSyncEngine(
 
     override fun realtimeAuth(): Pair<String, String>? = session?.let { it.userId to it.accessToken }
 
+    override suspend fun refreshRealtimeAuth() {
+        val current = session ?: return
+        // Uses the same serialized refresh as [withAuth] (adopts a token another caller already rotated), so
+        // the single-use refresh token is never double-spent against a concurrent reconcile.
+        runCatching { refreshSession(current) }
+    }
+
     override suspend fun claimLastPhone() {
         val current = session ?: return
         runCatching { withAuth(current) { client.claimLastPhone(it, meta().deviceId) } }

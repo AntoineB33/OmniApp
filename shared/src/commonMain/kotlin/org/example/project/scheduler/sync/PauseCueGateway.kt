@@ -27,6 +27,14 @@ interface PauseCueGateway {
     fun realtimeAuth(): Pair<String, String>?
 
     /**
+     * Forces a session access-token refresh (used when the Realtime join is rejected for an expired JWT — the
+     * button-only sync model means the token isn't otherwise refreshed on launch). Serialized with the reconcile
+     * refresh so the single-use refresh token isn't double-spent. Best-effort; after it, [realtimeAuth] returns
+     * the fresh token.
+     */
+    suspend fun refreshRealtimeAuth()
+
+    /**
      * Phone startup / foreground: becomes the account's last-logged-in phone (the device the listener pushes).
      * The `account_last_phone` change fires the DB trigger that cancels the *previous* phone's pending cue, so
      * only one phone ever speaks. Best-effort.

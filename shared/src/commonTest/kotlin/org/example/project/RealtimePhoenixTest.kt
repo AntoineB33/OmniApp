@@ -10,8 +10,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * The pure Phoenix (Supabase Realtime, vsn 1.0.0) message envelopes the presence publisher sends. The live
- * WebSocket connection needs on-device verification, but the wire shape of each frame is pinned here.
+ * The pure Phoenix (Supabase Realtime, vsn=1.0.0 → V1 object serializer) message envelopes the presence
+ * publisher sends: `{"topic","event","payload","ref"[,"join_ref"]}`. The live WebSocket connection is verified
+ * on-device; the wire shape of each frame is pinned here.
  */
 class RealtimePhoenixTest {
     private val json = Json { ignoreUnknownKeys = true }
@@ -38,12 +39,11 @@ class RealtimePhoenixTest {
     }
 
     @Test
-    fun heartbeat_frame_targets_the_phoenix_topic() {
+    fun heartbeat_frame_targets_the_phoenix_topic_with_no_join_ref() {
         val frame = json.parseToJsonElement(RealtimePhoenix.heartbeatFrame(ref = 7)).jsonObject
         assertEquals("phoenix", frame["topic"]!!.jsonPrimitive.content)
         assertEquals("heartbeat", frame["event"]!!.jsonPrimitive.content)
         assertEquals("7", frame["ref"]!!.jsonPrimitive.content)
-        // The heartbeat is not a channel message, so it carries no join_ref.
         assertTrue("join_ref" !in frame)
     }
 
