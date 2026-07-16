@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.example.project.scheduler.persistence.ActiveSessionRecord
 
 /** A signed-in Supabase session: the bearer token plus enough to refresh it and identify the user. */
 @Serializable
@@ -283,6 +284,60 @@ class RemoteSnapshotClient(
         if (!response.status.isSuccess()) throw response.toException()
     }
 
+    // ---- PRD §15 device-active sessions (PostgREST) — ride the manual Sync-button reconcile only ----
+
+    /**
+     * Upserts this device's active-session [rows] (keyed `(user_id, device_id, start_ms)`) so peers can show
+     * which devices were open during past calendar panels. One batched POST; `merge-duplicates` re-extends a
+     * row whose live `end_ms` advanced since the last sync.
+     */
+    suspend fun upsertActiveSessions(session: SupabaseSession, rows: List<ActiveSessionRecord>) {
+        if (rows.isEmpty()) return
+        val response =
+            http.post("${config.restUrl}/device_active_session") {
+                authHeaders(session)
+                header("Prefer", "resolution=merge-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(
+                    json.encodeToString(
+                        rows.map {
+                            ActiveSessionUpsert(
+                                userId = session.userId,
+                                deviceId = it.deviceId,
+                                startMs = it.startMillis,
+                                endMs = it.endMillis,
+                                updatedAt = it.updatedAtMillis,
+                                kind = it.kind,
+                            )
+                        },
+                    ),
+                )
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
+    /** Every active-session row of this account ending at/after [sinceMillis] (all devices, oldest first). */
+    suspend fun fetchActiveSessions(session: SupabaseSession, sinceMillis: Long): List<ActiveSessionRecord> {
+        val response =
+            http.get("${config.restUrl}/device_active_session") {
+                authHeaders(session)
+                url.parameters.append("user_id", "eq.${session.userId}")
+                url.parameters.append("end_ms", "gte.$sinceMillis")
+                url.parameters.append("select", "device_id,start_ms,end_ms,updated_at,kind")
+                url.parameters.append("order", "start_ms.asc")
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        return json.decodeFromString<List<ActiveSessionRow>>(response.bodyAsText()).map {
+            ActiveSessionRecord(
+                deviceId = it.deviceId,
+                startMillis = it.startMs,
+                endMillis = it.endMs,
+                updatedAtMillis = it.updatedAt,
+                kind = it.kind,
+            )
+        }
+    }
+
     fun close() = http.close()
 
     private fun io.ktor.client.request.HttpRequestBuilder.authHeaders(session: SupabaseSession) {
@@ -346,4 +401,23 @@ private data class AccountStateUpsert(
     @SerialName("user_id") val userId: String,
     val mode: String,
     @SerialName("wake_at") val wakeAt: String?,
+)
+
+@Serializable
+private data class ActiveSessionUpsert(
+    @SerialName("user_id") val userId: String,
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("start_ms") val startMs: Long,
+    @SerialName("end_ms") val endMs: Long,
+    @SerialName("updated_at") val updatedAt: Long,
+    val kind: String,
+)
+
+@Serializable
+private data class ActiveSessionRow(
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("start_ms") val startMs: Long,
+    @SerialName("end_ms") val endMs: Long,
+    @SerialName("updated_at") val updatedAt: Long,
+    val kind: String = "",
 )

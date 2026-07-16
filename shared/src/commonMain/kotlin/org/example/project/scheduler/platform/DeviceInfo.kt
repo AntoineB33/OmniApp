@@ -10,8 +10,9 @@ enum class DeviceKind { Phone, Desktop, Other }
 expect fun currentDeviceKind(): DeviceKind
 
 /**
- * Whether THIS device currently has an **active screen** (the user is present) — Android: the screen is
- * interactive; desktop: there was recent pointer activity. Drives PRD §15's "no device on the account has
- * an active screen" gate. Best-effort; returns `false` when it cannot tell (headless / no context).
+ * Whether THIS device is currently **active** (the user is present) — Android: the app is in the
+ * FOREGROUND (the phone's only activity signal; screen-on with the app backgrounded is inactive);
+ * desktop: there was recent pointer activity. Drives PRD §15's "no device on the account is active"
+ * gate and the active-session tracking. Best-effort; returns `false` when it cannot tell (headless).
  */
 expect fun isScreenActive(): Boolean

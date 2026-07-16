@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import org.example.project.scheduler.persistence.ActiveSessionStore
 import org.example.project.scheduler.persistence.PersistedSnapshot
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.SyncMetaStore
@@ -50,6 +51,10 @@ class SchedulerSyncEngine(
     private val client: RemoteSnapshotClient,
     private val metaStore: SyncMetaStore,
     private val json: Json = Json { ignoreUnknownKeys = true },
+    // PRD §15: the local active-session table. When present, every reconcile ALSO merges it per-row with the
+    // remote `device_active_session` table (push this device's rows, pull the peers') so the calendar can
+    // show which devices were open during past panels. Null (tests / store-less platforms) skips it.
+    private val activeSessionStore: ActiveSessionStore? = null,
 ) : PauseCueGateway {
     private val mutex = Mutex()
     private var session: SupabaseSession? = null
@@ -82,7 +87,7 @@ class SchedulerSyncEngine(
      * the async auto-login) still observes that moment instead of silently missing it.
      */
     private val _syncMoments = MutableSharedFlow<Unit>(replay = 1)
-    val syncMoments: SharedFlow<Unit> = _syncMoments.asSharedFlow()
+    override val syncMoments: SharedFlow<Unit> = _syncMoments.asSharedFlow()
 
     /**
      * Every Supabase HTTP call the transport made (see [SupabaseUsageEvent]) — forwarded straight from the
@@ -218,6 +223,37 @@ class SchedulerSyncEngine(
             // In sync, nothing pending.
             else -> Unit
         }
+
+        // Active sessions ride the SAME (button-only) reconcile, merged per-row rather than LWW: this
+        // device's rows are pushed and every peer's are pulled into the local store, so the calendar can
+        // label past panels with the devices that were open. Best-effort — a failure here never fails the
+        // snapshot reconcile (the rows simply ride the next press). Skipped entirely on the remote
+        // force-logout return above, which must push nothing.
+        syncActiveSessions(session)
+    }
+
+    // How far back the per-row active-session merge reaches — the same 168 h horizon the Inactivity bands /
+    // "the calendar the user can change" use. Anchored on the newest LOCAL row (not the wall clock) so a
+    // debug sim clock that leaped far ahead still syncs the window around what this device actually wrote.
+    private companion object {
+        const val ACTIVE_SESSION_SYNC_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1_000
+    }
+
+    private suspend fun syncActiveSessions(session: SupabaseSession) {
+        val store = activeSessionStore ?: return
+        runCatching {
+            val all = store.loadActiveSessions()
+            val since = (all.maxOfOrNull { it.endMillis } ?: 0L) - ACTIVE_SESSION_SYNC_HORIZON_MILLIS
+            val ownId = meta().deviceId
+            // Only rows recorded under this install's real device id are ours to push: rows written while
+            // signed out ("local") or by the retired remote-activity adoption never leave the device.
+            val own = all.filter { it.deviceId == ownId && it.endMillis >= since }
+            withAuth(session) { client.upsertActiveSessions(it, own) }
+            val peers = withAuth(session) { client.fetchActiveSessions(it, since) }
+                .filter { it.deviceId != ownId }
+            store.saveActiveSessions(peers)
+            Diagnostics.log("reconcile: active sessions pushed=${own.size}, pulled=${peers.size} (since=$since)")
+        }.onFailure { Diagnostics.log("reconcile: active-session merge failed (${it.message}); rows ride the next sync") }
     }
 
     private fun pull(remote: RemoteSnapshot) {

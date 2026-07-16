@@ -74,6 +74,7 @@ import org.example.project.time.SystemAppClock
 import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.ChoresManagerWindow
+import org.example.project.ui.deviceActivitySegments
 import org.example.project.ui.HistoryManagerWindow
 import org.example.project.ui.IconMenuButton
 import org.example.project.ui.raiseOnPress
@@ -124,7 +125,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // so sync is simply disabled there.
         val syncEngine =
             remember(store) {
-                (store as? SyncMetaStore)?.let { SchedulerSyncEngine(RemoteSnapshotClient(), it) }
+                (store as? SyncMetaStore)?.let {
+                    SchedulerSyncEngine(RemoteSnapshotClient(), it, activeSessionStore = store as? ActiveSessionStore)
+                }
             }
 
         // The scheduler view-model is hoisted here so the floating calendar can read the Task Tree's
@@ -438,22 +441,36 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 )
             }
         }
+        // PRD §15: every stored active session (this device's own + the peers' rows pulled by the Sync
+        // button) — the calendar segments past task panels by which devices were open (hover bubble line +
+        // dashed separators where the set changed).
+        val activeSessions by engine.activeSessions.collectAsState()
         // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
         // user-authored, uniform blocks) drawn the same way; reminders (PRD §14) and side tasks (PRD §15)
         // span the focused week.
-        val calendarRecords =
+        val calendarRecords = (
             schedulerState.tasks.values.flatMap { task ->
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
             } + mergePanelsForDisplay(
                 schedulerState.panels, displayReminderPanels, displaySidePanels, displaySleepPanels,
                 schedulerState.showSideTasks, schedulerState.showReminders, activeRegions,
-            ) + inactivityBands.map { gap ->
-                CalendarRecord(
-                    title = "Inactivity",
-                    range = gap,
-                    inactivity = true,
-                )
+            )
+            ).map { record ->
+            // Only real task blocks (records + auto/manual panels) carry the device-set segmentation; the
+            // reminder/side-task/sleep bands keep their own rendering. The helper itself clips to the
+            // elapsed part, so a future panel simply gets no segments.
+            if (record.reminder || record.sideTask || record.sleep) {
+                record
+            } else {
+                record.copy(deviceSegments = deviceActivitySegments(record.range, activeSessions, nowMillis))
             }
+        } + inactivityBands.map { gap ->
+            CalendarRecord(
+                title = "Inactivity",
+                range = gap,
+                inactivity = true,
+            )
+        }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
         var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
         // PRD §8 Manual add: a not-yet-committed default panel shown in the edit window with a Save

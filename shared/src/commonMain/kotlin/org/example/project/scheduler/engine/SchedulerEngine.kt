@@ -95,9 +95,16 @@ private const val LOCAL_DEVICE_ID: String = "local"
 // PRD §15: how often the active-session beat samples `isScreenActive()` and extends the current session in the
 // LOCAL store. Mirrors the advance-tick cadence (1 s under sim / 30 s in production) so the session timeline
 // tracks the same `now` the schedule does. The beat NEVER talks to the server — opens, extends and finalizes
-// are all local-only, feeding only this device's own Inactivity bands / Sleep-carve (activity is never synced).
+// are all local-only; the rows ride the next manual Sync-button reconcile.
 private const val ACTIVE_SESSION_BEAT_MILLIS_SIM: Long = 1_000
 private const val ACTIVE_SESSION_BEAT_MILLIS_PROD: Long = 30L * 1_000
+
+// The PHONE's activity model: the app being in the FOREGROUND is the only activity signal, expressed as a
+// one-minute LEASE — each beat (every [PHONE_SESSION_LEASE_MILLIS] in production) claims activity from `now`
+// to `now + 1 min`, so consecutive beats merge into one continuous session and a backgrounded/killed app
+// reads as inactive within a minute without relying on a finalize ever running. The lease deliberately
+// over-reports by up to one minute after the last renewal — that IS the spec's granularity.
+private const val PHONE_SESSION_LEASE_MILLIS: Long = 60L * 1_000
 
 // The now-line display cadence while time is ACCELERATED. Fine enough that the now-line glides instead of
 // jumping once per schedule tick (the reported x300 "jumps" anomaly) — on the phone as well as the desktop.
@@ -170,9 +177,11 @@ class SchedulerEngine(
     // PRD §15 device-sleep gaps: LOCAL-ONLY watermark of how far the OS sleep/wake log has been scanned, so the
     // launch backfill resumes instead of re-reading the full 3-day horizon each launch; null re-scans it fully.
     private val sleepScanCheckpoint: SleepScanCheckpointStore? = null,
-    // PRD §15: LOCAL-ONLY store for this device's active-session intervals — the input to this device's own
-    // "Inactivity" bands / "Sleep"-band carve / live-rest placement. Null disables activity tracking. Activity
-    // is no longer synced; cross-device presence is Supabase Realtime, watched by the external listener.
+    // PRD §15: store for the active-session intervals — this device's own rows (the beat writes them) plus
+    // the peers' rows the manual Sync button pulls in. The input to the "Inactivity" bands / "Sleep"-band
+    // carve / live-rest placement and the calendar's per-panel device sets. Null disables activity tracking.
+    // The beat itself never talks to the server; rows travel ONLY inside the Sync-button reconcile. LIVE
+    // cross-device presence stays Supabase Realtime, watched by the external listener.
     private val activeSessionStore: ActiveSessionStore? = null,
     // Push-token / last-phone channel (the sync engine) for the Realtime-presence + listener cue delivery:
     // only a phone registers its FCM/APNs token and claims the account's last phone so the listener can reach
@@ -226,6 +235,15 @@ class SchedulerEngine(
 
     /** End of this device's last finalized session — the live "Inactivity" tail's start (null = none pending). */
     val inactiveSince: StateFlow<Long?> = _inactiveSince.asStateFlow()
+
+    // Every stored active session — this device's own AND the peers' rows the Sync-button reconcile pulled
+    // in. The calendar reads these to label past panels with which devices were open (hover bubble) and to
+    // draw the dashed separators where the device set changed. Display-only and local: loaded from the store
+    // at startup / after each derive-refresh, and patched in-memory as the beat extends the open session.
+    private val _activeSessions = MutableStateFlow<List<ActiveSessionRecord>>(emptyList())
+
+    /** All stored active sessions (own + pulled peers); the UI derives the per-panel device sets from these. */
+    val activeSessions: StateFlow<List<ActiveSessionRecord>> = _activeSessions.asStateFlow()
 
     // PRD §15 server-derived pauses: this device's currently-open active session (null while inactive), tracked
     // in the LOCAL store only. Mutated only under [activeSessionMutex] because the beat loop, the debug
@@ -316,12 +334,18 @@ class SchedulerEngine(
         // device's own rest poses / Inactivity bands. Local-only — nothing is pushed or pulled (the
         // cross-device sleep-gap channel is retired).
         backfillSleepGaps()
-        // PRD §15: track this device's active sessions LOCALLY (the only input to its own "Inactivity" bands /
-        // "Sleep"-band carve / live-rest placement). Never synced. [purgeLegacyAdoptedRows] heals old DBs that
-        // still hold the retired adopted remote-activity rows.
+        // PRD §15: track this device's active sessions locally; the rows ride the manual Sync button (push
+        // own / pull peers), feeding the "Inactivity" bands, the "Sleep"-band carve, the live-rest placement
+        // and the calendar's per-panel device sets. [purgeLegacyAdoptedRows] heals old DBs that still hold
+        // the retired adopted remote-activity rows.
         purgeLegacyAdoptedRows()
         launchActiveSessionTracking()
         refreshDerivedPauses()
+        // The manual Sync button is the only path that can pull PEER session rows into the local store (the
+        // reconcile's per-row active-session merge); after every reconcile, reload the stored sessions and
+        // re-derive the Inactivity bands so the pulled activity shows at once. Fires on every reconcile
+        // outcome and the refresh is local-only, so a failed/push-only reconcile just re-derives in place.
+        pauseCue?.syncMoments?.let { moments -> scope.launch { moments.collect { refreshDerivedPausesNow() } } }
         // PRD §15 / listener cue delivery: a phone's startup claims the account's last phone so the external
         // listener knows which phone to push. Phones only; a no-op when sync is disabled / signed out.
         claimLastPhoneOnStartup()
@@ -531,9 +555,26 @@ class SchedulerEngine(
             lastRealBeat = realNow
             // Beat faster while accelerated (re-checked each pass — the speed changes at runtime) so the session
             // timeline tracks the racing `now` finely; keys off the clock's actual speed so the phone beats fast
-            // too under the desktop time-link, where DebugFlags.TIME_SIMULATION is off.
-            tickDelay(if (timeAccelerated()) ACTIVE_SESSION_BEAT_MILLIS_SIM else ACTIVE_SESSION_BEAT_MILLIS_PROD)
+            // too under the desktop time-link, where DebugFlags.TIME_SIMULATION is off. The phone renews its
+            // one-minute foreground lease once per lease length ("adds [now, now+1 min] every minute").
+            val prodBeat =
+                if (deviceKind == DeviceKind.Phone) PHONE_SESSION_LEASE_MILLIS else ACTIVE_SESSION_BEAT_MILLIS_PROD
+            tickDelay(if (timeAccelerated()) ACTIVE_SESSION_BEAT_MILLIS_SIM else prodBeat)
         }
+    }
+
+    // The instant a session claims activity up to when extended at `now`: the phone claims a one-minute
+    // LEASE (`now + 1 min` — foreground is its only activity signal, renewed each beat, expiring on its own
+    // if the app is backgrounded/killed); other devices claim only what the beat observed (`now`).
+    private fun sessionClaimEnd(now: Long): Long =
+        if (deviceKind == DeviceKind.Phone) now + PHONE_SESSION_LEASE_MILLIS else now
+
+    // Patch [activeSessions] in-memory with an updated row (keyed by device+start), keeping it sorted like
+    // the store's load. Cheaper than re-reading the whole table on every beat.
+    private fun publishSessionRow(row: ActiveSessionRecord) {
+        _activeSessions.value =
+            (_activeSessions.value.filterNot { it.deviceId == row.deviceId && it.startMillis == row.startMillis } + row)
+                .sortedBy { it.startMillis }
     }
 
     // PRD §15: advance the current active session to `now`, LOCAL store only. A suspension or an inactive
@@ -556,11 +597,12 @@ class SchedulerEngine(
             if (active) {
                 val cur = currentSession
                 val realNow = SystemAppClock.nowMillis()
+                val claimEnd = sessionClaimEnd(now)
                 val updated =
                     if (cur == null) {
-                        ActiveSessionRecord(activeSessionDeviceId, now, now, realNow)
+                        ActiveSessionRecord(activeSessionDeviceId, now, claimEnd, realNow, sessionKind)
                     } else {
-                        cur.copy(endMillis = maxOf(cur.endMillis, now), updatedAtMillis = realNow)
+                        cur.copy(endMillis = maxOf(cur.endMillis, claimEnd), updatedAtMillis = realNow)
                     }
                 currentSession = updated
                 persistSessionLocked(updated)
@@ -607,7 +649,12 @@ class SchedulerEngine(
 
     private fun persistSessionLocked(session: ActiveSessionRecord) {
         activeSessionStore?.saveActiveSessions(listOf(session))
+        publishSessionRow(session)
     }
+
+    // The device-kind label written on every session row this device records ('desktop'/'phone'/'other') —
+    // what the calendar's "which devices were open" bubble shows for it on every device after a sync.
+    private val sessionKind: String get() = deviceKind.name.lowercase()
 
     // PRD §15: freshen the open session up to `now`, opening one if the screen is active and none is open, and
     // persist it locally so a subsequent load/push reports activity right up to the present. No-op when the
@@ -618,9 +665,10 @@ class SchedulerEngine(
             val now = clock.nowMillis()
             val realNow = SystemAppClock.nowMillis()
             val cur = currentSession
+            val claimEnd = sessionClaimEnd(now)
             val updated =
-                cur?.copy(endMillis = maxOf(cur.endMillis, now), updatedAtMillis = realNow)
-                    ?: ActiveSessionRecord(activeSessionDeviceId, now, now, realNow)
+                cur?.copy(endMillis = maxOf(cur.endMillis, claimEnd), updatedAtMillis = realNow)
+                    ?: ActiveSessionRecord(activeSessionDeviceId, now, claimEnd, realNow, sessionKind)
             currentSession = updated
             persistSessionLocked(updated)
             _activeSince.value = updated.startMillis
@@ -628,11 +676,12 @@ class SchedulerEngine(
     }
 
     /**
-     * PRD §15: refresh the calendar's "Inactivity" bands from THIS device's own pauses. Activity is no longer
-     * synced (Realtime Presence + the external listener replaced the derived-pause channel), so the bands are a
-     * purely LOCAL derivation over this device's stored active sessions — the complement of when it was active.
-     * The freshly derived pauses also seed the §15 rest poses (advancing `lastRestMillis` only). Public for the
-     * debug "simulate pause + leap" control so the bands / rest poses reflect the just-simulated pause at once.
+     * PRD §15: refresh the calendar's "Inactivity" bands from the stored active sessions — this device's own
+     * rows plus the peers' rows the last Sync-button reconcile pulled, so a pause is account-wide ("no device
+     * was active") with Sync-bounded staleness. A purely LOCAL derivation (no server RPC; the derived pauses
+     * are never stored). The freshly derived pauses also seed the §15 rest poses (advancing `lastRestMillis`
+     * only). Public for the debug "simulate pause + leap" control so the bands / rest poses reflect the
+     * just-simulated pause at once.
      */
     fun refreshDerivedPauses() {
         scope.launch { refreshDerivedPausesNow() }
@@ -679,10 +728,14 @@ class SchedulerEngine(
         }
     }
 
+    // Derive the pauses from EVERY stored session — this device's own rows plus the peers' rows the last
+    // Sync-button reconcile pulled in, so the bands are account-wide again with Sync-bounded staleness (a
+    // pause = no device active). Also refreshes [activeSessions] from the store, since this runs at exactly
+    // the moments the stored set can change structurally (startup, post-reconcile, leap end).
     private fun localDerivedPauses(since: Long, until: Long): List<TaskTimeRange> {
-        val sessions = activeSessionStore?.loadActiveSessions()?.map { TaskTimeRange(it.startMillis, it.endMillis) }
-            ?: return emptyList()
-        return SchedulerDomain.derivePauses(sessions, since, until)
+        val records = activeSessionStore?.loadActiveSessions() ?: return emptyList()
+        _activeSessions.value = records
+        return SchedulerDomain.derivePauses(records.map { TaskTimeRange(it.startMillis, it.endMillis) }, since, until)
     }
 
     // PRD §15: install freshly-seeded rest times. Rest evidence only ever reveals a MORE-RECENT rest, so this

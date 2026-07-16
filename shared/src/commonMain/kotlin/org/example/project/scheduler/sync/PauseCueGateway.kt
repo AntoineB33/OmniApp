@@ -45,6 +45,13 @@ interface PauseCueGateway {
     suspend fun registerPushToken(kind: String, platform: String, token: String)
 
     /**
+     * Emits after every Sync-button reconcile (any outcome) — the only moment peer active-session rows can
+     * land in the local store. The engine collects this to re-derive the Inactivity bands / refresh the
+     * calendar's device-set data right after a sync. Null on gateways without a reconcile loop (tests).
+     */
+    val syncMoments: kotlinx.coroutines.flow.SharedFlow<Unit>? get() = null
+
+    /**
      * Mirrors the account's Sleep/Work mode to the `account_state` table so the external Realtime listener can
      * suppress the pause-end cue while the user is deliberately away. [wakeAtMillis] is the scheduled wake
      * instant while sleeping (null when working). Best-effort; a no-op while signed out.

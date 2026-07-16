@@ -1,22 +1,29 @@
 package org.example.project.scheduler.persistence
 
 /**
- * PRD §15 device-active sessions: one interval this device was **active** — the app was running, signed in,
- * and the screen was unlocked/interactive — from [startMillis] to [endMillis] (epoch millis). [deviceId] is
- * the install that recorded it and [updatedAtMillis] is when the row was last extended/written (a live
- * session's `endMillis` is advanced by a heartbeat, so an unclean shutdown is bounded by the last beat).
+ * PRD §15 device-active sessions: one interval a device was **active** from [startMillis] to [endMillis]
+ * (epoch millis). On the desktop "active" means the app was running, signed in, and the screen
+ * unlocked/interactive; on the phone it means the app was in the **foreground**, expressed as one-minute
+ * leases renewed every minute (`end = now + 1 min`), so backgrounding/killing the app reads as inactive
+ * within a minute. [deviceId] is the install that recorded it, [kind] is that install's device kind
+ * (`"desktop"`/`"phone"`/`"other"`; `""` on rows written before the column existed) — the label the
+ * calendar's "which devices were open" hover bubble shows — and [updatedAtMillis] is when the row was
+ * last extended/written (a live session's `endMillis` is advanced by a heartbeat, so an unclean shutdown
+ * is bounded by the last beat / lease end).
  *
- * This is authoritative device-activity history (an input the server needs to deduce the account-wide
- * pauses — the windows when NO device was active — not derivable from other local state), so it is synced
- * across the account, per-row and OUTSIDE [PersistedSnapshot]: it never enters the Undo/Redo history and one
- * device's rows are never clobbered by another's whole-document snapshot. Same separation rationale as
- * [SleepGapRecord] / window_placement / sync_meta.
+ * Device activity is a physical fact — NOT reconstructible from other state — so these rows are
+ * authoritative, but they ride ONLY the manual Sync button (`SchedulerSyncEngine.reconcile` pushes this
+ * device's rows and pulls every peer's into the local store); nothing about them ever triggers a push on
+ * its own. They stay OUTSIDE [PersistedSnapshot]: never a History Unit, merged per-row rather than
+ * clobbered by another device's whole-document snapshot. Same separation rationale as [SleepGapRecord] /
+ * window_placement / sync_meta.
  */
 data class ActiveSessionRecord(
     val deviceId: String,
     val startMillis: Long,
     val endMillis: Long,
     val updatedAtMillis: Long,
+    val kind: String = "",
 )
 
 /**

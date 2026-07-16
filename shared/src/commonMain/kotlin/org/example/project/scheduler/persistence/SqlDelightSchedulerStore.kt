@@ -137,6 +137,7 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
                 startMillis = row.start_ms,
                 endMillis = row.end_ms,
                 updatedAtMillis = row.updated_at,
+                kind = row.kind,
             )
         }
 
@@ -153,6 +154,7 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
                     start_ms = session.startMillis,
                     end_ms = session.endMillis,
                     updated_at = session.updatedAtMillis,
+                    kind = session.kind,
                 )
             }
         }

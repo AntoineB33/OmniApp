@@ -1,0 +1,5 @@
+-- Schema v7 -> v8: add `kind` to device_active_session — the recording install's device kind
+-- ('desktop'/'phone'/'other'), the label the calendar's "which devices were open" hover bubble shows.
+-- Rows written by older builds default to '' (rendered as a generic "Device"). Active sessions are synced
+-- again as of this schema — per-row, ONLY on the manual Sync button (see Scheduler.sq).
+ALTER TABLE device_active_session ADD COLUMN kind TEXT NOT NULL DEFAULT '';

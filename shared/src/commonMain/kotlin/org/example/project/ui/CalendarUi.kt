@@ -68,6 +68,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -126,6 +127,7 @@ import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.scheduler.persistence.ActiveSessionRecord
 import org.example.project.scheduler.state.CalendarEdge
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.HistoryUnit
@@ -200,7 +202,96 @@ data class CalendarRecord(
      * so it is display-only (never edited/scheduled).
      */
     val inactivity: Boolean = false,
+    /**
+     * The elapsed part of this panel, segmented by WHICH DEVICES were open (from the stored active
+     * sessions — own + Sync-pulled peers; see [deviceActivitySegments]). Consecutive segments differ in
+     * device set; the block draws a dashed separator at each interior boundary and the hover bubble names
+     * the segment's devices. Empty when no activity data covers the panel (bubble falls back to times only).
+     */
+    val deviceSegments: List<DeviceActivitySegment> = emptyList(),
 )
+
+/**
+ * One sub-range of a panel during which the set of open devices was constant. [devices] holds the
+ * human-readable labels ("Desktop", "Phone", "Phone 2"…), empty = no device was open.
+ */
+data class DeviceActivitySegment(
+    val startMillis: Long,
+    val endMillis: Long,
+    val devices: List<String>,
+)
+
+/**
+ * Segments `[range.start, min(range.end, untilMillis)]` of a panel by the set of devices with an active
+ * session covering each instant — the data behind the hover bubble's "which devices were open" line and
+ * the dashed set-change separators. Pure so the sweep is unit-testable.
+ *
+ * Only the region the data can speak for is segmented: nothing is claimed before the oldest known session
+ * start (a panel predating all activity data gets no segments, not a false "no device"), and nothing after
+ * [untilMillis] (the future part of a still-running panel). Within that region, a covered instant lists the
+ * open devices and an uncovered one is a real "no device was open" segment. Device labels come from each
+ * session's recorded [ActiveSessionRecord.kind] ("desktop" → "Desktop"; blank/legacy rows → "Device"),
+ * numbered "Phone 2", "Phone 3"… when several distinct installs share a kind.
+ */
+fun deviceActivitySegments(
+    range: TaskTimeRange,
+    sessions: List<ActiveSessionRecord>,
+    untilMillis: Long,
+): List<DeviceActivitySegment> {
+    if (sessions.isEmpty()) return emptyList()
+    val knownSince = sessions.minOf { it.startMillis }
+    val start = maxOf(range.startEpochMillis, knownSince)
+    val end = minOf(range.endEpochMillis, untilMillis)
+    if (end <= start) return emptyList()
+
+    // Stable per-install labels: kind capitalized, numbered by order of first appearance within a kind.
+    val labelById = LinkedHashMap<String, String>()
+    val kindCounts = mutableMapOf<String, Int>()
+    for (s in sessions.sortedBy { it.startMillis }) {
+        labelById.getOrPut(s.deviceId) {
+            val base = when (s.kind.trim().lowercase()) {
+                "" -> "Device"
+                else -> s.kind.trim().lowercase().replaceFirstChar { it.uppercase() }
+            }
+            val n = (kindCounts[base] ?: 0) + 1
+            kindCounts[base] = n
+            if (n == 1) base else "$base $n"
+        }
+    }
+
+    // Sweep the clipped window over every session boundary; between two consecutive cuts the open set is
+    // constant. Consecutive equal sets merge, so the result is minimal. (distinct+sorted, not sortedSetOf —
+    // that is JVM-only and breaks the non-JVM targets.)
+    val cuts = mutableListOf(start, end)
+    for (s in sessions) {
+        val a = maxOf(s.startMillis, start)
+        val b = minOf(s.endMillis, end)
+        if (b > a) {
+            cuts.add(a)
+            cuts.add(b)
+        }
+    }
+    val bounds = cuts.distinct().sorted()
+    val segments = mutableListOf<DeviceActivitySegment>()
+    for (i in 0 until bounds.size - 1) {
+        val a = bounds[i]
+        val b = bounds[i + 1]
+        val open =
+            sessions.asSequence()
+                .filter { it.startMillis < b && it.endMillis > a }
+                .map { labelById.getValue(it.deviceId) }
+                .distinct()
+                .sorted()
+                .toList()
+        val last = segments.lastOrNull()
+        if (last != null && last.devices == open && last.endMillis == a) {
+            segments[segments.lastIndex] = last.copy(endMillis = b)
+        } else {
+            segments.add(DeviceActivitySegment(a, b, open))
+        }
+    }
+    return segments
+}
 
 /** A [CalendarRecord] clipped to a single day, as start/end hour-of-day fractions in `[0, 24]`. */
 data class PlacedRecord(
@@ -233,6 +324,15 @@ data class PlacedRecord(
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
     val fullEndMillis: Long = 0L,
+    /** [CalendarRecord.deviceSegments] clipped to this day, as hour-of-day sub-ranges. */
+    val deviceSegments: List<PlacedDeviceSegment> = emptyList(),
+)
+
+/** One [DeviceActivitySegment] clipped to a day: hour-of-day bounds + the open devices' labels. */
+data class PlacedDeviceSegment(
+    val startHour: Float,
+    val endHour: Float,
+    val devices: List<String>,
 )
 
 /**
@@ -255,6 +355,16 @@ fun recordsForDay(
         // minute durations) as min-height bands, so keep them even though the block path would drop a
         // ~zero-height period.
         if (!record.reminder && !record.sideTask && endHour <= startHour) return@mapNotNull null
+        // Clip the device-set segments to this day too, in the same hour-of-day space as the block.
+        val daySegments =
+            record.deviceSegments.mapNotNull { seg ->
+                val s = Instant.fromEpochMilliseconds(seg.startMillis).toLocalDateTime(tz)
+                val e = Instant.fromEpochMilliseconds(seg.endMillis).toLocalDateTime(tz)
+                if (s.date > day || e.date < day) return@mapNotNull null
+                val sh = if (s.date < day) 0f else s.hour + s.minute / 60f + s.second / 3600f
+                val eh = if (e.date > day) 24f else e.hour + e.minute / 60f + e.second / 3600f
+                if (eh <= sh) null else PlacedDeviceSegment(sh.coerceIn(0f, 24f), eh.coerceIn(0f, 24f), seg.devices)
+            }
         PlacedRecord(
             title = record.title,
             startHour = startHour.coerceIn(0f, 24f),
@@ -275,6 +385,7 @@ fun recordsForDay(
             inactivity = record.inactivity,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
+            deviceSegments = daySegments,
         )
     }
 
@@ -3114,9 +3225,13 @@ private fun CalendarBlock(
                 // PRD §8: the title shows on hover. Reported up to the viewport-level bubble (anchored to the
                 // cursor, not the block's top) so a tall, zoomed-in block still pops its bubble right where the
                 // pointer is — and the cursor can pass through the bubble without freezing it.
-                // PRD §8: the hover bubble also shows the panel's true (un-clipped) start–end times.
+                // PRD §8: the hover bubble also shows the panel's true (un-clipped) start–end times, and — for
+                // the elapsed part with activity data — which devices were open under the cursor. The slice is
+                // tiled into hover zones (one per device-set segment + plain leftovers) instead of nesting
+                // hover handlers, because a parent hover Move would overwrite a child's report.
                 val timeRange = "${formatHm(record.fullStartMillis, tz)} – ${formatHm(record.fullEndMillis, tz)}"
-                Box(Modifier.fillMaxSize().calendarTitleHover(record.title, hoverScope, subtitle = timeRange)) {
+                val hoverZones = deviceHoverZones(record.deviceSegments, slice.topHour, slice.bottomHour)
+                Box(Modifier.fillMaxSize()) {
                     // The title is written only on the topmost slice so a stepped block reads as one.
                     CalendarBlockBody(color, record.title, showTitle = isFirst)
                     // PRD §17: grey the sub-range of this slice that falls inside a sleep window (the fill now
@@ -3136,6 +3251,46 @@ private fun CalendarBlock(
                             )
                         }
                     }
+                    hoverZones.forEach { zone ->
+                        val line = zone.devices?.let { d ->
+                            if (d.isEmpty()) "Open: no device" else "Open: ${d.joinToString(", ")}"
+                        }
+                        Box(
+                            Modifier
+                                .offset(y = hourHeight * (zone.top - slice.topHour))
+                                .fillMaxWidth()
+                                .height(hourHeight * (zone.bottom - zone.top))
+                                .calendarTitleHover(
+                                    record.title,
+                                    hoverScope,
+                                    subtitle = if (line == null) timeRange else "$timeRange\n$line",
+                                ),
+                        )
+                    }
+                    // A dashed separator at every interior boundary where the device set changed (two
+                    // adjacent segments always differ — equal neighbours were merged in the sweep).
+                    record.deviceSegments.forEachIndexed { segIndex, seg ->
+                        val prev = record.deviceSegments.getOrNull(segIndex - 1) ?: return@forEachIndexed
+                        if (!approxEq(prev.endHour, seg.startHour)) return@forEachIndexed
+                        if (seg.startHour <= slice.topHour + 1e-4f || seg.startHour >= slice.bottomHour - 1e-4f) {
+                            return@forEachIndexed
+                        }
+                        Box(
+                            Modifier
+                                .offset(y = hourHeight * (seg.startHour - slice.topHour))
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .drawBehind {
+                                    drawLine(
+                                        color = color,
+                                        start = Offset(0f, size.height / 2f),
+                                        end = Offset(size.width, size.height / 2f),
+                                        strokeWidth = size.height,
+                                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f)),
+                                    )
+                                },
+                        )
+                    }
                 }
                 // PRD §8 extend/shorten: a thin hover zone on the block's true top/bottom edge shows the
                 // standard resize cursor, indicating the user can grab the edge to resize.
@@ -3154,6 +3309,33 @@ private fun CalendarBlock(
             }
         }
     }
+}
+
+/** One hover tile of a block slice: `devices == null` means "no activity data here" (times-only bubble). */
+private data class DeviceHoverZone(val top: Float, val bottom: Float, val devices: List<String>?)
+
+/**
+ * Tiles a slice's `[top, bottom]` hour range with the device-set segments overlapping it, filling the
+ * uncovered leftovers (a future part / a part predating all activity data) with `devices == null` zones,
+ * so every point of the block reports a hover bubble. No segments ⇒ one whole-slice null zone.
+ */
+private fun deviceHoverZones(
+    segments: List<PlacedDeviceSegment>,
+    top: Float,
+    bottom: Float,
+): List<DeviceHoverZone> {
+    val zones = mutableListOf<DeviceHoverZone>()
+    var cursor = top
+    for (seg in segments.sortedBy { it.startHour }) {
+        val a = maxOf(seg.startHour, top)
+        val b = minOf(seg.endHour, bottom)
+        if (b <= a) continue
+        if (a > cursor) zones.add(DeviceHoverZone(cursor, a, null))
+        zones.add(DeviceHoverZone(maxOf(a, cursor), b, seg.devices))
+        cursor = b
+    }
+    if (cursor < bottom) zones.add(DeviceHoverZone(cursor, bottom, null))
+    return zones
 }
 
 /** PRD §8: the coloured body + title of a calendar block (or one of its overlap slices). */

@@ -447,6 +447,90 @@ class SchedulerStoreTest {
         }
     }
 
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by schema v7 (device_active_session WITHOUT the
+     * `kind` column) holds session rows an older build recorded. Opening it with the current schema must run
+     * 7.sqm (adding `kind`), keep those rows (defaulting to '' → the generic "Device" bubble label), and
+     * store new rows with their kind.
+     */
+    @Test
+    fun upgrades_pre_kind_v7_db_and_preserves_session_rows() {
+        val dbFile = File.createTempFile("scheduler-v7", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            val raw = JdbcSqliteDriver(url, Properties())
+            raw.execute(null, "CREATE TABLE app_state (id INTEGER NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+            raw.execute(
+                null,
+                "CREATE TABLE history_unit (category TEXT NOT NULL, ordinal INTEGER NOT NULL, " +
+                    "time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, debug_tainted INTEGER NOT NULL, " +
+                    "delta TEXT NOT NULL, PRIMARY KEY (category, ordinal))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE history_pointer (category TEXT NOT NULL PRIMARY KEY, pointer INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
+                    "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
+                    "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT, " +
+                    "acknowledged_logout_at INTEGER)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE window_placement (window_id TEXT NOT NULL PRIMARY KEY, x REAL NOT NULL, " +
+                    "y REAL NOT NULL, width REAL NOT NULL DEFAULT 0, height REAL NOT NULL DEFAULT 0, " +
+                    "visible INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_sleep_gap (device_id TEXT NOT NULL, sleep_start INTEGER NOT NULL, " +
+                    "sleep_end INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY (device_id, sleep_start))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_active_session (device_id TEXT NOT NULL, start_ms INTEGER NOT NULL, " +
+                    "end_ms INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (device_id, start_ms))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sleep_scan_checkpoint (id INTEGER NOT NULL PRIMARY KEY, scanned_through INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(null, "INSERT INTO app_state(id, payload) VALUES (0, ?)", 1) {
+                bindString(0, payload)
+            }
+            raw.execute(
+                null,
+                "INSERT INTO device_active_session(device_id, start_ms, end_ms, updated_at) VALUES ('desk', 1000, 2000, 9000)",
+                0,
+            )
+            raw.execute(null, "PRAGMA user_version = 7", 0)
+            raw.close()
+
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            assertEquals(payload, store.load()!!.statePayload)
+            val migrated = store.loadActiveSessions().single()
+            assertEquals(ActiveSessionRecord("desk", 1_000, 2_000, 9_000, kind = ""), migrated)
+            // New rows persist their kind alongside the healed old ones.
+            store.saveActiveSessions(listOf(ActiveSessionRecord("phone-1", 5_000, 6_000, 9_500, kind = "phone")))
+            assertEquals("phone", store.loadActiveSessions().single { it.deviceId == "phone-1" }.kind)
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
+    }
+
     @Test
     fun sleep_scan_checkpoint_round_trips() {
         val store = newStore()

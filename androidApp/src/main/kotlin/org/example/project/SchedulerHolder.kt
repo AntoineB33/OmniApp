@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import org.example.project.scheduler.engine.AppSchedulerHost
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.persistence.AndroidSchedulerStoreHolder
+import org.example.project.scheduler.platform.AndroidForegroundTracker
 import org.example.project.scheduler.persistence.ActiveSessionStore
 import org.example.project.scheduler.persistence.DeviceSleepGapStore
 import org.example.project.scheduler.persistence.SleepScanCheckpointStore
@@ -42,10 +43,16 @@ object SchedulerHolder {
     fun ensure(context: Context): AppSchedulerHost {
         host?.let { return it }
         AndroidSchedulerStoreHolder.context = context.applicationContext
+        // The phone's activity signal is "app in foreground" (see DeviceInfo.android.kt); register the
+        // Activity-lifecycle counter before any Activity resumes (MainActivity.onCreate calls ensure()
+        // before setContent, so the first onResume is always observed).
+        AndroidForegroundTracker.install(context.applicationContext)
         // PRD §6: History Units are timestamped from this clock; set it before any reducer write in the service.
         SchedulerReducer.clock = SystemAppClock
         val store = createDefaultSchedulerStore()
-        val syncEngine = (store as? SyncMetaStore)?.let { SchedulerSyncEngine(RemoteSnapshotClient(), it) }
+        val syncEngine = (store as? SyncMetaStore)?.let {
+            SchedulerSyncEngine(RemoteSnapshotClient(), it, activeSessionStore = store as? ActiveSessionStore)
+        }
         val vm = TaskSchedulerViewModel(store = store, syncEngine = syncEngine)
         val appContext = context.applicationContext
         // Debug time-link (docs/PAUSE_CUE_DELIVERY.md "Testing C"): on a debuggable build, drive the engine's
