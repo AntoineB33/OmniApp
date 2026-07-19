@@ -186,6 +186,8 @@ object SchedulerStateCodec {
                         record = it.record.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
                         scheduleUnit = it.scheduleUnit.map { e -> PersistedScheduleUnitEntry(e.title, e.spanMinutes) },
                         text = it.text,
+                        onScreen = it.onScreen,
+                        doableDuringBreak = it.doableDuringBreak,
                     )
                 },
             expanded = expanded.map(CellId::value),
@@ -344,6 +346,8 @@ object SchedulerStateCodec {
                         record = it.record.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
                         scheduleUnit = it.scheduleUnit.map { e -> PersistedScheduleUnitEntry(e.title, e.spanMinutes) },
                         text = it.text,
+                        onScreen = it.onScreen,
+                        doableDuringBreak = it.doableDuringBreak,
                     )
                 },
             nextTaskCounter = nextTaskCounter,
@@ -364,6 +368,8 @@ object SchedulerStateCodec {
                         record = p.record.map { TaskTimeRange(it.start, it.end) },
                         scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
                         text = p.text,
+                        onScreen = p.onScreen,
+                        doableDuringBreak = p.doableDuringBreak,
                     )
             }
         val cells =
@@ -543,6 +549,8 @@ object SchedulerStateCodec {
                         record = p.record.map { TaskTimeRange(it.start, it.end) },
                         scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
                         text = p.text,
+                        onScreen = p.onScreen,
+                        doableDuringBreak = p.doableDuringBreak,
                     )
             }
         val cells =
@@ -842,6 +850,10 @@ private data class PersistedTask(
     val scheduleUnit: List<PersistedScheduleUnitEntry> = emptyList(),
     // "See text": a missing text document decodes to empty (a task with no notes).
     val text: String = "",
+    // PRD §8 screen switches: payloads written before these fields existed decode to the pre-switch
+    // behaviour — every task on-screen, none doable during a screen break.
+    val onScreen: Boolean = true,
+    val doableDuringBreak: Boolean = false,
 )
 
 @Serializable

@@ -24,7 +24,7 @@ private fun ensureChannel(context: Context) {
     if (manager.getNotificationChannel(CHANNEL_ID) != null) return
     manager.createNotificationChannel(
         NotificationChannel(CHANNEL_ID, "Reminders", NotificationManager.IMPORTANCE_HIGH).apply {
-            description = "Task-to-do-now, side-task and wind-down reminders"
+            description = "Task-to-do-now, screen-break and wind-down reminders"
         },
     )
 }

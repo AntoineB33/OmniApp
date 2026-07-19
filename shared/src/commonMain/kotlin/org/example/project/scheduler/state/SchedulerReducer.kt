@@ -69,6 +69,12 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state, "Move weight column") { applyMovePriorityColumn(it, intent.listId, intent.from, intent.to) })
             is SchedulerIntent.SetTaskMinimumTime ->
                 commitDelta(state, priorityTreeDelta(state, "Minimum time") { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
+            is SchedulerIntent.SetTaskScreenFlags -> {
+                // Unchanged flags are a no-op — no empty "Screen flags" history unit.
+                val task = state.tasks[intent.taskId]
+                if (task == null || (task.onScreen == intent.onScreen && task.doableDuringBreak == intent.doableDuringBreak)) state
+                else commitDelta(state, priorityTreeDelta(state, "Screen flags") { applySetTaskScreenFlags(it, intent.taskId, intent.onScreen, intent.doableDuringBreak) })
+            }
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state, "Schedule unit") { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.SetTaskText ->
@@ -1851,6 +1857,17 @@ private fun applySetTaskMinimumTime(
     val clamped = minutes.coerceAtLeast(0)
     if (task.minimumMinutes == clamped) return state
     return state.copy(tasks = state.tasks + (taskId to task.copy(minimumMinutes = clamped)))
+}
+
+private fun applySetTaskScreenFlags(
+    state: SchedulerState,
+    taskId: TaskId,
+    onScreen: Boolean,
+    doableDuringBreak: Boolean,
+): SchedulerState {
+    val task = state.tasks[taskId] ?: return state
+    if (task.onScreen == onScreen && task.doableDuringBreak == doableDuringBreak) return state
+    return state.copy(tasks = state.tasks + (taskId to task.copy(onScreen = onScreen, doableDuringBreak = doableDuringBreak)))
 }
 
 private fun applySetScheduleUnit(

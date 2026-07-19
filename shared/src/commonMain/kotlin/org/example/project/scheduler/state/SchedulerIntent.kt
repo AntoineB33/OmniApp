@@ -113,6 +113,17 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §8 calendar edit window switches: set a task's screen-placement flags — [onScreen] (done at a
+     * screen, so placeable only on screen periods) and [doableDuringBreak] (may be scheduled inside a
+     * 5/15-minute screen break). Recorded as a content delta (part of the tree Undo/Redo history).
+     */
+    data class SetTaskScreenFlags(
+        val taskId: TaskId,
+        val onScreen: Boolean,
+        val doableDuringBreak: Boolean,
+    ) : SchedulerIntent
+
+    /**
      * PRD §13 Schedule Unit "Save": replace a task's schedule unit with [entries] (empty clears it).
      * Recorded as a content delta so it is part of the Undo/Redo history (PRD §6). The caller (the edit
      * window) only enables Save when [SchedulerDomain.canSaveScheduleUnit] holds, but the reducer also

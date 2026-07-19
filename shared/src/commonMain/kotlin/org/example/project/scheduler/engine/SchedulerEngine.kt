@@ -887,7 +887,7 @@ class SchedulerEngine(
                                                 "${Diagnostics.formatInstant(simNow)})",
                                         )
                                         else -> {
-                                            notifyUser("Side task", title)
+                                            notifyUser("Screen break", title)
                                             if (voice) speakCue(VoiceCue.LookAway)
                                             // Resume fires at `end`: same tick if the whole break was leaped
                                             // (queued below, sorted after this start); else armed for later.
@@ -914,7 +914,7 @@ class SchedulerEngine(
                                 val title = crossing.title
                                 firings += Firing(due, 3) {
                                     sidePoseNotifiedDue = sidePoseNotifiedDue + (title to due)
-                                    notifyUser("Side task", title)
+                                    notifyUser("Screen break", title)
                                 }
                             }
                             SchedulerDomain.CueKind.WindDown -> {
@@ -1000,7 +1000,7 @@ class SchedulerEngine(
         if (st.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(now))
         val voice = st.lookAwayVoiceEnabled
         manualLookAwayJob = scope.launch {
-            notifyUser("Side task", lookAway.title)
+            notifyUser("Screen break", lookAway.title)
             if (voice) speakCue(VoiceCue.LookAway)
             val resumeAt = clock.nowMillis() + lookAway.durationMillis
             while (clock.nowMillis() < resumeAt) {

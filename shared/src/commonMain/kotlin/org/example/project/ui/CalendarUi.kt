@@ -2106,7 +2106,7 @@ fun CalendarFloatingWindow(
                     modifier = Modifier.padding(end = 8.dp),
                 ) {
                     Text(
-                        text = "Side tasks",
+                        text = "Screen breaks",
                         style = MaterialTheme.typography.labelMedium,
                         color = CalColors.muted,
                     )
@@ -3416,10 +3416,16 @@ fun ManualEntryEditWindow(
     titleSuggestions: (String) -> List<String>,
     taskIdForTitle: (String) -> TaskId?,
     titleForTaskId: (TaskId) -> String?,
-    onSave: (taskId: TaskId?, title: String, startMillis: Long, endMillis: Long, pins: PanelPins) -> Unit,
+    onSave: (taskId: TaskId?, title: String, startMillis: Long, endMillis: Long, pins: PanelPins, onScreen: Boolean, doableDuringBreak: Boolean) -> Unit,
     onDismiss: () -> Unit,
     /** PRD §8: the panel's current four pin dimensions, toggled by the switches in this window. */
     initialPins: PanelPins = PanelPins(),
+    /**
+     * PRD §8 screen switches: the current (onScreen, doableDuringBreak) flags of a task, or null when
+     * unknown. Seeds the two switches whenever the effective task changes; a calendar-only "New task"
+     * (null taskId) has no task object to carry the flags, so the switches are hidden for it.
+     */
+    screenFlagsForTaskId: (TaskId) -> Pair<Boolean, Boolean>? = { null },
 ) {
     var title by remember { mutableStateOf(initialTitle) }
     // The explicitly-picked existing task, if any. PRD §8: unlike the tree, the calendar does NOT
@@ -3542,6 +3548,17 @@ fun ManualEntryEditWindow(
                 PinSwitchRow("Spanning", pins.spanning) { pins = pins.copy(spanning = it) }
                 PinSwitchRow("Distance", pins.distance) { pins = pins.copy(distance = it) }
 
+                // PRD §8 screen switches: task-level flags (not per-panel), re-seeded whenever the
+                // effective task changes. Hidden for a calendar-only "New task" (no task object yet).
+                var screenFlags by remember(effectiveTaskId) {
+                    mutableStateOf(effectiveTaskId?.let(screenFlagsForTaskId) ?: (true to false))
+                }
+                if (effectiveTaskId != null) {
+                    EditMenuSectionLabel("Screen")
+                    PinSwitchRow("On screen", screenFlags.first) { screenFlags = it to screenFlags.second }
+                    PinSwitchRow("Doable during a screen break", screenFlags.second) { screenFlags = screenFlags.first to it }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
@@ -3552,7 +3569,7 @@ fun ManualEntryEditWindow(
                         onClick = {
                             val start = parseHmOnDateOf(startText, startMillis, tz) ?: startMillis
                             val end = parseHmOnDateOf(endText, endMillis, tz) ?: endMillis
-                            onSave(effectiveTaskId, title, start, end, pins)
+                            onSave(effectiveTaskId, title, start, end, pins, screenFlags.first, screenFlags.second)
                         },
                     ) { Text("Save") }
                 }

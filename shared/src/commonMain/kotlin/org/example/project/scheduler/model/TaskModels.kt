@@ -38,6 +38,19 @@ data class Task(
      * Task Tree domain object (PRD §6), so edits go through the content Undo/Redo history.
      */
     val text: String = "",
+    /**
+     * PRD §8 "On screen" switch (calendar edit window): whether this task is done at a screen. An
+     * on-screen task may only be placed on screen periods; an off-screen task only on no-screen
+     * periods. Defaults to on-screen (the pre-switch behaviour — everything scheduled was screen work).
+     * Placement enforcement in the §9 fill is a follow-up; the flag is authoritative task data now.
+     */
+    val onScreen: Boolean = true,
+    /**
+     * PRD §8 "Doable during a screen break" switch: whether this (off-screen) task may be scheduled
+     * inside a 5/15-minute screen-break window (§15). Even when on, a task whose minimum time exceeds
+     * the break's length never fits there. Defaults off. Enforcement in the §9 fill is a follow-up.
+     */
+    val doableDuringBreak: Boolean = false,
 )
 
 /**

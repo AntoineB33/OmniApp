@@ -711,8 +711,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 taskIdForTitle = { SchedulerDomain.calendarTaskIdForTitle(schedulerState, it) },
                                 titleForTaskId = { schedulerState.tasks[it]?.title },
                                 initialPins = block.pins,
+                                screenFlagsForTaskId = { id ->
+                                    schedulerState.tasks[id]?.let { it.onScreen to it.doableDuringBreak }
+                                },
                                 onDismiss = { editingBlock = null; addingBlock = null },
-                                onSave = { taskId, title, startMillis, endMillis, pins ->
+                                onSave = { taskId, title, startMillis, endMillis, pins, onScreen, doableDuringBreak ->
                                     val intent =
                                         if (isNew) {
                                             SchedulerIntent.AddTaskPanel(taskId, title, startMillis, endMillis, pins)
@@ -720,6 +723,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                             commitBoundsIntent(block, taskId, title, startMillis, endMillis, pins)
                                         }
                                     intent?.let(vm::dispatch)
+                                    // PRD §8 screen switches: task-level flags saved alongside the panel;
+                                    // only dispatched when they actually changed (no no-op history unit).
+                                    val task = taskId?.let { schedulerState.tasks[it] }
+                                    if (task != null && (task.onScreen != onScreen || task.doableDuringBreak != doableDuringBreak)) {
+                                        vm.dispatch(SchedulerIntent.SetTaskScreenFlags(taskId, onScreen, doableDuringBreak))
+                                    }
                                     editingBlock = null
                                     addingBlock = null
                                 },
