@@ -110,6 +110,8 @@ object SchedulerReducer {
                     reduceReportDeviceSleep(state, intent.sleepStartEpochMillis, intent.sleepEndEpochMillis),
                 )
             is SchedulerIntent.AddTaskPanel -> reduceAddTaskPanel(state, intent)
+            is SchedulerIntent.AddNoScreenPeriod -> reduceAddNoScreenPeriod(state, intent)
+            is SchedulerIntent.AddInactivityPeriod -> reduceAddInactivityPeriod(state, intent)
             is SchedulerIntent.UpdateTaskPanel -> reduceUpdateTaskPanel(state, intent)
             is SchedulerIntent.MoveTaskPanel -> reduceMoveTaskPanel(state, intent)
             is SchedulerIntent.ResizeTaskPanel -> reduceResizeTaskPanel(state, intent)
@@ -970,10 +972,20 @@ object SchedulerReducer {
      * the other panels — that a dragged/resized panel [id] must not overlap.
      */
     private fun otherRanges(state: SchedulerState, id: String): List<TaskTimeRange> {
+        val moving = state.panels.firstOrNull { it.id == id }
+        // PRD §8/§12: an inactivity period records a fact — it may overlap anything, so nothing repels it.
+        if (moving?.inactivity == true) return emptyList()
         val records = state.tasks.values.flatMap { it.record }
         val panels =
-            state.panels.filter { it.id != id }
-                .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+            state.panels.filter { other ->
+                other.id != id &&
+                    // Inactivity periods repel no panel (overlap is allowed both ways).
+                    !other.inactivity &&
+                    // PRD §8 screen override: pairs the drop resolves by trimming don't repel each other —
+                    // an on-screen task panel may land on a no-screen period (and vice versa).
+                    !(other.noScreen && (moving == null || isOnScreenTaskPanel(state, moving))) &&
+                    !(moving?.noScreen == true && isOnScreenTaskPanel(state, other))
+            }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
         return records + panels
     }
 
@@ -1002,7 +1014,104 @@ object SchedulerReducer {
                 pins = intent.pins,
                 auto = false,
             )
-        return commitPanels(allocated, allocated.panels + panel, label = "Add panel")
+        val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
+        return commitPanels(resolved, resolvedPanels, label = "Add panel")
+    }
+
+    /** PRD §8 "add a no-screen period": lay a "No screen" panel; on-screen task panels it covers are trimmed. */
+    private fun reduceAddNoScreenPeriod(
+        state: SchedulerState,
+        intent: SchedulerIntent.AddNoScreenPeriod,
+    ): SchedulerState {
+        val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
+        val (panelId, allocated) = state.allocatePanelId()
+        val panel =
+            TaskPanel(
+                id = panelId,
+                taskId = null,
+                title = "No screen",
+                startEpochMillis = intent.startEpochMillis,
+                endEpochMillis = end,
+                noScreen = true,
+            )
+        val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
+        return commitPanels(resolved, resolvedPanels, label = "Add no-screen period")
+    }
+
+    /** PRD §8/§12 "add an inactivity period": a real panel recording the user was away; conflicts with nothing. */
+    private fun reduceAddInactivityPeriod(
+        state: SchedulerState,
+        intent: SchedulerIntent.AddInactivityPeriod,
+    ): SchedulerState {
+        val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
+        val (panelId, allocated) = state.allocatePanelId()
+        val panel =
+            TaskPanel(
+                id = panelId,
+                taskId = null,
+                title = "Inactivity",
+                startEpochMillis = intent.startEpochMillis,
+                endEpochMillis = end,
+                inactivity = true,
+            )
+        return commitPanels(allocated, allocated.panels + panel, label = "Add inactivity period")
+    }
+
+    /**
+     * PRD §8/§9: true for a panel the screen-override rule treats as an **on-screen task panel** — a real
+     * (auto or user-authored) task block whose task is on-screen ([Task.onScreen]; a calendar-only panel
+     * with no backing task defaults to on-screen). Reminder tags, side-task/sleep bands and the
+     * no-screen/inactivity periods themselves are never one.
+     */
+    private fun isOnScreenTaskPanel(state: SchedulerState, panel: TaskPanel): Boolean =
+        !panel.noScreen && !panel.inactivity && !panel.sideTask && !panel.sleep && !panel.chore &&
+            (panel.taskId?.let { state.tasks[it]?.onScreen } ?: true)
+
+    /**
+     * PRD §8 screen-override resolution: after the user lays / moves / resizes panel [changedId], trim or
+     * delete the panels of the OPPOSITE screen kind it now overlaps — an on-screen task panel overrides
+     * no-screen periods to fit itself, and a no-screen period overrides on-screen task panels. Off-screen
+     * tasks and inactivity periods conflict with neither, so they are left alone. A covered panel is
+     * deleted; one covered at an edge is trimmed; one covered in the middle is split (the far piece gets a
+     * fresh id). Pieces shorter than [SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS] are dropped as slivers.
+     */
+    private fun resolveScreenOverrides(
+        state: SchedulerState,
+        panels: List<TaskPanel>,
+        changedId: String,
+    ): Pair<SchedulerState, List<TaskPanel>> {
+        val changed = panels.firstOrNull { it.id == changedId } ?: return state to panels
+        val trimTarget: (TaskPanel) -> Boolean =
+            when {
+                changed.noScreen -> { p -> isOnScreenTaskPanel(state, p) }
+                isOnScreenTaskPanel(state, changed) -> { p -> p.noScreen }
+                else -> return state to panels
+            }
+        var working = state
+        val out = ArrayList<TaskPanel>(panels.size)
+        for (p in panels) {
+            val overlaps =
+                p.id != changedId && trimTarget(p) &&
+                    p.startEpochMillis < changed.endEpochMillis && p.endEpochMillis > changed.startEpochMillis
+            if (!overlaps) {
+                out += p
+                continue
+            }
+            val leftLen = changed.startEpochMillis - p.startEpochMillis
+            val rightLen = p.endEpochMillis - changed.endEpochMillis
+            if (leftLen >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS) {
+                out += p.copy(endEpochMillis = changed.startEpochMillis)
+                if (rightLen >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS) {
+                    val (newId, allocated) = working.allocatePanelId()
+                    working = allocated
+                    out += p.copy(id = newId, startEpochMillis = changed.endEpochMillis)
+                }
+            } else if (rightLen >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS) {
+                out += p.copy(startEpochMillis = changed.endEpochMillis)
+            }
+            // Fully covered (or only sub-minimum slivers remain): the panel is deleted.
+        }
+        return working to out
     }
 
     private fun reduceUpdateTaskPanel(
@@ -1038,7 +1147,9 @@ object SchedulerReducer {
                 auto = false,
                 layoutWeight = weight,
             )
-        return commitPanels(allocated, allocated.panels.toMutableList().also { it[index] = updated }, label = "Edit panel")
+        val (resolved, resolvedPanels) =
+            resolveScreenOverrides(allocated, allocated.panels.toMutableList().also { it[index] = updated }, panelId)
+        return commitPanels(resolved, resolvedPanels, label = "Edit panel")
     }
 
     private fun reduceMoveTaskPanel(
@@ -1064,7 +1175,9 @@ object SchedulerReducer {
                 endEpochMillis = placed.endEpochMillis,
                 auto = false,
             )
-        return commitPanels(state, panels.toMutableList().also { it[index] = moved }, label = "Move panel")
+        val (resolved, resolvedPanels) =
+            resolveScreenOverrides(state, panels.toMutableList().also { it[index] = moved }, intent.id)
+        return commitPanels(resolved, resolvedPanels, label = "Move panel")
     }
 
     /** PRD §8 (uniform blocks): convert a task-record period into a user panel; drop it from the record. */
@@ -1165,7 +1278,8 @@ object SchedulerReducer {
                 auto = false,
                 layoutWeight = weight,
             )
-        return commitPanels(allocated, allocated.panels + panel, label = "Edit panel")
+        val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
+        return commitPanels(resolved, resolvedPanels, label = "Edit panel")
     }
 
     /**
@@ -1238,7 +1352,9 @@ object SchedulerReducer {
                 endEpochMillis = resized.endEpochMillis,
                 auto = false,
             )
-        return commitPanels(state, panels.toMutableList().also { it[index] = updated }, label = "Resize panel")
+        val (resolved, resolvedPanels) =
+            resolveScreenOverrides(state, panels.toMutableList().also { it[index] = updated }, intent.id)
+        return commitPanels(resolved, resolvedPanels, label = "Resize panel")
     }
 
     private fun undo(state: SchedulerState, category: HistoryCategory): SchedulerState {
@@ -1753,6 +1869,14 @@ private fun applySetPriorityWeight(
  */
 private fun advanceSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
     var tasks = state.tasks
+    // PRD §9/§12: an elapsed span covered by a no-screen period banks NO record for an on-screen task —
+    // the app must not assume the on-screen work happened, so the period reads as past inactivity (the
+    // no-screen panel stays on the calendar; the task is still owed that work).
+    val noScreenRanges =
+        state.panels.filter { it.noScreen }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+    fun bank(taskId: TaskId?, startMillis: Long, endMillis: Long) {
+        tasks = appendRecordOutsideNoScreen(tasks, noScreenRanges, taskId, startMillis, endMillis)
+    }
     val remaining = ArrayList<TaskPanel>(state.panels.size)
     var changed = false
     for (panel in state.panels) {
@@ -1769,7 +1893,7 @@ private fun advanceSchedule(state: SchedulerState, nowMillis: Long): SchedulerSt
         when {
             // Elapsed auto panel → record [start, end] as completed work, drop the panel.
             panel.endEpochMillis <= nowMillis -> {
-                tasks = appendRecordMap(tasks, panel.taskId, panel.startEpochMillis, panel.endEpochMillis)
+                bank(panel.taskId, panel.startEpochMillis, panel.endEpochMillis)
                 changed = true
             }
             // In-progress auto panel covering `now`: keep it unless its task is no longer schedulable
@@ -1778,7 +1902,7 @@ private fun advanceSchedule(state: SchedulerState, nowMillis: Long): SchedulerSt
                 if (schedulable) {
                     remaining += panel
                 } else {
-                    tasks = appendRecordMap(tasks, panel.taskId, panel.startEpochMillis, nowMillis)
+                    bank(panel.taskId, panel.startEpochMillis, nowMillis)
                     changed = true
                 }
             }
@@ -1793,6 +1917,29 @@ private fun advanceSchedule(state: SchedulerState, nowMillis: Long): SchedulerSt
     }
     if (!changed) return state
     return state.copy(tasks = tasks, panels = remaining)
+}
+
+/**
+ * PRD §9/§12: append a worked `[start, end]` period to [taskId]'s record, minus any part covered by a
+ * no-screen period when the task is on-screen — the app assumes nothing happened on screen there, so
+ * that part reads as past inactivity instead of completed work. An off-screen task (allowed inside a
+ * no-screen period) banks the whole span.
+ */
+private fun appendRecordOutsideNoScreen(
+    tasks: Map<TaskId, Task>,
+    noScreenRanges: List<TaskTimeRange>,
+    taskId: TaskId?,
+    startMillis: Long,
+    endMillis: Long,
+): Map<TaskId, Task> {
+    if (taskId == null || endMillis <= startMillis) return tasks
+    val onScreen = tasks[taskId]?.onScreen ?: true
+    if (!onScreen || noScreenRanges.isEmpty()) return appendRecordMap(tasks, taskId, startMillis, endMillis)
+    var out = tasks
+    for (piece in SchedulerDomain.subtractRegions(listOf(TaskTimeRange(startMillis, endMillis)), noScreenRanges)) {
+        out = appendRecordMap(out, taskId, piece.startEpochMillis, piece.endEpochMillis)
+    }
+    return out
 }
 
 /** Appends a `[start, end]` period to [taskId]'s record in a task map (PRD §8; outside Undo/Redo). */
@@ -1842,7 +1989,10 @@ private fun reduceReportDeviceSleep(
             it.auto && !it.pinned &&
                 it.startEpochMillis <= sleepStart && sleepStart < it.endEpochMillis
         } ?: return base
-    val tasks = appendRecordMap(base.tasks, current.taskId, current.startEpochMillis, sleepStart)
+    val noScreenRanges =
+        base.panels.filter { it.noScreen }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+    val tasks =
+        appendRecordOutsideNoScreen(base.tasks, noScreenRanges, current.taskId, current.startEpochMillis, sleepStart)
     val remaining = base.panels.filter { it.pinned || !it.auto }
     return base.copy(tasks = tasks, panels = remaining)
 }

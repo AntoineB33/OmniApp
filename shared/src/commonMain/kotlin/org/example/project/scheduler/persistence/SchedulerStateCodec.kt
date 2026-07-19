@@ -213,6 +213,8 @@ object SchedulerStateCodec {
                         checked = it.checked,
                         sideTask = it.sideTask,
                         sleep = it.sleep,
+                        noScreen = it.noScreen,
+                        inactivity = it.inactivity,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -305,6 +307,8 @@ object SchedulerStateCodec {
             checked = checked,
             sideTask = sideTask,
             sleep = sleep,
+            noScreen = noScreen,
+            inactivity = inactivity,
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -428,6 +432,8 @@ object SchedulerStateCodec {
                         checked = it.checked,
                         sideTask = it.sideTask,
                         sleep = it.sleep,
+                        noScreen = it.noScreen,
+                        inactivity = it.inactivity,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -533,6 +539,8 @@ object SchedulerStateCodec {
             checked = checked,
             sideTask = sideTask,
             sleep = sleep,
+            noScreen = noScreen,
+            inactivity = inactivity,
         )
 
     private fun PersistedTreeSnapshot.toSnapshot(): TreeSnapshot {
@@ -796,6 +804,9 @@ private data class PersistedPanel(
     val sideTask: Boolean = false,
     // A missing sleep flag decodes to false (payloads written before the sleep window existed).
     val sleep: Boolean = false,
+    // PRD §8/§9: missing flags decode to false (payloads written before no-screen / inactivity panels existed).
+    val noScreen: Boolean = false,
+    val inactivity: Boolean = false,
 )
 
 @Serializable

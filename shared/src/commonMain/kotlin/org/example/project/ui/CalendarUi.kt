@@ -198,10 +198,16 @@ data class CalendarRecord(
     val sleep: Boolean = false,
     /**
      * PRD §15 device-sleep gaps: a past pause (the user was away/the device slept), drawn as a labeled
-     * greyed band exactly like [sleep] but reading "Inactivity". Derived from the synced sleep-gap store,
-     * so it is display-only (never edited/scheduled).
+     * greyed band exactly like [sleep] but reading "Inactivity". Derived bands carry no [entryId]
+     * (display-only); a user-authored inactivity *panel* (PRD §8/§12) sets [inactivity] WITH an [entryId]
+     * and renders as a real, removable block instead.
      */
     val inactivity: Boolean = false,
+    /**
+     * PRD §8/§9 no-screen period: a user-authored "No screen" panel, drawn as a decorative hatched block
+     * (a pattern over the real panels). Off-screen tasks schedule inside it; on-screen tasks never do.
+     */
+    val noScreen: Boolean = false,
     /**
      * The elapsed part of this panel, segmented by WHICH DEVICES were open (from the stored active
      * sessions — own + Sync-pulled peers; see [deviceActivitySegments]). Consecutive segments differ in
@@ -321,6 +327,8 @@ data class PlacedRecord(
     val sleep: Boolean = false,
     /** PRD §15 device-sleep gaps: a past pause, rendered as a labeled greyed band reading "Inactivity". */
     val inactivity: Boolean = false,
+    /** PRD §8/§9 no-screen period: a user-authored "No screen" panel, rendered as a hatched block. */
+    val noScreen: Boolean = false,
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
     val fullEndMillis: Long = 0L,
@@ -383,6 +391,7 @@ fun recordsForDay(
             sideTask = record.sideTask,
             sleep = record.sleep,
             inactivity = record.inactivity,
+            noScreen = record.noScreen,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
             deviceSegments = daySegments,
@@ -1929,6 +1938,10 @@ fun CalendarFloatingWindow(
     onAddTaskAt: (Long) -> Unit = {},
     /** PRD §14: "add reminder" — invoked with the epoch-millis at a right-click position. */
     onAddReminderAt: (Long) -> Unit = {},
+    /** PRD §8: "add a no-screen period" — invoked with the epoch-millis at a right-click position. */
+    onAddNoScreenAt: (Long) -> Unit = {},
+    /** PRD §8/§12: "add an inactivity period" — invoked with the epoch-millis at a right-click position. */
+    onAddInactivityAt: (Long) -> Unit = {},
     /**
      * PRD §8 drag/resize commit: the block, its new start/end millis, and whether Overlap Mode was armed
      * (the bounds are raw/overlapping when armed, else already no-overlap snapped).
@@ -2136,6 +2149,8 @@ fun CalendarFloatingWindow(
                     ctrlHeld = ctrlHeld,
                     onAddTaskAt = onAddTaskAt,
                     onAddReminderAt = onAddReminderAt,
+                    onAddNoScreenAt = onAddNoScreenAt,
+                    onAddInactivityAt = onAddInactivityAt,
                     onCommitBounds = onCommitBounds,
                     onEditEntry = onEditEntry,
                     onRemoveEntry = onRemoveEntry,
@@ -2198,6 +2213,8 @@ private fun WeekView(
     ctrlHeld: Boolean,
     onAddTaskAt: (Long) -> Unit,
     onAddReminderAt: (Long) -> Unit,
+    onAddNoScreenAt: (Long) -> Unit,
+    onAddInactivityAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
@@ -2401,6 +2418,8 @@ private fun WeekView(
                         records = recordsForDay(records, day, tz),
                         onAddTaskAt = onAddTaskAt,
                         onAddReminderAt = onAddReminderAt,
+                        onAddNoScreenAt = onAddNoScreenAt,
+                        onAddInactivityAt = onAddInactivityAt,
                         onCommitBounds = onCommitBounds,
                         onEditEntry = onEditEntry,
                         onRemoveEntry = onRemoveEntry,
@@ -2465,6 +2484,8 @@ private fun DayColumn(
     records: List<PlacedRecord>,
     onAddTaskAt: (Long) -> Unit,
     onAddReminderAt: (Long) -> Unit,
+    onAddNoScreenAt: (Long) -> Unit,
+    onAddInactivityAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
@@ -2483,8 +2504,11 @@ private fun DayColumn(
     val reminderTags = records.filter { it.reminder }
     val sideTaskMarkers = records.filter { it.sideTask }
     val sleepBands = records.filter { it.sleep }
-    val inactivityBands = records.filter { it.inactivity }
-    val blockRecords = records.filterNot { it.reminder || it.sideTask || it.sleep || it.inactivity }
+    // Derived Inactivity bands carry no entryId; a user-authored inactivity PANEL (entryId set) is a
+    // real, removable block and stays in the block pipeline (PRD §8/§12).
+    val inactivityBands = records.filter { it.inactivity && it.entryId == null }
+    val blockRecords =
+        records.filterNot { it.reminder || it.sideTask || it.sleep || (it.inactivity && it.entryId == null) }
     // PRD §17: the fill schedules the work plan straight through the nightly sleep windows, so a block may
     // land (partly) inside one. The overlapping sub-range is greyed "as if under the Sleep band" while the
     // block stays a normal interactive block. Bands and blocks are both clipped to this day, so hour ranges
@@ -2633,10 +2657,14 @@ private fun DayColumn(
         ) {
             val target = menuTarget
             if (target != null) {
-                DropdownMenuItem(
-                    text = { Text("Edit") },
-                    onClick = { closeMenu(); onEditEntry(target) },
-                )
+                // PRD §8: the edit window edits a task's panel — a no-screen / inactivity period has no
+                // task behind it, so it offers Remove (and move/resize on the block) but not Edit.
+                if (!target.noScreen && !target.inactivity) {
+                    DropdownMenuItem(
+                        text = { Text("Edit") },
+                        onClick = { closeMenu(); onEditEntry(target) },
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("Remove") },
                     onClick = { closeMenu(); onRemoveEntry(target) },
@@ -2646,6 +2674,20 @@ private fun DayColumn(
                 text = { Text("add a task") },
                 onClick = {
                     anchor?.let { onAddTaskAt(millisAt(it.y)) }
+                    closeMenu()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("add a no-screen period") },
+                onClick = {
+                    anchor?.let { onAddNoScreenAt(millisAt(it.y)) }
+                    closeMenu()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("add an inactivity period") },
+                onClick = {
+                    anchor?.let { onAddInactivityAt(millisAt(it.y)) }
                     closeMenu()
                 },
             )
@@ -3124,7 +3166,9 @@ private fun CalendarBlock(
         }
     }
 
-    val color = CalColors.event
+    // PRD §8: no-screen / inactivity periods are decorative-patterned, muted blocks; every real task
+    // period keeps the single uniform event colour.
+    val color = if (record.noScreen || record.inactivity) CalColors.muted else CalColors.event
 
     // PRD §8 Overlap Mode: a transparent full-column layer (no pointer handler of its own, so it never
     // steals clicks) that positions this block's horizontal slices absolutely. A non-overlapping block
@@ -3193,8 +3237,9 @@ private fun CalendarBlock(
                                             onCommitBounds(record, b.startEpochMillis, b.endEpochMillis, armed.value)
                                         } else if (downUptime - lastTapUptime <= doubleTapWindowMs) {
                                             // Second quick tap with no drag → open the edit window, then
-                                            // reset so a third tap starts a fresh pair.
-                                            onEditEntry(record)
+                                            // reset so a third tap starts a fresh pair. A no-screen /
+                                            // inactivity period has no task to edit (PRD §8).
+                                            if (!record.noScreen && !record.inactivity) onEditEntry(record)
                                             lastTapUptime = 0L
                                         } else {
                                             lastTapUptime = downUptime
@@ -3233,7 +3278,7 @@ private fun CalendarBlock(
                 val hoverZones = deviceHoverZones(record.deviceSegments, slice.topHour, slice.bottomHour)
                 Box(Modifier.fillMaxSize()) {
                     // The title is written only on the topmost slice so a stepped block reads as one.
-                    CalendarBlockBody(color, record.title, showTitle = isFirst)
+                    CalendarBlockBody(color, record.title, showTitle = isFirst, hatched = record.noScreen)
                     // PRD §17: grey the sub-range of this slice that falls inside a sleep window (the fill now
                     // projects the plan through the night). A plain overlay Box with no pointer handler, so
                     // the block underneath stays clickable/moveable — the block reads "as if under the band".
@@ -3340,19 +3385,41 @@ private fun deviceHoverZones(
 
 /** PRD §8: the coloured body + title of a calendar block (or one of its overlap slices). */
 @Composable
-private fun CalendarBlockBody(color: Color, title: String, showTitle: Boolean) {
+private fun CalendarBlockBody(color: Color, title: String, showTitle: Boolean, hatched: Boolean = false) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(3.dp))
-            .background(color.copy(alpha = 0.30f))
-            .border(1.dp, color, RoundedCornerShape(3.dp)),
+            .background(color.copy(alpha = if (hatched) 0.10f else 0.30f))
+            .border(1.dp, color, RoundedCornerShape(3.dp))
+            // PRD §8 decorative panels: a no-screen period reads as an oblique-line pattern laid over the
+            // calendar rather than a solid task block.
+            .then(
+                if (hatched) {
+                    Modifier.drawBehind {
+                        val step = 10.dp.toPx()
+                        val stroke = 1.dp.toPx()
+                        var x = -size.height
+                        while (x < size.width) {
+                            drawLine(
+                                color = color.copy(alpha = 0.35f),
+                                start = Offset(x, size.height),
+                                end = Offset(x + size.height, 0f),
+                                strokeWidth = stroke,
+                            )
+                            x += step
+                        }
+                    }
+                } else {
+                    Modifier
+                },
+            ),
     ) {
         if (showTitle) {
             Text(
                 text = title.ifEmpty { "(untitled)" },
                 style = MaterialTheme.typography.labelSmall,
-                color = CalColors.event,
+                color = if (hatched) CalColors.muted else CalColors.event,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()

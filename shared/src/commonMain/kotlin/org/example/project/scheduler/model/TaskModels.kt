@@ -298,6 +298,22 @@ data class TaskPanel(
      */
     val sleep: Boolean = false,
     /**
+     * PRD §8/§9 no-screen period: true for a user-authored "No screen" panel (null taskId). It is NOT a
+     * generic fixed obstacle — it *classifies* the timeline for the §9 fill: an on-screen task
+     * ([Task.onScreen]) may not be placed inside it, an off-screen task may ONLY be placed inside one.
+     * Authoritative (persisted + synced), kept across a fill, and trimmed/deleted automatically when the
+     * user lays an on-screen task panel over it (and vice versa — see the reducer's screen-override
+     * resolution). Its past portion banks NO task records (the app assumes nothing happened on screen).
+     */
+    val noScreen: Boolean = false,
+    /**
+     * PRD §8/§12 inactivity period: true for a user-authored "Inactivity" panel (null taskId) marking a
+     * span the user was away from every device. Unlike [noScreen] it still counts as a *screen* period
+     * (screen breaks keep their cadence through it) and it never constrains or trims the §9 fill — it is
+     * a real panel recording a fact, rendered like the derived Inactivity bands but editable/removable.
+     */
+    val inactivity: Boolean = false,
+    /**
      * PRD §8 Overlap Mode: this panel's relative horizontal weight within any time slice it shares with
      * other panels. Within a slice each active panel's width is `weight / Σ weights`, so equal weights
      * give every panel `1/n`. Only meaningful where panels overlap; a panel that is alone always fills

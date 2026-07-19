@@ -1802,7 +1802,10 @@ object SchedulerDomain {
         // and sleep panels are always cut and regenerated fresh below, so they never accumulate.
         val kept = state.panels.filter {
             !it.sideTask && !it.sleep &&
-                (isSchedulerFixed(it) || it.chore || it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon)
+                (
+                    isSchedulerFixed(it) || it.chore || it.noScreen || it.inactivity ||
+                        it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon
+                    )
         }
         // The user's sleep windows: rendered as "Sleep" bands, but NO LONGER task obstacles. The work plan
         // projects straight through them (like the side tasks) so a user working at night still sees the
@@ -1819,7 +1822,25 @@ object SchedulerDomain {
         val priorities = absoluteTaskPriorities(state)
         val keptIds = kept.mapTo(HashSet()) { it.id }
         var working = state.copy(panels = kept)
-        val start = firstFreeMoment(kept, nowMillis)
+        // PRD §9 screen switches: the no-screen periods *classify* the timeline rather than obstructing it
+        // — an on-screen task may only run outside them, an off-screen task only inside. Inactivity
+        // periods classify nothing (they stay screen periods). Neither is an occupancy obstacle, so the
+        // fill's start walks only the real blocks.
+        val start = firstFreeMoment(kept.filter { !it.noScreen && !it.inactivity }, nowMillis)
+        val noScreenRegions =
+            mergeOccupied(
+                kept.filter { it.noScreen }
+                    .map { TaskTimeRange(maxOf(it.startEpochMillis, nowMillis), it.endEpochMillis) }
+                    .filter { it.endEpochMillis > it.startEpochMillis },
+            )
+        fun noScreenCovering(t: Long): TaskTimeRange? =
+            noScreenRegions.firstOrNull { it.startEpochMillis <= t && t < it.endEpochMillis }
+        // The next instant the screen-zone classification flips (a region start or end) after [t].
+        fun nextNoScreenEdge(t: Long): Long? =
+            noScreenRegions.asSequence()
+                .flatMap { sequenceOf(it.startEpochMillis, it.endEpochMillis) }
+                .filter { it > t }
+                .minOrNull()
 
         // PRD §15: only the side-task occupied regions are obstacles the regular fill skips over (the
         // regular task resumes after each region without its minimum being charged). Sleep windows are NOT
@@ -1855,6 +1876,9 @@ object SchedulerDomain {
         }
         val tieBreak =
             compareByDescending<TaskId> { priorities[it] ?: 0.0 }.thenBy { state.tasks[it]?.title.orEmpty() }
+        // Earliest Deadline First (ties → priority → title) — the pick order for the regular fill and for
+        // the break-doable fill inside a screen break.
+        val edfOrder = compareBy<TaskId> { deadline[it] ?: Double.POSITIVE_INFINITY }.then(tieBreak)
 
         val generated = mutableListOf<TaskPanel>()
         var cursor = start
@@ -1884,28 +1908,72 @@ object SchedulerDomain {
                 pending = null
                 continue
             }
-            // PRD §15: skip a side-task region (it never charges the surrounding task) — the pending chunk
-            // resumes on the far side, its remaining work intact.
+            // PRD §15: a side-task region never charges the surrounding task — the pending chunk resumes
+            // on the far side, its remaining work intact. PRD §9 "doable during a screen break": before
+            // skipping it, a break-doable task whose minimum time fits what remains of the break may fill
+            // it (a longer minimum never schedules there; the 20-s look-away fits no ≥1-min minimum, so
+            // only the 5/15-min rest poses ever host one).
             val sideCovering = sideRegionCovering(cursor)
             if (sideCovering != null) {
-                cursor = sideCovering.endEpochMillis
+                val remainingBreak = sideCovering.endEpochMillis - cursor
+                val breakTask =
+                    leaves.asSequence()
+                        .filter { it != pending?.first && working.tasks[it]?.doableDuringBreak == true }
+                        .filter {
+                            val minMillis = (working.tasks[it]?.minimumMinutes ?: 0) * MILLIS_PER_MINUTE
+                            minMillis in 1..remainingBreak
+                        }
+                        .minWithOrNull(edfOrder)
+                if (breakTask == null) {
+                    cursor = sideCovering.endEpochMillis
+                    continue
+                }
+                val breakNeed = scheduledSpanMinutes(working, breakTask, cursor) * MILLIS_PER_MINUTE
+                val breakEnd = minOf(cursor + maxOf(breakNeed, MILLIS_PER_MINUTE), sideCovering.endEpochMillis)
+                generated += TaskPanel(
+                    id = nextAutoId(),
+                    taskId = breakTask,
+                    title = working.tasks[breakTask]?.title.orEmpty(),
+                    startEpochMillis = cursor,
+                    endEpochMillis = breakEnd,
+                    pinned = false,
+                    auto = true,
+                )
+                working = working.copy(panels = kept + generated)
+                advance(breakTask)
+                cursor = breakEnd
+                index++
                 continue
             }
 
-            // Continue the interrupted task, else Earliest Deadline First (ties → priority → title).
+            // PRD §9 screen switches: inside a no-screen period only off-screen tasks are placeable;
+            // outside one, only on-screen tasks are. A chunk suspended across a side task can only resume
+            // in a zone its task may occupy — crossing a screen-zone edge cuts it (minimum charged), like
+            // a pinned obstacle.
+            val inNoScreen = noScreenCovering(cursor) != null
+            fun placeableHere(id: TaskId): Boolean = (working.tasks[id]?.onScreen ?: true) != inNoScreen
+            pending?.first?.takeIf { !placeableHere(it) }?.let {
+                advance(it)
+                pending = null
+            }
+            // Continue the interrupted task, else Earliest Deadline First among the zone's tasks.
             val taskId =
-                pending?.first
-                    ?: leaves.minWithOrNull(
-                        compareBy<TaskId> { deadline[it] ?: Double.POSITIVE_INFINITY }.then(tieBreak),
-                    ) ?: break
+                pending?.first ?: leaves.filter { placeableHere(it) }.minWithOrNull(edfOrder)
+            if (taskId == null) {
+                // Nothing may occupy this zone (e.g. a no-screen span and no off-screen task, or only
+                // off-screen tasks outside one): jump to the next screen-zone edge; none left → done.
+                cursor = nextNoScreenEdge(cursor) ?: break
+                continue
+            }
             val task = working.tasks[taskId] ?: break
             val need = pending?.second ?: (scheduledSpanMinutes(working, taskId, cursor) * MILLIS_PER_MINUTE)
             if (need <= 0) break
-            // This piece runs until the chunk is satisfied, the next side region, the next pinned panel, or
-            // the horizon — whichever comes first.
+            // This piece runs until the chunk is satisfied, the next side region, the next pinned panel,
+            // the next screen-zone edge, or the horizon — whichever comes first.
             val nextSide = nextSideRegionStart(cursor) ?: Long.MAX_VALUE
             val nextPinned = nextPinnedStartAfter(kept, cursor) ?: Long.MAX_VALUE
-            val boundary = minOf(nextSide, nextPinned, horizon)
+            val nextZoneEdge = nextNoScreenEdge(cursor) ?: Long.MAX_VALUE
+            val boundary = minOf(nextSide, nextPinned, nextZoneEdge, horizon)
             val pieceEnd = minOf(cursor + need, boundary)
             if (pieceEnd <= cursor) break
             generated += TaskPanel(
@@ -1922,11 +1990,13 @@ object SchedulerDomain {
             cursor = pieceEnd
             when {
                 placed >= need -> { advance(taskId); pending = null } // chunk complete → next EDF release
-                boundary == nextPinned && nextPinned <= nextSide -> {
-                    // Truncated by a pinned obstacle: the minimum IS cut here (PRD §9/§10), chunk ends.
+                boundary == nextSide && nextSide < nextPinned && nextSide < nextZoneEdge ->
+                    pending = taskId to (need - placed) // interrupted by a side task → resume after it
+                else -> {
+                    // Truncated by a pinned obstacle or a screen-zone edge: the minimum IS cut here
+                    // (PRD §9/§10), the chunk ends.
                     advance(taskId); pending = null
                 }
-                else -> pending = taskId to (need - placed) // interrupted by a side task → resume after it
             }
             index++
         }

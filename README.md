@@ -1,4 +1,4 @@
-# OmniApp (v1.5.0)
+# OmniApp (v1.6.0)
 
 OmniApp is a versatile, cross-platform productivity application designed to provide a seamless, unified experience across Windows, macOS, Linux, Android, iOS, and Web. Built utilizing Kotlin Multi-platform (KMP) and Compose Multi-platform, OmniApp guarantees "one code for all platforms" wherever feasible.
 
@@ -24,6 +24,8 @@ This is a KMP project targeting Android, iOS, Web, and Desktop (JVM).
 - `/shared/src`: Core shared logic and UI for the Compose Multi-platform applications.
   - `commonMain`: Truly platform-agnostic code (Domain, Data, MVI State Holders, and shared UI).
   - `iosMain` / `jvmMain` / `androidMain` / `wasmJsMain`: Platform-specific integrations and actualizations (e.g., specific file system APIs, platform crypto).
+- `/supabase`: The server half of cross-device sync — SQL migrations (applied via the CLI, never pasted by hand) and the `pause-cue` Edge Function.
+- `/listener`: A small always-on Node worker that watches Supabase Realtime presence and fires the pause-end voice cue push (see `listener/README.md` and `docs/PAUSE_CUE_DELIVERY.md`).
 
 ## 🚀 Getting Started
 
@@ -61,17 +63,23 @@ Helper scripts in `scripts/` (Windows batch / PowerShell) open the app already s
 | Account 2 | `%USERPROFILE%\.omniapp-acc2` | `account2-open.bat` / `account2-empty.bat` |
 | Account 3 (release) | `%USERPROFILE%\.omniapp-release` | `account3-deploy-windows.bat` / `account3-deploy-android.bat` |
 
-- **`account1-empty-and-open.bat`** — empties account 1 (local DB **and** the remote Supabase snapshot/presence rows), then launches `:desktopApp:run` signed in as account 1.
+- **`account1-empty-and-open.bat`** — three things, in order: signs **every** app on account 1 out server-side (the `account_logout` marker, so a still-running peer can't re-seed the data), empties account 1's data (**local DB and the remote Supabase rows**), then launches `:desktopApp:run` signed in as account 1.
 - **`account2-open.bat`** — launches signed in as account 2, **preserving** its data.
 - **`account2-empty.bat`** — empties account 2 (local + remote); does **not** relaunch.
+- **`account1-deploy-android.bat`** / **`account2-deploy-android.bat`** — build a **debug** APK, wipe the phone's local app data (uninstall + reinstall over adb — not `pm clear`, which some OEM ROMs deny), and launch it auto-signed-in as account 1 / account 2. Remote data is preserved.
 - **`account3-deploy-windows.bat`** — builds a self-contained release app image (bundled JRE, via `:desktopApp:createDistributable`), installs it outside the project tree, registers it to start at Windows login, and auto-signs-in as account 3 against the release DB (left untouched by updates). Time simulation is off in this build.
 - **`account3-deploy-android.bat`** — builds, signs, installs, and launches the release APK auto-signed-in as account 3 (a BootReceiver keeps the scheduler running across reboots).
-- **`setup-piper.ps1`** — installs the local Piper neural text-to-speech voice used for the spoken side-task cues; without it the app falls back to the system speech voice.
+- **`deploy-supabase.bat`** — applies `supabase/migrations/`, deploys the `pause-cue` Edge Function, and runs `supabase/pause-cue-setup.sql`. Idempotent; re-run after any schema edit (needs a one-time `supabase login` + `supabase link`).
+- **`collect-diagnostics.bat [stateDir]`** — prints the merged cross-device diagnostics timeline (script markers + desktop log + Android log pulled over adb). The first tool to reach for when a calendar/sync anomaly shows up.
+- **`update-supabase-cli.bat`** — updates the standalone Supabase CLI binary in place (note: an npm-global `supabase` may shadow it on `PATH` — see CLAUDE.md).
+- **`setup-piper.ps1`** — installs the local Piper neural text-to-speech voice used for the spoken screen-break cues; without it the app falls back to the system speech voice.
 
 Credentials live in **`scripts/accounts.env`** (gitignored — copy `scripts/accounts.env.example` and fill it in). One-time setup (create the accounts, empty-script RLS) is described in `CLAUDE.md` under "Account scripts".
 
 Internal helpers that are **not run by hand** live in `scripts/internal/`:
-- **`account_db_admin.py`** — creates accounts (`signup`) and empties an account's data (local DB + the remote Supabase rows); driven by the account scripts.
+- **`account_db_admin.py`** — creates accounts (`signup`), signs an account's apps out remotely (`logout`), and empties an account's data (local DB + the remote Supabase rows); driven by the account scripts.
+- **`deploy-android-debug.bat`** — the shared body of the two debug Android deploy scripts.
+- **`merge_diagnostics.py`** — merges the desktop + Android diagnostics logs into the one timeline `collect-diagnostics.bat` prints.
 - **`kill-app-by-match.bat`** — stops only **one** account's running instance (matched by its state dir) so the other account's app — and the Gradle daemon — keep running.
 - **`load-accounts-env.bat`** — parses `accounts.env` into the calling script's environment.
 - **`release-launch-acc3.bat`** — the small launcher the Windows Startup shortcut points at: it sets the release DB and account-3 credentials, then starts the installed release app. Deployed to the install root by `account3-deploy-windows.bat`.

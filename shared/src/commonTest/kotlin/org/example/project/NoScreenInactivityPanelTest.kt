@@ -1,0 +1,336 @@
+package org.example.project
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.PanelPins
+import org.example.project.scheduler.model.SideTask
+import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskPanel
+import org.example.project.scheduler.persistence.SchedulerStateCodec
+import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.state.SchedulerReducer
+import org.example.project.scheduler.state.SchedulerState
+
+/**
+ * PRD §8/§9/§12 no-screen + inactivity calendar periods and the screen-switch scheduling rules:
+ *  - the manual "add a no-screen period" / "add an inactivity period" panels (undoable, persisted,
+ *    old payloads decode with the flags defaulted — persisted-DB compatibility rule);
+ *  - the automatic override/trim between an added screen task and a no-screen period (both ways);
+ *  - [SchedulerDomain.fillSchedule] placement: on-screen tasks only outside no-screen periods,
+ *    off-screen tasks only inside them, break-doable tasks filling a rest break their minimum fits;
+ *  - past no-screen ⇒ past inactivity: the schedule-advance banks NO record over a no-screen period.
+ */
+class NoScreenInactivityPanelTest {
+
+    private val MIN = 60_000L
+    private val HOUR = 3_600_000L
+    private val NOW = 1_000_000_000_000L // fixed reference instant
+
+    /** A single task "Solo" with the given minimum time (minutes). */
+    private fun stateWithOneTask(minMinutes: Int = 45): Pair<SchedulerState, TaskId> {
+        var s = SchedulerState.empty()
+        val c0 = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c0, "Solo"))
+        val solo = s.tasks.keys.first { s.tasks[it]!!.title == "Solo" }
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(solo, minMinutes))
+        return s to solo
+    }
+
+    private fun noScreenPanel(s: SchedulerState): TaskPanel? = s.panels.firstOrNull { it.noScreen }
+
+    // ----- the manual panels ------------------------------------------------------------------
+
+    @Test
+    fun add_no_screen_period_creates_an_undoable_titled_panel() {
+        val s0 = SchedulerState.empty()
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddNoScreenPeriod(NOW, NOW + HOUR))
+        val panel = noScreenPanel(s)
+        assertNotNull(panel)
+        assertEquals("No screen", panel.title)
+        assertEquals(NOW, panel.startEpochMillis)
+        assertEquals(NOW + HOUR, panel.endEpochMillis)
+        assertFalse(panel.auto)
+        // Undo is focus-routed (four-category history): panel deltas sit in the Calendar category.
+        val focused = SchedulerReducer.reduce(s, SchedulerIntent.SetCalendarFocus(true))
+        val undone = SchedulerReducer.reduce(focused, SchedulerIntent.Undo)
+        assertTrue(undone.panels.none { it.noScreen })
+    }
+
+    @Test
+    fun add_inactivity_period_creates_an_undoable_titled_panel() {
+        val s0 = SchedulerState.empty()
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddInactivityPeriod(NOW, NOW + HOUR))
+        val panel = s.panels.firstOrNull { it.inactivity }
+        assertNotNull(panel)
+        assertEquals("Inactivity", panel.title)
+        val focused = SchedulerReducer.reduce(s, SchedulerIntent.SetCalendarFocus(true))
+        val undone = SchedulerReducer.reduce(focused, SchedulerIntent.Undo)
+        assertTrue(undone.panels.none { it.inactivity })
+    }
+
+    @Test
+    fun codec_round_trips_the_no_screen_and_inactivity_flags() {
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW, NOW + HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddInactivityPeriod(NOW + 2 * HOUR, NOW + 3 * HOUR))
+        val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))
+        assertNotNull(decoded)
+        assertTrue(decoded.panels.any { it.noScreen && it.title == "No screen" })
+        assertTrue(decoded.panels.any { it.inactivity && it.title == "Inactivity" })
+    }
+
+    @Test
+    fun codec_decodes_old_panel_payload_without_the_flags() {
+        // Persisted-DB rule: a payload written before the fields existed must decode with both false.
+        val json =
+            """
+            {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
+             "cells":[{"id":"c0","parentListId":"L","taskId":null}],
+             "tasks":[{"id":"t0","title":"X"}],
+             "panels":[{"id":"panel/0","taskId":"t0","title":"X","start":0,"end":3600000}]}
+            """.trimIndent()
+        val decoded = SchedulerStateCodec.decode(json)
+        assertNotNull(decoded)
+        val panel = decoded.panels.single()
+        assertFalse(panel.noScreen)
+        assertFalse(panel.inactivity)
+    }
+
+    // ----- override/trim between screen tasks and no-screen periods ---------------------------
+
+    @Test
+    fun adding_a_no_screen_period_trims_the_on_screen_panel_it_overlaps() {
+        val (s0, solo) = stateWithOneTask()
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.AddTaskPanel(solo, "Solo", NOW, NOW + 2 * HOUR, PanelPins(existence = true)),
+        )
+        // Covers the second half of the task panel → the panel is trimmed to end at the period start.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 3 * HOUR))
+        val taskPanel = s.panels.single { it.taskId == solo }
+        assertEquals(NOW, taskPanel.startEpochMillis)
+        assertEquals(NOW + HOUR, taskPanel.endEpochMillis)
+        assertNotNull(noScreenPanel(s))
+    }
+
+    @Test
+    fun adding_a_no_screen_period_splits_a_panel_it_lands_inside() {
+        val (s0, solo) = stateWithOneTask()
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.AddTaskPanel(solo, "Solo", NOW, NOW + 4 * HOUR, PanelPins(existence = true)),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        val pieces = s.panels.filter { it.taskId == solo }.sortedBy { it.startEpochMillis }
+        assertEquals(2, pieces.size)
+        assertEquals(NOW to NOW + HOUR, pieces[0].startEpochMillis to pieces[0].endEpochMillis)
+        assertEquals(NOW + 2 * HOUR to NOW + 4 * HOUR, pieces[1].startEpochMillis to pieces[1].endEpochMillis)
+    }
+
+    @Test
+    fun adding_an_on_screen_panel_over_a_no_screen_period_trims_the_period() {
+        val (s0, solo) = stateWithOneTask()
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddNoScreenPeriod(NOW, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.AddTaskPanel(solo, "Solo", NOW + HOUR, NOW + 3 * HOUR, PanelPins(existence = true)),
+        )
+        val period = noScreenPanel(s)
+        assertNotNull(period)
+        assertEquals(NOW, period.startEpochMillis)
+        assertEquals(NOW + HOUR, period.endEpochMillis)
+    }
+
+    @Test
+    fun adding_an_off_screen_panel_over_a_no_screen_period_leaves_it_whole() {
+        val (s0, solo) = stateWithOneTask()
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.AddTaskPanel(solo, "Solo", NOW, NOW + HOUR, PanelPins(existence = true)),
+        )
+        val period = noScreenPanel(s)
+        assertNotNull(period)
+        assertEquals(NOW, period.startEpochMillis)
+        assertEquals(NOW + 2 * HOUR, period.endEpochMillis)
+    }
+
+    @Test
+    fun a_fully_covered_no_screen_period_is_deleted() {
+        val (s0, solo) = stateWithOneTask()
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.AddTaskPanel(solo, "Solo", NOW, NOW + 3 * HOUR, PanelPins(existence = true)),
+        )
+        assertTrue(s.panels.none { it.noScreen })
+    }
+
+    // ----- §9 fill placement under the screen switches ----------------------------------------
+
+    @Test
+    fun fill_keeps_an_on_screen_task_out_of_a_no_screen_period() {
+        val (s0, solo) = stateWithOneTask()
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        val panels = SchedulerDomain.fillSchedule(s, NOW)
+        val taskPanels = panels.filter { it.taskId == solo }
+        assertTrue(taskPanels.isNotEmpty())
+        assertTrue(
+            taskPanels.none { it.startEpochMillis < NOW + 2 * HOUR && it.endEpochMillis > NOW + HOUR },
+            "on-screen chunks must never overlap the no-screen period",
+        )
+        // The window before and after the period still fills (the fill flows around it).
+        assertTrue(taskPanels.any { it.startEpochMillis == NOW })
+        assertTrue(taskPanels.any { it.startEpochMillis == NOW + 2 * HOUR })
+    }
+
+    @Test
+    fun fill_places_an_off_screen_task_only_inside_no_screen_periods() {
+        val (s0, solo) = stateWithOneTask()
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        val panels = SchedulerDomain.fillSchedule(s, NOW)
+        val taskPanels = panels.filter { it.taskId == solo && it.auto }
+        assertTrue(taskPanels.isNotEmpty(), "the off-screen task must fill the no-screen period")
+        assertTrue(
+            taskPanels.all { it.startEpochMillis >= NOW + HOUR && it.endEpochMillis <= NOW + 2 * HOUR },
+            "off-screen chunks must all lie inside the no-screen period",
+        )
+    }
+
+    @Test
+    fun fill_schedules_nothing_for_an_off_screen_task_without_a_no_screen_period() {
+        val (s0, solo) = stateWithOneTask()
+        val s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+        )
+        val panels = SchedulerDomain.fillSchedule(s, NOW)
+        assertTrue(panels.none { it.taskId == solo && it.auto })
+    }
+
+    @Test
+    fun break_doable_task_fills_a_rest_break_its_minimum_fits() {
+        // A 15-min rest pose due at NOW + 1h, and a 5-min-minimum break-doable task.
+        val (s0, solo) = stateWithOneTask(minMinutes = 5)
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = true, doableDuringBreak = true),
+        )
+        s = s.copy(
+            sideTasks = listOf(
+                SideTask(
+                    title = "Rest pose",
+                    intervalMillis = HOUR,
+                    durationMillis = 15 * MIN,
+                    restBreak = true,
+                    lastRestMillis = NOW,
+                ),
+            ),
+        )
+        val panels = SchedulerDomain.fillSchedule(s, NOW)
+        val breakRange = panels.first { it.sideTask }
+        // Same-task chunks merge, so the filled break shows as the block COVERING the break's interior
+        // (instead of splitting around it as a non-break-doable task would).
+        val coversBreak = panels.any {
+            it.taskId == solo && it.auto &&
+                it.startEpochMillis < breakRange.endEpochMillis &&
+                it.endEpochMillis > breakRange.startEpochMillis
+        }
+        assertTrue(coversBreak, "the break-doable task must fill the 15-min rest pose")
+    }
+
+    @Test
+    fun break_doable_task_with_a_too_long_minimum_never_fills_the_break() {
+        // The rest pose is 15 min but the task needs 30 — it must never be scheduled inside the break.
+        val (s0, solo) = stateWithOneTask(minMinutes = 30)
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = true, doableDuringBreak = true),
+        )
+        s = s.copy(
+            sideTasks = listOf(
+                SideTask(
+                    title = "Rest pose",
+                    intervalMillis = HOUR,
+                    durationMillis = 15 * MIN,
+                    restBreak = true,
+                    lastRestMillis = NOW,
+                ),
+            ),
+        )
+        val panels = SchedulerDomain.fillSchedule(s, NOW)
+        val breakRange = panels.first { it.sideTask }
+        assertTrue(
+            panels.none {
+                it.taskId == solo && it.auto &&
+                    it.startEpochMillis < breakRange.endEpochMillis &&
+                    it.endEpochMillis > breakRange.startEpochMillis
+            },
+            "a 30-min minimum must never overlap the 15-min break interior",
+        )
+    }
+
+    // ----- past no-screen ⇒ past inactivity (no assumed work) ---------------------------------
+
+    @Test
+    fun advance_banks_no_record_over_a_no_screen_period() {
+        val (s0, solo) = stateWithOneTask()
+        // A no-screen period covering the middle hour of an elapsed 3-hour auto panel.
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR),
+        )
+        s = s.copy(
+            panels = s.panels + TaskPanel(
+                id = "auto/0",
+                taskId = solo,
+                title = "Solo",
+                startEpochMillis = NOW - 3 * HOUR,
+                endEpochMillis = NOW,
+                auto = true,
+            ),
+        )
+        val advanced = SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(NOW))
+        val record = advanced.tasks[solo]!!.record.sortedBy { it.startEpochMillis }
+        assertEquals(2, record.size, "the no-screen hour must be a hole, not completed work: $record")
+        assertEquals(NOW - 3 * HOUR to NOW - 2 * HOUR, record[0].startEpochMillis to record[0].endEpochMillis)
+        assertEquals(NOW - HOUR to NOW, record[1].startEpochMillis to record[1].endEpochMillis)
+    }
+
+    @Test
+    fun advance_banks_the_whole_record_for_an_off_screen_task_inside_the_period() {
+        val (s0, solo) = stateWithOneTask()
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR))
+        s = s.copy(
+            panels = s.panels + TaskPanel(
+                id = "auto/0",
+                taskId = solo,
+                title = "Solo",
+                startEpochMillis = NOW - 2 * HOUR,
+                endEpochMillis = NOW - HOUR,
+                auto = true,
+            ),
+        )
+        val advanced = SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(NOW))
+        val record = advanced.tasks[solo]!!.record
+        assertEquals(1, record.size)
+        assertEquals(NOW - 2 * HOUR, record[0].startEpochMillis)
+        assertEquals(NOW - HOUR, record[0].endEpochMillis)
+    }
+}

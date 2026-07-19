@@ -333,6 +333,26 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §8 contextual menu "add a no-screen period": lay a user-authored "No screen" panel over the
+     * given span. On-screen task panels it overlaps are trimmed/deleted to fit it (screen-override
+     * resolution), and the §9 fill then only places off-screen tasks inside it. Undoable calendar delta.
+     */
+    data class AddNoScreenPeriod(
+        val startEpochMillis: Long,
+        val endEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §8/§12 contextual menu "add an inactivity period": lay a user-authored "Inactivity" panel over
+     * the given span — a real panel recording that the user was away from every device. It stays a
+     * *screen* period (no fill constraint, screen breaks keep their cadence). Undoable calendar delta.
+     */
+    data class AddInactivityPeriod(
+        val startEpochMillis: Long,
+        val endEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
      * PRD §8 edit window / drag / resize commit: replace a panel's task/title/bounds and [pinned] state
      * (the edit-window pin toggle). Editing turns an auto panel into a user-authored one (re-id'd into
      * the persistent `panel/{n}` namespace). [taskId] is null for a calendar-only "New task". Recorded

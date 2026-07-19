@@ -3,7 +3,7 @@ setlocal EnableDelayedExpansion
 
 REM =====================================================================
 REM  Kill any previous instance of THIS script that is still running
-REM  (e.g. stuck at the Android-deploy "press Enter to retry" prompt).
+REM  (e.g. stuck at a prompt or waiting on a hung child process).
 REM
 REM  We do NOT use `taskkill /FI "WINDOWTITLE eq ..."`: the window-title
 REM  filter is unreliable - under Windows Terminal it can't read the tab
@@ -28,11 +28,15 @@ powershell -NoProfile -Command "$pp=(Get-CimInstance Win32_Process -Filter ('Pro
 title OmniApp_Account1_Empty_And_Open
 
 REM =====================================================================
-REM  account1-empty-and-open.bat - empty account 1's synced data, then open
-REM  the desktop app already logged in as account 1.
+REM  account1-empty-and-open.bat - three things, in order:
+REM    1. log out every app signed in as account 1 (server-side marker),
+REM    2. empty account 1's data, local AND remote,
+REM    3. open the desktop app logged in as account 1.
+REM  Nothing else - the Android debug deploy is a separate script
+REM  (account1-deploy-android.bat), run it yourself when a phone is needed.
 REM
 REM  "Empty" = local + remote (the user's choice): the account's remote
-REM  Supabase snapshot (and presence rows) are deleted AND the local DB for
+REM  Supabase snapshot (and session rows) are deleted AND the local DB for
 REM  account 1's isolated state dir is wiped, so the app opens truly empty
 REM  instead of re-pulling the old cloud data on first sync.
 REM
@@ -64,7 +68,7 @@ call :diag "account1-empty-and-open: START"
 REM ---- [1/5] Tell the server to log out account 1's apps --------------
 REM  Must run FIRST: it bumps the account_logout marker so any OTHER device still signed in as account 1
 REM  signs itself out on its next reconcile (pushing nothing), instead of re-seeding the data we clear below.
-echo [1/6] Signing out account 1's apps server-side...
+echo [1/5] Signing out account 1's apps server-side...
 python "%SCRIPT_DIR%internal\account_db_admin.py" logout "%ACC1_USER%" "%ACC1_PASS%"
 set "LOGOUT_RC=%ERRORLEVEL%"
 REM  Exit code 3 = the account_logout table is missing (schema behind). That is the ONE failure a deploy
@@ -87,26 +91,21 @@ call "%SCRIPT_DIR%internal\kill-app-by-match.bat" ".omniapp-acc1"
 REM Kill any previous spawned console window that might be stuck
 taskkill /F /FI "WINDOWTITLE eq OmniApp acc1*" /T >nul 2>nul
 
-REM ---- [3/6] Empty the REMOTE data for account 1 ----------------------
-echo [3/6] Emptying account 1's remote data...
+REM ---- [3/5] Empty the REMOTE data for account 1 ----------------------
+echo [3/5] Emptying account 1's remote data...
 python "%SCRIPT_DIR%internal\account_db_admin.py" empty "%ACC1_USER%" "%ACC1_PASS%"
 if errorlevel 1 (echo [x] Remote empty failed - aborting before the app re-seeds it.& popd & exit /b 1)
 call :diag "remote data emptied (snapshot/presence/sleep-gaps/active-sessions)"
 
-REM ---- [4/6] Wipe the LOCAL DB for account 1 --------------------------
-echo [4/6] Deleting local DB "%DB%" ...
+REM ---- [4/5] Wipe the LOCAL DB for account 1 --------------------------
+echo [4/5] Deleting local DB "%DB%" ...
 del /q "%DB%" "%DB%-wal" "%DB%-shm" 2>nul
 
-REM ---- [5/6] Launch logged in as account 1 ---------------------------
-echo [5/6] Launching the app logged in as "%ACC1_USER%" (state dir %STATE_DIR%)...
+REM ---- [5/5] Launch the desktop app logged in as account 1 -----------
+echo [5/5] Launching the desktop app logged in as "%ACC1_USER%" (state dir %STATE_DIR%)...
 call :diag "local DB wiped; launching desktop app"
 start "OmniApp acc1" cmd /c "gradlew.bat :desktopApp:run -Pomniapp.stateDir=%STATE_DIR% -Pomniapp.loginUser=%ACC1_USER% -Pomniapp.loginPass=%ACC1_PASS%"
-
-REM ---- [6/6] Build & deploy the debug APK signed in as account 1 -----
-echo [6/6] Deploying the Android debug APK signed in as "%ACC1_USER%"...
-call :diag "deploying Android debug APK (uninstall+reinstall)"
-call "%SCRIPT_DIR%account1-deploy-android.bat"
-call :diag "account1-empty-and-open: DONE (Android deploy returned)"
+call :diag "account1-empty-and-open: DONE (desktop launch dispatched)"
 
 REM Clean completion: drop our PID lock so the next run doesn't target a dead/recycled PID.
 del /q "%LOCK%" 2>nul

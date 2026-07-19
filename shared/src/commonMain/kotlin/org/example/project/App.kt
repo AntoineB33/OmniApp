@@ -459,7 +459,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // Only real task blocks (records + auto/manual panels) carry the device-set segmentation; the
             // reminder/side-task/sleep bands keep their own rendering. The helper itself clips to the
             // elapsed part, so a future panel simply gets no segments.
-            if (record.reminder || record.sideTask || record.sleep) {
+            if (record.reminder || record.sideTask || record.sleep || record.noScreen || record.inactivity) {
                 record
             } else {
                 record.copy(deviceSegments = deviceActivitySegments(record.range, activeSessions, nowMillis))
@@ -657,6 +657,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             // PRD §14 "add reminder": open the reminder editor at the click.
                             onAddReminderAt = { atMillis -> addingReminderAtMillis = atMillis },
+                            // PRD §8: lay a 1-hour no-screen / inactivity period at the right-click time
+                            // (then adjustable by drag/resize like any block).
+                            onAddNoScreenAt = { atMillis ->
+                                vm.dispatch(SchedulerIntent.AddNoScreenPeriod(atMillis, atMillis + 3_600_000L))
+                            },
+                            onAddInactivityAt = { atMillis ->
+                                vm.dispatch(SchedulerIntent.AddInactivityPeriod(atMillis, atMillis + 3_600_000L))
+                            },
                             // PRD §8 (uniform blocks): committing a drag/resize updates the panel
                             // (auto blocks become user-authored), or pins a record into a panel.
                             onCommitBounds = { block, newStart, newEnd, allowOverlap ->
@@ -1080,6 +1088,10 @@ private fun mergePanelsForDisplay(
                 pinned = head.pinned,
                 pins = head.pins,
                 layoutWeight = head.layoutWeight,
+                // PRD §8/§9/§12: user-authored no-screen / inactivity periods stay real, removable blocks
+                // (drawn as decorative pattern / muted band) rather than task panels.
+                noScreen = head.noScreen,
+                inactivity = head.inactivity,
             )
         }
     // The sleep windows render as their own labeled band behind the task blocks (drawn first), carved wherever
