@@ -82,6 +82,7 @@ import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed as pointerMetaPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
@@ -100,6 +101,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.roundToInt
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -2350,10 +2352,74 @@ private fun WeekView(
                 // the cursor is over the calendar — even if it doesn't hold keyboard focus. Pointer hit-testing
                 // means a panel drawn over the calendar receives the wheel instead, so it correctly "doesn't count".
                 .pointerInput(Unit) {
+                    // PRD §8 double-tap-and-drag zoom (touch): a quick tap followed by a held press that
+                    // drags vertically zooms around the tap point (drag down = in, up = out). A second tap
+                    // RELEASED without dragging is left unconsumed — the day column reads it as the
+                    // "double click and release" contextual-menu gesture.
+                    var tapUpAtMs = 0L
+                    var tapPos = Offset.Zero
+                    var pressAtMs = 0L
+                    var pressPos = Offset.Zero
+                    var pressMoved = false
+                    var secondPress = false
+                    var dtZooming = false
+                    var lastY = 0f
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
                             event.changes.firstOrNull()?.let { focalYpx = it.position.y }
+                            val touch = event.changes.singleOrNull()?.takeIf { it.type == PointerType.Touch }
+                            when {
+                                touch == null -> {
+                                    // Multi-finger (pinch) or non-touch input: abandon the tap sequence.
+                                    if (event.changes.count { it.pressed } >= 2) {
+                                        secondPress = false; dtZooming = false; tapUpAtMs = 0L
+                                    }
+                                }
+                                event.type == PointerEventType.Press -> {
+                                    pressAtMs = touch.uptimeMillis
+                                    pressPos = touch.position
+                                    pressMoved = false
+                                    lastY = touch.position.y
+                                    secondPress =
+                                        touch.uptimeMillis - tapUpAtMs <= viewConfiguration.doubleTapTimeoutMillis &&
+                                        (touch.position - tapPos).getDistance() <= viewConfiguration.touchSlop * 4
+                                    dtZooming = false
+                                }
+                                event.type == PointerEventType.Move -> {
+                                    if ((touch.position - pressPos).getDistance() > viewConfiguration.touchSlop) {
+                                        pressMoved = true
+                                        if (secondPress) dtZooming = true
+                                    }
+                                    if (dtZooming) {
+                                        val dy = touch.position.y - lastY
+                                        if (dy != 0f) {
+                                            // Exponential so equal drags give equal zoom ratios; anchored
+                                            // at the first tap's point.
+                                            scope.launch { applyZoom(exp(dy / 200f), pressPos.y) }
+                                        }
+                                        touch.consume()
+                                    }
+                                    lastY = touch.position.y
+                                }
+                                event.type == PointerEventType.Release -> {
+                                    if (dtZooming) {
+                                        touch.consume()
+                                        tapUpAtMs = 0L
+                                    } else if (!pressMoved &&
+                                        touch.uptimeMillis - pressAtMs <= viewConfiguration.longPressTimeoutMillis
+                                    ) {
+                                        // A clean tap: remember it as the (possible) first of a pair; a
+                                        // second tap-release is the day column's contextual-menu gesture.
+                                        tapUpAtMs = touch.uptimeMillis
+                                        tapPos = touch.position
+                                    } else {
+                                        tapUpAtMs = 0L
+                                    }
+                                    secondPress = false
+                                    dtZooming = false
+                                }
+                            }
                             val zoomModifier = event.keyboardModifiers.pointerCtrlPressed ||
                                 event.keyboardModifiers.pointerMetaPressed || ctrl.value
                             if (event.type == PointerEventType.Scroll && zoomModifier) {
@@ -2504,11 +2570,14 @@ private fun DayColumn(
     val reminderTags = records.filter { it.reminder }
     val sideTaskMarkers = records.filter { it.sideTask }
     val sleepBands = records.filter { it.sleep }
-    // Derived Inactivity bands carry no entryId; a user-authored inactivity PANEL (entryId set) is a
-    // real, removable block and stays in the block pipeline (PRD §8/§12).
-    val inactivityBands = records.filter { it.inactivity && it.entryId == null }
+    // Derived bands (account-offline "No screen" windows, legacy Inactivity) carry no entryId; a
+    // user-authored no-screen / inactivity PANEL (entryId set) is a real, removable block and stays in
+    // the block pipeline (PRD §8/§12).
+    val inactivityBands = records.filter { (it.inactivity || it.noScreen) && it.entryId == null }
     val blockRecords =
-        records.filterNot { it.reminder || it.sideTask || it.sleep || (it.inactivity && it.entryId == null) }
+        records.filterNot {
+            it.reminder || it.sideTask || it.sleep || ((it.inactivity || it.noScreen) && it.entryId == null)
+        }
     // PRD §17: the fill schedules the work plan straight through the nightly sleep windows, so a block may
     // land (partly) inside one. The overlapping sub-range is greyed "as if under the Sleep band" while the
     // block stays a normal interactive block. Bands and blocks are both clipped to this day, so hour ranges
@@ -2518,6 +2587,12 @@ private fun DayColumn(
     // when no menu is open. [menuTarget] is the block the click landed on (null = empty space).
     var menuOffset by remember { mutableStateOf<Offset?>(null) }
     var menuTarget by remember { mutableStateOf<PlacedRecord?>(null) }
+    // PRD §8 (phone): whether the open menu came from the touch double-tap — it then carries the panel
+    // info at its top (no hover bubble on a phone) and offers "move" (no direct touch drag).
+    var menuFromTouch by remember { mutableStateOf(false) }
+    // PRD §8 (phone) "move": the block armed by the menu's "move" option — the next touch drag moves it
+    // (live preview through [dragPreview]) and the release commits.
+    var movePending by remember { mutableStateOf<PlacedRecord?>(null) }
     // Latest records, so the right-click hit-test closure never reads a stale list (records change
     // every scheduler tick) without restarting the long-lived gesture coroutine.
     val currentRecords by rememberUpdatedState(blockRecords)
@@ -2577,10 +2652,19 @@ private fun DayColumn(
             .fillMaxHeight()
             .background(if (isToday) CalColors.today.copy(alpha = 0.4f) else Color.Transparent)
             .border(width = 0.5.dp, color = CalColors.grid)
-            // PRD §8: right-click opens a contextual menu. On a task block it offers "Edit"/"Remove";
-            // on empty space it offers "add a task". The whole column owns this so the menu choice is
-            // a reliable hit-test (no fragile cross-node pointer-consumption ordering).
+            // PRD §8: right-click (desktop) or a touch double-tap-and-release (phone) opens the
+            // contextual menu. On a task block it offers "Edit"/"Remove" (+ "move" and the panel info on
+            // touch); on empty space it offers the "add" actions. The whole column owns this so the menu
+            // choice is a reliable hit-test (no fragile cross-node pointer-consumption ordering). The
+            // same handler runs the menu-armed "move" drag (phone), previewing through [dragPreview].
             .pointerInput(day) {
+                var tapUpAtMs = 0L
+                var tapPos = Offset.Zero
+                var pressPos = Offset.Zero
+                var pressAtMs = 0L
+                var pressMoved = false
+                var moveStartY = 0f
+                var movePlaced: TaskTimeRange? = null
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
@@ -2589,6 +2673,81 @@ private fun DayColumn(
                             change.consume()
                             menuTarget = blockAt(change.position.y)
                             menuOffset = change.position
+                            menuFromTouch = false
+                            continue
+                        }
+                        val touch = event.changes.singleOrNull()?.takeIf { it.type == PointerType.Touch }
+                        // PRD §8 (phone) "move": while armed, a touch drag moves the block (snapped live
+                        // like a desktop drag) and the release commits; a bare tap cancels the mode.
+                        val moving = movePending
+                        if (moving != null && touch != null) {
+                            val hourHeightPx = with(density) { hourHeight.toPx() }
+                            when (event.type) {
+                                PointerEventType.Press -> {
+                                    moveStartY = touch.position.y
+                                    movePlaced = null
+                                    onLockScroll(true)
+                                    touch.consume()
+                                }
+                                PointerEventType.Move -> {
+                                    val duration = moving.fullEndMillis - moving.fullStartMillis
+                                    val rawStart = moving.fullStartMillis +
+                                        (((touch.position.y - moveStartY) / hourHeightPx) * 3_600_000f).toLong()
+                                    val others = allBlocks
+                                        .filter { it.first != calendarBlockKey(moving) }
+                                        .map { it.second }
+                                    val placed = SchedulerDomain.placeDraggedEntry(others, rawStart, duration)
+                                    movePlaced = placed
+                                    dragPreview = calendarBlockKey(moving) to placed
+                                    touch.consume()
+                                }
+                                PointerEventType.Release -> {
+                                    movePlaced?.let {
+                                        onCommitBounds(moving, it.startEpochMillis, it.endEpochMillis, false)
+                                    }
+                                    movePlaced = null
+                                    dragPreview = null
+                                    movePending = null
+                                    onLockScroll(false)
+                                    touch.consume()
+                                }
+                            }
+                            continue
+                        }
+                        // PRD §8 (phone): double tap AND release → contextual menu. The zoom gesture
+                        // (double-tap-drag, handled by the week viewport) consumes its events, so a
+                        // consumed release never opens the menu.
+                        if (touch != null) {
+                            when (event.type) {
+                                PointerEventType.Press -> {
+                                    pressPos = touch.position
+                                    pressAtMs = touch.uptimeMillis
+                                    pressMoved = false
+                                }
+                                PointerEventType.Move -> {
+                                    if ((touch.position - pressPos).getDistance() > viewConfiguration.touchSlop) {
+                                        pressMoved = true
+                                    }
+                                }
+                                PointerEventType.Release -> {
+                                    val cleanTap = !pressMoved && !touch.isConsumed &&
+                                        touch.uptimeMillis - pressAtMs <= viewConfiguration.longPressTimeoutMillis
+                                    if (cleanTap &&
+                                        touch.uptimeMillis - tapUpAtMs <= viewConfiguration.doubleTapTimeoutMillis &&
+                                        (touch.position - tapPos).getDistance() <= viewConfiguration.touchSlop * 4
+                                    ) {
+                                        menuTarget = blockAt(touch.position.y)
+                                        menuOffset = touch.position
+                                        menuFromTouch = true
+                                        tapUpAtMs = 0L
+                                    } else {
+                                        tapUpAtMs = if (cleanTap) touch.uptimeMillis else 0L
+                                        tapPos = touch.position
+                                    }
+                                }
+                            }
+                        } else if (event.changes.count { it.pressed } >= 2) {
+                            tapUpAtMs = 0L
                         }
                     }
                 }
@@ -2632,18 +2791,41 @@ private fun DayColumn(
         // same band. The blocks the fill now schedules through the window are drawn on top, each greying
         // its own sleep sub-range to match (see CalendarBlock's sleepHourRanges); the band's
         // "Sleep"/"Inactivity" label is drawn on top of them below, so it stays legible at the band's start.
-        (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to "Inactivity" }).forEach { (band, label) ->
-            // PRD §8: like every other block, hovering the band pops the title + true (un-clipped) start–end times.
-            val timeRange = "${formatHm(band.fullStartMillis, tz)} – ${formatHm(band.fullEndMillis, tz)}"
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .offset(y = hourHeight * band.startHour)
-                    .height(hourHeight * (band.endHour - band.startHour))
-                    .calendarTitleHover(label, hoverScope, subtitle = timeRange)
-                    .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA)),
-            )
-        }
+        (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to if (it.noScreen) "No screen" else "Inactivity" })
+            .forEach { (band, label) ->
+                // PRD §8: like every other block, hovering the band pops the title + true (un-clipped) start–end times.
+                val timeRange = "${formatHm(band.fullStartMillis, tz)} – ${formatHm(band.fullEndMillis, tz)}"
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .offset(y = hourHeight * band.startHour)
+                        .height(hourHeight * (band.endHour - band.startHour))
+                        .calendarTitleHover(label, hoverScope, subtitle = timeRange)
+                        .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA))
+                        // PRD §8 decorative panels: a derived no-screen window carries the same oblique-line
+                        // pattern as a manual no-screen panel, so both read as one kind on the calendar.
+                        .then(
+                            if (band.noScreen) {
+                                Modifier.drawBehind {
+                                    val step = 10.dp.toPx()
+                                    val stroke = 1.dp.toPx()
+                                    var x = -size.height
+                                    while (x < size.width) {
+                                        drawLine(
+                                            color = CalColors.muted.copy(alpha = 0.35f),
+                                            start = Offset(x, size.height),
+                                            end = Offset(x + size.height, 0f),
+                                            strokeWidth = stroke,
+                                        )
+                                        x += step
+                                    }
+                                }
+                            } else {
+                                Modifier
+                            },
+                        ),
+                )
+            }
 
         // PRD §8 contextual menu, anchored at the right-click position. A block gets Edit/Remove; both a
         // block and a gap also get the "add" actions (anchored at the right-click time), so a panel's menu
@@ -2656,6 +2838,20 @@ private fun DayColumn(
             offset = anchor?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
         ) {
             val target = menuTarget
+            // PRD §8 (phone): the panel info tops the touch contextual menu — a phone has no hover bubble.
+            if (menuFromTouch && target != null) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    Text(
+                        text = target.title.ifEmpty { "(untitled)" },
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Text(
+                        text = "${formatHm(target.fullStartMillis, tz)} – ${formatHm(target.fullEndMillis, tz)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = CalColors.muted,
+                    )
+                }
+            }
             if (target != null) {
                 // PRD §8: the edit window edits a task's panel — a no-screen / inactivity period has no
                 // task behind it, so it offers Remove (and move/resize on the block) but not Edit.
@@ -2669,6 +2865,14 @@ private fun DayColumn(
                     text = { Text("Remove") },
                     onClick = { closeMenu(); onRemoveEntry(target) },
                 )
+                // PRD §8 (phone): a touch drag scrolls the grid, so a block is moved by arming this menu
+                // option and then dragging — the release commits (see the column's gesture handler).
+                if (menuFromTouch) {
+                    DropdownMenuItem(
+                        text = { Text("move") },
+                        onClick = { closeMenu(); movePending = target },
+                    )
+                }
             }
             DropdownMenuItem(
                 text = { Text("add a task") },
@@ -3212,6 +3416,11 @@ private fun CalendarBlock(
                             // Right-click → leave it unconsumed so the enclosing day column shows the
                             // Edit/Remove contextual menu for this block (PRD §8).
                             if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
+                            // PRD §8 (phone): touch never drags/edits a block directly — a single-finger
+                            // drag scrolls the grid, a double tap opens the column's contextual menu
+                            // (info at the top, Edit/Remove/move inside). Leave the press unconsumed so
+                            // the column and the scroll container see it.
+                            if (down.type == PointerType.Touch) return@awaitEachGesture
                             val downUptime = down.uptimeMillis
 
                             // Resize only on the block's true top (first slice) / bottom (last slice);

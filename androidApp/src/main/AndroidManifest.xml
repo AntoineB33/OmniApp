@@ -8,6 +8,9 @@
     <!-- PRD §15: the pause-end voice cue fires as an exact AlarmManager alarm (PauseCueAlarmReceiver). -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- PRD §15 (1.6.0): one-time first-startup prompt to exempt the app from Doze, so the foreground
+         service can keep the presence WebSocket alive while the phone is unlocked (MainActivity). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- allowBackup MUST stay false: OS auto-backup restores the app's data across uninstall+reinstall
          (old device id, stale rotated-out Supabase tokens, and pre-wipe device_active_session rows). That

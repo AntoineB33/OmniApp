@@ -9,22 +9,30 @@ voice cue to the phone when everyone goes inactive. It replaces the retired pg_c
 pg_cron and the Edge Function **cannot read Realtime Presence** (presence lives in the Realtime service, not
 Postgres). So this small worker holds a Realtime connection as the service role, sees every account's live
 presence, and — when an account has **no active device** and is **not sleeping** — invokes the existing
-`pause-cue` Edge Function ~1 s before the next ≥5-min break ends. The phone then schedules an exact local alarm
-and speaks (`SchedulerEngine.onPauseCuePush` / `onPauseCueFire`). The push credentials (FCM/APNs) stay in the
-Edge Function; this worker only decides *when* and *who*.
+`pause-cue` Edge Function ~1 s before the waiting break completes, fanned out to **all** the account's
+registered phones. The phone then schedules an exact local alarm and speaks
+(`SchedulerEngine.onPauseCuePush` / `onPauseCueFire`). The push credentials (FCM/APNs) stay in the Edge
+Function; this worker only decides *when* and *who*.
 
 ## How it works
 
 - Subscribes to `presence:<user_id>` for every account (enumerated via the service-role admin API, rescanned
   every 60 s — so a desktop-only account is watched too; it just won't get a cue until a phone registers).
-  Active clients publish presence with `{ device_id, kind, next_break_end_ms }` while signed-in + screen-on.
+  Active clients publish presence with `{ device_id, kind, next_break_end_ms, next_break_start_ms,
+  next_break_len_ms }` while signed-in + unlocked.
 - On each presence change, per account:
-  - **≥1 device present** → cancel any pending cue (and push `cancel` to the phone if one was already scheduled).
-  - **0 devices present** → read `account_state`; if `mode = 'sleeping'` and `wake_at` is in the future, do
-    nothing. Otherwise schedule a one-shot timer at `next_break_end_ms − 1 s` that re-checks (still idle) and
-    POSTs `pause-cue` `{ action: 'schedule', device_id: <account_last_phone>, due_at }`.
+  - **≥1 device present** → cancel any pending cue (and push `cancel` to every phone if a schedule was
+    already fanned out); capture the latest published break window.
+  - **0 devices present** → record the disconnect instant `T` (the real moment the last device left); read
+    `account_state`; if `mode = 'sleeping'` and `wake_at` is in the future, do nothing. Otherwise the pause
+    end is computed **server-side**: `d = max(T, next_break_start_ms) + next_break_len_ms` (a start at/before
+    "now" means the break was already waiting — e.g. with 15-min breaks pending, `d` lands 15 min after the
+    start of the all-disconnected window). A one-shot timer at `d − 1 s` re-checks (still idle) and POSTs
+    `pause-cue` `{ action: 'schedule', device_id: '*', due_at, break_len_ms }` — the Edge Function sends to
+    every `device_push_token` row of the account. Clients that predate the window fields fall back to the
+    published `next_break_end_ms`.
 
-It reads `account_state` and `account_last_phone`; it never writes the DB.
+It reads `account_state`; it never writes the DB.
 
 ## Deploy (Render / Fly.io / Railway free tier)
 

@@ -465,10 +465,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 record.copy(deviceSegments = deviceActivitySegments(record.range, activeSessions, nowMillis))
             }
         } + inactivityBands.map { gap ->
+            // PRD §8/§15: the account-offline windows (no device held a WebSocket) render as derived
+            // "No screen" periods — same hatched pattern as a manual no-screen panel, but display-only
+            // (no entryId: not removable, not draggable). Manual no-screen panels stay separate blocks.
             CalendarRecord(
-                title = "Inactivity",
+                title = "No screen",
                 range = gap,
-                inactivity = true,
+                noScreen = true,
             )
         }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).

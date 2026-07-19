@@ -49,7 +49,13 @@ class RealtimePhoenixTest {
 
     @Test
     fun track_frame_carries_the_presence_payload() {
-        val state = PresenceState(deviceId = "dev-1", kind = "phone", nextBreakEndMillis = 1_800_000_000_000L)
+        val state = PresenceState(
+            deviceId = "dev-1",
+            kind = "phone",
+            nextBreakEndMillis = 1_800_000_000_000L,
+            nextBreakStartMillis = 1_799_999_100_000L,
+            nextBreakLenMillis = 900_000L,
+        )
         val frame = json.parseToJsonElement(
             RealtimePhoenix.trackFrame(topic = "realtime:presence:u1", joinRef = 1, state = state, ref = 3),
         ).jsonObject
@@ -63,6 +69,9 @@ class RealtimePhoenixTest {
         assertEquals("dev-1", inner["device_id"]!!.jsonPrimitive.content)
         assertEquals("phone", inner["kind"]!!.jsonPrimitive.content)
         assertEquals(1_800_000_000_000L, inner["next_break_end_ms"]!!.jsonPrimitive.content.toLong())
+        // PRD §15 server-side break computation: the pose window rides along.
+        assertEquals(1_799_999_100_000L, inner["next_break_start_ms"]!!.jsonPrimitive.content.toLong())
+        assertEquals(900_000L, inner["next_break_len_ms"]!!.jsonPrimitive.content.toLong())
     }
 
     @Test
@@ -73,6 +82,8 @@ class RealtimePhoenixTest {
         ).jsonObject
         val inner = frame["payload"]!!.jsonObject["payload"]!!.jsonObject
         assertEquals("null", inner["next_break_end_ms"].toString())
+        assertEquals("null", inner["next_break_start_ms"].toString())
+        assertEquals("null", inner["next_break_len_ms"].toString())
     }
 
     @Test

@@ -11,6 +11,7 @@ import org.example.project.scheduler.engine.AppSchedulerHost
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.persistence.AndroidSchedulerStoreHolder
 import org.example.project.scheduler.platform.AndroidForegroundTracker
+import org.example.project.scheduler.platform.AndroidUnlockTracker
 import org.example.project.scheduler.persistence.ActiveSessionStore
 import org.example.project.scheduler.persistence.DeviceSleepGapStore
 import org.example.project.scheduler.persistence.SleepScanCheckpointStore
@@ -43,10 +44,13 @@ object SchedulerHolder {
     fun ensure(context: Context): AppSchedulerHost {
         host?.let { return it }
         AndroidSchedulerStoreHolder.context = context.applicationContext
-        // The phone's activity signal is "app in foreground" (see DeviceInfo.android.kt); register the
-        // Activity-lifecycle counter before any Activity resumes (MainActivity.onCreate calls ensure()
-        // before setContent, so the first onResume is always observed).
+        // PRD §15 (1.6.0 websocket model): the phone's activity signal is "device unlocked" (see
+        // DeviceInfo.android.kt) — the presence WebSocket is held while unlocked and dropped at lock. The
+        // Activity-lifecycle counter stays installed for the resume-time reconnect poke (MainActivity.onResume
+        // → engine.onAppForegrounded), registered before any Activity resumes (MainActivity.onCreate calls
+        // ensure() before setContent, so the first onResume is always observed).
         AndroidForegroundTracker.install(context.applicationContext)
+        AndroidUnlockTracker.install(context.applicationContext)
         // PRD §6: History Units are timestamped from this clock; set it before any reducer write in the service.
         SchedulerReducer.clock = SystemAppClock
         val store = createDefaultSchedulerStore()
@@ -80,6 +84,9 @@ object SchedulerHolder {
                 localPauseCueDelivery = true,
             )
         engine.start()
+        // PRD §15: an unlock/lock flip re-samples the activity beat at once, so the presence socket
+        // (re)connects the moment the phone is unlocked and drops at lock — not at the next minute beat.
+        AndroidUnlockTracker.onChanged = { engine.onPlatformActivityChanged() }
         if (clock is SimAppClock) {
             TimeLinkClient.start(
                 scope,

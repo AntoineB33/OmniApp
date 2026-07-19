@@ -620,6 +620,8 @@ class SchedulerEngine(
         val gateway = pauseCue ?: return
         val presence = realtimePresence ?: return
         val active = effectiveScreenActive() && gateway.signedIn
+        val now = clock.nowMillis()
+        val window = nextRestPoseWindowMillis(vm.state.value.panels, vm.state.value.sideTasks, now)
         presence.setPresence(
             if (active) {
                 PresenceState(
@@ -628,8 +630,12 @@ class SchedulerEngine(
                     nextBreakEndMillis = nextRestPoseEndMillis(
                         vm.state.value.panels,
                         vm.state.value.sideTasks,
-                        clock.nowMillis(),
+                        now,
                     ),
+                    // PRD §15: the pose window, so the listener computes the pause end from the REAL
+                    // disconnect instant (`max(disconnectStart, start) + len`).
+                    nextBreakStartMillis = window?.first,
+                    nextBreakLenMillis = window?.second,
                 )
             } else {
                 null
@@ -1082,7 +1088,22 @@ class SchedulerEngine(
      * re-claim from [start] alone. Claiming is idempotent — the `account_last_phone` trigger only pushes `cancel`
      * to the previous phone when the device id actually changes, so re-claiming the same phone is a no-op.
      */
-    fun onAppForegrounded() = claimLastPhone()
+    fun onAppForegrounded() {
+        claimLastPhone()
+        // PRD §15: a foregrounded phone must re-hold its presence WebSocket at once (it may have been
+        // dropped while backgrounded/locked) — sample the activity beat now instead of waiting for it.
+        onPlatformActivityChanged()
+    }
+
+    /**
+     * PRD §15: platform hint that this device's activity signal just flipped (phone lock/unlock, app brought
+     * to the foreground). Samples the activity beat immediately — opening/finalizing the session and
+     * re-tracking Realtime presence (the WebSocket liveness signal) within moments of the change instead of
+     * waiting for the next minute beat. Same-value samples are no-ops, so spurious calls are harmless.
+     */
+    fun onPlatformActivityChanged() {
+        scope.launch { advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended = false) }
+    }
 
     private fun claimLastPhone() {
         val gateway = pauseCue ?: return
@@ -1138,6 +1159,24 @@ class SchedulerEngine(
                 .map { it.endEpochMillis }
                 .filter { it > now }
                 .minOrNull()
+
+        /**
+         * PRD §15 (server-side break computation): the drawn `(start, length)` window of the next 5/15-min
+         * rest pose whose end is still ahead of [now], or null when none is scheduled. An overdue-unserved
+         * pose rides the now-line (`start == now`), so a start at/before the publish instant tells the
+         * listener the break is already WAITING — it then fires the cue at
+         * `max(disconnectStart, start) + length`, anchored to the REAL instant the last device left.
+         */
+        internal fun nextRestPoseWindowMillis(
+            panels: List<TaskPanel>,
+            sideTasks: List<SideTask>,
+            now: Long,
+        ): Pair<Long, Long>? =
+            panels.asSequence()
+                .filter { p -> p.sideTask && sideTasks.any { it.restBreak && it.title == p.title } }
+                .filter { it.endEpochMillis > now }
+                .minByOrNull { it.startEpochMillis }
+                ?.let { it.startEpochMillis to (it.endEpochMillis - it.startEpochMillis) }
 
         /**
          * PRD §15: the gate for the phone's "pause finished" voice cue — true only when this is the phone, a

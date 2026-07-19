@@ -29,9 +29,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 interface CuePayload {
   user_id: string;
+  // A concrete device id, or "*" to fan out to EVERY registered device of the account (PRD §15 — the
+  // listener pushes the pause cue to all the account's phones).
   device_id: string;
   action: "schedule" | "cancel";
   due_at?: string; // ISO-8601, present for 'schedule'
+  break_len_ms?: number; // PRD §15: the waiting break's length, for the phone's message
 }
 
 const admin = createClient(
@@ -42,36 +45,43 @@ const admin = createClient(
 Deno.serve(async (req) => {
   const body = (await req.json()) as CuePayload;
 
-  // Look up the target device's push token.
-  const { data: tokens, error } = await admin
+  // Look up the target push token(s): one device, or every registered device of the account ("*").
+  let query = admin
     .from("device_push_token")
     .select("platform, token")
-    .eq("user_id", body.user_id)
-    .eq("device_id", body.device_id)
-    .limit(1);
+    .eq("user_id", body.user_id);
+  if (body.device_id !== "*") query = query.eq("device_id", body.device_id).limit(1);
+  const { data: tokens, error } = await query;
   if (error) return new Response(error.message, { status: 500 });
-  const target = tokens?.[0];
-  if (!target) return new Response("no push token for device", { status: 200 }); // inert until registered
+  if (!tokens?.length) return new Response("no push token for device", { status: 200 }); // inert until registered
 
   // The data payload the phone acts on: schedule a local cue at `due_at`, or cancel the pending one.
-  const data = {
+  // `break_len_ms` (when present) is the waiting break's length so the phone can name it in its message.
+  const data: Record<string, string> = {
     type: "pause_cue",
     action: body.action,
     due_at: body.due_at ?? "",
   };
+  if (body.break_len_ms != null) data.break_len_ms = String(body.break_len_ms);
 
-  try {
-    if (target.platform === "fcm") {
-      await sendFcm(target.token, data);
-    } else if (target.platform === "apns") {
-      await sendApns(target.token, data);
+  // Fan out; report per-token failures without wedging the caller (a push failure must not wedge the
+  // pg_net worker / the listener).
+  const failures: string[] = [];
+  for (const target of tokens) {
+    try {
+      if (target.platform === "fcm") {
+        await sendFcm(target.token, data);
+      } else if (target.platform === "apns") {
+        await sendApns(target.token, data);
+      }
+    } catch (e) {
+      failures.push(e instanceof Error ? e.message : String(e));
     }
-  } catch (e) {
-    // Surface the failure so the cron/trigger caller (and the function logs) can see a bad send, but never
-    // throw uncaught — a push failure must not wedge the pg_net worker.
-    return new Response(`push failed: ${e instanceof Error ? e.message : e}`, { status: 502 });
   }
-  return new Response("ok", { status: 200 });
+  if (failures.length === tokens.length) {
+    return new Response(`push failed: ${failures.join("; ")}`, { status: 502 });
+  }
+  return new Response(failures.length ? `partial: ${failures.join("; ")}` : "ok", { status: 200 });
 });
 
 // --- FCM HTTP v1 --------------------------------------------------------------------------------------------

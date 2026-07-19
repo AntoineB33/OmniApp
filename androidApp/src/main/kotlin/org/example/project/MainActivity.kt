@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
         // must be staged BEFORE the shared VM is built (SchedulerHolder.ensure) so its auto-login sees them.
         captureStartupLogin()
         maybeRequestNotificationPermission()
+        maybePromptKeepAliveOnce()
 
         // The foreground service owns the single shared scheduler (VM + engine); start it and render that
         // same instance, so the UI and the background service never run two competing copies of the state.
@@ -73,6 +74,53 @@ class MainActivity : ComponentActivity() {
         val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
         if (!granted) requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    /**
+     * PRD §15 (1.6.0 websocket model), ONE-TIME at first startup: the foreground service must keep the
+     * presence WebSocket alive while the phone is unlocked, so ask the OS to exempt the app from battery
+     * optimization (Doze kills the socket), and on OEM ROMs with an autostart allowlist (MIUI/HyperOS etc.)
+     * open that settings screen too. Both are best-effort — a denial changes nothing functionally except
+     * that the OS may drop the socket sooner — and neither is ever asked again (flag in SharedPreferences).
+     */
+    private fun maybePromptKeepAliveOnce() {
+        val prefs = getSharedPreferences("omniapp_prompts", MODE_PRIVATE)
+        if (prefs.getBoolean("keep_alive_prompted", false)) return
+        prefs.edit().putBoolean("keep_alive_prompted", true).apply()
+
+        val pm = getSystemService(POWER_SERVICE) as? android.os.PowerManager
+        if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+            runCatching {
+                startActivity(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.net.Uri.parse("package:$packageName"),
+                    ),
+                )
+            }
+        }
+        // OEM autostart allowlist (no public API): try the known settings activities, first match wins.
+        val autostartIntents = listOf(
+            android.content.Intent().setClassName(
+                "com.miui.securitycenter",
+                "com.miui.permcenter.autostart.AutoStartManagementActivity",
+            ),
+            android.content.Intent().setClassName(
+                "com.huawei.systemmanager",
+                "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+            ),
+            android.content.Intent().setClassName(
+                "com.coloros.safecenter",
+                "com.coloros.safecenter.permission.startup.StartupAppListActivity",
+            ),
+            android.content.Intent().setClassName(
+                "com.vivo.permissionmanager",
+                "com.vivo.permissionmanager.activity.BgStartUpManagerActivity",
+            ),
+        )
+        for (autostart in autostartIntents) {
+            if (runCatching { startActivity(autostart); true }.getOrDefault(false)) break
+        }
     }
 }
 

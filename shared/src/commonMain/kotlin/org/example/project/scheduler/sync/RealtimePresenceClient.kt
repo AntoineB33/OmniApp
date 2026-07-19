@@ -31,6 +31,15 @@ data class PresenceState(
     val deviceId: String,
     val kind: String,
     val nextBreakEndMillis: Long?,
+    /**
+     * PRD §15 (server-side break computation): the drawn START of the next ≥5-min rest pose. A start pinned
+     * to the now-line means the break is already WAITING (overdue-unserved poses slide, `maxOf(due, now)`),
+     * so the listener computes the true pause end as `max(disconnectStart, start) + len` from the instant
+     * the LAST device actually left presence — not from this (up to one beat stale) client projection.
+     */
+    val nextBreakStartMillis: Long? = null,
+    /** PRD §15: the length of that pose (`end − start`) — also the "waiting break" length for the cue. */
+    val nextBreakLenMillis: Long? = null,
 )
 
 /**
@@ -198,6 +207,11 @@ internal object RealtimePhoenix {
                 put("device_id", state.deviceId)
                 put("kind", state.kind)
                 if (state.nextBreakEndMillis != null) put("next_break_end_ms", state.nextBreakEndMillis) else put("next_break_end_ms", JsonNull)
+                // PRD §15: the pose window, so the listener can compute the pause end from the real
+                // disconnect instant (`max(disconnectStart, start) + len`) instead of trusting the
+                // client-projected end. Kept alongside `next_break_end_ms` for older listeners.
+                if (state.nextBreakStartMillis != null) put("next_break_start_ms", state.nextBreakStartMillis) else put("next_break_start_ms", JsonNull)
+                if (state.nextBreakLenMillis != null) put("next_break_len_ms", state.nextBreakLenMillis) else put("next_break_len_ms", JsonNull)
             }
         }
 
