@@ -102,9 +102,11 @@ debugging surface: every presence join/leave and every cue schedule/cancel decis
 
 ---
 
-## Testing A — physical Android (true end-to-end)
+## Testing A — Android (true end-to-end)
 
-The live-path verification. Prereqs: steps 1–3 done, `adb devices` lists the phone.
+The live-path verification. Prereqs: steps 1–3 done, and an Android device set up per
+`docs/MANUAL_TESTING.md` **Appendix A** — physical phone (§A1) or Play-image emulator (§A2); everything
+below is adb-based and identical on either. `adb devices` lists the device.
 
 1. **Deploy + sign in:** `scripts\account1-empty-and-open.bat` (desktop, account 1 — logs out other
    apps, empties local+remote, opens the desktop app), then `scripts\account1-deploy-android.bat`
@@ -131,14 +133,18 @@ The live-path verification. Prereqs: steps 1–3 done, `adb devices` lists the p
 **Android runtime prerequisites:** `google-services.json` present at build time, and on Android 12+ the
 **Alarms & reminders** special-access grant (else the alarm falls back to inexact).
 
-## Testing B — simulated iPhone (⚠ receipt only, not end-to-end)
+## Testing B — iOS
 
 Blocked on a **Mac build** first (Kotlin/Native iOS compiles only on macOS; expect interop fixups in the
 `iosMain` actuals, then add the **Push Notifications** capability + **Background Modes → Remote
-notifications** in Xcode).
+notifications** in Xcode). Device setup — physical iPhone or Simulator — is `docs/MANUAL_TESTING.md`
+**Appendix A** (§A3/§A4). The test itself — schedule, cancel, speak — is the same on either; only the
+**delivery leg** differs by capability (§A5):
 
-The iOS **Simulator cannot receive a network APNs push** — it can only receive a locally-injected one
-(Xcode 14+), which tests the app-side schedule/cancel + speak path, not the server→APNs leg:
+- A **physical iPhone** (dev build, `APNS_HOST=api.sandbox.push.apple.com`) receives the real
+  server→APNs push — run Testing A's steps 4–6 with it as the target phone: true end-to-end.
+- The **Simulator cannot receive a network APNs push** — inject one locally instead (Xcode 14+), which
+  tests the app-side path only (⚠ receipt-only, not the server→APNs leg):
 
 ```json
 { "Simulator Target Bundle": "org.example.project",
@@ -148,7 +154,6 @@ The iOS **Simulator cannot receive a network APNs push** — it can only receive
 
 `xcrun simctl push booted org.example.project schedule.apns` → the app schedules the local notification
 and speaks at `due_at`. Inject the same with `"action": "cancel"` → the pending notification is removed.
-A true server→APNs test needs a real device with a dev build and `APNS_HOST=api.sandbox.push.apple.com`.
 
 > iOS caveat: iOS cannot run app code at a local notification's fire time, so the eligibility gate is
 > **not** re-checked at delivery there — best-effort on iOS only.

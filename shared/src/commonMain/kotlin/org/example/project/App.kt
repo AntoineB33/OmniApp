@@ -675,7 +675,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     block, block.taskId, block.title, newStart, newEnd, block.pins, allowOverlap,
                                 )?.let(vm::dispatch)
                             },
-                            onEditEntry = { block -> editingBlock = block },
+                            // PRD §8 "Edit": a sleep band's editable object is the §17 sleep schedule,
+                            // so its Edit opens the sleep window; every other panel opens the edit
+                            // window (a no-screen period in times-only mode, see below).
+                            onEditEntry = { block ->
+                                if (block.sleep) sleepWindowOpen = true else editingBlock = block
+                            },
                             // PRD §8 task contextual menu "Remove": delete the block by its source.
                             onRemoveEntry = { block -> removeBlockIntent(block)?.let(vm::dispatch) },
                             // PRD §14 Reminders: clicking a reminder tag toggles its checked (done) state.
@@ -725,6 +730,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 screenFlagsForTaskId = { id ->
                                     schedulerState.tasks[id]?.let { it.onScreen to it.doableDuringBreak }
                                 },
+                                // PRD §8: a no-screen period has no task behind it — its editor is the
+                                // times-only variant (begin/end fields and Save).
+                                timesOnly = block.noScreen,
                                 onDismiss = { editingBlock = null; addingBlock = null },
                                 onSave = { taskId, title, startMillis, endMillis, pins, onScreen, doableDuringBreak ->
                                     val intent =

@@ -310,6 +310,104 @@ class NoScreenInactivityPanelTest {
     }
 
     @Test
+    fun advance_materializes_a_past_inactivity_panel_over_the_covered_span() {
+        val (s0, solo) = stateWithOneTask()
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR),
+        )
+        s = s.copy(
+            panels = s.panels + TaskPanel(
+                id = "auto/0",
+                taskId = solo,
+                title = "Solo",
+                startEpochMillis = NOW - 3 * HOUR,
+                endEpochMillis = NOW,
+                auto = true,
+            ),
+        )
+        val advanced = SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(NOW))
+        // PRD §9 "past no-screen ⇒ past inactivity": the covered hour becomes a REAL inactivity panel
+        // (the no-screen panel is only decorative, §8 taxonomy) marking that nothing happened there.
+        val inactivity = advanced.panels.single { it.inactivity }
+        assertEquals("Inactivity", inactivity.title)
+        assertEquals(NOW - 2 * HOUR, inactivity.startEpochMillis)
+        assertEquals(NOW - HOUR, inactivity.endEpochMillis)
+        // Re-advancing must not duplicate it (the elapsed panel was dropped, nothing re-banks).
+        val again = SchedulerReducer.reduce(advanced, SchedulerIntent.AdvanceSchedule(NOW))
+        assertEquals(1, again.panels.count { it.inactivity })
+    }
+
+    @Test
+    fun advance_materializes_no_inactivity_for_an_off_screen_task() {
+        val (s0, solo) = stateWithOneTask()
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR))
+        s = s.copy(
+            panels = s.panels + TaskPanel(
+                id = "auto/0",
+                taskId = solo,
+                title = "Solo",
+                startEpochMillis = NOW - 2 * HOUR,
+                endEpochMillis = NOW - HOUR,
+                auto = true,
+            ),
+        )
+        val advanced = SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(NOW))
+        // The off-screen task legitimately worked inside the no-screen period — no inactivity.
+        assertTrue(advanced.panels.none { it.inactivity })
+    }
+
+    @Test
+    fun advance_skips_spans_an_existing_inactivity_panel_already_covers() {
+        val (s0, solo) = stateWithOneTask()
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR),
+        )
+        // The user already marked that hour inactive by hand — the advance must not double it.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddInactivityPeriod(NOW - 2 * HOUR, NOW - HOUR))
+        s = s.copy(
+            panels = s.panels + TaskPanel(
+                id = "auto/0",
+                taskId = solo,
+                title = "Solo",
+                startEpochMillis = NOW - 3 * HOUR,
+                endEpochMillis = NOW,
+                auto = true,
+            ),
+        )
+        val advanced = SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(NOW))
+        assertEquals(1, advanced.panels.count { it.inactivity })
+    }
+
+    @Test
+    fun device_sleep_cut_materializes_the_covered_span_as_inactivity() {
+        val (s0, solo) = stateWithOneTask()
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR),
+        )
+        s = s.copy(
+            panels = s.panels + TaskPanel(
+                id = "auto/0",
+                taskId = solo,
+                title = "Solo",
+                startEpochMillis = NOW - 3 * HOUR,
+                endEpochMillis = NOW + HOUR,
+                auto = true,
+            ),
+        )
+        val slept = SchedulerReducer.reduce(s, SchedulerIntent.ReportDeviceSleep(NOW, NOW + HOUR))
+        val inactivity = slept.panels.single { it.inactivity }
+        assertEquals(NOW - 2 * HOUR, inactivity.startEpochMillis)
+        assertEquals(NOW - HOUR, inactivity.endEpochMillis)
+    }
+
+    @Test
     fun advance_banks_the_whole_record_for_an_off_screen_task_inside_the_period() {
         val (s0, solo) = stateWithOneTask()
         var s = SchedulerReducer.reduce(

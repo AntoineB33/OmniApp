@@ -2596,6 +2596,9 @@ private fun DayColumn(
     // Latest records, so the right-click hit-test closure never reads a stale list (records change
     // every scheduler tick) without restarting the long-lived gesture coroutine.
     val currentRecords by rememberUpdatedState(blockRecords)
+    // PRD §8: the sleep bands are menu targets too (their menu leads with "Edit" → the §17 sleep-schedule
+    // window), hit-tested behind the real blocks. Same staleness guard as [currentRecords].
+    val currentSleepBands by rememberUpdatedState(sleepBands)
 
     // PRD §8 Overlap Mode: live width-edge drag. While a weight handle is held this maps panel ids to
     // their in-progress weights so the layout (and the handle position) follow the drag; on release the
@@ -2647,6 +2650,16 @@ private fun DayColumn(
         }
     }
 
+    // PRD §8: the contextual-menu target at [offsetY] — a real block first, else the sleep band under
+    // the click (the §17 band is a panel too: its menu leads with "Edit", opening the sleep window).
+    fun menuTargetAt(offsetY: Float): PlacedRecord? {
+        blockAt(offsetY)?.let { return it }
+        val hourHeightPx = with(density) { hourHeight.toPx() }
+        return currentSleepBands.lastOrNull {
+            offsetY >= it.startHour * hourHeightPx && offsetY <= it.endHour * hourHeightPx
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxHeight()
@@ -2671,7 +2684,7 @@ private fun DayColumn(
                         if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
                             val change = event.changes.firstOrNull() ?: continue
                             change.consume()
-                            menuTarget = blockAt(change.position.y)
+                            menuTarget = menuTargetAt(change.position.y)
                             menuOffset = change.position
                             menuFromTouch = false
                             continue
@@ -2736,7 +2749,7 @@ private fun DayColumn(
                                         touch.uptimeMillis - tapUpAtMs <= viewConfiguration.doubleTapTimeoutMillis &&
                                         (touch.position - tapPos).getDistance() <= viewConfiguration.touchSlop * 4
                                     ) {
-                                        menuTarget = blockAt(touch.position.y)
+                                        menuTarget = menuTargetAt(touch.position.y)
                                         menuOffset = touch.position
                                         menuFromTouch = true
                                         tapUpAtMs = 0L
@@ -2853,25 +2866,31 @@ private fun DayColumn(
                 }
             }
             if (target != null) {
-                // PRD §8: the edit window edits a task's panel — a no-screen / inactivity period has no
-                // task behind it, so it offers Remove (and move/resize on the block) but not Edit.
-                if (!target.noScreen && !target.inactivity) {
+                // PRD §8: the menu on a task / no-screen / sleep panel leads with "Edit" — a task panel
+                // opens the calendar edit window, a no-screen period a times-only editor, a sleep band
+                // the §17 sleep-schedule window (routed by the App's onEditEntry). An inactivity period
+                // has nothing to edit (no task behind it) and only offers Remove.
+                if (!target.inactivity) {
                     DropdownMenuItem(
                         text = { Text("Edit") },
                         onClick = { closeMenu(); onEditEntry(target) },
                     )
                 }
-                DropdownMenuItem(
-                    text = { Text("Remove") },
-                    onClick = { closeMenu(); onRemoveEntry(target) },
-                )
-                // PRD §8 (phone): a touch drag scrolls the grid, so a block is moved by arming this menu
-                // option and then dragging — the release commits (see the column's gesture handler).
-                if (menuFromTouch) {
+                // The generated sleep band is not a removable/movable entity (no panel behind it).
+                if (!target.sleep) {
                     DropdownMenuItem(
-                        text = { Text("move") },
-                        onClick = { closeMenu(); movePending = target },
+                        text = { Text("Remove") },
+                        onClick = { closeMenu(); onRemoveEntry(target) },
                     )
+                    // PRD §8 (phone): a touch drag scrolls the grid, so a block is moved by arming this
+                    // menu option and then dragging — the release commits (see the column's gesture
+                    // handler).
+                    if (menuFromTouch) {
+                        DropdownMenuItem(
+                            text = { Text("move") },
+                            onClick = { closeMenu(); movePending = target },
+                        )
+                    }
                 }
             }
             DropdownMenuItem(
@@ -3445,10 +3464,11 @@ private fun CalendarBlock(
                                             val b = if (edge != null) resizedBounds(edge) else movedBounds()
                                             onCommitBounds(record, b.startEpochMillis, b.endEpochMillis, armed.value)
                                         } else if (downUptime - lastTapUptime <= doubleTapWindowMs) {
-                                            // Second quick tap with no drag → open the edit window, then
-                                            // reset so a third tap starts a fresh pair. A no-screen /
-                                            // inactivity period has no task to edit (PRD §8).
-                                            if (!record.noScreen && !record.inactivity) onEditEntry(record)
+                                            // Second quick tap with no drag → open the edit window (a
+                                            // no-screen period gets the times-only editor), then reset so
+                                            // a third tap starts a fresh pair. An inactivity period has
+                                            // nothing to edit (PRD §8).
+                                            if (!record.inactivity) onEditEntry(record)
                                             lastTapUptime = 0L
                                         } else {
                                             lastTapUptime = downUptime
@@ -3702,6 +3722,11 @@ fun ManualEntryEditWindow(
      * (null taskId) has no task object to carry the flags, so the switches are hidden for it.
      */
     screenFlagsForTaskId: (TaskId) -> Pair<Boolean, Boolean>? = { null },
+    /**
+     * PRD §8: times-only mode, used to edit a **no-screen period** — it has no task behind it, so the
+     * window shows just the begin/end time fields (no task field/menus, no pins, no screen switches).
+     */
+    timesOnly: Boolean = false,
 ) {
     var title by remember { mutableStateOf(initialTitle) }
     // The explicitly-picked existing task, if any. PRD §8: unlike the tree, the calendar does NOT
@@ -3734,29 +3759,35 @@ fun ManualEntryEditWindow(
             modifier = Modifier.width(320.dp).clickable(enabled = false) {},
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Edit task", style = MaterialTheme.typography.titleSmall)
-
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = {
-                        title = it
-                        // Typing reverts to the default (first task of the menu), not "New task".
-                        selectedTaskId = null
-                        newTaskChosen = false
-                    },
-                    label = { Text("Task") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                Text(
+                    if (timesOnly) "Edit no-screen period" else "Edit task",
+                    style = MaterialTheme.typography.titleSmall,
                 )
+
+                if (!timesOnly) {
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = {
+                            title = it
+                            // Typing reverts to the default (first task of the menu), not "New task".
+                            selectedTaskId = null
+                            newTaskChosen = false
+                        },
+                        label = { Text("Task") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
                 // --- Tasks menu: New task + existing leaf matches. Pass no exclusion so the matching
                 // task shows (and highlights) even when it was picked from the suggestions below. PRD §8:
                 // the first real task is selected by default; "New task" only when explicitly chosen. ---
-                val taskEntries = taskMenuEntries(title, null)
+                val taskEntries = if (timesOnly) emptyList() else taskMenuEntries(title, null)
                 // The effective task this window will save: the explicit pick, else (unless the user
                 // chose "New task") the first real task of the menu.
                 val effectiveTaskId =
                     when {
+                        timesOnly -> initialTaskId
                         newTaskChosen -> null
                         selectedTaskId != null && taskEntries.any { it.taskId == selectedTaskId } -> selectedTaskId
                         else -> SchedulerDomain.calendarDefaultMenuTaskId(taskEntries)
@@ -3784,7 +3815,7 @@ fun ManualEntryEditWindow(
                 }
 
                 // --- Title suggestions menu ---
-                val suggestions = titleSuggestions(title).take(8)
+                val suggestions = if (timesOnly) emptyList() else titleSuggestions(title).take(8)
                 if (suggestions.isNotEmpty()) {
                     EditMenuSectionLabel("Title suggestions")
                     suggestions.forEach { suggestion ->
@@ -3817,12 +3848,15 @@ fun ManualEntryEditWindow(
                 }
 
                 // PRD §8 pin switches: the four independent pin dimensions. Only "existence" is enforced
-                // today (a pinned panel survives a reschedule); the rest are stored and shown.
-                EditMenuSectionLabel("Pins")
-                PinSwitchRow("Existence", pins.existence) { pins = pins.copy(existence = it) }
-                PinSwitchRow("Position", pins.position) { pins = pins.copy(position = it) }
-                PinSwitchRow("Spanning", pins.spanning) { pins = pins.copy(spanning = it) }
-                PinSwitchRow("Distance", pins.distance) { pins = pins.copy(distance = it) }
+                // today (a pinned panel survives a reschedule); the rest are stored and shown. A
+                // no-screen period (times-only mode) is not rescheduled, so it has no pins to show.
+                if (!timesOnly) {
+                    EditMenuSectionLabel("Pins")
+                    PinSwitchRow("Existence", pins.existence) { pins = pins.copy(existence = it) }
+                    PinSwitchRow("Position", pins.position) { pins = pins.copy(position = it) }
+                    PinSwitchRow("Spanning", pins.spanning) { pins = pins.copy(spanning = it) }
+                    PinSwitchRow("Distance", pins.distance) { pins = pins.copy(distance = it) }
+                }
 
                 // PRD §8 screen switches: task-level flags (not per-panel), re-seeded whenever the
                 // effective task changes. Hidden for a calendar-only "New task" (no task object yet).

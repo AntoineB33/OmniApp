@@ -43,8 +43,13 @@ ways. "Press Sync" below always means this.
 - [ ] Server schema deployed: `scripts\deploy-supabase.bat` (idempotent; re-run after schema edits). It
       applies `supabase/migrations/`, deploys the `pause-cue` Edge Function, and runs
       `pause-cue-setup.sql` (which **unschedules** the retired `pause-cue-tick` cron).
-- [ ] For Android tests: `adb devices` lists the phone/emulator; `adb` on `PATH` or under SDK
+- [ ] For Android tests: an Android device set up per **Appendix A** (physical phone or emulator —
+      the checklists never care which); `adb devices` lists it; `adb` on `PATH` or under SDK
       `platform-tools`.
+- [ ] For iPhone tests: an iOS device set up per **Appendix A** (physical iPhone or Simulator), which
+      needs a **Mac** with Xcode 15+ and a JDK 17+ (everything iOS builds only on macOS —
+      Kotlin/Native constraint). Where your device type lacks a capability (matrix, §A5), use the
+      documented fallback or leave that box unchecked — the test steps themselves are the same.
 - [ ] For push-cue tests only (§6): Edge Function `FCM_*` / `APNS_*` secrets set, the `/listener` worker
       deployed and running, and a `device_push_token` row appears after the phone's first launch —
       otherwise the whole push path is inert (see `docs/PAUSE_CUE_DELIVERY.md`).
@@ -223,12 +228,72 @@ This is the **live path that is still unverified end-to-end** (client WS ↔ Sup
 - [ ] Watch `supabase functions logs pause-cue` throughout — every `schedule`/`cancel` and any FCM/APNs
       error is there.
 
-*(iOS: receipt-only via injected push until a Mac build + real device exist — see the runbook. Leave
-unchecked on Windows.)*
+*(iOS devices run the same steps; where network push isn't available on your device type, tick the push
+boxes **receipt-only** via the injected push — Appendix §A5/§A4.)*
 
 ---
 
-## 7. Background survival (Android)
+## 7. Three devices at once — desktop + Android + iPhone (one account)
+
+§3/§4/§6 verified device **pairs**; this section runs one account signed in **simultaneously** on the
+desktop, an Android phone, and an iPhone, and checks the invariants still hold with three peers. It is
+also the only place the iOS client gets exercised at all.
+
+**What the iPhone can and cannot do today** (read before writing a bug report): the iOS client
+participates in **snapshot sync** (interactive sign-in + the Sync button) and **receives the pause-cue
+push** (physical device only), but it is **never an active peer** — `isScreenActive()` on iOS is
+hardwired `false` (best-effort "cannot tell", `DeviceInfo.ios.kt`), so the iPhone never opens activity
+sessions, never joins the presence channel, and never suppresses the cue by being foregrounded. Expect
+it to behave like a signed-in-but-always-inactive device throughout §4/§6-style checks. Also: the iOS
+build is still 🟡 (written, never compiled — needs a Mac; see the runbook status table), so expect
+interop fixups on the first build.
+
+Device setup — physical or virtual, Android and iPhone — is the side tutorial in **Appendix A**; the run
+below is device-agnostic and identical either way (§A5 lists the few capabilities a virtual device lacks).
+
+### The three-device run
+
+Get all three signed in to account 1: desktop via `scripts\account1-empty-and-open.bat`, Android via
+`scripts\account1-deploy-android.bat` (device per §A1/§A2), iPhone per §A3/§A4 (with one Sync pressed
+after sign-in so it holds the data). Have the listener running and its log visible.
+
+- [ ] **Three-way LWW convergence.** Give each device a distinct edit (rename a different task on
+      each). Press Sync desktop → Android → iPhone → desktop → Android → all **three** show the same
+      state (whole-doc last-writer-wins; no lost tree, no duplicates).
+- [ ] **Edits stay local until each device's own Sync.** After the desktop edit + desktop Sync, the
+      Android and iPhone still show their pre-edit state until **their own** Sync press (sign-in never
+      pulls, nothing pushes on a timer) — and Supabase Logs show `scheduler_snapshot` writes only at
+      the Sync presses.
+- [ ] **Presence shows exactly two devices.** With all three foregrounded/unlocked, the listener log
+      shows the **desktop and Android** joined — and no iOS entry. The iPhone's absence is expected
+      (see the capability note above), not a bug.
+- [ ] **Activity bands with three devices.** Create a window where only the iPhone was "in use" (apps
+      closed on desktop + Android) → after Sync all around, all three calendars show that window as
+      **Inactivity** (the iPhone contributes no sessions). A window covered by the desktop **or** the
+      Android shows no band on any of the three calendars — the iPhone renders the same bands as the
+      others purely from pulled peer rows.
+- [ ] **Device bubble.** Hover a past task panel on the desktop → "Open: …" names the desktop/Android
+      stretches; the iPhone never appears in the set (no sessions).
+- [ ] **Cue fan-out reaches both phones.** With a screen break pending, background/lock the desktop
+      and the Android (the iPhone's state is irrelevant — it is never present) → listener log:
+      "0 devices present" → one `pause-cue` POST with `device_id:'*'` → the Edge Function fans out to
+      **every** `device_push_token` row: the Android (FCM) **and** the iPhone (APNs) both schedule and
+      both speak at the break's end. (No network-push capability on your iOS device type? Tick
+      receipt-only via the injected push — §A5/§A4.)
+- [ ] **Suppression is desktop/Android-only.** Repeat, but re-foreground the **iPhone** before the cue
+      instant → nothing is cancelled (it is not a presence device) and both phones still fire.
+      Re-foreground the **Android or desktop** instead → the listener cancels; both phones stay silent.
+      (iOS cancel is best-effort: iOS cannot re-run the eligibility gate at fire time — runbook caveat.)
+- [ ] **Three-way force-logout.** With all three signed in, run `account1-empty-and-open.bat` → the
+      Android and the iPhone each keep their session until their next Sync press, at which point each
+      signs itself **out** (the `account_logout` marker) without re-seeding the emptied server.
+
+---
+
+## 8. Background survival (Android)
+
+Run this section on a **physical** phone — OEM battery-killer behaviour, reboot survival on real ROMs
+and real-world Doze timing are capabilities the emulator lacks (§A5).
 
 - [ ] Foreground service keeps the scheduler ticking with the app backgrounded (notifications still
       fire). Note: backgrounded = **inactive** for presence/leases (§4) — the service keeps the engine
@@ -238,7 +303,7 @@ unchecked on Windows.)*
 
 ---
 
-## 8. Per-account isolation (desktop)
+## 9. Per-account isolation (desktop)
 
 State dirs keep accounts from sharing data: acc1 → `~/.omniapp-acc1`, acc2 → `~/.omniapp-acc2`,
 acc3 (release) → `~/.omniapp-release`, default → `~/.omniapp`.
@@ -252,7 +317,7 @@ acc3 (release) → `~/.omniapp-release`, default → `~/.omniapp`.
 
 ---
 
-## 9. Release deploy verification
+## 10. Release deploy verification
 
 Do these last, against the real release artifacts — they use their **own** state dirs and are left
 untouched by dev runs.
@@ -279,8 +344,91 @@ untouched by dev runs.
 | 4 Activity / Inactivity | | |
 | 5 Android debug | | |
 | 6 Presence + pause cue | | |
-| 7 Background survival | | |
-| 8 Per-account isolation | | |
-| 9 Release deploy | | |
+| 7 Three devices at once | | |
+| 8 Background survival | | |
+| 9 Per-account isolation | | |
+| 10 Release deploy | | |
 
 Release tag: __________  Tester: __________  Date: __________
+
+---
+
+## Appendix A — Device setup tutorial (Android & iPhone, physical or virtual)
+
+Side reference for every section that needs a phone (§3–§8, the runbook's Testing A/B). Set up whichever
+device you have, then run the checklists unchanged — **no test step branches on physical vs. virtual.**
+The only differences are missing *capabilities*, collected in the matrix (§A5): where your device type
+lacks one, use the documented fallback (ticking the box **receipt-only**) or leave the box unchecked
+with the device type noted.
+
+### A1. Android — physical phone
+
+1. On the phone: Settings → Developer options → **USB debugging** on. Plug in over USB; accept the
+   "Allow USB debugging?" prompt (tick "Always allow from this computer").
+2. `adb devices` lists the phone in the `device` state (not `unauthorized`/`offline` — the deploy
+   script diagnoses both and prompts to retry).
+3. `scripts\account1-deploy-android.bat` → builds the debug APK, **uninstall + reinstall** (wipes local
+   data — see §5), launches auto-signed-in as account 1.
+4. On first launch accept the notification permission and the one-time keep-alive prompt (Doze
+   exemption + OEM autostart). Android 12+: grant **Alarms & reminders**, else the pause-cue alarm
+   falls back to inexact.
+5. Push prereq (§0): `google-services.json` present at build time → after launch the Supabase
+   `device_push_token` table gains an `fcm` row for this device.
+
+### A2. Android — emulator (Android Studio AVD)
+
+1. Android Studio → Device Manager → **Create Device** → pick a **Google Play** (or Google APIs)
+   system image, API 34+. A plain AOSP image has no Play services — FCM pushes silently never arrive.
+   (No Google account sign-in is needed on the emulator; FCM token registration works without one.)
+2. Boot it → `adb devices` shows `emulator-5554`.
+3. If a physical phone is attached at the same time, target the emulator explicitly:
+   `set ANDROID_SERIAL=emulator-5554` in the terminal before running the script (adb honors the env
+   var; without it the script's bare `adb install` fails with "more than one device/emulator").
+4. `scripts\account1-deploy-android.bat` — identical from here on: the deploy, the diagnostics pull
+   (`collect-diagnostics.bat`) and the time-link (runbook Testing C) are all adb-based, so the
+   emulator behaves like hardware.
+5. "Background/lock the phone" steps: use the emulator toolbar's Home / power buttons — the foreground
+   lease reads inactive within ≤1 min just like hardware.
+
+### A3. iPhone — physical device
+
+One-time on the Mac: clone the repo, install a JDK 17+ and Xcode 15+ (everything iOS builds only on
+macOS — Kotlin/Native constraint).
+
+1. Open `iosApp/iosApp.xcodeproj` in Xcode. The Kotlin build phase runs
+   `./gradlew :shared:embedAndSignAppleFrameworkForXcode` — the first build is slow, and (first time
+   ever) may need `iosMain` interop fixups.
+2. Signing & Capabilities: select your Apple Developer team; confirm **Push Notifications** and
+   **Background Modes → Remote notifications** are present (add them if missing — the runbook's
+   Testing B notes them).
+3. Select the plugged-in iPhone as the run target → Run. If prompted on the phone, trust the developer
+   profile (Settings → General → VPN & Device Management).
+4. **Sign in in-app** — there is no script auto-login on iOS (`StartupLogin.ios.kt` returns `null`):
+   tap the **☁ Sign in** chip → email `account1@omniapp.local`, password from `scripts/accounts.env` →
+   Sign in. Accept the notification-permission prompt.
+5. Push prereq (§0): `APNS_*` secrets set with `APNS_HOST=api.sandbox.push.apple.com` (an Xcode dev
+   build uses the APNs **sandbox**) → `device_push_token` gains an `apns` row for the iPhone.
+6. Press **Sync** → the account's data appears (sign-in alone does not pull — §3).
+
+### A4. iPhone — Simulator
+
+1. Same Xcode project and Mac prerequisites as §A3; pick any iPhone Simulator as the run target → Run.
+   Sign in in-app exactly as §A3 step 4 and press Sync.
+2. **Network-push fallback** (the one capability the Simulator lacks — §A5): inject the push locally
+   (Xcode 14+), which exercises the app-side schedule/cancel + speak path only, never the server→APNs
+   leg. Save the JSON payload from `docs/PAUSE_CUE_DELIVERY.md` (Testing B) as `schedule.apns`, then
+   `xcrun simctl push booted org.example.project schedule.apns` → the app schedules the local
+   notification and speaks at `due_at`. Inject the same with `"action": "cancel"` → the pending
+   notification is removed. Tick the corresponding push boxes as **receipt-only**.
+
+### A5. Capability matrix — where device type still matters
+
+| Capability | Physical Android | Emulator (Play image) | Physical iPhone | iOS Simulator |
+| --- | --- | --- | --- | --- |
+| Network push delivery (server → device) | ✅ FCM | ✅ FCM | ✅ APNs sandbox (dev build) | ⛔ inject locally (§A4 step 2), receipt-only |
+| OEM battery-killers / autostart, reboot survival on real ROMs, real Doze (§8) | ✅ | ⛔ hardware only | — | — |
+| Presence / activity sessions | ✅ | ✅ | ⛔ platform-wide: iOS is never an active peer (§7) | ⛔ same |
+| Script auto-login | ✅ | ✅ | ⛔ sign in in-app (§A3 step 4) | ⛔ same |
+
+Everything else — sign-in, Sync push/pull, LWW convergence, force-logout, calendar rendering — works
+identically on all four, so run those legs on whatever device is at hand.

@@ -1874,7 +1874,9 @@ private fun advanceSchedule(state: SchedulerState, nowMillis: Long): SchedulerSt
     // no-screen panel stays on the calendar; the task is still owed that work).
     val noScreenRanges =
         state.panels.filter { it.noScreen }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+    val coveredPieces = ArrayList<TaskTimeRange>()
     fun bank(taskId: TaskId?, startMillis: Long, endMillis: Long) {
+        coveredPieces += noScreenCoveredPieces(tasks, noScreenRanges, taskId, startMillis, endMillis)
         tasks = appendRecordOutsideNoScreen(tasks, noScreenRanges, taskId, startMillis, endMillis)
     }
     val remaining = ArrayList<TaskPanel>(state.panels.size)
@@ -1916,7 +1918,7 @@ private fun advanceSchedule(state: SchedulerState, nowMillis: Long): SchedulerSt
         }
     }
     if (!changed) return state
-    return state.copy(tasks = tasks, panels = remaining)
+    return materializePastInactivity(state.copy(tasks = tasks, panels = remaining), coveredPieces)
 }
 
 /**
@@ -1940,6 +1942,60 @@ private fun appendRecordOutsideNoScreen(
         out = appendRecordMap(out, taskId, piece.startEpochMillis, piece.endEpochMillis)
     }
     return out
+}
+
+/**
+ * PRD §9/§12 "past no-screen ⇒ past inactivity": the parts of a banked `[start, end]` span that a
+ * no-screen period covered for an on-screen task — exactly the spans [appendRecordOutsideNoScreen]
+ * refuses to record. [materializePastInactivity] turns them into real "Inactivity" panels.
+ */
+private fun noScreenCoveredPieces(
+    tasks: Map<TaskId, Task>,
+    noScreenRanges: List<TaskTimeRange>,
+    taskId: TaskId?,
+    startMillis: Long,
+    endMillis: Long,
+): List<TaskTimeRange> {
+    if (taskId == null || endMillis <= startMillis || noScreenRanges.isEmpty()) return emptyList()
+    if (!(tasks[taskId]?.onScreen ?: true)) return emptyList()
+    val span = listOf(TaskTimeRange(startMillis, endMillis))
+    return SchedulerDomain.subtractRegions(span, SchedulerDomain.subtractRegions(span, noScreenRanges))
+}
+
+/**
+ * PRD §8/§9/§12: materialize [pieces] — elapsed spans where scheduled on-screen work was covered by a
+ * no-screen period — as real "Inactivity" panels. The no-screen panel is decorative (§8 taxonomy), so
+ * without this the covered stretch would hold no real panel at all. Spans an inactivity panel already
+ * covers are skipped and sub-minute slivers dropped. Like the record bank this runs outside Undo/Redo
+ * and must never count as a syncable change on its own (it rides the next authoritative push).
+ */
+private fun materializePastInactivity(
+    state: SchedulerState,
+    pieces: List<TaskTimeRange>,
+): SchedulerState {
+    if (pieces.isEmpty()) return state
+    val existing =
+        state.panels.filter { it.inactivity }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+    val fresh =
+        SchedulerDomain.subtractRegions(SchedulerDomain.mergeOccupied(pieces), existing)
+            .filter { it.endEpochMillis - it.startEpochMillis >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS }
+    if (fresh.isEmpty()) return state
+    var out = state
+    val added = ArrayList<TaskPanel>(fresh.size)
+    for (piece in fresh) {
+        val (panelId, allocated) = out.allocatePanelId()
+        out = allocated
+        added +=
+            TaskPanel(
+                id = panelId,
+                taskId = null,
+                title = "Inactivity",
+                startEpochMillis = piece.startEpochMillis,
+                endEpochMillis = piece.endEpochMillis,
+                inactivity = true,
+            )
+    }
+    return out.copy(panels = out.panels + added)
 }
 
 /** Appends a `[start, end]` period to [taskId]'s record in a task map (PRD §8; outside Undo/Redo). */
@@ -1991,10 +2047,12 @@ private fun reduceReportDeviceSleep(
         } ?: return base
     val noScreenRanges =
         base.panels.filter { it.noScreen }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+    val covered =
+        noScreenCoveredPieces(base.tasks, noScreenRanges, current.taskId, current.startEpochMillis, sleepStart)
     val tasks =
         appendRecordOutsideNoScreen(base.tasks, noScreenRanges, current.taskId, current.startEpochMillis, sleepStart)
     val remaining = base.panels.filter { it.pinned || !it.auto }
-    return base.copy(tasks = tasks, panels = remaining)
+    return materializePastInactivity(base.copy(tasks = tasks, panels = remaining), covered)
 }
 
 private fun applySetTaskMinimumTime(
