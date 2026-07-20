@@ -4,7 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
-import org.example.project.scheduler.model.SideTask
+import org.example.project.scheduler.model.ScreenBreak
 
 /**
  * PRD §15 / CLAUDE.md rule: the rest-pose ("take a 5/15-min break") notification must be **mathematically
@@ -16,9 +16,9 @@ import org.example.project.scheduler.model.SideTask
  */
 class RestPoseNotificationRuleTest {
     private val MIN = 60_000L
-    private val pose5 = SideTask("take a 5min pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true)
-    private val pose15 = SideTask("take a 15min pose", intervalMillis = 120 * MIN, durationMillis = 15 * MIN, restBreak = true)
-    private val lookAway = SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L)
+    private val pose5 = ScreenBreak("take a 5min pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true)
+    private val pose15 = ScreenBreak("take a 15min pose", intervalMillis = 120 * MIN, durationMillis = 15 * MIN, restBreak = true)
+    private val lookAway = ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L)
 
     @Test
     fun a_pose_whose_due_the_now_line_has_reached_is_announced_with_its_stable_due() {
@@ -75,7 +75,7 @@ class RestPoseNotificationRuleTest {
 
     @Test
     fun an_un_anchored_pose_is_not_announced_until_it_is_seeded() {
-        // The freshly-emptied-account bug: `DEFAULT_SIDE_TASKS` load with `lastRestMillis == 0` and the cue
+        // The freshly-emptied-account bug: `DEFAULT_SCREEN_BREAKS` load with `lastRestMillis == 0` and the cue
         // sweep can sample them in the ~90 ms before the startup derive anchors them. Their due `0 + interval`
         // is a 1970 sentinel, not a real crossed boundary, so nothing is announced — this is what stopped the
         // "take a 15min pose" cue from firing the instant the account opened.

@@ -31,6 +31,7 @@ class MainActivity : ComponentActivity() {
         // Non-interactive launch (account3-deploy-android script): credentials handed in as Intent extras
         // must be staged BEFORE the shared VM is built (SchedulerHolder.ensure) so its auto-login sees them.
         captureStartupLogin()
+        captureBreakOverrides()
         maybeRequestNotificationPermission()
         maybePromptKeepAliveOnce()
 
@@ -66,6 +67,18 @@ class MainActivity : ComponentActivity() {
         val user = intent?.getStringExtra("omniapp_login_user")?.takeIf { it.isNotBlank() }
         val pass = intent?.getStringExtra("omniapp_login_pass")?.takeIf { it.isNotBlank() }
         if (user != null && pass != null) AndroidStartupLogin.creds = StartupLogin(user, pass)
+    }
+
+    /**
+     * Debug fast-break override for testing the pause-cue voice message on real phones: the deploy script
+     * passes `--es omniapp_break_duration_ms 5000` (the 5-min break's length) and/or
+     * `--es omniapp_break_interval_ms 5000` (how long after the previous pause it comes due) so a break — and
+     * the listener's server→phone cue — arrives in seconds. Must be applied BEFORE [SchedulerHolder.ensure]
+     * builds the VM (which seeds the screen breaks). Absent extras leave production timings.
+     */
+    private fun captureBreakOverrides() {
+        intent?.getStringExtra("omniapp_break_duration_ms")?.toLongOrNull()?.let { DebugFlags.breakDurationMillisOverride = it }
+        intent?.getStringExtra("omniapp_break_interval_ms")?.toLongOrNull()?.let { DebugFlags.breakIntervalMillisOverride = it }
     }
 
     /** PRD §11: on API 33+ the POST_NOTIFICATIONS runtime grant is required or notifications are dropped. */

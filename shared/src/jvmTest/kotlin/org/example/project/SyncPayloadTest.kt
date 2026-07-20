@@ -94,13 +94,13 @@ class SyncPayloadTest {
         return base.copy(
             panels = listOf(
                 TaskPanel(id = "auto/0", taskId = base.tasks.keys.first(), title = "work", startEpochMillis = 0, endEpochMillis = 1_000, auto = true),
-                TaskPanel(id = "side/0", taskId = null, title = "Look away", startEpochMillis = 1_000, endEpochMillis = 2_000, auto = true, sideTask = true),
+                TaskPanel(id = "side/0", taskId = null, title = "Look away", startEpochMillis = 1_000, endEpochMillis = 2_000, auto = true, screenBreak = true),
                 TaskPanel(id = "sleep/0", taskId = null, title = "Sleep", startEpochMillis = 2_000, endEpochMillis = 3_000, sleep = true),
                 TaskPanel(id = "pin/0", taskId = null, title = "user pin", startEpochMillis = 3_000, endEpochMillis = 4_000, pinned = true),
             ),
             focusedWindow = AppWindow.Calendar,
             selection = SchedulerSelection(main = base.cells.keys.first()),
-            showSideTasks = true,
+            showScreenBreaks = true,
         )
     }
 
@@ -140,7 +140,7 @@ class SyncPayloadTest {
             // Per-device view state is neutralized, not shipped.
             assertEquals(AppWindow.Tree, pushed.focusedWindow, "the focused window is local-only")
             assertEquals(SchedulerSelection(), pushed.selection, "the tree selection is local-only")
-            assertEquals(false, pushed.showSideTasks, "the calendar display switches are local-only")
+            assertEquals(false, pushed.showScreenBreaks, "the calendar display switches are local-only")
 
             // The task tree itself (the authoritative data) is intact.
             assertEquals(vm.state.value.tasks.keys, pushed.tasks.keys)
@@ -153,7 +153,7 @@ class SyncPayloadTest {
     fun a_pulled_snapshot_without_derived_panels_still_renders_after_the_next_reschedule() {
         // The persisted-DB compatibility rule applied to the wire shape: a remote snapshot written by this
         // build lacks the regenerated panels. Loading it and running the next §9 reschedule must rebuild
-        // them (here: the seeded sleep window + side tasks of a prepared state).
+        // them (here: the seeded sleep window + screen breaks of a prepared state).
         val wire = SchedulerStateCodec.syncFingerprint(stateWithBaggage())
         val decoded = assertNotNull(SchedulerStateCodec.decodeSnapshot(wire))
         val prepared = TaskSchedulerViewModel.prepareLoadedState(decoded)
@@ -167,8 +167,8 @@ class SyncPayloadTest {
             "the reschedule regenerates the sleep panels the wire payload stripped",
         )
         assertTrue(
-            rescheduled.panels.any { it.sideTask },
-            "the reschedule regenerates the side-task panels the wire payload stripped",
+            rescheduled.panels.any { it.screenBreak },
+            "the reschedule regenerates the screen-break panels the wire payload stripped",
         )
         assertTrue(
             rescheduled.panels.any { it.id == "pin/0" },

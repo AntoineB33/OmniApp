@@ -7,7 +7,7 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerDomain.LiveRest
-import org.example.project.scheduler.model.SideTask
+import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -15,14 +15,14 @@ import org.example.project.scheduler.state.SchedulerState
 
 /**
  * PRD §15 live-pause placement overlay ([SchedulerDomain.liveRestGap] +
- * [SchedulerDomain.sideTasksForPlacement]): while this device observes a pause the derives haven't
- * banked yet, side-task placement folds it in. An ONGOING pause is presumed to keep going until it
- * has served each side task (`max(gapEnd, gapStart + duration)`), so the whole projected grid moves
+ * [SchedulerDomain.screenBreaksForPlacement]): while this device observes a pause the derives haven't
+ * banked yet, screen-break placement folds it in. An ONGOING pause is presumed to keep going until it
+ * has served each screen break (`max(gapEnd, gapStart + duration)`), so the whole projected grid moves
  * at the walk-away instant and stays fluid under an accelerated leap — nothing downstream of a
  * not-yet-served pose freezes until the leap's end (the reported anomaly), and the look-away's slot
  * can never be crossed by the now-line mid-pause. A HELD gap (user already back) counts only for
  * what it actually contained, exactly what the derive will bank — an aborted short pause retracts
- * the presumption. Placement-only — the stored [SideTask.lastRestMillis] is never advanced by the
+ * the presumption. Placement-only — the stored [ScreenBreak.lastRestMillis] is never advanced by the
  * overlay.
  */
 class LiveRestPlacementTest {
@@ -31,10 +31,10 @@ class LiveRestPlacementTest {
     private val now = 1_000_000_000_000L
 
     private fun lookAway(lastRest: Long = 0L) =
-        SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = lastRest)
+        ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = lastRest)
 
     private fun pose(lastRest: Long = 0L) =
-        SideTask("take a 5min pose and blink hard", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = lastRest)
+        ScreenBreak("take a 5min pose and blink hard", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = lastRest)
 
     private fun held(startMillis: Long, endMillis: Long) = LiveRest(TaskTimeRange(startMillis, endMillis), ongoing = false)
 
@@ -66,19 +66,19 @@ class LiveRestPlacementTest {
         assertNull(SchedulerDomain.liveRestGap(start, start - MIN, now))
     }
 
-    // ----- sideTasksForPlacement ---------------------------------------------------------------
+    // ----- screenBreaksForPlacement ---------------------------------------------------------------
 
     @Test
     fun placement_overlay_is_identity_without_a_gap() {
         val sides = listOf(lookAway(now - 25 * MIN), pose(now - 30 * MIN))
-        assertSame(sides, SchedulerDomain.sideTasksForPlacement(sides, null))
+        assertSame(sides, SchedulerDomain.screenBreaksForPlacement(sides, null))
     }
 
     @Test
     fun a_held_gap_shorter_than_the_look_away_duration_does_not_qualify() {
         // A finished 10-second pause can't have served a 20-second look-away.
         val sides = listOf(lookAway(now - 25 * MIN))
-        assertEquals(sides, SchedulerDomain.sideTasksForPlacement(sides, held(now - 10_000L, now)))
+        assertEquals(sides, SchedulerDomain.screenBreaksForPlacement(sides, held(now - 10_000L, now)))
     }
 
     @Test
@@ -88,10 +88,10 @@ class LiveRestPlacementTest {
         // walk-away instant, so the whole projected grid re-places fluidly instead of freezing.
         val gapStart = now - 10_000L
         val sides = listOf(lookAway(now - 25 * MIN), pose(now - 30 * MIN))
-        val overlaid = SchedulerDomain.sideTasksForPlacement(sides, ongoing(gapStart, now))
+        val overlaid = SchedulerDomain.screenBreaksForPlacement(sides, ongoing(gapStart, now))
         assertEquals(gapStart + 20_000L, overlaid[0].lastRestMillis)
         assertEquals(gapStart + 5 * MIN, overlaid[1].lastRestMillis)
-        // The input list is untouched (the overlay copies): the stored side tasks never advance here.
+        // The input list is untouched (the overlay copies): the stored screen breaks never advance here.
         assertEquals(now - 25 * MIN, sides[0].lastRestMillis)
         assertEquals(now - 30 * MIN, sides[1].lastRestMillis)
     }
@@ -101,7 +101,7 @@ class LiveRestPlacementTest {
         // Once the pause has lasted the task's duration, the presumed rest end IS the gap's moving end —
         // continuous with the fixed gapStart+duration instant it transitions from.
         val sides = listOf(lookAway(now - 25 * MIN), pose(now - 30 * MIN))
-        val overlaid = SchedulerDomain.sideTasksForPlacement(sides, ongoing(now - 5 * MIN, now))
+        val overlaid = SchedulerDomain.screenBreaksForPlacement(sides, ongoing(now - 5 * MIN, now))
         assertEquals(now, overlaid[0].lastRestMillis)
         assertEquals(now, overlaid[1].lastRestMillis)
     }
@@ -110,16 +110,16 @@ class LiveRestPlacementTest {
     fun a_gap_already_behind_the_stored_anchor_does_not_qualify() {
         // The derive already banked a rest at/after this gap's end → nothing to overlay.
         val sides = listOf(lookAway(lastRest = now))
-        assertEquals(sides, SchedulerDomain.sideTasksForPlacement(sides, held(now - 5 * MIN, now)))
+        assertEquals(sides, SchedulerDomain.screenBreaksForPlacement(sides, held(now - 5 * MIN, now)))
     }
 
     @Test
     fun a_held_gap_counts_only_what_it_actually_contained() {
         // The user is back after 4 minutes: the pause served the 20-s look-away (anchor → gap end) but
         // NOT the 5-min pose — the mid-pause presumption is retracted and the pose keeps its stored
-        // anchor (it is still owed). Exactly the seedSideTasksFromGaps rule the derive will bank.
+        // anchor (it is still owed). Exactly the seedScreenBreaksFromGaps rule the derive will bank.
         val sides = listOf(lookAway(now - 25 * MIN), pose(now - 30 * MIN))
-        val overlaid = SchedulerDomain.sideTasksForPlacement(sides, held(now - 4 * MIN, now))
+        val overlaid = SchedulerDomain.screenBreaksForPlacement(sides, held(now - 4 * MIN, now))
         assertEquals(now, overlaid[0].lastRestMillis)
         assertEquals(now - 30 * MIN, overlaid[1].lastRestMillis)
     }
@@ -134,7 +134,7 @@ class LiveRestPlacementTest {
         // can never cross it mid-pause.
         val sides = listOf(lookAway(now - 25 * MIN))
         val gap = SchedulerDomain.liveRestGap(now - 5 * MIN, null, now)
-        val panels = SchedulerDomain.sideTaskPanels(SchedulerDomain.sideTasksForPlacement(sides, gap), now)
+        val panels = SchedulerDomain.screenBreakPanels(SchedulerDomain.screenBreaksForPlacement(sides, gap), now)
         val first = panels.minByOrNull { it.startEpochMillis }!!
         assertEquals(now + 20 * MIN, first.startEpochMillis)
         assertTrue(panels.none { it.startEpochMillis in (now - 5 * MIN)..now })
@@ -147,7 +147,7 @@ class LiveRestPlacementTest {
         // exactly what the derive will bank — so placement doesn't snap when the derive lands.
         val sides = listOf(lookAway(now - 40 * MIN))
         val gap = SchedulerDomain.liveRestGap(now - 10 * MIN, now - 2 * MIN, now)
-        val panels = SchedulerDomain.sideTaskPanels(SchedulerDomain.sideTasksForPlacement(sides, gap), now)
+        val panels = SchedulerDomain.screenBreakPanels(SchedulerDomain.screenBreaksForPlacement(sides, gap), now)
         val first = panels.minByOrNull { it.startEpochMillis }!!
         assertEquals(now - 2 * MIN + 20 * MIN, first.startEpochMillis)
     }
@@ -162,7 +162,7 @@ class LiveRestPlacementTest {
         val gapStart = now - 4 * MIN
         val sides = listOf(pose(now - 90 * MIN)) // overdue; without a gap it would pin at the now-line
         val gap = SchedulerDomain.liveRestGap(gapStart, null, now)
-        val panels = SchedulerDomain.sideTaskPanels(SchedulerDomain.sideTasksForPlacement(sides, gap), now)
+        val panels = SchedulerDomain.screenBreakPanels(SchedulerDomain.screenBreaksForPlacement(sides, gap), now)
         val first = panels.minByOrNull { it.startEpochMillis }!!
         assertEquals(gapStart + 5 * MIN + 60 * MIN, first.startEpochMillis)
     }
@@ -175,7 +175,7 @@ class LiveRestPlacementTest {
         // both formulas give gapStart + 65min.
         val sides = listOf(pose(now - 90 * MIN))
         val gap = SchedulerDomain.liveRestGap(now - 5 * MIN, null, now)
-        val panels = SchedulerDomain.sideTaskPanels(SchedulerDomain.sideTasksForPlacement(sides, gap), now)
+        val panels = SchedulerDomain.screenBreakPanels(SchedulerDomain.screenBreaksForPlacement(sides, gap), now)
         val first = panels.minByOrNull { it.startEpochMillis }!!
         assertEquals(now + 60 * MIN, first.startEpochMillis)
         assertTrue(panels.none { it.startEpochMillis in (now - 5 * MIN)..now })
@@ -188,8 +188,8 @@ class LiveRestPlacementTest {
         // the pose is still owed.
         val sides = listOf(pose(now - 90 * MIN))
         val gap = SchedulerDomain.liveRestGap(now - 6 * MIN, now - 2 * MIN, now)
-        val without = SchedulerDomain.sideTaskPanels(sides, now)
-        val with = SchedulerDomain.sideTaskPanels(SchedulerDomain.sideTasksForPlacement(sides, gap), now)
+        val without = SchedulerDomain.screenBreakPanels(sides, now)
+        val with = SchedulerDomain.screenBreakPanels(SchedulerDomain.screenBreaksForPlacement(sides, gap), now)
         assertEquals(without, with)
     }
 
@@ -200,7 +200,7 @@ class LiveRestPlacementTest {
         // the anchor the derive will bank, so placement doesn't snap when it lands.
         val sides = listOf(pose(now - 90 * MIN))
         val gap = SchedulerDomain.liveRestGap(now - 10 * MIN, now - 2 * MIN, now)
-        val panels = SchedulerDomain.sideTaskPanels(SchedulerDomain.sideTasksForPlacement(sides, gap), now)
+        val panels = SchedulerDomain.screenBreakPanels(SchedulerDomain.screenBreaksForPlacement(sides, gap), now)
         val first = panels.minByOrNull { it.startEpochMillis }!!
         assertEquals(now - 2 * MIN + 60 * MIN, first.startEpochMillis)
     }
@@ -208,7 +208,7 @@ class LiveRestPlacementTest {
     @Test
     fun the_grid_downstream_of_a_pose_moves_with_the_pose_during_an_ongoing_pause() {
         // The reported anomaly: only the look-aways BEFORE the next pose slid; every occurrence after it
-        // was re-anchored to the pose's frozen slot ([sideTaskPanels]' pause-re-anchors-shorter-pauses
+        // was re-anchored to the pose's frozen slot ([screenBreakPanels]' pause-re-anchors-shorter-pauses
         // rule) and waited for the leap's end. With the presumption the pose's slot moves at walk-away
         // and the downstream look-aways move with it.
         val sides = listOf(lookAway(now - 25 * MIN), pose(now - 30 * MIN)) // pose due at now+30min
@@ -217,7 +217,7 @@ class LiveRestPlacementTest {
         fun lookAwayAfter(panels: List<org.example.project.scheduler.model.TaskPanel>, t: Long) =
             panels.filter { it.title == sides[0].title && it.startEpochMillis > t }.minOf { it.startEpochMillis }
 
-        val stale = SchedulerDomain.sideTaskPanels(sides, now)
+        val stale = SchedulerDomain.screenBreakPanels(sides, now)
         assertEquals(now + 30 * MIN, poseStart(stale))
         // Downstream look-away re-anchored to the pose's end + its interval (now+35min+20min).
         assertEquals(now + 55 * MIN, lookAwayAfter(stale, poseStart(stale)))
@@ -225,40 +225,40 @@ class LiveRestPlacementTest {
         // One minute into an ongoing pause: the pose is presumed served at gapStart+5min (= now+4min),
         // so its occurrence moves to now+64min — and the look-away behind it re-anchors to now+89min.
         val gap = SchedulerDomain.liveRestGap(now - MIN, null, now)
-        val fluid = SchedulerDomain.sideTaskPanels(SchedulerDomain.sideTasksForPlacement(sides, gap), now)
+        val fluid = SchedulerDomain.screenBreakPanels(SchedulerDomain.screenBreaksForPlacement(sides, gap), now)
         assertEquals(now + 64 * MIN, poseStart(fluid))
         assertEquals(now + 89 * MIN, lookAwayAfter(fluid, poseStart(fluid)))
     }
 
     @Test
-    fun fill_schedule_folds_the_live_rest_into_side_task_placement() {
-        val s = SchedulerState.empty().copy(sideTasks = listOf(lookAway(now - 25 * MIN)))
+    fun fill_schedule_folds_the_live_rest_into_screen_break_placement() {
+        val s = SchedulerState.empty().copy(screenBreaks = listOf(lookAway(now - 25 * MIN)))
         val gap = ongoing(now - 5 * MIN, now)
         val side = SchedulerDomain.fillSchedule(s, now, liveRest = gap)
-            .filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
+            .filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
         assertEquals(now + 20 * MIN, side.startEpochMillis)
         // Default (no liveRest) keeps the stale grid slot — the pre-overlay behavior.
         val stale = SchedulerDomain.fillSchedule(s, now)
-            .filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
+            .filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
         assertEquals(now + 15 * MIN, stale.startEpochMillis)
     }
 
     // ----- reducer wiring ----------------------------------------------------------------------
 
     @Test
-    fun refresh_schedule_uses_the_injected_live_rest_gap_and_leaves_stored_side_tasks_alone() {
+    fun refresh_schedule_uses_the_injected_live_rest_gap_and_leaves_stored_screen_breaks_alone() {
         val previous = SchedulerReducer.liveRestGap
         SchedulerReducer.liveRestGap = { ongoing(now - 5 * MIN, now) }
         try {
-            val s0 = SchedulerState.empty().copy(sideTasks = listOf(lookAway(now - 25 * MIN)))
+            val s0 = SchedulerState.empty().copy(screenBreaks = listOf(lookAway(now - 25 * MIN)))
             val s1 = SchedulerReducer.reduce(s0, SchedulerIntent.RefreshSchedule(now))
-            val sidePanels = s1.panels.filter { it.sideTask }
+            val sidePanels = s1.panels.filter { it.screenBreak }
             // No look-away panel inside the pause or at the stale now+15min slot; the first occurrence
             // slid a full interval past the pause's end.
             assertTrue(sidePanels.none { it.startEpochMillis in (now - 5 * MIN)..now })
             assertEquals(now + 20 * MIN, sidePanels.minOf { it.startEpochMillis })
             // Placement-only: the stored anchor is untouched (only derives may advance it).
-            assertEquals(now - 25 * MIN, s1.sideTasks[0].lastRestMillis)
+            assertEquals(now - 25 * MIN, s1.screenBreaks[0].lastRestMillis)
         } finally {
             SchedulerReducer.liveRestGap = previous
         }

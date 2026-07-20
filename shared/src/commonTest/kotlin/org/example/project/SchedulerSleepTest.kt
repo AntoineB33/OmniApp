@@ -119,7 +119,7 @@ class SchedulerSleepTest {
     @Test
     fun fill_schedule_projects_the_work_plan_through_a_sleep_window() {
         // Sleep windows are no longer task obstacles: the priority-ordered plan projects straight through
-        // them (like the side tasks) so a user working overnight still sees the best work plan. The panels
+        // them (like the screen breaks) so a user working overnight still sees the best work plan. The panels
         // are rendered tinted, under the "Sleep" band (see CalendarUi), but they are real auto panels here.
         val now = utc(2024, 1, 1, 10, 0)
         val state = soloTask().copy(sleep = SchedulerDomain.DEFAULT_SLEEP)
@@ -152,25 +152,25 @@ class SchedulerSleepTest {
     }
 
     @Test
-    fun side_tasks_are_projected_across_a_sleep_window() {
+    fun screen_breaks_are_projected_across_a_sleep_window() {
         // PRD §15: a user may work at the computer during the night, so the eye-rest / pose cues keep firing
         // straight through the nightly sleep windows (and render over the "Sleep" band). The projection no
-        // longer skips sleep, so at least one side task starts inside each night's window.
+        // longer skips sleep, so at least one screen break starts inside each night's window.
         val now = utc(2024, 1, 1, 10, 0)
         val to = now + 2L * 24 * HOUR_MS
         val regions = SchedulerDomain.sleepRegions(SchedulerDomain.DEFAULT_SLEEP, now, to, tz)
         assertTrue(regions.isNotEmpty())
-        val sides = SchedulerDomain.sideTaskPanels(SchedulerDomain.DEFAULT_SIDE_TASKS, now, to)
+        val sides = SchedulerDomain.screenBreakPanels(SchedulerDomain.DEFAULT_SCREEN_BREAKS, now, to)
         regions.forEach { r ->
             assertTrue(
                 sides.any { it.startEpochMillis >= r.startEpochMillis && it.startEpochMillis < r.endEpochMillis },
-                "no side task projected inside the sleep window [${r.startEpochMillis},${r.endEpochMillis}]",
+                "no screen break projected inside the sleep window [${r.startEpochMillis},${r.endEpochMillis}]",
             )
         }
     }
 
     @Test
-    fun a_sleep_window_breaks_the_display_merge_even_when_side_task_gaps_are_bridged() {
+    fun a_sleep_window_breaks_the_display_merge_even_when_screen_break_gaps_are_bridged() {
         // Two same-task panels straddling tonight's [23:00, 07:30] sleep window.
         val taskId = TaskId("t")
         val a = TaskPanel("a", taskId, "Solo", utc(2024, 1, 1, 20, 0), utc(2024, 1, 1, 23, 0), auto = true)
@@ -183,9 +183,9 @@ class SchedulerSleepTest {
     }
 
     @Test
-    fun a_side_task_gap_inside_a_sleep_window_still_bridges_when_side_tasks_are_hidden() {
+    fun a_screen_break_gap_inside_a_sleep_window_still_bridges_when_screen_breaks_are_hidden() {
         // Regression: work is now scheduled straight through the night, so a same-task run inside the
-        // [23:00, 07:30] sleep window is split by pose-cue side tasks. Hiding side tasks must fuse those
+        // [23:00, 07:30] sleep window is split by pose-cue screen breaks. Hiding screen breaks must fuse those
         // pieces into one continuous block — the sleep band overlaps the gap but does not sit *inside* it,
         // so it must not cut the run (the previous "any sleep overlap" guard left a hole during sleep).
         val taskId = TaskId("t")

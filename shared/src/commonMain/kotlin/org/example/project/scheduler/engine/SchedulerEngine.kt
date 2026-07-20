@@ -23,7 +23,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.DebugFlags
 import org.example.project.scheduler.domain.SchedulerDomain
-import org.example.project.scheduler.model.SideTask
+import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
@@ -105,6 +105,11 @@ private const val ACTIVE_SESSION_BEAT_MILLIS_PROD: Long = 30L * 1_000
 // reads as inactive within a minute without relying on a finalize ever running. The lease deliberately
 // over-reports by up to one minute after the last renewal — that IS the spec's granularity.
 private const val PHONE_SESSION_LEASE_MILLIS: Long = 60L * 1_000
+
+// The phone's foreground-lease length. (The debug fast-break override now retimes only the 5-min break's
+// interval/duration — not this lease — so the lease keeps its production one-minute granularity. Live cross-
+// device presence is the WebSocket, which drops within moments of a lock/suspend regardless of this lease.)
+private fun phoneSessionLeaseMillis(): Long = PHONE_SESSION_LEASE_MILLIS
 
 // The now-line display cadence while time is ACCELERATED. Fine enough that the now-line glides instead of
 // jumping once per schedule tick (the reported x300 "jumps" anomaly) — on the phone as well as the desktop.
@@ -326,18 +331,18 @@ class SchedulerEngine(
                 refreshAuth = { gateway.refreshRealtimeAuth() },
             ).also { it.start() }
         }
-        // PRD §15: every reducer refill folds this device's live ongoing/held pause into side-task
-        // PLACEMENT (SchedulerDomain.sideTasksForPlacement), so side-task panels slide with a pause the
+        // PRD §15: every reducer refill folds this device's live ongoing/held pause into screen-break
+        // PLACEMENT (SchedulerDomain.screenBreaksForPlacement), so screen-break panels slide with a pause the
         // derives haven't banked yet — the now-line can no longer cross a stale look-away slot and fire a
         // spurious cue mid-pause, and a rest pose re-places itself the moment the pause has lasted its
         // duration (fluid under an accelerated leap; no post-leap snap when the derive lands). Placement-
         // only: the stored lastRestMillis still advances only via the derives' forward-only seeding
-        // ([applySeededSideTasks]).
+        // ([applySeededScreenBreaks]).
         SchedulerReducer.liveRestGap = {
             SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, clock.nowMillis())
         }
         launchAdvanceTick()
-        launchSideTaskSeeding()
+        launchScreenBreakSeeding()
         launchTreeChangeReschedule()
         launchHorizonReschedule()
         launchPendingRescheduleOnSwitch()
@@ -412,18 +417,18 @@ class SchedulerEngine(
     private fun dispatchScheduleAdvance(now: Long) {
         val current = vm.state.value
         // A refill (not just an advance) is needed when a restBreak pose is overdue (it re-pins to the
-        // now-line), or when the live pause overlay would move a side task's placement — an ongoing gap
+        // now-line), or when the live pause overlay would move a screen break's placement — an ongoing gap
         // keeps re-presuming/re-satisfying, so the projected grid moves ahead of the racing now-line
         // instead of being crossed at (or frozen behind) a stale slot. RefreshSchedule is a non-syncing
         // intent, so this refill makes zero server writes (sync-gating rule).
         val liveRest = SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, now)
-        val sideTaskDue =
+        val screenBreakDue =
             current.automaticSchedule &&
                 (
-                    current.sideTasks.any { it.restBreak && SchedulerDomain.isSideTaskOverdue(it, now) } ||
-                        SchedulerDomain.sideTasksForPlacement(current.sideTasks, liveRest) != current.sideTasks
+                    current.screenBreaks.any { it.restBreak && SchedulerDomain.isScreenBreakOverdue(it, now) } ||
+                        SchedulerDomain.screenBreaksForPlacement(current.screenBreaks, liveRest) != current.screenBreaks
                     )
-        if (sideTaskDue) {
+        if (screenBreakDue) {
             vm.dispatch(SchedulerIntent.RefreshSchedule(now))
         } else {
             vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
@@ -561,12 +566,12 @@ class SchedulerEngine(
         }
     }
 
-    // PRD §15: at launch, seed each side task's last-rest time from the last qualifying pause — this device's
+    // PRD §15: at launch, seed each screen break's last-rest time from the last qualifying pause — this device's
     // OS sleep log (Windows) AND every device's synced sleep gaps already in the local store. The gap seeding is
     // what a phone (no readable OS sleep log) relies on to inherit the account's rests instead of showing a rest
-    // pose pinned to the now-line the desktop doesn't have. Side-task config is recomputed, never persisted.
-    private fun launchSideTaskSeeding() = scope.launch {
-        val before = vm.state.value.sideTasks
+    // pose pinned to the now-line the desktop doesn't have. Screen-break config is recomputed, never persisted.
+    private fun launchScreenBreakSeeding() = scope.launch {
+        val before = vm.state.value.screenBreaks
         val restedTasks = withContext(Dispatchers.Default) {
             val fromOsLog = before.map { side ->
                 if (side.durationMillis <= 0) {
@@ -576,18 +581,18 @@ class SchedulerEngine(
                     if (lastRest != null) side.copy(lastRestMillis = lastRest) else side
                 }
             }
-            SchedulerDomain.seedSideTasksFromGaps(fromOsLog, loadStoredGaps())
+            SchedulerDomain.seedScreenBreaksFromGaps(fromOsLog, loadStoredGaps())
         }
-        applySeededSideTasks(restedTasks)
+        applySeededScreenBreaks(restedTasks)
     }
 
     // PRD §15: after a pull brings in another device's exact sleep gaps, re-seed the rest poses from every gap now
     // in the local store — advancing `lastRestMillis` only (no work records / panel carving; see
-    // [SchedulerDomain.seedSideTasksFromGaps]). This is the account-wide-pause signal reaching a device that never
+    // [SchedulerDomain.seedScreenBreaksFromGaps]). This is the account-wide-pause signal reaching a device that never
     // slept, so its derived 5/15-min poses line up with the peer that recorded the sleep.
-    private fun reseedSideTasksFromGaps() {
-        val before = vm.state.value.sideTasks
-        applySeededSideTasks(SchedulerDomain.seedSideTasksFromGaps(before, loadStoredGaps()))
+    private fun reseedScreenBreaksFromGaps() {
+        val before = vm.state.value.screenBreaks
+        applySeededScreenBreaks(SchedulerDomain.seedScreenBreaksFromGaps(before, loadStoredGaps()))
     }
 
     private fun loadStoredGaps(): List<TaskTimeRange> =
@@ -618,7 +623,7 @@ class SchedulerEngine(
             // too under the desktop time-link, where DebugFlags.TIME_SIMULATION is off. The phone renews its
             // one-minute foreground lease once per lease length ("adds [now, now+1 min] every minute").
             val prodBeat =
-                if (deviceKind == DeviceKind.Phone) PHONE_SESSION_LEASE_MILLIS else ACTIVE_SESSION_BEAT_MILLIS_PROD
+                if (deviceKind == DeviceKind.Phone) phoneSessionLeaseMillis() else ACTIVE_SESSION_BEAT_MILLIS_PROD
             tickDelay(if (timeAccelerated()) ACTIVE_SESSION_BEAT_MILLIS_SIM else prodBeat)
         }
     }
@@ -627,7 +632,7 @@ class SchedulerEngine(
     // LEASE (`now + 1 min` — foreground is its only activity signal, renewed each beat, expiring on its own
     // if the app is backgrounded/killed); other devices claim only what the beat observed (`now`).
     private fun sessionClaimEnd(now: Long): Long =
-        if (deviceKind == DeviceKind.Phone) now + PHONE_SESSION_LEASE_MILLIS else now
+        if (deviceKind == DeviceKind.Phone) now + phoneSessionLeaseMillis() else now
 
     // Patch [activeSessions] in-memory with an updated row (keyed by device+start), keeping it sorted like
     // the store's load. Cheaper than re-reading the whole table on every beat.
@@ -681,7 +686,7 @@ class SchedulerEngine(
         val presence = realtimePresence ?: return
         val active = effectiveScreenActive() && gateway.signedIn
         val now = clock.nowMillis()
-        val window = nextRestPoseWindowMillis(vm.state.value.panels, vm.state.value.sideTasks, now)
+        val window = nextRestPoseWindowMillis(vm.state.value.panels, vm.state.value.screenBreaks, now)
         presence.setPresence(
             if (active) {
                 PresenceState(
@@ -689,7 +694,7 @@ class SchedulerEngine(
                     kind = deviceKind.name.lowercase(),
                     nextBreakEndMillis = nextRestPoseEndMillis(
                         vm.state.value.panels,
-                        vm.state.value.sideTasks,
+                        vm.state.value.screenBreaks,
                         now,
                     ),
                     // PRD §15: the pose window, so the listener computes the pause end from the REAL
@@ -777,8 +782,8 @@ class SchedulerEngine(
         // "Inactivity" tail once a session is open again. While still inactive the tail stays, so the band
         // keeps growing between derives.
         activeSessionMutex.withLock { if (currentSession != null) _inactiveSince.value = null }
-        val before = vm.state.value.sideTasks
-        applySeededSideTasks(SchedulerDomain.seedSideTasksFromGaps(before, pauses))
+        val before = vm.state.value.screenBreaks
+        applySeededScreenBreaks(SchedulerDomain.seedScreenBreaksFromGaps(before, pauses))
         // PRD §17: a fresh derive (startup, sync-pull) may reveal a scheduled sleep window was inactive — record
         // the observed part as a past "Sleep" panel now, not only on the next schedule advance.
         maybeMaterializePastSleep(until)
@@ -808,19 +813,19 @@ class SchedulerEngine(
     }
 
     // PRD §15: install freshly-seeded rest times. Rest evidence only ever reveals a MORE-RECENT rest, so this
-    // is **monotonic** — it folds [rested] into the LIVE side tasks and never moves a pose's `lastRestMillis`
+    // is **monotonic** — it folds [rested] into the LIVE screen breaks and never moves a pose's `lastRestMillis`
     // backward. This is essential because the two seeders run concurrently and off-thread against a snapshot
-    // captured when they started: the slow OS-log query ([launchSideTaskSeeding], an up-to-8s PowerShell call
+    // captured when they started: the slow OS-log query ([launchScreenBreakSeeding], an up-to-8s PowerShell call
     // built from the startup state where `lastRestMillis == 0`) can land AFTER [refreshDerivedPauses] has
     // already advanced the poses to `now` (the leading account-wide pause on a freshly-opened account ends at
     // the now-line). A wholesale overwrite would then drag `lastRestMillis` back to the morning wake and
     // re-pin the 5-/15-min pose to the now-line — the reported empty-account anomaly. Merging forward makes
     // the apply order irrelevant.
-    private fun applySeededSideTasks(rested: List<SideTask>) {
-        val live = vm.state.value.sideTasks
+    private fun applySeededScreenBreaks(rested: List<ScreenBreak>) {
+        val live = vm.state.value.screenBreaks
         val merged = SchedulerDomain.advanceRestsForward(live, rested)
         if (merged != live) {
-            vm.dispatch(SchedulerIntent.SetSideTasks(merged))
+            vm.dispatch(SchedulerIntent.SetScreenBreaks(merged))
             vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
         }
     }
@@ -872,7 +877,7 @@ class SchedulerEngine(
     // look-away's boundary came first. Here they share one [cueSweep] window and one sorted firing list.
     //
     // Leap-safety per cue is preserved and unified in [SchedulerDomain.cueCrossings]: look-away starts come
-    // from the mathematical [SchedulerDomain.sideTaskOccurrencesBetween] reconstruction (NOT `state.panels`,
+    // from the mathematical [SchedulerDomain.screenBreakOccurrencesBetween] reconstruction (NOT `state.panels`,
     // whose forward projection drops an occurrence the instant `now` passes it — the earlier look-away that
     // vanished in the report), and the rest-pose is the level `now >= due` reach that a jump can't skip.
     // Real-age staleness ([BoundarySweep.realLatenessMillis]), the screen-active gate, resume-cue arming and
@@ -896,7 +901,7 @@ class SchedulerEngine(
                         .filter { it.sleep }
                         .map { it.startEpochMillis - SchedulerDomain.NO_TASK_BEFORE_BED_MILLIS }
                     val crossings = SchedulerDomain.cueCrossings(
-                        sideTasks = st.sideTasks,
+                        screenBreaks = st.screenBreaks,
                         windDownInstants = windDownInstants,
                         automaticSchedule = st.automaticSchedule,
                         alreadyNotifiedPoseDues = sidePoseNotifiedDue,
@@ -1022,7 +1027,7 @@ class SchedulerEngine(
                     firings.sortedWith(compareBy({ it.instant }, { it.tie })).forEach { it.run() }
 
                     // Keep the pose de-dupe map bounded: retain only still-existing rest-pose titles.
-                    val restTitles = st.sideTasks.filter { it.restBreak }.map { it.title }.toSet()
+                    val restTitles = st.screenBreaks.filter { it.restBreak }.map { it.title }.toSet()
                     sidePoseNotifiedDue = sidePoseNotifiedDue.filterKeys { it in restTitles }
 
                     // Self-delay to the next boundary across every cue kind, so a cue fires at its instant and
@@ -1030,13 +1035,13 @@ class SchedulerEngine(
                     // look-away / wind-down come from the projection, which keeps FUTURE occurrences; the next
                     // pose due is arithmetic.
                     val nextStart = st.panels
-                        .filter { p -> p.sideTask && st.sideTasks.any { !it.restBreak && it.title == p.title } }
+                        .filter { p -> p.screenBreak && st.screenBreaks.any { !it.restBreak && it.title == p.title } }
                         .map { it.startEpochMillis }
                         .filter { it > simNow && it !in announcedStarts }.minOrNull()
                     val nextEnd = pendingEnds.filter { it > simNow }.minOrNull()
                     val nextWind = windDownInstants.filter { it > simNow && it !in announcedWindDowns }.minOrNull()
                     val nextPose = if (st.automaticSchedule) {
-                        st.sideTasks
+                        st.screenBreaks
                             .filter { it.restBreak && it.intervalMillis > 0 && it.durationMillis > 0 && it.title.isNotBlank() }
                             .map { it.lastRestMillis + it.intervalMillis }
                             .filter { it > simNow }.minOrNull()
@@ -1057,13 +1062,13 @@ class SchedulerEngine(
     fun restartLookAway() {
         val now = clock.nowMillis()
         val st = vm.state.value
-        val lookAway = st.sideTasks.firstOrNull { !it.restBreak } ?: return
+        val lookAway = st.screenBreaks.firstOrNull { !it.restBreak } ?: return
         stopSpeaking()
         pendingEnds = emptySet()
         manualLookAwayJob?.cancel()
         vm.dispatch(
-            SchedulerIntent.SetSideTasks(
-                st.sideTasks.map { if (!it.restBreak) it.copy(lastRestMillis = now) else it },
+            SchedulerIntent.SetScreenBreaks(
+                st.screenBreaks.map { if (!it.restBreak) it.copy(lastRestMillis = now) else it },
             ),
         )
         if (st.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(now))
@@ -1135,7 +1140,7 @@ class SchedulerEngine(
             val recordedAt = SystemAppClock.nowMillis()
             val records = gaps.map { SleepGapRecord(activeSessionDeviceId, it.startMillis, it.endMillis, recordedAt) }
             store.saveSleepGaps(records)
-            reseedSideTasksFromGaps()
+            reseedScreenBreaksFromGaps()
         }
     }
 
@@ -1213,12 +1218,12 @@ class SchedulerEngine(
         /**
          * PRD §15: the end instant of the next 5/15-min rest pose strictly after [now], or null if none is
          * scheduled — the `next_break_end_ms` this device publishes in its Realtime presence so the external
-         * listener can fire the pause-end cue at that instant. A pose is a `sideTask` panel whose title matches
-         * a `restBreak` side task.
+         * listener can fire the pause-end cue at that instant. A pose is a `screenBreak` panel whose title matches
+         * a `restBreak` screen break.
          */
-        internal fun nextRestPoseEndMillis(panels: List<TaskPanel>, sideTasks: List<SideTask>, now: Long): Long? =
+        internal fun nextRestPoseEndMillis(panels: List<TaskPanel>, screenBreaks: List<ScreenBreak>, now: Long): Long? =
             panels.asSequence()
-                .filter { p -> p.sideTask && sideTasks.any { it.restBreak && it.title == p.title } }
+                .filter { p -> p.screenBreak && screenBreaks.any { it.restBreak && it.title == p.title } }
                 .map { it.endEpochMillis }
                 .filter { it > now }
                 .minOrNull()
@@ -1232,11 +1237,11 @@ class SchedulerEngine(
          */
         internal fun nextRestPoseWindowMillis(
             panels: List<TaskPanel>,
-            sideTasks: List<SideTask>,
+            screenBreaks: List<ScreenBreak>,
             now: Long,
         ): Pair<Long, Long>? =
             panels.asSequence()
-                .filter { p -> p.sideTask && sideTasks.any { it.restBreak && it.title == p.title } }
+                .filter { p -> p.screenBreak && screenBreaks.any { it.restBreak && it.title == p.title } }
                 .filter { it.endEpochMillis > now }
                 .minByOrNull { it.startEpochMillis }
                 ?.let { it.startEpochMillis to (it.endEpochMillis - it.startEpochMillis) }

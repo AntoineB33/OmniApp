@@ -11,7 +11,7 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import org.example.project.scheduler.domain.SchedulerDomain
-import org.example.project.scheduler.model.SideTask
+import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.TaskPanel
@@ -307,11 +307,11 @@ class SchedulerSchedulerTest {
         assertTrue(share in 0.45..0.55, "B should still get ~50% in-window (no catch-up), got $share")
     }
 
-    // ----- §15 Side tasks --------------------------------------------------------------------
+    // ----- §15 Screen breaks --------------------------------------------------------------------
 
     @Test
-    fun side_task_projection_matches_the_prd_example() {
-        // PRD §15: with no pause taken for hours (all overdue), the default side tasks project forward from
+    fun screen_break_projection_matches_the_prd_example() {
+        // PRD §15: with no pause taken for hours (all overdue), the default screen breaks project forward from
         // `now` as the worked example: a 15-min pose now, look-aways every 20 min, a 5-min pose at +1h15, a
         // 15-min pose at +2h15 — and after every pose the look-away restarts 20 min after the pause ENDS
         // ("after a ≥20-second pause, the next look-away is 20 minutes later").
@@ -319,7 +319,7 @@ class SchedulerSchedulerTest {
         val la = "look 20 feet away"
         val p5 = "take a 5min pose and blink hard"
         val p15 = "take a 15min pose"
-        val panels = SchedulerDomain.sideTaskPanels(SchedulerDomain.DEFAULT_SIDE_TASKS, now)
+        val panels = SchedulerDomain.screenBreakPanels(SchedulerDomain.DEFAULT_SCREEN_BREAKS, now)
             .sortedBy { it.startEpochMillis }
 
         val firstEight = panels.take(8).map { it.title to (it.startEpochMillis - now) }
@@ -338,21 +338,21 @@ class SchedulerSchedulerTest {
         )
         // The 15-min pose at t0 spans a real 15 min; every panel is a null-task side panel.
         assertEquals(now + 15 * MIN, panels.first().endEpochMillis)
-        assertTrue(panels.all { it.sideTask && it.taskId == null })
+        assertTrue(panels.all { it.screenBreak && it.taskId == null })
         // The 5-min pose that would fall ~t0+2h20 is re-anchored past the t0+2h15 pose (to 1h after it ends).
         assertTrue(panels.none { it.title == p5 && it.startEpochMillis in (now + 2 * 60 * MIN)..(now + 145 * MIN) })
     }
 
     @Test
-    fun side_tasks_project_to_the_given_horizon_beyond_the_default() {
+    fun screen_breaks_project_to_the_given_horizon_beyond_the_default() {
         // PRD §15: the calendar passes the focused week's end as the horizon so navigating past the default
-        // 168h scheduling window still shows side-task markers. The shared prefix is unchanged — extending
+        // 168h scheduling window still shows screen-break markers. The shared prefix is unchanged — extending
         // the horizon only appends later occurrences.
         val now = 1_000_000_000_000L
-        val sides = listOf(SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now))
-        val defaultPanels = SchedulerDomain.sideTaskPanels(sides, now)
+        val sides = listOf(ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now))
+        val defaultPanels = SchedulerDomain.screenBreakPanels(sides, now)
         val twoWeeksOut = now + 14L * 24 * HOUR_MS
-        val extendedPanels = SchedulerDomain.sideTaskPanels(sides, now, twoWeeksOut)
+        val extendedPanels = SchedulerDomain.screenBreakPanels(sides, now, twoWeeksOut)
 
         assertTrue(extendedPanels.size > defaultPanels.size)
         assertTrue(defaultPanels.last().startEpochMillis <= now + SchedulerDomain.SCHEDULE_HORIZON_MILLIS)
@@ -362,68 +362,68 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun side_task_next_start_clamps_rest_poses_to_now_but_advances_the_look_away_along_its_grid() {
+    fun screen_break_next_start_clamps_rest_poses_to_now_but_advances_the_look_away_along_its_grid() {
         val now = 1_000_000_000_000L
 
         // A rest pose is detectable, so an overdue one clamps to the now-line and waits there.
-        val pose = SideTask("Pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now - 90 * MIN)
-        assertEquals(now, SchedulerDomain.sideTaskNextStart(pose, now))
-        assertTrue(SchedulerDomain.isSideTaskOverdue(pose, now))
+        val pose = ScreenBreak("Pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now - 90 * MIN)
+        assertEquals(now, SchedulerDomain.screenBreakNextStart(pose, now))
+        assertTrue(SchedulerDomain.isScreenBreakOverdue(pose, now))
 
         // The look-away up to date (rested 5 min ago, 20-min interval): next is 15 min ahead.
-        val fresh = SideTask("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 5 * MIN)
-        assertEquals(now + 15 * MIN, SchedulerDomain.sideTaskNextStart(fresh, now))
-        assertFalse(SchedulerDomain.isSideTaskOverdue(fresh, now))
+        val fresh = ScreenBreak("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 5 * MIN)
+        assertEquals(now + 15 * MIN, SchedulerDomain.screenBreakNextStart(fresh, now))
+        assertFalse(SchedulerDomain.isScreenBreakOverdue(fresh, now))
 
         // The look-away overdue (rested 25 min ago): its grid is …, now-5min, now+15min, … . The now-5min slot
         // has fully elapsed, so it is assumed done and the next start advances to now+15min — NOT to the
         // now-line (clamping to `now` would make the un-trackable look-away slide and the voice cue repeat).
         val late = fresh.copy(lastRestMillis = now - 25 * MIN)
-        assertEquals(now + 15 * MIN, SchedulerDomain.sideTaskNextStart(late, now))
+        assertEquals(now + 15 * MIN, SchedulerDomain.screenBreakNextStart(late, now))
 
         // The grid is anchored at lastRest, not at `now`: advancing `now` within a slot does not move it.
         assertEquals(
-            SchedulerDomain.sideTaskNextStart(late, now),
-            SchedulerDomain.sideTaskNextStart(late, now + 1),
+            SchedulerDomain.screenBreakNextStart(late, now),
+            SchedulerDomain.screenBreakNextStart(late, now + 1),
         )
 
         // Never rested: still anchored to a fixed grid (not slid to the now-line) and live around `now`.
         val never = fresh.copy(lastRestMillis = 0L)
-        val neverStart = SchedulerDomain.sideTaskNextStart(never, now)
-        assertEquals(neverStart, SchedulerDomain.sideTaskNextStart(never, now + 1))
+        val neverStart = SchedulerDomain.screenBreakNextStart(never, now)
+        assertEquals(neverStart, SchedulerDomain.screenBreakNextStart(never, now + 1))
         assertTrue(neverStart + never.durationMillis > now && neverStart <= now + 20 * MIN)
     }
 
     @Test
-    fun seed_side_tasks_from_gaps_advances_rest_poses_so_a_peer_sleep_lines_up_across_devices() {
+    fun seed_screen_breaks_from_gaps_advances_rest_poses_so_a_peer_sleep_lines_up_across_devices() {
         val now = 1_000_000_000_000L
         // The phone's derived poses with no local rest (Android has no readable OS sleep log): both overdue,
         // so both would be pinned to the now-line — the phantom "15-min pause" the desktop doesn't show.
         val poses = listOf(
-            SideTask("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = 0L),
-            SideTask("15min", intervalMillis = 2 * HOUR_MS, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = 0L),
+            ScreenBreak("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = 0L),
+            ScreenBreak("15min", intervalMillis = 2 * HOUR_MS, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = 0L),
         )
-        assertEquals(now, SchedulerDomain.sideTaskNextStart(poses[0], now))
-        assertEquals(now, SchedulerDomain.sideTaskNextStart(poses[1], now))
+        assertEquals(now, SchedulerDomain.screenBreakNextStart(poses[0], now))
+        assertEquals(now, SchedulerDomain.screenBreakNextStart(poses[1], now))
 
         // The desktop synced a 20-min sleep that ended 30 min ago. A 20-min pause satisfies both the 5- and
         // 15-min poses (duration ≤ gap length), so both last-rest times advance to the gap's END.
         val gapEnd = now - 30 * MIN
         val gaps = listOf(TaskTimeRange(gapEnd - 20 * MIN, gapEnd))
-        val seeded = SchedulerDomain.seedSideTasksFromGaps(poses, gaps)
+        val seeded = SchedulerDomain.seedScreenBreaksFromGaps(poses, gaps)
         assertEquals(gapEnd, seeded[0].lastRestMillis)
         assertEquals(gapEnd, seeded[1].lastRestMillis)
 
         // With the inherited rest, the 15-min pose is now scheduled ~2h out — no longer at the now-line, so the
         // phone stops showing a pause the desktop doesn't have.
-        assertEquals(gapEnd + 2 * HOUR_MS, SchedulerDomain.sideTaskNextStart(seeded[1], now))
-        assertFalse(SchedulerDomain.isSideTaskOverdue(seeded[1], now))
+        assertEquals(gapEnd + 2 * HOUR_MS, SchedulerDomain.screenBreakNextStart(seeded[1], now))
+        assertFalse(SchedulerDomain.isScreenBreakOverdue(seeded[1], now))
 
         // A gap SHORTER than a pose's duration does not satisfy it (a 10-min sleep isn't a 15-min rest), and a
         // gap OLDER than the current last-rest never moves it backward.
         val shortGap = listOf(TaskTimeRange(now - 10 * MIN, now))
-        assertEquals(0L, SchedulerDomain.seedSideTasksFromGaps(poses, shortGap)[1].lastRestMillis)
-        assertEquals(seeded, SchedulerDomain.seedSideTasksFromGaps(seeded, listOf(TaskTimeRange(gapEnd - 90 * MIN, gapEnd - 60 * MIN))))
+        assertEquals(0L, SchedulerDomain.seedScreenBreaksFromGaps(poses, shortGap)[1].lastRestMillis)
+        assertEquals(seeded, SchedulerDomain.seedScreenBreaksFromGaps(seeded, listOf(TaskTimeRange(gapEnd - 90 * MIN, gapEnd - 60 * MIN))))
     }
 
     @Test
@@ -436,26 +436,26 @@ class SchedulerSchedulerTest {
         val now = 1_000_000_000_000L
         val morningWake = now - 3 * HOUR_MS
         val derivedSeed = listOf(
-            SideTask("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now),
+            ScreenBreak("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now),
         )
         val osLogSeedFromStale = listOf(
-            SideTask("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = morningWake),
+            ScreenBreak("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = morningWake),
         )
         // Derived-pause seed applied first (live = now); the stale OS-log seed lands second and must NOT win.
         val merged = SchedulerDomain.advanceRestsForward(derivedSeed, osLogSeedFromStale)
         assertEquals(now, merged[0].lastRestMillis)
-        assertEquals(now + 60 * MIN, SchedulerDomain.sideTaskNextStart(merged[0], now))
-        assertFalse(SchedulerDomain.isSideTaskOverdue(merged[0], now))
+        assertEquals(now + 60 * MIN, SchedulerDomain.screenBreakNextStart(merged[0], now))
+        assertFalse(SchedulerDomain.isScreenBreakOverdue(merged[0], now))
         // Symmetric: a fresher seed applied over an older live value DOES advance it forward.
         assertEquals(now, SchedulerDomain.advanceRestsForward(osLogSeedFromStale, derivedSeed)[0].lastRestMillis)
     }
 
     @Test
-    fun a_cadence_side_task_recurs_an_interval_after_it_starts() {
+    fun a_cadence_screen_break_recurs_an_interval_after_it_starts() {
         // PRD §15: the look-away (non-rest) recurs an interval after it STARTS (its length is negligible).
         val now = 1_000_000_000_000L
-        val sides = listOf(SideTask("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 5 * MIN))
-        val panels = SchedulerDomain.sideTaskPanels(sides, now).sortedBy { it.startEpochMillis }
+        val sides = listOf(ScreenBreak("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 5 * MIN))
+        val panels = SchedulerDomain.screenBreakPanels(sides, now).sortedBy { it.startEpochMillis }
 
         assertEquals(now + 15 * MIN, panels[0].startEpochMillis) // lastRest + interval
         assertEquals(now + 15 * MIN + 20_000L, panels[0].endEpochMillis) // 20-s span
@@ -470,19 +470,19 @@ class SchedulerSchedulerTest {
         // Look-away (non-rest), last looked away 25 min ago on a 20-min grid: the now-5min slot has elapsed and
         // is assumed done (the app can't detect a look-away), so the next occurrence is placed at now+15min —
         // NOT pinned at the now-line. (Contrast fill_schedule_places_an_overdue_rest_pause_at_now.)
-        val s = s0.copy(sideTasks = listOf(SideTask("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 25 * MIN)))
-        val side = SchedulerDomain.fillSchedule(s, now).filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
+        val s = s0.copy(screenBreaks = listOf(ScreenBreak("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 25 * MIN)))
+        val side = SchedulerDomain.fillSchedule(s, now).filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
         assertEquals(now + 15 * MIN, side.startEpochMillis)
         assertEquals(now + 15 * MIN + 20_000L, side.endEpochMillis)
     }
 
     @Test
-    fun last_side_task_before_returns_the_look_away_when_it_is_the_most_recent_past_occurrence() {
+    fun last_screen_break_before_returns_the_look_away_when_it_is_the_most_recent_past_occurrence() {
         // PRD §15 manual redo: occurrences are at lastRest + k·interval (k≥1). With lastRest 25 min ago on a
         // 20-min grid, the most recent occurrence before now is at now-5min (k=1); now+15min (k=2) is future.
         val now = 1_000_000_000_000L
-        val sides = listOf(SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 25 * MIN))
-        val last = SchedulerDomain.lastSideTaskBefore(sides, now)
+        val sides = listOf(ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 25 * MIN))
+        val last = SchedulerDomain.lastScreenBreakBefore(sides, now)
         assertNotNull(last)
         assertEquals("look 20 feet away", last.title)
         assertEquals(now - 5 * MIN, last.startEpochMillis)
@@ -490,40 +490,40 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun last_side_task_before_returns_the_pose_right_after_a_pose_was_taken() {
+    fun last_screen_break_before_returns_the_pose_right_after_a_pose_was_taken() {
         // PRD §15 manual redo: a pose taken 3 min ago (lastRest), with the look-away re-anchored to that
-        // pose's end — so within the first 20 min after the pose, the most recent past side task is the pose,
+        // pose's end — so within the first 20 min after the pose, the most recent past screen break is the pose,
         // not a look-away. The button must therefore be hidden in that window.
         val now = 1_000_000_000_000L
         val poseStart = now - 3 * MIN
         val sides = listOf(
             // Look-away last rested at the pose's end (device-sleep semantics), so its next start is pose+20min (future).
-            SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = poseStart + 5 * MIN),
+            ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = poseStart + 5 * MIN),
             // 5-min pose whose last occurrence STARTED 3 min ago (interval before that puts the grid point in-window).
-            SideTask("pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = poseStart - 60 * MIN),
+            ScreenBreak("pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = poseStart - 60 * MIN),
         )
-        val last = SchedulerDomain.lastSideTaskBefore(sides, now)
+        val last = SchedulerDomain.lastScreenBreakBefore(sides, now)
         assertNotNull(last)
         assertEquals("pose", last.title)
     }
 
     @Test
-    fun last_side_task_before_is_null_when_there_are_no_side_tasks_or_none_before_now() {
+    fun last_screen_break_before_is_null_when_there_are_no_screen_breaks_or_none_before_now() {
         val now = 1_000_000_000_000L
-        assertNull(SchedulerDomain.lastSideTaskBefore(emptyList(), now))
+        assertNull(SchedulerDomain.lastScreenBreakBefore(emptyList(), now))
         // A look-away that has never occurred before now: its first occurrence is in the future.
-        val future = listOf(SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now))
-        assertNull(SchedulerDomain.lastSideTaskBefore(future, now))
+        val future = listOf(ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now))
+        assertNull(SchedulerDomain.lastScreenBreakBefore(future, now))
     }
 
     @Test
-    fun last_side_task_before_returns_an_occurrence_even_inside_a_sleep_window() {
-        // PRD §15: side tasks project straight through sleep windows now, so an occurrence whose start lands
-        // in what would be a sleep window is still a real "last past side task" (a user working overnight).
+    fun last_screen_break_before_returns_an_occurrence_even_inside_a_sleep_window() {
+        // PRD §15: screen breaks project straight through sleep windows now, so an occurrence whose start lands
+        // in what would be a sleep window is still a real "last past screen break" (a user working overnight).
         val now = 1_000_000_000_000L
         // Grid points (lastRest 45 min ago, 20-min interval): now-25min, now-5min, now+15min(future).
-        val sides = listOf(SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 45 * MIN))
-        val last = SchedulerDomain.lastSideTaskBefore(sides, now)
+        val sides = listOf(ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 45 * MIN))
+        val last = SchedulerDomain.lastScreenBreakBefore(sides, now)
         assertNotNull(last)
         // The most recent grid point before now (now-5min) is returned, not the earlier one.
         assertEquals(now - 5 * MIN, last.startEpochMillis)
@@ -532,11 +532,11 @@ class SchedulerSchedulerTest {
     @Test
     fun taking_a_look_away_now_re_anchors_the_cadence_so_the_next_look_away_is_one_interval_out() {
         // PRD §15 manual redo "updates the calendar": setting the look-away's lastRest to now (what the
-        // SetSideTasks dispatch does) moves its next projected occurrence to now + interval.
+        // SetScreenBreaks dispatch does) moves its next projected occurrence to now + interval.
         val now = 1_000_000_000_000L
-        val sides = listOf(SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 5 * MIN))
+        val sides = listOf(ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 5 * MIN))
         val taken = sides.map { it.copy(lastRestMillis = now) }
-        val next = SchedulerDomain.sideTaskPanels(taken, now).minByOrNull { it.startEpochMillis }!!
+        val next = SchedulerDomain.screenBreakPanels(taken, now).minByOrNull { it.startEpochMillis }!!
         assertEquals(now + 20 * MIN, next.startEpochMillis)
     }
 
@@ -546,11 +546,11 @@ class SchedulerSchedulerTest {
         // the 5-min pose becomes a 15-min pose at now, and the 15-min pose is pushed to now + 2h15.
         val now = 1_000_000_000_000L
         val sides = listOf(
-            SideTask("take a 5min pose and blink hard", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true),
+            ScreenBreak("take a 5min pose and blink hard", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true),
             // lastRest so the 15-min pose's next start is now + 2 min (just inside the 5-min pose's window).
-            SideTask("take a 15min pose", intervalMillis = 2 * 60 * MIN, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = now + 2 * MIN - 2 * 60 * MIN),
+            ScreenBreak("take a 15min pose", intervalMillis = 2 * 60 * MIN, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = now + 2 * MIN - 2 * 60 * MIN),
         )
-        val panels = SchedulerDomain.sideTaskPanels(sides, now).sortedBy { it.startEpochMillis }
+        val panels = SchedulerDomain.screenBreakPanels(sides, now).sortedBy { it.startEpochMillis }
 
         // The first pose is a 15-min pose at now (the upgraded 5-min pose), spanning a real 15 min.
         assertEquals("take a 15min pose", panels.first().title)
@@ -569,11 +569,11 @@ class SchedulerSchedulerTest {
         val now = 1_000_000_000_000L
         val look = now + 20 * MIN // the look-away's first start (lastRest + 20-min interval)
         val sides = listOf(
-            SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now),
+            ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now),
             // 15-min pose due at look + 10s, just inside the look-away's [look, look+20s) window.
-            SideTask("take a 15min pose", intervalMillis = 2 * 60 * MIN, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = look + 10_000L - 2 * 60 * MIN),
+            ScreenBreak("take a 15min pose", intervalMillis = 2 * 60 * MIN, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = look + 10_000L - 2 * 60 * MIN),
         )
-        val panels = SchedulerDomain.sideTaskPanels(sides, now).sortedBy { it.startEpochMillis }
+        val panels = SchedulerDomain.screenBreakPanels(sides, now).sortedBy { it.startEpochMillis }
 
         // The first occurrence is the 15-min pose, pulled back to the look-away's start (not the look-away).
         assertEquals("take a 15min pose", panels.first().title)
@@ -586,46 +586,46 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun default_side_tasks_are_the_three_from_the_prd() {
-        val titles = SchedulerDomain.DEFAULT_SIDE_TASKS.map { it.title }
+    fun default_screen_breaks_are_the_three_from_the_prd() {
+        val titles = SchedulerDomain.DEFAULT_SCREEN_BREAKS.map { it.title }
         assertEquals(
             listOf("look 20 feet away", "take a 5min pose and blink hard", "take a 15min pose"),
             titles,
         )
         // The 20s look-away, the 5-min blink pose, the 15-min pose.
-        assertEquals(20 * 1_000L, SchedulerDomain.DEFAULT_SIDE_TASKS[0].durationMillis)
-        assertEquals(20 * MIN, SchedulerDomain.DEFAULT_SIDE_TASKS[0].intervalMillis)
-        assertEquals(2 * 60 * MIN, SchedulerDomain.DEFAULT_SIDE_TASKS[2].intervalMillis)
+        assertEquals(20 * 1_000L, SchedulerDomain.DEFAULT_SCREEN_BREAKS[0].durationMillis)
+        assertEquals(20 * MIN, SchedulerDomain.DEFAULT_SCREEN_BREAKS[0].intervalMillis)
+        assertEquals(2 * 60 * MIN, SchedulerDomain.DEFAULT_SCREEN_BREAKS[2].intervalMillis)
     }
 
     @Test
-    fun the_running_app_seeds_the_default_side_tasks() {
-        // PRD §15: side tasks are a hardcoded set, seeded into the live state (not into bare test states).
+    fun the_running_app_seeds_the_default_screen_breaks() {
+        // PRD §15: screen breaks are a hardcoded set, seeded into the live state (not into bare test states).
         val seeded = TaskSchedulerViewModel.loadInitialState(store = null, initial = SchedulerState.empty())
-        assertEquals(SchedulerDomain.DEFAULT_SIDE_TASKS, seeded.sideTasks)
+        assertEquals(SchedulerDomain.DEFAULT_SCREEN_BREAKS, seeded.screenBreaks)
     }
 
     @Test
-    fun a_side_task_is_overdue_only_when_no_qualifying_rest_within_its_interval() {
+    fun a_screen_break_is_overdue_only_when_no_qualifying_rest_within_its_interval() {
         // PRD §15: a 5-min pose (1h interval) is overdue once the user hasn't rested within the hour.
-        val pause = SideTask("Pause", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true)
+        val pause = ScreenBreak("Pause", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true)
         val now = 1_000_000_000_000L
 
-        assertTrue(SchedulerDomain.isSideTaskOverdue(pause, now)) // never rested (lastRestMillis == 0) → overdue
-        assertTrue(SchedulerDomain.isSideTaskOverdue(pause.copy(lastRestMillis = now - 61 * MIN), now)) // > 1h ago
-        assertFalse(SchedulerDomain.isSideTaskOverdue(pause.copy(lastRestMillis = now - 59 * MIN), now)) // rested 59m ago
+        assertTrue(SchedulerDomain.isScreenBreakOverdue(pause, now)) // never rested (lastRestMillis == 0) → overdue
+        assertTrue(SchedulerDomain.isScreenBreakOverdue(pause.copy(lastRestMillis = now - 61 * MIN), now)) // > 1h ago
+        assertFalse(SchedulerDomain.isScreenBreakOverdue(pause.copy(lastRestMillis = now - 59 * MIN), now)) // rested 59m ago
     }
 
     @Test
-    fun side_task_panels_show_every_pause_overdue_at_now_or_ahead_at_its_due_time() {
+    fun screen_break_panels_show_every_pause_overdue_at_now_or_ahead_at_its_due_time() {
         // PRD §15: an overdue pause's first occurrence sits at the now-line; a recently-rested one's first
         // occurrence is shown ahead at lastRest+interval.
         val now = 1_000_000_000_000L
         val sides = listOf(
-            SideTask("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now - 90 * MIN),
-            SideTask("15min", intervalMillis = 2 * 60 * MIN, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = now - 30 * MIN),
+            ScreenBreak("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now - 90 * MIN),
+            ScreenBreak("15min", intervalMillis = 2 * 60 * MIN, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = now - 30 * MIN),
         )
-        val firstByTitle = SchedulerDomain.sideTaskPanels(sides, now)
+        val firstByTitle = SchedulerDomain.screenBreakPanels(sides, now)
             .groupBy { it.title }
             .mapValues { (_, v) -> v.minByOrNull { it.startEpochMillis }!! }
 
@@ -635,7 +635,7 @@ class SchedulerSchedulerTest {
         // The 15-min pose rested 30 min ago (< 2h) → first shown 90 min ahead (lastRest + 2h). No overlap → no merge.
         assertEquals(now + 90 * MIN, firstByTitle.getValue("15min").startEpochMillis)
         assertEquals(now + 105 * MIN, firstByTitle.getValue("15min").endEpochMillis)
-        assertTrue(firstByTitle.values.all { it.sideTask && it.taskId == null })
+        assertTrue(firstByTitle.values.all { it.screenBreak && it.taskId == null })
     }
 
     @Test
@@ -644,12 +644,12 @@ class SchedulerSchedulerTest {
         val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val s = s0.copy(
-            sideTasks = listOf(
-                SideTask("Pause", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true),
+            screenBreaks = listOf(
+                ScreenBreak("Pause", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true),
             ),
         )
         val panels = SchedulerDomain.fillSchedule(s, now)
-        val side = panels.filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
+        val side = panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
         assertEquals(now, side.startEpochMillis)
         assertEquals(now + 5 * MIN, side.endEpochMillis)
         // A resumes right after the pause and still gets its full 45 min (the pause is not charged to it):
@@ -665,35 +665,35 @@ class SchedulerSchedulerTest {
         val (s0, _, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val s = s0.copy(
-            sideTasks = listOf(
-                SideTask("Pause", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now - 10 * MIN),
+            screenBreaks = listOf(
+                ScreenBreak("Pause", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now - 10 * MIN),
             ),
         )
-        val side = SchedulerDomain.fillSchedule(s, now).filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
+        val side = SchedulerDomain.fillSchedule(s, now).filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
         assertEquals(now + 50 * MIN, side.startEpochMillis) // lastRest + interval, still in the future
         assertEquals(now + 55 * MIN, side.endEpochMillis)
     }
 
     @Test
-    fun a_side_task_splits_a_task_panel_without_cutting_its_minimum_time() {
-        // PRD §15: A and B are equal (50%, 45min). A side task lands 20 min into A's first chunk. A must
-        // NOT be cut short — it resumes after the side task and still accumulates its full 45 min before B
+    fun a_screen_break_splits_a_task_panel_without_cutting_its_minimum_time() {
+        // PRD §15: A and B are equal (50%, 45min). A screen break lands 20 min into A's first chunk. A must
+        // NOT be cut short — it resumes after the screen break and still accumulates its full 45 min before B
         // starts (contrast a pinned panel, which would truncate A to 20 min and hand the slot to B).
         val (s0, a, b) = stateWithTwoTasks()
         val twoHour = 2 * 60 * MIN
         val now = 1_000_000_000_000L
         // Rested so the next occurrence (lastRest + interval) lands 20 min into A's first chunk.
         val s = s0.copy(
-            sideTasks = listOf(
-                SideTask("Eyes", intervalMillis = twoHour, durationMillis = 5 * MIN, lastRestMillis = now + 20 * MIN - twoHour),
+            screenBreaks = listOf(
+                ScreenBreak("Eyes", intervalMillis = twoHour, durationMillis = 5 * MIN, lastRestMillis = now + 20 * MIN - twoHour),
             ),
         )
 
         val panels = SchedulerDomain.fillSchedule(s, now)
-        val side = panels.filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
+        val side = panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
         val autos = panels.filter { it.auto }.sortedBy { it.startEpochMillis }
 
-        // The side task sits 20 min in, lasting 5 min.
+        // The screen break sits 20 min in, lasting 5 min.
         assertEquals(now + 20 * MIN, side.startEpochMillis)
         assertEquals(now + 25 * MIN, side.endEpochMillis)
         assertEquals("Eyes", side.title)
@@ -713,7 +713,7 @@ class SchedulerSchedulerTest {
     @Test
     fun a_pinned_panel_by_contrast_does_cut_the_minimum() {
         // Control for the test above: a *pinned* obstacle 20 min into A's chunk truncates A (its minimum IS
-        // cut) — proving the no-cut behaviour is specific to side tasks.
+        // cut) — proving the no-cut behaviour is specific to screen breaks.
         val (s0, a, b) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val pin = pinned("panel/0", b, now + 20 * MIN, now + 25 * MIN)
@@ -845,20 +845,20 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun set_show_side_tasks_toggles_the_display_flag_without_touching_panels() {
-        // PRD §15: the calendar's side-task display switch is a cosmetic flag — it changes nothing else.
+    fun set_show_screen_breaks_toggles_the_display_flag_without_touching_panels() {
+        // PRD §15: the calendar's screen-break display switch is a cosmetic flag — it changes nothing else.
         val (s0, _, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val scheduled = SchedulerReducer.reduce(s0, SchedulerIntent.RefreshSchedule(now))
-        assertFalse(scheduled.showSideTasks) // default off
+        assertFalse(scheduled.showScreenBreaks) // default off
 
-        val shown = SchedulerReducer.reduce(scheduled, SchedulerIntent.SetShowSideTasks(true))
-        assertTrue(shown.showSideTasks)
-        assertEquals(scheduled.panels, shown.panels) // the schedule (and side tasks) are untouched
+        val shown = SchedulerReducer.reduce(scheduled, SchedulerIntent.SetShowScreenBreaks(true))
+        assertTrue(shown.showScreenBreaks)
+        assertEquals(scheduled.panels, shown.panels) // the schedule (and screen breaks) are untouched
 
         // Idempotent (same instance back) + reversible.
-        assertTrue(SchedulerReducer.reduce(shown, SchedulerIntent.SetShowSideTasks(true)) === shown)
-        assertFalse(SchedulerReducer.reduce(shown, SchedulerIntent.SetShowSideTasks(false)).showSideTasks)
+        assertTrue(SchedulerReducer.reduce(shown, SchedulerIntent.SetShowScreenBreaks(true)) === shown)
+        assertFalse(SchedulerReducer.reduce(shown, SchedulerIntent.SetShowScreenBreaks(false)).showScreenBreaks)
     }
 
     @Test
@@ -1067,20 +1067,43 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun records_for_day_keeps_a_sub_minute_side_task_as_a_marker() {
-        // PRD §15 regression: a 20-second side task drawn to scale is ~invisible. recordsForDay must keep it
-        // (flagged sideTask) so the day column can render it as a fixed-height marker at its time.
+    fun records_for_day_keeps_a_sub_minute_screen_break_as_a_marker() {
+        // PRD §15 regression: a 20-second screen break drawn to scale is ~invisible. recordsForDay must keep it
+        // (flagged screenBreak) so the day column can render it as a fixed-height marker at its time.
         val tz = TimeZone.UTC
         val day = LocalDate(2024, 1, 1)
         val start = LocalDateTime(2024, 1, 1, 20, 0).toInstant(tz).toEpochMilliseconds()
         val side = CalendarRecord(
-            "look 20 feet away", TaskTimeRange(start, start + 20_000L), entryId = "side/0/$start", sideTask = true,
+            "look 20 feet away", TaskTimeRange(start, start + 20_000L), entryId = "side/0/$start", screenBreak = true,
         )
 
         val placed = recordsForDay(listOf(side), day, tz)
         assertEquals(1, placed.size)
-        assertTrue(placed[0].sideTask)
+        assertTrue(placed[0].screenBreak)
         assertEquals(20.0f, placed[0].startHour)
         assertEquals("look 20 feet away", placed[0].title)
+    }
+
+    @Test
+    fun fill_horizon_follows_the_requested_week_and_scales_the_panel_cap() {
+        // PRD §9/§17 "schedule the whole week displayed": a display fill for a focused future week passes that
+        // week's end as [horizonMillis], so the plan is materialized from `now` out to it — well past the
+        // default one-week horizon — without the fixed panel cap clipping the far weeks.
+        val (s, _) = stateWithOneTask(minMinutes = 30)
+        val now = 0L
+        val week = 168L * HOUR_MS
+        val autoEnd = { st: SchedulerState, horizon: Long? ->
+            val panels =
+                if (horizon == null) SchedulerDomain.fillSchedule(st, now, timeZone = TimeZone.UTC)
+                else SchedulerDomain.fillSchedule(st, now, timeZone = TimeZone.UTC, horizonMillis = horizon)
+            panels.filter { it.auto }.maxOf { it.endEpochMillis }
+        }
+        // Default horizon still stops around one week (unchanged near behavior).
+        assertTrue(autoEnd(s, null) <= now + week + HOUR_MS)
+        // A four-week horizon fills into the fourth week — the far weeks are not clipped at the old cap.
+        assertTrue(
+            autoEnd(s, now + 4 * week) > now + 3 * week,
+            "far-week fill should reach past 3 weeks",
+        )
     }
 }

@@ -155,13 +155,13 @@ enum class ChoreRecurrenceUnit(val label: String) {
 }
 
 /**
- * PRD §15 Side task: a task to do periodically, placed on the calendar with a **real spanning time** (a
- * [TaskPanel] with `sideTask = true`). It recurs every [intervalMillis] for [durationMillis]. The
+ * PRD §15 Screen break: a task to do periodically, placed on the calendar with a **real spanning time** (a
+ * [TaskPanel] with `screenBreak = true`). It recurs every [intervalMillis] for [durationMillis]. The
  * distinguishing rule (vs a simple task): when the §9 auto scheduler splits a task panel around a side
- * task, the side task's time is *not* counted against that task's minimum — the task resumes after and
+ * task, the screen break's time is *not* counted against that task's minimum — the task resumes after and
  * still accumulates its full minimum (see [org.example.project.scheduler.domain.SchedulerDomain.fillSchedule]).
  */
-data class SideTask(
+data class ScreenBreak(
     val title: String,
     val intervalMillis: Long,
     val durationMillis: Long,
@@ -169,8 +169,8 @@ data class SideTask(
      * PRD §15: when true this is a **rest pose** (the 5/15-min poses) eligible for the merge — when the
      * shorter pose's next window overlaps the longer's, the shorter becomes a longer-length pause and the
      * longer's occurrence is pushed back (see
-     * [org.example.project.scheduler.domain.SchedulerDomain.sideTaskPanels]). The look-away (false) never
-     * merges. All side tasks — rest poses and the look-away alike — are otherwise scheduled the same way
+     * [org.example.project.scheduler.domain.SchedulerDomain.screenBreakPanels]). The look-away (false) never
+     * merges. All screen breaks — rest poses and the look-away alike — are otherwise scheduled the same way
      * (next occurrence at `lastRestMillis + intervalMillis`).
      */
     val restBreak: Boolean = false,
@@ -178,14 +178,14 @@ data class SideTask(
      * PRD §15: epoch millis of the most recent qualifying pause (a device sleep ≥ [durationMillis], from the
      * OS sleep history), or 0 when none is known. The next occurrence is due at `lastRestMillis + intervalMillis`
      * — clamped forward to the now-line once that has passed without the pause being taken (0 ⇒ due now). See
-     * [org.example.project.scheduler.domain.SchedulerDomain.sideTaskNextStart].
+     * [org.example.project.scheduler.domain.SchedulerDomain.screenBreakNextStart].
      */
     val lastRestMillis: Long = 0L,
 )
 
 /**
  * The user's sleep schedule: a nightly window `[wake − sleepDuration, wake)` (local wall-clock) that the
- * task scheduler and side-task projection must leave empty (see
+ * task scheduler and screen-break projection must leave empty (see
  * [org.example.project.scheduler.domain.SchedulerDomain.sleepPanels]).
  *
  * [wakeMinutes] is the current wake time as minutes since local midnight; [goalWakeMinutes] is the wake
@@ -284,16 +284,16 @@ data class TaskPanel(
      */
     val checkedAtMillis: Long? = null,
     /**
-     * PRD §15 Side tasks: true for a periodic side-task panel (real spanning time, null taskId). The §9
+     * PRD §15 Screen breaks: true for a periodic screen-break panel (real spanning time, null taskId). The §9
      * auto fill treats it as a fixed obstacle but, unlike a pinned panel, splitting a task around it does
      * not reduce that task's minimum time (the task resumes after and still gets its full minimum).
      * Regenerated deterministically on every fill (like auto panels), so it is not retained across one.
      */
-    val sideTask: Boolean = false,
+    val screenBreak: Boolean = false,
     /**
      * The user's sleep window (see [SleepSchedule]): true for a generated nightly obstacle panel
-     * (null taskId, title "Sleep"). Like a side-task panel it is a fixed obstacle the §9 fill skips
-     * (resuming after, no minimum charged) and the side-task projection avoids; it is regenerated every
+     * (null taskId, title "Sleep"). Like a screen-break panel it is a fixed obstacle the §9 fill skips
+     * (resuming after, no minimum charged) and the screen-break projection avoids; it is regenerated every
      * fill and rendered as a distinct block on the calendar.
      */
     val sleep: Boolean = false,

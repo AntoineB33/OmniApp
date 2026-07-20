@@ -33,14 +33,14 @@ object SchedulerReducer {
     var debugTainting: () -> Boolean = { false }
 
     /**
-     * The device's live ongoing/held pause ([SchedulerDomain.liveRestGap]), folded into side-task
+     * The device's live ongoing/held pause ([SchedulerDomain.liveRestGap]), folded into screen-break
      * placement by every [SchedulerDomain.fillSchedule] call site via
-     * [SchedulerDomain.sideTasksForPlacement] — so the projected side-task grid moves with a pause the
+     * [SchedulerDomain.screenBreaksForPlacement] — so the projected screen-break grid moves with a pause the
      * derives haven't banked yet instead of letting the now-line cross a stale slot (spurious cue) or
      * freezing every occurrence downstream of a not-yet-served pose. The engine injects a live provider
      * over its inactiveSince/activeSince flows; defaults to `{ null }` (production shells without an
      * engine / tests) = no overlay. Placement-only: the stored
-     * [org.example.project.scheduler.model.SideTask.lastRestMillis] is never advanced here.
+     * [org.example.project.scheduler.model.ScreenBreak.lastRestMillis] is never advanced here.
      */
     var liveRestGap: () -> SchedulerDomain.LiveRest? = { null }
 
@@ -82,18 +82,18 @@ object SchedulerReducer {
             is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis, intent.nowMillis)
             is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked, intent.nowMillis)
             is SchedulerIntent.AddReminder -> reduceAddReminder(state, intent.reminderId, intent.title, intent.atMillis, intent.checked, intent.pinned)
-            is SchedulerIntent.SetSideTasks ->
-                if (state.sideTasks == intent.sideTasks) state
-                else state.copy(sideTasks = intent.sideTasks)
+            is SchedulerIntent.SetScreenBreaks ->
+                if (state.screenBreaks == intent.screenBreaks) state
+                else state.copy(screenBreaks = intent.screenBreaks)
             is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
             is SchedulerIntent.AdvanceSchedule ->
                 commitRecordChanges(state, advanceSchedule(state, intent.nowMillis))
             is SchedulerIntent.SetAutomaticSchedule ->
                 if (state.automaticSchedule == intent.enabled) state
                 else state.copy(automaticSchedule = intent.enabled)
-            is SchedulerIntent.SetShowSideTasks ->
-                if (state.showSideTasks == intent.show) state
-                else state.copy(showSideTasks = intent.show)
+            is SchedulerIntent.SetShowScreenBreaks ->
+                if (state.showScreenBreaks == intent.show) state
+                else state.copy(showScreenBreaks = intent.show)
             is SchedulerIntent.SetShowReminders ->
                 if (state.showReminders == intent.show) state
                 else state.copy(showReminders = intent.show)
@@ -1059,11 +1059,11 @@ object SchedulerReducer {
     /**
      * PRD §8/§9: true for a panel the screen-override rule treats as an **on-screen task panel** — a real
      * (auto or user-authored) task block whose task is on-screen ([Task.onScreen]; a calendar-only panel
-     * with no backing task defaults to on-screen). Reminder tags, side-task/sleep bands and the
+     * with no backing task defaults to on-screen). Reminder tags, screen-break/sleep bands and the
      * no-screen/inactivity periods themselves are never one.
      */
     private fun isOnScreenTaskPanel(state: SchedulerState, panel: TaskPanel): Boolean =
-        !panel.noScreen && !panel.inactivity && !panel.sideTask && !panel.sleep && !panel.chore &&
+        !panel.noScreen && !panel.inactivity && !panel.screenBreak && !panel.sleep && !panel.chore &&
             (panel.taskId?.let { state.tasks[it]?.onScreen } ?: true)
 
     /**
@@ -1445,7 +1445,7 @@ object SchedulerReducer {
      * appended as auto panels elapse in [advanceSchedule] / a device-sleep cut) as a single Main
      * [RecordDelta], so they are Ctrl+Z-undoable and reverted by the debug-time restart rollback.
      * Returns [after] with that unit appended; every non-record field of [after] (the advanced panel
-     * list, rested side tasks, …) is preserved. A no-op when no record changed.
+     * list, rested screen breaks, …) is preserved. A no-op when no record changed.
      */
     private fun commitRecordChanges(before: SchedulerState, after: SchedulerState): SchedulerState {
         val changedIds =
@@ -2087,7 +2087,7 @@ private fun appendRecordMap(
  * dropped so the wake-time [reduceRefreshSchedule] starts a fresh schedule after the sleep. Pinned and
  * user-authored panels are untouched.
  *
- * PRD §15: a device sleep is the user taking a pause — it counts as taking every side task whose duration
+ * PRD §15: a device sleep is the user taking a pause — it counts as taking every screen break whose duration
  * it covers (a long sleep satisfies the shorter pauses too), recording [sleepEnd] as their last rest so the
  * next occurrence of each is scheduled an interval later.
  */
@@ -2097,10 +2097,10 @@ private fun reduceReportDeviceSleep(
     sleepEnd: Long,
 ): SchedulerState {
     val sleepLength = sleepEnd - sleepStart
-    // §15: a device sleep counts as taking every side task whose duration it covers (a long sleep satisfies
+    // §15: a device sleep counts as taking every screen break whose duration it covers (a long sleep satisfies
     // the shorter pauses too), so record [sleepEnd] as their last rest — scheduling the next one an interval on.
-    val restedSideTasks =
-        state.sideTasks.map { side ->
+    val restedScreenBreaks =
+        state.screenBreaks.map { side ->
             if (side.durationMillis in 1..sleepLength && side.lastRestMillis < sleepEnd) {
                 side.copy(lastRestMillis = sleepEnd)
             } else {
@@ -2108,8 +2108,8 @@ private fun reduceReportDeviceSleep(
             }
         }
     val base =
-        if (restedSideTasks == state.sideTasks) state
-        else state.copy(sideTasks = restedSideTasks)
+        if (restedScreenBreaks == state.screenBreaks) state
+        else state.copy(screenBreaks = restedScreenBreaks)
     val current =
         base.panels.firstOrNull {
             it.auto && !it.pinned &&

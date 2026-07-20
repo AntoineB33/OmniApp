@@ -4,18 +4,18 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
-import org.example.project.scheduler.model.SideTask
+import org.example.project.scheduler.model.ScreenBreak
 
 /**
  * PRD §15 / CLAUDE.md "each fires exactly once, **in order**": the unified cue sweep. These pin the reported
  * bug — "a 20s look-away was announced AFTER the 5-min rest pose that is still starting at the now-line; it
  * should have fired before". Two independent faults combined:
  *  1. the look-away cue read `state.panels`, whose FORWARD projection drops any occurrence `now` has already
- *     crossed ([SchedulerDomain.sideTaskNextStart] steps the grid), so a leap over a look-away simply lost
+ *     crossed ([SchedulerDomain.screenBreakNextStart] steps the grid), so a leap over a look-away simply lost
  *     it — while the level-based rest pose still fired;
  *  2. the two cues ran as independent now-line collectors, so even when both fired they could race.
  *
- * [SchedulerDomain.sideTaskOccurrencesBetween] fixes (1) by reconstructing look-away occurrences over the
+ * [SchedulerDomain.screenBreakOccurrencesBetween] fixes (1) by reconstructing look-away occurrences over the
  * sweep window from the fixed grid (leap-safe, like the rest pose's level rule), and
  * [SchedulerDomain.cueCrossings] fixes (2) by merging every cue boundary into one list sorted by its true
  * instant.
@@ -23,20 +23,20 @@ import org.example.project.scheduler.model.SideTask
 class CueSweepOrderingTest {
     private val MIN = 60_000L
     private val SEC = 1_000L
-    private val lookAway = SideTask("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20 * SEC)
-    private val pose5 = SideTask("take a 5min pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true)
+    private val lookAway = ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20 * SEC)
+    private val pose5 = ScreenBreak("take a 5min pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true)
 
     @Test
     fun reconstruction_recovers_look_aways_the_forward_projection_has_dropped() {
         val la = lookAway.copy(lastRestMillis = 0) // grid: 20, 40, 60, 80… min
         // A sweep window [35, 62] min — the now-line has already crossed the 40- and 60-min look-aways.
-        val recovered = SchedulerDomain.sideTaskOccurrencesBetween(listOf(la), 35 * MIN, 62 * MIN)
+        val recovered = SchedulerDomain.screenBreakOccurrencesBetween(listOf(la), 35 * MIN, 62 * MIN)
             .map { it.startEpochMillis }.sorted()
         assertEquals(listOf(40 * MIN, 60 * MIN), recovered)
 
         // The forward projection at now = 62 min has stepped the grid clean past them (this is exactly why a
         // panel-based cue lost them under a leap): its next occurrence is 80 min, not 40 or 60.
-        val forward = SchedulerDomain.sideTaskPanels(listOf(la), nowMillis = 62 * MIN).map { it.startEpochMillis }
+        val forward = SchedulerDomain.screenBreakPanels(listOf(la), nowMillis = 62 * MIN).map { it.startEpochMillis }
         assertTrue(forward.none { it == 40 * MIN || it == 60 * MIN })
     }
 
@@ -49,7 +49,7 @@ class CueSweepOrderingTest {
         val p5 = pose5.copy(lastRestMillis = 2 * MIN) // due = 62 min
 
         val crossings = SchedulerDomain.cueCrossings(
-            sideTasks = listOf(la, p5),
+            screenBreaks = listOf(la, p5),
             windDownInstants = emptyList(),
             automaticSchedule = true,
             alreadyNotifiedPoseDues = emptyMap(),
@@ -74,7 +74,7 @@ class CueSweepOrderingTest {
         val p5 = pose5.copy(lastRestMillis = 2 * MIN) // due = 62 min, still unserved at 70 min
 
         val crossings = SchedulerDomain.cueCrossings(
-            sideTasks = listOf(la, p5),
+            screenBreaks = listOf(la, p5),
             windDownInstants = emptyList(),
             automaticSchedule = true,
             alreadyNotifiedPoseDues = mapOf(p5.title to 62 * MIN),
@@ -91,7 +91,7 @@ class CueSweepOrderingTest {
         val p5 = pose5.copy(lastRestMillis = 2 * MIN) // due = 62 min
 
         val crossings = SchedulerDomain.cueCrossings(
-            sideTasks = listOf(la, p5),
+            screenBreaks = listOf(la, p5),
             windDownInstants = listOf(61 * MIN),
             automaticSchedule = true,
             alreadyNotifiedPoseDues = emptyMap(),
@@ -113,7 +113,7 @@ class CueSweepOrderingTest {
     fun auto_schedule_off_yields_no_rest_pose_crossings() {
         val p5 = pose5.copy(lastRestMillis = 2 * MIN)
         val crossings = SchedulerDomain.cueCrossings(
-            sideTasks = listOf(p5),
+            screenBreaks = listOf(p5),
             windDownInstants = emptyList(),
             automaticSchedule = false,
             alreadyNotifiedPoseDues = emptyMap(),
@@ -126,7 +126,7 @@ class CueSweepOrderingTest {
     @Test
     fun an_inverted_window_reconstructs_nothing() {
         val la = lookAway.copy(lastRestMillis = 0)
-        assertTrue(SchedulerDomain.sideTaskOccurrencesBetween(listOf(la), 62 * MIN, 55 * MIN).isEmpty())
+        assertTrue(SchedulerDomain.screenBreakOccurrencesBetween(listOf(la), 62 * MIN, 55 * MIN).isEmpty())
     }
 
     @Test
@@ -143,14 +143,14 @@ class CueSweepOrderingTest {
 
         // The look-aways the now-line actually crossed by 90 min are 25 and 45 only — the 65 is absorbed by the
         // coincident pose and the re-anchored 85+ are phantoms that recede with the dragging pose.
-        val lookAways = SchedulerDomain.sideTaskOccurrencesBetween(listOf(la, p5), 0, 90 * MIN)
+        val lookAways = SchedulerDomain.screenBreakOccurrencesBetween(listOf(la, p5), 0, 90 * MIN)
             .filter { it.title == la.title }
             .map { it.startEpochMillis }
         assertEquals(listOf(25 * MIN, 45 * MIN), lookAways)
 
         // And through the full cue path: after the pose's 65-min due, no LookAwayStart crossing is emitted.
         val crossings = SchedulerDomain.cueCrossings(
-            sideTasks = listOf(la, p5),
+            screenBreaks = listOf(la, p5),
             windDownInstants = emptyList(),
             automaticSchedule = true,
             alreadyNotifiedPoseDues = emptyMap(),
@@ -170,7 +170,7 @@ class CueSweepOrderingTest {
         val la = lookAway.copy(lastRestMillis = 65 * MIN) // re-anchored to the pose end (device-sleep seeding)
         val p5 = pose5.copy(lastRestMillis = 60 * MIN) // taken at 60 min; next due 120 min (not overdue at 90)
 
-        val lookAways = SchedulerDomain.sideTaskOccurrencesBetween(listOf(la, p5), 60 * MIN, 90 * MIN)
+        val lookAways = SchedulerDomain.screenBreakOccurrencesBetween(listOf(la, p5), 60 * MIN, 90 * MIN)
             .filter { it.title == la.title }
             .map { it.startEpochMillis }
         assertEquals(listOf(85 * MIN), lookAways) // 65 + 20 = 85, a real crossable boundary

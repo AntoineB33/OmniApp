@@ -21,9 +21,9 @@ class NotificationLogTest {
     @Test
     fun record_notification_appends_an_entry() {
         val state = SchedulerState.empty()
-        val next = SchedulerReducer.reduce(state, SchedulerIntent.RecordNotification("Side task", "Look away", 1_000))
+        val next = SchedulerReducer.reduce(state, SchedulerIntent.RecordNotification("Screen break", "Look away", 1_000))
         assertEquals(1, next.notificationLog.size)
-        assertEquals(NotificationLogEntry(1_000, "Side task", "Look away"), next.notificationLog.single())
+        assertEquals(NotificationLogEntry(1_000, "Screen break", "Look away"), next.notificationLog.single())
     }
 
     @Test
@@ -47,7 +47,7 @@ class NotificationLogTest {
     @Test
     fun log_round_trips_through_the_codec() {
         val entries = listOf(
-            NotificationLogEntry(1_000, "Side task", "Look away"),
+            NotificationLogEntry(1_000, "Screen break", "Look away"),
             NotificationLogEntry(2_000, "Stop work", "Wind down — bedtime in 1 hour"),
         )
         val state = SchedulerState.empty().copy(notificationLog = entries)

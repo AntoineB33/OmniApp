@@ -187,12 +187,12 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §15 Side tasks: replace the side-task list — used at launch to seed each side task's
+     * PRD §15 Screen breaks: replace the screen-break list — used at launch to seed each screen break's
      * `lastRestMillis` from the OS sleep history (the last device rest ≥ its duration). Session state,
      * not undoable.
      */
-    data class SetSideTasks(
-        val sideTasks: List<org.example.project.scheduler.model.SideTask>,
+    data class SetScreenBreaks(
+        val screenBreaks: List<org.example.project.scheduler.model.ScreenBreak>,
     ) : SchedulerIntent
 
     /**
@@ -222,10 +222,10 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §15 Side tasks: show/hide the side tasks on the calendar (a cosmetic display preference). Hiding
+     * PRD §15 Screen breaks: show/hide the screen breaks on the calendar (a cosmetic display preference). Hiding
      * does not touch the schedule or notifications. Persisted; not undoable.
      */
-    data class SetShowSideTasks(
+    data class SetShowScreenBreaks(
         val show: Boolean,
     ) : SchedulerIntent
 
@@ -238,7 +238,7 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §15 Side tasks: enable/disable the spoken voice cue for the 20s look-away pause. Persisted; not
+     * PRD §15 Screen breaks: enable/disable the spoken voice cue for the 20s look-away pause. Persisted; not
      * undoable; does not touch the schedule.
      */
     data class SetLookAwayVoice(

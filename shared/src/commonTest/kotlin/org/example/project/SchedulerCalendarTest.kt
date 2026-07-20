@@ -357,17 +357,17 @@ class SchedulerCalendarTest {
     }
 
     @Test
-    fun display_grouping_bridges_a_same_task_gap_left_by_a_hidden_side_task() {
-        // PRD §15 (side tasks hidden): two same-task panels split around a side task fuse into one block
+    fun display_grouping_bridges_a_same_task_gap_left_by_a_hidden_screen_break() {
+        // PRD §15 (screen breaks hidden): two same-task panels split around a screen break fuse into one block
         // when bridgeGaps is set — purely cosmetic, the panels stay separate in state.
         val a = TaskId("t/a")
         val panels = listOf(
             autoPanel("auto/0", a, 0, 20 * MIN),
-            autoPanel("auto/1", a, 25 * MIN, 50 * MIN), // a 5-min gap = the hidden side task
+            autoPanel("auto/1", a, 25 * MIN, 50 * MIN), // a 5-min gap = the hidden screen break
         )
-        // Side tasks shown (no bridging): the gap splits them into two blocks.
+        // Screen breaks shown (no bridging): the gap splits them into two blocks.
         assertEquals(2, SchedulerDomain.groupSameTaskPanelsForDisplay(panels).size)
-        // Side tasks hidden: gaps are bridged so they fuse into one block keeping both ids.
+        // Screen breaks hidden: gaps are bridged so they fuse into one block keeping both ids.
         val bridged = SchedulerDomain.groupSameTaskPanelsForDisplay(panels, bridgeGaps = true)
         assertEquals(1, bridged.size)
         assertEquals(listOf("auto/0", "auto/1"), bridged[0].map { it.id })
@@ -394,7 +394,7 @@ class SchedulerCalendarTest {
     fun display_grouping_does_not_bridge_a_gap_between_two_pinned_manual_panels() {
         // Regression: two existence-pinned manual panels of the same task placed days apart used to fuse
         // into one block spanning the whole gap (the bridge only checks for a sleep window in the gap, and
-        // past sleep windows aren't supplied). The bridge is for the auto-fill's side-task splits only, so
+        // past sleep windows aren't supplied). The bridge is for the auto-fill's screen-break splits only, so
         // user-placed pinned panels must stay separate blocks.
         val a = TaskId("t/a")
         val panels = listOf(
@@ -557,11 +557,11 @@ class SchedulerCalendarTest {
     }
 
     @Test
-    fun codec_round_trips_the_show_side_tasks_preference() {
-        // PRD §15: the calendar's side-task display switch persists across sessions; default is off.
-        assertEquals(false, SchedulerState.empty().showSideTasks)
-        val shown = SchedulerState.empty().copy(showSideTasks = true)
-        assertEquals(true, SchedulerStateCodec.decode(SchedulerStateCodec.encode(shown))!!.showSideTasks)
+    fun codec_round_trips_the_show_screen_breaks_preference() {
+        // PRD §15: the calendar's screen-break display switch persists across sessions; default is off.
+        assertEquals(false, SchedulerState.empty().showScreenBreaks)
+        val shown = SchedulerState.empty().copy(showScreenBreaks = true)
+        assertEquals(true, SchedulerStateCodec.decode(SchedulerStateCodec.encode(shown))!!.showScreenBreaks)
     }
 
     @Test
@@ -831,26 +831,26 @@ class SchedulerCalendarTest {
     }
 
     @Test
-    fun a_device_sleep_counts_as_taking_every_side_task_it_covers() {
-        // PRD §15: a device sleep is the user resting — it satisfies every side task whose duration it
+    fun a_device_sleep_counts_as_taking_every_screen_break_it_covers() {
+        // PRD §15: a device sleep is the user resting — it satisfies every screen break whose duration it
         // covers (a long sleep clears the shorter pauses too), recording the wake as their last rest.
         val (s0, _, _) = stateWithTwoTasks()
         val sides = listOf(
-            org.example.project.scheduler.model.SideTask("5min", 60 * MIN, 5 * MIN, restBreak = true),
-            org.example.project.scheduler.model.SideTask("15min", 2 * HOUR, 15 * MIN, restBreak = true),
+            org.example.project.scheduler.model.ScreenBreak("5min", 60 * MIN, 5 * MIN, restBreak = true),
+            org.example.project.scheduler.model.ScreenBreak("15min", 2 * HOUR, 15 * MIN, restBreak = true),
         )
         val start = 1_000_000_000_000L
-        val s = s0.copy(sideTasks = sides)
+        val s = s0.copy(screenBreaks = sides)
 
         // A 10-min sleep covers the 5-min pause but not the 15-min one.
         val short = SchedulerReducer.reduce(s, SchedulerIntent.ReportDeviceSleep(start, start + 10 * MIN))
-        assertEquals(start + 10 * MIN, short.sideTasks[0].lastRestMillis) // 5-min pause satisfied
-        assertEquals(0L, short.sideTasks[1].lastRestMillis) // 15-min pause not (sleep too short)
+        assertEquals(start + 10 * MIN, short.screenBreaks[0].lastRestMillis) // 5-min pause satisfied
+        assertEquals(0L, short.screenBreaks[1].lastRestMillis) // 15-min pause not (sleep too short)
 
         // A 20-min sleep covers both.
         val long = SchedulerReducer.reduce(s, SchedulerIntent.ReportDeviceSleep(start, start + 20 * MIN))
-        assertEquals(start + 20 * MIN, long.sideTasks[0].lastRestMillis)
-        assertEquals(start + 20 * MIN, long.sideTasks[1].lastRestMillis)
+        assertEquals(start + 20 * MIN, long.screenBreaks[0].lastRestMillis)
+        assertEquals(start + 20 * MIN, long.screenBreaks[1].lastRestMillis)
     }
 
     @Test
@@ -861,37 +861,37 @@ class SchedulerCalendarTest {
         val (s0, _, _) = stateWithTwoTasks()
         val start = 1_000_000_000_000L
         val s = s0.copy(
-            sideTasks = listOf(org.example.project.scheduler.model.SideTask("5min", 60 * MIN, 5 * MIN, restBreak = true)),
+            screenBreaks = listOf(org.example.project.scheduler.model.ScreenBreak("5min", 60 * MIN, 5 * MIN, restBreak = true)),
         )
 
         val t1 = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(start))
-        val pause1 = t1.panels.filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
+        val pause1 = t1.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
         assertEquals(start, pause1.startEpochMillis)
         assertEquals(start + 5 * MIN, pause1.endEpochMillis)
 
         // The clock jumps forward 12 min: a refill re-places the pause at the new now and re-splits the task.
         val t2 = SchedulerReducer.reduce(t1, SchedulerIntent.RefreshSchedule(start + 12 * MIN))
-        val pause2 = t2.panels.filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
+        val pause2 = t2.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
         assertEquals(start + 12 * MIN, pause2.startEpochMillis)
         assertEquals(start + 17 * MIN, pause2.endEpochMillis)
         // No task panel overlaps the pause's region — the fill leaves it a clean place (PRD §15).
         assertTrue(
             t2.panels.none {
-                !it.sideTask && it.taskId != null &&
+                !it.screenBreak && it.taskId != null &&
                     it.startEpochMillis < pause2.endEpochMillis && pause2.startEpochMillis < it.endEpochMillis
             },
         )
 
         // Once the user rests it away (recent enough), the next refill shows it ahead at its due time, not at now.
         val rested = t2.copy(
-            sideTasks = listOf(
-                org.example.project.scheduler.model.SideTask(
+            screenBreaks = listOf(
+                org.example.project.scheduler.model.ScreenBreak(
                     "5min", 60 * MIN, 5 * MIN, restBreak = true, lastRestMillis = start + 12 * MIN,
                 ),
             ),
         )
         val t3 = SchedulerReducer.reduce(rested, SchedulerIntent.RefreshSchedule(start + 13 * MIN))
-        val pause3 = t3.panels.filter { it.sideTask }.minByOrNull { it.startEpochMillis }!!
+        val pause3 = t3.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
         assertEquals(start + 12 * MIN + 60 * MIN, pause3.startEpochMillis) // lastRest + interval, in the future
     }
 }

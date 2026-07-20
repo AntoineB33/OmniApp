@@ -305,20 +305,20 @@ class TaskSchedulerViewModel(
 
         /**
          * Normalizes a just-loaded state (from local disk or a pulled remote snapshot) for the running app:
-         * revert debug-tainted changes (§6), seed the hardcoded side tasks and default sleep window (§15),
+         * revert debug-tainted changes (§6), seed the hardcoded screen breaks and default sleep window (§15),
          * and cancel any interrupted Edit Mode session.
          */
         fun prepareLoadedState(loaded: SchedulerState): SchedulerState {
             // PRD §6: revert any changes committed under the diverged debug clock before they reach the
             // running app, so a fast-forwarded session never pollutes the real saved data on restart.
             val clean = SchedulerReducer.rollbackDebugTainted(loaded)
-            // PRD §15: side tasks are a hardcoded set (not persisted user data); seed them onto whatever
+            // PRD §15: screen breaks are a hardcoded set (not persisted user data); seed them onto whatever
             // was loaded so they are always present in the running app, never in the bare test states.
             // The sleep schedule is seeded with the default only when none was persisted, so production
             // always has a sleep window (07:30 / 8h30) while bare test states keep `sleep = null`.
             val seeded =
                 clean.copy(
-                    sideTasks = SchedulerDomain.DEFAULT_SIDE_TASKS,
+                    screenBreaks = SchedulerDomain.effectiveDefaultScreenBreaks(),
                     sleep = clean.sleep ?: SchedulerDomain.DEFAULT_SLEEP,
                 )
             return if (seeded.editSession != null) {

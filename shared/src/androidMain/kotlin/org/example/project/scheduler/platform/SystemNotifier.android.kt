@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * PRD §11 Notifications (Android): post a heads-up notification on the app's reminder channel. Best-effort
  * and wrapped in `runCatching` per the [sendSystemNotification] contract — it silently does nothing when the
  * app `Context` isn't ready yet or the user denied the POST_NOTIFICATIONS permission (API 33+). Each post
- * uses a fresh id so successive task-switch / side-task cues stack rather than replacing each other.
+ * uses a fresh id so successive task-switch / screen-break cues stack rather than replacing each other.
  */
 private const val CHANNEL_ID = "omniapp_reminders"
 private val nextNotificationId = AtomicInteger(1)

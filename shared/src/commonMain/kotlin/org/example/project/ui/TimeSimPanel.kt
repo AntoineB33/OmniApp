@@ -134,7 +134,7 @@ fun TimeSimPanel(
                 }
             }
             // PRD §15 debug: simulate taking a pause — instantly jump the sim clock forward by the break with
-            // the selected device(s) reading as inactive, so the side-task rhythm (look-away / poses), the
+            // the selected device(s) reading as inactive, so the screen-break rhythm (look-away / poses), the
             // derived Inactivity bands and the now-line can be exercised without waiting.
             Text(
                 text = "simulate pause + leap",

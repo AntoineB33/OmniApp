@@ -216,19 +216,19 @@ data class SchedulerState(
      */
     val chores: List<ChoreEntry> = emptyList(),
     /**
-     * PRD §15 Side tasks: the periodic side tasks to weave into the auto schedule. A hardcoded set in
+     * PRD §15 Screen breaks: the periodic screen breaks to weave into the auto schedule. A hardcoded set in
      * production (seeded by [org.example.project.scheduler.ui.TaskSchedulerViewModel] from
-     * [org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SIDE_TASKS]); empty by default so the
-     * scheduler tests that assert exact schedules see no side tasks unless they opt in.
+     * [org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SCREEN_BREAKS]); empty by default so the
+     * scheduler tests that assert exact schedules see no screen breaks unless they opt in.
      */
-    val sideTasks: List<org.example.project.scheduler.model.SideTask> = emptyList(),
+    val screenBreaks: List<org.example.project.scheduler.model.ScreenBreak> = emptyList(),
     /**
-     * PRD §15 Side tasks: whether the calendar window draws the side tasks. A purely cosmetic display
-     * preference (persisted, not undoable) — when off, side-task blocks are hidden and two same-task panels
-     * separated only by a hidden side task render as one merged block. The underlying panels and the
-     * scheduling (and the side-task notifications) are unaffected; the real spanning time never changes.
+     * PRD §15 Screen breaks: whether the calendar window draws the screen breaks. A purely cosmetic display
+     * preference (persisted, not undoable) — when off, screen-break blocks are hidden and two same-task panels
+     * separated only by a hidden screen break render as one merged block. The underlying panels and the
+     * scheduling (and the screen-break notifications) are unaffected; the real spanning time never changes.
      */
-    val showSideTasks: Boolean = false,
+    val showScreenBreaks: Boolean = false,
     /**
      * PRD §14 Reminders: whether the calendar window draws the reminder tags. A purely cosmetic display
      * preference (persisted, not undoable) — when off, reminder tags are hidden. The underlying chores and
@@ -236,13 +236,13 @@ data class SchedulerState(
      */
     val showReminders: Boolean = true,
     /**
-     * PRD §15 Side tasks (20s look-away): whether the spoken voice cue is enabled — when the look-away pause
+     * PRD §15 Screen breaks (20s look-away): whether the spoken voice cue is enabled — when the look-away pause
      * is reached a voice says to look away and, at the pause's end, to resume work (in addition to the
      * notification). On by default; persisted, not undoable.
      */
     val lookAwayVoiceEnabled: Boolean = true,
     /**
-     * The user's sleep schedule (a nightly window the §9 task fill and the §15 side-task projection must
+     * The user's sleep schedule (a nightly window the §9 task fill and the §15 screen-break projection must
      * leave empty; see [org.example.project.scheduler.domain.SchedulerDomain.sleepPanels]). **Null by
      * default** so the scheduler tests that assert exact schedules see no sleep window unless they opt in;
      * production is seeded with [org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SLEEP] by
@@ -300,7 +300,7 @@ data class SchedulerState(
      * remote snapshot must not adopt another device's value. It covers:
      *  - [focusedWindow] — PRD §7 window navigation (the tree vs. a floating window),
      *  - [selection] — which tree cell(s) are highlighted (cleared as a side effect of navigating away),
-     *  - [showSideTasks] / [showReminders] — the calendar's cosmetic display switches,
+     *  - [showScreenBreaks] / [showReminders] — the calendar's cosmetic display switches,
      *  - the [HistoryCategory.WindowNav] and [HistoryCategory.Selection] history that records those moves,
      *  - [notificationLog] — the per-device diagnostic notification log (never synced, never adopted),
      *  - [supabaseUsageLog] — the per-device Supabase-usage diagnostic log (never synced, never adopted).
@@ -315,7 +315,7 @@ data class SchedulerState(
         copy(
             focusedWindow = other.focusedWindow,
             selection = other.selection,
-            showSideTasks = other.showSideTasks,
+            showScreenBreaks = other.showScreenBreaks,
             showReminders = other.showReminders,
             notificationLog = other.notificationLog,
             supabaseUsageLog = other.supabaseUsageLog,
@@ -329,7 +329,7 @@ data class SchedulerState(
         copy(
             focusedWindow = AppWindow.Tree,
             selection = SchedulerSelection(),
-            showSideTasks = false,
+            showScreenBreaks = false,
             showReminders = true,
             notificationLog = emptyList(),
             supabaseUsageLog = emptyList(),

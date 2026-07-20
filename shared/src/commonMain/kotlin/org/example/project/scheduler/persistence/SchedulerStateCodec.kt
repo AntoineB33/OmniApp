@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package org.example.project.scheduler.persistence
 
 import kotlinx.serialization.SerialName
@@ -5,6 +7,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNames
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
@@ -211,7 +214,7 @@ object SchedulerStateCodec {
                         layoutWeight = it.layoutWeight,
                         chore = it.chore,
                         checked = it.checked,
-                        sideTask = it.sideTask,
+                        screenBreak = it.screenBreak,
                         sleep = it.sleep,
                         noScreen = it.noScreen,
                         inactivity = it.inactivity,
@@ -220,7 +223,7 @@ object SchedulerStateCodec {
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
             chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit, it.id, it.constrainedToReminderId) },
-            showSideTasks = showSideTasks,
+            showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
             focusedWindow = focusedWindow.name,
@@ -306,7 +309,7 @@ object SchedulerStateCodec {
             layoutWeight = layoutWeight,
             chore = chore,
             checked = checked,
-            sideTask = sideTask,
+            screenBreak = screenBreak,
             sleep = sleep,
             noScreen = noScreen,
             inactivity = inactivity,
@@ -431,7 +434,7 @@ object SchedulerStateCodec {
                         layoutWeight = it.layoutWeight,
                         chore = it.chore,
                         checked = it.checked,
-                        sideTask = it.sideTask,
+                        screenBreak = it.screenBreak,
                         sleep = it.sleep,
                         noScreen = it.noScreen,
                         inactivity = it.inactivity,
@@ -452,7 +455,7 @@ object SchedulerStateCodec {
                     )
                 },
             ),
-            showSideTasks = showSideTasks,
+            showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
             focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),
@@ -539,7 +542,7 @@ object SchedulerStateCodec {
             layoutWeight = layoutWeight,
             chore = chore,
             checked = checked,
-            sideTask = sideTask,
+            screenBreak = screenBreak,
             sleep = sleep,
             noScreen = noScreen,
             inactivity = inactivity,
@@ -631,9 +634,12 @@ private data class PersistedState(
     val automaticSchedule: Boolean = true,
     // PRD §14: a missing chores list decodes to empty (payloads written before the chores manager existed).
     val chores: List<PersistedChoreEntry> = emptyList(),
-    // PRD §15: side tasks are hidden by default, so payloads written before the display toggle existed
-    // (and any that omit the field) decode with the switch off.
-    val showSideTasks: Boolean = false,
+    // PRD §15: screen breaks are hidden by default, so payloads written before the display toggle existed
+    // (and any that omit the field) decode with the switch off. Migration: DBs written under the old name
+    // (the legacy "side tasks") stored this as `showSideTasks`; [JsonNames] lets those still decode into this
+    // field while new writes use `showScreenBreaks`.
+    @JsonNames("showSideTasks")
+    val showScreenBreaks: Boolean = false,
     // PRD §14: default on keeps reminders visible for payloads written before the display toggle existed.
     val showReminders: Boolean = true,
     // PRD §15: the 20s look-away voice cue; default on (payloads written before the toggle existed get the voice).
@@ -805,8 +811,11 @@ private data class PersistedPanel(
     val chore: Boolean = false,
     // PRD §14: a missing checked flag decodes to false (payloads written before reminders were checkable).
     val checked: Boolean = false,
-    // PRD §15: a missing sideTask flag decodes to false (payloads written before side tasks existed).
-    val sideTask: Boolean = false,
+    // PRD §15: a missing screenBreak flag decodes to false (payloads written before screen breaks existed).
+    // Migration: DBs written under the old name stored this panel flag as `sideTask`; [JsonNames] lets those
+    // still decode into this field while new writes use `screenBreak`.
+    @JsonNames("sideTask")
+    val screenBreak: Boolean = false,
     // A missing sleep flag decodes to false (payloads written before the sleep window existed).
     val sleep: Boolean = false,
     // PRD §8/§9: missing flags decode to false (payloads written before no-screen / inactivity panels existed).

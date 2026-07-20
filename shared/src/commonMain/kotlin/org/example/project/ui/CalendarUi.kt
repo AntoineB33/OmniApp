@@ -196,8 +196,8 @@ data class CalendarRecord(
     val checked: Boolean = false,
     /** PRD §14 Reminders: epoch millis at which the tag was checked (freeze point), or null while unchecked. */
     val checkedAtMillis: Long? = null,
-    /** PRD §15 Side tasks: a periodic side task, drawn as a time-positioned band spanning its real duration. */
-    val sideTask: Boolean = false,
+    /** PRD §15 Screen breaks: a periodic screen break, drawn as a time-positioned band spanning its real duration. */
+    val screenBreak: Boolean = false,
     /** The user's sleep window, drawn as a labeled greyed band behind the task blocks. */
     val sleep: Boolean = false,
     /**
@@ -338,8 +338,8 @@ data class PlacedRecord(
     val checked: Boolean = false,
     /** PRD §14 Reminders: epoch millis at which the tag was checked (freeze point), or null while unchecked. */
     val checkedAtMillis: Long? = null,
-    /** PRD §15 Side tasks: a periodic side task rendered as a time-positioned band over [startHour, endHour]. */
-    val sideTask: Boolean = false,
+    /** PRD §15 Screen breaks: a periodic screen break rendered as a time-positioned band over [startHour, endHour]. */
+    val screenBreak: Boolean = false,
     /** The user's sleep window, rendered as a labeled greyed band over [startHour, endHour]. */
     val sleep: Boolean = false,
     /** PRD §15 device-sleep gaps: a past pause, rendered as a labeled greyed band reading "Inactivity". */
@@ -380,10 +380,10 @@ fun recordsForDay(
         if (start.date > day || end.date < day) return@mapNotNull null
         val startHour = if (start.date < day) 0f else start.hour + start.minute / 60f
         val endHour = if (end.date > day) 24f else end.hour + end.minute / 60f
-        // PRD §14/§15: reminders (zero-duration) render as fixed-height tags and side tasks (down to sub-
+        // PRD §14/§15: reminders (zero-duration) render as fixed-height tags and screen breaks (down to sub-
         // minute durations) as min-height bands, so keep them even though the block path would drop a
         // ~zero-height period.
-        if (!record.reminder && !record.sideTask && endHour <= startHour) return@mapNotNull null
+        if (!record.reminder && !record.screenBreak && endHour <= startHour) return@mapNotNull null
         // Clip the device-set segments to this day too, in the same hour-of-day space as the block.
         val daySegments =
             record.deviceSegments.mapNotNull { seg ->
@@ -409,7 +409,7 @@ fun recordsForDay(
             reminder = record.reminder,
             checked = record.checked,
             checkedAtMillis = record.checkedAtMillis,
-            sideTask = record.sideTask,
+            screenBreak = record.screenBreak,
             sleep = record.sleep,
             inactivity = record.inactivity,
             noScreen = record.noScreen,
@@ -641,7 +641,7 @@ fun LateralMenu(
     lookAwayVoiceEnabled: Boolean = true,
     onToggleLookAwayVoice: (Boolean) -> Unit = {},
     /**
-     * PRD §15 (20s look-away): shown only when the last past side task before the now-line is a 20s
+     * PRD §15 (20s look-away): shown only when the last past screen break before the now-line is a 20s
      * look-away — re-runs the 20s pause now (superseding any look-away still sounding/pending).
      */
     showLookAwayButton: Boolean = false,
@@ -708,7 +708,7 @@ fun LateralMenu(
             )
         }
 
-        // PRD §15 (20s look-away): only while the most recent past side task is a 20s look-away — redo it now.
+        // PRD §15 (20s look-away): only while the most recent past screen break is a 20s look-away — redo it now.
         if (showLookAwayButton) {
             MenuButton(label = "Look away now", active = false, onClick = onLookAwayNow)
         }
@@ -1970,6 +1970,12 @@ fun CalendarFloatingWindow(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     records: List<CalendarRecord> = emptyList(),
+    /**
+     * PRD §9/§17: true while the work plan for a focused future week beyond the near horizon is still being
+     * computed off the UI thread. Surfaces a "Calculating…" hint so the (necessarily slower) distant-week
+     * fill reads as "loading", never as a frozen calendar.
+     */
+    calculating: Boolean = false,
     /** PRD §8 focus: a press anywhere in the window makes the calendar the focused surface again. */
     onFocus: () -> Unit = {},
     /** PRD §8 Manual add: invoked with the epoch-millis at a right-click position in the calendar. */
@@ -1997,10 +2003,10 @@ fun CalendarFloatingWindow(
     overlapArmed: Boolean = false,
     /** PRD §8 Overlap Mode: `O` toggles "allow overlap" for the next move/resize. */
     onToggleOverlap: () -> Unit = {},
-    /** PRD §15: whether the calendar draws the side tasks (cosmetic display toggle). */
-    showSideTasks: Boolean = true,
-    /** PRD §15: flip the "Side tasks" display switch. */
-    onToggleSideTasks: (Boolean) -> Unit = {},
+    /** PRD §15: whether the calendar draws the screen breaks (cosmetic display toggle). */
+    showScreenBreaks: Boolean = true,
+    /** PRD §15: flip the "Screen breaks" display switch. */
+    onToggleScreenBreaks: (Boolean) -> Unit = {},
     /** PRD §14: whether the calendar draws the reminder tags (cosmetic display toggle). */
     showReminders: Boolean = true,
     /** PRD §14: flip the "Reminders" display switch. */
@@ -2134,7 +2140,16 @@ fun CalendarFloatingWindow(
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.weight(1f),
                 )
-                // PRD §14/§15: toggle whether reminders / side tasks are drawn (cosmetic; notifications keep
+                // PRD §9/§17: a distant future week fills its plan off the UI thread — show it's working.
+                if (calculating) {
+                    Text(
+                        text = "Calculating…",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = CalColors.muted,
+                        modifier = Modifier.padding(end = 8.dp),
+                    )
+                }
+                // PRD §14/§15: toggle whether reminders / screen breaks are drawn (cosmetic; notifications keep
                 // firing). The Switch consumes its own presses, so toggling it never starts the title-bar drag.
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -2162,8 +2177,8 @@ fun CalendarFloatingWindow(
                         color = CalColors.muted,
                     )
                     Switch(
-                        checked = showSideTasks,
-                        onCheckedChange = onToggleSideTasks,
+                        checked = showScreenBreaks,
+                        onCheckedChange = onToggleScreenBreaks,
                     )
                 }
                 Box(
@@ -2325,10 +2340,10 @@ private fun WeekView(
 
     // PRD §8 "there must not be overlaps" (default mode): every block on the calendar (records,
     // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live. Reminder tags
-    // (zero-duration, §14) and side-task markers (§15) are not blocks and are excluded.
-    val allBlocks = records.filterNot { it.reminder || it.sideTask || it.sleep || it.inactivity }.map { calendarBlockKey(it) to it.range }
+    // (zero-duration, §14) and screen-break markers (§15) are not blocks and are excluded.
+    val allBlocks = records.filterNot { it.reminder || it.screenBreak || it.sleep || it.inactivity }.map { calendarBlockKey(it) to it.range }
 
-    // PRD §8 hover title: the block/side-task under the cursor, reported up from each element so a single
+    // PRD §8 hover title: the block/screen-break under the cursor, reported up from each element so a single
     // non-interactive overlay (below) draws the bubble. [viewportCoords] anchors the bubble in viewport
     // (non-scrolling) space; [hoverScope] is threaded down to every hoverable element.
     var titleHover by remember { mutableStateOf<CalendarTitleHover?>(null) }
@@ -2600,11 +2615,11 @@ private fun DayColumn(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    // PRD §14/§15: reminders (zero-duration) and side tasks (sub-minute durations) render on their own
+    // PRD §14/§15: reminders (zero-duration) and screen breaks (sub-minute durations) render on their own
     // fixed-height marker paths; everything else is a height-proportional, draggable block. Split them so
-    // the block pipeline only sees real blocks (drawing side tasks to scale would make them invisible).
+    // the block pipeline only sees real blocks (drawing screen breaks to scale would make them invisible).
     val reminderTags = records.filter { it.reminder }
-    val sideTaskMarkers = records.filter { it.sideTask }
+    val screenBreakMarkers = records.filter { it.screenBreak }
     val sleepBands = records.filter { it.sleep }
     // Derived bands (account-offline "No screen" windows, legacy Inactivity) carry no entryId; a
     // user-authored no-screen / inactivity PANEL (entryId set) is a real, removable block and stays in
@@ -2612,7 +2627,7 @@ private fun DayColumn(
     val inactivityBands = records.filter { (it.inactivity || it.noScreen) && it.entryId == null }
     val blockRecords =
         records.filterNot {
-            it.reminder || it.sideTask || it.sleep || ((it.inactivity || it.noScreen) && it.entryId == null)
+            it.reminder || it.screenBreak || it.sleep || ((it.inactivity || it.noScreen) && it.entryId == null)
         }
     // PRD §17: the fill schedules the work plan straight through the nightly sleep windows, so a block may
     // land (partly) inside one. The overlapping sub-range is greyed "as if under the Sleep band" while the
@@ -3155,14 +3170,14 @@ private fun DayColumn(
             }
         }
 
-        // PRD §15 Side tasks: drawn as real time-positioned bands spanning their true duration, so the §9
+        // PRD §15 Screen breaks: drawn as real time-positioned bands spanning their true duration, so the §9
         // fill leaves an exact gap for each one (no overlap with the surrounding task, no stray white where
         // a multi-minute rest pause sits). A sub-minute look-away therefore renders as a hairline; the 5/15-
         // min rest pauses fill their region. A small minimum height keeps even a hairline visible/hoverable.
-        // Coinciding side tasks (e.g. the hourly and 2-hourly pose both due now) share the column width side
+        // Coinciding screen breaks (e.g. the hourly and 2-hourly pose both due now) share the column width side
         // by side via [overlapLayout], exactly like overlapping task blocks.
-        if (sideTaskMarkers.isNotEmpty()) {
-            val sideLayout = overlapLayout(sideTaskMarkers)
+        if (screenBreakMarkers.isNotEmpty()) {
+            val sideLayout = overlapLayout(screenBreakMarkers)
             // PRD §8: a screen break is drawn on top of everything else, so whatever sits under it (a
             // sleep/no-screen/inactivity band, or — rarely, since the fill normally carves an exact gap for
             // the break — a real panel) is otherwise hidden. Hover stacks that element's info below the
@@ -3170,12 +3185,12 @@ private fun DayColumn(
             val sideUnders = sleepBands + inactivityBands + blockRecords
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val colWidth = maxWidth
-                sideTaskMarkers.forEach { marker ->
+                screenBreakMarkers.forEach { marker ->
                     val key = calendarBlockKey(marker)
                     val slices = sideLayout[key]
                         ?: listOf(PanelSlice(marker.startHour, marker.endHour, xFraction = 0f, widthFraction = 1f))
                     slices.forEach { slice ->
-                        SideTaskBand(marker, slice, hourHeight, colWidth, tz, hoverScope, sideUnders)
+                        ScreenBreakBand(marker, slice, hourHeight, colWidth, tz, hoverScope, sideUnders)
                     }
                 }
             }
@@ -3206,21 +3221,21 @@ private fun DayColumn(
 /** PRD §14: a reminder rendered as a small checkable chip on the calendar (not a draggable block). */
 private val REMINDER_TAG_HEIGHT = 18.dp
 
-/** PRD §15: smallest rendered height for a side-task band, so a sub-minute look-away stays a visible hairline. */
-private val SIDE_TASK_MIN_HEIGHT = 3.dp
+/** PRD §15: smallest rendered height for a screen-break band, so a sub-minute look-away stays a visible hairline. */
+private val SCREEN_BREAK_MIN_HEIGHT = 3.dp
 
-/** PRD §15: a side-task band only draws its title (●/name) once it is at least this tall; shorter ones are bare. */
-private val SIDE_TASK_LABEL_MIN_HEIGHT = 13.dp
+/** PRD §15: a screen-break band only draws its title (●/name) once it is at least this tall; shorter ones are bare. */
+private val SCREEN_BREAK_LABEL_MIN_HEIGHT = 13.dp
 
 /**
- * PRD §15 Side task, rendered as a real time-positioned band (one [overlapLayout] slice of it) spanning its
- * true duration so the §9 fill leaves an exact gap for it. Sub-minute side tasks render at [SIDE_TASK_MIN_HEIGHT]
- * (a hairline); the title is drawn only when the band is tall enough ([SIDE_TASK_LABEL_MIN_HEIGHT]). The full
+ * PRD §15 Screen break, rendered as a real time-positioned band (one [overlapLayout] slice of it) spanning its
+ * true duration so the §9 fill leaves an exact gap for it. Sub-minute screen breaks render at [SCREEN_BREAK_MIN_HEIGHT]
+ * (a hairline); the title is drawn only when the band is tall enough ([SCREEN_BREAK_LABEL_MIN_HEIGHT]). The full
  * name always shows on hover (PRD §8), anchored at the cursor so zoom never floats the bubble off-screen, with
- * the side task's true (un-clipped) start–end times on a second line — the same bubble blocks get.
+ * the screen break's true (un-clipped) start–end times on a second line — the same bubble blocks get.
  */
 @Composable
-private fun SideTaskBand(
+private fun ScreenBreakBand(
     marker: PlacedRecord,
     slice: PanelSlice,
     hourHeight: Dp,
@@ -3230,8 +3245,8 @@ private fun SideTaskBand(
     /** PRD §8: real panels / derived activity bands that may sit under this (topmost) decorative band. */
     underCandidates: List<PlacedRecord>,
 ) {
-    val height = (hourHeight * (slice.bottomHour - slice.topHour)).coerceAtLeast(SIDE_TASK_MIN_HEIGHT)
-    val showLabel = height >= SIDE_TASK_LABEL_MIN_HEIGHT
+    val height = (hourHeight * (slice.bottomHour - slice.topHour)).coerceAtLeast(SCREEN_BREAK_MIN_HEIGHT)
+    val showLabel = height >= SCREEN_BREAK_LABEL_MIN_HEIGHT
     val timeRange = "${formatHm(marker.fullStartMillis, tz)} – ${formatHm(marker.fullEndMillis, tz)}"
     Box(
         modifier = Modifier
@@ -3265,7 +3280,7 @@ private fun SideTaskBand(
             }
         }
         // PRD §8: tiled by whichever underlying panel/band covers each sub-range (see [decorativeHoverZones]),
-        // so the hover bubble stacks it below this side task's own title/time.
+        // so the hover bubble stacks it below this screen break's own title/time.
         decorativeHoverZones(slice.topHour, slice.bottomHour, underCandidates).forEach { zone ->
             Box(
                 Modifier
@@ -3287,7 +3302,7 @@ private fun SideTaskBand(
 }
 
 /**
- * PRD §8 hover title: which block/side-task the cursor is currently over and where. [pos] is the cursor
+ * PRD §8 hover title: which block/screen-break the cursor is currently over and where. [pos] is the cursor
  * position in the calendar **viewport's** coordinates (not the scrolling content), so the bubble overlay
  * sits next to the pointer and follows it even while the grid scrolls under a still cursor. [ownerId]
  * identifies the reporting element so a stale `Exit` from the element the cursor just left can't clear a

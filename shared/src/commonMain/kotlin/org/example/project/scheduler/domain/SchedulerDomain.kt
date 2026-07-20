@@ -14,7 +14,7 @@ import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ScheduleUnitEntry
-import org.example.project.scheduler.model.SideTask
+import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
@@ -756,10 +756,10 @@ object SchedulerDomain {
      * Display-only and a local PRESUMPTION (this device cannot see a peer's activity between derives — the
      * same bounded staleness the active-session push accepts, ARCHITECTURE.md §8): the next derive replaces
      * it with the account-wide answer, shrinking it over any peer activity. It must never advance the
-     * **stored** [SideTask.lastRestMillis] or any persisted/synced state (the forward-only
+     * **stored** [ScreenBreak.lastRestMillis] or any persisted/synced state (the forward-only
      * [advanceRestsForward] merge would make a wrong this-device-only advance permanent). The sanctioned
-     * derived use is the [sideTasksForPlacement] placement overlay, which folds the same live gap into
-     * side-task **placement** without touching the stored value.
+     * derived use is the [screenBreaksForPlacement] placement overlay, which folds the same live gap into
+     * screen-break **placement** without touching the stored value.
      */
     fun displayInactivityGaps(
         derived: List<TaskTimeRange>,
@@ -849,13 +849,13 @@ object SchedulerDomain {
      * individual panels (so callers can still act on each backing panel) rather than fusing them — the
      * UI fuses each returned run into one block while the stored panels stay separate.
      *
-     * PRD §15 (side tasks hidden): when the calendar hides side tasks, two same-task panels separated only
-     * by a side-task gap should read as one continuous block. Set [bridgeGaps] = true and the gap between
+     * PRD §15 (screen breaks hidden): when the calendar hides screen breaks, two same-task panels separated only
+     * by a screen-break gap should read as one continuous block. Set [bridgeGaps] = true and the gap between
      * consecutive same-task/same-pin **auto** panels is treated as touching regardless of its width — purely cosmetic
      * (the panels stay separate in state, so the real spanning time is unchanged). This is correct because in
-     * the forward fill a same-task run is only ever broken by a side-task pause (a different task or a pinned
+     * the forward fill a same-task run is only ever broken by a screen-break pause (a different task or a pinned
      * panel sits in the gap as its own block and so breaks the run on its own); deciding it structurally —
-     * rather than matching the live side-task projection, which is recomputed at the current `now` while the
+     * rather than matching the live screen-break projection, which is recomputed at the current `now` while the
      * gaps come from the last schedule — avoids a flicker as `now` advances (the two were drifting apart). A
      * different/pinned block between the two panels still breaks the run because it is a separate block in the
      * sorted input. With [bridgeGaps] = false this is the original touch-or-overlap grouping.
@@ -864,8 +864,8 @@ object SchedulerDomain {
         panels: List<TaskPanel>,
         bridgeGaps: Boolean = false,
         // A bridged gap is not closed when one of these sleep windows sits *entirely within* it — the
-        // panels straddle the night and the always-visible sleep block must cut the run. A side-task gap
-        // *inside* a sleep window (work scheduled through the night) still bridges, so hiding side tasks
+        // panels straddle the night and the always-visible sleep block must cut the run. A screen-break gap
+        // *inside* a sleep window (work scheduled through the night) still bridges, so hiding screen breaks
         // doesn't leave a hole in the plan during sleep.
         sleepRegions: List<TaskTimeRange> = emptyList(),
     ): List<List<TaskPanel>> {
@@ -878,16 +878,16 @@ object SchedulerDomain {
             val frontier = group?.maxOf { it.endEpochMillis } ?: Long.MIN_VALUE
             // The run is cut only when a whole sleep window sits *inside* the gap — i.e. the two panels
             // straddle the night (work up to bedtime, resuming at wake) with the always-visible "Sleep"
-            // band between them. A side-task gap that falls *within* a sleep window (continuous
+            // band between them. A screen-break gap that falls *within* a sleep window (continuous
             // through-the-night work split by a pose cue) does NOT contain a whole sleep region, so it
-            // still bridges — otherwise hiding side tasks would leave a hole in the plan during sleep.
+            // still bridges — otherwise hiding screen breaks would leave a hole in the plan during sleep.
             val sleepStraddled =
                 sleepRegions.any { it.startEpochMillis >= frontier && it.endEpochMillis <= panel.startEpochMillis }
             val mergeable = head != null &&
                 panel.taskId != null && head.taskId == panel.taskId &&
                 head.pinned == panel.pinned &&
                 // Touching/overlapping panels always group. A *gap* is only bridged for the forward
-                // auto-fill's side-task splits, which produce auto panels — so the bridge is restricted to
+                // auto-fill's screen-break splits, which produce auto panels — so the bridge is restricted to
                 // auto panels. User-placed (pinned/manual) entries are deliberate distinct blocks: two
                 // pinned same-task panels days apart must NOT fuse into one block spanning the gap.
                 (panel.startEpochMillis <= frontier ||
@@ -1040,23 +1040,48 @@ object SchedulerDomain {
      */
     const val MIN_INACTIVITY_BAND_MILLIS: Long = 90L * 1000
 
-    // ----- PRD §15 Side tasks -----------------------------------------------------------------
+    // ----- PRD §15 Screen breaks -----------------------------------------------------------------
 
     /**
-     * PRD §15: the hardcoded set of side tasks — periodic activities placed on the calendar with a real
+     * PRD §15: the hardcoded set of screen breaks — periodic activities placed on the calendar with a real
      * spanning time. The §9 fill weaves them in without letting them reduce the surrounding task's minimum.
      */
-    val DEFAULT_SIDE_TASKS: List<SideTask> = listOf(
+    val DEFAULT_SCREEN_BREAKS: List<ScreenBreak> = listOf(
         // The 20-20-20 micro-break: after a ≥20-second pause, the next look-away is due 20 min later.
-        SideTask("look 20 feet away", intervalMillis = 20L * 60_000, durationMillis = 20L * 1_000),
+        ScreenBreak("look 20 feet away", intervalMillis = 20L * 60_000, durationMillis = 20L * 1_000),
         // The rest poses: after a pause of at least their length, the next one is due an interval later. The
         // 5-min pose merges up into the 15-min pose when their windows would overlap (PRD §15).
-        SideTask("take a 5min pose and blink hard", intervalMillis = 60L * 60_000, durationMillis = 5L * 60_000, restBreak = true),
-        SideTask("take a 15min pose", intervalMillis = 2L * 60L * 60_000, durationMillis = 15L * 60_000, restBreak = true),
+        ScreenBreak("take a 5min pose and blink hard", intervalMillis = 60L * 60_000, durationMillis = 5L * 60_000, restBreak = true),
+        ScreenBreak("take a 15min pose", intervalMillis = 2L * 60L * 60_000, durationMillis = 15L * 60_000, restBreak = true),
     )
 
-    /** A side task is schedulable when it has a positive interval, a positive duration, and a title. */
-    private fun isValidSideTask(side: SideTask): Boolean =
+    /**
+     * The screen breaks to actually seed into the running app — [DEFAULT_SCREEN_BREAKS] in production, or with the
+     * **5-min break** retimed to [org.example.project.DebugFlags.breakDurationMillisOverride] /
+     * [org.example.project.DebugFlags.breakIntervalMillisOverride] under the debug fast-break override (so the
+     * pause-cue voice message can be tested on real phones in seconds; see the flags). Only the shorter
+     * rest-break pose (the "5-min break") is retimed — the 15-min pose and the 20-20-20 look-away keep their
+     * production timings. Kept separate from [DEFAULT_SCREEN_BREAKS] so the scheduler tests keep asserting the
+     * exact production timings. A no-op when no override is set, so production callers get the unchanged list.
+     */
+    fun effectiveDefaultScreenBreaks(): List<ScreenBreak> {
+        if (!org.example.project.DebugFlags.fastBreakOverrideActive) return DEFAULT_SCREEN_BREAKS
+        // The "5-min break" is the shorter-duration rest-break pose; leave every other screen break untouched.
+        val fiveMinPose = DEFAULT_SCREEN_BREAKS.filter { it.restBreak }.minByOrNull { it.durationMillis }
+        return DEFAULT_SCREEN_BREAKS.map { side ->
+            if (side === fiveMinPose) {
+                side.copy(
+                    intervalMillis = org.example.project.DebugFlags.breakIntervalMillisOverride ?: side.intervalMillis,
+                    durationMillis = org.example.project.DebugFlags.breakDurationMillisOverride ?: side.durationMillis,
+                )
+            } else {
+                side
+            }
+        }
+    }
+
+    /** A screen break is schedulable when it has a positive interval, a positive duration, and a title. */
+    private fun isValidScreenBreak(side: ScreenBreak): Boolean =
         side.intervalMillis > 0 && side.durationMillis > 0 && side.title.isNotBlank()
 
     // ----- Sleep schedule -----------------------------------------------------------------------
@@ -1157,7 +1182,7 @@ object SchedulerDomain {
      * `lastRest + interval` (an interval after the last qualifying pause **ended**).
      *
      * How a *past* due time is handled depends on whether the app can tell the pause was taken:
-     * - A **rest pose** ([SideTask.restBreak], the 5-/15-min poses) is detectable from device sleep, so an
+     * - A **rest pose** ([ScreenBreak.restBreak], the 5-/15-min poses) is detectable from device sleep, so an
      *   un-taken one is clamped forward to `now` and waits at the now-line until the user actually rests
      *   (which updates `lastRestMillis`). A never-rested pose (`lastRestMillis == 0`) is due immediately.
      * - The **look-away cadence** (non-rest) is NOT detectable — the app can't know whether the user looked
@@ -1166,7 +1191,7 @@ object SchedulerDomain {
      *   slide to the now-line: `lastRestMillis` never updates for it, so clamping to `now` would re-place it
      *   at `now` every tick and make the look-away voice cue repeat indefinitely.
      */
-    fun sideTaskNextStart(side: SideTask, nowMillis: Long): Long {
+    fun screenBreakNextStart(side: ScreenBreak, nowMillis: Long): Long {
         val due = side.lastRestMillis + side.intervalMillis
         if (side.restBreak) return maxOf(due, nowMillis)
         // The current occurrence still covers `now` (or is future) → keep it; otherwise step the grid forward
@@ -1180,13 +1205,13 @@ object SchedulerDomain {
     /**
      * PRD §15: true when [side]'s due time `lastRest + interval` has passed at [nowMillis]. For a rest pose
      * this means it sits at the now-line (and is what drives the per-tick refill that keeps it tracking `now`);
-     * the look-away never pins to the now-line, so callers gate this on [SideTask.restBreak].
+     * the look-away never pins to the now-line, so callers gate this on [ScreenBreak.restBreak].
      */
-    fun isSideTaskOverdue(side: SideTask, nowMillis: Long): Boolean =
+    fun isScreenBreakOverdue(side: ScreenBreak, nowMillis: Long): Boolean =
         side.lastRestMillis + side.intervalMillis <= nowMillis
 
     /**
-     * PRD §15: which **rest poses** ([SideTask.restBreak], the 5-/15-min breaks) the now-line has reached at
+     * PRD §15: which **rest poses** ([ScreenBreak.restBreak], the 5-/15-min breaks) the now-line has reached at
      * [nowMillis] and should be **notified** — each mapped to its stable DUE instant `lastRest + interval`.
      *
      * This is the pure mathematical rule behind the rest-pose notification, deliberately a function of only
@@ -1197,7 +1222,7 @@ object SchedulerDomain {
      * a **level** condition — once the now-line passes `due` it stays true however far the clock jumped, so a
      * reach can never be missed — and `due` is fixed while the break is unserved (it only steps forward when a
      * pause advances `lastRestMillis`), which is why the caller can dedupe on it to fire exactly once per
-     * break and stay silent as an overdue pose slides along the now-line ([sideTaskNextStart] = `maxOf(due,
+     * break and stay silent as an overdue pose slides along the now-line ([screenBreakNextStart] = `maxOf(due,
      * now)`).
      *
      * The **5↔15 merge** is honored without panels: when both poses are reached at the now-line the longer
@@ -1207,18 +1232,18 @@ object SchedulerDomain {
      * A pose with **no known rest anchor** (`lastRestMillis == 0`) is deliberately NOT announced: its due
      * `0 + interval` is a 1970 sentinel, not an instant derived from the rules, so firing on it would violate
      * the "keys on a fixed rules-derived boundary" contract. This is the pre-seed transient every load starts
-     * in — `DEFAULT_SIDE_TASKS` seed at `lastRestMillis == 0` and the startup derive anchors them a moment
+     * in — `DEFAULT_SCREEN_BREAKS` seed at `lastRestMillis == 0` and the startup derive anchors them a moment
      * later (a fresh account's whole past is inactivity, so every pose is served at startup ⇒ anchor ≈ now;
      * a returning account's poses anchor to their real last rest). Announcing on the sentinel before that
      * seed lands is the "a freshly-emptied account spoke *take a 15min pose* the instant it opened" bug: the
-     * cue sweep sampled the poses in the ~90 ms window between seeding `DEFAULT_SIDE_TASKS` and the first
+     * cue sweep sampled the poses in the ~90 ms window between seeding `DEFAULT_SCREEN_BREAKS` and the first
      * `pauses refreshed [local, startup]` derive. Once anchored, the real due (`anchor + interval`) drives
      * the cue normally, so the only effect is suppressing the un-anchored sentinel fire.
      */
-    fun reachedRestPoseDueByTitle(sideTasks: List<SideTask>, nowMillis: Long): Map<String, Long> {
-        val reached = sideTasks
+    fun reachedRestPoseDueByTitle(screenBreaks: List<ScreenBreak>, nowMillis: Long): Map<String, Long> {
+        val reached = screenBreaks
             .filter {
-                it.restBreak && isValidSideTask(it) &&
+                it.restBreak && isValidScreenBreak(it) &&
                     it.lastRestMillis > 0 && it.lastRestMillis + it.intervalMillis <= nowMillis
             }
         return reached
@@ -1227,9 +1252,9 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §15: fold device-sleep [gaps] (each `start..end` epoch millis) into each side task's last-rest time.
-     * A pause of length L counts as having taken every side task whose duration ≤ L (a long pause satisfies the
-     * shorter poses too), so a task's [SideTask.lastRestMillis] advances to the **latest** qualifying gap's end.
+     * PRD §15: fold device-sleep [gaps] (each `start..end` epoch millis) into each screen break's last-rest time.
+     * A pause of length L counts as having taken every screen break whose duration ≤ L (a long pause satisfies the
+     * shorter poses too), so a task's [ScreenBreak.lastRestMillis] advances to the **latest** qualifying gap's end.
      *
      * This is the batch form of the per-gap rule in `reduceReportDeviceSleep`, and the one that closes the
      * cross-device divergence: a device-sleep gap is authoritative account-wide evidence that the user paused
@@ -1239,9 +1264,9 @@ object SchedulerDomain {
      * `lastRestMillis`; it does NOT append work records or carve panels — that belongs to the device that was
      * actually asleep when it recorded the gap.
      */
-    fun seedSideTasksFromGaps(sideTasks: List<SideTask>, gaps: List<TaskTimeRange>): List<SideTask> {
-        if (gaps.isEmpty()) return sideTasks
-        return sideTasks.map { side ->
+    fun seedScreenBreaksFromGaps(screenBreaks: List<ScreenBreak>, gaps: List<TaskTimeRange>): List<ScreenBreak> {
+        if (gaps.isEmpty()) return screenBreaks
+        return screenBreaks.map { side ->
             if (side.durationMillis <= 0) return@map side
             val latestRest = gaps.asSequence()
                 .filter { it.endEpochMillis - it.startEpochMillis >= side.durationMillis }
@@ -1253,8 +1278,8 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §15: fold freshly [seeded] rest times into the [current] side tasks, advancing each pose's
-     * [SideTask.lastRestMillis] **forward only** (never backward). Rest evidence can only ever reveal a
+     * PRD §15: fold freshly [seeded] rest times into the [current] screen breaks, advancing each pose's
+     * [ScreenBreak.lastRestMillis] **forward only** (never backward). Rest evidence can only ever reveal a
      * more-recent rest, so a later signal never "un-rests" a pose.
      *
      * This guards the two rest-pose seeders — the device's OS sleep log and the server-derived account-wide
@@ -1262,9 +1287,9 @@ object SchedulerDomain {
      * out of order. Without a forward-only merge, the slow OS-log seed (built from the startup state where
      * `lastRestMillis == 0`) landing after the derived-pause seed has advanced a pose to `now` would drag it
      * back to the morning wake and re-pin the 5-/15-min pose to the now-line on a freshly-opened account.
-     * Index-aligned: both lists derive from [DEFAULT_SIDE_TASKS].
+     * Index-aligned: both lists derive from [DEFAULT_SCREEN_BREAKS].
      */
-    fun advanceRestsForward(current: List<SideTask>, seeded: List<SideTask>): List<SideTask> =
+    fun advanceRestsForward(current: List<ScreenBreak>, seeded: List<ScreenBreak>): List<ScreenBreak> =
         current.mapIndexed { i, side ->
             val s = seeded.getOrNull(i)
             if (s != null && s.lastRestMillis > side.lastRestMillis) side.copy(lastRestMillis = s.lastRestMillis) else side
@@ -1276,8 +1301,8 @@ object SchedulerDomain {
      * instant) and, while the device stays inactive ([ongoing]), ends at the now-line, so it grows with
      * `now` exactly like the display Inactivity tail ([displayInactivityGaps] draws the same range). Once
      * the user is back the end freezes at the reopened session's start ([ongoing] = false) and the gap
-     * holds until a derive retires the tail. [ongoing] is what lets [sideTasksForPlacement] PRESUME an
-     * still-growing pause will run long enough to serve each side task (fluid placement), while a held
+     * holds until a derive retires the tail. [ongoing] is what lets [screenBreaksForPlacement] PRESUME an
+     * still-growing pause will run long enough to serve each screen break (fluid placement), while a held
      * gap only counts for what it actually contained.
      */
     data class LiveRest(val gap: TaskTimeRange, val ongoing: Boolean)
@@ -1293,36 +1318,36 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §15: the side tasks as the schedule PLACEMENT must see them — with the live, still-underived rest
-     * evidence [liveRest] ([liveRestGap]) folded into every side task's anchor.
+     * PRD §15: the screen breaks as the schedule PLACEMENT must see them — with the live, still-underived rest
+     * evidence [liveRest] ([liveRestGap]) folded into every screen break's anchor.
      *
      * An **ongoing** pause (the device is inactive right now) is PRESUMED to keep going until it has served
-     * each side task, so every anchor moves the moment the user walks away: the task's presumed rest end is
+     * each screen break, so every anchor moves the moment the user walks away: the task's presumed rest end is
      * `max(gapEnd, gapStart + duration)` — a *fixed* instant (`gapStart + duration`) while the pause is
      * still younger than the task's duration, transitioning **continuously** into the *sliding* gap end
      * (= the now-line) once the pause reaches it. This is what keeps the whole projected grid fluid under
      * an accelerated leap: without the presumption, every occurrence downstream of a not-yet-served rest
-     * pose is re-anchored to that pose's frozen slot ([sideTaskPanels]' pause-re-anchors-shorter-pauses
+     * pose is re-anchored to that pose's frozen slot ([screenBreakPanels]' pause-re-anchors-shorter-pauses
      * rule) and visibly waits for the leap's end to move. It also means the look-away's boundary can never
      * be crossed mid-pause (the "20s break stayed still and fired during the simulated pause" anomaly).
      *
      * A **held** gap (the user is back; the tail awaits a derive) counts only for what it actually
-     * contained — the strict [seedSideTasksFromGaps] rule: length ≥ duration, anchored at the gap's end,
+     * contained — the strict [seedScreenBreaksFromGaps] rule: length ≥ duration, anchored at the gap's end,
      * which is exactly what the derive will bank, so placement doesn't snap when it lands. A pause aborted
      * before reaching a pose's duration therefore RETRACTS that pose's presumption at the reopen instant —
      * the pose is still owed, and its occurrence returns to its stored slot.
      *
-     * Placement-only overlay: the stored [SideTask.lastRestMillis] is NOT advanced (the tail — and a
+     * Placement-only overlay: the stored [ScreenBreak.lastRestMillis] is NOT advanced (the tail — and a
      * fortiori the ongoing-pause presumption — is a local guess a peer's activity or an early return can
      * falsify; [advanceRestsForward] could never take a wrong advance back). It is recomputed on every
      * fill from `now` + the engine's session state, evaporating into the derive's account-wide answer, so
      * it persists and syncs nothing (reconstructibility rule).
      */
-    fun sideTasksForPlacement(sideTasks: List<SideTask>, liveRest: LiveRest?): List<SideTask> {
-        if (liveRest == null) return sideTasks
+    fun screenBreaksForPlacement(screenBreaks: List<ScreenBreak>, liveRest: LiveRest?): List<ScreenBreak> {
+        if (liveRest == null) return screenBreaks
         val gap = liveRest.gap
         val restLength = gap.endEpochMillis - gap.startEpochMillis
-        return sideTasks.map { side ->
+        return screenBreaks.map { side ->
             if (side.durationMillis <= 0) return@map side
             val restEnd =
                 if (liveRest.ongoing) {
@@ -1383,29 +1408,34 @@ object SchedulerDomain {
         return pauses
     }
 
-    /** Safety cap on the side-task projection loop (far above the ~700 occurrences a week-long horizon holds). */
-    private const val SIDE_TASK_PROJECTION_LIMIT: Int = 200_000
+    /**
+     * Safety cap on the screen-break projection loop. Far above what any real horizon holds — ~700 occurrences a
+     * week at production timings, and even a debug seconds-interval break over a multi-week fill stays well
+     * under it — so it only ever fires on a genuinely degenerate (near-zero span) configuration. The
+     * placement itself is O(n) (see [simulateScreenBreaks]), so a large count is cheap, not a freeze.
+     */
+    private const val SCREEN_BREAK_PROJECTION_LIMIT: Int = 2_000_000
 
     /**
-     * PRD §15: project [sideTasks] forward from [nowMillis] to [horizonMillis] as obstacle panels,
-     * interleaving the three recurrences and resolving their overlaps. Each panel has `sideTask = true`, a
+     * PRD §15: project [screenBreaks] forward from [nowMillis] to [horizonMillis] as obstacle panels,
+     * interleaving the three recurrences and resolving their overlaps. Each panel has `screenBreak = true`, a
      * null taskId, and a deterministic `side/{index}/{start}` id; invalid rows are skipped.
      *
      * [horizonMillis] defaults to the scheduling horizon (`now + [SCHEDULE_HORIZON_MILLIS]`), which is what
      * the §9 fill uses as a fixed obstacle window. The calendar display passes the **end of the focused week**
      * instead (PRD §15 "computed from now to the end of the currently focused week"), so navigating to a week
-     * beyond the default horizon still shows the side-task markers across it.
+     * beyond the default horizon still shows the screen-break markers across it.
      *
      * The simulation walks occurrences in time order (ties resolved toward the **longer** pause so a
      * coincident bigger pause is placed first), applying:
-     * - **Recurrence:** a rest pose ([SideTask.restBreak]) recurs an interval after it *ends*
+     * - **Recurrence:** a rest pose ([ScreenBreak.restBreak]) recurs an interval after it *ends*
      *   (`start + duration + interval`); the cadence look-away recurs an interval after it *starts*
      *   (`start + interval`).
      * - **A pause re-anchors shorter pauses:** placing any pause (overdue at `now` or future) re-anchors every
      *   *shorter* pause to `thisPauseEnd + itsInterval`, so the look-away always lands **20 min after a pose
      *   ends** ("after a ≥20-second pause, the next look-away is 20 minutes later") and never within an
      *   interval of a longer pose. (An overdue *rest pose* seeds at the now-line; the look-away instead seeds
-     *   at the next live slot of its fixed grid — see [sideTaskNextStart].)
+     *   at the next live slot of its fixed grid — see [screenBreakNextStart].)
      * - **Absorption:** a (defensive) skip of any occurrence whose window still falls inside an already-placed
      *   longer pause; it advances its own clock. With the re-anchoring above a shorter pause is normally pushed
      *   clear of a longer one before it would be drawn.
@@ -1413,89 +1443,75 @@ object SchedulerDomain {
      *   the still-future 15-min pose), it **becomes** a 15-min pose at its own start and the 15-min pose is
      *   pushed to an interval after the merged pause ends (`mergedEnd + 2 h` = 2h15 after the 5-min start).
      */
-    fun sideTaskPanels(
-        sideTasks: List<SideTask>,
+    fun screenBreakPanels(
+        screenBreaks: List<ScreenBreak>,
         nowMillis: Long,
         horizonMillis: Long = nowMillis + SCHEDULE_HORIZON_MILLIS,
     ): List<TaskPanel> {
         val horizon = maxOf(horizonMillis, nowMillis)
-        val valid = sideTasks.withIndex().filter { isValidSideTask(it.value) }
+        val valid = screenBreaks.withIndex().filter { isValidScreenBreak(it.value) }
         if (valid.isEmpty()) return emptyList()
         // Seed each task at its due time (or `now` when overdue) and run the shared projection engine forward.
-        val seedDue = valid.associate { (i, t) -> i to sideTaskNextStart(t, nowMillis) }
-        return simulateSideTasks(sideTasks, seedDue, horizon)
+        val seedDue = valid.associate { (i, t) -> i to screenBreakNextStart(t, nowMillis) }
+        return simulateScreenBreaks(screenBreaks, seedDue, horizon)
     }
 
     /**
-     * PRD §15: the most recent side-task occurrence whose start is strictly before [nowMillis] (the
-     * "last past side task before the now-line"), or null when none. Reuses the same interleaving /
-     * merge / re-anchor engine the forward [sideTaskPanels] uses, but seeds each task's grid at a
+     * PRD §15: the most recent screen-break occurrence whose start is strictly before [nowMillis] (the
+     * "last past screen break before the now-line"), or null when none. Reuses the same interleaving /
+     * merge / re-anchor engine the forward [screenBreakPanels] uses, but seeds each task's grid at a
      * point a full longest-interval (+ longest duration) before `now` and runs only up to `now`. That
      * lookback is wide enough that any pose able to re-anchor a look-away inside the window is itself
      * placed first, so the reconstructed recent cadence matches what the forward projection would have
      * drawn. Callers test `restBreak` of the returned panel's source task to tell a 20s look-away apart
      * from a rest pose.
      */
-    fun lastSideTaskBefore(
-        sideTasks: List<SideTask>,
+    fun lastScreenBreakBefore(
+        screenBreaks: List<ScreenBreak>,
         nowMillis: Long,
     ): TaskPanel? {
-        val valid = sideTasks.withIndex().filter { isValidSideTask(it.value) }
+        val valid = screenBreaks.withIndex().filter { isValidScreenBreak(it.value) }
         if (valid.isEmpty()) return null
         val maxInterval = valid.maxOf { it.value.intervalMillis }
         val maxDuration = valid.maxOf { it.value.durationMillis }
-        return sideTaskOccurrencesBetween(sideTasks, nowMillis - maxInterval - maxDuration, nowMillis)
+        return screenBreakOccurrencesBetween(screenBreaks, nowMillis - maxInterval - maxDuration, nowMillis)
             .filter { it.startEpochMillis < nowMillis }
             .maxByOrNull { it.startEpochMillis }
     }
 
     /**
-     * PRD §15: every side-task occurrence whose **start** lies in `[fromMillis, toMillis]`, reconstructed
-     * from the fixed grid via the same interleave / merge / re-anchor engine [sideTaskPanels] uses — but
-     * seeded from the PAST so it reproduces occurrences the forward projection has already discarded.
+     * PRD §15: every screen-break occurrence whose **start** lies in `[fromMillis, toMillis]`, reconstructed
+     * from the fixed grid via the same interleave / merge / re-anchor engine [screenBreakPanels] uses — but
+     * seeded from the PAST (one full recurrence step at/before [fromMillis]) so it reproduces the cadence
+     * inside the window **without walking the grid from `now`.**
      *
-     * This is the **leap-safe** source for the look-away cue. The forward [sideTaskPanels] seeds each task
-     * at [sideTaskNextStart], which **steps the grid past any occurrence `now` has already crossed**, so a
-     * look-away the clock jumped over is simply absent from `state.panels`; a panel-based cue can then never
-     * fire it — the reported "the 20s break was notified *after* the 5-min pose, it should have been before":
-     * the earlier look-away was dropped from the projection and only the next (re-anchored past the pose) one
-     * remained. Reconstructing over the sweep's `[scanFloor, now]` window instead tiles the timeline, so no
-     * crossed boundary is clipped (mirrors the level `now >= due` leap-proofing of the rest-pose cue in
-     * [reachedRestPoseDueByTitle]).
+     * This is the calendar's source of screen-break markers for a week the forward [screenBreakPanels] would have
+     * to project across to reach: the forward projection generates every occurrence between `now` and the
+     * horizon, so drawing a week `N` weeks out costs `O(N)` occurrences — and under a shrunk 5-min-break
+     * interval ([org.example.project.DebugFlags.breakIntervalMillisOverride]) that is tens of thousands of
+     * them, run through the `O(n²)` placement scan in [simulateScreenBreaks], which froze the UI when the user
+     * opened a distant day.
+     * Reconstructing only `[fromMillis, toMillis]` keeps the cost proportional to the **visible window**,
+     * independent of how far it sits from `now` (CLAUDE.md: hot-path display derivations scale with the
+     * screen, not with total history).
      *
      * Each participating task is seeded a full recurrence step at/before [fromMillis] so any pose able to
-     * re-anchor a look-away inside the window is itself placed first (the same widening [lastSideTaskBefore]
-     * relies on). Callers test `restBreak` of a returned panel's source task to tell a 20s look-away apart
-     * from a rest pose.
-     *
-     * **Dragging-pose shadow.** The static engine places an overdue rest pose at its FIXED due and re-anchors
-     * the look-away to that pose's fixed end (`due + duration + interval`), emitting one look-away just past
-     * the pose. But an overdue-**unserved** pose does not sit at its due — it SLIDES to the now-line
-     * ([sideTaskNextStart] = `maxOf(due, now)`), and dragging there it perpetually re-anchors every shorter
-     * task to `now + interval`, a slot that recedes as fast as `now` advances and that the now-line therefore
-     * never crosses. So while a pose is overdue and unserved, NO look-away is a fixed crossable boundary after
-     * its due; the one the static engine emits is a phantom (the reported "a 20s break fired right after the
-     * 5-min pose I never took — I only accelerated time, so the pose was just dragged"). Look-aways whose
-     * start is at/after the earliest overdue-unserved pose's due are dropped here (the pose's own due cue is
-     * the level [reachedRestPoseDueByTitle], unaffected; a genuinely-served pose is not overdue — its
-     * `lastRestMillis` advanced — so it casts no shadow and the look-away legitimately resumes 20 min after it).
+     * re-anchor a look-away inside the window is itself placed first (the same widening [lastScreenBreakBefore]
+     * and [screenBreakOccurrencesBetween] rely on). Unlike [screenBreakOccurrencesBetween] this applies **no**
+     * dragging-pose shadow — a display window shows every occurrence the periodic grid places; the shadow is
+     * a cue-ordering concern of the now-line sweep only.
      */
-    fun sideTaskOccurrencesBetween(
-        sideTasks: List<SideTask>,
+    fun screenBreakPanelsInWindow(
+        screenBreaks: List<ScreenBreak>,
         fromMillis: Long,
         toMillis: Long,
     ): List<TaskPanel> {
         if (toMillis < fromMillis) return emptyList()
-        val valid = sideTasks.withIndex().filter { isValidSideTask(it.value) }
+        val valid = screenBreaks.withIndex().filter { isValidScreenBreak(it.value) }
         if (valid.isEmpty()) return emptyList()
         val maxInterval = valid.maxOf { it.value.intervalMillis }
         val maxDuration = valid.maxOf { it.value.durationMillis }
         val from = fromMillis - maxInterval - maxDuration
-        // The earliest overdue-unserved rest-pose due (anchored, i.e. `lastRestMillis > 0` — an un-anchored
-        // pose is the pre-seed transient, not a drag). Look-aways at/after it are shadowed — see the docstring.
-        val overduePoseDue = valid
-            .filter { (_, t) -> t.restBreak && t.lastRestMillis > 0 && t.lastRestMillis + t.intervalMillis <= toMillis }
-            .minOfOrNull { (_, t) -> t.lastRestMillis + t.intervalMillis }
         val seedDue = valid.associate { (i, t) ->
             // A pose recurs over a (duration + interval) cycle; the look-away every interval. Seed at the
             // grid point at/just before the widened [from] so the loop reconstructs every occurrence up to
@@ -1504,13 +1520,53 @@ object SchedulerDomain {
             val base = t.lastRestMillis + t.intervalMillis
             i to (if (base >= from) base else base + ((from - base) / step) * step)
         }
-        return simulateSideTasks(sideTasks, seedDue, toMillis)
+        return simulateScreenBreaks(screenBreaks, seedDue, toMillis)
             .filter { it.startEpochMillis in fromMillis..toMillis }
+    }
+
+    /**
+     * PRD §15: [screenBreakPanelsInWindow] minus the **dragging-pose shadow** — the **leap-safe** source for the
+     * look-away cue. The forward [screenBreakPanels] seeds each task at [screenBreakNextStart], which **steps the
+     * grid past any occurrence `now` has already crossed**, so a look-away the clock jumped over is simply
+     * absent from `state.panels`; a panel-based cue can then never fire it — the reported "the 20s break was
+     * notified *after* the 5-min pose, it should have been before": the earlier look-away was dropped from the
+     * projection and only the next (re-anchored past the pose) one remained. Reconstructing over the sweep's
+     * `[scanFloor, now]` window instead tiles the timeline, so no crossed boundary is clipped (mirrors the
+     * level `now >= due` leap-proofing of the rest-pose cue in [reachedRestPoseDueByTitle]).
+     *
+     * Callers test `restBreak` of a returned panel's source task to tell a 20s look-away apart from a rest pose.
+     *
+     * **Dragging-pose shadow.** The static engine places an overdue rest pose at its FIXED due and re-anchors
+     * the look-away to that pose's fixed end (`due + duration + interval`), emitting one look-away just past
+     * the pose. But an overdue-**unserved** pose does not sit at its due — it SLIDES to the now-line
+     * ([screenBreakNextStart] = `maxOf(due, now)`), and dragging there it perpetually re-anchors every shorter
+     * task to `now + interval`, a slot that recedes as fast as `now` advances and that the now-line therefore
+     * never crosses. So while a pose is overdue and unserved, NO look-away is a fixed crossable boundary after
+     * its due; the one the static engine emits is a phantom (the reported "a 20s break fired right after the
+     * 5-min pose I never took — I only accelerated time, so the pose was just dragged"). Look-aways whose
+     * start is at/after the earliest overdue-unserved pose's due are dropped here (the pose's own due cue is
+     * the level [reachedRestPoseDueByTitle], unaffected; a genuinely-served pose is not overdue — its
+     * `lastRestMillis` advanced — so it casts no shadow and the look-away legitimately resumes 20 min after it).
+     */
+    fun screenBreakOccurrencesBetween(
+        screenBreaks: List<ScreenBreak>,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<TaskPanel> {
+        if (toMillis < fromMillis) return emptyList()
+        val valid = screenBreaks.withIndex().filter { isValidScreenBreak(it.value) }
+        if (valid.isEmpty()) return emptyList()
+        // The earliest overdue-unserved rest-pose due (anchored, i.e. `lastRestMillis > 0` — an un-anchored
+        // pose is the pre-seed transient, not a drag). Look-aways at/after it are shadowed — see the docstring.
+        val overduePoseDue = valid
+            .filter { (_, t) -> t.restBreak && t.lastRestMillis > 0 && t.lastRestMillis + t.intervalMillis <= toMillis }
+            .minOfOrNull { (_, t) -> t.lastRestMillis + t.intervalMillis }
+        return screenBreakPanelsInWindow(screenBreaks, fromMillis, toMillis)
             .filterNot { panel ->
                 // Drop a look-away shadowed by a dragging (overdue-unserved) pose — see the docstring.
                 overduePoseDue != null &&
                     panel.startEpochMillis >= overduePoseDue &&
-                    sideTasks.any { !it.restBreak && it.title == panel.title }
+                    screenBreaks.any { !it.restBreak && it.title == panel.title }
             }
     }
 
@@ -1536,7 +1592,7 @@ object SchedulerDomain {
      * order (the reported "20s look-away announced after the 5-min pose, but its boundary was earlier").
      *
      * The three kinds are gathered by their own leap-safe rules and then merged/sorted:
-     * - **Look-away starts** — [sideTaskOccurrencesBetween] over `[fromMillis, toMillis]` (not the forward
+     * - **Look-away starts** — [screenBreakOccurrencesBetween] over `[fromMillis, toMillis]` (not the forward
      *   projection, which drops an already-crossed occurrence). Each carries its resume instant as
      *   [CueCrossing.endInstant].
      * - **Rest-pose dues** — [reachedRestPoseDueByTitle] at [toMillis] (a **level** reach, so a jump can't
@@ -1549,7 +1605,7 @@ object SchedulerDomain {
      * the clock and the fired-boundary memory; this function is a pure function of the schedule and window.
      */
     fun cueCrossings(
-        sideTasks: List<SideTask>,
+        screenBreaks: List<ScreenBreak>,
         windDownInstants: List<Long>,
         automaticSchedule: Boolean,
         alreadyNotifiedPoseDues: Map<String, Long>,
@@ -1558,14 +1614,14 @@ object SchedulerDomain {
     ): List<CueCrossing> {
         val out = mutableListOf<CueCrossing>()
         // 20s look-away starts (leap-safe reconstruction; a pose-merged/absorbed occurrence never surfaces).
-        for (occ in sideTaskOccurrencesBetween(sideTasks, fromMillis, toMillis)) {
-            if (sideTasks.any { !it.restBreak && it.title == occ.title }) {
+        for (occ in screenBreakOccurrencesBetween(screenBreaks, fromMillis, toMillis)) {
+            if (screenBreaks.any { !it.restBreak && it.title == occ.title }) {
                 out += CueCrossing(occ.startEpochMillis, CueKind.LookAwayStart, occ.title, occ.endEpochMillis)
             }
         }
         // 5/15-min rest-pose dues reached at the now-line (level; the stable due is the ordering key).
         if (automaticSchedule) {
-            for ((title, due) in reachedRestPoseDueByTitle(sideTasks, toMillis)) {
+            for ((title, due) in reachedRestPoseDueByTitle(screenBreaks, toMillis)) {
                 if (alreadyNotifiedPoseDues[title] != due) {
                     out += CueCrossing(due, CueKind.RestPoseDue, title, due)
                 }
@@ -1579,31 +1635,34 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §15 projection engine shared by [sideTaskPanels] (forward from `now`) and [lastSideTaskBefore]
+     * PRD §15 projection engine shared by [screenBreakPanels] (forward from `now`) and [lastScreenBreakBefore]
      * (recent past). Walks the [seedDue] occurrences in time order up to [horizon], resolving overlaps via
-     * the merge / absorption / re-anchor rules documented on [sideTaskPanels]. [seedDue] maps each
-     * participating side-task index to the start of its first occurrence to consider.
+     * the merge / absorption / re-anchor rules documented on [screenBreakPanels]. [seedDue] maps each
+     * participating screen-break index to the start of its first occurrence to consider.
      */
-    private fun simulateSideTasks(
-        sideTasks: List<SideTask>,
+    private fun simulateScreenBreaks(
+        screenBreaks: List<ScreenBreak>,
         seedDue: Map<Int, Long>,
         horizon: Long,
     ): List<TaskPanel> {
         if (seedDue.isEmpty()) return emptyList()
         // The rest poses (restBreak) absorb any shorter pause whose window they fall inside (the 5↔15 merge
         // and the look-away→pose merge below).
-        val poses = seedDue.keys.filter { sideTasks[it].restBreak }
+        val poses = seedDue.keys.filter { screenBreaks[it].restBreak }
 
         // Next-due start per task index; seeded by the caller.
         val due = HashMap(seedDue)
 
         val result = mutableListOf<TaskPanel>()
-        // True when [start] falls inside an already-placed pause strictly longer than [durationMillis].
-        fun coveredByLonger(start: Long, durationMillis: Long): Boolean =
-            result.any { p ->
-                (p.endEpochMillis - p.startEpochMillis) > durationMillis &&
-                    p.startEpochMillis <= start && start < p.endEpochMillis
-            }
+        // The still-OPEN placed pauses (those whose end is still ahead of the occurrence being placed), as
+        // `(end, duration)`. Occurrences are placed in non-decreasing `start` order (every `due` only ever
+        // moves forward, and an absorbed pose is pulled back only to the *current* start), so a placed pause
+        // covers the current `start` iff its end is still ahead of it — which is exactly this set once pruned.
+        // Testing "is `start` inside an already-placed pause strictly longer than `durationMillis`" is then a
+        // scan of just the open pauses (kept tiny by the merge/absorption rules) instead of the whole growing
+        // result list — the O(n) transform that keeps a dense projection (a debug seconds-interval break, or a
+        // far-future week filled from the now-line) linear instead of O(n²).
+        val openPauses = ArrayList<Pair<Long, Long>>()
         // PRD §15: placing a pause re-anchors every *shorter* pause to `thisPauseEnd + itsInterval`, so a
         // shorter pause never lands within its own interval of a longer one that already covers it — e.g.
         // the look-away always restarts 20 min *after a pose ends* ("after a ≥20-second pause, the next
@@ -1611,7 +1670,7 @@ object SchedulerDomain {
         // pose. Applies to every placed pause (overdue at `now` or future), so the rule holds forward too.
         fun reanchorSmaller(placedEnd: Long, placedDuration: Long) {
             seedDue.keys.forEach { j ->
-                val s = sideTasks[j]
+                val s = screenBreaks[j]
                 if (s.durationMillis < placedDuration) {
                     due[j] = placedEnd + s.intervalMillis
                 }
@@ -1619,22 +1678,25 @@ object SchedulerDomain {
         }
 
         var guard = 0
-        while (guard++ < SIDE_TASK_PROJECTION_LIMIT) {
+        while (guard++ < SCREEN_BREAK_PROJECTION_LIMIT) {
             // The earliest pending occurrence within the horizon; ties go to the longer pause.
             val nextIndex = due.entries
                 .filter { it.value <= horizon }
                 .minWithOrNull(
                     compareBy<Map.Entry<Int, Long>> { it.value }
-                        .thenByDescending { sideTasks[it.key].durationMillis },
+                        .thenByDescending { screenBreaks[it.key].durationMillis },
                 )?.key ?: break
-            val task = sideTasks[nextIndex]
+            val task = screenBreaks[nextIndex]
             val start = due.getValue(nextIndex)
+            // Drop the pauses that have already closed at/before this occurrence's start (`start` never moves
+            // backward, so a closed pause can never re-open) — leaving exactly the pauses that cover `start`.
+            openPauses.removeAll { it.first <= start }
 
-            // Side tasks are projected straight through the nightly sleep windows too — a user who works at
+            // Screen breaks are projected straight through the nightly sleep windows too — a user who works at
             // the computer during the night still needs the eye-rest / pose cues, so the cadence never pauses
             // for sleep and the markers render over the "Sleep" band (PRD §15). A device that is *actually*
             // asleep advances each task's lastRestMillis over the real device-sleep gap
-            // ([seedSideTasksFromGaps] / reduceReportDeviceSleep), which re-anchors the poses past the gap on
+            // ([seedScreenBreaksFromGaps] / reduceReportDeviceSleep), which re-anchors the poses past the gap on
             // its own — so the "don't nag me the instant I wake" case is handled by real sleep evidence, not
             // by skipping the scheduled window here.
 
@@ -1649,18 +1711,23 @@ object SchedulerDomain {
             val absorbing = poses
                 .filter {
                     it != nextIndex &&
-                        sideTasks[it].durationMillis > task.durationMillis &&
+                        screenBreaks[it].durationMillis > task.durationMillis &&
                         (due[it] ?: Long.MAX_VALUE) in (start + 1) until (start + task.durationMillis)
                 }
-                .maxByOrNull { sideTasks[it].durationMillis }
+                .maxByOrNull { screenBreaks[it].durationMillis }
             if (absorbing != null) {
                 due[absorbing] = start
                 continue
             }
 
             val end = start + task.durationMillis
-            if (!coveredByLonger(start, task.durationMillis)) {
-                result.add(sideTaskPanel(nextIndex, task.title, start, end))
+            // `start` is inside an already-placed strictly-longer pause iff any still-open pause is longer.
+            // Only *placed* pauses can cover a later occurrence (matching the old scan of `result`), so a
+            // covered/skipped occurrence is never itself added to the open set.
+            val covered = openPauses.any { it.second > task.durationMillis }
+            if (!covered) {
+                result.add(screenBreakPanel(nextIndex, task.title, start, end))
+                openPauses.add(end to task.durationMillis)
             }
             // Recurrence: poses resume an interval after they end; the cadence look-away an interval after it
             // starts. Placing this pause also pushes every shorter pause to an interval after it ends.
@@ -1670,7 +1737,7 @@ object SchedulerDomain {
         return result.sortedBy { it.startEpochMillis }
     }
 
-    private fun sideTaskPanel(index: Int, title: String, start: Long, end: Long): TaskPanel =
+    private fun screenBreakPanel(index: Int, title: String, start: Long, end: Long): TaskPanel =
         TaskPanel(
             id = "side/$index/$start",
             taskId = null,
@@ -1679,7 +1746,7 @@ object SchedulerDomain {
             endEpochMillis = end,
             pinned = false,
             auto = false,
-            sideTask = true,
+            screenBreak = true,
         )
 
     /** The panel whose `[start, end)` contains [nowMillis] (the "task to do now"), or null. */
@@ -1790,26 +1857,26 @@ object SchedulerDomain {
      * ([mergeSameTaskPanels]), so a sole task shows as a single continuous panel. Auto panels get
      * deterministic `auto/{i}` ids (regenerated each run, skipping ids held by kept panels).
      *
-     * PRD §15 Side tasks: [SchedulerState.sideTasks] are materialized as fixed obstacle panels
-     * ([sideTaskPanels]) and woven into the window. They behave like a pinned obstacle (the fill flows
-     * around them) with one difference: when a task chunk meets a side task, the chunk is **split** around
+     * PRD §15 Screen breaks: [SchedulerState.screenBreaks] are materialized as fixed obstacle panels
+     * ([screenBreakPanels]) and woven into the window. They behave like a pinned obstacle (the fill flows
+     * around them) with one difference: when a task chunk meets a screen break, the chunk is **split** around
      * it and the task **resumes after** with its remaining work, so its minimum is never charged for the
-     * side-task time (a 45-min task crossing a 5-min side task occupies a 50-min wall-clock span). A pinned
+     * screen-break time (a 45-min task crossing a 5-min screen break occupies a 50-min wall-clock span). A pinned
      * obstacle, by contrast, truncates the chunk (the minimum is cut). Side panels regenerate every fill.
      */
     /**
      * CLAUDE.md reconstructibility rule: true for a panel [fillSchedule] **regenerates** deterministically
-     * from `now` + the tree + the sleep/side config — the side-task and sleep obstacle panels and the
+     * from `now` + the tree + the sleep/side config — the screen-break and sleep obstacle panels and the
      * non-pinned auto-fill panels. These carry no authoritative user state, so a re-derive that only moves
      * them is not a syncable change. Pinned panels (user-fixed) and reminder tags (`chore`, which carry the
      * authoritative `checked` state) are NOT regenerated and so are never treated as derived. Mirrors the
-     * `kept` filter in [fillSchedule] (sideTask/sleep always cut; everything else kept when fixed or a
+     * `kept` filter in [fillSchedule] (screenBreak/sleep always cut; everything else kept when fixed or a
      * reminder). Used by [org.example.project.scheduler.persistence.SchedulerStateCodec.syncFingerprint] to
      * exclude derived panels from the sync fingerprint, so an engine-tick reschedule that only re-derives
      * them neither marks state dirty nor pushes ("known deviation" fix).
      */
     fun isRegeneratedPanel(panel: TaskPanel): Boolean =
-        panel.sideTask || panel.sleep || (panel.auto && !panel.pinned && !panel.chore)
+        panel.screenBreak || panel.sleep || (panel.auto && !panel.pinned && !panel.chore)
 
     fun fillSchedule(
         state: SchedulerState,
@@ -1817,21 +1884,28 @@ object SchedulerDomain {
         // Sleep is local wall-clock, so the otherwise tz-pure fill needs a zone to place the nightly
         // sleep windows. Defaults to the system zone for production; tests pass empty/explicit sleep.
         timeZone: TimeZone = TimeZone.currentSystemDefault(),
-        // The device's live ongoing/held pause, if any ([liveRestGap]). Folded into side-task placement
-        // via [sideTasksForPlacement] so the side-task grid moves with a pause the derives haven't
+        // The device's live ongoing/held pause, if any ([liveRestGap]). Folded into screen-break placement
+        // via [screenBreaksForPlacement] so the screen-break grid moves with a pause the derives haven't
         // banked yet — placement-only; the stored lastRestMillis is untouched.
         liveRest: LiveRest? = null,
+        // How far ahead of [nowMillis] to materialize the plan. Defaults to the standard one-week horizon
+        // (the engine's authoritative near-term fill). A DISPLAY caller viewing a future week passes that
+        // week's end instead, so the plan is computed from the now-line out to the visible week — the
+        // "schedule the whole week displayed" rule. The work is O(horizon); a distant week is meant to be
+        // filled off the UI thread (it "takes time to display", never freezes), and nothing beyond the
+        // requested horizon is retained, so navigating back simply refills the nearer window.
+        horizonMillis: Long = nowMillis + SCHEDULE_HORIZON_MILLIS,
     ): List<TaskPanel> {
-        val horizon = nowMillis + SCHEDULE_HORIZON_MILLIS
+        val horizon = maxOf(horizonMillis, nowMillis)
         // Cut every non-pinned panel in [now, horizon]; keep fixed (pinned) panels, reminder tags (PRD
         // §14 — kept on the calendar though not obstacles, see isSchedulerFixed), and any panel entirely
-        // outside the window — already past (end ≤ now) or beyond the horizon (start > horizon). Side-task
+        // outside the window — already past (end ≤ now) or beyond the horizon (start > horizon). Screen-break
         // and schedule-DERIVED (`sleep/{day}`) sleep panels are always cut and regenerated fresh below, so
         // they never accumulate — but MATERIALIZED past-sleep panels (PRD §17, allocated id) are a recorded
         // fact and kept, like the materialized Inactivity panels.
         val kept = state.panels.filter {
             when {
-                it.sideTask -> false
+                it.screenBreak -> false
                 it.sleep -> !it.id.startsWith("sleep/")
                 else ->
                     isSchedulerFixed(it) || it.chore || it.noScreen || it.inactivity ||
@@ -1839,15 +1913,15 @@ object SchedulerDomain {
             }
         }
         // The user's sleep windows: rendered as "Sleep" bands, but NO LONGER task obstacles. The work plan
-        // projects straight through them (like the side tasks) so a user working at night still sees the
+        // projects straight through them (like the screen breaks) so a user working at night still sees the
         // priority-ordered plan; those panels render tinted, under the "Sleep" band (see CalendarUi).
         val sleepPanels = sleepPanels(state.sleep, nowMillis, horizon, timeZone)
         val leaves = schedulableLeaves(state)
-        // PRD §15: side tasks materialize regardless of whether there are leaf tasks to fill around them.
+        // PRD §15: screen breaks materialize regardless of whether there are leaf tasks to fill around them.
         // Each one places its next occurrence at its due time (or the now-line when overdue), with the
         // 5-min↔15-min merge applied. They project straight through the sleep windows too, so the eye-rest /
         // pose cues still fire (and render over the "Sleep" band) for a user working through the night.
-        val sidePanels = sideTaskPanels(sideTasksForPlacement(state.sideTasks, liveRest), nowMillis)
+        val sidePanels = screenBreakPanels(screenBreaksForPlacement(state.screenBreaks, liveRest), nowMillis)
         if (leaves.isEmpty()) return (kept + sidePanels + sleepPanels).sortedBy { it.startEpochMillis }
 
         val priorities = absoluteTaskPriorities(state)
@@ -1873,7 +1947,7 @@ object SchedulerDomain {
                 .filter { it > t }
                 .minOrNull()
 
-        // PRD §15: only the side-task occupied regions are obstacles the regular fill skips over (the
+        // PRD §15: only the screen-break occupied regions are obstacles the regular fill skips over (the
         // regular task resumes after each region without its minimum being charged). Sleep windows are NOT
         // in this set anymore — the plan is scheduled through the night (and the wind-down hour), so the
         // user can see the best work plan for the priority parameters even during sleep.
@@ -1919,7 +1993,7 @@ object SchedulerDomain {
             while ("auto/$idCounter" in keptIds) idCounter++
             return "auto/${idCounter++}"
         }
-        // PRD §15: the task whose minimum chunk is mid-placement, split across a side task, with the work
+        // PRD §15: the task whose minimum chunk is mid-placement, split across a screen break, with the work
         // it still owes. Carried across iterations so it resumes after the side region rather than the EDF
         // re-picking and its deadline only advances once the whole chunk (or a pinned-truncated one) lands.
         var pending: Pair<TaskId, Long>? = null
@@ -1928,8 +2002,11 @@ object SchedulerDomain {
             if (!p.isInfinite()) deadline[t] = (deadline[t] ?: start.toDouble()) + p
         }
         // Bound the loop defensively: with positive spans this can't run away, but a degenerate zero
-        // span (only possible if minima are clamped to 0) would otherwise spin.
-        while (cursor < horizon && index < MAX_SCHEDULE_PANELS) {
+        // span (only possible if minima are clamped to 0) would otherwise spin. The cap SCALES with the
+        // horizon span (~one chunk per 30 s) so a DISPLAY fill out to a distant focused week isn't clipped
+        // the way a fixed 168h-sized cap would be — bounded by the absolute [MAX_SCHEDULE_PANELS] ceiling.
+        val maxPanels = ((horizon - nowMillis) / 30_000L).coerceIn(1L, MAX_SCHEDULE_PANELS.toLong()).toInt()
+        while (cursor < horizon && index < maxPanels) {
             val pinnedCovering = kept.firstOrNull {
                 isSchedulerFixed(it) && it.startEpochMillis <= cursor && cursor < it.endEpochMillis
             }
@@ -1939,7 +2016,7 @@ object SchedulerDomain {
                 pending = null
                 continue
             }
-            // PRD §15: a side-task region never charges the surrounding task — the pending chunk resumes
+            // PRD §15: a screen-break region never charges the surrounding task — the pending chunk resumes
             // on the far side, its remaining work intact. PRD §9 "doable during a screen break": before
             // skipping it, a break-doable task whose minimum time fits what remains of the break may fill
             // it (a longer minimum never schedules there; the 20-s look-away fits no ≥1-min minimum, so
@@ -1978,7 +2055,7 @@ object SchedulerDomain {
             }
 
             // PRD §9 screen switches: inside a no-screen period only off-screen tasks are placeable;
-            // outside one, only on-screen tasks are. A chunk suspended across a side task can only resume
+            // outside one, only on-screen tasks are. A chunk suspended across a screen break can only resume
             // in a zone its task may occupy — crossing a screen-zone edge cuts it (minimum charged), like
             // a pinned obstacle.
             val inNoScreen = noScreenCovering(cursor) != null
@@ -2022,7 +2099,7 @@ object SchedulerDomain {
             when {
                 placed >= need -> { advance(taskId); pending = null } // chunk complete → next EDF release
                 boundary == nextSide && nextSide < nextPinned && nextSide < nextZoneEdge ->
-                    pending = taskId to (need - placed) // interrupted by a side task → resume after it
+                    pending = taskId to (need - placed) // interrupted by a screen break → resume after it
                 else -> {
                     // Truncated by a pinned obstacle or a screen-zone edge: the minimum IS cut here
                     // (PRD §9/§10), the chunk ends.
@@ -2031,13 +2108,17 @@ object SchedulerDomain {
             }
             index++
         }
-        // PRD §9: two consecutive auto panels of the same task merge into one block. Side-task and sleep
+        // PRD §9: two consecutive auto panels of the same task merge into one block. Screen-break and sleep
         // panels are added as-is (they split the run, so adjacent same-task pieces don't touch and stay apart).
         return (kept + sidePanels + sleepPanels + mergeSameTaskPanels(generated)).sortedBy { it.startEpochMillis }
     }
 
-    /** Safety cap on auto panels (pre-merge chunks) one fill can lay down (≈ 168h / a 1-minute minimum). */
-    private const val MAX_SCHEDULE_PANELS = 20_000
+    /**
+     * Absolute ceiling on auto panels (pre-merge chunks) one fill can lay down. The live cap scales with the
+     * fill horizon (~one chunk per 30 s of span — ≈ 20k over the standard 168h, as before), so a display fill
+     * out to a distant focused week isn't clipped; this ceiling only guards a degenerate near-zero span.
+     */
+    private const val MAX_SCHEDULE_PANELS = 2_000_000
 
     // ----- PRD §14 Reminders scheduler --------------------------------------------------------
 

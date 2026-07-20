@@ -7,7 +7,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.PanelPins
-import org.example.project.scheduler.model.SideTask
+import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.persistence.SchedulerStateCodec
@@ -98,6 +98,28 @@ class NoScreenInactivityPanelTest {
         val panel = decoded.panels.single()
         assertFalse(panel.noScreen)
         assertFalse(panel.inactivity)
+    }
+
+    @Test
+    fun codec_decodes_old_screen_break_key_names_as_screen_breaks() {
+        // Persisted-DB rule: the screen-break rename also renamed the persisted JSON keys (the legacy
+        // `sideTask` panel flag → `screenBreak`, `showSideTasks` → `showScreenBreaks`). A DB written by the
+        // OLD build (legacy key names) must still load — @JsonNames maps the legacy names onto the new fields.
+        val oldJson =
+            """
+            {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
+             "cells":[{"id":"c0","parentListId":"L","taskId":null}],
+             "tasks":[{"id":"t0","title":"X"}],
+             "showSideTasks":true,
+             "panels":[{"id":"side/0/0","taskId":null,"title":"look 20 feet away","start":0,"end":20000,"sideTask":true}]}
+            """.trimIndent()
+        val decoded = SchedulerStateCodec.decode(oldJson)
+        assertNotNull(decoded)
+        assertTrue(decoded.showScreenBreaks, "old showSideTasks key should decode into showScreenBreaks")
+        assertTrue(
+            decoded.panels.single().screenBreak,
+            "old sideTask panel flag should decode into screenBreak",
+        )
     }
 
     // ----- override/trim between screen tasks and no-screen periods ---------------------------
@@ -229,8 +251,8 @@ class NoScreenInactivityPanelTest {
             SchedulerIntent.SetTaskScreenFlags(solo, onScreen = true, doableDuringBreak = true),
         )
         s = s.copy(
-            sideTasks = listOf(
-                SideTask(
+            screenBreaks = listOf(
+                ScreenBreak(
                     title = "Rest pose",
                     intervalMillis = HOUR,
                     durationMillis = 15 * MIN,
@@ -240,7 +262,7 @@ class NoScreenInactivityPanelTest {
             ),
         )
         val panels = SchedulerDomain.fillSchedule(s, NOW)
-        val breakRange = panels.first { it.sideTask }
+        val breakRange = panels.first { it.screenBreak }
         // Same-task chunks merge, so the filled break shows as the block COVERING the break's interior
         // (instead of splitting around it as a non-break-doable task would).
         val coversBreak = panels.any {
@@ -260,8 +282,8 @@ class NoScreenInactivityPanelTest {
             SchedulerIntent.SetTaskScreenFlags(solo, onScreen = true, doableDuringBreak = true),
         )
         s = s.copy(
-            sideTasks = listOf(
-                SideTask(
+            screenBreaks = listOf(
+                ScreenBreak(
                     title = "Rest pose",
                     intervalMillis = HOUR,
                     durationMillis = 15 * MIN,
@@ -271,7 +293,7 @@ class NoScreenInactivityPanelTest {
             ),
         )
         val panels = SchedulerDomain.fillSchedule(s, NOW)
-        val breakRange = panels.first { it.sideTask }
+        val breakRange = panels.first { it.screenBreak }
         assertTrue(
             panels.none {
                 it.taskId == solo && it.auto &&

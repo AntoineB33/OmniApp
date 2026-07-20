@@ -26,9 +26,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.math.abs
 import kotlin.time.Instant
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
@@ -110,6 +112,18 @@ private enum class FloatingWindow { Calendar, Reminders, History, Sleep, TimeSim
 // look-away cues the user "slept through") before the session reopens. The clock's `reconfigured` bump wakes
 // those loops within a display frame, so this is a comfortable margin, not a tight race.
 private const val SIM_PAUSE_LEAP_SETTLE_MILLIS: Long = 350
+
+// Display quantum for the observed now-line UNDER TIME SIMULATION. The engine advances `now` every
+// [ADVANCE_DISPLAY_MILLIS_ACCEL] (50 ms) whenever the debug clock is accelerated — and DebugFlags.TIME_SIMULATION
+// forces that fine cadence on even at 1×. The whole calendar/band/record derivation below is a pure function of
+// `nowMillis` and re-runs on every emission, at O(account history) each time. On an empty account that is cheap,
+// but on a real (large) account it pegs the AWT/Compose UI thread ~20×/s and Compose never presents a first
+// frame — the window is created but stays hidden (the "time simulation shows no window" bug). Snapping the
+// OBSERVED now-line to this step and reading it through a derivedStateOf gates recomposition to ~this cadence
+// (≈4 fps of now-line motion) instead of 20×/s, keeping a big account responsive while fast-forwarding. Only the
+// on-screen now-line granularity is affected; the engine's cues/records/schedule still use its exact clock.
+// Production (real clock) already emits `now` only every 30 s (ADVANCE_TICK_MILLIS_PROD), so it is left exact.
+private const val DISPLAY_NOW_QUANTUM_MILLIS: Long = 250
 
 @Composable
 @Preview
@@ -227,7 +241,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 onForegrounded = { engine.onAppForegrounded() },
             )
         }
-        val nowMillis by engine.nowMillis.collectAsState()
+        // Observed now-line. Under time simulation it is snapped to [DISPLAY_NOW_QUANTUM_MILLIS] and read through
+        // a derivedStateOf so this composable recomposes only when the quantized value changes (a few times a
+        // second) rather than on every 50 ms engine emission — otherwise the O(history) derivation below pegs the
+        // UI thread on a real account and the window never presents. Production advances only every 30 s, so it is
+        // observed exactly (the branch is a no-op there).
+        val nowMillisState = engine.nowMillis.collectAsState()
+        val nowMillis by remember {
+            derivedStateOf {
+                val raw = nowMillisState.value
+                if (DebugFlags.TIME_SIMULATION) raw - (raw % DISPLAY_NOW_QUANTUM_MILLIS) else raw
+            }
+        }
         // PRD §15 device-sleep gaps: past pauses drawn as greyed "Inactivity" bands (display-only; see the engine).
         val inactivityGaps by engine.inactivityGaps.collectAsState()
         // PRD §15/§17: start of this device's open active session (null while inactive) — carves the "Sleep" band
@@ -337,17 +362,50 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
 
-        // PRD §15: side tasks are projected from now to the END OF THE FOCUSED WEEK — the week the calendar
+        // PRD §15: screen breaks are projected from now to the END OF THE FOCUSED WEEK — the week the calendar
         // window is showing ([startOfWeek] of [selectedDate], Monday-based, exclusive end = the next Monday's
         // midnight). The scheduling horizon is the floor, so the near term is unchanged and navigating to a
-        // further-out week extends the side-task markers to span it. `nowMillis` is the same `now` the last
+        // further-out week extends the screen-break markers to span it. `nowMillis` is the same `now` the last
         // schedule refresh used (the tick loop sets both together), so within the schedule window this
-        // reproduces the side-task panels already in [schedulerState.panels] and only adds the tail.
+        // reproduces the screen-break panels already in [schedulerState.panels] and only adds the tail.
+        val focusedWeekStartMillis = startOfWeek(selectedDate).atStartOfDayIn(tz).toEpochMilliseconds()
         val focusedWeekEndMillis =
             startOfWeek(selectedDate).plus(7, DateTimeUnit.DAY).atStartOfDayIn(tz).toEpochMilliseconds()
-        val sideTaskHorizonMillis = maxOf(nowMillis + SchedulerDomain.SCHEDULE_HORIZON_MILLIS, focusedWeekEndMillis)
+        val screenBreakHorizonMillis = maxOf(nowMillis + SchedulerDomain.SCHEDULE_HORIZON_MILLIS, focusedWeekEndMillis)
+
+        // PRD §9/§17 "schedule the whole week displayed": the engine materializes the work plan only out to
+        // its near horizon (168h). When the focused week reaches past that, compute the plan from the now-line
+        // out to that week for DISPLAY — off the UI thread (Dispatchers.Default) so a distant week "simply
+        // takes time to be displayed" instead of freezing, keyed only on the focused week so it doesn't rerun
+        // every now-tick. The result is never stored in the state, so navigating back to a near week just uses
+        // the near panels again and this far fill is dropped ("erased") — no retained multi-week memory.
+        val nearHorizonEndMillis = nowMillis + SchedulerDomain.SCHEDULE_HORIZON_MILLIS
+        val focusedWeekBeyondNearHorizon = focusedWeekEndMillis > nearHorizonEndMillis
+        var farWeekPlan by remember { mutableStateOf<List<TaskPanel>?>(null) }
+        var farWeekCalculating by remember { mutableStateOf(false) }
+        LaunchedEffect(focusedWeekStartMillis, focusedWeekBeyondNearHorizon) {
+            if (!focusedWeekBeyondNearHorizon) {
+                farWeekPlan = null
+                farWeekCalculating = false
+                return@LaunchedEffect
+            }
+            farWeekPlan = null
+            farWeekCalculating = true
+            val fill =
+                withContext(Dispatchers.Default) {
+                    SchedulerDomain.fillSchedule(
+                        schedulerState, nowMillis, timeZone = tz, horizonMillis = focusedWeekEndMillis,
+                    )
+                }
+            farWeekPlan = fill
+            farWeekCalculating = false
+        }
+        // The source for the calendar's real task BLOCKS: the near panels as usual, or the async far-week fill
+        // (falling back to the near panels while it is still computing, so past/pinned blocks stay visible).
+        val workPlanPanels =
+            if (focusedWeekBeyondNearHorizon) farWeekPlan ?: schedulerState.panels else schedulerState.panels
         // The user's sleep windows — shown as "Sleep" blocks and avoided by the regular task fill (so no task
-        // is scheduled while asleep). Side tasks, by contrast, DO project across sleep so their eye-rest / pose
+        // is scheduled while asleep). Screen breaks, by contrast, DO project across sleep so their eye-rest / pose
         // cues still render over the "Sleep" band for a user working through the night (PRD §15). The sleep
         // SCHEDULE is projected only from `now` FORWARD (PRD §17): the past is not assumed to have been slept —
         // an emptied DB's past is Inactivity + No-screen. Past sleep is instead a recorded fact: the persisted
@@ -370,36 +428,54 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
                 ?: emptyList()
         val displaySleepPanels =
-            SchedulerDomain.sleepPanels(schedulerState.sleep, nowMillis, sideTaskHorizonMillis, tz) +
+            SchedulerDomain.sleepPanels(schedulerState.sleep, nowMillis, screenBreakHorizonMillis, tz) +
                 schedulerState.panels.filter { it.sleep && it.endEpochMillis <= nowMillis } +
                 liveSleepBand
         val displaySleepRegions =
             displaySleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
         // The same live-pause placement overlay the reducer refill applies (SchedulerReducer.liveRestGap):
-        // the display projection folds this device's ongoing/held pause into the side-task grid, so the
+        // the display projection folds this device's ongoing/held pause into the screen-break grid, so the
         // rendered markers match the engine's placement and move with the pause (an ongoing pause is
         // presumed to serve each task — the whole grid re-places at walk-away and stays fluid under an
         // accelerated leap) instead of letting the now-line cross a stale slot or freezing everything
-        // downstream of a not-yet-served pose. Placement-only — stored side-task state is untouched.
+        // downstream of a not-yet-served pose. Placement-only — stored screen-break state is untouched.
+        //
+        // Bound to the VISIBLE week, not `[now, focusedWeekEnd]` (CLAUDE.md: hot-path display derivations
+        // scale with the screen, not with total history). When the focused week contains the present, the
+        // forward projection from `now` — which carries the overdue-slide + live-rest semantics near the
+        // now-line — is already bounded to `≤ 1` week (ends at `focusedWeekEnd`). When the focused week is
+        // entirely in the FUTURE, projecting from `now` would generate every occurrence between `now` and
+        // that week; at a shrunk 5-min-break interval ([DebugFlags.breakIntervalMillisOverride]) that is tens of thousands of markers pushed
+        // through the O(n²) placement scan, which froze the app when a distant day was opened. Reconstruct
+        // just that week's window from the fixed grid instead (no walk from `now`, no live-rest overlay
+        // needed — the present isn't in view).
         val displaySidePanels =
-            SchedulerDomain.sideTaskPanels(
-                SchedulerDomain.sideTasksForPlacement(
-                    schedulerState.sideTasks,
-                    SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
-                ),
-                nowMillis,
-                sideTaskHorizonMillis,
-            )
+            if (focusedWeekStartMillis <= nowMillis) {
+                SchedulerDomain.screenBreakPanels(
+                    SchedulerDomain.screenBreaksForPlacement(
+                        schedulerState.screenBreaks,
+                        SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
+                    ),
+                    nowMillis,
+                    focusedWeekEndMillis,
+                )
+            } else {
+                SchedulerDomain.screenBreakPanelsInWindow(
+                    schedulerState.screenBreaks,
+                    focusedWeekStartMillis,
+                    focusedWeekEndMillis,
+                )
+            }
 
         // PRD §15 (20s look-away): show the manual "Look away now" button only when the most recent past
-        // side task before the now-line is a 20s look-away (a non-rest-break side task), not a rest pose.
+        // screen break before the now-line is a 20s look-away (a non-rest-break screen break), not a rest pose.
         val showLookAwayButton =
-            SchedulerDomain.lastSideTaskBefore(schedulerState.sideTasks, nowMillis)
-                ?.let { panel -> schedulerState.sideTasks.any { !it.restBreak && it.title == panel.title } }
+            SchedulerDomain.lastScreenBreakBefore(schedulerState.screenBreaks, nowMillis)
+                ?.let { panel -> schedulerState.screenBreaks.any { !it.restBreak && it.title == panel.title } }
                 ?: false
 
         // PRD §14: reminder flags are calculated for the WHOLE focused week — from now to the end of the
-        // week the calendar is showing — so navigating to a week shows its reminders. Like the side-task
+        // week the calendar is showing — so navigating to a week shows its reminders. Like the screen-break
         // projection they are regenerated for display (anchored at today's midnight, out to the focused
         // week's end), with each tag's checked state carried over from the stored reminder panels by
         // matching its deterministic id.
@@ -432,7 +508,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // empty DB ⇒ the whole week is one open-ended inactivity gap). Recomputed every frame from
         // `selectedDate`, so nothing older than the displayed week is retained (memory). Over the near-term
         // window this reproduces the engine's value (same sessions); it only extends coverage further back.
-        val focusedWeekStartMillis = startOfWeek(selectedDate).atStartOfDayIn(tz).toEpochMilliseconds()
         val displayFloorMillis =
             minOf(nowMillis - SchedulerDomain.SCHEDULE_HORIZON_MILLIS, focusedWeekStartMillis)
         val displayDerivedGaps =
@@ -494,21 +569,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             ).minOrNull()
         val openStartMillis = SchedulerDomain.derivedBandsOpenStart(inactivityBands, earliestEvidenceMillis)
         // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
-        // user-authored, uniform blocks) drawn the same way; reminders (PRD §14) and side tasks (PRD §15)
+        // user-authored, uniform blocks) drawn the same way; reminders (PRD §14) and screen breaks (PRD §15)
         // span the focused week.
         val calendarRecords = (
             schedulerState.tasks.values.flatMap { task ->
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
             } + mergePanelsForDisplay(
-                schedulerState.panels, displayReminderPanels, displaySidePanels, displaySleepPanels,
-                schedulerState.showSideTasks, schedulerState.showReminders, activeRegions,
+                workPlanPanels, displayReminderPanels, displaySidePanels, displaySleepPanels,
+                schedulerState.showScreenBreaks, schedulerState.showReminders, activeRegions,
                 displayInactivityGaps,
             )
             ).map { record ->
             // Only real task blocks (records + auto/manual panels) carry the device-set segmentation; the
-            // reminder/side-task/sleep bands keep their own rendering. The helper itself clips to the
+            // reminder/screen-break/sleep bands keep their own rendering. The helper itself clips to the
             // elapsed part, so a future panel simply gets no segments.
-            if (record.reminder || record.sideTask || record.sleep || record.noScreen || record.inactivity) {
+            if (record.reminder || record.screenBreak || record.sleep || record.noScreen || record.inactivity) {
                 record
             } else {
                 record.copy(deviceSegments = deviceActivitySegments(record.range, activeSessions, nowMillis))
@@ -685,6 +760,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 .align(Alignment.Center)
                                 .zIndex(windowZ(FloatingWindow.Calendar)),
                             records = calendarRecords,
+                            // PRD §9/§17: a future week beyond the near horizon is still computing its plan
+                            // off the UI thread — surface a "Calculating…" hint instead of a frozen window.
+                            calculating = farWeekCalculating,
                             // PRD §8 focus: pressing in the calendar makes it the focused surface again
                             // (e.g. after a click into the tree had handed focus back) and raises it to the
                             // top of the window layers. (onFocus fires inside the window, after its offset.)
@@ -745,10 +823,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             overlapArmed = schedulerState.overlapArmed,
                             onToggleOverlap = { vm.dispatch(SchedulerIntent.ToggleCalendarOverlap) },
-                            // PRD §14/§15: the calendar's "Reminders" / "Side tasks" display switches (cosmetic;
+                            // PRD §14/§15: the calendar's "Reminders" / "Screen breaks" display switches (cosmetic;
                             // notifications stay on).
-                            showSideTasks = schedulerState.showSideTasks,
-                            onToggleSideTasks = { vm.dispatch(SchedulerIntent.SetShowSideTasks(it)) },
+                            showScreenBreaks = schedulerState.showScreenBreaks,
+                            onToggleScreenBreaks = { vm.dispatch(SchedulerIntent.SetShowScreenBreaks(it)) },
                             showReminders = schedulerState.showReminders,
                             onToggleReminders = { vm.dispatch(SchedulerIntent.SetShowReminders(it)) },
                             onUndo = { vm.dispatch(SchedulerIntent.Undo) },
@@ -1088,11 +1166,11 @@ private fun mergePanelsForDisplay(
     reminderPanels: List<TaskPanel>,
     sidePanels: List<TaskPanel>,
     sleepPanels: List<TaskPanel>,
-    showSideTasks: Boolean,
+    showScreenBreaks: Boolean,
     showReminders: Boolean,
     // PRD §15/§17: intervals the device/account was ACTIVE — the visible "Sleep" bands are carved here so a
     // window the user worked through shows a gap. Bridging still uses the UNCARVED sleep windows (below), so
-    // hiding side tasks doesn't fuse task blocks across a night just because part of it was carved.
+    // hiding screen breaks doesn't fuse task blocks across a night just because part of it was carved.
     activeRegions: List<TaskTimeRange> = emptyList(),
     // PRD §8: the account-offline "No screen" windows (un-subtracted, so each spans any sleep it contains
     // plus the awake-offline stretch around it). A sleep window is by definition a no-screen period, so each
@@ -1100,17 +1178,17 @@ private fun mergePanelsForDisplay(
     // therefore >= the sleep's own span when the sleep is directly followed/preceded by more offline time.
     noScreenRegions: List<TaskTimeRange> = emptyList(),
 ): List<CalendarRecord> {
-    // PRD §14/§15: reminder tags (zero-duration) and side tasks (very short real durations, e.g. a 20-second
+    // PRD §14/§15: reminder tags (zero-duration) and screen breaks (very short real durations, e.g. a 20-second
     // look-away) are NOT height-proportional blocks — drawn at scale they'd be invisible. They render on
-    // their own fixed-height marker paths (CalendarRecord.reminder / .sideTask) and never merge with panels.
-    // PRD §14/§15: reminder tags ([reminderPanels]) and side tasks ([sidePanels]) are both projected across
+    // their own fixed-height marker paths (CalendarRecord.reminder / .screenBreak) and never merge with panels.
+    // PRD §14/§15: reminder tags ([reminderPanels]) and screen breaks ([sidePanels]) are both projected across
     // the focused week (which may run past the schedule's fixed obstacle window in [panels]) — not taken from
     // [panels]; the regular `blocks` still come from [panels]. Within the schedule window the projections are
-    // identical (same `now`, same chores/side tasks), so the blocks stay split around the side tasks exactly
+    // identical (same `now`, same chores/screen breaks), so the blocks stay split around the screen breaks exactly
     // as scheduled and the checked state of each reminder is carried over by matching its deterministic id.
     val reminders = if (showReminders) reminderPanels else emptyList()
     val sides = sidePanels
-    val blocks = panels.filter { !SchedulerDomain.isReminder(it) && !it.sideTask && !it.sleep }
+    val blocks = panels.filter { !SchedulerDomain.isReminder(it) && !it.screenBreak && !it.sleep }
     val reminderRecords =
         reminders.map { tag ->
             CalendarRecord(
@@ -1123,10 +1201,10 @@ private fun mergePanelsForDisplay(
                 checkedAtMillis = tag.checkedAtMillis,
             )
         }
-    // PRD §15 toggle: when side tasks are hidden, draw none, and let same-task panels separated only by a
-    // (now-hidden) side task fuse into one block (cosmetic — the panels and the schedule are untouched).
+    // PRD §15 toggle: when screen breaks are hidden, draw none, and let same-task panels separated only by a
+    // (now-hidden) screen break fuse into one block (cosmetic — the panels and the schedule are untouched).
     val sideRecords =
-        if (!showSideTasks) {
+        if (!showScreenBreaks) {
             emptyList()
         } else {
             sides.map { side ->
@@ -1135,16 +1213,16 @@ private fun mergePanelsForDisplay(
                     range = TaskTimeRange(side.startEpochMillis, side.endEpochMillis),
                     entryId = side.id,
                     entryIds = listOf(side.id),
-                    sideTask = true,
+                    screenBreak = true,
                 )
             }
         }
-    // PRD §15: when side tasks are hidden, fuse same-task panels across the gaps the (now-hidden) side-task
-    // pauses left — structurally, so the fused block doesn't flicker as `now` advances (a moving side-task
+    // PRD §15: when screen breaks are hidden, fuse same-task panels across the gaps the (now-hidden) screen-break
+    // pauses left — structurally, so the fused block doesn't flicker as `now` advances (a moving screen-break
     // projection would keep drifting out of alignment with the already-scheduled gaps).
     val sleepRanges = sleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
     val blockRecords =
-        SchedulerDomain.groupSameTaskPanelsForDisplay(blocks, bridgeGaps = !showSideTasks, sleepRegions = sleepRanges).map { group ->
+        SchedulerDomain.groupSameTaskPanelsForDisplay(blocks, bridgeGaps = !showScreenBreaks, sleepRegions = sleepRanges).map { group ->
             val head = group.first()
             CalendarRecord(
                 title = head.title,

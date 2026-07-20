@@ -50,7 +50,7 @@ class SyncFingerprintGateTest {
             base.copy(
                 panels = listOf(
                     TaskPanel(id = "auto/0", taskId = null, title = "T", startEpochMillis = 0, endEpochMillis = 1_000, auto = true),
-                    TaskPanel(id = "side/0", taskId = null, title = "Look away", startEpochMillis = 1_000, endEpochMillis = 2_000, auto = true, sideTask = true),
+                    TaskPanel(id = "side/0", taskId = null, title = "Look away", startEpochMillis = 1_000, endEpochMillis = 2_000, auto = true, screenBreak = true),
                     TaskPanel(id = "sleep/0", taskId = null, title = "Sleep", startEpochMillis = 2_000, endEpochMillis = 3_000, sleep = true),
                 ),
             )
@@ -69,7 +69,7 @@ class SyncFingerprintGateTest {
         assertEquals(fp(base), fp(navigated), "navigating windows must not move the sync fingerprint")
 
         // The calendar's cosmetic display switches are per-device view state.
-        val switched = base.copy(showSideTasks = !base.showSideTasks, showReminders = !base.showReminders)
+        val switched = base.copy(showScreenBreaks = !base.showScreenBreaks, showReminders = !base.showReminders)
         assertEquals(fp(base), fp(switched), "the calendar display switches must not move the sync fingerprint")
 
         // The tree selection (highlighted cell) is per-device view state — cleared as a side effect of
@@ -110,7 +110,7 @@ class SyncFingerprintGateTest {
 
     @Test
     fun empty_account_idle_now_advance_makes_zero_authoritative_changes() {
-        // On a freshly-emptied account (no leaf tasks — only the seeded side tasks + default sleep) an idle
+        // On a freshly-emptied account (no leaf tasks — only the seeded screen breaks + default sleep) an idle
         // now-advance only re-derives the auto/side/sleep panels; it banks NO completed-work record, so the
         // sync fingerprint never moves and TaskSchedulerViewModel pushes no `scheduler_snapshot` revision.
         // Advancing across the 20-min look-away, the hourly 5-min pose, and the 2-hourly 15-min pose must all
@@ -164,7 +164,7 @@ class SyncFingerprintGateTest {
             )
             runCurrent()
 
-            // A §9 reschedule tick: with the seeded sleep window + side tasks but no leaf tasks, this only
+            // A §9 reschedule tick: with the seeded sleep window + screen breaks but no leaf tasks, this only
             // (re)generates sleep/side panels — a pure re-derive. It must NOT mark the state dirty.
             vm.dispatch(SchedulerIntent.RefreshSchedule(nowMillis = 1_700_000_000_000L))
             advanceTimeBy(500)
@@ -178,7 +178,7 @@ class SyncFingerprintGateTest {
             runCurrent()
             assertNotEquals(true, meta.loadSyncMeta()?.dirty, "navigating windows must not push")
 
-            vm.dispatch(SchedulerIntent.SetShowSideTasks(show = true))
+            vm.dispatch(SchedulerIntent.SetShowScreenBreaks(show = true))
             vm.dispatch(SchedulerIntent.SetShowReminders(show = false))
             advanceTimeBy(500)
             runCurrent()
