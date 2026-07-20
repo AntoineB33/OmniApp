@@ -237,6 +237,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // derived gaps don't cover yet. Unioned in below so the "Inactivity" band grows live behind an
         // advancing now-line (display-only, non-syncing; see SchedulerDomain.displayInactivityGaps).
         val inactiveSince by engine.inactiveSince.collectAsState()
+        // PRD §15: whether the user declared they are away from THIS device (left-menu "I'm away" button).
+        val userAway by engine.userAway.collectAsState()
 
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
@@ -537,6 +539,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             )
                         }
                     },
+                    away = userAway,
+                    onToggleAway = { engine.setUserAway(!userAway) },
                     anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen,
                     onCloseAllWindows = {
                         calendarOpen = false

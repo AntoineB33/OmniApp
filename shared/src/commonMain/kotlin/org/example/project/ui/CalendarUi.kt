@@ -38,6 +38,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -610,6 +611,13 @@ fun LateralMenu(
      */
     sleeping: Boolean = false,
     onToggleSleepWork: () -> Unit = {},
+    /**
+     * PRD §15 "I'm away" toggle: whether the user declared they are away from **this device**. Pressing it closes
+     * this device's presence WebSocket (the server sees the device stop working); pressing it again ("I'm back")
+     * reopens it. Distinct from Sleep/Work, which is the account-wide sleep mode.
+     */
+    away: Boolean = false,
+    onToggleAway: () -> Unit = {},
     /** PRD §15 (20s look-away): whether the spoken voice cue is enabled + toggle callback. */
     lookAwayVoiceEnabled: Boolean = true,
     onToggleLookAwayVoice: (Boolean) -> Unit = {},
@@ -706,6 +714,14 @@ fun LateralMenu(
             label = if (sleeping) "Work" else "Sleep",
             active = sleeping,
             onClick = onToggleSleepWork,
+        )
+
+        // PRD §15 "I'm away" toggle: declares this DEVICE idle. Pressing "I'm away" drops this device's presence
+        // WebSocket (the server sees it stop working); "I'm back" reopens it. Per-device, unlike Sleep/Work.
+        MenuButton(
+            label = if (away) "I'm back" else "I'm away",
+            active = away,
+            onClick = onToggleAway,
         )
 
         // Sleep schedule: toggles the floating window for the nightly sleep window the scheduler avoids.
@@ -2502,7 +2518,7 @@ private fun WeekView(
             }
         }
         // PRD §8 hover title bubble, drawn above all columns; non-interactive so the cursor passes through.
-        titleHover?.let { CalendarTitleBubble(it.title, it.pos, it.subtitle) }
+        titleHover?.let { CalendarTitleBubble(it.title, it.pos, it.subtitle, it.underTitle, it.underSubtitle) }
         }
     }
 }
@@ -2815,7 +2831,6 @@ private fun DayColumn(
                         .offset(y = hourHeight * band.startHour)
                         .height(hourHeight * (band.endHour - band.startHour))
                         .clipToBounds()
-                        .calendarTitleHover(label, hoverScope, subtitle = timeRange)
                         .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA))
                         // PRD §8 decorative panels: a derived no-screen window carries the same oblique-line
                         // pattern as a manual no-screen panel, so both read as one kind on the calendar.
@@ -2839,7 +2854,31 @@ private fun DayColumn(
                                 Modifier
                             },
                         ),
-                )
+                ) {
+                    // PRD §8: the fill schedules work straight through the night / off-screen tasks land
+                    // inside a no-screen window, so a real panel (or the derived Inactivity/No-screen band
+                    // itself, elsewhere) often sits under this decorative band. Tiled by which panel is
+                    // under each sub-range, so the hover bubble stacks that panel's title/time below this
+                    // band's own — instead of the two elements' independent hover reports racing/overwriting
+                    // each other (see [deviceHoverZones]).
+                    decorativeHoverZones(band.startHour, band.endHour, blockRecords).forEach { zone ->
+                        Box(
+                            Modifier
+                                .offset(y = hourHeight * (zone.top - band.startHour))
+                                .fillMaxWidth()
+                                .height(hourHeight * (zone.bottom - zone.top))
+                                .calendarTitleHover(
+                                    label,
+                                    hoverScope,
+                                    subtitle = timeRange,
+                                    underTitle = zone.under?.let(::underHoverTitle),
+                                    underSubtitle = zone.under?.let {
+                                        "${formatHm(it.fullStartMillis, tz)} – ${formatHm(it.fullEndMillis, tz)}"
+                                    },
+                                ),
+                        )
+                    }
+                }
             }
 
         // PRD §8 contextual menu, anchored at the right-click position. A block gets Edit/Remove; both a
@@ -3091,6 +3130,11 @@ private fun DayColumn(
         // by side via [overlapLayout], exactly like overlapping task blocks.
         if (sideTaskMarkers.isNotEmpty()) {
             val sideLayout = overlapLayout(sideTaskMarkers)
+            // PRD §8: a screen break is drawn on top of everything else, so whatever sits under it (a
+            // sleep/no-screen/inactivity band, or — rarely, since the fill normally carves an exact gap for
+            // the break — a real panel) is otherwise hidden. Hover stacks that element's info below the
+            // break's own (see [decorativeHoverZones]).
+            val sideUnders = sleepBands + inactivityBands + blockRecords
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val colWidth = maxWidth
                 sideTaskMarkers.forEach { marker ->
@@ -3098,7 +3142,7 @@ private fun DayColumn(
                     val slices = sideLayout[key]
                         ?: listOf(PanelSlice(marker.startHour, marker.endHour, xFraction = 0f, widthFraction = 1f))
                     slices.forEach { slice ->
-                        SideTaskBand(marker, slice, hourHeight, colWidth, tz, hoverScope)
+                        SideTaskBand(marker, slice, hourHeight, colWidth, tz, hoverScope, sideUnders)
                     }
                 }
             }
@@ -3150,35 +3194,60 @@ private fun SideTaskBand(
     colWidth: Dp,
     tz: TimeZone,
     hoverScope: CalendarTitleHoverScope,
+    /** PRD §8: real panels / derived activity bands that may sit under this (topmost) decorative band. */
+    underCandidates: List<PlacedRecord>,
 ) {
     val height = (hourHeight * (slice.bottomHour - slice.topHour)).coerceAtLeast(SIDE_TASK_MIN_HEIGHT)
     val showLabel = height >= SIDE_TASK_LABEL_MIN_HEIGHT
     val timeRange = "${formatHm(marker.fullStartMillis, tz)} – ${formatHm(marker.fullEndMillis, tz)}"
-    Row(
+    Box(
         modifier = Modifier
             .offset(x = colWidth * slice.xFraction, y = hourHeight * slice.topHour)
             .width(colWidth * slice.widthFraction)
-            .height(height)
-            .calendarTitleHover(marker.title, hoverScope, subtitle = timeRange)
-            .padding(horizontal = 1.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(CalColors.accent)
-            .then(if (showLabel) Modifier.padding(horizontal = 4.dp) else Modifier),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+            .height(height),
     ) {
-        if (showLabel) {
-            Text(
-                text = "●",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White,
-            )
-            Text(
-                text = marker.title,
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White,
-                maxLines = 1,
-                modifier = Modifier.weight(1f),
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 1.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(CalColors.accent)
+                .then(if (showLabel) Modifier.padding(horizontal = 4.dp) else Modifier),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (showLabel) {
+                Text(
+                    text = "●",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                )
+                Text(
+                    text = marker.title,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        // PRD §8: tiled by whichever underlying panel/band covers each sub-range (see [decorativeHoverZones]),
+        // so the hover bubble stacks it below this side task's own title/time.
+        decorativeHoverZones(slice.topHour, slice.bottomHour, underCandidates).forEach { zone ->
+            Box(
+                Modifier
+                    .offset(y = hourHeight * (zone.top - slice.topHour))
+                    .fillMaxWidth()
+                    .height(hourHeight * (zone.bottom - zone.top))
+                    .calendarTitleHover(
+                        marker.title,
+                        hoverScope,
+                        subtitle = timeRange,
+                        underTitle = zone.under?.let(::underHoverTitle),
+                        underSubtitle = zone.under?.let {
+                            "${formatHm(it.fullStartMillis, tz)} – ${formatHm(it.fullEndMillis, tz)}"
+                        },
+                    ),
             )
         }
     }
@@ -3197,6 +3266,13 @@ private class CalendarTitleHover(
     val pos: Offset,
     /** PRD §8: a second bubble line — the panel's start–end times; null for elements without a time range. */
     val subtitle: String? = null,
+    /**
+     * PRD §8: hovering a decorative panel (sleep/no-screen/screen-break) also names whatever real panel or
+     * derived activity/inactivity period sits underneath it, stacked below the decorative element's own
+     * title/subtitle. Null for an element with nothing underneath (or that isn't decorative).
+     */
+    val underTitle: String? = null,
+    val underSubtitle: String? = null,
 )
 
 /**
@@ -3223,13 +3299,24 @@ private fun Modifier.calendarTitleHover(
     title: String,
     scope: CalendarTitleHoverScope,
     subtitle: String? = null,
+    underTitle: String? = null,
+    underSubtitle: String? = null,
 ): Modifier = composed {
     val ownerId = remember { Any() }
     var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val report: (Offset) -> Unit = report@{ local ->
         val viewport = scope.viewportCoords()?.takeIf { it.isAttached } ?: return@report
         val self = coords?.takeIf { it.isAttached } ?: return@report
-        scope.onHover(CalendarTitleHover(ownerId, title, viewport.localPositionOf(self, local), subtitle))
+        scope.onHover(
+            CalendarTitleHover(
+                ownerId,
+                title,
+                viewport.localPositionOf(self, local),
+                subtitle,
+                underTitle,
+                underSubtitle,
+            ),
+        )
     }
     this
         .onGloballyPositioned { coords = it }
@@ -3264,7 +3351,13 @@ private fun Modifier.onPointerEventCompat(
  * bubble during a fast scroll, keeping the title live.
  */
 @Composable
-private fun CalendarTitleBubble(text: String, pos: Offset, subtitle: String? = null) {
+private fun CalendarTitleBubble(
+    text: String,
+    pos: Offset,
+    subtitle: String? = null,
+    underTitle: String? = null,
+    underSubtitle: String? = null,
+) {
     val yOffsetPx = with(LocalDensity.current) { 16.dp.roundToPx() }
     Column(
         Modifier
@@ -3285,6 +3378,27 @@ private fun CalendarTitleBubble(text: String, pos: Offset, subtitle: String? = n
                 color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.8f),
                 style = MaterialTheme.typography.labelSmall,
             )
+        }
+        // PRD §8: hovering a decorative panel (sleep/no-screen/screen-break) stacks the real panel or
+        // derived activity/inactivity period underneath it below a thin divider, so both are visible at once
+        // instead of one element's report silently overwriting the other's.
+        if (underTitle != null) {
+            HorizontalDivider(
+                Modifier.padding(vertical = 4.dp),
+                color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.3f),
+            )
+            Text(
+                text = underTitle.ifEmpty { "(untitled)" },
+                color = MaterialTheme.colorScheme.inverseOnSurface,
+                style = MaterialTheme.typography.labelMedium,
+            )
+            if (underSubtitle != null) {
+                Text(
+                    text = underSubtitle,
+                    color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.8f),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
         }
     }
 }
@@ -3613,6 +3727,45 @@ private fun deviceHoverZones(
     if (cursor < bottom) zones.add(DeviceHoverZone(cursor, bottom, null))
     return zones
 }
+
+/**
+ * One hover tile of a decorative panel's `[top, bottom]` hour range: [under] is the real panel or derived
+ * activity/inactivity period whose time range is directly beneath this sub-range, if any — its title/time
+ * are stacked below the decorative element's own title/subtitle in the hover bubble (PRD §8). Two
+ * independent hover reporters at the same position race unpredictably (see [deviceHoverZones]'s note on
+ * why nested/overlapping hover handlers aren't used), so this tiles the region instead, the same way.
+ */
+private data class DecorativeHoverZone(val top: Float, val bottom: Float, val under: PlacedRecord?)
+
+/** Tiles `[top, bottom]` by whichever of [unders] overlaps each sub-range; uncovered leftovers get `under = null`. */
+private fun decorativeHoverZones(top: Float, bottom: Float, unders: List<PlacedRecord>): List<DecorativeHoverZone> {
+    val zones = mutableListOf<DecorativeHoverZone>()
+    var cursor = top
+    for (u in unders.filter { it.startHour < bottom && it.endHour > top }.sortedBy { it.startHour }) {
+        val a = maxOf(u.startHour, top)
+        val b = minOf(u.endHour, bottom)
+        if (b <= cursor) continue
+        if (a > cursor) zones.add(DecorativeHoverZone(cursor, a, null))
+        zones.add(DecorativeHoverZone(maxOf(a, cursor), b, u))
+        cursor = maxOf(cursor, b)
+    }
+    if (cursor < bottom) zones.add(DecorativeHoverZone(cursor, bottom, null))
+    return zones
+}
+
+/** The band label for a derived (no-[entryId]) sleep/no-screen/inactivity record — see the drawing loop below. */
+private fun decorativeBandLabel(r: PlacedRecord): String = when {
+    r.sleep -> "Sleep"
+    r.noScreen -> "No screen"
+    else -> "Inactivity"
+}
+
+/**
+ * The hover title for a [DecorativeHoverZone.under] record: a derived band's own label ("Sleep"/"No
+ * screen"/"Inactivity") if it is one, otherwise the real panel's title.
+ */
+private fun underHoverTitle(u: PlacedRecord): String =
+    if (u.entryId == null && (u.sleep || u.inactivity || u.noScreen)) decorativeBandLabel(u) else u.title
 
 /** PRD §8: the coloured body + title of a calendar block (or one of its overlap slices). */
 @Composable

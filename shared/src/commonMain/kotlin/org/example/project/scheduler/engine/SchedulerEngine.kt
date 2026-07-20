@@ -257,6 +257,16 @@ class SchedulerEngine(
     // leap by the desktop debug control, and on a linked phone by the time-link frames' inactive flag.
     private var debugForcedInactive = false
 
+    // PRD §15: the user manually declared they are AWAY from this device via the left-menu "I'm away" button.
+    // While set, the device reads screen-inactive regardless of the platform sensor, so its active session is
+    // finalized and its Realtime presence cleared (the WebSocket drops) — telling the server this device is no
+    // longer being worked on. Purely local runtime state: never persisted, never synced (like [debugForcedInactive]),
+    // so a restart returns the device to active. Toggled by [setUserAway]; the menu reads it via [userAway].
+    private val _userAway = MutableStateFlow(false)
+
+    /** PRD §15: whether the user declared they are away from this device (drives the left-menu button label). */
+    val userAway: StateFlow<Boolean> = _userAway.asStateFlow()
+
     // PRD §7: a §9 calculation event that comes due while "Auto schedule" is off is deferred and coalesced
     // into a single reschedule fired when the switch is turned back on.
     private var pendingReschedule = false
@@ -430,9 +440,25 @@ class SchedulerEngine(
         }
     }
 
+    /**
+     * PRD §15: the left-menu "I'm away" button. Declares this device idle (`true`) or back in use (`false`),
+     * overriding the platform screen sensor. Flipping it advances the active session immediately — finalizing the
+     * open session on `true` (locally, like a real walk-away) so its Realtime presence clears and the WebSocket
+     * drops, and reopening one on `false` so the socket reconnects — rather than waiting for the next beat. A
+     * same-value call is a no-op. This device's own Inactivity band then derives the resulting pause on the next
+     * refresh, exactly like an observed walk-away.
+     */
+    fun setUserAway(away: Boolean) {
+        if (_userAway.value == away) return
+        _userAway.value = away
+        scope.launch {
+            advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended = false)
+        }
+    }
+
     // The screen-activity sample every engine site reads: the real platform sensor, overridden to inactive
-    // while the debug leap forces it (see [setDebugForcedInactive]).
-    private fun effectiveScreenActive(): Boolean = !debugForcedInactive && screenActive()
+    // while the debug leap forces it ([setDebugForcedInactive]) or the user declared they are away ([setUserAway]).
+    private fun effectiveScreenActive(): Boolean = !debugForcedInactive && !_userAway.value && screenActive()
 
     // Diagnostics-instrumented seams for every user-audible output: each posted notification and played voice
     // cue lands in the cross-device timeline with the sim instant it fired at, so "this device stayed silent
