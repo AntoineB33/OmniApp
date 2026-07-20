@@ -710,6 +710,15 @@ object SchedulerDomain {
     }
 
     /**
+     * The overlap of [ranges] with [regions] — every sub-span present in both. Built from [subtractRegions]:
+     * `ranges \ (ranges \ regions)` = `ranges ∩ regions`. Used to find the parts of the scheduled sleep
+     * windows that turned out to be no-screen/inactive (PRD §9 "a scheduled sleep window found to be a
+     * no-screen period is a past sleep period"). Zero-length remnants are dropped.
+     */
+    fun intersectRegions(ranges: List<TaskTimeRange>, regions: List<TaskTimeRange>): List<TaskTimeRange> =
+        subtractRegions(ranges, subtractRegions(ranges, regions))
+
+    /**
      * PRD §15/§17: carve the display "Sleep" bands where the device/account was demonstrably ACTIVE — the
      * user kept working through a scheduled sleep window, so that slice never happened as sleep and must show
      * as a gap. Each panel in [sleepPanels] is split by [activeRegions] into its surviving asleep sub-pieces
@@ -762,6 +771,24 @@ object SchedulerDomain {
         val tailEnd = activeSinceMillis ?: nowMillis
         if (tailStart >= tailEnd) return derived
         return mergeOccupied(derived + TaskTimeRange(tailStart, tailEnd))
+    }
+
+    /**
+     * The start instant that a derived Inactivity/No-screen band should render as `∞` (open-ended into the
+     * past), or null when none is. A derived band is open-started when **nothing precedes it** — no activity
+     * session, task record, or user-authored/materialized panel begins strictly before it — so the inactivity
+     * genuinely extends indefinitely back (the derive window's back edge is an arbitrary display floor, not a
+     * real boundary). Only the earliest band can be open-started; [earliestEvidenceMillis] is the minimum
+     * start instant across all such evidence (null when the account has none — a freshly-emptied DB, where the
+     * whole rendered past is one open-ended inactivity band).
+     */
+    fun derivedBandsOpenStart(gaps: List<TaskTimeRange>, earliestEvidenceMillis: Long?): Long? {
+        val earliest = gaps.minByOrNull { it.startEpochMillis } ?: return null
+        return if (earliestEvidenceMillis == null || earliestEvidenceMillis >= earliest.startEpochMillis) {
+            earliest.startEpochMillis
+        } else {
+            null
+        }
     }
 
     /**
@@ -1799,13 +1826,17 @@ object SchedulerDomain {
         // Cut every non-pinned panel in [now, horizon]; keep fixed (pinned) panels, reminder tags (PRD
         // §14 — kept on the calendar though not obstacles, see isSchedulerFixed), and any panel entirely
         // outside the window — already past (end ≤ now) or beyond the horizon (start > horizon). Side-task
-        // and sleep panels are always cut and regenerated fresh below, so they never accumulate.
+        // and schedule-DERIVED (`sleep/{day}`) sleep panels are always cut and regenerated fresh below, so
+        // they never accumulate — but MATERIALIZED past-sleep panels (PRD §17, allocated id) are a recorded
+        // fact and kept, like the materialized Inactivity panels.
         val kept = state.panels.filter {
-            !it.sideTask && !it.sleep &&
-                (
+            when {
+                it.sideTask -> false
+                it.sleep -> !it.id.startsWith("sleep/")
+                else ->
                     isSchedulerFixed(it) || it.chore || it.noScreen || it.inactivity ||
                         it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon
-                    )
+            }
         }
         // The user's sleep windows: rendered as "Sleep" bands, but NO LONGER task obstacles. The work plan
         // projects straight through them (like the side tasks) so a user working at night still sees the

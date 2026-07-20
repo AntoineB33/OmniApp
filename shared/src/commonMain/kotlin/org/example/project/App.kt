@@ -237,6 +237,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // derived gaps don't cover yet. Unioned in below so the "Inactivity" band grows live behind an
         // advancing now-line (display-only, non-syncing; see SchedulerDomain.displayInactivityGaps).
         val inactiveSince by engine.inactiveSince.collectAsState()
+        // PRD §15: every stored active session (this device's own + the peers' rows pulled by the Sync button) —
+        // the full unclipped session history. Used both to segment past task panels by which devices were open
+        // (hover bubble + dashed separators) and to re-derive the display Inactivity bands over any focused past
+        // week (PRD §12/§15 — the engine's own [inactivityGaps] only reaches back 168h).
+        val activeSessions by engine.activeSessions.collectAsState()
         // PRD §15: whether the user declared they are away from THIS device (left-menu "I'm away" button).
         val userAway by engine.userAway.collectAsState()
 
@@ -343,13 +348,31 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val sideTaskHorizonMillis = maxOf(nowMillis + SchedulerDomain.SCHEDULE_HORIZON_MILLIS, focusedWeekEndMillis)
         // The user's sleep windows — shown as "Sleep" blocks and avoided by the regular task fill (so no task
         // is scheduled while asleep). Side tasks, by contrast, DO project across sleep so their eye-rest / pose
-        // cues still render over the "Sleep" band for a user working through the night (PRD §15). Generated
-        // back over the past 168h too (the same horizon the §15 inactivity bands use), so past nights render as
-        // "Sleep" and the inactivity bands can be carved around them (a night is labelled Sleep, not Inactivity).
+        // cues still render over the "Sleep" band for a user working through the night (PRD §15). The sleep
+        // SCHEDULE is projected only from `now` FORWARD (PRD §17): the past is not assumed to have been slept —
+        // an emptied DB's past is Inactivity + No-screen. Past sleep is instead a recorded fact: the persisted
+        // materialized "Sleep" panels the engine banks when a scheduled window elapses unattended, plus the
+        // live band `[sleepingSince, now]` that grows while the Sleep toggle is on (finalized when it goes off).
+        val liveSleepBand =
+            schedulerState.sleepingSinceMillis
+                ?.takeIf { it < nowMillis }
+                ?.let {
+                    listOf(
+                        TaskPanel(
+                            id = "sleep-live",
+                            taskId = null,
+                            title = "Sleep",
+                            startEpochMillis = it,
+                            endEpochMillis = nowMillis,
+                            sleep = true,
+                        ),
+                    )
+                }
+                ?: emptyList()
         val displaySleepPanels =
-            SchedulerDomain.sleepPanels(
-                schedulerState.sleep, nowMillis - SchedulerDomain.SCHEDULE_HORIZON_MILLIS, sideTaskHorizonMillis, tz,
-            )
+            SchedulerDomain.sleepPanels(schedulerState.sleep, nowMillis, sideTaskHorizonMillis, tz) +
+                schedulerState.panels.filter { it.sleep && it.endEpochMillis <= nowMillis } +
+                liveSleepBand
         val displaySleepRegions =
             displaySleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
         // The same live-pause placement overlay the reducer refill applies (SchedulerReducer.liveRestGap):
@@ -403,11 +426,26 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // reopened session once the user returns) — so the band grows behind an advancing now-line instead
         // of appearing whole at the next derive. The tail also joins the complement below, so an ongoing
         // pause is never mistaken for activity that would carve the "Sleep" band.
+        // PRD §12/§15 on-demand past fill: the engine's [inactivityGaps] only derives back 168h, so a week older
+        // than that would render empty. Re-derive the account-wide pauses for DISPLAY from the full stored
+        // session history over a floor that reaches the focused week — any past week then fills on demand (an
+        // empty DB ⇒ the whole week is one open-ended inactivity gap). Recomputed every frame from
+        // `selectedDate`, so nothing older than the displayed week is retained (memory). Over the near-term
+        // window this reproduces the engine's value (same sessions); it only extends coverage further back.
+        val focusedWeekStartMillis = startOfWeek(selectedDate).atStartOfDayIn(tz).toEpochMilliseconds()
+        val displayFloorMillis =
+            minOf(nowMillis - SchedulerDomain.SCHEDULE_HORIZON_MILLIS, focusedWeekStartMillis)
+        val displayDerivedGaps =
+            SchedulerDomain.derivePauses(
+                activeSessions.map { TaskTimeRange(it.startMillis, it.endMillis) },
+                displayFloorMillis,
+                nowMillis,
+            )
         val displayInactivityGaps =
-            SchedulerDomain.displayInactivityGaps(inactivityGaps, inactiveSince, activeSince, nowMillis)
-        val pastActivityWindow = TaskTimeRange(nowMillis - SchedulerDomain.SCHEDULE_HORIZON_MILLIS, nowMillis)
+            SchedulerDomain.displayInactivityGaps(displayDerivedGaps, inactiveSince, activeSince, nowMillis)
+        val pastActivityWindow = TaskTimeRange(displayFloorMillis, nowMillis)
         val accountActiveRegions =
-            if (inactivityGaps.isEmpty()) {
+            if (activeSessions.isEmpty()) {
                 emptyList()
             } else {
                 SchedulerDomain.subtractRegions(listOf(pastActivityWindow), displayInactivityGaps)
@@ -443,10 +481,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 )
             }
         }
-        // PRD §15: every stored active session (this device's own + the peers' rows pulled by the Sync
-        // button) — the calendar segments past task panels by which devices were open (hover bubble line +
-        // dashed separators where the set changed).
-        val activeSessions by engine.activeSessions.collectAsState()
+        // PRD §12 "∞ start": the earliest derived Inactivity/No-screen band is open-ended into the past when
+        // nothing precedes it — no activity session, task record, or user-authored/materialized panel begins
+        // before it (an emptied DB has none). Its start then renders as "∞" instead of a wall-clock time
+        // (which, clamped to the 168h derive floor, would read the same hour:minute as `now`).
+        val earliestEvidenceMillis =
+            listOfNotNull(
+                activeSessions.minOfOrNull { it.startMillis },
+                schedulerState.panels.filterNot(SchedulerDomain::isRegeneratedPanel)
+                    .minOfOrNull { it.startEpochMillis },
+                schedulerState.tasks.values.flatMap { it.record }.minOfOrNull { it.startEpochMillis },
+            ).minOrNull()
+        val openStartMillis = SchedulerDomain.derivedBandsOpenStart(inactivityBands, earliestEvidenceMillis)
         // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
         // user-authored, uniform blocks) drawn the same way; reminders (PRD §14) and side tasks (PRD §15)
         // span the focused week.
@@ -456,6 +502,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             } + mergePanelsForDisplay(
                 schedulerState.panels, displayReminderPanels, displaySidePanels, displaySleepPanels,
                 schedulerState.showSideTasks, schedulerState.showReminders, activeRegions,
+                displayInactivityGaps,
             )
             ).map { record ->
             // Only real task blocks (records + auto/manual panels) carry the device-set segmentation; the
@@ -474,6 +521,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 title = "No screen",
                 range = gap,
                 noScreen = true,
+                openStart = openStartMillis != null && gap.startEpochMillis == openStartMillis,
             )
         }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
@@ -1046,6 +1094,11 @@ private fun mergePanelsForDisplay(
     // window the user worked through shows a gap. Bridging still uses the UNCARVED sleep windows (below), so
     // hiding side tasks doesn't fuse task blocks across a night just because part of it was carved.
     activeRegions: List<TaskTimeRange> = emptyList(),
+    // PRD §8: the account-offline "No screen" windows (un-subtracted, so each spans any sleep it contains
+    // plus the awake-offline stretch around it). A sleep window is by definition a no-screen period, so each
+    // sleep band records the enclosing offline window here to drive its "No screen" hover line — which is
+    // therefore >= the sleep's own span when the sleep is directly followed/preceded by more offline time.
+    noScreenRegions: List<TaskTimeRange> = emptyList(),
 ): List<CalendarRecord> {
     // PRD §14/§15: reminder tags (zero-duration) and side tasks (very short real durations, e.g. a 20-second
     // look-away) are NOT height-proportional blocks — drawn at scale they'd be invisible. They render on
@@ -1113,12 +1166,20 @@ private fun mergePanelsForDisplay(
     // the device/account was active so a night the user worked through shows a gap rather than a solid block.
     val sleepRecords =
         SchedulerDomain.carveSleepPanels(sleepPanels, activeRegions).map { sleepPanel ->
+            // The enclosing offline window (contains this carved sleep sub-panel's midpoint) — a sleep is
+            // always inactive, so it sits inside an offline window that may extend past it. Null when no
+            // pause evidence exists yet (conservative empty case): the "No screen" line then falls back to
+            // the sleep's own span.
+            val mid = (sleepPanel.startEpochMillis + sleepPanel.endEpochMillis) / 2
+            val enclosing =
+                noScreenRegions.firstOrNull { it.startEpochMillis <= mid && it.endEpochMillis >= mid }
             CalendarRecord(
                 title = sleepPanel.title,
                 range = TaskTimeRange(sleepPanel.startEpochMillis, sleepPanel.endEpochMillis),
                 entryId = sleepPanel.id,
                 entryIds = listOf(sleepPanel.id),
                 sleep = true,
+                noScreenRange = enclosing,
             )
         }
     return sleepRecords + blockRecords + reminderRecords + sideRecords

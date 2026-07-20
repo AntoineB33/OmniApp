@@ -203,6 +203,13 @@ class SchedulerEngine(
     /** The advancing "now" (epoch millis); the UI collects this for display. */
     val nowMillis: StateFlow<Long> = _nowMillis.asStateFlow()
 
+    // PRD §17 past sleep: the instant this engine session began. A scheduled sleep window is materialized as a
+    // persisted past "Sleep" panel only for the portion that elapsed WHILE THIS SESSION RAN (bounded below by
+    // this anchor) — a freshly opened/emptied account must not retroactively assume sleep across the whole
+    // derive window. The past is Inactivity + No-screen until the running app observes a scheduled window pass
+    // with no device active; already-materialized panels persist across restarts.
+    private val sessionStartMillis: Long = clock.nowMillis()
+
     // PRD §15 server-derived pauses: the account-wide pauses (windows when NO device was active), surfaced for
     // the calendar to draw as greyed "Inactivity" bands. Display-only and derived — by the server from every
     // device's active sessions (or locally from this device's own sessions when signed out) — so it is never
@@ -421,6 +428,33 @@ class SchedulerEngine(
         } else {
             vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
         }
+        // PRD §17: the Sleep toggle auto-wakes when its scheduled wake instant lapses mid-session — finalize
+        // the sleep session as a past "Sleep" panel (reduceSetSleepMode) and stop suppressing the pause cue.
+        current.sleepingUntilMillis?.let { until -> if (now >= until) vm.setSleepMode(null) }
+        maybeMaterializePastSleep(now)
+    }
+
+    // PRD §9/§17 past sleep: as `now` advances, record any scheduled sleep window that has fully elapsed and
+    // turned out to be a no-screen/inactive period as a persisted past "Sleep" panel. Bounded to the portion
+    // that elapsed while THIS session ran ([sessionStartMillis]) so a freshly-opened/emptied account never
+    // retroactively assumes sleep across the whole derive window; the empty case ([inactivityGaps] empty = no
+    // evidence yet) records nothing, matching the conservative sleep-band carve. The reducer dedups against
+    // already-materialized panels and drops sub-minute slivers, so an over-eager call is a cheap no-op.
+    private fun maybeMaterializePastSleep(now: Long) {
+        val st = vm.state.value
+        val sleep = st.sleep ?: return
+        val gaps = _inactivityGaps.value
+        if (gaps.isEmpty()) return
+        val scheduled =
+            SchedulerDomain.sleepRegions(sleep, now - PAUSE_DERIVE_HORIZON_MILLIS, now, tz)
+                .filter { it.endEpochMillis <= now }
+        if (scheduled.isEmpty()) return
+        // The scheduled sleep that was inactive AND observed this session (start ≥ session start).
+        val observed = listOf(TaskTimeRange(sessionStartMillis, now))
+        val candidates =
+            SchedulerDomain.intersectRegions(SchedulerDomain.intersectRegions(scheduled, gaps), observed)
+                .filter { it.endEpochMillis - it.startEpochMillis >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS }
+        if (candidates.isNotEmpty()) vm.dispatch(SchedulerIntent.MaterializePastSleep(candidates))
     }
 
     /**
@@ -745,6 +779,9 @@ class SchedulerEngine(
         activeSessionMutex.withLock { if (currentSession != null) _inactiveSince.value = null }
         val before = vm.state.value.sideTasks
         applySeededSideTasks(SchedulerDomain.seedSideTasksFromGaps(before, pauses))
+        // PRD §17: a fresh derive (startup, sync-pull) may reveal a scheduled sleep window was inactive — record
+        // the observed part as a past "Sleep" panel now, not only on the next schedule advance.
+        maybeMaterializePastSleep(until)
     }
 
     // Startup heal for the retired adoption scheme: delete the [REMOTE_ACTIVITY_DEVICE_ID] rows an older

@@ -278,6 +278,17 @@ sealed interface SchedulerIntent {
         val sleepEndEpochMillis: Long,
     ) : SchedulerIntent
 
+    /**
+     * PRD §9/§17 past sleep: materialize the given elapsed spans — scheduled sleep windows the engine found
+     * were no-screen/inactive periods — as persisted "Sleep" panels (so past sleep is a recorded fact, not a
+     * retroactive projection of the schedule). Dispatched by the engine, which owns the derived inactivity;
+     * the reducer skips spans an existing materialized Sleep panel already covers and drops sub-minute
+     * slivers. Not undoable and, like the record bank, not a syncable change on its own.
+     */
+    data class MaterializePastSleep(
+        val ranges: List<org.example.project.scheduler.model.TaskTimeRange>,
+    ) : SchedulerIntent
+
     /** [initialText] non-null when entering via typing (replaces cell content with first keystroke). */
     data class BeginEdit(
         val cellId: CellId,

@@ -227,6 +227,7 @@ object SchedulerStateCodec {
             histories = histories.toPersisted(),
             sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
             sleepingUntilMillis = sleepingUntilMillis,
+            sleepingSinceMillis = sleepingSinceMillis,
             notificationLog = notificationLog.map { PersistedNotificationEntry(it.timeMillis, it.title, it.message) },
             supabaseUsageLog =
                 supabaseUsageLog.map {
@@ -458,6 +459,7 @@ object SchedulerStateCodec {
             histories = histories?.toHistories() ?: SchedulerHistories(),
             sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
             sleepingUntilMillis = sleepingUntilMillis,
+            sleepingSinceMillis = sleepingSinceMillis,
             notificationLog = notificationLog.map { NotificationLogEntry(it.timeMillis, it.title, it.message) },
             supabaseUsageLog =
                 supabaseUsageLog.map {
@@ -648,6 +650,9 @@ private data class PersistedState(
     // Sleep/Work toggle: the next wake instant while the user is deliberately away, or null when working. A
     // missing value decodes to null (payloads written before the toggle existed decode as "working").
     val sleepingUntilMillis: Long? = null,
+    // The instant the current sleep session began (see [SchedulerState.sleepingSinceMillis]); a missing value
+    // decodes to null (payloads written before past-sleep materialization existed decode with no live band).
+    val sleepingSinceMillis: Long? = null,
     // The local-only diagnostic notification log; a missing value decodes to empty (payloads written before
     // the History Manager's Notifications column existed). Local-only — stripped from the sync fingerprint.
     val notificationLog: List<PersistedNotificationEntry> = emptyList(),

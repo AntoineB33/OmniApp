@@ -213,6 +213,19 @@ data class CalendarRecord(
      */
     val noScreen: Boolean = false,
     /**
+     * For a [sleep] band: the enclosing account-offline "No screen" window. A sleep window is by
+     * definition also a no-screen period, and that no-screen stretch may extend past the sleep into a
+     * directly-following (or preceding) awake-offline window — so this range is >= the sleep range. It
+     * drives the "No screen" line's time span in the hover bubble; null for every non-sleep record.
+     */
+    val noScreenRange: TaskTimeRange? = null,
+    /**
+     * PRD §12: this derived Inactivity/No-screen band is open-ended into the past — nothing precedes it, so
+     * the inactivity extends indefinitely back (its rendered start is only the display floor, not a real
+     * boundary). The hover bubble / phone menu then shows "∞" as the start instead of a wall-clock time.
+     */
+    val openStart: Boolean = false,
+    /**
      * The elapsed part of this panel, segmented by WHICH DEVICES were open (from the stored active
      * sessions — own + Sync-pulled peers; see [deviceActivitySegments]). Consecutive segments differ in
      * device set; the block draws a dashed separator at each interior boundary and the hover bubble names
@@ -333,6 +346,10 @@ data class PlacedRecord(
     val inactivity: Boolean = false,
     /** PRD §8/§9 no-screen period: a user-authored "No screen" panel, rendered as a hatched block. */
     val noScreen: Boolean = false,
+    /** For a [sleep] band: its enclosing "No screen" window (>= the sleep range). See [CalendarRecord.noScreenRange]. */
+    val noScreenRange: TaskTimeRange? = null,
+    /** PRD §12: this derived band is open-ended into the past; the hover bubble shows "∞" as its start. */
+    val openStart: Boolean = false,
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
     val fullEndMillis: Long = 0L,
@@ -396,6 +413,8 @@ fun recordsForDay(
             sleep = record.sleep,
             inactivity = record.inactivity,
             noScreen = record.noScreen,
+            noScreenRange = record.noScreenRange,
+            openStart = record.openStart,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
             deviceSegments = daySegments,
@@ -2821,10 +2840,36 @@ private fun DayColumn(
         // same band. The blocks the fill now schedules through the window are drawn on top, each greying
         // its own sleep sub-range to match (see CalendarBlock's sleepHourRanges); the band's
         // "Sleep"/"Inactivity" label is drawn on top of them below, so it stays legible at the band's start.
-        (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to if (it.noScreen) "No screen" else "Inactivity" })
-            .forEach { (band, label) ->
+        // PRD §8 decorative bands, drawn behind the task blocks. Two kinds stack here:
+        //   • an awake account-offline window reads "Inactivity" as its base + a "No screen" oblique-line
+        //     hatch ("/") on top;
+        //   • a sleep window is BY DEFINITION also a no-screen period, so it carries BOTH decorative
+        //     patterns — its own sleep hatch (oblique lines in the OPPOSITE direction, "\") crossed with
+        //     the no-screen "/" hatch — and its hover lists "Sleep" first, then "No screen". The no-screen
+        //     stretch may run past the sleep into a directly-following/preceding offline window, so the
+        //     sleep band's "No screen" line shows that enclosing window's (>=) span ([noScreenRange]).
+        // No-screen bands are composed FIRST and sleep bands ON TOP, so a slept-through night's hover
+        // resolves to the sleep band ("Sleep" first) rather than the offline band beneath it.
+        data class DecorBand(
+            val band: PlacedRecord,
+            val baseLabel: String,
+            val decorLabel: String?,
+            val decorRange: TaskTimeRange?,
+            val noScreenHatch: Boolean,
+            val sleepHatch: Boolean,
+        )
+        (inactivityBands.map {
+            DecorBand(it, "Inactivity", if (it.noScreen) "No screen" else null, null, it.noScreen, false)
+        } + sleepBands.map {
+            DecorBand(it, "Sleep", "No screen", it.noScreenRange, noScreenHatch = true, sleepHatch = true)
+        }).forEach { (band, baseLabel, decorLabel, decorRange, noScreenHatch, sleepHatch) ->
                 // PRD §8: like every other block, hovering the band pops the title + true (un-clipped) start–end times.
-                val timeRange = "${formatHm(band.fullStartMillis, tz)} – ${formatHm(band.fullEndMillis, tz)}"
+                // PRD §12: a band open-ended into the past shows "∞" as its start (the drawn start is only the floor).
+                val timeRange = "${hmOrInfinity(band.fullStartMillis, band.openStart, tz)} – ${formatHm(band.fullEndMillis, tz)}"
+                // The "No screen" decorative line spans its enclosing offline window (>= the band itself).
+                val decorTimeRange =
+                    decorRange?.let { "${formatHm(it.startEpochMillis, tz)} – ${formatHm(it.endEpochMillis, tz)}" }
+                        ?: timeRange
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2832,28 +2877,10 @@ private fun DayColumn(
                         .height(hourHeight * (band.endHour - band.startHour))
                         .clipToBounds()
                         .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA))
-                        // PRD §8 decorative panels: a derived no-screen window carries the same oblique-line
-                        // pattern as a manual no-screen panel, so both read as one kind on the calendar.
-                        .then(
-                            if (band.noScreen) {
-                                Modifier.drawBehind {
-                                    val step = 10.dp.toPx()
-                                    val stroke = 1.dp.toPx()
-                                    var x = -size.height
-                                    while (x < size.width) {
-                                        drawLine(
-                                            color = CalColors.muted.copy(alpha = 0.35f),
-                                            start = Offset(x, size.height),
-                                            end = Offset(x + size.height, 0f),
-                                            strokeWidth = stroke,
-                                        )
-                                        x += step
-                                    }
-                                }
-                            } else {
-                                Modifier
-                            },
-                        ),
+                        // PRD §8 decorative panels: the no-screen "/" hatch, and — for a sleep window — the
+                        // sleep "\" hatch crossed over it, so the two stacked decorative panels read distinctly.
+                        .then(if (noScreenHatch) Modifier.obliqueHatch(CalColors.muted, reversed = false) else Modifier)
+                        .then(if (sleepHatch) Modifier.obliqueHatch(CalColors.muted, reversed = true) else Modifier),
                 ) {
                     // PRD §8: the fill schedules work straight through the night / off-screen tasks land
                     // inside a no-screen window, so a real panel (or the derived Inactivity/No-screen band
@@ -2862,19 +2889,25 @@ private fun DayColumn(
                     // band's own — instead of the two elements' independent hover reports racing/overwriting
                     // each other (see [deviceHoverZones]).
                     decorativeHoverZones(band.startHour, band.endHour, blockRecords).forEach { zone ->
+                        // Line 1 (read first) = the real panel under this sub-range: an off-screen task the
+                        // no-screen sits over, else the band's own base ("Inactivity"/"Sleep"). Line 2 = the
+                        // "No screen" decorative on top. (A reachable hover is almost always a null zone —
+                        // any real task here is drawn as its own block on top and reports itself.)
+                        val baseTitle = zone.under?.let(::underHoverTitle) ?: baseLabel
+                        val baseTimes = zone.under
+                            ?.let { "${formatHm(it.fullStartMillis, tz)} – ${formatHm(it.fullEndMillis, tz)}" }
+                            ?: timeRange
                         Box(
                             Modifier
                                 .offset(y = hourHeight * (zone.top - band.startHour))
                                 .fillMaxWidth()
                                 .height(hourHeight * (zone.bottom - zone.top))
                                 .calendarTitleHover(
-                                    label,
+                                    baseTitle,
                                     hoverScope,
-                                    subtitle = timeRange,
-                                    underTitle = zone.under?.let(::underHoverTitle),
-                                    underSubtitle = zone.under?.let {
-                                        "${formatHm(it.fullStartMillis, tz)} – ${formatHm(it.fullEndMillis, tz)}"
-                                    },
+                                    subtitle = baseTimes,
+                                    underTitle = decorLabel,
+                                    underSubtitle = decorLabel?.let { decorTimeRange },
                                 ),
                         )
                     }
@@ -2900,7 +2933,7 @@ private fun DayColumn(
                         style = MaterialTheme.typography.labelMedium,
                     )
                     Text(
-                        text = "${formatHm(target.fullStartMillis, tz)} – ${formatHm(target.fullEndMillis, tz)}",
+                        text = "${hmOrInfinity(target.fullStartMillis, target.openStart, tz)} – ${formatHm(target.fullEndMillis, tz)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = CalColors.muted,
                     )
@@ -3767,6 +3800,24 @@ private fun decorativeBandLabel(r: PlacedRecord): String = when {
 private fun underHoverTitle(u: PlacedRecord): String =
     if (u.entryId == null && (u.sleep || u.inactivity || u.noScreen)) decorativeBandLabel(u) else u.title
 
+/**
+ * PRD §8 decorative panels: an oblique-line hatch. [reversed] flips the slope — the no-screen pattern
+ * draws "/" (bottom-left → top-right); the sleep pattern draws "\" (top-left → bottom-right), so a sleep
+ * window (which is also a no-screen period) reads as the two crossed.
+ */
+private fun Modifier.obliqueHatch(color: Color, reversed: Boolean): Modifier =
+    this.drawBehind {
+        val step = 10.dp.toPx()
+        val stroke = 1.dp.toPx()
+        var x = -size.height
+        while (x < size.width) {
+            val start = if (reversed) Offset(x, 0f) else Offset(x, size.height)
+            val end = if (reversed) Offset(x + size.height, size.height) else Offset(x + size.height, 0f)
+            drawLine(color = color.copy(alpha = 0.35f), start = start, end = end, strokeWidth = stroke)
+            x += step
+        }
+    }
+
 /** PRD §8: the coloured body + title of a calendar block (or one of its overlap slices). */
 @Composable
 private fun CalendarBlockBody(color: Color, title: String, showTitle: Boolean, hatched: Boolean = false) {
@@ -3778,26 +3829,7 @@ private fun CalendarBlockBody(color: Color, title: String, showTitle: Boolean, h
             .border(1.dp, color, RoundedCornerShape(3.dp))
             // PRD §8 decorative panels: a no-screen period reads as an oblique-line pattern laid over the
             // calendar rather than a solid task block.
-            .then(
-                if (hatched) {
-                    Modifier.drawBehind {
-                        val step = 10.dp.toPx()
-                        val stroke = 1.dp.toPx()
-                        var x = -size.height
-                        while (x < size.width) {
-                            drawLine(
-                                color = color.copy(alpha = 0.35f),
-                                start = Offset(x, size.height),
-                                end = Offset(x + size.height, 0f),
-                                strokeWidth = stroke,
-                            )
-                            x += step
-                        }
-                    }
-                } else {
-                    Modifier
-                },
-            ),
+            .then(if (hatched) Modifier.obliqueHatch(color, reversed = false) else Modifier),
     ) {
         if (showTitle) {
             Text(
@@ -3819,6 +3851,14 @@ private fun formatHm(millis: Long, tz: TimeZone): String {
     val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz)
     return "${twoDigits(dt.hour)}:${twoDigits(dt.minute)}"
 }
+
+/**
+ * PRD §12: the start label for a derived band. "∞" when the band is open-ended into the past ([openStart] —
+ * the inactivity extends indefinitely back and the drawn start is only the display floor), else the
+ * wall-clock `HH:MM`.
+ */
+private fun hmOrInfinity(millis: Long, openStart: Boolean, tz: TimeZone): String =
+    if (openStart) "∞" else formatHm(millis, tz)
 
 /** Parse "H:mm" / "HH:mm" onto the calendar date of [refMillis]; null when malformed. */
 private fun parseHmOnDateOf(text: String, refMillis: Long, tz: TimeZone): Long? {

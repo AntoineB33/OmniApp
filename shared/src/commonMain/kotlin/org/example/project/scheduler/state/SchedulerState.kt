@@ -260,6 +260,15 @@ data class SchedulerState(
      */
     val sleepingUntilMillis: Long? = null,
     /**
+     * The instant the current Sleep/Work sleep session began (the user pressed **Sleep**), or `null` when
+     * working. While the toggle is on, the calendar renders a live "Sleep" band `[sleepingSinceMillis, now]`
+     * that grows to the now-line; when the toggle goes off (or the wake instant lapses) the reducer
+     * finalizes that span as a persisted past "Sleep" panel and clears this (PRD §17 — past sleep is a
+     * recorded fact, not a projection of the schedule). Persisted so a restart mid-sleep keeps the band;
+     * a payload written before this field decodes to null.
+     */
+    val sleepingSinceMillis: Long? = null,
+    /**
      * A bounded, local-only diagnostic log of the notification text the app has posted, shown as the
      * History Manager's **Notifications** column. Capped at [MAX_NOTIFICATION_LOG] — the earliest that
      * many entries are kept and the rest ignored (see [NotificationLogEntry]). Derived / local-only: it
