@@ -60,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.focusGroup
@@ -2813,6 +2814,7 @@ private fun DayColumn(
                         .fillMaxWidth()
                         .offset(y = hourHeight * band.startHour)
                         .height(hourHeight * (band.endHour - band.startHour))
+                        .clipToBounds()
                         .calendarTitleHover(label, hoverScope, subtitle = timeRange)
                         .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA))
                         // PRD §8 decorative panels: a derived no-screen window carries the same oblique-line
