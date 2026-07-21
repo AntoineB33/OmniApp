@@ -107,12 +107,15 @@ if errorlevel 1 (echo [x] Install failed.& goto deploy_failed)
 REM ---- [5/6] Force-stop so the next launch is a fresh process. The shared
 REM ---- scheduler VM is a process singleton; it must be (re)built with the
 REM ---- credentials present, so kill any running instance before relaunching.
-REM  Optional debug fast-break override: set OMNIAPP_BREAK_DURATION_MS and/or OMNIAPP_BREAK_INTERVAL_MS
+REM  Optional debug fast-break overrides: set OMNIAPP_BREAK_DURATION_MS and/or OMNIAPP_BREAK_INTERVAL_MS
 REM  (e.g. 5000) before running to shrink the 5-min screen break (its length / how long after the previous
 REM  pause it comes due), so the pause-cue voice message can be tested on the phone in seconds.
+REM  OMNIAPP_BREAK_PAUSE_THRESHOLD_MS decouples the qualifying-pause length from the drawn break length
+REM  (the account1 fast-break flavor: the pose anchors only after a pause of this length).
 set "BREAK_EXTRA="
 if defined OMNIAPP_BREAK_DURATION_MS set "BREAK_EXTRA=%BREAK_EXTRA% --es omniapp_break_duration_ms %OMNIAPP_BREAK_DURATION_MS%"
 if defined OMNIAPP_BREAK_INTERVAL_MS set "BREAK_EXTRA=%BREAK_EXTRA% --es omniapp_break_interval_ms %OMNIAPP_BREAK_INTERVAL_MS%"
+if defined OMNIAPP_BREAK_PAUSE_THRESHOLD_MS set "BREAK_EXTRA=%BREAK_EXTRA% --es omniapp_break_pause_threshold_ms %OMNIAPP_BREAK_PAUSE_THRESHOLD_MS%"
 
 echo [5/6] Launching auto-signed-in as %OMNIAPP_DEPLOY_USER%...
 "%ADB%" shell am force-stop "%APP_ID%"

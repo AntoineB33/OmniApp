@@ -44,7 +44,20 @@ object DebugFlags {
      */
     var breakIntervalMillisOverride: Long? = null
 
-    /** True when either 5-min-break override is set — the debug fast-break test mode is active. */
+    /**
+     * Debug-only override of the **5-min screen break**'s qualifying-PAUSE THRESHOLD, in milliseconds — the
+     * minimum real pause length that anchors the pose, decoupled from its drawn length. `null` = production
+     * behavior (the threshold equals the break's [breakDurationMillisOverride]/duration). Set it to place a
+     * short break only after a long pause — e.g. `account1-empty-and-open-fast-break.bat` runs under the
+     * accelerated time-sim with duration 5 s, interval 5 s, and this threshold at 2 h, so the pose fires 5 s
+     * after a ≥2-h pause and lasts 5 s. Companion of the other two; startup-only (`omniapp.breakPauseThresholdMs`
+     * / `omniapp_break_pause_threshold_ms`), never persisted, off in release.
+     */
+    var breakPauseThresholdMillisOverride: Long? = null
+
+    /** True when any 5-min-break override is set — the debug fast-break test mode is active. */
     val fastBreakOverrideActive: Boolean
-        get() = breakDurationMillisOverride != null || breakIntervalMillisOverride != null
+        get() = breakDurationMillisOverride != null ||
+            breakIntervalMillisOverride != null ||
+            breakPauseThresholdMillisOverride != null
 }

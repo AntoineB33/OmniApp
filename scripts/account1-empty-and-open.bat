@@ -101,10 +101,18 @@ REM ---- [4/5] Wipe the LOCAL DB for account 1 --------------------------
 echo [4/5] Deleting local DB "%DB%" ...
 del /q "%DB%" "%DB%-wal" "%DB%-shm" 2>nul
 
+REM Optional debug fast-break overrides (set by account1-empty-and-open-and-deploy-android-fast-break.bat):
+REM forward them to the desktop gradle launch so the opened app shows the SAME retimed 5-min break as the
+REM phone deploy. Empty/inert on the normal path where none are defined.
+set "BREAK_PROPS="
+if defined OMNIAPP_BREAK_DURATION_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.breakDurationMs=!OMNIAPP_BREAK_DURATION_MS!"
+if defined OMNIAPP_BREAK_INTERVAL_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.breakIntervalMs=!OMNIAPP_BREAK_INTERVAL_MS!"
+if defined OMNIAPP_BREAK_PAUSE_THRESHOLD_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.breakPauseThresholdMs=!OMNIAPP_BREAK_PAUSE_THRESHOLD_MS!"
+
 REM ---- [5/5] Launch the desktop app logged in as account 1 -----------
 echo [5/5] Launching the desktop app logged in as "%ACC1_USER%" (state dir %STATE_DIR%)...
 call :diag "local DB wiped; launching desktop app"
-start "OmniApp acc1" cmd /c "gradlew.bat :desktopApp:run -Pomniapp.stateDir=%STATE_DIR% -Pomniapp.loginUser=%ACC1_USER% -Pomniapp.loginPass=%ACC1_PASS%"
+start "OmniApp acc1" cmd /c "gradlew.bat :desktopApp:run -Pomniapp.stateDir=%STATE_DIR% -Pomniapp.loginUser=%ACC1_USER% -Pomniapp.loginPass=%ACC1_PASS%!BREAK_PROPS!"
 call :diag "account1-empty-and-open: DONE (desktop launch dispatched)"
 
 REM Clean completion: drop our PID lock so the next run doesn't target a dead/recycled PID.

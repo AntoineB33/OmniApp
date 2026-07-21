@@ -454,6 +454,48 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun pause_threshold_decouples_the_qualifying_pause_length_from_the_drawn_break_length() {
+        val now = 1_000_000_000_000L
+        // Production default (pauseThreshold 0): the qualifying pause equals the drawn break length.
+        val prod = ScreenBreak("5min", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true)
+        assertEquals(5 * MIN, prod.qualifyingPauseMillis)
+
+        // Fast-break shape (the account1-empty-and-open-fast-break.bat knobs): a 5-SECOND break that anchors
+        // only after a >=2h pause. qualifyingPauseMillis follows the threshold, NOT the 5s drawn length.
+        val fast = ScreenBreak("5min", intervalMillis = 5_000L, durationMillis = 5_000L, restBreak = true, pauseThresholdMillis = 2 * HOUR_MS)
+        assertEquals(2 * HOUR_MS, fast.qualifyingPauseMillis)
+
+        // A 10-min gap does NOT anchor it (10 min < the 2h threshold) even though 10 min far exceeds the 5s
+        // drawn length — proving the seeder reads the threshold, not the duration.
+        val poses = listOf(fast)
+        assertEquals(0L, SchedulerDomain.seedScreenBreaksFromGaps(poses, listOf(TaskTimeRange(now - 10 * MIN, now)))[0].lastRestMillis)
+        // A >=2h gap DOES anchor it, at the gap's end.
+        val longGapEnd = now - MIN
+        assertEquals(longGapEnd, SchedulerDomain.seedScreenBreaksFromGaps(poses, listOf(TaskTimeRange(longGapEnd - 3 * HOUR_MS, longGapEnd)))[0].lastRestMillis)
+    }
+
+    @Test
+    fun fast_break_override_retimes_only_the_5min_pose_including_the_pause_threshold() {
+        DebugFlags.breakDurationMillisOverride = 5_000L
+        DebugFlags.breakIntervalMillisOverride = 5_000L
+        DebugFlags.breakPauseThresholdMillisOverride = 2 * HOUR_MS
+        try {
+            val sides = SchedulerDomain.effectiveDefaultScreenBreaks()
+            val pose5 = sides.first { it.restBreak && it.durationMillis == 5_000L }
+            assertEquals(5_000L, pose5.intervalMillis)
+            assertEquals(2 * HOUR_MS, pose5.pauseThresholdMillis)
+            assertEquals(2 * HOUR_MS, pose5.qualifyingPauseMillis)
+            // The 15-min pose and the 20-20-20 look-away keep production timings (never retimed).
+            assertTrue(sides.any { it.restBreak && it.durationMillis == 15L * 60_000 && it.pauseThresholdMillis == 0L })
+            assertTrue(sides.any { !it.restBreak && it.durationMillis == 20L * 1_000 && it.pauseThresholdMillis == 0L })
+        } finally {
+            DebugFlags.breakDurationMillisOverride = null
+            DebugFlags.breakIntervalMillisOverride = null
+            DebugFlags.breakPauseThresholdMillisOverride = null
+        }
+    }
+
+    @Test
     fun rest_seeding_is_forward_only_so_a_slow_seeder_cannot_re_pin_a_pose() {
         // Reported empty-account anomaly: on a freshly-opened account the leading account-wide "Inactivity"
         // pause ends at the now-line, so the derived-pause seed advances the 5-min pose's last-rest to `now`

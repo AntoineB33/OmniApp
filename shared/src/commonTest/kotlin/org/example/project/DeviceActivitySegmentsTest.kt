@@ -130,4 +130,19 @@ class DeviceActivitySegmentsTest {
         assertEquals(11f, placed.deviceSegments[1].endHour)
         assertEquals(listOf("Desktop", "Phone"), placed.deviceSegments[1].devices)
     }
+
+    @Test
+    fun sub_minute_screen_break_keeps_a_nonzero_span_so_it_stays_hoverable() {
+        // A 20-s look-away entirely within one minute (09:30:00 – 09:30:20). Dropping seconds would
+        // collapse it to startHour == endHour, and a zero-length span tiles no hover zone (no info bubble).
+        val start = LocalDateTime(2026, 7, 4, 9, 30, 0).toInstant(tz).toEpochMilliseconds()
+        val end = LocalDateTime(2026, 7, 4, 9, 30, 20).toInstant(tz).toEpochMilliseconds()
+        val record = CalendarRecord(
+            title = "Look away",
+            range = TaskTimeRange(start, end),
+            screenBreak = true,
+        )
+        val placed = recordsForDay(listOf(record), LocalDate(2026, 7, 4), tz).single()
+        assertTrue(placed.endHour > placed.startHour, "sub-minute break must have a nonzero span")
+    }
 }

@@ -2101,7 +2101,7 @@ private fun reduceReportDeviceSleep(
     // the shorter pauses too), so record [sleepEnd] as their last rest — scheduling the next one an interval on.
     val restedScreenBreaks =
         state.screenBreaks.map { side ->
-            if (side.durationMillis in 1..sleepLength && side.lastRestMillis < sleepEnd) {
+            if (side.qualifyingPauseMillis in 1..sleepLength && side.lastRestMillis < sleepEnd) {
                 side.copy(lastRestMillis = sleepEnd)
             } else {
                 side

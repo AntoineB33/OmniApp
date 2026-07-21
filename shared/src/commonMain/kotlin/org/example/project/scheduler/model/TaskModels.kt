@@ -181,7 +181,23 @@ data class ScreenBreak(
      * [org.example.project.scheduler.domain.SchedulerDomain.screenBreakNextStart].
      */
     val lastRestMillis: Long = 0L,
-)
+    /**
+     * PRD §15: the minimum length a pause must reach to *anchor* this pose (a "qualifying pause"), in millis.
+     * `0` (the default) means "use [durationMillis]" — the production rule, where a pose is triggered by a
+     * pause at least as long as the break itself. Setting it **decouples** the qualifying-pause length from
+     * the drawn break length, used by the debug fast-break override to place a short (5-second) break only
+     * after a long (e.g. ≥2-hour) real pause. Read everywhere through [qualifyingPauseMillis], never directly.
+     */
+    val pauseThresholdMillis: Long = 0L,
+) {
+    /**
+     * The minimum pause length that anchors this pose (sets [lastRestMillis]). It is [pauseThresholdMillis]
+     * when that is set (> 0), else [durationMillis] — so production breaks (which leave it 0) keep the
+     * "a pause at least as long as the break" rule unchanged.
+     */
+    val qualifyingPauseMillis: Long
+        get() = if (pauseThresholdMillis > 0L) pauseThresholdMillis else durationMillis
+}
 
 /**
  * The user's sleep schedule: a nightly window `[wake − sleepDuration, wake)` (local wall-clock) that the

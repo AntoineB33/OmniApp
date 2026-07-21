@@ -48,7 +48,9 @@ tasks.withType<JavaExec>().configureEach {
     // so main() reads it absent and ships with the debug tooling off.
     systemProperty("omniapp.timeSim", (project.findProperty("omniapp.timeSim") as String?) ?: "true")
     // Debug fast-break override for testing the pause-cue voice message (`-Pomniapp.breakDurationMs`,
-    // `-Pomniapp.breakIntervalMs`); forwarded only when set, so the app defaults to production break timings.
+    // `-Pomniapp.breakIntervalMs`, `-Pomniapp.breakPauseThresholdMs`); forwarded only when set, so the app
+    // defaults to production break timings.
     (project.findProperty("omniapp.breakDurationMs") as String?)?.let { systemProperty("omniapp.breakDurationMs", it) }
     (project.findProperty("omniapp.breakIntervalMs") as String?)?.let { systemProperty("omniapp.breakIntervalMs", it) }
+    (project.findProperty("omniapp.breakPauseThresholdMs") as String?)?.let { systemProperty("omniapp.breakPauseThresholdMs", it) }
 }

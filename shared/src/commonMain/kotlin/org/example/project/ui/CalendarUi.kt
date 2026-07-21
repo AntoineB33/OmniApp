@@ -378,8 +378,13 @@ fun recordsForDay(
         val start = Instant.fromEpochMilliseconds(record.range.startEpochMillis).toLocalDateTime(tz)
         val end = Instant.fromEpochMilliseconds(record.range.endEpochMillis).toLocalDateTime(tz)
         if (start.date > day || end.date < day) return@mapNotNull null
-        val startHour = if (start.date < day) 0f else start.hour + start.minute / 60f
-        val endHour = if (end.date > day) 24f else end.hour + end.minute / 60f
+        // Seconds are kept (not just hour+minute): a sub-minute look-away (e.g. a 20-s screen break that
+        // stays within one minute) would otherwise collapse to startHour == endHour, giving its band a
+        // zero-length span — and [decorativeHoverZones] tiles nothing over a zero-length range, so the band
+        // (drawn at [SCREEN_BREAK_MIN_HEIGHT]) would be visible but un-hoverable (no info bubble). The
+        // device-segment math below already carries seconds for the same reason.
+        val startHour = if (start.date < day) 0f else start.hour + start.minute / 60f + start.second / 3600f
+        val endHour = if (end.date > day) 24f else end.hour + end.minute / 60f + end.second / 3600f
         // PRD §14/§15: reminders (zero-duration) render as fixed-height tags and screen breaks (down to sub-
         // minute durations) as min-height bands, so keep them even though the block path would drop a
         // ~zero-height period.

@@ -1073,6 +1073,7 @@ object SchedulerDomain {
                 side.copy(
                     intervalMillis = org.example.project.DebugFlags.breakIntervalMillisOverride ?: side.intervalMillis,
                     durationMillis = org.example.project.DebugFlags.breakDurationMillisOverride ?: side.durationMillis,
+                    pauseThresholdMillis = org.example.project.DebugFlags.breakPauseThresholdMillisOverride ?: side.pauseThresholdMillis,
                 )
             } else {
                 side
@@ -1269,7 +1270,7 @@ object SchedulerDomain {
         return screenBreaks.map { side ->
             if (side.durationMillis <= 0) return@map side
             val latestRest = gaps.asSequence()
-                .filter { it.endEpochMillis - it.startEpochMillis >= side.durationMillis }
+                .filter { it.endEpochMillis - it.startEpochMillis >= side.qualifyingPauseMillis }
                 .map { it.endEpochMillis }
                 .filter { it > side.lastRestMillis }
                 .maxOrNull()
@@ -1351,12 +1352,12 @@ object SchedulerDomain {
             if (side.durationMillis <= 0) return@map side
             val restEnd =
                 if (liveRest.ongoing) {
-                    // Presumed: the still-growing pause serves this task at gapStart + duration, then keeps
-                    // re-satisfying it (sliding gap end) for as long as the user stays away.
-                    maxOf(gap.endEpochMillis, gap.startEpochMillis + side.durationMillis)
+                    // Presumed: the still-growing pause serves this task once it has lasted the qualifying
+                    // length, then keeps re-satisfying it (sliding gap end) for as long as the user stays away.
+                    maxOf(gap.endEpochMillis, gap.startEpochMillis + side.qualifyingPauseMillis)
                 } else {
-                    // Held: only a pause that actually lasted the task's duration counts.
-                    if (restLength >= side.durationMillis) gap.endEpochMillis else return@map side
+                    // Held: only a pause that actually reached the task's qualifying length counts.
+                    if (restLength >= side.qualifyingPauseMillis) gap.endEpochMillis else return@map side
                 }
             if (restEnd > side.lastRestMillis) side.copy(lastRestMillis = restEnd) else side
         }
