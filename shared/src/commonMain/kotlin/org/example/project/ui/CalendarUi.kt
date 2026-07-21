@@ -3280,13 +3280,20 @@ private fun ScreenBreakBand(
             }
         }
         // PRD §8: tiled by whichever underlying panel/band covers each sub-range (see [decorativeHoverZones]),
-        // so the hover bubble stacks it below this screen break's own title/time.
+        // so the hover bubble stacks it below this screen break's own title/time. The zones are mapped onto
+        // the RENDERED [height] (not the break's true span): a sub-minute look-away draws at the coerced
+        // [SCREEN_BREAK_MIN_HEIGHT] hairline, so sizing its hover zones by the ~0-height true duration would
+        // leave the visible band un-hoverable — the pointer would fall through to the sleep band beneath and
+        // the bubble would name that instead of the break (which must come first).
+        val span = slice.bottomHour - slice.topHour
         decorativeHoverZones(slice.topHour, slice.bottomHour, underCandidates).forEach { zone ->
+            val fracTop = if (span > 0f) (zone.top - slice.topHour) / span else 0f
+            val fracBottom = if (span > 0f) (zone.bottom - slice.topHour) / span else 1f
             Box(
                 Modifier
-                    .offset(y = hourHeight * (zone.top - slice.topHour))
+                    .offset(y = height * fracTop)
                     .fillMaxWidth()
-                    .height(hourHeight * (zone.bottom - zone.top))
+                    .height(height * (fracBottom - fracTop))
                     .calendarTitleHover(
                         marker.title,
                         hoverScope,

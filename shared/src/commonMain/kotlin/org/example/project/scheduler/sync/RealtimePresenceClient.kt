@@ -9,12 +9,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.coroutines.coroutineContext
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -79,11 +81,19 @@ class RealtimePresenceClient(
     private val refreshAuth: suspend () -> Unit = {},
     private val httpClient: HttpClient = HttpClient { install(WebSockets) },
 ) : RealtimePresence {
-    private val desired = MutableStateFlow<PresenceState?>(null)
+    // The connection target: the ACCOUNT this device belongs to ([userId], sampled from [auth] at publish
+    // time) plus the [payload] to track. Keying on the userId is what makes the association exclusive — see
+    // [supervise]. Null when there is nothing to publish (inactive / signed out).
+    private data class Target(val userId: String, val payload: PresenceState)
+
+    private val desired = MutableStateFlow<Target?>(null)
     private var job: Job? = null
 
     override fun setPresence(state: PresenceState?) {
-        desired.value = state
+        // Bind the presence to the CURRENT account (auth() at this instant). A signed-out device (or one whose
+        // active state was cleared) publishes nothing; a device that just switched accounts binds to the new
+        // userId, which [supervise] reacts to by dropping the old account's socket.
+        desired.value = state?.let { s -> auth()?.let { Target(it.first, s) } }
     }
 
     /** Starts the connection supervisor (idempotent). */
@@ -92,21 +102,26 @@ class RealtimePresenceClient(
         job = scope.launch { supervise() }
     }
 
-    // React only to active↔inactive transitions: while active, hold a connection (reconnecting on drop); while
-    // inactive, hold none. Payload changes within an active session are sent by [serve] collecting [desired].
+    // The connection is keyed on the ACCOUNT (userId): exactly one live socket at a time, always to the
+    // currently-signed-in account. [collectLatest] cancels the previous account's connection the instant the
+    // userId changes (account switch) or clears (sign-out / inactive) — cancelling [serve] closes its
+    // WebSocket, so Phoenix removes this device from the OLD account's presence at once. That is what enforces
+    // "a device is associated with, at most, one account at a time" (PRD §15): the previous key-only-on-active
+    // supervisor left the old account's socket open across a switch, so the device appeared active on BOTH
+    // accounts and the old one never saw the no-screen period. Payload-only changes within one account are sent
+    // by [serve] collecting [desired] (no reconnect).
     private suspend fun supervise() {
-        desired.map { it != null }.distinctUntilChanged().collect { active ->
-            if (!active) return@collect
-            // A fresh launch per active window so it is cancelled cleanly the moment we go inactive.
-            scope.launch {
-                while (isActive && desired.value != null) {
-                    val credentials = auth()
-                    if (credentials != null) {
-                        runCatching { serve(credentials.first, credentials.second) }
-                            .onFailure { Diagnostics.log("realtime presence connection ended: ${it.message}") }
-                    }
-                    if (isActive && desired.value != null) delay(RECONNECT_BACKOFF_MILLIS)
+        desired.map { it?.userId }.distinctUntilChanged().collectLatest { userId ->
+            if (userId == null) return@collectLatest
+            while (coroutineContext.isActive && desired.value?.userId == userId) {
+                // Only connect with a token that still matches this account (the session may have changed
+                // between the map above and here); a mismatch/absence just waits for the next [setPresence].
+                val token = auth()?.takeIf { it.first == userId }?.second
+                if (token != null) {
+                    runCatching { serve(userId, token) }
+                        .onFailure { Diagnostics.log("realtime presence connection ended: ${it.message}") }
                 }
+                if (coroutineContext.isActive && desired.value?.userId == userId) delay(RECONNECT_BACKOFF_MILLIS)
             }
         }
     }
@@ -131,7 +146,9 @@ class RealtimePresenceClient(
                 }
             }
             val publisher = launch {
-                desired.collect { state ->
+                // Re-track only the payload; an account change is handled by [supervise] restarting the whole
+                // connection, so a payload here is always for [userId]. A null payload (went inactive) untracks.
+                desired.map { it?.payload }.distinctUntilChanged().collect { state ->
                     if (state != null) emit { RealtimePhoenix.trackFrame(topic, joinRef, state, it) }
                     else emit { RealtimePhoenix.untrackFrame(topic, joinRef, it) }
                 }
