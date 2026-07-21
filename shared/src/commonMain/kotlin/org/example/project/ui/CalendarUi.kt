@@ -662,6 +662,9 @@ fun LateralMenu(
             .width(188.dp)
             .background(CalColors.menuBackground)
             .border(1.dp, CalColors.grid)
+            // Scroll when the buttons exceed the available height (e.g. short windows / calendar
+            // expanded) so nothing is clipped off the bottom.
+            .verticalScroll(rememberScrollState())
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
