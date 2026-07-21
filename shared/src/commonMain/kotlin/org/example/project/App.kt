@@ -458,12 +458,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     ),
                     nowMillis,
                     focusedWeekEndMillis,
+                    // A decoupled 5-min pose (account1 fast-break) appears an interval after each qualifying
+                    // pause; the future ones are the scheduled sleep windows (PRD §15).
+                    qualifyingPauseWindows = SchedulerDomain.sleepRegions(
+                        schedulerState.sleep, nowMillis, focusedWeekEndMillis, tz,
+                    ),
                 )
             } else {
                 SchedulerDomain.screenBreakPanelsInWindow(
                     schedulerState.screenBreaks,
                     focusedWeekStartMillis,
                     focusedWeekEndMillis,
+                    qualifyingPauseWindows = SchedulerDomain.sleepRegions(
+                        schedulerState.sleep, focusedWeekStartMillis, focusedWeekEndMillis, tz,
+                    ),
                 )
             }
 

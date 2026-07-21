@@ -389,6 +389,55 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun a_decoupled_pose_appears_once_per_qualifying_pause_5s_after_each_sleep() {
+        // The account1 fast-break rule (account1-empty-open-and-deploy-android-fast-break.bat): a 5-SECOND
+        // break that anchors only after a >=2h pause (pauseThreshold 2h > the 5s drawn length). Because the
+        // drawn break is NOT itself a qualifying pause, the pose must appear exactly ONCE per >=2h pause and
+        // must NOT recur on its 5-second grid — the reported "lots of 5-min breaks in a single day". The future
+        // >=2h pauses are the nightly sleep windows, so the calendar shows one break 5 s after each.
+        val now = 1_000_000_000_000L
+        val pose = ScreenBreak(
+            "take a 5min pose and blink hard",
+            intervalMillis = 5_000L,
+            durationMillis = 5_000L,
+            restBreak = true,
+            pauseThresholdMillis = 2 * HOUR_MS,
+            lastRestMillis = now, // the past inactivity ended at the now-line (freshly-emptied account)
+        )
+        // With NO future pause windows the decoupled pose yields exactly ONE occurrence — the live now-anchor,
+        // 5 s out — not a 5-second grid.
+        val bare = SchedulerDomain.screenBreakPanels(listOf(pose), now, now + 14L * 24 * HOUR_MS)
+        assertEquals(1, bare.size)
+        assertEquals(now + 5_000L, bare.single().startEpochMillis)
+
+        // With three future sleep windows (each an 8 h ≥2h pause), exactly one 5-min break lands 5 s after each
+        // wake, plus the live now-anchor: one per day, and NOT one per 5 seconds.
+        val day = 24L * HOUR_MS
+        val sleeps = (1..3).map { d ->
+            val wake = now + d * day // wake at day d
+            TaskTimeRange(wake - 8 * HOUR_MS, wake)
+        }
+        val withSleep = SchedulerDomain.screenBreakPanels(
+            listOf(pose), now, now + 14L * 24 * HOUR_MS, qualifyingPauseWindows = sleeps,
+        )
+        assertEquals(4, withSleep.size) // now-anchor + one per sleep
+        assertEquals(
+            listOf(now + 5_000L) + sleeps.map { it.endEpochMillis + 5_000L },
+            withSleep.map { it.startEpochMillis }.sorted(),
+        )
+
+        // A short future pause (< the 2 h qualifying threshold) does NOT place a break — the rule requires ≥2h.
+        val shortPause = listOf(TaskTimeRange(now + day, now + day + 30 * MIN))
+        assertEquals(1, SchedulerDomain.screenBreakPanels(listOf(pose), now, now + 14L * 24 * HOUR_MS, qualifyingPauseWindows = shortPause).size)
+
+        // Contrast: the COUPLED sub-minute shape (interval == duration, no threshold — the real-time account2
+        // flavor) legitimately grid-recurs and is merely capped to one, unaffected by sleep windows.
+        val coupled = pose.copy(pauseThresholdMillis = 0L)
+        assertEquals(5_000L, coupled.qualifyingPauseMillis)
+        assertEquals(1, SchedulerDomain.screenBreakPanels(listOf(coupled), now, now + 14L * 24 * HOUR_MS, qualifyingPauseWindows = sleeps).size)
+    }
+
+    @Test
     fun screen_break_next_start_clamps_rest_poses_to_now_but_advances_the_look_away_along_its_grid() {
         val now = 1_000_000_000_000L
 

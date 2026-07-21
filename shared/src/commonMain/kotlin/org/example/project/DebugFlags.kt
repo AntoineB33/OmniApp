@@ -37,10 +37,15 @@ object DebugFlags {
      * immediately (then put the machine to sleep and wait `duration` for the phone cue).
      *
      * Only the 5-min pose is retimed — the 15-min pose and the 20-20-20 look-away keep their production
-     * timings, so many short 5-min breaks pile up toward the still-distant 15-min pose. The screen-break
-     * projection is O(n) (`SchedulerDomain.simulateScreenBreaks`), so even a seconds interval over the fill
-     * horizon stays linear rather than freezing. Startup-only (`omniapp.breakIntervalMs` /
-     * `omniapp_break_interval_ms`), never persisted, off in release.
+     * timings. Whether short 5-min breaks recur depends on [breakPauseThresholdMillisOverride]: with no
+     * threshold (the real-time `account2-open-fast-break.bat` shape, qualifying pause == the 5 s drawn length)
+     * the pose grid-recurs and the dense cap holds it to one at a time; with a threshold (the
+     * `account1-…-fast-break.bat` shape, e.g. 2 h) the pose is *decoupled* and does NOT grid-recur — it appears
+     * exactly `interval` after each qualifying pause, i.e. one break 5 s after each scheduled sleep window
+     * (`SchedulerDomain.decoupledPoseOccurrences`), so the calendar shows one 5-min break per day rather than a
+     * 5-second flood. The screen-break projection is O(n), so even a seconds interval over the fill horizon
+     * stays linear rather than freezing. Startup-only (`omniapp.breakIntervalMs` / `omniapp_break_interval_ms`),
+     * never persisted, off in release.
      */
     var breakIntervalMillisOverride: Long? = null
 

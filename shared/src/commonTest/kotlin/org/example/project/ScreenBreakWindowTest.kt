@@ -67,17 +67,23 @@ class ScreenBreakWindowTest {
     }
 
     @Test
-    fun dense_seconds_interval_pose_projects_linearly_without_a_cap() {
-        // Fast-break mode shrinks the 5-min pose to seconds; over a multi-hour fill horizon that is thousands
-        // of occurrences. The O(n) placement projects them all — well past the old 2000-occurrence cap that
-        // was needed while the scan was O(n²) — with an exact (duration + interval) cadence and no clipping.
+    fun dense_seconds_interval_pose_is_bounded_not_flooded_over_a_window() {
+        // Fast-break mode shrinks the 5-min pose to seconds. The placement is O(n) (open-pause tracking, not an
+        // O(n²) scan), but the project also *deliberately bounds* a dense sub-minute pose so it never floods
+        // `state.panels`: a COUPLED dense pose (qualifying pause == the 5 s drawn length, the real-time account2
+        // shape) is held to one at a time by the dense-interval cap
+        // ([SchedulerDomain] `DENSE_SCREEN_BREAK_INTERVAL_FLOOR_MILLIS`). So the windowed reconstruction over a
+        // multi-hour span yields a bounded count, not thousands — the fix for "lots of 5-min breaks in a day".
         val fast = pose5.copy(intervalMillis = 5 * SEC, durationMillis = 5 * SEC, lastRestMillis = 0)
-        val horizon = 6 * 60 * MIN // 6 hours
-        val starts = SchedulerDomain.screenBreakPanels(listOf(fast), nowMillis = 0, horizonMillis = horizon)
-            .map { it.startEpochMillis }.sorted()
-        assertTrue(starts.size > 2_000, "expected >2000 dense occurrences, got ${starts.size}")
-        assertTrue(starts.last() <= horizon)
-        // Each pose resumes (duration + interval) = 10 s after the previous start — nothing is clipped.
-        assertEquals(setOf(10 * SEC), starts.zipWithNext { a, b -> b - a }.toSet())
+        val windowed = SchedulerDomain.screenBreakPanelsInWindow(listOf(fast), 0, 6 * 60 * MIN)
+        assertEquals(1, windowed.size)
+
+        // A DECOUPLED dense pose (qualifying pause 2 h > the 5 s drawn length, the account1 fast-break shape)
+        // does not grid-recur at all — it appears once per real qualifying pause, so the forward projection
+        // likewise emits exactly one, anchored an interval after its lastRest.
+        val decoupled = fast.copy(pauseThresholdMillis = 2 * 60 * 60 * SEC, lastRestMillis = 0)
+        val forward = SchedulerDomain.screenBreakPanels(listOf(decoupled), nowMillis = 0, horizonMillis = 6 * 60 * MIN)
+        assertEquals(1, forward.size)
+        assertEquals(5 * SEC, forward.single().startEpochMillis)
     }
 }

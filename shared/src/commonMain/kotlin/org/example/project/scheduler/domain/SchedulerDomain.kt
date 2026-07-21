@@ -1432,6 +1432,14 @@ object SchedulerDomain {
      * afresh from the advanced `lastRestMillis`, a fresh single break re-appears each time the previous one
      * elapses — so the fast-break test keeps working (reach a break, sleep, hear the phone cue) without the
      * flood. Production timings sit far above the floor, so a real schedule is never affected.
+     *
+     * This cap only ever applies to a **coupled** dense break (`qualifyingPauseMillis == durationMillis`, the
+     * real-time `account2-open-fast-break.bat` shape) that legitimately grid-recurs. A **decoupled** pose
+     * (`qualifyingPauseMillis > durationMillis`, the `account1-…-fast-break.bat` shape: a 5 s break due only
+     * after a ≥2 h pause) never rides the grid at all — [screenBreakPanels] routes it to
+     * [decoupledPoseOccurrences], which places one break an interval after each qualifying pause (the live
+     * now-anchor + each scheduled sleep window). So the cap is not what bounds the decoupled case; the
+     * anchor-per-pause rule is, mathematically ("one break per ≥threshold pause"), not a flood band-aid.
      */
     private const val DENSE_SCREEN_BREAK_INTERVAL_FLOOR_MILLIS: Long = 60_000L
 
@@ -1448,8 +1456,20 @@ object SchedulerDomain {
      * instead (PRD §15 "computed from now to the end of the currently focused week"), so navigating to a week
      * beyond the default horizon still shows the screen-break markers across it.
      *
-     * The simulation walks occurrences in time order (ties resolved toward the **longer** pause so a
-     * coincident bigger pause is placed first), applying:
+     * Breaks split by whether they can **self-recur** — whether taking the drawn break is itself a qualifying
+     * pause for the next one (`qualifyingPauseMillis <= durationMillis`):
+     * - **Coupled** breaks (every production break, and the real-time `account2-open-fast-break.bat` shape) DO
+     *   self-recur, so they ride the [simulateScreenBreaks] grid engine below.
+     * - **Decoupled** poses (`qualifyingPauseMillis > durationMillis`, the `account1-…-fast-break.bat` shape: a
+     *   5 s break due only after a ≥2 h pause) do NOT — a 5 s break is not a 2 h pause — so they never ride the
+     *   grid. [decoupledPoseOccurrences] places them exactly an interval after each qualifying pause: the live
+     *   now-anchor plus each future qualifying-pause window in [qualifyingPauseWindows] (the scheduled sleep
+     *   windows), giving one break per day, 5 s after each night's wake. Passing no windows yields just the live
+     *   now-anchor. This is the fix for "lots of 5-min breaks in a single day" under the account1 fast-break
+     *   script.
+     *
+     * The grid simulation walks the coupled occurrences in time order (ties resolved toward the **longer** pause
+     * so a coincident bigger pause is placed first), applying:
      * - **Recurrence:** a rest pose ([ScreenBreak.restBreak]) recurs an interval after it *ends*
      *   (`start + duration + interval`); the cadence look-away recurs an interval after it *starts*
      *   (`start + interval`).
@@ -1469,13 +1489,60 @@ object SchedulerDomain {
         screenBreaks: List<ScreenBreak>,
         nowMillis: Long,
         horizonMillis: Long = nowMillis + SCHEDULE_HORIZON_MILLIS,
+        qualifyingPauseWindows: List<TaskTimeRange> = emptyList(),
     ): List<TaskPanel> {
         val horizon = maxOf(horizonMillis, nowMillis)
         val valid = screenBreaks.withIndex().filter { isValidScreenBreak(it.value) }
         if (valid.isEmpty()) return emptyList()
-        // Seed each task at its due time (or `now` when overdue) and run the shared projection engine forward.
-        val seedDue = valid.associate { (i, t) -> i to screenBreakNextStart(t, nowMillis) }
-        return simulateScreenBreaks(screenBreaks, seedDue, horizon)
+        val (decoupled, coupled) = valid.partition { isDecoupledPose(it.value) }
+        // Coupled breaks: seed each at its due time (or `now` when overdue) and run the shared grid engine.
+        val gridPanels =
+            if (coupled.isEmpty()) emptyList()
+            else simulateScreenBreaks(screenBreaks, coupled.associate { (i, t) -> i to screenBreakNextStart(t, nowMillis) }, horizon)
+        // Decoupled poses: an interval after the live now-anchor and after each future qualifying pause.
+        val decoupledPanels = decoupled.flatMap { (i, t) ->
+            decoupledPoseOccurrences(i, t, nowMillis, horizon, qualifyingPauseWindows, includeLiveNow = true, nowMillis)
+        }
+        return (gridPanels + decoupledPanels).sortedBy { it.startEpochMillis }
+    }
+
+    /** True when [side] is a rest pose whose qualifying pause exceeds its drawn length (the fast-break shape). */
+    private fun isDecoupledPose(side: ScreenBreak): Boolean =
+        side.restBreak && side.qualifyingPauseMillis > side.durationMillis
+
+    /**
+     * PRD §15: the occurrences of a **decoupled** rest pose ([isDecoupledPose]) over `[fromMillis, toMillis]`.
+     * A decoupled pose cannot self-recur — its short drawn break is not a qualifying pause — so it never rides
+     * the [simulateScreenBreaks] grid; it appears exactly `interval` after each qualifying pause:
+     * - the most recent PAST pause (its anchored `lastRestMillis`, clamped forward to the now-line while
+     *   overdue-unserved via [screenBreakNextStart]), included only when [includeLiveNow] — i.e. the window that
+     *   actually contains the now-line ([screenBreakPanels]); a future-week window ([screenBreakPanelsInWindow])
+     *   omits it, since the live anchor is not inside that week; and
+     * - each FUTURE qualifying-pause window in [qualifyingPauseWindows] whose length reaches the pose's
+     *   qualifying threshold — the scheduled sleep windows are the only future ≥threshold pauses on a typical
+     *   schedule, so a break lands `interval` after each night's wake ("after a ≥2 h pause the next 5-min pose
+     *   is `interval` later"). This is what makes the account1 fast-break calendar show exactly one 5-min break
+     *   per day instead of a 5-second grid flood.
+     */
+    fun decoupledPoseOccurrences(
+        index: Int,
+        pose: ScreenBreak,
+        fromMillis: Long,
+        toMillis: Long,
+        qualifyingPauseWindows: List<TaskTimeRange>,
+        includeLiveNow: Boolean,
+        nowMillis: Long,
+    ): List<TaskPanel> {
+        if (toMillis < fromMillis) return emptyList()
+        val starts = buildList {
+            if (includeLiveNow) add(screenBreakNextStart(pose, nowMillis))
+            for (w in qualifyingPauseWindows) {
+                if (w.endEpochMillis - w.startEpochMillis >= pose.qualifyingPauseMillis) {
+                    add(w.endEpochMillis + pose.intervalMillis)
+                }
+            }
+        }.filter { it in fromMillis..toMillis }.distinct().sorted()
+        return starts.map { screenBreakPanel(index, pose.title, it, it + pose.durationMillis) }
     }
 
     /**
@@ -1522,28 +1589,44 @@ object SchedulerDomain {
      * and [screenBreakOccurrencesBetween] rely on). Unlike [screenBreakOccurrencesBetween] this applies **no**
      * dragging-pose shadow — a display window shows every occurrence the periodic grid places; the shadow is
      * a cue-ordering concern of the now-line sweep only.
+     *
+     * Like [screenBreakPanels], a **decoupled** pose ([isDecoupledPose]) is projected off the grid via
+     * [decoupledPoseOccurrences] — here anchored only to the future qualifying-pause windows
+     * ([qualifyingPauseWindows], the scheduled sleep windows) that fall in this week, since the live now-anchor
+     * is not inside a future week.
      */
     fun screenBreakPanelsInWindow(
         screenBreaks: List<ScreenBreak>,
         fromMillis: Long,
         toMillis: Long,
+        qualifyingPauseWindows: List<TaskTimeRange> = emptyList(),
     ): List<TaskPanel> {
         if (toMillis < fromMillis) return emptyList()
         val valid = screenBreaks.withIndex().filter { isValidScreenBreak(it.value) }
         if (valid.isEmpty()) return emptyList()
-        val maxInterval = valid.maxOf { it.value.intervalMillis }
-        val maxDuration = valid.maxOf { it.value.durationMillis }
-        val from = fromMillis - maxInterval - maxDuration
-        val seedDue = valid.associate { (i, t) ->
-            // A pose recurs over a (duration + interval) cycle; the look-away every interval. Seed at the
-            // grid point at/just before the widened [from] so the loop reconstructs every occurrence up to
-            // [toMillis] with the re-anchoring poses already placed.
-            val step = if (t.restBreak) t.durationMillis + t.intervalMillis else t.intervalMillis
-            val base = t.lastRestMillis + t.intervalMillis
-            i to (if (base >= from) base else base + ((from - base) / step) * step)
+        val (decoupled, coupled) = valid.partition { isDecoupledPose(it.value) }
+        val gridPanels =
+            if (coupled.isEmpty()) {
+                emptyList()
+            } else {
+                val maxInterval = coupled.maxOf { it.value.intervalMillis }
+                val maxDuration = coupled.maxOf { it.value.durationMillis }
+                val from = fromMillis - maxInterval - maxDuration
+                val seedDue = coupled.associate { (i, t) ->
+                    // A pose recurs over a (duration + interval) cycle; the look-away every interval. Seed at the
+                    // grid point at/just before the widened [from] so the loop reconstructs every occurrence up to
+                    // [toMillis] with the re-anchoring poses already placed.
+                    val step = if (t.restBreak) t.durationMillis + t.intervalMillis else t.intervalMillis
+                    val base = t.lastRestMillis + t.intervalMillis
+                    i to (if (base >= from) base else base + ((from - base) / step) * step)
+                }
+                simulateScreenBreaks(screenBreaks, seedDue, toMillis)
+                    .filter { it.startEpochMillis in fromMillis..toMillis }
+            }
+        val decoupledPanels = decoupled.flatMap { (i, t) ->
+            decoupledPoseOccurrences(i, t, fromMillis, toMillis, qualifyingPauseWindows, includeLiveNow = false, fromMillis)
         }
-        return simulateScreenBreaks(screenBreaks, seedDue, toMillis)
-            .filter { it.startEpochMillis in fromMillis..toMillis }
+        return (gridPanels + decoupledPanels).sortedBy { it.startEpochMillis }
     }
 
     /**
@@ -1764,6 +1847,8 @@ object SchedulerDomain {
             }
             // Recurrence: poses resume an interval after they end; the cadence look-away an interval after it
             // starts. Placing this pause also pushes every shorter pause to an interval after it ends.
+            // (Only COUPLED breaks reach this grid — a decoupled pose is projected separately by
+            // [decoupledPoseOccurrences] and never seeded here; see [screenBreakPanels].)
             val remaining = denseBudget[nextIndex]
             if (remaining != null && remaining <= 1) {
                 // Dense test-anchor budget exhausted — stop recurring this index so its sub-minute interval
@@ -1962,7 +2047,11 @@ object SchedulerDomain {
         // Each one places its next occurrence at its due time (or the now-line when overdue), with the
         // 5-min↔15-min merge applied. They project straight through the sleep windows too, so the eye-rest /
         // pose cues still fire (and render over the "Sleep" band) for a user working through the night.
-        val sidePanels = screenBreakPanels(screenBreaksForPlacement(state.screenBreaks, liveRest), nowMillis)
+        val sidePanels = screenBreakPanels(
+            screenBreaksForPlacement(state.screenBreaks, liveRest),
+            nowMillis,
+            qualifyingPauseWindows = sleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
+        )
         if (leaves.isEmpty()) return (kept + sidePanels + sleepPanels).sortedBy { it.startEpochMillis }
 
         val priorities = absoluteTaskPriorities(state)
