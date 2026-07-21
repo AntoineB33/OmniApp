@@ -1,5 +1,5 @@
 # Deterministic image for the OmniApp presence listener (a plain always-on Node worker).
-FROM node:20-slim
+FROM node:22-slim
 WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev

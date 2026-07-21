@@ -676,6 +676,19 @@ fun LateralMenu(
             onClick = onToggleCalendar,
         )
 
+        // PRD §7 Calendar: the day selector (month grid) sits right below the Calendar button, and only
+        // appears while the calendar is displayed.
+        if (calendarOpen) {
+            Spacer(Modifier.height(4.dp))
+            MiniMonth(
+                monthAnchor = monthAnchor,
+                onMonthAnchorChange = onMonthAnchorChange,
+                selectedDate = selectedDate,
+                today = today,
+                onSelectDate = onSelectDate,
+            )
+        }
+
         // PRD §7 Automatic Schedule Switch: while off, the §9 scheduling events wait.
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -749,18 +762,6 @@ fun LateralMenu(
             active = sleepWindowOpen,
             onClick = onToggleSleep,
         )
-
-        // PRD §7 Calendar: the month grid only appears while the calendar is displayed.
-        if (calendarOpen) {
-            Spacer(Modifier.height(4.dp))
-            MiniMonth(
-                monthAnchor = monthAnchor,
-                onMonthAnchorChange = onMonthAnchorChange,
-                selectedDate = selectedDate,
-                today = today,
-                onSelectDate = onSelectDate,
-            )
-        }
     }
 }
 
