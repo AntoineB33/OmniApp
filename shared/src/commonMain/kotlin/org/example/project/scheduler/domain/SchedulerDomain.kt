@@ -1410,11 +1410,32 @@ object SchedulerDomain {
 
     /**
      * Safety cap on the screen-break projection loop. Far above what any real horizon holds — ~700 occurrences a
-     * week at production timings, and even a debug seconds-interval break over a multi-week fill stays well
-     * under it — so it only ever fires on a genuinely degenerate (near-zero span) configuration. The
-     * placement itself is O(n) (see [simulateScreenBreaks]), so a large count is cheap, not a freeze.
+     * week at production timings — so it only ever fires on a genuinely degenerate (near-zero span)
+     * configuration. The placement itself is O(n) (see [simulateScreenBreaks]), so a large count is cheap in
+     * the projection loop *itself* — but every emitted occurrence becomes a panel that downstream code
+     * (`fillSchedule`'s screen-break obstacle regions, the calendar merge/render) pays for, so a genuinely
+     * dense cadence is bounded at the source by [DENSE_SCREEN_BREAK_INTERVAL_FLOOR_MILLIS] below.
      */
     private const val SCREEN_BREAK_PROJECTION_LIMIT: Int = 2_000_000
+
+    /**
+     * Below this interval a recurring screen break is treated as a **dense test anchor**, not a real cadence:
+     * only the debug fast-break override ([org.example.project.DebugFlags.breakIntervalMillisOverride], set by
+     * `account2-open-fast-break.bat`) shrinks an interval this far — production intervals are ≥20 min. A
+     * sub-minute interval would otherwise place tens of thousands of occurrences across a one-week fill horizon
+     * (`604800 s / 5 s ≈ 121 000`), flooding `state.panels` and the O(occurrences)-per-cursor screen-break
+     * obstacle scan in [fillSchedule] until the desktop window is created-but-never-shown (the classic "the app
+     * froze on launch"). Such a task is capped to [DENSE_SCREEN_BREAK_EMIT_CAP] occurrences per projection
+     * (SchedulerDomain owns no debug flag, so the cap keys purely on the configured interval and stays a pure,
+     * testable function). The first break still comes due within seconds, and because every reschedule projects
+     * afresh from the advanced `lastRestMillis`, a fresh single break re-appears each time the previous one
+     * elapses — so the fast-break test keeps working (reach a break, sleep, hear the phone cue) without the
+     * flood. Production timings sit far above the floor, so a real schedule is never affected.
+     */
+    private const val DENSE_SCREEN_BREAK_INTERVAL_FLOOR_MILLIS: Long = 60_000L
+
+    /** Max occurrences a dense ([DENSE_SCREEN_BREAK_INTERVAL_FLOOR_MILLIS]) screen break emits per projection. */
+    private const val DENSE_SCREEN_BREAK_EMIT_CAP: Int = 1
 
     /**
      * PRD §15: project [screenBreaks] forward from [nowMillis] to [horizonMillis] as obstacle panels,
@@ -1653,6 +1674,17 @@ object SchedulerDomain {
         // Next-due start per task index; seeded by the caller.
         val due = HashMap(seedDue)
 
+        // Dense test-anchor cap (see [DENSE_SCREEN_BREAK_INTERVAL_FLOOR_MILLIS]): a sub-minute-interval break
+        // is only the debug fast-break override, which would otherwise flood the projection. Each such index
+        // gets a small remaining-occurrence budget; when it runs out the index is dropped from [due] so it
+        // stops recurring. Production intervals are ≥20 min, so this map is empty for a real schedule.
+        val denseBudget = HashMap<Int, Int>()
+        for (i in seedDue.keys) {
+            if (screenBreaks[i].intervalMillis in 1L until DENSE_SCREEN_BREAK_INTERVAL_FLOOR_MILLIS) {
+                denseBudget[i] = DENSE_SCREEN_BREAK_EMIT_CAP
+            }
+        }
+
         val result = mutableListOf<TaskPanel>()
         // The still-OPEN placed pauses (those whose end is still ahead of the occurrence being placed), as
         // `(end, duration)`. Occurrences are placed in non-decreasing `start` order (every `due` only ever
@@ -1731,7 +1763,15 @@ object SchedulerDomain {
             }
             // Recurrence: poses resume an interval after they end; the cadence look-away an interval after it
             // starts. Placing this pause also pushes every shorter pause to an interval after it ends.
-            due[nextIndex] = (if (task.restBreak) end else start) + task.intervalMillis
+            val remaining = denseBudget[nextIndex]
+            if (remaining != null && remaining <= 1) {
+                // Dense test-anchor budget exhausted — stop recurring this index so its sub-minute interval
+                // can't flood the projection (see [DENSE_SCREEN_BREAK_INTERVAL_FLOOR_MILLIS]).
+                due.remove(nextIndex)
+            } else {
+                if (remaining != null) denseBudget[nextIndex] = remaining - 1
+                due[nextIndex] = (if (task.restBreak) end else start) + task.intervalMillis
+            }
             reanchorSmaller(end, task.durationMillis)
         }
         return result.sortedBy { it.startEpochMillis }

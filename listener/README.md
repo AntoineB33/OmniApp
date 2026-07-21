@@ -129,11 +129,14 @@ nothing:
 
 1. **The `pause-cue` Edge Function is deployed with its push credentials set.** Run
    `scripts/deploy-supabase.bat` (creates the `account_state`, `account_last_phone`, `device_push_token`
-   tables + deploys the function), then set the send credentials once:
+   tables + deploys the function), then set the send credentials once. For **Android**, the credential is the
+   whole Firebase service-account JSON as a single secret (`FCM_SERVICE_ACCOUNT`) — get it from Firebase
+   Console → your project → Project settings → Service accounts → **Generate new private key**:
    ```powershell
-   supabase secrets set FCM_PROJECT_ID=... FCM_CLIENT_EMAIL=... FCM_PRIVATE_KEY="..."   # Android; APNS_* for iOS
+   supabase secrets set FCM_SERVICE_ACCOUNT="$(Get-Content -Raw firebase-service-account.json)"   # APNS_* for iOS
    ```
-   See `docs/PAUSE_CUE_DELIVERY.md` for exactly which FCM/APNs values these are and where to get them.
+   The Edge Function reads `project_id` / `client_email` / `private_key` from inside that JSON itself.
+   See `docs/PAUSE_CUE_DELIVERY.md` for the APNs values and full details.
 2. **Your phone is signed in to the account and has registered a push token.** Deploy the app to the phone
    (`scripts/account2-deploy-android.bat` for account 2) and open it once — the client claims last-phone and
    registers `device_push_token` on startup/foreground automatically.

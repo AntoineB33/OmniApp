@@ -362,6 +362,33 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun a_sub_minute_interval_screen_break_is_capped_so_it_cannot_flood_the_projection() {
+        // Regression: the debug fast-break override (account2-open-fast-break.bat) shrinks the 5-min pose's
+        // interval to a few seconds. Across the one-week fill horizon a 5-second interval would place ~121k
+        // panels, flooding state.panels and fillSchedule's obstacle scan until the desktop window never shows
+        // ("the app froze on launch"). A sub-minute interval is treated as a dense test anchor and capped.
+        val now = 1_000_000_000_000L
+        val dense = ScreenBreak(
+            "take a 5min pose and blink hard",
+            intervalMillis = 5_000L, // 5 s — only the debug override goes this low
+            durationMillis = 5_000L,
+            restBreak = true,
+            lastRestMillis = now,
+        )
+        val panels = SchedulerDomain.screenBreakPanels(listOf(dense), now, now + 14L * 24 * HOUR_MS)
+        // Exactly one dense occurrence across two weeks (not ~240k), and it is due ~one interval out (~now+5s).
+        assertEquals(1, panels.count { it.title == "take a 5min pose and blink hard" })
+        assertEquals(now + 5_000L, panels.single().startEpochMillis)
+
+        // The production timings sit far above the floor, so a real schedule is unaffected: the same two-week
+        // horizon still yields the full recurring cadence (hundreds of occurrences).
+        val production = SchedulerDomain.screenBreakPanels(
+            SchedulerDomain.DEFAULT_SCREEN_BREAKS, now, now + 14L * 24 * HOUR_MS,
+        )
+        assertTrue(production.count { it.title == "take a 5min pose and blink hard" } > 10)
+    }
+
+    @Test
     fun screen_break_next_start_clamps_rest_poses_to_now_but_advances_the_look_away_along_its_grid() {
         val now = 1_000_000_000_000L
 
