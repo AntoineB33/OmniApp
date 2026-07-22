@@ -8,50 +8,47 @@ push-triggered **OS-scheduled local notification/alarm**, so it fires even when 
 The delivery chain (ARCHITECTURE.md §8, PRD §15):
 
 ```
-active clients ──(Realtime presence WebSocket: {device_id, kind, next_break_end_ms})──▶ Supabase Realtime
-                                                                                            │ watched by
-                                                                     /listener (always-on Node worker,
-                                                                      service role; reads account_state)
-                                                                                            │ when 0 devices
-                                                                                            │ present + not sleeping
+active clients ──(UPSERT device_heartbeat every ~10s: {device_id, kind, next_break_*})──▶ Supabase Postgres
+                                                                                            │ polled every ~10s
+                                                                       pg_cron: tick_pause_cues()
+                                                                       (no fresh heartbeat + not sleeping)
+                                                                                            │ omni_edge_push
                                                                               POST pause-cue Edge Function
-                                                                                            │ FCM / APNs
+                                                                                            │ FCM / APNs (device '*')
                                                                 phone: onPauseCuePush → OS alarm → speaks
                                                                        (onPauseCueFire, eligibility-gated)
 ```
 
-There is **no cron, no `pause_cue_schedule` table, no polling**: the retired pg_cron `tick_pause_cues()`
-machinery was dropped by migration `20260713000000` and `pause-cue-setup.sql` unschedules any leftover
-cron job. The listener exists because pg_cron / an Edge Function **cannot read Realtime Presence** —
-presence lives in the Realtime service, not Postgres.
+**This is a pg_cron + heartbeat-table design (2026-07-23), which replaced the external Fly.io `/listener`.**
+The listener existed only because pg_cron / an Edge Function **cannot read Realtime Presence**. But the
+listener was itself a heartbeat-and-poll process (a `published_at_ms` liveness stamp + a 10-s `evaluate()`
+tick), so moving the same heartbeat onto a plain `device_heartbeat` table lets pg_cron do the poll
+centrally — and drops the always-on host entirely. Detecting a locked phone is fundamentally a
+heartbeat-timeout problem either way; this just puts the timeout in Postgres.
 
-> **Note — two independent Realtime channels.** The presence WebSocket described here (`RealtimePresenceClient`,
-> topic `realtime:presence:<user_id>`) carries *only* the pause-cue liveness/break data. Cross-device **document
-> sync** rides a **separate** Realtime `postgres_changes` subscription on the `scheduler_snapshot` row
-> (`RealtimeSnapshotSubscriber`), which auto-pulls a peer's push (ARCHITECTURE.md §8). They share the transport
-> but are otherwise unrelated; nothing in this cue-delivery path depends on the snapshot subscription.
+> **Note — the only live Realtime channel is document sync.** Cross-device **document sync** rides a Realtime
+> `postgres_changes` subscription on the `scheduler_snapshot` row (`RealtimeSnapshotSubscriber`), which
+> auto-pulls a peer's push (ARCHITECTURE.md §8). Nothing in this cue-delivery path uses a WebSocket any more —
+> the heartbeat is a PostgREST UPSERT and the cue decision is a cron job.
 
 ## Status — done vs. remaining
 
 | Piece | Status |
 | --- | --- |
-| Client presence publishing: signed-in + active clients hold the Phoenix WS on `realtime:presence:<user_id>` and publish `{device_id, kind, next_break_end_ms}` (driven from the engine's active-session beat) | ✅ `RealtimePresenceClient` / `SchedulerEngine.updatePresence()`; `RealtimePhoenixTest` |
-| Sleep/Work toggle → `account_state` (listener suppression; persists across restart until the scheduled wake) | ✅ `SetSleepMode` / `publishAccountState` / `resolveSleepModeOnStartup`; `SleepModeTest` |
-| `/listener` worker: watches every account's presence channel, fires `pause-cue` ~1 s before the published `next_break_end_ms` when 0 devices present and not sleeping | ✅ `/listener/index.js` (see `/listener/README.md`) — **deploy is manual, below** |
-| Supabase schema: `account_state`, `device_push_token`, `account_last_phone`, drops of the retired machinery | ✅ migrations up to `20260716000000`, applied by `deploy-supabase.bat` |
-| `pause-cue` Edge Function: real FCM v1 / APNs HTTP/2 sends | ✅ `supabase/functions/pause-cue/index.ts` (**needs secrets**, below) |
+| Client heartbeat: signed-in + active clients UPSERT `device_heartbeat` every ~10 s with `{device_id, kind, next_break_start_ms, next_break_len_ms, next_break_end_ms}` (driven from the engine's active-session beat); a clean lock flips `closed = true` | ✅ `DeviceHeartbeatPublisher` / `SchedulerEngine.updatePresence()`; `PauseCueGatewayTest` |
+| Sleep/Work toggle → `account_state` (cron suppression; persists across restart until the scheduled wake) | ✅ `SetSleepMode` / `publishAccountState` / `resolveSleepModeOnStartup`; `SleepModeTest` |
+| Server cron: `tick_pause_cues()` polls `device_heartbeat` every ~10 s, computes the pause end server-side, fires `pause-cue` to all phones when idle + not sleeping | ✅ migration `20260723000000` + `pause-cue-setup.sql` (`cron.schedule('pause-cue-tick','10 seconds', …)`) |
+| Supabase schema: `device_heartbeat`, `pause_cue_schedule`, `account_state`, `device_push_token`, `account_last_phone` | ✅ migrations up to `20260723000000`, applied by `deploy-supabase.bat` |
+| `pause-cue` Edge Function: real FCM v1 / APNs HTTP/2 sends, fan-out to `device_id:'*'` | ✅ `supabase/functions/pause-cue/index.ts` (**needs secrets**, below) |
 | Phone client: FCM receiver + exact alarm + spoken cue, eligibility-gated at fire time | ✅ `PauseCueMessagingService` / `PauseCueScheduler` / `PauseCueAlarmReceiver` → `SchedulerEngine.onPauseCuePush` / `onPauseCueFire` / `poseFinishEligible`; `PauseCueGatewayTest` |
 | Phone claims `account_last_phone` at startup and on every app-foreground; push-token registration | ✅ `SchedulerEngine.claimLastPhoneOnStartup` / `onAppForegrounded`; `SchedulerSyncEngine.registerPushToken` (needs a native token → Firebase step) |
 | iOS: APNs registration + local-notification cue | 🟡 code written (`iosMain` actuals + `IosPushBridge` + Swift `AppDelegate`), **needs a Mac build** to compile/verify |
 | Firebase project + `google-services.json` + APNs key + Edge secrets | ⛔ **TODO — your credentials** |
-| Listener deployed to an always-on host | ⛔ **TODO** |
-| **Live end-to-end verification** (client WS ↔ Realtime ↔ listener ↔ Edge ↔ phone) | ⛔ **TODO — this runbook's purpose** |
+| **Live end-to-end verification** (client heartbeat ↔ `tick_pause_cues()` cron ↔ Edge ↔ phone) | ⛔ **TODO — this runbook's purpose** |
 
-**Spec deltas (PRD §15, specified but not yet implemented):** the listener should fan out to **all** the
-account's phones and compute the waiting break **server-side** (message at disconnect-start + waiting-break
-length); today it pushes to the single `account_last_phone` ~1 s before the client-published
-`next_break_end_ms`. Phone activity should be a **lock/unlock-gated** socket held by the foreground
-service; today it is app-foreground one-minute leases (`AndroidForegroundTracker`).
+**Requires sub-minute pg_cron**, which Supabase supports (pg_cron ≥ 1.5 accepts an interval string like
+`'10 seconds'`). If a project is pinned to an older pg_cron, fall back to `'* * * * *'` (1-minute) in
+`pause-cue-setup.sql` — the cue then fires with up to ~1 min of extra latency.
 
 ---
 
@@ -71,7 +68,7 @@ service; today it is app-foreground one-minute leases (`AndroidForegroundTracker
 
 ---
 
-## Step 2 — Deploy the server half
+## Step 2 — Deploy the server half (this is the whole server; there is no worker to host)
 
 ```bash
 # Edge Function secrets (one line each; keep the .p8 newlines or use \n):
@@ -82,35 +79,19 @@ supabase secrets set APNS_KEY="$(cat AuthKey_XXXX.p8)" APNS_KEY_ID=XXXXXXXXXX AP
 scripts\deploy-supabase.bat   # db push + functions deploy pause-cue + pause-cue-setup.sql
 ```
 
-`deploy-supabase.bat` is idempotent; it also **unschedules** the retired `pause-cue-tick` cron if the
-project still has one.
+`deploy-supabase.bat` is idempotent. Step (3) of it runs `pause-cue-setup.sql`, which provisions the Vault
+secrets `omni_edge_base_url` / `omni_service_role_key` (read by `omni_edge_push`) and **schedules** the
+`pause-cue-tick` cron at `'10 seconds'`. Verify the job exists:
 
----
-
-## Step 3 — Deploy the listener
-
-Any always-on Node ≥ 18 host (Render / Fly.io / Railway free tier — or a local `npm start` terminal for
-testing). From `/listener`:
-
-| env var | value |
-| --- | --- |
-| `SUPABASE_URL` | `https://<ref>.supabase.co` |
-| `SUPABASE_SERVICE_ROLE_KEY` | the project's **service-role** key. Secret — never commit it. |
-| `EDGE_BASE_URL` | optional; defaults to `${SUPABASE_URL}/functions/v1` |
-
-```bash
-cd listener && npm install && npm start
+```sql
+select jobname, schedule, active from cron.job where jobname = 'pause-cue-tick';
 ```
-
-It enumerates the accounts via the admin API (rescanned every 60 s), subscribes to each presence channel,
-reads `account_state` / `account_last_phone`, and **never writes the DB**. Its stdout is the primary
-debugging surface: every presence join/leave and every cue schedule/cancel decision is logged.
 
 ---
 
 ## Testing A — Android (true end-to-end)
 
-The live-path verification. Prereqs: steps 1–3 done, and an Android device set up per
+The live-path verification. Prereqs: steps 1–2 done, and an Android device set up per
 `docs/MANUAL_TESTING.md` **Appendix A** — physical phone (§A1) or Play-image emulator (§A2); everything
 below is adb-based and identical on either. `adb devices` lists the device.
 
@@ -120,21 +101,23 @@ below is adb-based and identical on either. `adb devices` lists the device.
 2. **Token + last-phone registered:** Supabase → Table editor → `device_push_token` has an `fcm` row for
    the phone; `account_last_phone` holds the phone's `device_id`. Re-foregrounding the app re-claims it
    (`onAppForegrounded`).
-3. **Presence visible:** with the phone foregrounded and the desktop open, the listener log shows both
-   devices present with their `next_break_end_ms`. Background the phone → it leaves within ~1 min (the
-   foreground lease); close the desktop → it leaves.
+3. **Heartbeats visible:** with the phone foregrounded and the desktop open, `device_heartbeat` has a fresh
+   (recent `beat_at`, `closed = false`) row per device with its `next_break_*`. Background/lock the phone →
+   its row flips `closed = true` (clean) or its `beat_at` stops advancing (dirty); close the desktop →
+   likewise.
 4. **The cue fires:** with a screen break pending (walk the schedule forward, or just wait for the next
-   pose), background/lock **everything**. Listener log: "0 devices present" → a `schedule` POST to
-   `pause-cue` ~1 s before `next_break_end_ms`. Edge log (`supabase functions logs pause-cue`): the FCM
-   send. Phone: schedules the exact alarm (`adb shell dumpsys alarm | grep org.example.project`), then
-   **speaks at the break's end**. **Kill the app before the fire instant** to prove the OS-alarm path.
-5. **Reconnect suppresses:** repeat, but re-foreground a device before the cue instant → listener cancels
-   (a `cancel` push if one was already scheduled); the phone stays silent. The eligibility gate
-   (`poseFinishEligible`) is the last line of defence: a device already back at a screen is never told.
+   pose), background/lock **everything**. Watch `pause_cue_schedule` gain a row (`pushed_at` set) within
+   ~10 s of the last device going idle. Edge log (`supabase functions logs pause-cue`): the FCM send. Phone:
+   schedules the exact alarm (`adb shell dumpsys alarm | grep org.example.project`), then **speaks at the
+   break's end**. **Kill the app before the fire instant** to prove the OS-alarm path.
+5. **Reconnect suppresses:** repeat, but re-foreground a device before the cue instant → the next tick sees a
+   fresh heartbeat, deletes the `pause_cue_schedule` row and pushes a `cancel`; the phone stays silent. The
+   eligibility gate (`poseFinishEligible`) is the last line of defence: a device already back at a screen is
+   never told.
 6. **Sleep mode suppresses:** press the left menu's **Sleep** toggle → `account_state` shows
    `mode='sleeping'` + `wake_at`; going all-inactive fires no cue. Press **Work** → cues resume.
 7. **Desktop-only account:** with no phone registered the Edge Function answers "no push token" (200) and
-   nothing errors — the listener still watches the account.
+   nothing errors — the cron still evaluates the account.
 
 **Android runtime prerequisites:** `google-services.json` present at build time, and on Android 12+ the
 **Alarms & reminders** special-access grant (else the alarm falls back to inexact).
@@ -192,20 +175,21 @@ Transport is adb-only and debuggable-only — nothing runs in a release build.
    back to real time.
 
 **Caveats:** the phone adopts the desktop's wall time, so keep both machines NTP-synced; accelerated state
-can reach Supabase via a Sync press, so use a throwaway account. And the **live listener path does not
-accelerate**: the listener's timer runs on real wall clock against the presence-published
-`next_break_end_ms`, so under a diverged sim clock the push timing is meaningless — verify the *client*
-mechanics (schedule, alarm, speech) under the time-link, but do the **listener** verification (Testing A)
-at 1× real time.
+can reach Supabase via a Sync press, so use a throwaway account. And the **server cue path runs on real
+wall clock**: `tick_pause_cues()` compares `beat_at` (server `now()`) against the client-published break
+window, so under a diverged sim clock the push timing is meaningless — verify the *client* mechanics
+(schedule, alarm, speech) under the time-link, but do the **cue-timing** verification (Testing A) at 1×
+real time.
 
 ## Notes
 
 - Everything push-side is **inert, never failing**, until the secrets exist and a phone registers a
-  `device_push_token` row — the Edge Function returns `no push token for device` (200).
-- The listener decides *when* and *who*; the push credentials stay in the Edge Function; the client
-  decides *whether to actually speak* (`poseFinishEligible`) — three separable failure domains. Check
-  their three logs in that order when a cue misbehaves: listener stdout → `supabase functions logs
-  pause-cue` → `scripts\collect-diagnostics.bat` (the phone logs every posted cue, and every crossing
-  swallowed as stale).
+  `device_push_token` row — the Edge Function returns `no push token for device` (200), and `omni_edge_push`
+  is a no-op until the Vault secrets are provisioned.
+- The cron decides *when* and *who*; the push credentials stay in the Edge Function; the client decides
+  *whether to actually speak* (`poseFinishEligible`) — three separable failure domains. When a cue
+  misbehaves, check in order: the `pause_cue_schedule` / `device_heartbeat` tables (did the cron see idle
+  and push?) → `supabase functions logs pause-cue` (did the send happen?) → `scripts\collect-diagnostics.bat`
+  (the phone logs every posted cue, and every crossing swallowed as stale).
 - With no account signed in, the cue path is simply inactive; the in-app look-away/pose cues (which need
   no server) still work.

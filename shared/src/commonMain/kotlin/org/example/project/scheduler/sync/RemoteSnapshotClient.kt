@@ -284,6 +284,34 @@ class RemoteSnapshotClient(
         if (!response.status.isSuccess()) throw response.toException()
     }
 
+    /**
+     * Upserts this device's `device_heartbeat` row (keyed `(user_id, device_id)`; migration 20260723000000) —
+     * the pg_cron pause-cue model's liveness signal. The server stamps `beat_at` (trigger), so the body omits
+     * it; [closed] `= true` marks a clean lock/inactive transition. `merge-duplicates` refreshes the one row.
+     */
+    suspend fun upsertHeartbeat(
+        session: SupabaseSession,
+        deviceId: String,
+        kind: String,
+        nextBreakStartMs: Long?,
+        nextBreakLenMs: Long?,
+        nextBreakEndMs: Long?,
+        closed: Boolean,
+    ) {
+        val response =
+            http.post("${config.restUrl}/device_heartbeat") {
+                authHeaders(session)
+                header("Prefer", "resolution=merge-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(
+                    json.encodeToString(
+                        HeartbeatUpsert(session.userId, deviceId, kind, nextBreakStartMs, nextBreakLenMs, nextBreakEndMs, closed),
+                    ),
+                )
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
     // ---- PRD §15 device-active sessions (PostgREST) — ride the manual Sync-button reconcile only ----
 
     /**
@@ -401,6 +429,17 @@ private data class AccountStateUpsert(
     @SerialName("user_id") val userId: String,
     val mode: String,
     @SerialName("wake_at") val wakeAt: String?,
+)
+
+@Serializable
+private data class HeartbeatUpsert(
+    @SerialName("user_id") val userId: String,
+    @SerialName("device_id") val deviceId: String,
+    val kind: String,
+    @SerialName("next_break_start_ms") val nextBreakStartMs: Long?,
+    @SerialName("next_break_len_ms") val nextBreakLenMs: Long?,
+    @SerialName("next_break_end_ms") val nextBreakEndMs: Long?,
+    val closed: Boolean,
 )
 
 @Serializable

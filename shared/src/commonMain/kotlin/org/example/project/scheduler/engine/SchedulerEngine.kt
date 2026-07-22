@@ -43,10 +43,10 @@ import org.example.project.scheduler.platform.recentSleepGaps as platformRecentS
 import org.example.project.scheduler.platform.VoiceCue
 import org.example.project.scheduler.platform.playVoiceCue as platformPlayVoiceCue
 import org.example.project.scheduler.platform.stopSpeaking
+import org.example.project.scheduler.sync.DeviceHeartbeatPublisher
 import org.example.project.scheduler.sync.PauseCueGateway
 import org.example.project.scheduler.sync.PresenceState
 import org.example.project.scheduler.sync.RealtimePresence
-import org.example.project.scheduler.sync.RealtimePresenceClient
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
@@ -185,16 +185,17 @@ class SchedulerEngine(
     // PRD §15: store for the active-session intervals — this device's own rows (the beat writes them) plus
     // the peers' rows the manual Sync button pulls in. The input to the "Inactivity" bands / "Sleep"-band
     // carve / live-rest placement and the calendar's per-panel device sets. Null disables activity tracking.
-    // The beat itself never talks to the server; rows travel ONLY inside the Sync-button reconcile. LIVE
-    // cross-device presence stays Supabase Realtime, watched by the external listener.
+    // The beat itself only writes the local store + the ~10 s device_heartbeat row (via [pauseCue]); the
+    // active-session rows travel to peers ONLY inside the Sync-button reconcile. There is no live cross-device
+    // activity channel — peers learn of activity at the next Sync.
     private val activeSessionStore: ActiveSessionStore? = null,
-    // Push-token / last-phone channel (the sync engine) for the Realtime-presence + listener cue delivery:
-    // only a phone registers its FCM/APNs token and claims the account's last phone so the listener can reach
-    // it. Null disables it. This is the ONLY remaining server side-channel and is event-driven, never a timer.
+    // Push-token / last-phone / device-heartbeat channel (the sync engine) for the pg_cron pause-cue delivery:
+    // the device writes its activity heartbeat, and a phone registers its FCM/APNs token + claims the account's
+    // last phone so the Edge push can reach it. Null disables it.
     private val pauseCue: PauseCueGateway? = null,
     // PRD §15: the platform OS-scheduled local cue seam — schedule the "pause is over" alarm at the given
     // instant, or cancel the pending one when null. Default no-op (desktop/tests); the phone wires AlarmManager
-    // / UNUserNotificationCenter here (see docs/PAUSE_CUE_DELIVERY.md). Driven by the listener's push
+    // / UNUserNotificationCenter here (see docs/PAUSE_CUE_DELIVERY.md). Driven by the cron's Edge push
     // ([onPauseCuePush]); the alarm's fire handler runs [onPauseCueFire] before speaking.
     private val scheduleLocalPauseCue: (Long?) -> Unit = {},
     // PRD §15: true on a platform that delivers the pause-end cue via [scheduleLocalPauseCue] + [onPauseCueFire]
@@ -271,8 +272,8 @@ class SchedulerEngine(
 
     // PRD §15: the user manually declared they are AWAY from this device via the left-menu "I'm away" button.
     // While set, the device reads screen-inactive regardless of the platform sensor, so its active session is
-    // finalized and its Realtime presence cleared (the WebSocket drops) — telling the server this device is no
-    // longer being worked on. Purely local runtime state: never persisted, never synced (like [debugForcedInactive]),
+    // finalized and its heartbeat closed (`closed = true`) — telling the server this device is no longer being
+    // worked on. Purely local runtime state: never persisted, never synced (like [debugForcedInactive]),
     // so a restart returns the device to active. Toggled by [setUserAway]; the menu reads it via [userAway].
     private val _userAway = MutableStateFlow(false)
 
@@ -309,10 +310,10 @@ class SchedulerEngine(
     // for a non-sim clock, whose run is always continuous.
     private fun clockGeneration(): Long = (clock as? SimAppClock)?.reconfigured?.value ?: 0L
 
-    // PRD §15: the Realtime-Presence publisher — this device announces itself active (with its next break-end)
-    // over a WebSocket while signed in + screen-on, so the external listener knows the account's live activity.
-    // Constructed in [start] from the [pauseCue] gateway (which carries the Realtime URL/key + session auth);
-    // null when sync is disabled or on a platform without an injected gateway.
+    // PRD §15: the device-heartbeat publisher — this device upserts its `device_heartbeat` row every ~10 s while
+    // signed in + screen-on (with its next break window), so the server's `tick_pause_cues()` cron knows the
+    // account's live activity. Constructed in [start] from the [pauseCue] gateway; null when sync is disabled or
+    // on a platform without an injected gateway.
     private var realtimePresence: RealtimePresence? = null
 
     private var started = false
@@ -322,14 +323,7 @@ class SchedulerEngine(
         started = true
         Diagnostics.log("engine started (device=$activeSessionDeviceId)")
         pauseCue?.let { gateway ->
-            realtimePresence = RealtimePresenceClient(
-                scope = scope,
-                realtimeUrl = gateway.realtimeUrl,
-                apiKey = gateway.realtimeApiKey,
-                deviceId = gateway.deviceId,
-                auth = { gateway.realtimeAuth() },
-                refreshAuth = { gateway.refreshRealtimeAuth() },
-            ).also { it.start() }
+            realtimePresence = DeviceHeartbeatPublisher(scope = scope, gateway = gateway).also { it.start() }
         }
         // PRD §15: every reducer refill folds this device's live ongoing/held pause into screen-break
         // PLACEMENT (SchedulerDomain.screenBreaksForPlacement), so screen-break panels slide with a pause the
@@ -482,8 +476,8 @@ class SchedulerEngine(
     /**
      * PRD §15: the left-menu "I'm away" button. Declares this device idle (`true`) or back in use (`false`),
      * overriding the platform screen sensor. Flipping it advances the active session immediately — finalizing the
-     * open session on `true` (locally, like a real walk-away) so its Realtime presence clears and the WebSocket
-     * drops, and reopening one on `false` so the socket reconnects — rather than waiting for the next beat. A
+     * open session on `true` (locally, like a real walk-away) so its heartbeat is closed, and reopening one on
+     * `false` so the heartbeat resumes — rather than waiting for the next beat. A
      * same-value call is a no-op. This device's own Inactivity band then derives the resulting pause on the next
      * refresh, exactly like an observed walk-away.
      */
@@ -677,26 +671,26 @@ class SchedulerEngine(
         updatePresence()
     }
 
-    // PRD §15: publish this device's Realtime presence — active (with its next ≥5-min break end) while the
+    // PRD §15: publish this device's activity heartbeat — active (with its next ≥5-min break window) while the
     // screen is on and signed in, cleared otherwise. Driven from every active-session beat, so a walk-away
-    // (screen off) or a break passing is reflected within a beat; the StateFlow behind [setPresence] dedupes,
-    // so an unchanged state sends nothing.
+    // (screen off) or a break passing is reflected within a beat; [DeviceHeartbeatPublisher] then re-upserts the
+    // row on its own ~10 s cadence. The StateFlow behind [setPresence] dedupes, so an unchanged window is not
+    // re-emitted (the publisher's own loop keeps `beat_at` fresh regardless).
     private fun updatePresence() {
         val gateway = pauseCue ?: return
         val presence = realtimePresence ?: return
         val active = effectiveScreenActive() && gateway.signedIn
         val now = clock.nowMillis()
         // Compute the next rest-pose window LIVE from the screen-break config, NOT from the (possibly stale)
-        // stored `state.panels`. For the listener's pause cue we must publish the pose the user is waiting on
-        // right now: an overdue/decoupled pose rides the now-line (`maxOf(due, now)`). Reading stored panels
-        // instead dropped that (short, fast-break) now-line break as soon as its window elapsed and substituted
-        // a far-future sleep-anchored occurrence, so the listener aimed the cue hours out. See
-        // RestPosePresenceWindowTest.
+        // stored `state.panels`. For the pause cue we must publish the pose the user is waiting on right now: an
+        // overdue/decoupled pose rides the now-line (`maxOf(due, now)`). Reading stored panels instead dropped
+        // that (short, fast-break) now-line break as soon as its window elapsed and substituted a far-future
+        // sleep-anchored occurrence, so the cue aimed hours out. See RestPosePresenceWindowTest.
         val window = nextRestPoseWindowMillis(vm.state.value.screenBreaks, now)?.let { (start, len) ->
-            // A dragging (overdue) pose is waiting NOW, so report its start on the REAL wall clock: the
-            // real-time listener's `max(disconnect, start)` then anchors to the true disconnect instant even
-            // when this device runs an accelerated debug/sim clock (a sim-ahead `now` must not push the cue
-            // past the real disconnect). A genuinely-future pose keeps its computed start.
+            // A dragging (overdue) pose is waiting NOW, so report its start on the REAL wall clock: the server's
+            // `max(idleSince, start)` then anchors to the true idle instant even when this device runs an
+            // accelerated debug/sim clock (a sim-ahead `now` must not push the cue past the real disconnect). A
+            // genuinely-future pose keeps its computed start.
             val reportedStart = if (start <= now) SystemAppClock.nowMillis() else start
             reportedStart to len
         }
@@ -705,15 +699,12 @@ class SchedulerEngine(
                 PresenceState(
                     deviceId = gateway.deviceId,
                     kind = deviceKind.name.lowercase(),
-                    // Legacy field (older listeners): the end of that same window = start + length.
+                    // Legacy fallback field: the end of that same window = start + length.
                     nextBreakEndMillis = window?.let { it.first + it.second },
-                    // PRD §15: the pose window, so the listener computes the pause end from the REAL
-                    // disconnect instant (`max(disconnectStart, start) + len`).
+                    // PRD §15: the pose window, so the server computes the pause end from the real idle instant
+                    // (`max(idleSince, start) + len`).
                     nextBreakStartMillis = window?.first,
                     nextBreakLenMillis = window?.second,
-                    // Real-clock liveness heartbeat (refreshed every beat) so the listener can drop stale ghost
-                    // presence entries; must be REAL time (not the sim clock) since the listener runs real time.
-                    publishedAtMillis = SystemAppClock.nowMillis(),
                 )
             } else {
                 null
@@ -1171,15 +1162,15 @@ class SchedulerEngine(
      */
     fun onAppForegrounded() {
         claimLastPhone()
-        // PRD §15: a foregrounded phone must re-hold its presence WebSocket at once (it may have been
-        // dropped while backgrounded/locked) — sample the activity beat now instead of waiting for it.
+        // PRD §15: a foregrounded phone must resume its device_heartbeat at once (it may have been
+        // closed while backgrounded/locked) — sample the activity beat now instead of waiting for it.
         onPlatformActivityChanged()
     }
 
     /**
      * PRD §15: platform hint that this device's activity signal just flipped (phone lock/unlock, app brought
      * to the foreground). Samples the activity beat immediately — opening/finalizing the session and
-     * re-tracking Realtime presence (the WebSocket liveness signal) within moments of the change instead of
+     * resuming/closing the device_heartbeat (the liveness signal) within moments of the change instead of
      * waiting for the next minute beat. Same-value samples are no-ops, so spurious calls are harmless.
      */
     fun onPlatformActivityChanged() {
@@ -1211,8 +1202,8 @@ class SchedulerEngine(
 
     /**
      * PRD §15: the platform local cue fired at the pause-end instant (an AlarmManager alarm / a delivered
-     * `UNNotification`) calls this — the external listener already decided the whole account was inactive when
-     * it scheduled the cue, so the phone only re-checks its OWN screen (the user may have picked the phone up)
+     * `UNNotification`) calls this — the server cron already decided the whole account was inactive when it
+     * scheduled the cue, so the phone only re-checks its OWN screen (the user may have picked the phone up)
      * and speaks if it is still off. Inert unless this is a signed-in phone with its screen off.
      */
     suspend fun onPauseCueFire() {
@@ -1234,15 +1225,15 @@ class SchedulerEngine(
     companion object {
         /**
          * PRD §15 (server-side break computation): the `(start, length)` window of the next 5/15-min rest pose
-         * as of [now], computed LIVE from the [screenBreaks] config — the value this device publishes in its
-         * Realtime presence so the external listener can time the pause-end cue as
-         * `max(disconnectInstant, start) + length`, or null when no rest pose is configured.
+         * as of [now], computed LIVE from the [screenBreaks] config — the value this device writes into its
+         * device_heartbeat row so the server cron can time the pause-end cue as
+         * `max(idleInstant, start) + length`, or null when no rest pose is configured.
          *
          * Each rest pose's live start is [SchedulerDomain.screenBreakNextStart] = `maxOf(lastRest + interval,
-         * now)`, so an overdue/decoupled pose rides the now-line (`start == now`) — telling the listener the
+         * now)`, so an overdue/decoupled pose rides the now-line (`start == now`) — telling the server the
          * break is already WAITING — and the earliest-starting pose wins. Deliberately NOT derived from
          * `state.panels`: that frozen snapshot's short (fast-break) now-line break expires within seconds and is
-         * then replaced there by a far-future sleep-anchored occurrence, which the listener would mistime the
+         * then replaced there by a far-future sleep-anchored occurrence, which the cron would mistime the
          * cue to (hours out). See RestPosePresenceWindowTest.
          */
         internal fun nextRestPoseWindowMillis(
@@ -1257,7 +1248,7 @@ class SchedulerEngine(
         /**
          * PRD §15: the gate for the phone's "pause finished" voice cue — true only when this is the phone, a
          * signed-in session is available, and this device's screen is off. (Whether any OTHER device is active
-         * was already decided by the external listener before it pushed this phone.)
+         * was already decided by the server cron before it pushed this phone.)
          */
         internal fun poseFinishEligible(
             isPhone: Boolean,

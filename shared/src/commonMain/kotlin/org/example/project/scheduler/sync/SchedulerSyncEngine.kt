@@ -361,10 +361,10 @@ open class SchedulerSyncEngine(
     // ---- PRD §15 pause-end cue delivery (PauseCueGateway) ----
     //
     // These run outside [mutex] (the reconcile lock): each is an independent, best-effort per-row side channel,
-    // never blocking — or blocked by — a whole-document snapshot reconcile. This is the ONLY remaining server
-    // side-channel: the phone registers its push token and claims the account's last phone so the external
-    // Realtime listener can reach it. (The old presence / sleep-gap / active-session / derived-pause and
-    // next-cue-instant channels are retired; activity is Supabase Realtime Presence, watched by the listener.)
+    // never blocking — or blocked by — a whole-document snapshot reconcile. The device writes its activity
+    // heartbeat (~10 s while active) and a phone registers its push token + claims the account's last phone so
+    // the Edge push can reach it. (The old presence / sleep-gap / derived-pause / next-cue-instant channels and
+    // the Realtime-presence listener are retired; the `tick_pause_cues()` cron reads the device_heartbeat table.)
 
     override val signedIn: Boolean get() = session != null
 
@@ -400,5 +400,22 @@ open class SchedulerSyncEngine(
     override suspend fun publishAccountState(sleeping: Boolean, wakeAtMillis: Long?) {
         val current = session ?: return
         runCatching { withAuth(current) { client.upsertAccountState(it, sleeping, wakeAtMillis) } }
+    }
+
+    override suspend fun publishHeartbeat(state: PresenceState, closed: Boolean) {
+        val current = session ?: return
+        runCatching {
+            withAuth(current) {
+                client.upsertHeartbeat(
+                    session = it,
+                    deviceId = meta().deviceId,
+                    kind = state.kind,
+                    nextBreakStartMs = state.nextBreakStartMillis,
+                    nextBreakLenMs = state.nextBreakLenMillis,
+                    nextBreakEndMs = state.nextBreakEndMillis,
+                    closed = closed,
+                )
+            }
+        }
     }
 }

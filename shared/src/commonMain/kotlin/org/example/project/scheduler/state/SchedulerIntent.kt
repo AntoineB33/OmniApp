@@ -259,7 +259,8 @@ sealed interface SchedulerIntent {
      * Sleep/Work toggle (left-menu control): set the next scheduled wake instant (epoch millis) when the user
      * presses **Sleep**, or `null` when they press **Work** (or the wake instant lapses on launch). Persisted +
      * synced (authoritative); not undoable; does not touch the schedule. The ViewModel also mirrors the mode to
-     * the `account_state` table so the external listener can suppress the pause-end cue while sleeping.
+     * the `account_state` table so the server cron (`tick_pause_cues()`) can suppress the pause-end cue while
+     * sleeping.
      */
     data class SetSleepMode(
         val sleepingUntilMillis: Long?,

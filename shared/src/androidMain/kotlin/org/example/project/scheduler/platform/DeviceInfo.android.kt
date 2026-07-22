@@ -14,10 +14,10 @@ import android.os.PowerManager
 actual fun currentDeviceKind(): DeviceKind = DeviceKind.Phone
 
 /**
- * PRD §15 (1.6.0 websocket model): the phone's activity signal is the device being **unlocked** — the
- * foreground service holds the presence WebSocket exactly while the user can see a screen, and drops it at
+ * PRD §15: the phone's activity signal is the device being **unlocked** — the foreground service writes this
+ * device's `device_heartbeat` row exactly while the user can see a screen, and closes it (`closed = true`) at
  * lock/screen-off. Tracked by [AndroidUnlockTracker] from the lock/unlock broadcasts (with the app-foreground
- * tracker kept for the resume-time reconnect poke). This replaces the earlier foreground minute-lease signal
+ * tracker kept for the resume-time poke). This replaces the earlier foreground minute-lease signal
  * (`AndroidForegroundTracker.foreground`), which read a phone left unlocked on the calendar as inactive.
  */
 actual fun isScreenActive(): Boolean = AndroidUnlockTracker.unlocked

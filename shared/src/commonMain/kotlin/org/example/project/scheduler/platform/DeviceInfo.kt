@@ -19,7 +19,7 @@ expect fun isScreenActive(): Boolean
 
 /**
  * PRD §15: register a listener that pokes [onChanged] whenever this device's platform activity signal flips,
- * so the presence WebSocket reconnects/drops within moments of the change instead of at the next minute beat.
+ * so the device_heartbeat resumes/closes within moments of the change instead of at the next minute beat.
  * On **desktop** this hooks the OS session **lock/unlock** events (Windows `WM_WTSSESSION_CHANGE`), mirroring
  * Android's unlock broadcasts. A **no-op** where the engine is already poked directly (Android wires
  * `AndroidUnlockTracker.onChanged` in `SchedulerHolder`) or where there is no such signal (iOS/web).

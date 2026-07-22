@@ -8,14 +8,14 @@ import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.ScreenBreak
 
 /**
- * PRD §15: the Realtime-presence rest-pose window a device publishes so the external listener can time the
- * phone's pause-end cue as `max(disconnectInstant, start) + length`.
+ * PRD §15: the rest-pose window a device writes into its device_heartbeat row so the server cron can time the
+ * phone's pause-end cue as `max(idleInstant, start) + length`.
  *
  * Regression: the window MUST be the pose the user is waiting on right now — an overdue/decoupled pose rides
  * the now-line. It was previously derived from the engine's stored `state.panels`, where the short fast-break
- * now-line break expires within seconds and is replaced by a far-future sleep-anchored occurrence; the
- * listener then aimed the cue hours out and the phone stayed silent. [SchedulerEngine.nextRestPoseWindowMillis]
- * now computes the window live from the [ScreenBreak] config, so a far-future occurrence can never surface.
+ * now-line break expires within seconds and is replaced by a far-future sleep-anchored occurrence; the cue was
+ * then aimed hours out and the phone stayed silent. [SchedulerEngine.nextRestPoseWindowMillis] now computes the
+ * window live from the [ScreenBreak] config, so a far-future occurrence can never surface.
  */
 class RestPosePresenceWindowTest {
     private val MIN = 60_000L

@@ -58,11 +58,11 @@ class TaskSchedulerViewModel(
     val syncState: StateFlow<SyncState>? = syncEngine?.state
 
     /**
-     * Push-token / last-phone channel for the Realtime-presence + listener cue delivery: the phone registers
-     * its FCM/APNs token and claims the account's last phone so the external listener can reach it. This is the
-     * ONLY remaining server side-channel — event-driven (startup / token refresh / foreground), never a timer.
-     * Null when sync is disabled. (The old presence/sleep-gap/active-session/derived-pause channels are gone —
-     * activity is now Supabase Realtime Presence, watched by the listener; see CLAUDE.md.)
+     * Push-token / last-phone / device-heartbeat channel for the pg_cron pause-cue delivery: the device writes
+     * its activity heartbeat (~10 s while active), and a phone registers its FCM/APNs token + claims the
+     * account's last phone so the Edge push can reach it. Null when sync is disabled. (The old
+     * presence/sleep-gap/derived-pause channels and the Realtime-presence listener are gone — the server's
+     * `tick_pause_cues()` cron reads the `device_heartbeat` table; see CLAUDE.md.)
      */
     val pauseCue: PauseCueGateway? get() = syncEngine
 
@@ -353,8 +353,8 @@ class TaskSchedulerViewModel(
 
     /**
      * Sleep/Work toggle: set the account's sleeping-until instant (null = working) locally AND mirror the mode
-     * to the `account_state` table immediately, so the external listener suppresses the pause-end cue while the
-     * user is deliberately away. Pass the next scheduled wake instant when pressing **Sleep**, or null when
+     * to the `account_state` table immediately, so the server cron (`tick_pause_cues()`) suppresses the
+     * pause-end cue while the user is deliberately away. Pass the next scheduled wake instant when pressing **Sleep**, or null when
      * pressing **Work** (or when the wake instant lapses on launch). The local dispatch persists on the save
      * debounce and marks the snapshot dirty for the next Sync; the account_state write is its own targeted,
      * event-driven call (not the snapshot reconcile).

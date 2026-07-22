@@ -637,8 +637,8 @@ fun LateralMenu(
     onToggleSleepWork: () -> Unit = {},
     /**
      * PRD §15 "I'm away" toggle: whether the user declared they are away from **this device**. Pressing it closes
-     * this device's presence WebSocket (the server sees the device stop working); pressing it again ("I'm back")
-     * reopens it. Distinct from Sleep/Work, which is the account-wide sleep mode.
+     * this device's heartbeat (the server sees the device stop working); pressing it again ("I'm back")
+     * resumes it. Distinct from Sleep/Work, which is the account-wide sleep mode.
      */
     away: Boolean = false,
     onToggleAway: () -> Unit = {},

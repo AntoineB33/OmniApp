@@ -41,14 +41,8 @@ begin
 end;
 $$;
 
--- The pause-cue tick cron is RETIRED: the external Realtime listener (see /listener) now decides when to fire
--- the pause-cue Edge Function, so pg_cron no longer polls a pause_cue_schedule table (that table + tick_pause_cues
--- were dropped in migration 20260713000000). Unschedule the old job if a previous deploy created it.
-do $$
-begin
-    perform cron.unschedule('pause-cue-tick');
-exception when others then
-    -- No such job (never scheduled, or already removed) — nothing to do.
-    null;
-end;
-$$;
+-- Pause-cue tick cron (RESTORED, heartbeat-driven — the external Realtime listener is retired, see /listener's
+-- removal and migration 20260723000000). `tick_pause_cues()` polls the device_heartbeat table and fires the
+-- pause-cue Edge Function when an account goes idle. Sub-minute scheduling: pg_cron on Supabase accepts an
+-- interval string like '10 seconds' (pg_cron ≥ 1.5). cron.schedule upserts by jobname, so re-running is safe.
+select cron.schedule('pause-cue-tick', '10 seconds', $$ select public.tick_pause_cues() $$);

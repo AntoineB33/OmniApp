@@ -45,11 +45,11 @@ object SchedulerHolder {
     fun ensure(context: Context): AppSchedulerHost {
         host?.let { return it }
         AndroidSchedulerStoreHolder.context = context.applicationContext
-        // PRD §15 (1.6.0 websocket model): the phone's activity signal is "device unlocked" (see
-        // DeviceInfo.android.kt) — the presence WebSocket is held while unlocked and dropped at lock. The
-        // Activity-lifecycle counter stays installed for the resume-time reconnect poke (MainActivity.onResume
-        // → engine.onAppForegrounded), registered before any Activity resumes (MainActivity.onCreate calls
-        // ensure() before setContent, so the first onResume is always observed).
+        // PRD §15: the phone's activity signal is "device unlocked" (see DeviceInfo.android.kt) — the device
+        // writes its device_heartbeat while unlocked and closes it at lock. The Activity-lifecycle counter
+        // stays installed for the resume-time poke (MainActivity.onResume → engine.onAppForegrounded),
+        // registered before any Activity resumes (MainActivity.onCreate calls ensure() before setContent, so
+        // the first onResume is always observed).
         AndroidForegroundTracker.install(context.applicationContext)
         AndroidUnlockTracker.install(context.applicationContext)
         // PRD §6: History Units are timestamped from this clock; set it before any reducer write in the service.

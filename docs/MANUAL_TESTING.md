@@ -2,8 +2,8 @@
 
 The automated suite (`:shared:jvmTest`, cross-target `commonTest`) covers state mechanics only (see
 `ARCHITECTURE.md` §6). Everything below is behaviour it **cannot** reach: real persistence, the
-**bidirectional auto-sync** cross-device sync, Realtime presence, the external listener + push cue, the
-background service, and per-account isolation. Run this before tagging a release; run the section that
+**bidirectional auto-sync** cross-device sync, the device-heartbeat activity signal, the pg_cron pause cue,
+the background service, and per-account isolation. Run this before tagging a release; run the section that
 touches whatever you changed before merging.
 
 Every step is written as **do this → expect that**. If the expectation does not hold, stop and collect the
@@ -12,10 +12,11 @@ evidence (see "Spotting problems" below) before touching anything else.
 **The sync model under test (ARCHITECTURE.md §8):** snapshot sync is **bidirectional and automatic** —
 an authoritative local edit auto-pushes ~500 ms after you stop editing, and a peer's push auto-pulls over a
 Realtime `postgres_changes` subscription within ~a second. The manual **Sync button** remains as a
-force-now fallback. Live cross-device *activity* is a separate **Realtime presence WebSocket**; the
-pause-end voice cue is fired by the external `/listener` worker through the `pause-cue` Edge Function. An
-**idle** signed-in app (no edits, no peer changes) makes no snapshot REST traffic — the pull is driven by
-the WebSocket, and the push only fires on an authoritative change.
+force-now fallback. Cross-device *activity* is a **`device_heartbeat`** row each active device UPSERTs
+every ~10 s; the pause-end voice cue is fired by the **`tick_pause_cues()` pg_cron** job through the
+`pause-cue` Edge Function. An **idle** signed-in app (no edits, no peer changes) makes no snapshot REST
+traffic — the pull is driven by the one Realtime WebSocket — but an **active** app does write the ~10 s
+heartbeat; the snapshot push only fires on an authoritative change.
 
 **The Sync button (force-now fallback):** click the **☁ status chip** (top of the app) → the sync dialog
 opens → press **"Fetch from server"**. That button is `TaskSchedulerViewModel.syncNow()`: it pushes the
@@ -30,8 +31,9 @@ ways. "Press Sync" below always means this.
   notification, voice cue (including crossings swallowed as stale), and the exact Inactivity bands the
   calendar renders are in there. **Use it instead of describing a calendar anomaly from memory.**
 - **Supabase Dashboard → Logs** counts every HTTP request the apps made (see §3a).
-- **Listener logs** (wherever `/listener` is deployed — Render/Fly/Railway console, or the local
-  `npm start` terminal) show every presence join/leave and every cue schedule/cancel decision.
+- **`device_heartbeat` / `pause_cue_schedule` tables** (Supabase → Table editor) show which devices are
+  fresh (recent `beat_at`, `closed=false`) and whether the cron has pushed a cue (`pause_cue_schedule` row
+  with `pushed_at`).
 - **`supabase functions logs pause-cue`** shows every push the Edge Function actually sent and any
   FCM/APNs error.
 
@@ -44,7 +46,7 @@ ways. "Press Sync" below always means this.
       1, 2, 3. Supabase project has **email confirmation disabled** (usernames map to `<user>@omniapp.local`).
 - [ ] Server schema deployed: `scripts\deploy-supabase.bat` (idempotent; re-run after schema edits). It
       applies `supabase/migrations/`, deploys the `pause-cue` Edge Function, and runs
-      `pause-cue-setup.sql` (which **unschedules** the retired `pause-cue-tick` cron).
+      `pause-cue-setup.sql` (which **schedules** the `pause-cue-tick` cron at `'10 seconds'`).
 - [ ] For Android tests: an Android device set up per **Appendix A** (physical phone or emulator —
       the checklists never care which); `adb devices` lists it; `adb` on `PATH` or under SDK
       `platform-tools`.
@@ -52,9 +54,9 @@ ways. "Press Sync" below always means this.
       needs a **Mac** with Xcode 15+ and a JDK 17+ (everything iOS builds only on macOS —
       Kotlin/Native constraint). Where your device type lacks a capability (matrix, §A5), use the
       documented fallback or leave that box unchecked — the test steps themselves are the same.
-- [ ] For push-cue tests only (§6): Edge Function `FCM_*` / `APNS_*` secrets set, the `/listener` worker
-      deployed and running, and a `device_push_token` row appears after the phone's first launch —
-      otherwise the whole push path is inert (see `docs/PAUSE_CUE_DELIVERY.md`).
+- [ ] For push-cue tests only (§6): Edge Function `FCM_*` / `APNS_*` secrets set, the `pause-cue-tick`
+      cron scheduled (via `deploy-supabase.bat`), and a `device_push_token` row appears after the phone's
+      first launch — otherwise the whole push path is inert (see `docs/PAUSE_CUE_DELIVERY.md`).
 
 ---
 
@@ -140,8 +142,10 @@ carried by the already-open WebSocket; a push fires only on an authoritative edi
       `status_code`). Do **not** add PostgREST logs (they double-count). Scope the time-range picker to
       just the run (free-plan retention is 1 day — query soon after).
 - [ ] Leave the desktop signed in with a stable schedule for ~10 min, no edits, no Sync → filter
-      `request.path like '/rest/v1/%'` → **no new rows** in that window (the presence WebSocket is not
-      REST and does not appear here; token refresh under `/auth/v1/%` is allowed).
+      `request.path like '/rest/v1/scheduler_snapshot%'` → **no new rows** in that window (an idle app makes
+      no snapshot traffic; the pull is Realtime-driven, the push only fires on an authoritative change). The
+      `/rest/v1/device_heartbeat` UPSERT recurs every ~10 s **while the app is active** — expected, and the
+      one steady-state write; token refresh under `/auth/v1/%` is allowed.
 - [ ] Press Sync once → a small burst: the `scheduler_snapshot` read/write, the `device_active_session`
       merge, the `account_logout` check. Nothing recurs afterwards.
 - [ ] Exact grouped count — **Logs Explorer**:
@@ -214,21 +218,22 @@ Both debug scripts share one app install and wipe local data on deploy by **unin
 
 ---
 
-## 6. Realtime presence + pause-end voice cue (listener path)
+## 6. Device heartbeat + pause-end voice cue (pg_cron path)
 
-This is the **live path that is still unverified end-to-end** (client WS ↔ Supabase Realtime ↔
-`/listener` ↔ `pause-cue` Edge Function ↔ FCM/APNs ↔ phone). Full procedures live in
+This is the **live path that is still unverified end-to-end** (client `device_heartbeat` UPSERT ↔
+`tick_pause_cues()` pg_cron ↔ `pause-cue` Edge Function ↔ FCM/APNs ↔ phone). Full procedures live in
 **`docs/PAUSE_CUE_DELIVERY.md`** — do them there, tick here. Inert unless §0 push prerequisites are met.
 
-- [ ] **Presence appears.** With the listener running, foreground the signed-in phone / open the signed-in
-      desktop → the listener log shows the device join the account's presence channel (with
-      `device_id`, `kind`, `next_break_end_ms`). Background the phone / close the desktop → it leaves.
+- [ ] **Heartbeats appear.** Foreground the signed-in phone / open the signed-in desktop → `device_heartbeat`
+      gains a fresh row per device (recent `beat_at`, `closed=false`, its `next_break_*`). Background/lock the
+      phone → its row flips `closed=true` (clean) or its `beat_at` stops advancing (dirty); close the desktop
+      → likewise.
 - [ ] **Cue fires when everyone is gone.** With a screen break pending, background/lock every device on
-      the account → listener log shows "0 devices present", then a `schedule` POST to `pause-cue` ~1 s
-      before the published `next_break_end_ms`; the phone receives the push, schedules an OS alarm, and
-      **speaks at the break's end** — kill the app before the fire instant to prove the OS alarm path.
-- [ ] **Reconnect suppresses.** Repeat, but re-foreground a device before the cue instant → the listener
-      cancels; the phone stays silent.
+      the account → within ~10 s of the last device going idle, `pause_cue_schedule` gains a row with
+      `pushed_at`, and the phone receives the push, schedules an OS alarm, and **speaks at the break's end**
+      — kill the app before the fire instant to prove the OS alarm path.
+- [ ] **Reconnect suppresses.** Repeat, but re-foreground a device before the cue instant → the next tick
+      deletes the `pause_cue_schedule` row and pushes a `cancel`; the phone stays silent.
 - [ ] **Sleep mode suppresses.** Press the left menu's **Sleep** toggle (it flips to "Work") → the
       `account_state` row shows `mode='sleeping'` with `wake_at`; going all-inactive now fires **no**
       cue. Press **Work** (or let the scheduled wake pass, surviving an app restart —
@@ -253,7 +258,7 @@ also the only place the iOS client gets exercised at all.
 participates in **snapshot sync** (interactive sign-in + bidirectional auto-sync, with the Sync button as fallback) and **receives the pause-cue
 push** (physical device only), but it is **never an active peer** — `isScreenActive()` on iOS is
 hardwired `false` (best-effort "cannot tell", `DeviceInfo.ios.kt`), so the iPhone never opens activity
-sessions, never joins the presence channel, and never suppresses the cue by being foregrounded. Expect
+sessions, never writes a heartbeat, and never suppresses the cue by being foregrounded. Expect
 it to behave like a signed-in-but-always-inactive device throughout §4/§6-style checks. Also: the iOS
 build is still 🟡 (written, never compiled — needs a Mac; see the runbook status table), so expect
 interop fixups on the first build.
@@ -265,7 +270,8 @@ below is device-agnostic and identical either way (§A5 lists the few capabiliti
 
 Get all three signed in to account 1: desktop via `scripts\account1-empty-and-open.bat`, Android via
 `scripts\account1-deploy-android.bat` (device per §A1/§A2), iPhone per §A3/§A4 (with one Sync pressed
-after sign-in so it holds the data). Have the listener running and its log visible.
+after sign-in so it holds the data). Have the Supabase `device_heartbeat` / `pause_cue_schedule` tables
+and `supabase functions logs pause-cue` visible.
 
 - [ ] **Three-way LWW convergence.** Give each device a distinct edit (rename a different task on
       each). Press Sync desktop → Android → iPhone → desktop → Android → all **three** show the same
@@ -274,8 +280,8 @@ after sign-in so it holds the data). Have the listener running and its log visib
       Android and iPhone still show their pre-edit state until **their own** Sync press (sign-in never
       pulls, nothing pushes on a timer) — and Supabase Logs show `scheduler_snapshot` writes only at
       the Sync presses.
-- [ ] **Presence shows exactly two devices.** With all three foregrounded/unlocked, the listener log
-      shows the **desktop and Android** joined — and no iOS entry. The iPhone's absence is expected
+- [ ] **Heartbeats show exactly two devices.** With all three foregrounded/unlocked, `device_heartbeat`
+      has fresh rows for the **desktop and Android** — and no iOS row. The iPhone's absence is expected
       (see the capability note above), not a bug.
 - [ ] **Activity bands with three devices.** Create a window where only the iPhone was "in use" (apps
       closed on desktop + Android) → after Sync all around, all three calendars show that window as
@@ -285,15 +291,15 @@ after sign-in so it holds the data). Have the listener running and its log visib
 - [ ] **Device bubble.** Hover a past task panel on the desktop → "Open: …" names the desktop/Android
       stretches; the iPhone never appears in the set (no sessions).
 - [ ] **Cue fan-out reaches both phones.** With a screen break pending, background/lock the desktop
-      and the Android (the iPhone's state is irrelevant — it is never present) → listener log:
-      "0 devices present" → one `pause-cue` POST with `device_id:'*'` → the Edge Function fans out to
-      **every** `device_push_token` row: the Android (FCM) **and** the iPhone (APNs) both schedule and
-      both speak at the break's end. (No network-push capability on your iOS device type? Tick
-      receipt-only via the injected push — §A5/§A4.)
+      and the Android (the iPhone's state is irrelevant — it never writes a heartbeat) → within ~10 s the
+      cron issues one `pause-cue` POST with `device_id:'*'` → the Edge Function fans out to **every**
+      `device_push_token` row: the Android (FCM) **and** the iPhone (APNs) both schedule and both speak at
+      the break's end. (No network-push capability on your iOS device type? Tick receipt-only via the
+      injected push — §A5/§A4.)
 - [ ] **Suppression is desktop/Android-only.** Repeat, but re-foreground the **iPhone** before the cue
-      instant → nothing is cancelled (it is not a presence device) and both phones still fire.
-      Re-foreground the **Android or desktop** instead → the listener cancels; both phones stay silent.
-      (iOS cancel is best-effort: iOS cannot re-run the eligibility gate at fire time — runbook caveat.)
+      instant → nothing is cancelled (it writes no heartbeat) and both phones still fire. Re-foreground the
+      **Android or desktop** instead → the next tick cancels; both phones stay silent. (iOS cancel is
+      best-effort: iOS cannot re-run the eligibility gate at fire time — runbook caveat.)
 - [ ] **Three-way force-logout.** With all three signed in, run `account1-empty-and-open.bat` → the
       Android and the iPhone each keep their session until their next Sync press, at which point each
       signs itself **out** (the `account_logout` marker) without re-seeding the emptied server.

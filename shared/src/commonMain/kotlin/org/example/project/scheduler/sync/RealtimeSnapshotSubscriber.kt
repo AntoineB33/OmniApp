@@ -39,13 +39,14 @@ interface SnapshotChangeSubscription {
  * through the tested LWW path and its `revision` guard silently drops this device's own echo (the row change
  * our own push just made is already at `lastKnownRevision`, so the reconcile is a no-op).
  *
- * This is the read-only mirror of [RealtimePresenceClient] and reuses the same Phoenix frame builders
- * ([RealtimePhoenix]); the difference is it is keyed on being **signed in** (not "active"), because a device
- * wants to receive peers' edits whenever it is logged in, and it only reads (no `track`/`untrack`).
+ * This is the only live Realtime WebSocket the client holds (the pause-cue moved to the pg_cron +
+ * `device_heartbeat` model). It uses the shared Phoenix frame builders ([RealtimePhoenix]) and is keyed on
+ * being **signed in** (not "active"), because a device wants to receive peers' edits whenever it is logged in;
+ * it only reads (no `track`/`untrack`).
  *
- * NOTE: like the presence path, the exact Realtime wire shape can only be validated against a live Supabase
- * endpoint (see docs/PAUSE_CUE_DELIVERY.md); the pure builders are unit-tested and the reconcile poke is
- * defensive (no trust of the event body).
+ * NOTE: the exact Realtime wire shape can only be validated against a live Supabase endpoint (see
+ * docs/PAUSE_CUE_DELIVERY.md); the pure builders are unit-tested and the reconcile poke is defensive (no trust
+ * of the event body).
  */
 class RealtimeSnapshotSubscriber(
     private val scope: CoroutineScope,
@@ -75,7 +76,7 @@ class RealtimeSnapshotSubscriber(
     }
 
     // Exactly one live socket at a time, always to the currently-signed-in account; [collectLatest] cancels the
-    // previous account's connection the instant the userId changes or clears, mirroring [RealtimePresenceClient].
+    // previous account's connection the instant the userId changes or clears.
     private suspend fun supervise() {
         // A StateFlow already conflates equal consecutive values, so no distinctUntilChanged is needed.
         account.collectLatest { userId ->

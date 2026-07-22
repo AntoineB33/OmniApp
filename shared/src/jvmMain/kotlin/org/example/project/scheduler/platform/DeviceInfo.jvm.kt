@@ -13,59 +13,17 @@ import com.sun.jna.platform.win32.WinUser
 import com.sun.jna.platform.win32.WinUser.MSG
 import com.sun.jna.platform.win32.WinUser.WNDCLASSEX
 import com.sun.jna.win32.W32APIOptions
-import java.awt.MouseInfo
-import java.awt.Point
 
 /** PRD §15: the desktop build is not the phone. */
 actual fun currentDeviceKind(): DeviceKind = DeviceKind.Desktop
 
-// PRD §15: how long without detected pointer movement before the desktop screen counts as inactive.
-private const val IDLE_THRESHOLD_MILLIS = 60_000L
-
-private val lock = Any()
-private var lastPoint: Point? = null
-private var lastActivityMillis: Long = 0L
-
 /**
- * PRD §15: the desktop screen is "active" when the session is **unlocked** AND the pointer has moved within
- * [IDLE_THRESHOLD_MILLIS]. The lock state is event-driven ([DesktopSessionTracker], so a lock reads inactive
- * instantly); the pointer poll additionally catches "unlocked but the user walked away" (sampled on each call,
- * ~every 30 s by the presence beat). Headless environments (tests, no display) report inactive.
+ * PRD §15: the desktop screen is "active" purely while the OS session is **unlocked** — event-driven via
+ * [DesktopSessionTracker] (Windows `WM_WTSSESSION_CHANGE`), so a lock reads inactive and an unlock reads active
+ * instantly, mirroring Android's unlock-gated signal. No pointer polling: an unlocked-but-idle desktop stays
+ * active until it is actually locked. Non-Windows hosts / a failed native install keep [unlocked] `true`.
  */
-actual fun isScreenActive(): Boolean {
-    if (!DesktopSessionTracker.unlocked) return false
-    return synchronized(lock) {
-        val now = System.currentTimeMillis()
-        try {
-            val point = MouseInfo.getPointerInfo()?.location
-            when {
-                // First sample since launch: assume the user just started using the machine.
-                lastActivityMillis == 0L -> {
-                    lastActivityMillis = now
-                    lastPoint = point
-                }
-                point != null && point != lastPoint -> {
-                    lastActivityMillis = now
-                    lastPoint = point
-                }
-            }
-            now - lastActivityMillis < IDLE_THRESHOLD_MILLIS
-        } catch (t: Throwable) {
-            false
-        }
-    }
-}
-
-/** Mark the pointer as freshly active (called on unlock, so a just-unlocked session reads active at once even
- * if the mouse hasn't moved since before the lock). */
-private fun markPointerActiveNow() = synchronized(lock) {
-    lastActivityMillis = System.currentTimeMillis()
-    lastPoint = try {
-        MouseInfo.getPointerInfo()?.location
-    } catch (t: Throwable) {
-        null
-    }
-}
+actual fun isScreenActive(): Boolean = DesktopSessionTracker.unlocked
 
 actual fun installPlatformActivityListener(onChanged: () -> Unit) {
     DesktopSessionTracker.onChanged = onChanged
@@ -129,7 +87,6 @@ internal object DesktopSessionTracker {
     private fun setUnlocked(next: Boolean) {
         if (next == unlocked) return
         unlocked = next
-        if (next) markPointerActiveNow()
         Diagnostics.log("desktop session ${if (next) "unlock" else "lock"}")
         onChanged?.invoke()
     }

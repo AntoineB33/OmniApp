@@ -16,6 +16,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.SyncMetaStore
+import org.example.project.scheduler.sync.PresenceState
 import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.sync.SupabaseConfig
@@ -23,9 +24,10 @@ import org.example.project.scheduler.sync.SupabaseConfig
 /**
  * Exercises PRD §15 pause-end cue delivery through [SchedulerSyncEngine]'s
  * [PauseCueGateway][org.example.project.scheduler.sync.PauseCueGateway] impl against a Ktor [MockEngine].
- * Covers each PostgREST write's method/path/body shape (last-phone / push-token carry the device id), and that
- * every call is a no-op while signed out (never reaches the server). The cue's *timing* moved off the client
- * to the external Realtime listener, so there is no next-cue-instant write any more.
+ * Covers each PostgREST write's method/path/body shape (last-phone / push-token carry the device id; the
+ * heartbeat carries the break window + closed flag), and that every call is a no-op while signed out (never
+ * reaches the server). The cue's *timing* stays off the client — the server's `tick_pause_cues()` cron reads
+ * the `device_heartbeat` rows this writes.
  */
 class PauseCueGatewayTest {
     private val json = Json { ignoreUnknownKeys = true }
@@ -114,12 +116,39 @@ class PauseCueGatewayTest {
     }
 
     @Test
+    fun publish_heartbeat_writes_break_window_and_closed_flag() = runTest {
+        val cap = Captured()
+        signedIn(cap).publishHeartbeat(
+            PresenceState(
+                deviceId = "ignored", // the engine writes its own meta device id
+                kind = "phone",
+                nextBreakEndMillis = 1_800_000_900_000L,
+                nextBreakStartMillis = 1_800_000_000_000L,
+                nextBreakLenMillis = 900_000L,
+            ),
+            closed = true,
+        )
+
+        assertEquals("POST", cap.method)
+        assertTrue(cap.path!!.endsWith("/device_heartbeat"))
+        val body = json.parseToJsonElement(cap.body!!).jsonObject
+        assertEquals("self", body["device_id"]!!.jsonPrimitive.content)
+        assertEquals("phone", body["kind"]!!.jsonPrimitive.content)
+        assertEquals(1_800_000_000_000L, body["next_break_start_ms"]!!.jsonPrimitive.content.toLong())
+        assertEquals(900_000L, body["next_break_len_ms"]!!.jsonPrimitive.content.toLong())
+        assertTrue(body["closed"]!!.jsonPrimitive.content.toBoolean())
+        // The server stamps beat_at (trigger) — the client must not send it.
+        assertTrue(!cap.body!!.contains("beat_at"))
+    }
+
+    @Test
     fun signed_out_is_a_no_op() = runTest {
         val cap = Captured()
         val engine = SchedulerSyncEngine(harness(cap), FakeMetaStore(SyncMeta(deviceId = "self")), json)
         engine.claimLastPhone()
         engine.registerPushToken("phone", "fcm", "t")
         engine.publishAccountState(sleeping = true, wakeAtMillis = 1L)
+        engine.publishHeartbeat(PresenceState("d", "phone", null), closed = false)
         // Signed out: nothing reached the server.
         assertNull(cap.method)
     }

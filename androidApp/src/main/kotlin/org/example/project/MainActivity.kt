@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
      * Debug fast-break override for testing the pause-cue voice message on real phones: the deploy script
      * passes `--es omniapp_break_duration_ms 5000` (the 5-min break's length) and/or
      * `--es omniapp_break_interval_ms 5000` (how long after the previous pause it comes due) so a break — and
-     * the listener's server→phone cue — arrives in seconds. `--es omniapp_break_pause_threshold_ms` decouples
+     * the cron's server→phone cue — arrives in seconds. `--es omniapp_break_pause_threshold_ms` decouples
      * the qualifying-pause length from the drawn length (place a short break only after a long pause). Must be
      * applied BEFORE [SchedulerHolder.ensure] builds the VM (which seeds the screen breaks). Absent extras
      * leave production timings.
@@ -93,11 +93,12 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * PRD §15 (1.6.0 websocket model), ONE-TIME at first startup: the foreground service must keep the
-     * presence WebSocket alive while the phone is unlocked, so ask the OS to exempt the app from battery
-     * optimization (Doze kills the socket), and on OEM ROMs with an autostart allowlist (MIUI/HyperOS etc.)
-     * open that settings screen too. Both are best-effort — a denial changes nothing functionally except
-     * that the OS may drop the socket sooner — and neither is ever asked again (flag in SharedPreferences).
+     * PRD §15, ONE-TIME at first startup: the foreground service must keep the engine running (writing this
+     * device's `device_heartbeat`) while the phone is unlocked/backgrounded, so ask the OS to exempt the app
+     * from battery optimization (Doze would stop the heartbeat), and on OEM ROMs with an autostart allowlist
+     * (MIUI/HyperOS etc.) open that settings screen too. Both are best-effort — a denial changes nothing
+     * functionally except that the OS may stop the heartbeat sooner — and neither is ever asked again (flag in
+     * SharedPreferences).
      */
     private fun maybePromptKeepAliveOnce() {
         val prefs = getSharedPreferences("omniapp_prompts", MODE_PRIVATE)

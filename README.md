@@ -24,8 +24,7 @@ This is a KMP project targeting Android, iOS, Web, and Desktop (JVM).
 - `/shared/src`: Core shared logic and UI for the Compose Multi-platform applications.
   - `commonMain`: Truly platform-agnostic code (Domain, Data, MVI State Holders, and shared UI).
   - `iosMain` / `jvmMain` / `androidMain` / `wasmJsMain`: Platform-specific integrations and actualizations (e.g., specific file system APIs, platform crypto).
-- `/supabase`: The server half of cross-device sync — SQL migrations (applied via the CLI, never pasted by hand) and the `pause-cue` Edge Function.
-- `/listener`: A small always-on Node worker that watches Supabase Realtime presence and fires the pause-end voice cue push (see `listener/README.md` and `docs/PAUSE_CUE_DELIVERY.md`).
+- `/supabase`: The server half of cross-device sync — SQL migrations (applied via the CLI, never pasted by hand), the `pause-cue` Edge Function, and `pause-cue-setup.sql` (the `tick_pause_cues()` pg_cron job that fires the pause-end voice cue over a `device_heartbeat` table — see `docs/PAUSE_CUE_DELIVERY.md`).
 
 ## 🚀 Getting Started
 
