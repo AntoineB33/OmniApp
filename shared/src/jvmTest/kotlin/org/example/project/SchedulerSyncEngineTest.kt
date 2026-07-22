@@ -167,6 +167,27 @@ class SchedulerSyncEngineTest {
     }
 
     @Test
+    fun dirty_but_content_identical_to_remote_skips_the_phantom_push() = runTest {
+        // Regression: a transient derived change (a time-passing reschedule/materialization) can leave `dirty`
+        // set even though this device's authoritative projection is byte-identical to what the server holds.
+        // Pushing it would advance the revision for no content change, and every peer would then take the LWW
+        // `pull` branch and DROP its own genuine unpushed edit. The guard must recognise local == remote and
+        // send nothing (just clear the flag), leaving the revision untouched.
+        val server = FakeServer(payload = json.encodeToString(snap("SAME")), revision = 2)
+        val meta = FakeMetaStore(SyncMeta(deviceId = "d", lastKnownRevision = 2, dirty = true))
+        var applied: PersistedSnapshot? = null
+        val sync = engine(harness(server), meta, { snap("SAME") }, { applied = it })
+
+        sync.signIn("a@b.c", "pw")
+        sync.reconcile()
+
+        assertEquals(2, server.revision) // no phantom push — revision never advanced
+        assertEquals(2, meta.loadSyncMeta()!!.lastKnownRevision)
+        assertEquals(false, meta.loadSyncMeta()!!.dirty) // flag cleared, nothing to send
+        assertNull(applied) // nothing pulled either
+    }
+
+    @Test
     fun remote_logout_after_login_signs_out_and_does_not_reseed() = runTest {
         // A device is signed in (its login recorded logout marker = none) and holds local data. The account is
         // then force-logged-out server-side (the empty script bumps account_logout). The next reconcile must

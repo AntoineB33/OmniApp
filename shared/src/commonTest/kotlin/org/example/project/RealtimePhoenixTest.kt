@@ -3,6 +3,7 @@ package org.example.project
 import org.example.project.scheduler.sync.PresenceState
 import org.example.project.scheduler.sync.RealtimePhoenix
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
@@ -93,5 +94,94 @@ class RealtimePhoenixTest {
         ).jsonObject
         assertEquals("presence", frame["event"]!!.jsonPrimitive.content)
         assertEquals("untrack", frame["payload"]!!.jsonObject["event"]!!.jsonPrimitive.content)
+    }
+
+    // ---- Bidirectional sync (PRD §5): the postgres_changes auto-pull subscription frames ----
+
+    @Test
+    fun postgres_changes_topic_is_a_per_account_channel() {
+        assertEquals(
+            "realtime:db:scheduler_snapshot:user-1",
+            RealtimePhoenix.postgresChangesTopic("db:scheduler_snapshot:user-1"),
+        )
+    }
+
+    @Test
+    fun postgres_changes_join_frame_carries_config_filter_and_token() {
+        val frame = json.parseToJsonElement(
+            RealtimePhoenix.postgresChangesJoinFrame(
+                topic = "realtime:db:scheduler_snapshot:u1",
+                accessToken = "jwt-abc",
+                schema = "public",
+                table = "scheduler_snapshot",
+                filter = "user_id=eq.u1",
+                ref = 1,
+            ),
+        ).jsonObject
+
+        assertEquals("realtime:db:scheduler_snapshot:u1", frame["topic"]!!.jsonPrimitive.content)
+        assertEquals("phx_join", frame["event"]!!.jsonPrimitive.content)
+        assertEquals("1", frame["ref"]!!.jsonPrimitive.content)
+        assertEquals("1", frame["join_ref"]!!.jsonPrimitive.content)
+        val payload = frame["payload"]!!.jsonObject
+        assertEquals("jwt-abc", payload["access_token"]!!.jsonPrimitive.content)
+        val change = payload["config"]!!.jsonObject["postgres_changes"]!!.jsonArray.single().jsonObject
+        assertEquals("*", change["event"]!!.jsonPrimitive.content)
+        assertEquals("public", change["schema"]!!.jsonPrimitive.content)
+        assertEquals("scheduler_snapshot", change["table"]!!.jsonPrimitive.content)
+        assertEquals("user_id=eq.u1", change["filter"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun postgres_changes_join_frame_omits_an_absent_filter() {
+        val frame = json.parseToJsonElement(
+            RealtimePhoenix.postgresChangesJoinFrame(
+                topic = "realtime:db:t", accessToken = "j", schema = "public", table = "t", filter = null, ref = 2,
+            ),
+        ).jsonObject
+        val change = frame["payload"]!!.jsonObject["config"]!!.jsonObject["postgres_changes"]!!.jsonArray.single().jsonObject
+        assertTrue("filter" !in change)
+    }
+
+    @Test
+    fun is_postgres_change_matches_a_broadcast_but_not_the_join_reply() {
+        // An actual change broadcast.
+        assertTrue(
+            RealtimePhoenix.isPostgresChange(
+                """{"topic":"realtime:db:x","event":"postgres_changes","payload":{"data":{"type":"UPDATE"}}}""",
+            ),
+        )
+        // The phx_reply that echoes the subscription config on join must NOT count as a change.
+        assertTrue(
+            !RealtimePhoenix.isPostgresChange(
+                """{"topic":"realtime:db:x","event":"phx_reply","payload":{"status":"ok","response":{"postgres_changes":[]}}}""",
+            ),
+        )
+    }
+
+    @Test
+    fun postgres_subscription_error_is_detected_but_not_the_success_frame() {
+        // The real rejection `system` frame Supabase sends when the table is absent from the Realtime
+        // publication (migration not applied) — the client must surface it and reconnect, not sit silent.
+        assertTrue(
+            RealtimePhoenix.isPostgresSubscriptionError(
+                """{"ref":null,"event":"system","payload":{"message":"Unable to subscribe to changes with given""" +
+                    """ parameters. Please check Realtime is enabled...","status":"error","extension":""" +
+                    """"postgres_changes","channel":"db:scheduler_snapshot:u1"},"topic":"realtime:db:scheduler_snapshot:u1"}""",
+            ),
+        )
+        // The success `system` frame carries the same extension but `"status":"ok"` — must NOT match.
+        assertTrue(
+            !RealtimePhoenix.isPostgresSubscriptionError(
+                """{"ref":null,"event":"system","payload":{"message":"Subscribed to PostgreSQL","status":"ok",""" +
+                    """"extension":"postgres_changes","channel":"db:scheduler_snapshot:u1"},"topic":"x"}""",
+            ),
+        )
+        // An auth `phx_reply` error is a different failure (handled by the JWT-refresh path) — must NOT match.
+        assertTrue(
+            !RealtimePhoenix.isPostgresSubscriptionError(
+                """{"event":"phx_reply","payload":{"status":"error","response":{"reason":"JWT expired"}},"topic":"x"}""",
+            ),
+        )
     }
 }

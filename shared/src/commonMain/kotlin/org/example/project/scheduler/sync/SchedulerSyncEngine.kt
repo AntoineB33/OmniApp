@@ -47,7 +47,7 @@ sealed interface SyncState {
  * installs a pulled one — both wired by [org.example.project.scheduler.ui.TaskSchedulerViewModel].
  */
 @OptIn(ExperimentalUuidApi::class)
-class SchedulerSyncEngine(
+open class SchedulerSyncEngine(
     private val client: RemoteSnapshotClient,
     private val metaStore: SyncMetaStore,
     private val json: Json = Json { ignoreUnknownKeys = true },
@@ -64,8 +64,9 @@ class SchedulerSyncEngine(
     private var localSnapshot: (() -> PersistedSnapshot)? = null
     private var applyRemote: ((PersistedSnapshot) -> Unit)? = null
 
-    /** Wires the local-state provider and the pulled-snapshot sink. Call once before [reconcile]. */
-    fun bind(localSnapshot: () -> PersistedSnapshot, applyRemote: (PersistedSnapshot) -> Unit) {
+    /** Wires the local-state provider and the pulled-snapshot sink. Call once before [reconcile]. `open` so a
+     * test double can capture the [applyRemote] sink to simulate a pull without a live transport. */
+    open fun bind(localSnapshot: () -> PersistedSnapshot, applyRemote: (PersistedSnapshot) -> Unit) {
         this.localSnapshot = localSnapshot
         this.applyRemote = applyRemote
     }
@@ -158,7 +159,7 @@ class SchedulerSyncEngine(
      * on startup, on window focus, and after a debounced save. No-op (and never throws) when signed out;
      * on network/server failure it records [SyncState.Error] and leaves local state untouched.
      */
-    suspend fun reconcile() {
+    open suspend fun reconcile() {
         try {
             mutex.withLock {
                 val current = session ?: run { _state.value = SyncState.SignedOut; return }
@@ -209,6 +210,17 @@ class SchedulerSyncEngine(
             }
             // Remote advanced past what we last saw: remote wins (LWW). Drop any local unpushed change.
             remote.revision > m.lastKnownRevision -> pull(remote)
+            // `dirty` is set, but our authoritative projection is already byte-identical to the remote — a
+            // PHANTOM push. A transient DERIVED change (a time-passing reschedule/materialization that briefly
+            // perturbs the sync fingerprint before reverting to the same content) can leave `dirty` set with
+            // nothing real to send. Pushing it would advance the `revision` for no content change, which makes
+            // every peer take the `pull` branch above and silently DROP its own genuine unpushed edit
+            // (whole-doc LWW). This actually happened: an idle peer pushed a content-identical snapshot that
+            // clobbered a concurrent sleep-schedule edit on another device. Clear the flag and send nothing.
+            m.dirty && localMatchesRemote(remote) -> {
+                Diagnostics.log("reconcile: dirty but local == remote (revision ${m.lastKnownRevision}); skipping phantom push")
+                setMeta(m.copy(dirty = false))
+            }
             // We have unpushed local changes and the remote is still where we left it: push them.
             m.dirty -> {
                 val ok = withAuth(session) { client.update(it, payload(), m.lastKnownRevision) }
@@ -266,6 +278,19 @@ class SchedulerSyncEngine(
 
     private fun payload(): String =
         json.encodeToString(checkNotNull(localSnapshot) { "SchedulerSyncEngine.bind() not called" }())
+
+    /**
+     * True when this device's authoritative projection already equals what the server holds, so a `dirty`
+     * flag has nothing real to push (see the phantom-push guard in [runReconcile]). Compares the decoded
+     * [PersistedSnapshot] VALUES — not the raw JSON — so a difference in field order or omitted defaults from
+     * another client's encoder cannot read as a change. Fails safe to `false` (any decode error ⇒ treat as
+     * different ⇒ push normally), so the guard can never suppress a genuine change.
+     */
+    private fun localMatchesRemote(remote: RemoteSnapshot): Boolean =
+        runCatching {
+            checkNotNull(localSnapshot) { "SchedulerSyncEngine.bind() not called" }() ==
+                json.decodeFromString<PersistedSnapshot>(remote.payload)
+        }.getOrDefault(false)
 
     private fun persistSession(s: SupabaseSession, email: String) =
         setMeta(meta().copy(accessToken = s.accessToken, refreshToken = s.refreshToken, userId = s.userId, email = email))

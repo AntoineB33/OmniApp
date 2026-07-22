@@ -2,22 +2,24 @@
 
 The automated suite (`:shared:jvmTest`, cross-target `commonTest`) covers state mechanics only (see
 `ARCHITECTURE.md` §6). Everything below is behaviour it **cannot** reach: real persistence, the
-**button-only** cross-device sync, Realtime presence, the external listener + push cue, the background
-service, and per-account isolation. Run this before tagging a release; run the section that touches
-whatever you changed before merging.
+**bidirectional auto-sync** cross-device sync, Realtime presence, the external listener + push cue, the
+background service, and per-account isolation. Run this before tagging a release; run the section that
+touches whatever you changed before merging.
 
 Every step is written as **do this → expect that**. If the expectation does not hold, stop and collect the
 evidence (see "Spotting problems" below) before touching anything else.
 
-**The sync model under test (ARCHITECTURE.md §8):** snapshot sync happens **only** when the user presses
-the Sync button — sign-in does **not** pull, sign-out does **not** push, there is no change-triggered push
-and no timer. Live cross-device activity is a **Realtime presence WebSocket**; the pause-end voice cue is
-fired by the external `/listener` worker through the `pause-cue` Edge Function. If you observe any REST
-traffic outside a Sync press, a Sleep/Work toggle, or a phone push-token/last-phone write, that is a bug.
+**The sync model under test (ARCHITECTURE.md §8):** snapshot sync is **bidirectional and automatic** —
+an authoritative local edit auto-pushes ~500 ms after you stop editing, and a peer's push auto-pulls over a
+Realtime `postgres_changes` subscription within ~a second. The manual **Sync button** remains as a
+force-now fallback. Live cross-device *activity* is a separate **Realtime presence WebSocket**; the
+pause-end voice cue is fired by the external `/listener` worker through the `pause-cue` Edge Function. An
+**idle** signed-in app (no edits, no peer changes) makes no snapshot REST traffic — the pull is driven by
+the WebSocket, and the push only fires on an authoritative change.
 
-**The Sync button:** click the **☁ status chip** (top of the app) → the sync dialog opens → press
-**"Fetch from server"**. That one button is `TaskSchedulerViewModel.syncNow()`: it pushes the local
-snapshot if dirty, pulls the remote one (last-writer-wins), and merges the device active-session rows both
+**The Sync button (force-now fallback):** click the **☁ status chip** (top of the app) → the sync dialog
+opens → press **"Fetch from server"**. That button is `TaskSchedulerViewModel.syncNow()`: it pushes the
+local snapshot if dirty, pulls the remote one (last-writer-wins), and merges the device active-session rows both
 ways. "Press Sync" below always means this.
 
 ## Spotting problems
@@ -88,43 +90,51 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
 
 ---
 
-## 3. Cross-device sync — button-only (one account, two devices)
+## 3. Cross-device sync — bidirectional auto-sync (one account, two devices)
 
-The core thing only manual testing catches: **nothing syncs until the user presses Sync** — on either
-side. Use **one account on two devices**: desktop via `scripts\account1-empty-and-open.bat`, phone via
-`scripts\account1-deploy-android.bat` (debug APK, wiped + auto-signed-in as account 1).
+The core thing only manual testing catches: **an edit on one device reaches the other automatically**,
+without pressing Sync — the push fires ~500 ms after you stop editing, the pull arrives over the Realtime
+`postgres_changes` subscription within ~a second. Use **one account on two devices**: desktop via
+`scripts\account1-empty-and-open.bat`, phone via `scripts\account1-deploy-android.bat` (debug APK, wiped +
+auto-signed-in as account 1). Requires migration `20260722000000` applied (`deploy-supabase.bat`).
 
 - [ ] **Force-logout on empty.** Have the phone app running signed in as account 1, then run
-      `account1-empty-and-open.bat` → the phone does **not** immediately react (no timer traffic). Press
-      **Sync on the phone** → it signs itself **out** (the `account_logout` marker advanced) instead of
-      re-seeding the just-emptied server with its old data. Server tables stay empty.
-- [ ] **An edit does not push on its own.** On the desktop, create a task and rename it. Wait ≥1 min.
-      Check Supabase Logs → **no** `scheduler_snapshot` write appeared. The chip does not flip to
-      "Syncing…" by itself.
-- [ ] **Push on Sync.** Press Sync on the desktop → chip shows "☁ Syncing…" then "☁ Synced"; Supabase
-      shows exactly one `scheduler_snapshot` write. The pushed payload is the stripped authoritative
-      projection (no regenerated auto/side/sleep panels — `SyncPayloadTest` covers the shape; here just
-      confirm the row's JSON has no ocean of derived panels).
-- [ ] **Pull on Sync.** Redeploy/relaunch the phone (or sign it back in) → it shows **local** (empty)
-      state, not the desktop's data — sign-in does not pull. Press **Sync on the phone** → the desktop's
-      task appears.
-- [ ] **LWW convergence.** Edit a different task title on each side, press Sync on side A, then Sync on
-      side B, then Sync on side A again → both sides show the same state (last writer wins, whole-doc;
-      no lost tree, no duplicates).
-- [ ] **Sign-out is a pure session drop.** Make an edit on the desktop, sign out **without** pressing
-      Sync → no push happens. Press Sync on the phone → the edit is absent. Sign the desktop back in and
-      press Sync → now the phone's next Sync shows it.
-- [ ] **Kill mid-edit.** Kill the desktop app right after an edit (before pressing anything) → on
-      relaunch the edit is still there (the ~400 ms local save debounce is independent of sync).
-- [ ] **Refresh-token longevity.** Leave a session idle >1 h, then press Sync → it works, no
+      `account1-empty-and-open.bat` → on its next reconcile the phone signs itself **out** (the
+      `account_logout` marker advanced) instead of re-seeding the just-emptied server with its old data.
+      Server tables stay empty.
+- [ ] **Auto-push.** On the desktop, create a task and rename it. **Without pressing anything**, within
+      ~1–2 s Supabase Logs show exactly one `scheduler_snapshot` write and the chip flickers
+      "Syncing…" → "Synced". The pushed payload is the stripped authoritative projection (no regenerated
+      auto/side/sleep panels — `SyncPayloadTest` covers the shape; here just confirm the row's JSON has no
+      ocean of derived panels).
+- [ ] **Auto-push coalesces.** Type a rapid burst of edits (rename several times quickly) → **one**
+      `scheduler_snapshot` write after you stop, not one per keystroke (the 500 ms debounce).
+- [ ] **Auto-pull.** With both devices signed in and idle, make an edit on the desktop → the phone shows
+      it within ~a second **without** any Sync press (the Realtime subscription poked a pull). Confirm the
+      change appears; no user action on the phone.
+- [ ] **No echo storm.** After the two devices converge, watch Supabase Logs for ~30 s → traffic goes
+      quiet. There is **no** ping-pong of writes (a pulled change never pushes back — the `revision` guard
+      and the reset sync baseline).
+- [ ] **Idle is quiet.** Two signed-in apps with no edits → **no** `scheduler_snapshot` writes at all over
+      minutes (the pull is WebSocket-driven; the push only fires on an authoritative change).
+- [ ] **LWW convergence under a conflict.** Take one device briefly offline (kill its network), edit a
+      different task title on each side, bring it back → both sides converge to the same state (last writer
+      wins, whole-doc; no lost tree, no duplicates).
+- [ ] **Manual Sync still works.** Press the Sync button → it still force-reconciles (push-if-dirty /
+      pull), a harmless no-op when already converged.
+- [ ] **Kill mid-edit.** Kill the desktop app right after an edit (before the ~500 ms push fires) → on
+      relaunch the edit is still there (the ~400 ms local save debounce is independent of sync) and it
+      auto-pushes on the next launch.
+- [ ] **Refresh-token longevity.** Leave a session idle >1 h, then make an edit → the auto-push works, no
       "400 refresh token not found" (`sync-refresh-token-rotation` note).
-- [ ] **Sync never wedges.** During each Sync press, the chip returns to "☁ Synced" (or "☁ Sync error")
-      within seconds — a chip stuck on "☁ Syncing…" means a hung reconcile holding the engine mutex
-      (see the `sync-stuck-syncing-mutex-wedge` note) and is a release blocker.
+- [ ] **Sync never wedges.** Each reconcile (auto or button) returns the chip to "☁ Synced" (or
+      "☁ Sync error") within seconds — a chip stuck on "☁ Syncing…" means a hung reconcile holding the
+      engine mutex (see the `sync-stuck-syncing-mutex-wedge` note) and is a release blocker.
 
 ### 3a. Counting API requests (Supabase logs)
 
-The point of the button-only model: **an idle signed-in app makes zero REST requests.** Verify it:
+The point of the auto-sync model: **an idle signed-in app makes no snapshot REST requests** (the pull is
+carried by the already-open WebSocket; a push fires only on an authoritative edit). Verify it:
 
 - [ ] Source = **API Gateway / Edge** (`edge_logs`) — one row per HTTP request (`path`, `method`,
       `status_code`). Do **not** add PostgREST logs (they double-count). Scope the time-range picker to
@@ -240,7 +250,7 @@ desktop, an Android phone, and an iPhone, and checks the invariants still hold w
 also the only place the iOS client gets exercised at all.
 
 **What the iPhone can and cannot do today** (read before writing a bug report): the iOS client
-participates in **snapshot sync** (interactive sign-in + the Sync button) and **receives the pause-cue
+participates in **snapshot sync** (interactive sign-in + bidirectional auto-sync, with the Sync button as fallback) and **receives the pause-cue
 push** (physical device only), but it is **never an active peer** — `isScreenActive()` on iOS is
 hardwired `false` (best-effort "cannot tell", `DeviceInfo.ios.kt`), so the iPhone never opens activity
 sessions, never joins the presence channel, and never suppresses the cue by being foregrounded. Expect
@@ -340,7 +350,7 @@ untouched by dev runs.
 |---|---|---|
 | 1 Automated gate | | |
 | 2 Desktop smoke | | |
-| 3 Button-only sync | | |
+| 3 Bidirectional auto-sync | | |
 | 4 Activity / Inactivity | | |
 | 5 Android debug | | |
 | 6 Presence + pause cue | | |

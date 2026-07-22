@@ -25,6 +25,12 @@ machinery was dropped by migration `20260713000000` and `pause-cue-setup.sql` un
 cron job. The listener exists because pg_cron / an Edge Function **cannot read Realtime Presence** —
 presence lives in the Realtime service, not Postgres.
 
+> **Note — two independent Realtime channels.** The presence WebSocket described here (`RealtimePresenceClient`,
+> topic `realtime:presence:<user_id>`) carries *only* the pause-cue liveness/break data. Cross-device **document
+> sync** rides a **separate** Realtime `postgres_changes` subscription on the `scheduler_snapshot` row
+> (`RealtimeSnapshotSubscriber`), which auto-pulls a peer's push (ARCHITECTURE.md §8). They share the transport
+> but are otherwise unrelated; nothing in this cue-delivery path depends on the snapshot subscription.
+
 ## Status — done vs. remaining
 
 | Piece | Status |

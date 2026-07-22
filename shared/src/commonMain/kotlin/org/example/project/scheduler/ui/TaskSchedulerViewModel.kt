@@ -3,14 +3,18 @@ package org.example.project.scheduler.ui
 import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.persistence.PersistedSnapshot
@@ -20,7 +24,9 @@ import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.sync.PauseCueGateway
+import org.example.project.scheduler.sync.RealtimeSnapshotSubscriber
 import org.example.project.scheduler.sync.SchedulerSyncEngine
+import org.example.project.scheduler.sync.SnapshotChangeSubscription
 import org.example.project.scheduler.sync.StartupLogin
 import org.example.project.scheduler.sync.SyncState
 import org.example.project.scheduler.sync.startupLoginCredentials
@@ -38,6 +44,10 @@ class TaskSchedulerViewModel(
     // Credentials for non-interactive launch (the per-account `/scripts`). Injectable so tests can drive
     // the auto-login path without the platform property/env/Intent plumbing.
     private val startupLogin: () -> StartupLogin? = { startupLoginCredentials() },
+    // PRD §5 bidirectional sync — the remote→local auto-pull subscription. Injectable so tests can supply a
+    // no-op/recording fake (a real one would open a WebSocket). Null → build the real [RealtimeSnapshotSubscriber]
+    // when sync is enabled.
+    snapshotSubscription: SnapshotChangeSubscription? = null,
 ) : ViewModel() {
     // PRD §5 Initialization: load from local persistence when present, otherwise start
     // from the empty DB (root → main).
@@ -81,6 +91,29 @@ class TaskSchedulerViewModel(
     private var lastSyncedFingerprint: PersistedSnapshot? =
         if (syncEngine != null) SchedulerStateCodec.syncFingerprint(_state.value) else null
 
+    // PRD §5 bidirectional sync — local→remote auto-push. An authoritative, fingerprint-changing edit emits
+    // here (from [markDirtyIfAuthoritativeChanged]); a 500 ms debounce coalesces a burst of edits into a single
+    // [SchedulerSyncEngine.reconcile] push. Only meaningful when sync is on; the manual Sync button ([syncNow])
+    // remains as a fallback. `extraBufferCapacity = 1` so a `tryEmit` from the (conflated) edit path never drops.
+    private val pushRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    // PRD §5 bidirectional sync — remote→local auto-pull. While signed in this holds a Realtime `postgres_changes`
+    // subscription on this account's `scheduler_snapshot` row; a server-side change (a peer pushed) pokes
+    // [syncNow], which pulls via the LWW reconcile (the `revision` guard drops this device's own echo). Null when
+    // sync is disabled (tests / offline builds), so no WebSocket is opened. Kept for [onCleared] cleanup only via
+    // [saveScope] cancellation — the subscriber's coroutines live on that scope.
+    private val snapshotSubscriber: SnapshotChangeSubscription? =
+        snapshotSubscription ?: syncEngine?.let { engine ->
+            RealtimeSnapshotSubscriber(
+                scope = saveScope,
+                realtimeUrl = engine.realtimeUrl,
+                apiKey = engine.realtimeApiKey,
+                auth = { engine.realtimeAuth() },
+                refreshAuth = { engine.refreshRealtimeAuth() },
+                onRemoteChange = { syncNow() },
+            )
+        }
+
     init {
         syncEngine?.let { engine ->
             // History-window "Supabase usage" column (local-only diagnostic): record every Supabase HTTP call
@@ -111,14 +144,48 @@ class TaskSchedulerViewModel(
                 localSnapshot = { SchedulerStateCodec.syncFingerprint(_state.value) },
                 applyRemote = { snapshot -> applyRemoteSnapshot(snapshot) },
             )
+            // PRD §5 bidirectional sync — local→remote auto-push: coalesce authoritative edits and reconcile
+            // (push) after a 500 ms quiet period. Only authoritative, fingerprint-changing edits reach here
+            // (emitted by [markDirtyIfAuthoritativeChanged]); derived/tick changes are gated out upstream, so an
+            // idle running session never auto-pushes.
+            startAutoPush()
+            // PRD §5 bidirectional sync — remote→local auto-pull: keep the Realtime subscription running; it
+            // connects once an account is set below (on restore/login) and pokes [syncNow] on a peer's push.
+            snapshotSubscriber?.start()
             engine.restoreSession()
             // Non-interactive launch (per-account `/scripts`): when no session was restored and startup
-            // credentials were supplied, sign in to that account. Sync is BUTTON-ONLY now, so signing in does
-            // NOT pull — a fresh device shows local state until the user presses Sync (see [syncNow]).
-            if (!engine.isSignedIn) {
+            // credentials were supplied, sign in to that account. Signing in triggers no immediate pull, but the
+            // Realtime subscription (pointed at the account below / after login) then streams peers' changes and
+            // the first local edit auto-pushes.
+            if (engine.isSignedIn) {
+                refreshRealtimeSubscription()
+            } else {
                 startupLogin()?.let { creds -> signIn(usernameToEmail(creds.username), creds.password) }
             }
         }
+    }
+
+    /**
+     * PRD §5 bidirectional sync — the local→remote auto-push loop. Collects [pushRequests] (one per authoritative
+     * edit), debounces [AUTO_PUSH_DEBOUNCE_MILLIS] so a burst of edits (e.g. dragging a panel) becomes one push,
+     * then reconciles. Reconcile pushes only the pending change (it no-ops unless the engine is dirty and the
+     * remote is still where we left it — see [SchedulerSyncEngine.reconcile]), and a pulled remote snapshot never
+     * re-emits here (see the echo-prevention note on [applyRemoteSnapshot]), so this can't loop.
+     */
+    @OptIn(FlowPreview::class)
+    private fun startAutoPush() {
+        val engine = syncEngine ?: return
+        // UNDISPATCHED so the collector subscribes to [pushRequests] synchronously before this returns: an edit
+        // that emits moments after startup (or in a test) then can't be dropped by the replay-0 SharedFlow for
+        // lack of a subscriber. Emissions still resume on [saveScope]'s dispatcher.
+        saveScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            pushRequests.debounce(AUTO_PUSH_DEBOUNCE_MILLIS).collect { engine.reconcile() }
+        }
+    }
+
+    /** Points the Realtime snapshot subscription at the current account (or disconnects it when signed out). */
+    private fun refreshRealtimeSubscription() {
+        snapshotSubscriber?.setAccount(syncEngine?.realtimeAuth()?.first)
     }
 
     fun dispatch(intent: SchedulerIntent) {
@@ -139,6 +206,17 @@ class TaskSchedulerViewModel(
      * that is a user-authored change another device can't deduce, so it must NEVER trigger a server push on its
      * own — an always-running device would otherwise `scheduler_snapshot`-write all day just from time passing.
      * (Any such record still rides along with the next authoritative push; the snapshot is whole-document.)
+     *
+     * `MaterializePastSleep` is the same shape: a time-driven materialization of past scheduled-sleep windows
+     * (fired from [org.example.project.scheduler.engine.SchedulerEngine]'s tick, not a user action). It is
+     * derived (a pure function of `now` + the sleep config + inactivity), banked locally only, and its panels
+     * are stripped from the sync wire — but materializing one calls `allocatePanelId()`, which advances the
+     * persisted `nextPanelCounter` (part of `syncFingerprint`). Left syncable, that counter bump alone flips
+     * the fingerprint and fires a **phantom push** of otherwise-identical content, which (whole-doc LWW) makes
+     * peers pull-and-drop their own unpushed edits. So it must NOT push on its own. (Its sibling
+     * `materializePastInactivity` has no intent of its own — it rides `AdvanceSchedule`/`ReportDeviceSleep`,
+     * already gated here — so it needs no separate entry.)
+     *
      * Every other intent — tree edits, pinned/user panels, reminders, sleep/settings, history, and the MANUAL
      * record edits `RemoveRecordPeriod` / `PinRecordAsPanel` — is authoritative and syncs (subject to the
      * fingerprint gate in [pushIfAuthoritativeChanged]).
@@ -148,6 +226,9 @@ class TaskSchedulerViewModel(
             is SchedulerIntent.AdvanceSchedule,
             is SchedulerIntent.RefreshSchedule,
             is SchedulerIntent.ReportDeviceSleep,
+            // Derived time-driven materialization — see the KDoc above: its `allocatePanelId()` counter bump
+            // would otherwise phantom-push identical content and clobber peers' edits via whole-doc LWW.
+            is SchedulerIntent.MaterializePastSleep,
             // The notification log is a per-device diagnostic (see SchedulerState.notificationLog); recording
             // one persists locally but is never an authoritative change, so it must not request a server push.
             is SchedulerIntent.RecordNotification,
@@ -207,6 +288,9 @@ class TaskSchedulerViewModel(
         if (fingerprint == lastSyncedFingerprint) return
         lastSyncedFingerprint = fingerprint
         engine.markDirty()
+        // PRD §5 bidirectional sync: request a debounced auto-push. Only reached for an authoritative change
+        // whose projection actually moved, so derived/tick reschedules never enqueue a push (see [startAutoPush]).
+        pushRequests.tryEmit(Unit)
     }
 
     /**
@@ -231,32 +315,40 @@ class TaskSchedulerViewModel(
 
     // ---- PRD §5 cross-device sync controls (no-ops when sync is disabled) ----
     //
-    // Sync is BUTTON-ONLY: sign-in / sign-up / sign-out never reconcile on their own. Local edits persist to
-    // SQLite on the save debounce and are marked dirty; they reach the server only when the user presses Sync
-    // ([syncNow]). A fresh device therefore shows local state until the first manual sync.
+    // Sync is BIDIRECTIONAL: after sign-in, the Realtime subscription streams peers' pushes (auto-pull) and
+    // authoritative local edits auto-push on a 500 ms debounce. Sign-in / sign-up do NOT force an immediate
+    // whole-document reconcile — they point the subscription at the account (so the first remote change and the
+    // first local edit sync), and the manual Sync button ([syncNow]) remains a force-now fallback.
 
-    /** Signs in (no automatic pull). Errors surface via [syncState]; never throws to the caller. */
+    /** Signs in, then points the Realtime auto-pull subscription at the account. Errors surface via [syncState]. */
     fun signIn(email: String, password: String) =
-        saveScope.launch { runCatching { syncEngine?.signIn(email, password) } }
+        saveScope.launch {
+            runCatching { syncEngine?.signIn(email, password) }
+            refreshRealtimeSubscription()
+        }
 
-    /** Registers a new account (no automatic pull). Errors surface via [syncState]. */
+    /** Registers a new account, then points the Realtime auto-pull subscription at it. Errors via [syncState]. */
     fun signUp(email: String, password: String) =
-        saveScope.launch { runCatching { syncEngine?.signUp(email, password) } }
+        saveScope.launch {
+            runCatching { syncEngine?.signUp(email, password) }
+            refreshRealtimeSubscription()
+        }
 
     /**
-     * Signs out — a pure LOCAL drop of the cached session (no farewell push, per button-only sync). Any change
-     * still inside the save debounce is flushed to the local SQLite first (nothing is lost locally) and left
-     * marked dirty for the next login's Sync button. Does not delete remote data.
+     * Signs out — a pure LOCAL drop of the cached session (no farewell push). Any change still inside the save
+     * debounce is flushed to the local SQLite first (nothing is lost locally) and left marked dirty for the next
+     * login. Disconnects the Realtime auto-pull subscription. Does not delete remote data.
      */
     fun signOut() {
         val engine = syncEngine ?: return
         saveScope.launch {
             runCatching { flush() }
             engine.signOut()
+            refreshRealtimeSubscription() // realtimeAuth() is now null → disconnect the subscription
         }
     }
 
-    /** The manual sync trigger — the ONLY thing that reconciles (push local dirty / pull remote). */
+    /** The manual sync trigger (fallback / force-now). Auto-push + Realtime auto-pull also reconcile on their own. */
     fun syncNow() = saveScope.launch { syncEngine?.reconcile() }
 
     /**
@@ -298,6 +390,9 @@ class TaskSchedulerViewModel(
     companion object {
         /** PRD §5: how long edits must be quiet before the debounced write to SQLite fires. */
         private const val SAVE_DEBOUNCE_MILLIS = 400L
+
+        /** PRD §5 bidirectional sync: how long authoritative edits must be quiet before the auto-push reconcile. */
+        private const val AUTO_PUSH_DEBOUNCE_MILLIS = 500L
 
         /** PRD §5: reload persisted state; an interrupted Edit Mode session is canceled. */
         fun loadInitialState(store: SchedulerStore?, initial: SchedulerState): SchedulerState =

@@ -18,8 +18,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.coroutineContext
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import org.example.project.scheduler.platform.Diagnostics
 
@@ -200,6 +202,61 @@ class RealtimePresenceClient(
  */
 internal object RealtimePhoenix {
     fun topic(userId: String): String = "realtime:presence:$userId"
+
+    /**
+     * The Realtime channel topic for a Postgres-changes subscription. The subtopic after `realtime:` is a free
+     * channel name (`@supabase/realtime-js` uses an arbitrary name); we make it unique per account so two
+     * accounts never share one channel — e.g. `realtime:db:scheduler_snapshot:<userId>`.
+     */
+    fun postgresChangesTopic(subtopic: String): String = "realtime:$subtopic"
+
+    /**
+     * `phx_join` that subscribes to Postgres change events on [table] (all events), optionally narrowed by a
+     * PostgREST-style [filter] (e.g. `user_id=eq.<uuid>`). The [accessToken] is the signed-in user's JWT, so
+     * Supabase authorizes the subscription through the table's Row-Level Security — a peer only receives rows
+     * its own policy admits. `ref == join_ref`.
+     */
+    fun postgresChangesJoinFrame(
+        topic: String,
+        accessToken: String,
+        schema: String,
+        table: String,
+        filter: String?,
+        ref: Long,
+    ): String =
+        envelope(topic, "phx_join", ref, ref) {
+            putJsonObject("config") {
+                putJsonArray("postgres_changes") {
+                    addJsonObject {
+                        put("event", "*")
+                        put("schema", schema)
+                        put("table", table)
+                        if (filter != null) put("filter", filter)
+                    }
+                }
+                put("private", false)
+            }
+            put("access_token", accessToken)
+        }
+
+    /**
+     * True for an actual Postgres-change broadcast (`"event":"postgres_changes"`) — NOT the `phx_reply` that
+     * echoes the subscription config on join (that carries `"event":"phx_reply"` and merely mentions the word).
+     * We only use it as a signal to re-`reconcile()`, so the record body itself never needs parsing.
+     */
+    fun isPostgresChange(text: String): Boolean = text.contains("\"event\":\"postgres_changes\"")
+
+    /**
+     * True for a `system` frame reporting the postgres_changes subscription was REJECTED — the server accepted
+     * the channel join but refuses to stream row changes (most commonly the table is not in the
+     * `supabase_realtime` publication, i.e. the enabling migration was never applied). Deliberately distinct
+     * from the success `system` frame (`"message":"Subscribed to PostgreSQL","status":"ok"`): only a
+     * `"status":"error"` on the `postgres_changes` extension matches. Not an auth failure, so the JWT-refresh
+     * path must NOT treat it as one.
+     */
+    fun isPostgresSubscriptionError(text: String): Boolean =
+        text.contains("\"event\":\"system\"") && text.contains("\"extension\":\"postgres_changes\"") &&
+            text.contains("\"status\":\"error\"")
 
     /** `phx_join` with a presence key = this device id and the caller's access token. `ref == join_ref`. */
     fun joinFrame(topic: String, accessToken: String, presenceKey: String, ref: Long): String =
