@@ -87,6 +87,8 @@ kotlin {
         jvmMain.dependencies {
             implementation(libs.sqldelight.sqliteDriver)
             implementation(libs.ktor.client.cio)
+            // PRD §15: desktop event-based session lock/unlock detection (Windows WTSRegisterSessionNotification).
+            implementation(libs.jna.platform)
         }
         jvmTest.dependencies {
             implementation(libs.kotlin.test)

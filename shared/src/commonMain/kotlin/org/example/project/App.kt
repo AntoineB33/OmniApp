@@ -57,6 +57,7 @@ import org.example.project.scheduler.debug.startTimeLink
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.scheduler.platform.installPauseCuePushBridge
+import org.example.project.scheduler.platform.installPlatformActivityListener
 import org.example.project.scheduler.platform.localPauseCueDeliveryPlatform
 import org.example.project.scheduler.platform.scheduleLocalPauseCuePlatform
 import org.example.project.scheduler.sync.RemoteSnapshotClient
@@ -222,6 +223,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 )
         }
         LaunchedEffect(engine) { if (host == null) engine.start() }
+        // PRD §15: hook this device's platform activity signal (desktop OS session lock/unlock) so the engine
+        // re-samples presence the moment it flips, instead of at the next minute beat. No-op on Android (the
+        // service wires it directly) and iOS/web (no such signal).
+        LaunchedEffect(engine) { installPlatformActivityListener { engine.onPlatformActivityChanged() } }
         // PRD §15 / ARCHITECTURE.md §8 (iOS APNs, reqs #2/#6): give the platform's native push layer its two
         // callbacks — publish this phone's APNs token, and route a received pause-cue push into the engine.
         // A no-op off iOS (Android uses its FirebaseMessagingService instead; desktop/web have no push layer).

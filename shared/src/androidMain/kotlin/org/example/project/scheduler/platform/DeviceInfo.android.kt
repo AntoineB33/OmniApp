@@ -22,6 +22,10 @@ actual fun currentDeviceKind(): DeviceKind = DeviceKind.Phone
  */
 actual fun isScreenActive(): Boolean = AndroidUnlockTracker.unlocked
 
+// No-op: Android wires the unlock/lock poke directly in SchedulerHolder (`AndroidUnlockTracker.onChanged`),
+// because the headless foreground service starts the engine without going through App()'s common seam.
+actual fun installPlatformActivityListener(onChanged: () -> Unit) {}
+
 /**
  * PRD §15: tracks whether the device is unlocked (screen on AND keyguard dismissed), from
  * `ACTION_SCREEN_OFF` / `ACTION_SCREEN_ON` / `ACTION_USER_PRESENT` — these are dynamic-register-only
