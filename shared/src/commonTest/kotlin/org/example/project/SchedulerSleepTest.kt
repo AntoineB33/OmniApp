@@ -13,6 +13,7 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStateCodec
+import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
@@ -208,5 +209,65 @@ class SchedulerSleepTest {
         assertTrue(decoded.panels.any { it.sleep })
         // A state without a sleep schedule round-trips to null (old payloads decode to null too).
         assertNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(SchedulerState.empty()))!!.sleep)
+    }
+
+    // ----- History (undoable, shown in the History window) --------------------------------------
+
+    /** A base state with a known sleep schedule and no history yet. */
+    private fun stateWithSleep(): SchedulerState =
+        soloTask().copy(sleep = SleepBaseline)
+
+    private val SleepBaseline =
+        SleepSchedule(wakeMinutes = 450, goalWakeMinutes = 450, sleepDurationMinutes = 510, anchorEpochDay = null)
+
+    @Test
+    fun setting_the_sleep_schedule_records_a_main_history_unit() {
+        val s0 = stateWithSleep()
+        val before = s0.histories.forCategory(HistoryCategory.Main).units.size
+        val s1 = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetSleepSchedule(SleepBaseline.copy(sleepDurationMinutes = 480), todayEpochDay = 100),
+        )
+        val main = s1.histories.forCategory(HistoryCategory.Main)
+        assertEquals(before + 1, main.units.size)
+        assertEquals(main.units.lastIndex, main.pointer)
+        assertEquals("Sleep schedule", main.units.last().delta.label)
+        assertTrue(main.units.last().delta.details.any { it.contains("duration") })
+    }
+
+    @Test
+    fun setting_an_unchanged_sleep_schedule_adds_no_history_unit() {
+        val s0 = stateWithSleep()
+        // SetSleepSchedule anchors, so pass a schedule that anchors to the same value (goal == wake ⇒ null anchor).
+        val s1 = SchedulerReducer.reduce(s0, SchedulerIntent.SetSleepSchedule(SleepBaseline, todayEpochDay = 100))
+        assertEquals(s0.histories, s1.histories)
+    }
+
+    @Test
+    fun undo_and_redo_restore_the_sleep_schedule() {
+        val s0 = stateWithSleep()
+        val changed = SleepBaseline.copy(wakeMinutes = 420, sleepDurationMinutes = 480)
+        val s1 = SchedulerReducer.reduce(s0, SchedulerIntent.SetSleepSchedule(changed, todayEpochDay = 100))
+        assertEquals(480, s1.sleep!!.sleepDurationMinutes)
+
+        val undone = SchedulerReducer.reduce(s1, SchedulerIntent.Undo)
+        assertEquals(SleepBaseline, undone.sleep)
+
+        val redone = SchedulerReducer.reduce(undone, SchedulerIntent.Redo)
+        assertEquals(420, redone.sleep!!.wakeMinutes)
+        assertEquals(480, redone.sleep!!.sleepDurationMinutes)
+    }
+
+    @Test
+    fun codec_round_trips_a_sleep_schedule_history_unit() {
+        val s0 = stateWithSleep()
+        val s1 = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetSleepSchedule(SleepBaseline.copy(wakeMinutes = 400), todayEpochDay = 100),
+        )
+        val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s1))!!
+        // The unit survives the round-trip and still undoes to the original schedule.
+        val undone = SchedulerReducer.reduce(decoded, SchedulerIntent.Undo)
+        assertEquals(SleepBaseline, undone.sleep)
     }
 }

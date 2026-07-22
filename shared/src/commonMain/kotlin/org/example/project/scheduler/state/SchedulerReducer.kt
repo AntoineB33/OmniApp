@@ -6,6 +6,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.PanelPins
+import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
@@ -1301,21 +1302,24 @@ object SchedulerReducer {
     /**
      * Store the user's sleep schedule and refill so the calendar immediately reflects the new sleep window.
      * The 15-min-per-2-days wake drift is anchored at [todayEpochDay] when a goal different from the current
-     * wake is set (else there is no drift). Persisted; not undoable.
+     * wake is set (else there is no drift). Recorded as a [SleepDelta] History Unit so the change shows in
+     * the History window and is Ctrl+Z-undoable (the sleep schedule is authoritative user intent, PRD §17).
+     * The panels are derived, so the immediate refill below is left off the delta — an undo reverts the
+     * [sleep] field and the next schedule tick re-derives the panels to match.
      */
     private fun reduceSetSleepSchedule(
         state: SchedulerState,
-        sleep: org.example.project.scheduler.model.SleepSchedule,
+        sleep: SleepSchedule,
         todayEpochDay: Long,
     ): SchedulerState {
         val anchored =
             sleep.copy(anchorEpochDay = if (sleep.goalWakeMinutes != sleep.wakeMinutes) todayEpochDay else null)
         if (state.sleep == anchored) return state
-        val updated = state.copy(sleep = anchored)
+        val committed = commitDelta(state, SleepDelta(state.sleep, anchored))
         // Refill so the nightly sleep window takes effect right away (when auto-scheduling is on).
-        if (!updated.automaticSchedule) return updated
-        val filled = SchedulerDomain.fillSchedule(updated, clock.nowMillis(), liveRest = liveRestGap())
-        return updated.copy(panels = filled)
+        if (!committed.automaticSchedule) return committed
+        val filled = SchedulerDomain.fillSchedule(committed, clock.nowMillis(), liveRest = liveRestGap())
+        return committed.copy(panels = filled)
     }
 
     /** PRD §8 "Remove" on a record block: drop the period from the task's record (history-excluded). */
@@ -2586,6 +2590,38 @@ internal data class RecordDelta(
             tasks = tasks + (id to task.copy(record = rec))
         }
         return state.copy(tasks = tasks)
+    }
+}
+
+/**
+ * PRD §17 sleep schedule: a change to the user's wake time / goal wake / sleep duration. Authoritative
+ * user intent (persisted + synced), so it is routed through Undo/Redo and shows in the History window.
+ * Captures only the [sleep] schedule (before/after); the derived sleep panels re-fill on the next tick.
+ */
+internal data class SleepDelta(
+    val before: SleepSchedule?,
+    val after: SleepSchedule,
+) : Delta {
+    override val label: String = "Sleep schedule"
+
+    override val details: List<String>
+        get() = buildList {
+            if (before?.wakeMinutes != after.wakeMinutes)
+                add("wake ${before?.let { hhmm(it.wakeMinutes) } ?: "—"} → ${hhmm(after.wakeMinutes)}")
+            if (before?.goalWakeMinutes != after.goalWakeMinutes)
+                add("goal wake ${before?.let { hhmm(it.goalWakeMinutes) } ?: "—"} → ${hhmm(after.goalWakeMinutes)}")
+            if (before?.sleepDurationMinutes != after.sleepDurationMinutes)
+                add("duration ${before?.let { hhmm(it.sleepDurationMinutes) } ?: "—"} → ${hhmm(after.sleepDurationMinutes)}")
+        }
+
+    override fun undo(state: SchedulerState): SchedulerState = state.copy(sleep = before)
+
+    override fun redo(state: SchedulerState): SchedulerState = state.copy(sleep = after)
+
+    private fun hhmm(minutes: Int): String {
+        val h = (minutes / 60) % 24
+        val m = minutes % 60
+        return h.toString().padStart(2, '0') + ":" + m.toString().padStart(2, '0')
     }
 }
 

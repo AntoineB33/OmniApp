@@ -248,7 +248,8 @@ sealed interface SchedulerIntent {
     /**
      * Sets the user's sleep schedule (wake/goal/duration). The scheduler then leaves the nightly sleep
      * window empty. [todayEpochDay] anchors the 15-min-per-2-days wake drift at the current local day when
-     * a goal different from the current wake is set. Persisted; not undoable; triggers a schedule refill.
+     * a goal different from the current wake is set. Persisted; recorded as an undoable Main History Unit
+     * (shows in the History window, [SleepDelta]); triggers a schedule refill.
      */
     data class SetSleepSchedule(
         val sleep: org.example.project.scheduler.model.SleepSchedule,

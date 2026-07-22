@@ -41,6 +41,7 @@ import org.example.project.scheduler.state.SchedulerHistory
 import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.SetSelectionDelta
+import org.example.project.scheduler.state.SleepDelta
 import org.example.project.scheduler.state.ToggleExpandDelta
 import org.example.project.scheduler.state.TreeMutationDelta
 import org.example.project.scheduler.state.TreeSnapshot
@@ -294,6 +295,11 @@ object SchedulerStateCodec {
                     before.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
                     after.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
                 )
+            is SleepDelta ->
+                PersistedDelta.Sleep(
+                    before?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
+                    PersistedSleep(after.wakeMinutes, after.goalWakeMinutes, after.sleepDurationMinutes, after.anchorEpochDay),
+                )
             NoOpDelta -> PersistedDelta.NoOp
         }
 
@@ -524,6 +530,11 @@ object SchedulerStateCodec {
                 RecordDelta(
                     before.mapKeys { TaskId(it.key) }.mapValues { e -> e.value.map { TaskTimeRange(it.start, it.end) } },
                     after.mapKeys { TaskId(it.key) }.mapValues { e -> e.value.map { TaskTimeRange(it.start, it.end) } },
+                )
+            is PersistedDelta.Sleep ->
+                SleepDelta(
+                    before?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
+                    SleepSchedule(after.wakeMinutes, after.goalWakeMinutes, after.sleepDurationMinutes, after.anchorEpochDay),
                 )
             PersistedDelta.NoOp -> NoOpDelta
         }
@@ -772,6 +783,10 @@ private sealed interface PersistedDelta {
         val before: Map<String, List<PersistedTimeRange>>,
         val after: Map<String, List<PersistedTimeRange>>,
     ) : PersistedDelta
+
+    @Serializable
+    @SerialName("sleep")
+    data class Sleep(val before: PersistedSleep? = null, val after: PersistedSleep) : PersistedDelta
 
     @Serializable
     @SerialName("noOp")
