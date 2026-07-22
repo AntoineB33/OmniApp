@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import org.example.project.scheduler.platform.Diagnostics
 
 /**
  * PRD §15 / ARCHITECTURE.md §8: receives the pause-cue data push — the only server→device channel (never a
@@ -19,12 +20,16 @@ class PauseCueMessagingService : FirebaseMessagingService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onNewToken(token: String) {
+        Diagnostics.log("FCM onNewToken (${token.take(12)}…); registering with backend")
         val host = SchedulerHolder.ensure(applicationContext)
         scope.launch { runCatching { host.vm.pauseCue?.registerPushToken("phone", "fcm", token) } }
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
         val data = message.data
+        Diagnostics.log(
+            "FCM message received: type=${data["type"]} action=${data["action"]} due_at=${data["due_at"]}",
+        )
         if (data["type"] != "pause_cue") return
         val action = data["action"] ?: return
         val dueAtMillis =

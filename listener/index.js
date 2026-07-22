@@ -34,6 +34,19 @@ const EDGE_BASE_URL = process.env.EDGE_BASE_URL ?? `${SUPABASE_URL}/functions/v1
 const ACCOUNT_REFRESH_MS = 60_000;
 // Fire the Edge push this long before the break end, so the phone schedules its exact local alarm at d.
 const CUE_LEAD_MS = 1_000;
+// A presence meta counts as a LIVE device only if its real-clock heartbeat stamp (`published_at_ms`) is within
+// this window. Ghost connections — left by every reconnect and by past app runs that rejoin under a new
+// device_id — keep their (frozen or absent) stamp and are ignored, so the account can actually reach "idle".
+// Must comfortably exceed the client's presence re-publish interval (prod beat: 60 s phone / 30 s desktop).
+const PRESENCE_STALE_MS = 150_000;
+// Re-run evaluate() for every watched account on this cadence, INDEPENDENTLY of Realtime presence events. The
+// staleness filter above can only age a ghost out when evaluate actually runs, but a device that stops
+// heart-beating without a clean `untrack` (phone suspended on lock/close before it can leave) produces NO
+// presence event — so without this tick the account would stay "active" against a frozen meta forever and the
+// cue would never fire (the observed "closed both devices, no voice message" bug). The tick makes idle
+// detection a function of the clock, not of whether Phoenix delivered a leave. Cheap: an already-armed account
+// short-circuits before touching the DB (see evaluate()).
+const EVALUATE_TICK_MS = 10_000;
 
 function requireEnv(name) {
   const v = process.env[name];
@@ -55,6 +68,10 @@ async function main() {
   console.log("omniapp-listener starting");
   await refreshAccounts();
   setInterval(() => refreshAccounts().catch((e) => console.error("account refresh failed:", e)), ACCOUNT_REFRESH_MS);
+  // Clock-driven re-evaluation: catch stale devices that never sent a leave (see EVALUATE_TICK_MS).
+  setInterval(() => {
+    for (const userId of accounts.keys()) evaluate(userId).catch((e) => console.error(`tick ${userId} failed:`, e));
+  }, EVALUATE_TICK_MS);
 }
 
 // Subscribe to any account we're not already watching. We use the service-role admin API to enumerate ALL
@@ -80,6 +97,10 @@ function watchAccount(userId) {
     channel: null,
     timer: null,
     pushedDueAt: null,
+    // The instant a one-shot timer is currently armed for (null when no timer). Lets the periodic tick detect
+    // "already scheduled for this instant" and NOT re-arm the timer every tick — re-arming would reset a timer
+    // whose fire time is further out than the tick interval, so a long break would never fire.
+    scheduledDueAt: null,
     lastBreakEndMs: null,
     // { startMs, lenMs } — the last rest-pose window any present device published (PRD §15).
     lastBreakWindow: null,
@@ -114,9 +135,23 @@ async function evaluate(userId) {
   if (!state?.channel) return;
 
   const presence = state.channel.presenceState(); // { key: [ { device_id, kind, next_break_end_ms, ... } ] }
-  const deviceMetas = Object.entries(presence)
-    .filter(([key]) => key !== "listener")
-    .flatMap(([, metas]) => metas);
+  const nowMs = Date.now();
+  // Presence metas accumulate GHOST entries: every reconnect (and every past app run, which rejoins with a new
+  // device_id) leaves a stale connection that lingers until its heartbeat times out. Counting them all made the
+  // account look perpetually active (seen: "191 device(s) active"), so the cue never fired. Trust a meta only
+  // if it carries a FRESH real-clock `published_at_ms` (live clients re-stamp every beat; a ghost's stamp is
+  // frozen or, for a pre-heartbeat client, absent), then keep only the freshest meta per device_id.
+  const freshByDevice = new Map();
+  for (const [key, metas] of Object.entries(presence)) {
+    if (key === "listener") continue;
+    for (const m of metas) {
+      const ts = m.published_at_ms == null ? null : Number(m.published_at_ms);
+      if (ts == null || !Number.isFinite(ts) || nowMs - ts > PRESENCE_STALE_MS) continue;
+      const prev = freshByDevice.get(m.device_id);
+      if (prev == null || ts > Number(prev.published_at_ms)) freshByDevice.set(m.device_id, m);
+    }
+  }
+  const deviceMetas = [...freshByDevice.values()];
 
   // Visible feedback: log whenever the number of active devices changes.
   if (state.lastActiveCount !== deviceMetas.length) {
@@ -150,9 +185,28 @@ async function evaluate(userId) {
     return;
   }
 
-  // The account just went fully idle: anchor the disconnect-start to NOW (the real instant the last device
-  // left; on a listener restart into an already-idle account this is conservatively the restart instant).
+  // The account just went fully idle: anchor the disconnect-start to NOW (the real instant we OBSERVED the last
+  // device gone — a clean leave on the same beat, else the periodic tick that first noticed the stale meta; on
+  // a listener restart into an already-idle account this is conservatively the restart instant). The break end
+  // is measured from here, so a fast-break cue fires `len` after we notice idle, not `len` after the frozen
+  // stamp (which for a short break is already in the past → would suppress the cue entirely).
   if (state.disconnectStartMs == null) state.disconnectStartMs = Date.now();
+
+  // PRD §15 server-side computation: pause end = max(disconnectStart, poseStart) + poseLength. Falls back
+  // to the client-projected `next_break_end_ms` for clients that don't publish the window yet.
+  const w = state.lastBreakWindow;
+  const target = w != null
+    ? Math.max(state.disconnectStartMs, w.startMs) + w.lenMs
+    : state.lastBreakEndMs;
+  if (target == null || target <= Date.now()) {
+    clearScheduled(userId, false);
+    return;
+  }
+
+  // Already armed or already pushed for this exact instant → nothing to do. Return BEFORE the account_state
+  // query so the 10 s tick doesn't hammer the DB for every idle account each cycle (only the transition, and
+  // any window change, hits the DB).
+  if (state.pushedDueAt === target || (state.timer != null && state.scheduledDueAt === target)) return;
 
   // Nobody active. Suppress while the user is deliberately away (Sleep pressed and wake not yet reached).
   const { data: acct } = await supabase
@@ -166,27 +220,18 @@ async function evaluate(userId) {
     return;
   }
 
-  // PRD §15 server-side computation: pause end = max(disconnectStart, poseStart) + poseLength. Falls back
-  // to the client-projected `next_break_end_ms` for clients that don't publish the window yet.
-  const w = state.lastBreakWindow;
-  const target = w != null
-    ? Math.max(state.disconnectStartMs, w.startMs) + w.lenMs
-    : state.lastBreakEndMs;
-  if (target == null || target <= Date.now()) {
-    clearScheduled(userId, false);
-    return;
-  }
-
   scheduleCue(userId, target, w?.lenMs ?? null);
 }
 
 function scheduleCue(userId, dueAtMs, breakLenMs) {
   const state = accounts.get(userId);
   if (!state) return;
-  if (state.pushedDueAt === dueAtMs) return; // already scheduled for this instant
+  if (state.pushedDueAt === dueAtMs) return; // already pushed for this instant
+  if (state.timer != null && state.scheduledDueAt === dueAtMs) return; // already armed for this instant
   clearScheduled(userId, false);
 
   const fireInMs = Math.max(0, dueAtMs - CUE_LEAD_MS - Date.now());
+  state.scheduledDueAt = dueAtMs;
   state.timer = setTimeout(
     () => fireCue(userId, dueAtMs, breakLenMs).catch((e) => console.error(`fire ${userId} failed:`, e)),
     fireInMs,
@@ -198,6 +243,7 @@ async function fireCue(userId, dueAtMs, breakLenMs) {
   const state = accounts.get(userId);
   if (!state) return;
   state.timer = null;
+  state.scheduledDueAt = null;
 
   // Re-check: a device may have become active during the wait.
   const presence = state.channel.presenceState();
@@ -218,6 +264,7 @@ function clearScheduled(userId, pushCancel) {
     clearTimeout(state.timer);
     state.timer = null;
   }
+  state.scheduledDueAt = null;
   if (pushCancel && state.pushedDueAt != null && state.pushedDueAt > Date.now()) {
     // Cancel on every phone the schedule was fanned out to.
     invokeEdge(userId, "*", "cancel", null, null)

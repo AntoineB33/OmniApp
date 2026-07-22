@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import org.example.project.scheduler.platform.Diagnostics
 
 /**
  * PRD §15 / ARCHITECTURE.md §8: the Android impl of the engine's local pause-cue seam
@@ -28,10 +29,14 @@ object PauseCueScheduler {
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val pi = pendingIntent(context)
         if (dueAtMillis == null) {
+            Diagnostics.log("pause-cue OS alarm cancelled")
             am.cancel(pi)
             return
         }
         val canExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()
+        Diagnostics.log(
+            "pause-cue OS alarm scheduled for ${Diagnostics.formatInstant(dueAtMillis)} (exact=$canExact)",
+        )
         if (canExact) {
             am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, dueAtMillis, pi)
         } else {

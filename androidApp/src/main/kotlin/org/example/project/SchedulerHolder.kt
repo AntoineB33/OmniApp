@@ -12,6 +12,7 @@ import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.persistence.AndroidSchedulerStoreHolder
 import org.example.project.scheduler.platform.AndroidForegroundTracker
 import org.example.project.scheduler.platform.AndroidUnlockTracker
+import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.scheduler.persistence.ActiveSessionStore
 import org.example.project.scheduler.persistence.DeviceSleepGapStore
 import org.example.project.scheduler.persistence.SleepScanCheckpointStore
@@ -106,11 +107,17 @@ object SchedulerHolder {
      * [FirebaseMessaging] has no default app), so a build without a Firebase project still runs.
      */
     private fun registerFcmToken(vm: TaskSchedulerViewModel) {
-        val pauseCue = vm.pauseCue ?: return
-        runCatching {
-            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
-                scope.launch { runCatching { pauseCue.registerPushToken("phone", "fcm", token) } }
-            }
+        val pauseCue = vm.pauseCue ?: run {
+            Diagnostics.log("FCM token registration skipped: pause-cue gateway unavailable (signed out / sync off)")
+            return
         }
+        runCatching {
+            FirebaseMessaging.getInstance().token
+                .addOnSuccessListener { token ->
+                    Diagnostics.log("FCM token acquired (${token.take(12)}…); registering with backend")
+                    scope.launch { runCatching { pauseCue.registerPushToken("phone", "fcm", token) } }
+                }
+                .addOnFailureListener { Diagnostics.log("FCM token fetch FAILED: ${it.message}") }
+        }.onFailure { Diagnostics.log("FCM token registration skipped (Firebase unavailable): ${it.message}") }
     }
 }

@@ -686,21 +686,34 @@ class SchedulerEngine(
         val presence = realtimePresence ?: return
         val active = effectiveScreenActive() && gateway.signedIn
         val now = clock.nowMillis()
-        val window = nextRestPoseWindowMillis(vm.state.value.panels, vm.state.value.screenBreaks, now)
+        // Compute the next rest-pose window LIVE from the screen-break config, NOT from the (possibly stale)
+        // stored `state.panels`. For the listener's pause cue we must publish the pose the user is waiting on
+        // right now: an overdue/decoupled pose rides the now-line (`maxOf(due, now)`). Reading stored panels
+        // instead dropped that (short, fast-break) now-line break as soon as its window elapsed and substituted
+        // a far-future sleep-anchored occurrence, so the listener aimed the cue hours out. See
+        // RestPosePresenceWindowTest.
+        val window = nextRestPoseWindowMillis(vm.state.value.screenBreaks, now)?.let { (start, len) ->
+            // A dragging (overdue) pose is waiting NOW, so report its start on the REAL wall clock: the
+            // real-time listener's `max(disconnect, start)` then anchors to the true disconnect instant even
+            // when this device runs an accelerated debug/sim clock (a sim-ahead `now` must not push the cue
+            // past the real disconnect). A genuinely-future pose keeps its computed start.
+            val reportedStart = if (start <= now) SystemAppClock.nowMillis() else start
+            reportedStart to len
+        }
         presence.setPresence(
             if (active) {
                 PresenceState(
                     deviceId = gateway.deviceId,
                     kind = deviceKind.name.lowercase(),
-                    nextBreakEndMillis = nextRestPoseEndMillis(
-                        vm.state.value.panels,
-                        vm.state.value.screenBreaks,
-                        now,
-                    ),
+                    // Legacy field (older listeners): the end of that same window = start + length.
+                    nextBreakEndMillis = window?.let { it.first + it.second },
                     // PRD §15: the pose window, so the listener computes the pause end from the REAL
                     // disconnect instant (`max(disconnectStart, start) + len`).
                     nextBreakStartMillis = window?.first,
                     nextBreakLenMillis = window?.second,
+                    // Real-clock liveness heartbeat (refreshed every beat) so the listener can drop stale ghost
+                    // presence entries; must be REAL time (not the sim clock) since the listener runs real time.
+                    publishedAtMillis = SystemAppClock.nowMillis(),
                 )
             } else {
                 null
@@ -1186,6 +1199,10 @@ class SchedulerEngine(
      * speaking.
      */
     fun onPauseCuePush(action: String, dueAtMillis: Long?) {
+        Diagnostics.log(
+            "pause-cue push handled: action=$action due_at=" +
+                (dueAtMillis?.let { Diagnostics.formatInstant(it) } ?: "null"),
+        )
         when (action) {
             "schedule" -> if (dueAtMillis != null) scheduleLocalPauseCue(dueAtMillis)
             "cancel" -> scheduleLocalPauseCue(null)
@@ -1216,35 +1233,26 @@ class SchedulerEngine(
 
     companion object {
         /**
-         * PRD §15: the end instant of the next 5/15-min rest pose strictly after [now], or null if none is
-         * scheduled — the `next_break_end_ms` this device publishes in its Realtime presence so the external
-         * listener can fire the pause-end cue at that instant. A pose is a `screenBreak` panel whose title matches
-         * a `restBreak` screen break.
-         */
-        internal fun nextRestPoseEndMillis(panels: List<TaskPanel>, screenBreaks: List<ScreenBreak>, now: Long): Long? =
-            panels.asSequence()
-                .filter { p -> p.screenBreak && screenBreaks.any { it.restBreak && it.title == p.title } }
-                .map { it.endEpochMillis }
-                .filter { it > now }
-                .minOrNull()
-
-        /**
-         * PRD §15 (server-side break computation): the drawn `(start, length)` window of the next 5/15-min
-         * rest pose whose end is still ahead of [now], or null when none is scheduled. An overdue-unserved
-         * pose rides the now-line (`start == now`), so a start at/before the publish instant tells the
-         * listener the break is already WAITING — it then fires the cue at
-         * `max(disconnectStart, start) + length`, anchored to the REAL instant the last device left.
+         * PRD §15 (server-side break computation): the `(start, length)` window of the next 5/15-min rest pose
+         * as of [now], computed LIVE from the [screenBreaks] config — the value this device publishes in its
+         * Realtime presence so the external listener can time the pause-end cue as
+         * `max(disconnectInstant, start) + length`, or null when no rest pose is configured.
+         *
+         * Each rest pose's live start is [SchedulerDomain.screenBreakNextStart] = `maxOf(lastRest + interval,
+         * now)`, so an overdue/decoupled pose rides the now-line (`start == now`) — telling the listener the
+         * break is already WAITING — and the earliest-starting pose wins. Deliberately NOT derived from
+         * `state.panels`: that frozen snapshot's short (fast-break) now-line break expires within seconds and is
+         * then replaced there by a far-future sleep-anchored occurrence, which the listener would mistime the
+         * cue to (hours out). See RestPosePresenceWindowTest.
          */
         internal fun nextRestPoseWindowMillis(
-            panels: List<TaskPanel>,
             screenBreaks: List<ScreenBreak>,
             now: Long,
         ): Pair<Long, Long>? =
-            panels.asSequence()
-                .filter { p -> p.screenBreak && screenBreaks.any { it.restBreak && it.title == p.title } }
-                .filter { it.endEpochMillis > now }
-                .minByOrNull { it.startEpochMillis }
-                ?.let { it.startEpochMillis to (it.endEpochMillis - it.startEpochMillis) }
+            screenBreaks.asSequence()
+                .filter { it.restBreak && it.intervalMillis > 0 && it.durationMillis > 0 && it.title.isNotBlank() }
+                .map { SchedulerDomain.screenBreakNextStart(it, now) to it.durationMillis }
+                .minByOrNull { it.first }
 
         /**
          * PRD §15: the gate for the phone's "pause finished" voice cue — true only when this is the phone, a

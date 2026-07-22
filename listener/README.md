@@ -100,17 +100,18 @@ Fly stores these encrypted and injects them as env vars — they never touch thi
 
 ### 5. Deploy at 256 MB and confirm it's alive
 
-Deploy with **`--vm-memory 256`** — the launch default is 1 GB (~$5.70/mo, over Fly's waived threshold),
-but this worker uses ~50 MB, so 256 MB (~$2/mo) keeps you under the **$5/mo Fly does not invoice** → it's
-effectively free:
+`fly.toml` pins the machine to **256 MB** (`[[vm]] memory = '256mb'`), so a plain `flyctl deploy` reads that
+and deploys at 256 MB — no flag needed. This matters because the launch default is 1 GB (~$5.70/mo, over
+Fly's waived threshold), but this worker uses ~50 MB, so 256 MB (~$2/mo) keeps you under the **$5/mo Fly
+does not invoice** → it's effectively free:
 
 ```powershell
-flyctl deploy --vm-memory 256
+flyctl deploy
 flyctl logs
 ```
 
 You should see `omniapp-listener starting` in the logs. It now runs 24/7. To update it later (after pulling
-new code), just run `flyctl deploy --vm-memory 256` again from `listener/`.
+new code), just run `flyctl deploy` again from `listener/`.
 
 > **Just want a quick local sanity check first?** Run it in the foreground on your desktop — but remember
 > this dies when the machine sleeps, so it only proves the code connects, not the closed-computer scenario:

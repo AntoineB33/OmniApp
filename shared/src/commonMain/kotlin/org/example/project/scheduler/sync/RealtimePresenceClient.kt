@@ -3,11 +3,15 @@ package org.example.project.scheduler.sync
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
+import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -44,6 +48,14 @@ data class PresenceState(
     val nextBreakStartMillis: Long? = null,
     /** PRD §15: the length of that pose (`end − start`) — also the "waiting break" length for the cue. */
     val nextBreakLenMillis: Long? = null,
+    /**
+     * A REAL wall-clock heartbeat stamp (epoch millis, [org.example.project.time.SystemAppClock]), refreshed
+     * on every publish. It lets the external listener tell a LIVE device (re-stamps each beat) from a stale
+     * GHOST presence entry left by a dropped/reconnected connection (stamp frozen) — the listener treats a
+     * device as active only when its freshest stamp is recent. Without it a pile of ghost connections keeps the
+     * account looking perpetually active and the pause cue never fires. `0` only in tests.
+     */
+    val publishedAtMillis: Long = 0L,
 )
 
 /**
@@ -177,6 +189,20 @@ class RealtimePresenceClient(
             } finally {
                 heartbeat.cancel()
                 publisher.cancel()
+                // PRD §15: locking the phone cuts this socket (setPresence(null) → [supervise] cancels
+                // [serve]). Send an EXPLICIT presence `untrack` + a clean WebSocket close BEFORE the transport
+                // tears down, so Phoenix broadcasts our leave to the external listener INSTANTLY — rather than
+                // only when it eventually times out our missed heartbeats (tens of seconds later, during which
+                // the account still looks active and the pause cue never fires). We reach here almost always via
+                // cancellation, so the sends run under [NonCancellable]; the session is still open at this point
+                // (the deliberate inactive transition), and [runCatching] swallows the case where it isn't
+                // (a real network drop — nothing to send, and Phoenix will time us out anyway).
+                withContext(NonCancellable) {
+                    runCatching {
+                        sendMutex.withLock { send(Frame.Text(RealtimePhoenix.untrackFrame(topic, joinRef, ++ref))) }
+                        close(CloseReason(CloseReason.Codes.NORMAL, "inactive"))
+                    }.onFailure { Diagnostics.log("realtime presence clean-leave skipped: ${it.message}") }
+                }
             }
         }
     }
@@ -286,6 +312,9 @@ internal object RealtimePhoenix {
                 // client-projected end. Kept alongside `next_break_end_ms` for older listeners.
                 if (state.nextBreakStartMillis != null) put("next_break_start_ms", state.nextBreakStartMillis) else put("next_break_start_ms", JsonNull)
                 if (state.nextBreakLenMillis != null) put("next_break_len_ms", state.nextBreakLenMillis) else put("next_break_len_ms", JsonNull)
+                // Real-clock liveness heartbeat: the listener ignores a presence meta whose stamp is stale, so
+                // ghost connections left by reconnects/past runs stop counting as active devices.
+                put("published_at_ms", state.publishedAtMillis)
             }
         }
 

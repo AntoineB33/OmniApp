@@ -388,8 +388,13 @@ open class SchedulerSyncEngine(
     }
 
     override suspend fun registerPushToken(kind: String, platform: String, token: String) {
-        val current = session ?: return
+        val current = session ?: run {
+            Diagnostics.log("push token NOT registered ($platform): signed out")
+            return
+        }
         runCatching { withAuth(current) { client.upsertPushToken(it, meta().deviceId, kind, platform, token) } }
+            .onSuccess { Diagnostics.log("push token registered with backend ($platform, ${token.take(12)}…)") }
+            .onFailure { Diagnostics.log("push token registration FAILED ($platform): ${it.message}") }
     }
 
     override suspend fun publishAccountState(sleeping: Boolean, wakeAtMillis: Long?) {

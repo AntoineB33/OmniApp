@@ -56,6 +56,7 @@ class RealtimePhoenixTest {
             nextBreakEndMillis = 1_800_000_000_000L,
             nextBreakStartMillis = 1_799_999_100_000L,
             nextBreakLenMillis = 900_000L,
+            publishedAtMillis = 1_799_999_200_000L,
         )
         val frame = json.parseToJsonElement(
             RealtimePhoenix.trackFrame(topic = "realtime:presence:u1", joinRef = 1, state = state, ref = 3),
@@ -73,6 +74,8 @@ class RealtimePhoenixTest {
         // PRD §15 server-side break computation: the pose window rides along.
         assertEquals(1_799_999_100_000L, inner["next_break_start_ms"]!!.jsonPrimitive.content.toLong())
         assertEquals(900_000L, inner["next_break_len_ms"]!!.jsonPrimitive.content.toLong())
+        // Real-clock liveness heartbeat used by the listener to drop stale ghost presence.
+        assertEquals(1_799_999_200_000L, inner["published_at_ms"]!!.jsonPrimitive.content.toLong())
     }
 
     @Test
