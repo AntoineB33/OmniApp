@@ -216,6 +216,13 @@ data class SchedulerState(
      */
     val chores: List<ChoreEntry> = emptyList(),
     /**
+     * PRD §18 Alarms: the alarms the account's phones ring at (edited in the left-menu Alarms window).
+     * Authoritative user data — persisted **and synced**, like the reminders and the sleep schedule; each
+     * phone arms its own OS-level alarm from this list, so a ring needs no server round-trip. Empty by
+     * default (a fresh account has no alarm).
+     */
+    val alarms: List<org.example.project.scheduler.model.AlarmEntry> = emptyList(),
+    /**
      * PRD §15 Screen breaks: the periodic screen breaks to weave into the auto schedule. A hardcoded set in
      * production (seeded by [org.example.project.scheduler.ui.TaskSchedulerViewModel] from
      * [org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SCREEN_BREAKS]); empty by default so the

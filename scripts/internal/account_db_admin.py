@@ -13,9 +13,11 @@ Three subcommands, all taking a username + password (the username is an arbitrar
                          after a migration the table exists in Postgres but PostgREST answers PGRST205 until
                          it reloads its schema cache, so --wait polls through that lag instead of failing.
   empty  <user> <pass>   Sign in, then DELETE this account's synced data so every device for it goes
-                         empty -- the `scheduler_snapshot` row, all `device_presence` rows, all
-                         `device_sleep_gap` rows, and all `device_active_session` rows. It deliberately does
-                         NOT clear `account_logout`: that marker must survive so the running apps still see it.
+                         empty -- the `scheduler_snapshot` row, the `device_heartbeat` presence rows, the
+                         `pause_cue_schedule` bookkeeping, all `device_active_session` rows, and the retired
+                         `device_presence` / `device_sleep_gap` rows. It deliberately does NOT clear
+                         `account_logout` (that marker must survive so the running apps still see it) nor
+                         `app_config` / `break_config` (operator tuning set over HTTP, not account data).
 
 Config comes from the environment (the .bat exports it from accounts.env), falling back to the public
 values baked into shared SupabaseConfig.kt:
@@ -151,14 +153,25 @@ def cmd_empty(user, password):
     base, key, domain = cfg()
     email = username_to_email(user, domain)
     token, uid = sign_in(base, key, email, password)
-    for table in ("scheduler_snapshot", "device_presence", "device_sleep_gap", "device_active_session"):
+    # device_heartbeat is the presence table and pause_cue_schedule the cue bookkeeping (PRD §15): a stale
+    # unclaimed presence row left behind would make the emptied account read as "idle" on the next server tick
+    # and fire a pause cue for data that no longer exists. device_presence / device_sleep_gap are retired
+    # tables, kept here so an older project still gets cleaned. app_config / break_config are deliberately NOT
+    # cleared: they are operator tuning set over HTTP (t_a, break lengths/messages), not account data.
+    for table in (
+        "scheduler_snapshot",
+        "device_heartbeat",
+        "pause_cue_schedule",
+        "device_presence",
+        "device_sleep_gap",
+        "device_active_session",
+    ):
         url = "{}/rest/v1/{}?user_id=eq.{}".format(base, table, uid)
         status, payload = _request("DELETE", url, key, token=token)
         if status in (200, 204):
             print("    Cleared {} for {}.".format(table, email))
             continue
         # A missing table just means there is no such data to clear -- not a failure.
-        # device_presence (PRD §15) is optional and may not exist in every project.
         code = payload.get("code") if isinstance(payload, dict) else None
         if status == 404 or code == "PGRST205":
             print("    Skipped {} (table not present; nothing to clear).".format(table))

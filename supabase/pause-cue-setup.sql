@@ -41,8 +41,14 @@ begin
 end;
 $$;
 
--- Pause-cue tick cron (RESTORED, heartbeat-driven — the external Realtime listener is retired, see /listener's
--- removal and migration 20260723000000). `tick_pause_cues()` polls the device_heartbeat table and fires the
--- pause-cue Edge Function when an account goes idle. Sub-minute scheduling: pg_cron on Supabase accepts an
--- interval string like '10 seconds' (pg_cron ≥ 1.5). cron.schedule upserts by jobname, so re-running is safe.
-select cron.schedule('pause-cue-tick', '10 seconds', $$ select public.tick_pause_cues() $$);
+-- Pause-cue tick cron — this is **`t_b`** (migration 20260724000000): every minute, one fast grouped query over
+-- the presence table (`device_heartbeat`) hands each idle account to the `pause-cue` Edge Function, which owns
+-- the decision. `t_b` is the *detection* granularity only: the cue instant itself is computed from the
+-- server-stamped presence time (`t2 = beat_at + t_a/2`), so it does not drift with which tick noticed — and a
+-- clean screen-off short-circuits the wait by calling the Edge Function directly.
+--
+-- pg_cron on Supabase accepts both cron syntax and an interval string like '10 seconds' (pg_cron ≥ 1.5).
+-- cron.schedule upserts by jobname, so re-running is safe; to change `t_b`, edit the interval here and re-run
+-- scripts/deploy-supabase.bat. (`t_a` and the break lengths/messages are per-account rows changed over HTTP —
+-- see docs/PAUSE_CUE_DELIVERY.md — no redeploy needed.)
+select cron.schedule('pause-cue-tick', '1 minute', $$ select public.tick_pause_cues() $$);

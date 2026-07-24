@@ -402,20 +402,27 @@ open class SchedulerSyncEngine(
         runCatching { withAuth(current) { client.upsertAccountState(it, sleeping, wakeAtMillis) } }
     }
 
-    override suspend fun publishHeartbeat(state: PresenceState, closed: Boolean) {
-        val current = session ?: return
-        runCatching {
+    override suspend fun publishPresence(state: PresenceState): Int? {
+        val current = session ?: return null
+        return runCatching {
             withAuth(current) {
-                client.upsertHeartbeat(
+                client.publishPresence(
                     session = it,
                     deviceId = meta().deviceId,
                     kind = state.kind,
+                    nextBreakKind = state.nextBreakKind,
                     nextBreakStartMs = state.nextBreakStartMillis,
                     nextBreakLenMs = state.nextBreakLenMillis,
                     nextBreakEndMs = state.nextBreakEndMillis,
-                    closed = closed,
                 )
             }
-        }
+        }.getOrNull()
+    }
+
+    override suspend fun notifyScreenOff() {
+        val current = session ?: return
+        runCatching { withAuth(current) { client.notifyScreenOff(it, meta().deviceId) } }
+            .onSuccess { Diagnostics.log("screen off reported to pause-cue function") }
+            .onFailure { Diagnostics.log("screen-off report FAILED: ${it.message}") }
     }
 }

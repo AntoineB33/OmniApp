@@ -7,10 +7,10 @@ package org.example.project.scheduler.sync
  * device's push token. Implemented by [SchedulerSyncEngine] (which owns the Supabase session); `null`/dormant
  * when sync is disabled or signed out. Injectable so the engine can be tested with a fake.
  *
- * The cue's *timing* decision stays off the client: every active device upserts a `device_heartbeat` row, and
- * the server's `tick_pause_cues()` cron (migration 20260723000000) invokes the pause-cue Edge Function when the
- * account goes idle and is not sleeping. The phone only receives the push ([SchedulerEngine.onPauseCuePush]) and
- * schedules the OS-local cue itself. (This replaced the external Realtime-presence listener.)
+ * The cue's *timing* decision stays off the client: every active device writes its presence row every `t_a`, the
+ * `t_b` cron (`tick_pause_cues()`) spots an account whose newest beat is older than `2·t_a`, and the `pause-cue`
+ * Edge Function ("e1") evaluates + claims + pushes (migration 20260724000000). The phone only receives the push
+ * ([SchedulerEngine.onPauseCuePush]) and schedules the OS-local cue itself.
  */
 interface PauseCueGateway {
     /** Whether a signed-in session is available (all calls are no-ops otherwise). */
@@ -45,13 +45,22 @@ interface PauseCueGateway {
     suspend fun registerPushToken(kind: String, platform: String, token: String)
 
     /**
-     * Upserts this device's `device_heartbeat` row (migration 20260723000000). While the device is active
-     * [DeviceHeartbeatPublisher] calls this on a fixed interval with `closed = false` (the server stamps
-     * `beat_at`, the liveness signal); on the inactive transition it calls it once with `closed = true`
-     * (carrying the last-known break window) — the explicit "device locked" signal the cron detects next tick.
-     * Best-effort; a no-op while signed out.
+     * The **`t_a` tick** (migration 20260724000000): upserts this device's row in the presence table
+     * (`device_heartbeat`) via the `publish_presence` RPC while the device is unlocked + signed in. The server
+     * stamps the row's time and clears its `data_payload_sent` claim flag.
+     *
+     * Returns the account's current `t_a` in **seconds** so [DeviceHeartbeatPublisher] re-paces itself when it
+     * is changed over HTTP (null ⇒ keep the current pacing — signed out, or the call failed). Best-effort.
      */
-    suspend fun publishHeartbeat(state: PresenceState, closed: Boolean)
+    suspend fun publishPresence(state: PresenceState): Int?
+
+    /**
+     * PRD §15 clean screen-off: this device's screen just went off, so it stopped its `t_a` tick — tell **e1**
+     * (the `pause-cue` Edge Function) directly, so it can evaluate the account NOW rather than waiting for the
+     * next `t_b` cron tick to notice the missing beats. e1 excludes this device from the liveness check. A no-op
+     * while signed out; best-effort (the stale presence row is the backstop when the app is killed outright).
+     */
+    suspend fun notifyScreenOff()
 
     /**
      * Emits after every Sync-button reconcile (any outcome) — the only moment peer active-session rows can

@@ -1043,16 +1043,38 @@ object SchedulerDomain {
     // ----- PRD §15 Screen breaks -----------------------------------------------------------------
 
     /**
+     * PRD §15: the stable [ScreenBreak.key]s. The two *break types* the server knows about — `break_config` rows,
+     * the value a device publishes in its presence row, and the `break_kind` the cue push carries (migration
+     * 20260724000000). The look-away has a key for symmetry only: it is served locally and never cued remotely.
+     */
+    const val LOOK_AWAY_KEY: String = "look_away"
+    const val FIVE_MIN_BREAK_KEY: String = "5min_break"
+    const val FIFTEEN_MIN_BREAK_KEY: String = "15min_break"
+
+    /**
      * PRD §15: the hardcoded set of screen breaks — periodic activities placed on the calendar with a real
      * spanning time. The §9 fill weaves them in without letting them reduce the surrounding task's minimum.
      */
     val DEFAULT_SCREEN_BREAKS: List<ScreenBreak> = listOf(
         // The 20-20-20 micro-break: after a ≥20-second pause, the next look-away is due 20 min later.
-        ScreenBreak("look 20 feet away", intervalMillis = 20L * 60_000, durationMillis = 20L * 1_000),
+        ScreenBreak("look 20 feet away", intervalMillis = 20L * 60_000, durationMillis = 20L * 1_000, key = LOOK_AWAY_KEY),
         // The rest poses: after a pause of at least their length, the next one is due an interval later. The
-        // 5-min pose merges up into the 15-min pose when their windows would overlap (PRD §15).
-        ScreenBreak("take a 5min pose and blink hard", intervalMillis = 60L * 60_000, durationMillis = 5L * 60_000, restBreak = true),
-        ScreenBreak("take a 15min pose", intervalMillis = 2L * 60L * 60_000, durationMillis = 15L * 60_000, restBreak = true),
+        // 5-min pose merges up into the 15-min pose when their windows would overlap (PRD §15). Their [key]s are
+        // the two break types the server configures (`break_config`) and the phone cue names.
+        ScreenBreak(
+            "take a 5min pose and blink hard",
+            intervalMillis = 60L * 60_000,
+            durationMillis = 5L * 60_000,
+            restBreak = true,
+            key = FIVE_MIN_BREAK_KEY,
+        ),
+        ScreenBreak(
+            "take a 15min pose",
+            intervalMillis = 2L * 60L * 60_000,
+            durationMillis = 15L * 60_000,
+            restBreak = true,
+            key = FIFTEEN_MIN_BREAK_KEY,
+        ),
     )
 
     /**

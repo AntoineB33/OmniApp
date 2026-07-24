@@ -28,13 +28,15 @@ class PauseCueMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         val data = message.data
         Diagnostics.log(
-            "FCM message received: type=${data["type"]} action=${data["action"]} due_at=${data["due_at"]}",
+            "FCM message received: type=${data["type"]} action=${data["action"]} due_at=${data["due_at"]} " +
+                "break=${data["break_kind"]} cue=${data["voice_cue"]}",
         )
         if (data["type"] != "pause_cue") return
         val action = data["action"] ?: return
         val dueAtMillis =
             data["due_at"]?.takeIf { it.isNotBlank() }
                 ?.let { runCatching { Instant.parse(it).toEpochMilliseconds() }.getOrNull() }
-        SchedulerHolder.ensure(applicationContext).engine.onPauseCuePush(action, dueAtMillis)
+        SchedulerHolder.ensure(applicationContext).engine
+            .onPauseCuePush(action, dueAtMillis, data["voice_cue"])
     }
 }

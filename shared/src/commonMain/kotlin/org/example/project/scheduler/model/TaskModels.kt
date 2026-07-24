@@ -189,6 +189,14 @@ data class ScreenBreak(
      * after a long (e.g. ≥2-hour) real pause. Read everywhere through [qualifyingPauseMillis], never directly.
      */
     val pauseThresholdMillis: Long = 0L,
+    /**
+     * PRD §15: the STABLE identifier of this break type — `"look_away"` / `"5min_break"` / `"15min_break"`.
+     * The [title] is display text and the durations move under the debug fast-break knobs, so neither can name
+     * a break across the wire; this can. It is what a device publishes in its presence row so the server can
+     * look the break's configured length + vocal message up in `break_config` (both changeable over HTTP —
+     * migration 20260724000000). Blank on an ad-hoc break, which simply has no server-side configuration.
+     */
+    val key: String = "",
 ) {
     /**
      * The minimum pause length that anchors this pose (sets [lastRestMillis]). It is [pauseThresholdMillis]
@@ -197,6 +205,47 @@ data class ScreenBreak(
      */
     val qualifyingPauseMillis: Long
         get() = if (pauseThresholdMillis > 0L) pauseThresholdMillis else durationMillis
+}
+
+/**
+ * An **alarm** (PRD §18): a wall-clock time of day at which every phone signed in to the account rings.
+ *
+ * Authoritative user data — it is edited in the Alarms window (left menu), persisted and synced like the
+ * reminders/sleep schedule, and never re-derived. Each phone schedules the ring itself from this synced
+ * list (an OS-level exact alarm), so it fires offline and while the app is backgrounded/killed; the desktop
+ * only edits alarms (it never rings).
+ *
+ * [timeOfDayMinutes] is minutes since local midnight (`0..1439`), so the alarm follows the device's wall
+ * clock. [soundSeconds] is how long the alarm sound lasts, [vibrate] whether the phone also vibrates.
+ * A [repeatDaily] alarm rings every day at that time; a one-off disables itself once it has rung
+ * ([enabled] = false) so the row stays in the window and can be re-armed.
+ */
+data class AlarmEntry(
+    /** Stable identity (`alarm-{n}`), so a ring can name its alarm across devices and edits. */
+    val id: String,
+    val label: String = "",
+    val timeOfDayMinutes: Int = 0,
+    val soundSeconds: Int = DEFAULT_ALARM_SOUND_SECONDS,
+    val vibrate: Boolean = true,
+    val repeatDaily: Boolean = true,
+    val enabled: Boolean = true,
+) {
+    /**
+     * Whether this alarm can ever ring: armed, at a real time of day, and lasting a positive time.
+     * [soundSeconds] is the length of the whole ring — the sound, and the vibration alongside it.
+     */
+    val schedulable: Boolean
+        get() = enabled && timeOfDayMinutes in 0..<MINUTES_PER_DAY && soundSeconds > 0
+
+    companion object {
+        /** How long the alarm sound lasts by default. */
+        const val DEFAULT_ALARM_SOUND_SECONDS: Int = 30
+
+        /** Upper bound on [soundSeconds] (10 minutes) — long enough to wake, short enough to stop itself. */
+        const val MAX_ALARM_SOUND_SECONDS: Int = 600
+
+        const val MINUTES_PER_DAY: Int = 24 * 60
+    }
 }
 
 /**

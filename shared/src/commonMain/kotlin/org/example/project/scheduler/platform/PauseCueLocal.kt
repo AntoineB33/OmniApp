@@ -19,7 +19,7 @@ expect val localPauseCueDeliveryPlatform: Boolean
 /**
  * PRD §15 / ARCHITECTURE.md §8 requirements #2/#6 (iOS APNs): hand the platform the three callbacks its native
  * push layer needs — [registerApnsToken] to publish this phone's APNs token (`device_push_token`),
- * [onRemotePush] to act on a received `{action, due_at}` remote push, and [onForegrounded] (scenario #3) to
+ * [onRemotePush] to act on a received `{action, due_at, voice_cue}` remote push, and [onForegrounded] (#3) to
  * re-claim the account's last phone when the app becomes active (the Swift AppDelegate calls it from
  * `applicationDidBecomeActive`). `App()` calls this once after building the engine; only the iOS actual retains
  * them (for a Swift AppDelegate to invoke via `IosPushBridge`), every other platform is a no-op (Android routes
@@ -27,6 +27,6 @@ expect val localPauseCueDeliveryPlatform: Boolean
  */
 expect fun installPauseCuePushBridge(
     registerApnsToken: (token: String) -> Unit,
-    onRemotePush: (action: String, dueAtIso: String?) -> Unit,
+    onRemotePush: (action: String, dueAtIso: String?, voiceCue: String?) -> Unit,
     onForegrounded: () -> Unit,
 )

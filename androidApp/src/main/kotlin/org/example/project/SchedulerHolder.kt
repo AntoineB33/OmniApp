@@ -83,6 +83,13 @@ object SchedulerHolder {
                 // avoid a double-speak.
                 scheduleLocalPauseCue = { dueAtMillis -> PauseCueScheduler.apply(appContext, dueAtMillis) },
                 localPauseCueDelivery = true,
+                // PRD §18 Alarms: the phone arms its own exact OS alarm for the next ring in the synced alarm
+                // list (so it rings offline, dozing, or with the app killed) and rings it in a foreground
+                // service that plays the alarm ringtone for the configured length + vibrates.
+                scheduleDeviceAlarm = { armed -> AlarmClockScheduler.apply(appContext, armed) },
+                ringAlarm = { armed ->
+                    AlarmRingService.ring(appContext, armed.label, armed.soundSeconds, armed.vibrate)
+                },
             )
         engine.start()
         // PRD §15: an unlock/lock flip re-samples the activity beat at once, so the presence socket

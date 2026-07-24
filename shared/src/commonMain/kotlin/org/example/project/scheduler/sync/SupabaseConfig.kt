@@ -22,6 +22,13 @@ data class SupabaseConfig(
     /** Realtime WebSocket endpoint, e.g. `wss://<ref>.supabase.co/realtime/v1/websocket` (http→ws, https→wss). */
     val realtimeUrl: String get() = baseUrl.trimEnd('/').replaceFirst("http", "ws") + "/realtime/v1/websocket"
 
+    /**
+     * Edge Function endpoint base, e.g. `https://<ref>.supabase.co/functions/v1`. Used only for the clean
+     * screen-off short-circuit (PRD §15): the app calls `pause-cue` directly so the cue is armed at the lock
+     * instant instead of waiting for the next `t_b` cron tick.
+     */
+    val functionsUrl: String get() = "${baseUrl.trimEnd('/')}/functions/v1"
+
     companion object {
         /** The OmniApp Supabase project. */
         val DEFAULT =

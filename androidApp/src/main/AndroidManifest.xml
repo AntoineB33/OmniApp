@@ -8,6 +8,8 @@
     <!-- PRD §15: the pause-end voice cue fires as an exact AlarmManager alarm (PauseCueAlarmReceiver). -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- PRD §18 Alarms: an alarm may vibrate the phone alongside its sound (AlarmRingService). -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- PRD §15 (1.6.0): one-time first-startup prompt to exempt the app from Doze, so the foreground
          service can keep the presence WebSocket alive while the phone is unlocked (MainActivity). -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -79,6 +81,23 @@
             android:name=".PauseCueAlarmReceiver"
             android:enabled="true"
             android:exported="false" />
+
+        <!-- PRD §18 Alarms: fires at an alarm's instant; hands off to the engine, which rings + arms the next. -->
+        <receiver
+            android:name=".AlarmClockReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <!-- PRD §18 Alarms: plays the alarm ringtone (+ vibration) for the alarm's configured length. A
+             foreground service because a ring outlives the receiver's process lifetime. -->
+        <service
+            android:name=".AlarmRingService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Rings a user-set alarm for its configured duration, on every phone of the account." />
+        </service>
     </application>
 
 </manifest>

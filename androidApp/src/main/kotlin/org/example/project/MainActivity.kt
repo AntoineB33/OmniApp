@@ -101,6 +101,12 @@ class MainActivity : ComponentActivity() {
      * SharedPreferences).
      */
     private fun maybePromptKeepAliveOnce() {
+        // The debug fast-break deploy scripts grant the Doze exemption (and attempt the MIUI AUTO_START
+        // appops op) over adb after each reinstall, then pass this extra so we don't ALSO pop the OS
+        // battery dialog + the MIUI autostart app-list screen on every launch (the uninstall/reinstall
+        // wipes the "already prompted" flag, so without this the prompt fires every deploy). The release
+        // deploy carries no such extra, so genuine first-run installs still get the prompt.
+        if (intent?.getStringExtra("omniapp_skip_keepalive_prompt") == "true") return
         val prefs = getSharedPreferences("omniapp_prompts", MODE_PRIVATE)
         if (prefs.getBoolean("keep_alive_prompted", false)) return
         prefs.edit().putBoolean("keep_alive_prompted", true).apply()

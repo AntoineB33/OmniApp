@@ -42,7 +42,7 @@ actual val localPauseCueDeliveryPlatform: Boolean = true
 
 actual fun installPauseCuePushBridge(
     registerApnsToken: (token: String) -> Unit,
-    onRemotePush: (action: String, dueAtIso: String?) -> Unit,
+    onRemotePush: (action: String, dueAtIso: String?, voiceCue: String?) -> Unit,
     onForegrounded: () -> Unit,
 ) {
     IosPushBridge.install(registerApnsToken, onRemotePush, onForegrounded)

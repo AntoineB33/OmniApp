@@ -104,6 +104,18 @@ echo [4/6] Installing the debug app fresh...
 "%ADB%" install "%APK%"
 if errorlevel 1 (echo [x] Install failed.& goto deploy_failed)
 
+REM ---- Re-grant keep-alive permissions over adb so the one-time on-device prompt
+REM ---- (MainActivity.maybePromptKeepAliveOnce) needs no manual tapping/scrolling.
+REM ---- The uninstall above wiped both the "already prompted" flag AND the actual
+REM ---- grants, so they must be re-applied every deploy. Both are best-effort
+REM ---- (|| true style: a failure/unknown-op on a given ROM changes nothing).
+REM ----  1) Doze / battery-optimization exemption - works on ALL ROMs.
+REM ----  2) MIUI/HyperOS AUTO_START appops - Xiaomi-specific; on some builds the
+REM ----     op string is unknown and this is a harmless no-op (then the OEM
+REM ----     autostart list must still be picked by hand once per reinstall).
+"%ADB%" shell dumpsys deviceidle whitelist +%APP_ID% >nul 2>&1
+"%ADB%" shell cmd appops set %APP_ID% AUTO_START allow >nul 2>&1
+
 REM ---- [5/6] Force-stop so the next launch is a fresh process. The shared
 REM ---- scheduler VM is a process singleton; it must be (re)built with the
 REM ---- credentials present, so kill any running instance before relaunching.
@@ -119,7 +131,10 @@ if defined OMNIAPP_BREAK_PAUSE_THRESHOLD_MS set "BREAK_EXTRA=%BREAK_EXTRA% --es 
 
 echo [5/6] Launching auto-signed-in as %OMNIAPP_DEPLOY_USER%...
 "%ADB%" shell am force-stop "%APP_ID%"
-"%ADB%" shell am start -n "%LAUNCH_ACTIVITY%" --es omniapp_login_user "%OMNIAPP_DEPLOY_USER%" --es omniapp_login_pass "%OMNIAPP_DEPLOY_PASS%" %BREAK_EXTRA% >nul
+REM  omniapp_skip_keepalive_prompt: the adb grants above already re-applied the keep-alive permissions,
+REM  so tell MainActivity NOT to pop the battery-opt dialog + MIUI autostart app-list screen on launch
+REM  (which the uninstall/reinstall would otherwise re-trigger every deploy - no more scrolling to find OmniApp).
+"%ADB%" shell am start -n "%LAUNCH_ACTIVITY%" --es omniapp_login_user "%OMNIAPP_DEPLOY_USER%" --es omniapp_login_pass "%OMNIAPP_DEPLOY_PASS%" --es omniapp_skip_keepalive_prompt true %BREAK_EXTRA% >nul
 if errorlevel 1 (echo [x] Launch with login extras failed.& goto deploy_failed)
 
 goto deploy_done

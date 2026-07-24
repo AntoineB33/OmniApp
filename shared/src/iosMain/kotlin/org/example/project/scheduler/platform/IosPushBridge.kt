@@ -10,12 +10,12 @@ package org.example.project.scheduler.platform
  */
 object IosPushBridge {
     private var registerApnsToken: ((String) -> Unit)? = null
-    private var onRemotePush: ((String, String?) -> Unit)? = null
+    private var onRemotePush: ((String, String?, String?) -> Unit)? = null
     private var onForegrounded: (() -> Unit)? = null
 
     fun install(
         registerApnsToken: (String) -> Unit,
-        onRemotePush: (String, String?) -> Unit,
+        onRemotePush: (String, String?, String?) -> Unit,
         onForegrounded: () -> Unit,
     ) {
         this.registerApnsToken = registerApnsToken
@@ -28,9 +28,12 @@ object IosPushBridge {
         registerApnsToken?.invoke(token)
     }
 
-    /** Swift: call from the remote-notification handler with the push's `action` and ISO-8601 `due_at`. */
-    fun deliverPush(action: String, dueAtIso: String?) {
-        onRemotePush?.invoke(action, dueAtIso)
+    /**
+     * Swift: call from the remote-notification handler with the push's `action`, ISO-8601 `due_at` and
+     * `voice_cue` (the configured vocal message's id — pass null and the generic "pause is over" cue plays).
+     */
+    fun deliverPush(action: String, dueAtIso: String?, voiceCue: String? = null) {
+        onRemotePush?.invoke(action, dueAtIso, voiceCue)
     }
 
     /**

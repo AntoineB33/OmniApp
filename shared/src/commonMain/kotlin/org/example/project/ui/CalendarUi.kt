@@ -628,6 +628,9 @@ fun LateralMenu(
     /** Sleep schedule window: whether it is open + toggle callback. */
     sleepWindowOpen: Boolean = false,
     onToggleSleep: () -> Unit = {},
+    /** PRD §18 Alarms: whether the alarms window is open + toggle callback. */
+    alarmWindowOpen: Boolean = false,
+    onToggleAlarms: () -> Unit = {},
     /**
      * Sleep/Work toggle: whether the user is currently in "sleeping" mode (pressed **Sleep**). The button reads
      * **Work** while sleeping and **Sleep** while working; pressing it flips the mode ([onToggleSleepWork]) and
@@ -769,6 +772,13 @@ fun LateralMenu(
             label = "Sleep schedule",
             active = sleepWindowOpen,
             onClick = onToggleSleep,
+        )
+
+        // PRD §18 Alarms: toggles the window where the account's alarms (time, sound length, vibration) are set.
+        MenuButton(
+            label = "Alarms",
+            active = alarmWindowOpen,
+            onClick = onToggleAlarms,
         )
     }
 }

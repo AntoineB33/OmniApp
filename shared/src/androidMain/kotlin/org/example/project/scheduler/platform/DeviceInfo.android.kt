@@ -14,9 +14,10 @@ import android.os.PowerManager
 actual fun currentDeviceKind(): DeviceKind = DeviceKind.Phone
 
 /**
- * PRD §15: the phone's activity signal is the device being **unlocked** — the foreground service writes this
- * device's `device_heartbeat` row exactly while the user can see a screen, and closes it (`closed = true`) at
- * lock/screen-off. Tracked by [AndroidUnlockTracker] from the lock/unlock broadcasts (with the app-foreground
+ * PRD §15: the phone's activity signal is the device being **unlocked** — the foreground service runs the `t_a`
+ * presence tick exactly while the user can see a screen, and at lock/screen-off stops it and reports the
+ * screen-off straight to the pause-cue Edge Function. Tracked by [AndroidUnlockTracker] from the lock/unlock
+ * broadcasts (with the app-foreground
  * tracker kept for the resume-time poke). This replaces the earlier foreground minute-lease signal
  * (`AndroidForegroundTracker.foreground`), which read a phone left unlocked on the calendar as inactive.
  */

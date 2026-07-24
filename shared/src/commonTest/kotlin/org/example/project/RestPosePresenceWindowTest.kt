@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.ScreenBreak
 
@@ -38,8 +39,8 @@ class RestPosePresenceWindowTest {
         val window = SchedulerEngine.nextRestPoseWindowMillis(listOf(pose), now)
         assertNotNull(window)
         // Rides the now-line (start == now), NOT `now + interval-after-a-future-sleep`; length is the drawn 5 s.
-        assertEquals(now, window.first)
-        assertEquals(5 * SEC, window.second)
+        assertEquals(now, window.startMillis)
+        assertEquals(5 * SEC, window.lengthMillis)
     }
 
     @Test
@@ -54,12 +55,12 @@ class RestPosePresenceWindowTest {
         )
         val window = SchedulerEngine.nextRestPoseWindowMillis(listOf(pose), now)
         assertNotNull(window)
-        assertEquals(now + 40 * MIN, window.first)
-        assertEquals(5 * MIN, window.second)
+        assertEquals(now + 40 * MIN, window.startMillis)
+        assertEquals(5 * MIN, window.lengthMillis)
     }
 
     @Test
-    fun the_earliest_starting_rest_pose_wins_and_look_aways_are_ignored() {
+    fun with_none_overdue_the_earliest_starting_rest_pose_wins_and_look_aways_are_ignored() {
         val now = 1_000_000_000L
         val lookAway = ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20 * SEC)
         val pose5 = ScreenBreak(
@@ -72,9 +73,48 @@ class RestPosePresenceWindowTest {
         )
         val window = SchedulerEngine.nextRestPoseWindowMillis(listOf(lookAway, pose5, pose15), now)
         assertNotNull(window)
-        // The 5-min pose is due soonest; the look-away (not a rest pose) is never reported.
-        assertEquals(now + 50 * MIN, window.first)
-        assertEquals(5 * MIN, window.second)
+        // Neither pose is overdue, so the soonest-starting (5-min) wins; the look-away is never reported.
+        assertEquals(now + 50 * MIN, window.startMillis)
+        assertEquals(5 * MIN, window.lengthMillis)
+    }
+
+    @Test
+    fun when_both_poses_are_overdue_the_longest_one_governs() {
+        // PRD §15: the user walked away long enough to be overdue for BOTH the 5-min and 15-min poses (both ride
+        // the now-line). Resting 15 min discharges the 5-min too, so the reported window is the 15-min one — the
+        // server then times the cue to `idleInstant + 15 min`, not 5.
+        val now = 1_000_000_000L
+        val pose5 = ScreenBreak(
+            "take a 5min pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true,
+            lastRestMillis = now - 2 * HOUR, // due 1h ago
+        )
+        val pose15 = ScreenBreak(
+            "take a 15min pose", intervalMillis = 2 * HOUR, durationMillis = 15 * MIN, restBreak = true,
+            lastRestMillis = now - 3 * HOUR, // due 1h ago
+        )
+        // List order deliberately puts the SHORTER pose first, to prove selection is by length, not order.
+        val window = SchedulerEngine.nextRestPoseWindowMillis(listOf(pose5, pose15), now)
+        assertNotNull(window)
+        assertEquals(now, window.startMillis) // both at the now-line
+        assertEquals(15 * MIN, window.lengthMillis) // the longest overdue governs
+    }
+
+    @Test
+    fun the_published_window_names_the_break_type_the_server_configures() {
+        // PRD §15 (migration 20260724000000): the presence row carries the break KIND, not just its length —
+        // that is what lets the server look the configured length + vocal message up in `break_config`. The key
+        // survives the debug fast-break retiming, which rewrites the durations but never the identity.
+        val now = 1_000_000_000L
+        val breaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS.map {
+            if (it.key == SchedulerDomain.FIFTEEN_MIN_BREAK_KEY) it.copy(lastRestMillis = now - 3 * HOUR) else it
+        }
+        val window = SchedulerEngine.nextRestPoseWindowMillis(breaks, now)
+        assertNotNull(window)
+        assertEquals(SchedulerDomain.FIFTEEN_MIN_BREAK_KEY, window.key)
+
+        // An ad-hoc break with no key publishes none, and the server then falls back to its own default.
+        val adHoc = ScreenBreak("custom pose", intervalMillis = 30 * MIN, durationMillis = 3 * MIN, restBreak = true)
+        assertEquals("", SchedulerEngine.nextRestPoseWindowMillis(listOf(adHoc), now)!!.key)
     }
 
     @Test

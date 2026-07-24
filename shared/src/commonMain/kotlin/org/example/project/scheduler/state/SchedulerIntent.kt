@@ -187,6 +187,25 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §18 Alarms: replace the whole alarm list with [entries] (rows are edited live in the Alarms
+     * window). Blank ids are filled in with a fresh `alarm-{n}`. Authoritative — persisted and synced, so
+     * every phone of the account arms the new times; not part of the tree Undo/Redo history.
+     */
+    data class SetAlarms(
+        val entries: List<org.example.project.scheduler.model.AlarmEntry>,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §18 Alarms: arm/disarm one alarm by id. Dispatched by the user's row switch and by the engine when
+     * a **one-off** alarm has rung (it disarms itself, leaving the row for re-arming). A no-op when the alarm
+     * is unknown or already in that state.
+     */
+    data class SetAlarmEnabled(
+        val id: String,
+        val enabled: Boolean,
+    ) : SchedulerIntent
+
+    /**
      * PRD §15 Screen breaks: replace the screen-break list — used at launch to seed each screen break's
      * `lastRestMillis` from the OS sleep history (the last device rest ≥ its duration). Session state,
      * not undoable.

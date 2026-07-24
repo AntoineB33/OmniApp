@@ -11,6 +11,6 @@ actual val localPauseCueDeliveryPlatform: Boolean = false
 // re-claim through MainActivity.onResume, not this bridge.
 actual fun installPauseCuePushBridge(
     registerApnsToken: (token: String) -> Unit,
-    onRemotePush: (action: String, dueAtIso: String?) -> Unit,
+    onRemotePush: (action: String, dueAtIso: String?, voiceCue: String?) -> Unit,
     onForegrounded: () -> Unit,
 ) = Unit

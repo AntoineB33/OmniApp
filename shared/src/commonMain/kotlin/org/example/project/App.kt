@@ -74,6 +74,7 @@ import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 import org.example.project.time.SimAppClock
 import org.example.project.time.SystemAppClock
+import org.example.project.ui.AlarmWindow
 import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.ChoresManagerWindow
@@ -95,7 +96,7 @@ enum class OmniPage(val label: String) {
 }
 
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
-private enum class FloatingWindow { Calendar, Reminders, History, Sleep, TimeSim }
+private enum class FloatingWindow { Calendar, Reminders, History, Sleep, Alarms, TimeSim }
 
 // Debug "simulate pause + leap": pressing a break chip INSTANTLY jumps the sim clock forward by the whole
 // break ([SimAppClock.leap]) — the now-line leaps to the break's end rather than gliding there over ~1 real
@@ -235,11 +236,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 registerApnsToken = { token ->
                     engineScope.launch { vm.pauseCue?.registerPushToken("phone", "apns", token) }
                 },
-                onRemotePush = { action, dueAtIso ->
+                onRemotePush = { action, dueAtIso, voiceCue ->
                     val dueMillis =
                         dueAtIso?.takeIf { it.isNotBlank() }
                             ?.let { runCatching { Instant.parse(it).toEpochMilliseconds() }.getOrNull() }
-                    engine.onPauseCuePush(action, dueMillis)
+                    engine.onPauseCuePush(action, dueMillis, voiceCue)
                 },
                 // PRD §15 scenario #3: the phone became active — re-claim the account's last phone (the DB
                 // trigger then cancels the previous phone's cue). No-op off iOS.
@@ -302,6 +303,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var historyManagerOpen by remember { mutableStateOf(savedVisible(FloatingWindow.History)) }
         // Sleep schedule window: whether the floating sleep-settings window is open (local UI state).
         var sleepWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Sleep)) }
+        // PRD §18 Alarms: whether the floating alarms window is open (local UI state; the alarms themselves
+        // are authoritative synced state).
+        var alarmWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Alarms)) }
 
         // The floating windows are siblings in one Box, so their paint order is their declaration order.
         // To put the *currently focused* window on top of the layers, we keep an explicit stacking order
@@ -309,7 +313,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // every press inside it (see raiseOnPress). Unmanaged: the modal edit window (its own scrim already
         // sits above everything).
         var windowStack by remember {
-            mutableStateOf(listOf(FloatingWindow.Calendar, FloatingWindow.Reminders, FloatingWindow.History, FloatingWindow.Sleep, FloatingWindow.TimeSim))
+            mutableStateOf(
+                listOf(
+                    FloatingWindow.Calendar,
+                    FloatingWindow.Reminders,
+                    FloatingWindow.History,
+                    FloatingWindow.Sleep,
+                    FloatingWindow.Alarms,
+                    FloatingWindow.TimeSim,
+                ),
+            )
         }
         fun bringWindowToFront(id: FloatingWindow) {
             if (windowStack.lastOrNull() != id) windowStack = windowStack.filterNot { it == id } + id
@@ -320,6 +333,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Reminders -> choresManagerOpen
             FloatingWindow.History -> historyManagerOpen
             FloatingWindow.Sleep -> sleepWindowOpen
+            FloatingWindow.Alarms -> alarmWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
         }
         // The focused window is the topmost open one in the stack.
@@ -331,6 +345,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Reminders -> AppWindow.Reminders
             FloatingWindow.History -> AppWindow.History
             FloatingWindow.Sleep -> null
+            FloatingWindow.Alarms -> null
             FloatingWindow.TimeSim -> null
         }
         // PRD §7 window navigation: raise [id] to the top layer AND move scheduler focus onto it, which
@@ -358,11 +373,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var remindersOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Reminders, Offset(-200f, -150f))) }
         var historyOffset by remember { mutableStateOf(savedOffset(FloatingWindow.History, Offset(200f, 150f))) }
         var sleepOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Sleep, Offset(120f, -120f))) }
+        var alarmOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Alarms, Offset(-120f, 120f))) }
         // Persist each window's visibility whenever it opens/closes (its offset persists separately on drag-end).
         LaunchedEffect(calendarOpen) { persistPlacement(FloatingWindow.Calendar, calendarOffset, calendarOpen) }
         LaunchedEffect(choresManagerOpen) { persistPlacement(FloatingWindow.Reminders, remindersOffset, choresManagerOpen) }
         LaunchedEffect(historyManagerOpen) { persistPlacement(FloatingWindow.History, historyOffset, historyManagerOpen) }
         LaunchedEffect(sleepWindowOpen) { persistPlacement(FloatingWindow.Sleep, sleepOffset, sleepWindowOpen) }
+        LaunchedEffect(alarmWindowOpen) { persistPlacement(FloatingWindow.Alarms, alarmOffset, alarmWindowOpen) }
 
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
@@ -665,6 +682,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onLookAwayNow = { engine.restartLookAway() },
                     sleepWindowOpen = sleepWindowOpen,
                     onToggleSleep = { onMenuWindowClicked(FloatingWindow.Sleep) { sleepWindowOpen = it } },
+                    alarmWindowOpen = alarmWindowOpen,
+                    onToggleAlarms = { onMenuWindowClicked(FloatingWindow.Alarms) { alarmWindowOpen = it } },
                     sleeping = schedulerState.isSleeping(nowMillis),
                     onToggleSleepWork = {
                         if (schedulerState.isSleeping(clock.nowMillis())) {
@@ -677,12 +696,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     },
                     away = userAway,
                     onToggleAway = { engine.setUserAway(!userAway) },
-                    anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen,
+                    anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen ||
+                        alarmWindowOpen,
                     onCloseAllWindows = {
                         calendarOpen = false
                         choresManagerOpen = false
                         historyManagerOpen = false
                         sleepWindowOpen = false
+                        alarmWindowOpen = false
                     },
                 )
 
@@ -994,6 +1015,31 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             modifier = Modifier
                                 .align(Alignment.Center)
                                 .zIndex(windowZ(FloatingWindow.Sleep)),
+                        )
+                    }
+
+                    // PRD §18 Alarms: floating window listing the account's alarms (time, sound length,
+                    // vibration). The list is authoritative synced state, so saving it here arms every phone.
+                    if (alarmWindowOpen) {
+                        AlarmWindow(
+                            alarms = schedulerState.alarms,
+                            onChange = { vm.dispatch(SchedulerIntent.SetAlarms(it)) },
+                            onDismiss = { alarmWindowOpen = false },
+                            // Pre-fill a newly added alarm's Time field with the current clock time.
+                            newRowTimeOfDayMinutes = {
+                                val t = Instant.fromEpochMilliseconds(clock.nowMillis()).toLocalDateTime(tz)
+                                t.hour * 60 + t.minute
+                            },
+                            // Cascade: open down-left of center so the other windows stay reachable.
+                            initialOffset = alarmOffset,
+                            onOffsetChange = {
+                                alarmOffset = it
+                                persistPlacement(FloatingWindow.Alarms, it, true)
+                            },
+                            onRaise = { focusWindow(FloatingWindow.Alarms) },
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .zIndex(windowZ(FloatingWindow.Alarms)),
                         )
                     }
 

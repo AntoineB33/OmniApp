@@ -22,7 +22,9 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.DebugFlags
+import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
@@ -126,6 +128,11 @@ private const val ADVANCE_TICK_MILLIS_ACCEL: Long = 1_000
 // records at sub-second sim resolution is pointless and just churns the reducer.
 private const val SCHEDULE_ADVANCE_STEP_MILLIS: Long = 1_000
 
+// PRD §18 Alarms: how far the recomputed real instant of the armed ring may drift before the OS alarm is
+// rewritten. Only the debug sim clock drifts at all (it re-derives the real instant every display tick); on the
+// production clock the value is exactly stable, so this never applies.
+private const val ALARM_REARM_TOLERANCE_MILLIS: Long = 1_000
+
 // PRD §12/§15: the window the server derivation (and its local fallback) considers — the last 168 hours, the
 // same horizon §9/§12 use for "the calendar the user can change". Older pauses age out of the bands.
 private const val PAUSE_DERIVE_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1_000
@@ -136,6 +143,28 @@ private const val PAUSE_DERIVE_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1_000
  * (one state, one notification stream). Null on platforms where `App()` creates them itself.
  */
 class AppSchedulerHost(val vm: TaskSchedulerViewModel, val engine: SchedulerEngine)
+
+/**
+ * PRD §18 Alarms: the one ring this device currently has armed with the OS — which alarm ([alarmId]), the
+ * **real** wall-clock instant ([atMillis]) it goes off at, and everything needed to actually ring it. The OS
+ * knows nothing of the debug sim clock, so the engine converts before handing it over (see
+ * `SchedulerEngine.realInstantFor`).
+ *
+ * The ring parameters travel *with* the armed alarm (rather than being looked up when it fires) so the ring is
+ * exactly what was armed: it survives a cold process that has to rebuild its state, and — for a **one-off** —
+ * it cannot be silenced by the peer that rang a moment earlier syncing its own "this one-off has rung" disarm
+ * back to us first. PRD §18 says the alarm rings on *every* phone of the account.
+ *
+ * Only the soonest ring is ever armed; the platform receiver calls `SchedulerEngine.onAlarmFire`, which rings
+ * it and arms the one after it.
+ */
+data class ArmedAlarm(
+    val alarmId: String,
+    val atMillis: Long,
+    val label: String = "",
+    val soundSeconds: Int = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
+    val vibrate: Boolean = true,
+)
 
 /** PRD §13: a compact `HH:MM` label for a schedule-unit step deadline in the task-switch notification. */
 private fun formatClockTime(dateTime: LocalDateTime): String {
@@ -203,6 +232,14 @@ class SchedulerEngine(
     // pose-finish cue is skipped so the phone never speaks the cue twice. Default false keeps the in-app path
     // for desktop / not-yet-wired platforms.
     private val localPauseCueDelivery: Boolean = false,
+    // PRD §18 Alarms: arm the OS-level alarm clock for the next ring — a **real** wall-clock instant, since the
+    // OS knows nothing of the debug sim clock (see [realInstantFor]) — or cancel the armed one when null. The
+    // phone wires AlarmManager here (its receiver calls [onAlarmFire]); the default no-op is what keeps every
+    // non-phone device silent (PRD §18: an alarm rings on the account's PHONES).
+    private val scheduleDeviceAlarm: (ArmedAlarm?) -> Unit = {},
+    // PRD §18 Alarms: ring NOW — play the alarm sound for the armed length and vibrate if asked. Called from
+    // [onAlarmFire]; injectable so tests can assert what rang.
+    private val ringAlarm: (ArmedAlarm) -> Unit = {},
 ) {
     private val _nowMillis = MutableStateFlow(clock.nowMillis())
 
@@ -272,8 +309,8 @@ class SchedulerEngine(
 
     // PRD §15: the user manually declared they are AWAY from this device via the left-menu "I'm away" button.
     // While set, the device reads screen-inactive regardless of the platform sensor, so its active session is
-    // finalized and its heartbeat closed (`closed = true`) — telling the server this device is no longer being
-    // worked on. Purely local runtime state: never persisted, never synced (like [debugForcedInactive]),
+    // finalized and its `t_a` presence tick stopped + reported as a screen-off — telling the server this device
+    // is no longer being worked on. Purely local runtime state: never persisted, never synced,
     // so a restart returns the device to active. Toggled by [setUserAway]; the menu reads it via [userAway].
     private val _userAway = MutableStateFlow(false)
 
@@ -310,10 +347,10 @@ class SchedulerEngine(
     // for a non-sim clock, whose run is always continuous.
     private fun clockGeneration(): Long = (clock as? SimAppClock)?.reconfigured?.value ?: 0L
 
-    // PRD §15: the device-heartbeat publisher — this device upserts its `device_heartbeat` row every ~10 s while
-    // signed in + screen-on (with its next break window), so the server's `tick_pause_cues()` cron knows the
-    // account's live activity. Constructed in [start] from the [pauseCue] gateway; null when sync is disabled or
-    // on a platform without an injected gateway.
+    // PRD §15: the presence publisher — this device writes its presence row every `t_a` (10 s by default, set
+    // server-side) while signed in + screen-on, carrying its next break window, and on screen-off stops ticking
+    // and reports that to the pause-cue Edge Function. Constructed in [start] from the [pauseCue] gateway; null
+    // when sync is disabled or on a platform without an injected gateway.
     private var realtimePresence: RealtimePresence? = null
 
     private var started = false
@@ -366,6 +403,102 @@ class SchedulerEngine(
         // listener knows which phone to push. Phones only; a no-op when sync is disabled / signed out.
         claimLastPhoneOnStartup()
         resolveSleepModeOnStartup()
+        // PRD §18 Alarms: keep this phone's OS alarm armed for the next ring in the synced alarm list.
+        launchAlarmArming()
+    }
+
+    // ----- PRD §18 Alarms -------------------------------------------------------------------------
+
+    // The ring this device currently has armed with the OS, so a re-computation that lands on the same
+    // (alarm, instant) doesn't re-arm on every tick. Null when nothing is armed.
+    private var armedAlarm: ArmedAlarm? = null
+
+    /**
+     * PRD §18 Alarms: keep the OS-level alarm armed for the soonest ring in the synced alarm list. Re-runs on
+     * every now-tick and whenever the list changes (an edit here, or a peer's edit arriving over sync), and
+     * only touches the OS when the target actually moves. Phones only — a desktop never rings.
+     */
+    private fun launchAlarmArming() = scope.launch {
+        if (deviceKind != DeviceKind.Phone) return@launch
+        combine(_nowMillis, vm.state.map { it.alarms }.distinctUntilChanged()) { now, alarms -> now to alarms }
+            .collectLatest { (now, alarms) -> armNextAlarm(now, alarms) }
+    }
+
+    // Computes the next ring after [now] and hands it to the OS (or cancels when there is none).
+    private fun armNextAlarm(now: Long, alarms: List<AlarmEntry>) {
+        val next = AlarmDomain.nextOccurrence(alarms, now, tz)
+        val armed = next?.let {
+            ArmedAlarm(
+                alarmId = it.entry.id,
+                atMillis = realInstantFor(it.instant),
+                label = it.entry.label,
+                soundSeconds = it.entry.soundSeconds,
+                vibrate = it.entry.vibrate,
+            )
+        }
+        if (!needsRearming(armed)) return
+        armedAlarm = armed
+        if (armed == null) {
+            Diagnostics.log("alarm: none armed (no enabled alarm)")
+        } else {
+            Diagnostics.log(
+                "alarm ${armed.alarmId} armed for ${Diagnostics.formatInstant(armed.atMillis)} (real clock)",
+            )
+        }
+        scheduleDeviceAlarm(armed)
+    }
+
+    /**
+     * Whether [next] differs from what is already armed enough to re-arm the OS. The instant is compared with a
+     * tolerance because under the debug sim clock [realInstantFor] recomputes a slightly different real instant
+     * on every display tick (20×/s) — without the tolerance the OS alarm would be rewritten continuously. On the
+     * production clock the value is exactly stable, so this is a no-op there.
+     */
+    private fun needsRearming(next: ArmedAlarm?): Boolean {
+        val current = armedAlarm
+        if (next == null || current == null) return next != current
+        if (next.copy(atMillis = 0) != current.copy(atMillis = 0)) return true
+        val drift = next.atMillis - current.atMillis
+        return drift > ALARM_REARM_TOLERANCE_MILLIS || drift < -ALARM_REARM_TOLERANCE_MILLIS
+    }
+
+    /**
+     * PRD §18 Alarms: the OS alarm fired — ring exactly what was [armed] (its sound for its configured length,
+     * vibrating if asked), post the notification, disarm a **one-off** now that it has rung, and arm the next
+     * ring. Called from the platform receiver, which may have woken the process from scratch.
+     *
+     * The ring itself is unconditional: the arming decision was already made from the alarm list, so a list
+     * that has since changed (typically a peer that rang the same one-off a moment earlier and synced its
+     * disarm) must not silence this phone — PRD §18 rings every phone of the account.
+     */
+    fun onAlarmFire(armed: ArmedAlarm) {
+        Diagnostics.log(
+            "alarm ${armed.alarmId} RINGING (${armed.soundSeconds}s sound, vibrate=${armed.vibrate})",
+        )
+        ringAlarm(armed)
+        notifyUser("Alarm", armed.label.ifBlank { "Alarm" })
+        // A one-off has now rung: disarm it so it doesn't come round again tomorrow (the row stays in the
+        // window, ready to be re-armed). Unknown id = deleted meanwhile; nothing to disarm.
+        val entry = vm.state.value.alarms.firstOrNull { it.id == armed.alarmId }
+        if (entry != null && !entry.repeatDaily) {
+            vm.dispatch(SchedulerIntent.SetAlarmEnabled(entry.id, false))
+        }
+        // Re-arm from the state as it is AFTER that dispatch, so a one-off doesn't re-arm itself.
+        armedAlarm = null
+        armNextAlarm(clock.nowMillis(), vm.state.value.alarms)
+    }
+
+    /**
+     * Converts an instant on the engine's (possibly simulated) clock into the **real** wall-clock instant the
+     * OS scheduler understands: under acceleration a sim instant `d` is reached in `(d − simNow)/speed` real
+     * millis. Identity on the production clock. A paused sim clock (speed 0) never reaches it, so the alarm is
+     * pushed out of reach rather than firing immediately.
+     */
+    private fun realInstantFor(simInstant: Long): Long {
+        val sim = clock as? SimAppClock ?: return simInstant
+        if (sim.speed <= 0.0) return Long.MAX_VALUE
+        val remaining = ((simInstant - sim.nowMillis()).toDouble() / sim.speed).toLong()
+        return SystemAppClock.nowMillis() + remaining
     }
 
     // Sleep/Work toggle: if the user pressed "Sleep" and the scheduled wake instant has already passed by the
@@ -686,13 +819,12 @@ class SchedulerEngine(
         // overdue/decoupled pose rides the now-line (`maxOf(due, now)`). Reading stored panels instead dropped
         // that (short, fast-break) now-line break as soon as its window elapsed and substituted a far-future
         // sleep-anchored occurrence, so the cue aimed hours out. See RestPosePresenceWindowTest.
-        val window = nextRestPoseWindowMillis(vm.state.value.screenBreaks, now)?.let { (start, len) ->
-            // A dragging (overdue) pose is waiting NOW, so report its start on the REAL wall clock: the server's
-            // `max(idleSince, start)` then anchors to the true idle instant even when this device runs an
-            // accelerated debug/sim clock (a sim-ahead `now` must not push the cue past the real disconnect). A
-            // genuinely-future pose keeps its computed start.
-            val reportedStart = if (start <= now) SystemAppClock.nowMillis() else start
-            reportedStart to len
+        val window = nextRestPoseWindowMillis(vm.state.value.screenBreaks, now)?.let { w ->
+            // A dragging (overdue) pose is waiting NOW, so report its start on the REAL wall clock: the server
+            // anchors the cue to the true idle instant even when this device runs an accelerated debug/sim clock
+            // (a sim-ahead `now` must not push the cue past the real disconnect). A genuinely-future pose keeps
+            // its computed start.
+            if (w.startMillis <= now) w.copy(startMillis = SystemAppClock.nowMillis()) else w
         }
         presence.setPresence(
             if (active) {
@@ -700,11 +832,12 @@ class SchedulerEngine(
                     deviceId = gateway.deviceId,
                     kind = deviceKind.name.lowercase(),
                     // Legacy fallback field: the end of that same window = start + length.
-                    nextBreakEndMillis = window?.let { it.first + it.second },
-                    // PRD §15: the pose window, so the server computes the pause end from the real idle instant
-                    // (`max(idleSince, start) + len`).
-                    nextBreakStartMillis = window?.first,
-                    nextBreakLenMillis = window?.second,
+                    nextBreakEndMillis = window?.let { it.startMillis + it.lengthMillis },
+                    // PRD §15: the pose window, so the server computes the pause end from the real idle instant.
+                    nextBreakStartMillis = window?.startMillis,
+                    nextBreakLenMillis = window?.lengthMillis,
+                    // WHICH break type is waiting, so the server resolves its configured length + vocal message.
+                    nextBreakKind = window?.key?.takeIf { it.isNotBlank() },
                 )
             } else {
                 null
@@ -1184,21 +1317,33 @@ class SchedulerEngine(
     }
 
     /**
-     * PRD §15 / listener cue delivery: the native push receiver (an FCM/APNs data message from the external
-     * listener) calls this — schedule the local OS cue at [dueAtMillis] on `"schedule"`, or cancel the pending
+     * PRD §15 cue delivery: the native push receiver (an FCM/APNs data message from the `pause-cue` Edge
+     * Function) calls this — schedule the local OS cue at [dueAtMillis] on `"schedule"`, or cancel the pending
      * one on `"cancel"`. The scheduled cue's fire handler ([onPauseCueFire]) re-checks the local screen before
      * speaking.
+     *
+     * [voiceCue] is the break's configured vocal message (`break_config.voice_cue`, changeable over HTTP),
+     * resolved to one of the app's bundled cues — the phone plays a pre-rendered clip rather than synthesizing
+     * arbitrary text, so an unknown id falls back to [VoiceCue.PauseOver]. Remembered until the alarm fires.
      */
-    fun onPauseCuePush(action: String, dueAtMillis: Long?) {
+    fun onPauseCuePush(action: String, dueAtMillis: Long?, voiceCue: String? = null) {
         Diagnostics.log(
             "pause-cue push handled: action=$action due_at=" +
-                (dueAtMillis?.let { Diagnostics.formatInstant(it) } ?: "null"),
+                (dueAtMillis?.let { Diagnostics.formatInstant(it) } ?: "null") +
+                " voice_cue=${voiceCue ?: "-"}",
         )
         when (action) {
-            "schedule" -> if (dueAtMillis != null) scheduleLocalPauseCue(dueAtMillis)
+            "schedule" ->
+                if (dueAtMillis != null) {
+                    pendingPauseCue = resolveVoiceCue(voiceCue)
+                    scheduleLocalPauseCue(dueAtMillis)
+                }
             "cancel" -> scheduleLocalPauseCue(null)
         }
     }
+
+    // The cue the pending OS alarm should speak, as named by the push that scheduled it (PRD §15).
+    private var pendingPauseCue: VoiceCue = VoiceCue.PauseOver
 
     /**
      * PRD §15: the platform local cue fired at the pause-end instant (an AlarmManager alarm / a delivered
@@ -1213,7 +1358,7 @@ class SchedulerEngine(
                 screenActive = effectiveScreenActive(),
             )
         ) {
-            speakCue(VoiceCue.PauseOver)
+            speakCue(pendingPauseCue)
         } else {
             Diagnostics.log(
                 "OS pause-cue alarm fired but suppressed (phone=${deviceKind == DeviceKind.Phone}, " +
@@ -1224,14 +1369,17 @@ class SchedulerEngine(
 
     companion object {
         /**
-         * PRD §15 (server-side break computation): the `(start, length)` window of the next 5/15-min rest pose
-         * as of [now], computed LIVE from the [screenBreaks] config — the value this device writes into its
+         * PRD §15 (server-side break computation): the `(start, length)` window of the governing 5/15-min rest
+         * pose as of [now], computed LIVE from the [screenBreaks] config — the value this device writes into its
          * device_heartbeat row so the server cron can time the pause-end cue as
          * `max(idleInstant, start) + length`, or null when no rest pose is configured.
          *
          * Each rest pose's live start is [SchedulerDomain.screenBreakNextStart] = `maxOf(lastRest + interval,
-         * now)`, so an overdue/decoupled pose rides the now-line (`start == now`) — telling the server the
-         * break is already WAITING — and the earliest-starting pose wins. Deliberately NOT derived from
+         * now)`, so an overdue/decoupled pose rides the now-line (`start == now`) — telling the server the break
+         * is already WAITING. **Selection rule (PRD §15): when several poses are simultaneously overdue (all at
+         * the now-line), the LONGEST one governs** — resting the 15-min pose also discharges the 5-min one due at
+         * the same instant, so the user is told to rest 15 min, not 5. Only when NONE is overdue does the
+         * soonest-STARTING upcoming pose win (there is nothing yet to discharge). Deliberately NOT derived from
          * `state.panels`: that frozen snapshot's short (fast-break) now-line break expires within seconds and is
          * then replaced there by a far-future sleep-anchored occurrence, which the cron would mistime the
          * cue to (hours out). See RestPosePresenceWindowTest.
@@ -1239,11 +1387,38 @@ class SchedulerEngine(
         internal fun nextRestPoseWindowMillis(
             screenBreaks: List<ScreenBreak>,
             now: Long,
-        ): Pair<Long, Long>? =
-            screenBreaks.asSequence()
+        ): RestPoseWindow? {
+            val poses = screenBreaks.asSequence()
                 .filter { it.restBreak && it.intervalMillis > 0 && it.durationMillis > 0 && it.title.isNotBlank() }
-                .map { SchedulerDomain.screenBreakNextStart(it, now) to it.durationMillis }
-                .minByOrNull { it.first }
+                .map { RestPoseWindow(SchedulerDomain.screenBreakNextStart(it, now), it.durationMillis, it.key) }
+                .toList()
+            if (poses.isEmpty()) return null
+            // Overdue poses ride the now-line (start == now); among them the longest length governs. Fall back
+            // to the soonest-starting upcoming pose only when nothing is overdue.
+            val overdue = poses.filter { it.startMillis <= now }
+            return overdue.maxByOrNull { it.lengthMillis } ?: poses.minByOrNull { it.startMillis }
+        }
+
+        /**
+         * The governing rest pose as published to the server: when it is drawn, how long it lasts, and WHICH
+         * break type it is ([ScreenBreak.key] — `"5min_break"`/`"15min_break"`, blank for an ad-hoc break). The
+         * key is what lets the server resolve the break's configured length + vocal message (`break_config`).
+         */
+        internal data class RestPoseWindow(
+            val startMillis: Long,
+            val lengthMillis: Long,
+            val key: String,
+        )
+
+        /**
+         * PRD §15: the bundled cue a `break_config.voice_cue` id names. The cues are pre-rendered clips
+         * ([VoiceCue]), so a message the app does not ship falls back to the generic "your pause is over".
+         */
+        internal fun resolveVoiceCue(id: String?): VoiceCue = when (id?.trim()?.lowercase()) {
+            "look_away" -> VoiceCue.LookAway
+            "resume_work" -> VoiceCue.ResumeWork
+            else -> VoiceCue.PauseOver
+        }
 
         /**
          * PRD §15: the gate for the phone's "pause finished" voice cue — true only when this is the phone, a

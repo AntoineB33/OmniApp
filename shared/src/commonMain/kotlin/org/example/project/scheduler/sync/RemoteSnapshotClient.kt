@@ -285,29 +285,52 @@ class RemoteSnapshotClient(
     }
 
     /**
-     * Upserts this device's `device_heartbeat` row (keyed `(user_id, device_id)`; migration 20260723000000) —
-     * the pg_cron pause-cue model's liveness signal. The server stamps `beat_at` (trigger), so the body omits
-     * it; [closed] `= true` marks a clean lock/inactive transition. `merge-duplicates` refreshes the one row.
+     * The **`t_a` tick** (PRD §15, migration 20260724000000): upserts this device's row in the presence table
+     * (`device_heartbeat`) through the `publish_presence` RPC and returns the account's current `t_a`, in
+     * SECONDS, so the caller can re-pace itself when it is changed over HTTP.
+     *
+     * An RPC rather than a plain PostgREST upsert for three reasons: the server (not the client clock) stamps
+     * `beat_at`; the row's `data_payload_sent` claim flag is reset to `false` in the same statement, re-arming
+     * the next idle episode; and the reply carries `t_a` back at no extra request.
      */
-    suspend fun upsertHeartbeat(
+    suspend fun publishPresence(
         session: SupabaseSession,
         deviceId: String,
         kind: String,
+        nextBreakKind: String?,
         nextBreakStartMs: Long?,
         nextBreakLenMs: Long?,
         nextBreakEndMs: Long?,
-        closed: Boolean,
-    ) {
+    ): Int? {
         val response =
-            http.post("${config.restUrl}/device_heartbeat") {
+            http.post("${config.restUrl}/rpc/publish_presence") {
                 authHeaders(session)
-                header("Prefer", "resolution=merge-duplicates,return=minimal")
                 contentType(ContentType.Application.Json)
                 setBody(
                     json.encodeToString(
-                        HeartbeatUpsert(session.userId, deviceId, kind, nextBreakStartMs, nextBreakLenMs, nextBreakEndMs, closed),
+                        PublishPresenceArgs(deviceId, kind, nextBreakKind, nextBreakStartMs, nextBreakLenMs, nextBreakEndMs),
                     ),
                 )
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        // The function returns a bare scalar (`10`); a blank body just means "keep the current pacing".
+        return response.bodyAsText().trim().toIntOrNull()
+    }
+
+    /**
+     * PRD §15 clean screen-off: invokes the `pause-cue` Edge Function (**e1**) directly, with this device's own
+     * user JWT, the moment this device's screen goes off. e1 re-evaluates account liveness server-side —
+     * excluding [deviceId], whose presence row is necessarily still fresh — and arms the cue right away instead
+     * of waiting up to `t_b + 2·t_a` for the cron to notice the tick stopped. Best-effort by construction: if
+     * this call is lost (or the app was killed before making it), the presence row simply goes stale and the
+     * cron tick delivers the same cue, just later.
+     */
+    suspend fun notifyScreenOff(session: SupabaseSession, deviceId: String) {
+        val response =
+            http.post("${config.functionsUrl}/pause-cue") {
+                authHeaders(session)
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(ScreenOffInvoke(action = "evaluate", deviceId = deviceId)))
             }
         if (!response.status.isSuccess()) throw response.toException()
     }
@@ -431,15 +454,27 @@ private data class AccountStateUpsert(
     @SerialName("wake_at") val wakeAt: String?,
 )
 
+/** Arguments of the `publish_presence` RPC — the `t_a` tick. `user_id` comes from the JWT, never the body. */
 @Serializable
-private data class HeartbeatUpsert(
-    @SerialName("user_id") val userId: String,
+private data class PublishPresenceArgs(
+    @SerialName("p_device_id") val deviceId: String,
+    @SerialName("p_kind") val kind: String,
+    @SerialName("p_break_kind") val breakKind: String?,
+    @SerialName("p_break_start_ms") val breakStartMs: Long?,
+    @SerialName("p_break_len_ms") val breakLenMs: Long?,
+    @SerialName("p_break_end_ms") val breakEndMs: Long?,
+)
+
+/**
+ * Body of the direct `pause-cue` Edge Function call on a clean screen-off. `action:"evaluate"` asks e1 to decide
+ * (and claim) server-side; `device_id` is this device — the one that just went dark, so it must not count
+ * itself as an active device.
+ */
+@Serializable
+private data class ScreenOffInvoke(
+    // No default value: kotlinx.serialization omits defaults from the encoded body, and e1 needs the action.
+    val action: String,
     @SerialName("device_id") val deviceId: String,
-    val kind: String,
-    @SerialName("next_break_start_ms") val nextBreakStartMs: Long?,
-    @SerialName("next_break_len_ms") val nextBreakLenMs: Long?,
-    @SerialName("next_break_end_ms") val nextBreakEndMs: Long?,
-    val closed: Boolean,
 )
 
 @Serializable

@@ -1,5 +1,6 @@
 package org.example.project.scheduler.state
 
+import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
@@ -83,6 +84,8 @@ object SchedulerReducer {
             is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis, intent.nowMillis)
             is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked, intent.nowMillis)
             is SchedulerIntent.AddReminder -> reduceAddReminder(state, intent.reminderId, intent.title, intent.atMillis, intent.checked, intent.pinned)
+            is SchedulerIntent.SetAlarms -> reduceSetAlarms(state, intent.entries)
+            is SchedulerIntent.SetAlarmEnabled -> reduceSetAlarmEnabled(state, intent.id, intent.enabled)
             is SchedulerIntent.SetScreenBreaks ->
                 if (state.screenBreaks == intent.screenBreaks) state
                 else state.copy(screenBreaks = intent.screenBreaks)
@@ -534,6 +537,26 @@ object SchedulerReducer {
         )
         if (state.chores == withIds && state.panels == panels) return state
         return state.copy(chores = withIds, panels = panels)
+    }
+
+    /**
+     * PRD §18 Alarms: store the alarm list (minting an id for any blank row). Authoritative state, but — like
+     * the reminders list — it is not routed through the Undo/Redo history; it changes the schedule of nothing,
+     * so no panels are regenerated either.
+     */
+    private fun reduceSetAlarms(
+        state: SchedulerState,
+        entries: List<org.example.project.scheduler.model.AlarmEntry>,
+    ): SchedulerState {
+        val withIds = AlarmDomain.assignAlarmIds(entries)
+        return if (state.alarms == withIds) state else state.copy(alarms = withIds)
+    }
+
+    /** PRD §18 Alarms: arm/disarm one alarm (the row switch, and a one-off disarming itself after it rang). */
+    private fun reduceSetAlarmEnabled(state: SchedulerState, id: String, enabled: Boolean): SchedulerState {
+        val alarm = state.alarms.firstOrNull { it.id == id } ?: return state
+        if (alarm.enabled == enabled) return state
+        return state.copy(alarms = state.alarms.map { if (it.id == id) it.copy(enabled = enabled) else it })
     }
 
     /**

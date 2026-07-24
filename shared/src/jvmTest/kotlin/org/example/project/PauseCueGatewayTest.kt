@@ -24,10 +24,10 @@ import org.example.project.scheduler.sync.SupabaseConfig
 /**
  * Exercises PRD §15 pause-end cue delivery through [SchedulerSyncEngine]'s
  * [PauseCueGateway][org.example.project.scheduler.sync.PauseCueGateway] impl against a Ktor [MockEngine].
- * Covers each PostgREST write's method/path/body shape (last-phone / push-token carry the device id; the
- * heartbeat carries the break window + closed flag), and that every call is a no-op while signed out (never
- * reaches the server). The cue's *timing* stays off the client — the server's `tick_pause_cues()` cron reads
- * the `device_heartbeat` rows this writes.
+ * Covers each call's method/path/body shape (last-phone / push-token carry the device id; the `t_a` presence
+ * tick carries the break window + kind and reads `t_a` back; the screen-off short-circuit invokes the Edge
+ * Function with this device's id), and that every call is a no-op while signed out (never reaches the server).
+ * The cue's *timing* stays off the client — the server evaluates the presence rows this writes.
  */
 class PauseCueGatewayTest {
     private val json = Json { ignoreUnknownKeys = true }
@@ -44,7 +44,7 @@ class PauseCueGatewayTest {
     /** Captures the (single) data request the engine issued after auth. */
     private class Captured(var method: String? = null, var path: String? = null, var body: String? = null)
 
-    private fun harness(cap: Captured): RemoteSnapshotClient {
+    private fun harness(cap: Captured, dataResponse: String = ""): RemoteSnapshotClient {
         val engine =
             MockEngine { request ->
                 val jsonHeader = headersOf("Content-Type", "application/json")
@@ -58,14 +58,18 @@ class PauseCueGatewayTest {
                     cap.method = request.method.value
                     cap.path = request.url.encodedPath
                     cap.body = (request.body as? TextContent)?.text
-                    respond("", HttpStatusCode.NoContent)
+                    if (dataResponse.isEmpty()) {
+                        respond("", HttpStatusCode.NoContent)
+                    } else {
+                        respond(dataResponse, HttpStatusCode.OK, jsonHeader)
+                    }
                 }
             }
         return RemoteSnapshotClient(config, HttpClient(engine))
     }
 
-    private suspend fun signedIn(cap: Captured): SchedulerSyncEngine =
-        SchedulerSyncEngine(harness(cap), FakeMetaStore(SyncMeta(deviceId = "self")), json)
+    private suspend fun signedIn(cap: Captured, dataResponse: String = ""): SchedulerSyncEngine =
+        SchedulerSyncEngine(harness(cap, dataResponse), FakeMetaStore(SyncMeta(deviceId = "self")), json)
             .also { it.signIn("a@b.c", "pw") }
 
     @Test
@@ -116,29 +120,47 @@ class PauseCueGatewayTest {
     }
 
     @Test
-    fun publish_heartbeat_writes_break_window_and_closed_flag() = runTest {
+    fun presence_tick_writes_break_window_and_kind_and_reads_back_t_a() = runTest {
         val cap = Captured()
-        signedIn(cap).publishHeartbeat(
-            PresenceState(
-                deviceId = "ignored", // the engine writes its own meta device id
-                kind = "phone",
-                nextBreakEndMillis = 1_800_000_900_000L,
-                nextBreakStartMillis = 1_800_000_000_000L,
-                nextBreakLenMillis = 900_000L,
-            ),
-            closed = true,
-        )
+        // The RPC returns the account's `t_a` in seconds — a bare scalar body.
+        val tickSeconds =
+            signedIn(cap, dataResponse = "30").publishPresence(
+                PresenceState(
+                    deviceId = "ignored", // the engine writes its own meta device id
+                    kind = "phone",
+                    nextBreakEndMillis = 1_800_000_900_000L,
+                    nextBreakStartMillis = 1_800_000_000_000L,
+                    nextBreakLenMillis = 900_000L,
+                    nextBreakKind = "15min_break",
+                ),
+            )
 
         assertEquals("POST", cap.method)
-        assertTrue(cap.path!!.endsWith("/device_heartbeat"))
+        assertTrue(cap.path!!.endsWith("/rpc/publish_presence"))
         val body = json.parseToJsonElement(cap.body!!).jsonObject
-        assertEquals("self", body["device_id"]!!.jsonPrimitive.content)
-        assertEquals("phone", body["kind"]!!.jsonPrimitive.content)
-        assertEquals(1_800_000_000_000L, body["next_break_start_ms"]!!.jsonPrimitive.content.toLong())
-        assertEquals(900_000L, body["next_break_len_ms"]!!.jsonPrimitive.content.toLong())
-        assertTrue(body["closed"]!!.jsonPrimitive.content.toBoolean())
-        // The server stamps beat_at (trigger) — the client must not send it.
+        assertEquals("self", body["p_device_id"]!!.jsonPrimitive.content)
+        assertEquals("phone", body["p_kind"]!!.jsonPrimitive.content)
+        assertEquals("15min_break", body["p_break_kind"]!!.jsonPrimitive.content)
+        assertEquals(1_800_000_000_000L, body["p_break_start_ms"]!!.jsonPrimitive.content.toLong())
+        assertEquals(900_000L, body["p_break_len_ms"]!!.jsonPrimitive.content.toLong())
+        // The server stamps the row's time and owns the account id — the client must send neither.
         assertTrue(!cap.body!!.contains("beat_at"))
+        assertTrue(!cap.body!!.contains("user_id"))
+        // `t_a` came back, so the publisher re-paces itself to 30 s.
+        assertEquals(30, tickSeconds)
+    }
+
+    @Test
+    fun screen_off_invokes_the_edge_function_excluding_this_device() = runTest {
+        val cap = Captured()
+        signedIn(cap).notifyScreenOff()
+
+        assertEquals("POST", cap.method)
+        assertTrue(cap.path!!.endsWith("/functions/v1/pause-cue"), "was ${cap.path}")
+        val body = json.parseToJsonElement(cap.body!!).jsonObject
+        assertEquals("evaluate", body["action"]!!.jsonPrimitive.content)
+        // e1 excludes the reporting device from the account-liveness check (its row is still fresh).
+        assertEquals("self", body["device_id"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -148,7 +170,8 @@ class PauseCueGatewayTest {
         engine.claimLastPhone()
         engine.registerPushToken("phone", "fcm", "t")
         engine.publishAccountState(sleeping = true, wakeAtMillis = 1L)
-        engine.publishHeartbeat(PresenceState("d", "phone", null), closed = false)
+        assertNull(engine.publishPresence(PresenceState("d", "phone", null)))
+        engine.notifyScreenOff()
         // Signed out: nothing reached the server.
         assertNull(cap.method)
     }

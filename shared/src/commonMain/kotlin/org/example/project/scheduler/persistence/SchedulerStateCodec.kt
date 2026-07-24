@@ -8,7 +8,9 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNames
+import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
@@ -224,6 +226,10 @@ object SchedulerStateCodec {
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
             chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit, it.id, it.constrainedToReminderId) },
+            alarms =
+                alarms.map {
+                    PersistedAlarm(it.id, it.label, it.timeOfDayMinutes, it.soundSeconds, it.vibrate, it.repeatDaily, it.enabled)
+                },
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
@@ -461,6 +467,21 @@ object SchedulerStateCodec {
                     )
                 },
             ),
+            // PRD §18 Alarms: a payload written before alarms existed decodes to an empty list; a row whose
+            // id was somehow blank gets one minted here (the same healing the reminders get above).
+            alarms = AlarmDomain.assignAlarmIds(
+                alarms.map {
+                    AlarmEntry(
+                        id = it.id,
+                        label = it.label,
+                        timeOfDayMinutes = it.timeOfDayMinutes,
+                        soundSeconds = it.soundSeconds,
+                        vibrate = it.vibrate,
+                        repeatDaily = it.repeatDaily,
+                        enabled = it.enabled,
+                    )
+                },
+            ),
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
@@ -645,6 +666,8 @@ private data class PersistedState(
     val automaticSchedule: Boolean = true,
     // PRD §14: a missing chores list decodes to empty (payloads written before the chores manager existed).
     val chores: List<PersistedChoreEntry> = emptyList(),
+    // PRD §18: a missing alarm list decodes to empty (payloads written before the Alarms window existed).
+    val alarms: List<PersistedAlarm> = emptyList(),
     // PRD §15: screen breaks are hidden by default, so payloads written before the display toggle existed
     // (and any that omit the field) decode with the switch off. Migration: DBs written under the old name
     // (the legacy "side tasks") stored this as `showSideTasks`; [JsonNames] lets those still decode into this
@@ -693,6 +716,21 @@ private data class PersistedSupabaseUsageEntry(
     val requestBytes: Long,
     val responseBytes: Long,
     val status: Int,
+)
+
+/**
+ * PRD §18 Alarms: one persisted alarm. Every field carries a default so a payload written by an older shape
+ * (or by a build before a field existed) decodes cleanly.
+ */
+@Serializable
+private data class PersistedAlarm(
+    val id: String = "",
+    val label: String = "",
+    val timeOfDayMinutes: Int = 0,
+    val soundSeconds: Int = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
+    val vibrate: Boolean = true,
+    val repeatDaily: Boolean = true,
+    val enabled: Boolean = true,
 )
 
 @Serializable

@@ -18,11 +18,14 @@ object DebugFlags {
      * The "5-min break" is the shorter of the two rest-break poses in
      * [org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SCREEN_BREAKS] ("take a 5min pose and blink
      * hard"). Shrinking its duration to a few seconds is the one lever that makes the REAL server→phone push
-     * fire quickly: the `tick_pause_cues()` cron + Edge Function run on the REAL wall clock (server `now()`
-     * against `beat_at`), so accelerating the client's [org.example.project.time.SimAppClock] ([TIME_SIMULATION])
-     * does NOT speed them up. The cron times the cue off `next_break_len_ms`, written straight from this pose's
-     * drawn duration into the device_heartbeat row, so the phone speaks `duration` after the last device leaves
-     * the break window — **no Supabase redeploy is needed**, the length rides the client's heartbeat.
+     * fire quickly: the `t_b` cron + Edge Function run on the REAL wall clock (server `now()` against
+     * `beat_at`), so accelerating the client's [org.example.project.time.SimAppClock] ([TIME_SIMULATION]) does
+     * NOT speed them up. The server times the cue off `next_break_len_ms`, written straight from this pose's
+     * drawn duration into the presence row, so the phone speaks `duration` after the last device leaves the
+     * break window — **no Supabase redeploy is needed**, the length rides the client's tick. (The equivalent
+     * server-side lever, needing no rebuild either, is a `break_config.length_ms` row — see
+     * docs/PAUSE_CUE_DELIVERY.md Step 3; it OVERRIDES this one for the cue while leaving the calendar alone.
+     * Either way, a length below the ~1-min `t_b` can only be armed by the clean screen-off short-circuit.)
      *
      * Set at startup from the platform entry point (`omniapp.breakDurationMs` system property on desktop; the
      * `omniapp_break_duration_ms` launch-Intent extra on Android), never persisted, always off in release.
