@@ -14,8 +14,9 @@ REM
 REM  With both at 5s the now-line reaches a 5-min break almost immediately:
 REM  put the computer to sleep and ~DURATION_S later the phone speaks the
 REM  break-end cue. The tick_pause_cues() cron fires it from the client's
-REM  device_heartbeat row (`next_break_len_ms` = the break's drawn length), so NO
-REM  Supabase redeploy is needed - the length rides the heartbeat payload.
+REM  device_break row (`break_len_ms` = the break's drawn length, published when
+REM  the pose changes), so NO Supabase redeploy is needed - the length rides the
+REM  client's own break write.
 REM
 REM  Runs at REAL time (omniapp.timeSim=false) so the seconds are real, matching
 REM  the wall-clock listener/Edge Function (a sim-accelerated clock does NOT

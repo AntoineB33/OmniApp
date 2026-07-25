@@ -45,14 +45,23 @@ interface PauseCueGateway {
     suspend fun registerPushToken(kind: String, platform: String, token: String)
 
     /**
-     * The **`t_a` tick** (migration 20260724000000): upserts this device's row in the presence table
-     * (`device_heartbeat`) via the `publish_presence` RPC while the device is unlocked + signed in. The server
-     * stamps the row's time and clears its `data_payload_sent` claim flag.
+     * The **`t_a` tick** (migrations 20260724000000 + 20260726000000): upserts this device's row in the presence
+     * table (`device_heartbeat`) via the `publish_presence` RPC while the device is unlocked + signed in. The
+     * server stamps the row's time and clears its `data_payload_sent` claim flag. The row is identity + time
+     * only — the break window travels separately ([publishNextBreak]).
      *
      * Returns the account's current `t_a` in **seconds** so [DeviceHeartbeatPublisher] re-paces itself when it
      * is changed over HTTP (null ⇒ keep the current pacing — signed out, or the call failed). Best-effort.
      */
     suspend fun publishPresence(state: PresenceState): Int?
+
+    /**
+     * PRD §15: writes the rest pose this device is waiting on to `device_break` (`publish_next_break` RPC,
+     * migration 20260726000000). Called **only when the pose changes**, so it costs nothing in steady state —
+     * and, unlike the old per-beat piggyback, the server's copy is current the instant the schedule changes
+     * rather than up to one active-session beat later. Throws on failure so the caller can retry.
+     */
+    suspend fun publishNextBreak(state: NextBreakState)
 
     /**
      * PRD §15 clean screen-off: this device's screen just went off, so it stopped its `t_a` tick — tell **e1**

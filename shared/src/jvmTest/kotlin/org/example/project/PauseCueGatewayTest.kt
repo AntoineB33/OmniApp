@@ -16,6 +16,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.SyncMetaStore
+import org.example.project.scheduler.sync.NextBreakState
 import org.example.project.scheduler.sync.PresenceState
 import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
@@ -120,34 +121,50 @@ class PauseCueGatewayTest {
     }
 
     @Test
-    fun presence_tick_writes_break_window_and_kind_and_reads_back_t_a() = runTest {
+    fun the_presence_tick_body_is_the_device_id_and_nothing_else() = runTest {
+        // Migration 20260726000000: the beat is identity + (server-stamped) time. Everything about the break
+        // travels on its own event-driven row, so nothing that changes with the schedule rides the `t_a` tick.
         val cap = Captured()
         // The RPC returns the account's `t_a` in seconds — a bare scalar body.
-        val tickSeconds =
-            signedIn(cap, dataResponse = "30").publishPresence(
-                PresenceState(
-                    deviceId = "ignored", // the engine writes its own meta device id
-                    kind = "phone",
-                    nextBreakEndMillis = 1_800_000_900_000L,
-                    nextBreakStartMillis = 1_800_000_000_000L,
-                    nextBreakLenMillis = 900_000L,
-                    nextBreakKind = "15min_break",
-                ),
-            )
+        val tickSeconds = signedIn(cap, dataResponse = "30").publishPresence(PresenceState("ignored"))
 
         assertEquals("POST", cap.method)
         assertTrue(cap.path!!.endsWith("/rpc/publish_presence"))
         val body = json.parseToJsonElement(cap.body!!).jsonObject
+        // The engine writes its own meta device id, not the one in the state object.
         assertEquals("self", body["p_device_id"]!!.jsonPrimitive.content)
-        assertEquals("phone", body["p_kind"]!!.jsonPrimitive.content)
-        assertEquals("15min_break", body["p_break_kind"]!!.jsonPrimitive.content)
-        assertEquals(1_800_000_000_000L, body["p_break_start_ms"]!!.jsonPrimitive.content.toLong())
-        assertEquals(900_000L, body["p_break_len_ms"]!!.jsonPrimitive.content.toLong())
+        assertEquals(setOf("p_device_id"), body.keys, "the beat must carry nothing but the device id")
         // The server stamps the row's time and owns the account id — the client must send neither.
         assertTrue(!cap.body!!.contains("beat_at"))
         assertTrue(!cap.body!!.contains("user_id"))
         // `t_a` came back, so the publisher re-paces itself to 30 s.
         assertEquals(30, tickSeconds)
+    }
+
+    @Test
+    fun the_next_break_write_carries_the_due_instant_kind_and_length() = runTest {
+        val cap = Captured()
+        signedIn(cap).publishNextBreak(
+            NextBreakState(
+                deviceId = "ignored", // the engine writes its own meta device id
+                kind = "phone",
+                breakKind = "15min_break",
+                dueMillis = 1_800_000_000_000L,
+                lengthMillis = 900_000L,
+            ),
+        )
+
+        assertEquals("POST", cap.method)
+        assertTrue(cap.path!!.endsWith("/rpc/publish_next_break"), "was ${cap.path}")
+        val body = json.parseToJsonElement(cap.body!!).jsonObject
+        assertEquals("self", body["p_device_id"]!!.jsonPrimitive.content)
+        assertEquals("phone", body["p_kind"]!!.jsonPrimitive.content)
+        assertEquals("15min_break", body["p_break_kind"]!!.jsonPrimitive.content)
+        // The pose's DUE instant, not its drawn (now-line-riding) start — that is what makes this row writable
+        // on change instead of on every beat.
+        assertEquals(1_800_000_000_000L, body["p_break_due_ms"]!!.jsonPrimitive.content.toLong())
+        assertEquals(900_000L, body["p_break_len_ms"]!!.jsonPrimitive.content.toLong())
+        assertTrue(!cap.body!!.contains("user_id"))
     }
 
     @Test
@@ -170,7 +187,8 @@ class PauseCueGatewayTest {
         engine.claimLastPhone()
         engine.registerPushToken("phone", "fcm", "t")
         engine.publishAccountState(sleeping = true, wakeAtMillis = 1L)
-        assertNull(engine.publishPresence(PresenceState("d", "phone", null)))
+        assertNull(engine.publishPresence(PresenceState("d")))
+        engine.publishNextBreak(NextBreakState("d", "phone", "5min_break", 1L, 2L))
         engine.notifyScreenOff()
         // Signed out: nothing reached the server.
         assertNull(cap.method)

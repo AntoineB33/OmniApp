@@ -405,18 +405,25 @@ open class SchedulerSyncEngine(
     override suspend fun publishPresence(state: PresenceState): Int? {
         val current = session ?: return null
         return runCatching {
-            withAuth(current) {
-                client.publishPresence(
-                    session = it,
-                    deviceId = meta().deviceId,
-                    kind = state.kind,
-                    nextBreakKind = state.nextBreakKind,
-                    nextBreakStartMs = state.nextBreakStartMillis,
-                    nextBreakLenMs = state.nextBreakLenMillis,
-                    nextBreakEndMs = state.nextBreakEndMillis,
-                )
-            }
+            withAuth(current) { client.publishPresence(session = it, deviceId = meta().deviceId) }
         }.getOrNull()
+    }
+
+    // Unlike the beat, this one RETHROWS: it is written only on a change, so nothing re-sends it on its own and
+    // the publisher's retry loop is what keeps the server's copy from going stale. A signed-out device drops it
+    // (there is no account to write for; the next change after sign-in republishes).
+    override suspend fun publishNextBreak(state: NextBreakState) {
+        val current = session ?: return
+        withAuth(current) {
+            client.publishNextBreak(
+                session = it,
+                deviceId = meta().deviceId,
+                kind = state.kind,
+                breakKind = state.breakKind,
+                breakDueMs = state.dueMillis,
+                breakLenMs = state.lengthMillis,
+            )
+        }
     }
 
     override suspend fun notifyScreenOff() {

@@ -9,14 +9,19 @@ import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.ScreenBreak
 
 /**
- * PRD §15: the rest-pose window a device writes into its device_heartbeat row so the server cron can time the
- * phone's pause-end cue as `max(idleInstant, start) + length`.
+ * PRD §15: the rest-pose window a device writes into its `device_break` row so the server can decide whether the
+ * account went idle with a break owed, and time the phone's pause-end cue as `idleInstant + length`.
  *
- * Regression: the window MUST be the pose the user is waiting on right now — an overdue/decoupled pose rides
- * the now-line. It was previously derived from the engine's stored `state.panels`, where the short fast-break
- * now-line break expires within seconds and is replaced by a far-future sleep-anchored occurrence; the cue was
- * then aimed hours out and the phone stayed silent. [SchedulerEngine.nextRestPoseWindowMillis] now computes the
- * window live from the [ScreenBreak] config, so a far-future occurrence can never surface.
+ * Since migration 20260726000000 the published instant is the pose's mathematical **due** time
+ * (`lastRest + interval`), not its drawn start (`maxOf(due, now)`). That is what lets the row be written
+ * event-driven — an overdue pose's drawn start rides the now-line and changes at every sample — and it puts the
+ * server on the same boundary the client's own rest-pose cue keys on.
+ *
+ * Regression: the window MUST be the pose the user is waiting on right now. It was previously derived from the
+ * engine's stored `state.panels`, where the short fast-break now-line break expires within seconds and is
+ * replaced by a far-future sleep-anchored occurrence; the cue was then aimed hours out and the phone stayed
+ * silent. [SchedulerEngine.nextRestPoseWindowMillis] computes the window live from the [ScreenBreak] config, so
+ * a far-future occurrence can never surface.
  */
 class RestPosePresenceWindowTest {
     private val MIN = 60_000L
@@ -24,9 +29,9 @@ class RestPosePresenceWindowTest {
     private val HOUR = 60 * MIN
 
     @Test
-    fun overdue_decoupled_pose_reports_the_now_line_window_not_a_future_sleep_break() {
-        // account1 fast-break: a decoupled 5 s pose (2 h qualifying pause) whose last pause was 60 s ago, so
-        // it is overdue and drags along the now-line.
+    fun overdue_decoupled_pose_reports_its_past_due_instant_not_a_future_sleep_break() {
+        // account1 fast-break: a decoupled 5 s pose (2 h qualifying pause) whose last pause was 60 s ago, so it
+        // is overdue — it came due 55 s ago and has been waiting ever since.
         val now = 1_000_000_000L
         val pose = ScreenBreak(
             title = "take a 5min pose",
@@ -38,13 +43,33 @@ class RestPosePresenceWindowTest {
         )
         val window = SchedulerEngine.nextRestPoseWindowMillis(listOf(pose), now)
         assertNotNull(window)
-        // Rides the now-line (start == now), NOT `now + interval-after-a-future-sleep`; length is the drawn 5 s.
-        assertEquals(now, window.startMillis)
+        // The DUE instant, in the past — NOT the now-line and NOT `now + interval-after-a-future-sleep`.
+        assertEquals(now - 55 * SEC, window.dueMillis)
         assertEquals(5 * SEC, window.lengthMillis)
     }
 
     @Test
-    fun a_not_yet_due_pose_reports_its_future_start() {
+    fun an_overdue_poses_due_instant_does_not_move_as_the_now_line_advances() {
+        // The property the event-driven `device_break` write rests on: while the pose is unchanged the published
+        // value is CONSTANT, so a device sitting at its desk makes no requests. The drawn start (`maxOf(due,
+        // now)`) would instead advance with every sample, which is why it used to have to ride the `t_a` beat.
+        val now = 1_000_000_000L
+        val pose = ScreenBreak(
+            title = "take a 5min pose",
+            intervalMillis = 60 * MIN,
+            durationMillis = 5 * MIN,
+            restBreak = true,
+            lastRestMillis = now - 2 * HOUR, // due 1 h ago
+        )
+        val due = SchedulerEngine.nextRestPoseWindowMillis(listOf(pose), now)!!.dueMillis
+        assertEquals(now - 1 * HOUR, due)
+        for (elapsed in listOf(1 * SEC, 30 * SEC, 5 * MIN, 3 * HOUR)) {
+            assertEquals(due, SchedulerEngine.nextRestPoseWindowMillis(listOf(pose), now + elapsed)!!.dueMillis)
+        }
+    }
+
+    @Test
+    fun a_not_yet_due_pose_reports_its_future_due_instant() {
         val now = 1_000_000_000L
         val pose = ScreenBreak(
             title = "take a 5min pose",
@@ -55,7 +80,7 @@ class RestPosePresenceWindowTest {
         )
         val window = SchedulerEngine.nextRestPoseWindowMillis(listOf(pose), now)
         assertNotNull(window)
-        assertEquals(now + 40 * MIN, window.startMillis)
+        assertEquals(now + 40 * MIN, window.dueMillis)
         assertEquals(5 * MIN, window.lengthMillis)
     }
 
@@ -74,15 +99,15 @@ class RestPosePresenceWindowTest {
         val window = SchedulerEngine.nextRestPoseWindowMillis(listOf(lookAway, pose5, pose15), now)
         assertNotNull(window)
         // Neither pose is overdue, so the soonest-starting (5-min) wins; the look-away is never reported.
-        assertEquals(now + 50 * MIN, window.startMillis)
+        assertEquals(now + 50 * MIN, window.dueMillis)
         assertEquals(5 * MIN, window.lengthMillis)
     }
 
     @Test
     fun when_both_poses_are_overdue_the_longest_one_governs() {
-        // PRD §15: the user walked away long enough to be overdue for BOTH the 5-min and 15-min poses (both ride
-        // the now-line). Resting 15 min discharges the 5-min too, so the reported window is the 15-min one — the
-        // server then times the cue to `idleInstant + 15 min`, not 5.
+        // PRD §15: the user walked away long enough to be overdue for BOTH the 5-min and 15-min poses. Resting
+        // 15 min discharges the 5-min too, so the reported window is the 15-min one — the server then times the
+        // cue to `idleInstant + 15 min`, not 5.
         val now = 1_000_000_000L
         val pose5 = ScreenBreak(
             "take a 5min pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true,
@@ -95,7 +120,7 @@ class RestPosePresenceWindowTest {
         // List order deliberately puts the SHORTER pose first, to prove selection is by length, not order.
         val window = SchedulerEngine.nextRestPoseWindowMillis(listOf(pose5, pose15), now)
         assertNotNull(window)
-        assertEquals(now, window.startMillis) // both at the now-line
+        assertEquals(now - 1 * HOUR, window.dueMillis) // both came due an hour ago
         assertEquals(15 * MIN, window.lengthMillis) // the longest overdue governs
     }
 

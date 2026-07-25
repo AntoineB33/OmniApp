@@ -285,36 +285,49 @@ class RemoteSnapshotClient(
     }
 
     /**
-     * The **`t_a` tick** (PRD §15, migration 20260724000000): upserts this device's row in the presence table
-     * (`device_heartbeat`) through the `publish_presence` RPC and returns the account's current `t_a`, in
-     * SECONDS, so the caller can re-pace itself when it is changed over HTTP.
+     * The **`t_a` tick** (PRD §15, migrations 20260724000000 + 20260726000000): upserts this device's row in the
+     * presence table (`device_heartbeat`) through the `publish_presence` RPC and returns the account's current
+     * `t_a`, in SECONDS, so the caller can re-pace itself when it is changed over HTTP.
      *
-     * An RPC rather than a plain PostgREST upsert for three reasons: the server (not the client clock) stamps
-     * `beat_at`; the row's `data_payload_sent` claim flag is reset to `false` in the same statement, re-arming
-     * the next idle episode; and the reply carries `t_a` back at no extra request.
+     * The whole request body is the device id — the presence row is identity + time only since the break window
+     * moved to its own event-driven row ([publishNextBreak]). An RPC rather than a plain PostgREST upsert for
+     * three reasons: the server (not the client clock) stamps `beat_at`; the row's `data_payload_sent` claim flag
+     * is reset to `false` in the same statement, re-arming the next idle episode; and the reply carries `t_a`
+     * back at no extra request.
      */
-    suspend fun publishPresence(
-        session: SupabaseSession,
-        deviceId: String,
-        kind: String,
-        nextBreakKind: String?,
-        nextBreakStartMs: Long?,
-        nextBreakLenMs: Long?,
-        nextBreakEndMs: Long?,
-    ): Int? {
+    suspend fun publishPresence(session: SupabaseSession, deviceId: String): Int? {
         val response =
             http.post("${config.restUrl}/rpc/publish_presence") {
                 authHeaders(session)
                 contentType(ContentType.Application.Json)
-                setBody(
-                    json.encodeToString(
-                        PublishPresenceArgs(deviceId, kind, nextBreakKind, nextBreakStartMs, nextBreakLenMs, nextBreakEndMs),
-                    ),
-                )
+                setBody(json.encodeToString(PublishPresenceArgs(deviceId)))
             }
         if (!response.status.isSuccess()) throw response.toException()
         // The function returns a bare scalar (`10`); a blank body just means "keep the current pacing".
         return response.bodyAsText().trim().toIntOrNull()
+    }
+
+    /**
+     * PRD §15 (migration 20260726000000): upserts this device's `device_break` row — the rest pose it is waiting
+     * on — through the `publish_next_break` RPC. Called **only when that pose changes**, so the server's copy is
+     * never a beat behind the schedule; `breakDueMs` is the pose's fixed DUE instant on the real wall clock, the
+     * value the server's overdue gate compares against this device's last `beat_at`.
+     */
+    suspend fun publishNextBreak(
+        session: SupabaseSession,
+        deviceId: String,
+        kind: String,
+        breakKind: String?,
+        breakDueMs: Long?,
+        breakLenMs: Long?,
+    ) {
+        val response =
+            http.post("${config.restUrl}/rpc/publish_next_break") {
+                authHeaders(session)
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(PublishNextBreakArgs(deviceId, kind, breakKind, breakDueMs, breakLenMs)))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
     }
 
     /**
@@ -454,15 +467,23 @@ private data class AccountStateUpsert(
     @SerialName("wake_at") val wakeAt: String?,
 )
 
-/** Arguments of the `publish_presence` RPC — the `t_a` tick. `user_id` comes from the JWT, never the body. */
+/**
+ * Arguments of the `publish_presence` RPC — the `t_a` tick. `user_id` comes from the JWT, never the body, and
+ * the server stamps the time, so the device id is the entire payload.
+ */
 @Serializable
 private data class PublishPresenceArgs(
     @SerialName("p_device_id") val deviceId: String,
+)
+
+/** Arguments of the `publish_next_break` RPC — the event-driven break write. */
+@Serializable
+private data class PublishNextBreakArgs(
+    @SerialName("p_device_id") val deviceId: String,
     @SerialName("p_kind") val kind: String,
     @SerialName("p_break_kind") val breakKind: String?,
-    @SerialName("p_break_start_ms") val breakStartMs: Long?,
+    @SerialName("p_break_due_ms") val breakDueMs: Long?,
     @SerialName("p_break_len_ms") val breakLenMs: Long?,
-    @SerialName("p_break_end_ms") val breakEndMs: Long?,
 )
 
 /**

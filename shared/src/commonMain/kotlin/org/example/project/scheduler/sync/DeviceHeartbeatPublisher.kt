@@ -11,59 +11,76 @@ import kotlin.coroutines.coroutineContext
 import org.example.project.scheduler.platform.Diagnostics
 
 /**
- * PRD §15 cross-device activity, presence-table model (migration 20260724000000): what a device publishes about
- * itself while it is **active** (screen on / unlocked, signed in; on Android also app-foreground). The server's
- * `evaluate_pause_cue()` reads the account's presence rows to decide, when they all go stale and the account is
- * not sleeping, when to fire the phones' pause-end cue. `null` [nextBreakEndMillis] means no upcoming ≥5-min
- * break.
+ * PRD §15 cross-device activity, presence-table model: what a device publishes about **itself** while it is
+ * active (screen on / unlocked, signed in; on Android also app-foreground).
+ *
+ * Since migration 20260726000000 this is *identity only* — the presence row is `{ user_id, device_id }` plus a
+ * server-stamped `beat_at` and the `data_payload_sent` claim flag. Its one job is "this account was alive at
+ * time T"; the break the account is waiting on rides [NextBreakState] on its own, event-driven cadence.
  */
-data class PresenceState(
+data class PresenceState(val deviceId: String)
+
+/**
+ * PRD §15: the governing 5/15-min rest pose this device is waiting on, written to `device_break` **only when it
+ * changes** (migration 20260726000000) — a device sitting at its desk publishes nothing.
+ *
+ * [dueMillis] is the pose's mathematical DUE instant (`lastRest + interval`) on the REAL wall clock, **not** its
+ * drawn start. That distinction is what makes an event-driven write possible at all: an overdue pose's drawn
+ * start is clamped to the now-line and so changes at every sample, whereas the due instant moves only when the
+ * pose is served or reconfigured. The server's overdue gate reads it as "was this break already due at that
+ * device's last beat?" (`break_due_ms <= beat_at`).
+ *
+ * The row is deliberately NEVER cleared on screen-off: the last value published while active is exactly the
+ * state the user walked away in, which is what the cue is judged on.
+ */
+data class NextBreakState(
     val deviceId: String,
+    /** `"phone"` / `"desktop"` — moved off the per-beat row, kept here at no steady-state cost. */
     val kind: String,
-    val nextBreakEndMillis: Long?,
-    /**
-     * PRD §15 (server-side break computation): the drawn START of the next ≥5-min rest pose. A start pinned to
-     * the now-line means the break is already WAITING (overdue-unserved poses slide, `maxOf(due, now)`), so the
-     * server computes the true pause end from the instant the account actually went idle — not from this (up to
-     * one beat stale) client projection.
-     */
-    val nextBreakStartMillis: Long? = null,
-    /** PRD §15: the length of that pose (`end − start`) — also the "waiting break" length for the cue. */
-    val nextBreakLenMillis: Long? = null,
-    /**
-     * PRD §15: WHICH of the two break types is waiting — `"5min_break"` / `"15min_break"`
-     * ([org.example.project.scheduler.model.ScreenBreak.key]). The server looks its configured length and vocal
-     * message up in `break_config`, so both are changeable over HTTP without touching the client.
-     */
-    val nextBreakKind: String? = null,
+    /** [org.example.project.scheduler.model.ScreenBreak.key] — `"5min_break"` / `"15min_break"`, or null. */
+    val breakKind: String?,
+    val dueMillis: Long?,
+    val lengthMillis: Long?,
 )
 
 /**
- * The seam the [org.example.project.scheduler.engine.SchedulerEngine] uses to publish this device's activity.
- * `null` clears it (the device went inactive / signed out); a non-null state (re)publishes it. Idempotent per
- * value. Implemented by [DeviceHeartbeatPublisher]; a no-op fake in tests.
+ * The seam the [org.example.project.scheduler.engine.SchedulerEngine] uses to publish this device's state.
+ * Implemented by [DeviceHeartbeatPublisher]; a no-op fake in tests.
  */
 interface RealtimePresence {
+    /** Activity: a non-null state starts/keeps the `t_a` tick, `null` stops it (screen off / signed out). */
     fun setPresence(state: PresenceState?)
+
+    /**
+     * The next rest pose. Idempotent per value — re-publishing an unchanged window costs no request. Call it
+     * only while the device is active; it is never cleared (see [NextBreakState]).
+     */
+    fun setNextBreak(state: NextBreakState)
 }
 
 /**
- * The **`t_a` tick**: writes this device's row in the presence table every `t_a` while it is active, and on the
- * inactive transition stops ticking and tells the `pause-cue` Edge Function ("e1") directly that this device's
- * screen went off. This is the client half of the pause-cue timing model (migration 20260724000000): the server
- * stamps the row's time and, when no row of the account has been refreshed within `2·t_a`, times the pause-end
- * cue from `t2 = <row time> + t_a/2` plus the waiting break's length.
+ * The **`t_a` tick** plus the event-driven break write — the client half of the pause-cue timing model
+ * (migrations 20260724000000 + 20260726000000). Two independent cadences, matching two different rates of
+ * change:
+ *
+ *  * **presence**, every `t_a` while active: `publish_presence(device_id)`. The server stamps the row's time and
+ *    clears its claim flag; when no row of the account has been refreshed within `2·t_a`, it times the pause-end
+ *    cue from `t2 = <row time> + t_a/2` plus the waiting break's length. The payload no longer carries the break
+ *    window, so the loop is **not** restarted by a break change — a burst of schedule edits cannot turn the tick
+ *    into a request storm.
+ *  * **next break**, only on change: `publish_next_break(...)`. Because it is written the instant the governing
+ *    pose changes, the server's copy is never up-to-one-beat stale — the race that let a device go dark within
+ *    30 s of a schedule edit and be judged on the pre-edit break (and that the clean screen-off path hit *by
+ *    construction*, since it calls e1 without a final beat) is closed. A failed write is retried with backoff
+ *    until it lands or a newer value supersedes it, so the two paths' freshness guarantees are equivalent.
  *
  * `t_a` is **server-owned**: [PauseCueGateway.publishPresence] returns the account's current value (default
  * [DEFAULT_TICK_SECONDS]) and this loop adopts it on the next pass, so changing it over HTTP re-paces every
  * device within one tick. [beatMillisOverride] pins it instead (tests).
  *
- * Lifecycle, driven by [setPresence] (via [org.example.project.scheduler.engine.SchedulerEngine.updatePresence]):
- *  - active (non-null) → re-publish the row every `t_a`. [collectLatest] restarts the loop when the payload
- *    changes, so a new break window reaches the server at once.
- *  - inactive (null) → stop ticking and call e1 once (the clean screen-off short-circuit), so the cue is armed
- *    at the lock instant. A dirty kill makes no such call — there the row simply goes stale and the `t_b` cron
- *    tick delivers the same cue, later.
+ * On the inactive transition the tick stops and e1 is called once (the clean screen-off short-circuit), so the
+ * cue is armed at the lock instant. A dirty kill makes no such call — there the row simply goes stale and the
+ * `t_b` cron tick delivers the same cue, later.
  *
  * All writes are best-effort (a failed beat must never crash the engine); the server's staleness window is the
  * backstop when one is missed. Every call is a no-op while signed out ([PauseCueGateway.signedIn]).
@@ -74,27 +91,56 @@ class DeviceHeartbeatPublisher(
     private val beatMillisOverride: Long? = null,
 ) : RealtimePresence {
     private val desired = MutableStateFlow<PresenceState?>(null)
+    private val nextBreak = MutableStateFlow<BreakRequest?>(null)
     private var job: Job? = null
+    private var breakJob: Job? = null
+
+    /**
+     * Bumped on every inactive→active transition, and carried in the dedupe key below so that transition
+     * force-republishes the break even when its value is unchanged.
+     *
+     * Needed because the server may have dropped this device's break row without the client knowing: a device is
+     * associated to exactly ONE account (PRD §15), so signing into another account deletes the previous
+     * account's presence + break pair server-side (migration 20260727000000). Coming back to the first account
+     * would otherwise leave it with a heartbeat but no break — and a break that is only written on CHANGE would
+     * not be rewritten until the pose next moved, so the account could never be owed a cue. An activation is an
+     * event, not a cadence, so this costs a handful of writes a day and leaves the steady state at zero.
+     */
+    private var activation = 0
+
+    // The dedupe key: the window itself plus the activation it was published under.
+    private data class BreakRequest(val state: NextBreakState, val activation: Int)
     // The server-published `t_a`, adopted from the last successful beat. Starts at the documented default.
     private var beatMillis: Long = beatMillisOverride ?: DEFAULT_TICK_SECONDS * 1000L
     // Whether this device was ever active in this run — a device that never ticked has nothing to report off.
     private var everActive = false
 
     override fun setPresence(state: PresenceState?) {
+        // Going active again starts a new publication epoch (see [activation]); the caller re-asserts the break
+        // in the same pass, and the changed key makes that re-assertion actually go out.
+        if (desired.value == null && state != null) activation++
         desired.value = state
     }
 
-    /** Starts the publish loop (idempotent). */
+    // The StateFlow dedupes by value, so an unchanged window never reaches the collector below — that is the
+    // whole "zero writes in steady state" guarantee, and it holds only because [NextBreakState] carries the
+    // FIXED due instant rather than the now-line-riding drawn start.
+    override fun setNextBreak(state: NextBreakState) {
+        nextBreak.value = BreakRequest(state, activation)
+    }
+
+    /** Starts the publish loops (idempotent). */
     fun start() {
-        if (job != null) return
-        job = scope.launch { run() }
+        if (job == null) job = scope.launch { run() }
+        if (breakJob == null) breakJob = scope.launch { runBreakWrites() }
     }
 
     private suspend fun run() {
         desired.collectLatest { state ->
             if (state == null) {
                 // Screen off / signed out: stop ticking and hand the account to e1 right away. Skipped when this
-                // device never ticked (nothing on the server to go stale, so nothing to evaluate).
+                // device never ticked (nothing on the server to go stale, so nothing to evaluate). The break row
+                // is deliberately left as it is — it holds the state the user walked away in.
                 if (everActive) {
                     runCatching { gateway.notifyScreenOff() }
                         .onFailure { Diagnostics.log("screen-off cue evaluation skipped: ${it.message}") }
@@ -107,6 +153,30 @@ class DeviceHeartbeatPublisher(
                     .onSuccess { tickSeconds -> if (beatMillisOverride == null) adoptTick(tickSeconds) }
                     .onFailure { Diagnostics.log("presence beat skipped: ${it.message}") }
                 delay(beatMillis)
+            }
+        }
+    }
+
+    // The event-driven half. [collectLatest] cancels an in-flight retry the moment a newer window arrives, so a
+    // device that is offline while its pose changes twice ends up publishing only the second (correct) one.
+    private suspend fun runBreakWrites() {
+        nextBreak.collectLatest { request ->
+            val state = request?.state ?: return@collectLatest
+            var backoff = BREAK_RETRY_MIN_MILLIS
+            while (coroutineContext.isActive) {
+                val failure = runCatching { gateway.publishNextBreak(state) }.exceptionOrNull()
+                if (failure == null) {
+                    Diagnostics.log(
+                        "next break published: kind=${state.breakKind} due=${state.dueMillis} " +
+                            "len=${state.lengthMillis}",
+                    )
+                    return@collectLatest
+                }
+                // Retried rather than dropped: unlike a beat, nothing later re-sends this value on its own, so a
+                // lost write would leave the server judging the cue on a stale break until the NEXT change.
+                Diagnostics.log("next-break write failed, retrying in ${backoff}ms: ${failure.message}")
+                delay(backoff)
+                backoff = minOf(backoff * 2, BREAK_RETRY_MAX_MILLIS)
             }
         }
     }
@@ -130,5 +200,10 @@ class DeviceHeartbeatPublisher(
         // The server's own bounds (`app_config.tick_seconds` CHECK); a value outside them is ignored.
         private const val MIN_TICK_SECONDS = 1
         private const val MAX_TICK_SECONDS = 3600
+
+        // Retry cadence for a failed break write: fast enough to land while the user is still at the desk,
+        // capped so an offline device does not poll a dead network.
+        internal const val BREAK_RETRY_MIN_MILLIS = 2_000L
+        internal const val BREAK_RETRY_MAX_MILLIS = 60_000L
     }
 }

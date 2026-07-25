@@ -14,8 +14,9 @@ Three subcommands, all taking a username + password (the username is an arbitrar
                          it reloads its schema cache, so --wait polls through that lag instead of failing.
   empty  <user> <pass>   Sign in, then DELETE this account's synced data so every device for it goes
                          empty -- the `scheduler_snapshot` row, the `device_heartbeat` presence rows, the
-                         `pause_cue_schedule` bookkeeping, all `device_active_session` rows, and the retired
-                         `device_presence` / `device_sleep_gap` rows. It deliberately does NOT clear
+                         `device_break` next-break rows, the `pause_cue_schedule` bookkeeping, all
+                         `device_active_session` rows, and the retired `device_presence` /
+                         `device_sleep_gap` rows. It deliberately does NOT clear
                          `account_logout` (that marker must survive so the running apps still see it) nor
                          `app_config` / `break_config` (operator tuning set over HTTP, not account data).
 
@@ -153,14 +154,16 @@ def cmd_empty(user, password):
     base, key, domain = cfg()
     email = username_to_email(user, domain)
     token, uid = sign_in(base, key, email, password)
-    # device_heartbeat is the presence table and pause_cue_schedule the cue bookkeeping (PRD §15): a stale
-    # unclaimed presence row left behind would make the emptied account read as "idle" on the next server tick
-    # and fire a pause cue for data that no longer exists. device_presence / device_sleep_gap are retired
+    # device_heartbeat is the presence table, device_break the next-break table, pause_cue_schedule the cue
+    # bookkeeping (PRD §15): a stale unclaimed presence row left behind would make the emptied account read as
+    # "idle" on the next server tick and fire a pause cue for data that no longer exists -- and a stale
+    # device_break row would tell it WHICH break to speak. device_presence / device_sleep_gap are retired
     # tables, kept here so an older project still gets cleaned. app_config / break_config are deliberately NOT
     # cleared: they are operator tuning set over HTTP (t_a, break lengths/messages), not account data.
     for table in (
         "scheduler_snapshot",
         "device_heartbeat",
+        "device_break",
         "pause_cue_schedule",
         "device_presence",
         "device_sleep_gap",

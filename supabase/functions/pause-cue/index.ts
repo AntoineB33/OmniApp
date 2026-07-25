@@ -4,6 +4,11 @@
 // below hand it an account and it asks `evaluate_pause_cue()` (migration 20260724000000) whether a cue is owed,
 // which atomically claims the episode (`device_heartbeat.data_payload_sent = true`) so it is pushed once.
 //
+// That function reads TWO tables: `device_heartbeat` (the `t_a` presence beat — identity + a server-stamped
+// time, nothing else) and `device_break` (which rest pose each device is waiting on, written by the client only
+// when it CHANGES — migration 20260726000000). Nothing here needs to know the split; it is why the break e1
+// pushes is the one the user actually walked away on rather than whatever the last beat happened to carry.
+//
 // Callers / actions:
 //   • action:'evaluate' — from the `t_b` pg_cron tick (`tick_pause_cues()`, service-role via pg_net), for an
 //     account whose newest presence beat is older than `2 * t_a`.

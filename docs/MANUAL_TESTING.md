@@ -13,7 +13,8 @@ evidence (see "Spotting problems" below) before touching anything else.
 an authoritative local edit auto-pushes ~500 ms after you stop editing, and a peer's push auto-pulls over a
 Realtime `postgres_changes` subscription within ~a second. The manual **Sync button** remains as a
 force-now fallback. Cross-device *activity* is a **`device_heartbeat`** row each active device UPSERTs
-every ~10 s; the pause-end voice cue is fired by the **`tick_pause_cues()` pg_cron** job through the
+every ~10 s (identity + time only — the break it is waiting on lives in **`device_break`**, written only when
+that break changes); the pause-end voice cue is fired by the **`tick_pause_cues()` pg_cron** job through the
 `pause-cue` Edge Function. An **idle** signed-in app (no edits, no peer changes) makes no snapshot REST
 traffic — the pull is driven by the one Realtime WebSocket — but an **active** app does write the ~10 s
 heartbeat; the snapshot push only fires on an authoritative change.
@@ -31,9 +32,10 @@ ways. "Press Sync" below always means this.
   notification, voice cue (including crossings swallowed as stale), and the exact Inactivity bands the
   calendar renders are in there. **Use it instead of describing a calendar anomaly from memory.**
 - **Supabase Dashboard → Logs** counts every HTTP request the apps made (see §3a).
-- **`device_heartbeat` / `pause_cue_schedule` tables** (Supabase → Table editor) show which devices are
-  fresh (recent `beat_at`, `closed=false`) and whether the cron has pushed a cue (`pause_cue_schedule` row
-  with `pushed_at`).
+- **`device_heartbeat` / `device_break` / `pause_cue_schedule` tables** (Supabase → Table editor) show which
+  devices are fresh (recent `beat_at`), which break each is waiting on (`device_break.break_kind` /
+  `break_due_ms`, written only when the pose changes), and whether the cron has pushed a cue
+  (`pause_cue_schedule` row with `pushed_at`).
 - **`supabase functions logs pause-cue`** shows every push the Edge Function actually sent and any
   FCM/APNs error.
 
@@ -144,8 +146,11 @@ carried by the already-open WebSocket; a push fires only on an authoritative edi
 - [ ] Leave the desktop signed in with a stable schedule for ~10 min, no edits, no Sync → filter
       `request.path like '/rest/v1/scheduler_snapshot%'` → **no new rows** in that window (an idle app makes
       no snapshot traffic; the pull is Realtime-driven, the push only fires on an authoritative change). The
-      `/rest/v1/device_heartbeat` UPSERT recurs every ~10 s **while the app is active** — expected, and the
+      `/rest/v1/rpc/publish_presence` call recurs every ~10 s **while the app is active** — expected, and the
       one steady-state write; token refresh under `/auth/v1/%` is allowed.
+- [ ] In the same window, `/rest/v1/rpc/publish_next_break` appears **zero** times while the schedule is
+      untouched (it is written only when the governing rest pose changes), and exactly once shortly after you
+      edit the schedule in a way that moves the next break.
 - [ ] Press Sync once → a small burst: the `scheduler_snapshot` read/write, the `device_active_session`
       merge, the `account_logout` check. Nothing recurs afterwards.
 - [ ] Exact grouped count — **Logs Explorer**:
@@ -225,9 +230,10 @@ This is the **live path that is still unverified end-to-end** (client `device_he
 **`docs/PAUSE_CUE_DELIVERY.md`** — do them there, tick here. Inert unless §0 push prerequisites are met.
 
 - [ ] **Heartbeats appear.** Foreground the signed-in phone / open the signed-in desktop → `device_heartbeat`
-      gains a fresh row per device (recent `beat_at`, `closed=false`, its `next_break_*`). Background/lock the
-      phone → its row flips `closed=true` (clean) or its `beat_at` stops advancing (dirty); close the desktop
-      → likewise.
+      gains a fresh row per device (recent `beat_at`, `data_payload_sent = false`) and `device_break` gains one
+      per device (`break_kind` / `break_due_ms` / `break_len_ms`). Background/lock the phone → its `beat_at`
+      stops advancing while its `device_break` row stays put (that is deliberate — it records the state the
+      user walked away in); close the desktop → likewise.
 - [ ] **Cue fires when everyone is gone.** With a screen break pending, background/lock every device on
       the account → within ~10 s of the last device going idle, `pause_cue_schedule` gains a row with
       `pushed_at`, and the phone receives the push, schedules an OS alarm, and **speaks at the break's end**

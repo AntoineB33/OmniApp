@@ -7,25 +7,36 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.example.project.scheduler.sync.DeviceHeartbeatPublisher
+import org.example.project.scheduler.sync.NextBreakState
 import org.example.project.scheduler.sync.PauseCueGateway
 import org.example.project.scheduler.sync.PresenceState
 
 /**
- * PRD §15 / migration 20260724000000 — the client half of the pause-cue timing model:
+ * PRD §15 / migrations 20260724000000 + 20260726000000 — the client half of the pause-cue timing model, which
+ * runs on **two cadences**:
  *
- *  * while the screen is on, this device writes its presence row every **`t_a`** (10 s by default);
+ *  * while the screen is on, this device writes its presence row every **`t_a`** (10 s by default), and that row
+ *    is identity + time only;
  *  * `t_a` is **server-owned** — the tick RPC returns the account's current value and the loop adopts it, so
  *    changing it over HTTP re-paces every device within one tick;
+ *  * the next break is written **only when it changes** — never on the beat, and retried until it lands;
  *  * on screen-off the tick **stops** and the app calls the Edge Function once, so the cue is armed at the lock
  *    instant rather than waiting for the `t_b` cron to notice the missing beats.
  */
 class PresenceTickTest {
-    private val active = PresenceState(deviceId = "d1", kind = "desktop", nextBreakEndMillis = null)
+    private val active = PresenceState(deviceId = "d1")
+
+    private fun breakState(dueMillis: Long, kind: String = "5min_break") =
+        NextBreakState("d1", "desktop", kind, dueMillis, 300_000L)
 
     /** Records the calls the publisher makes; [tickSeconds] is what the server replies with. */
     private class FakeGateway(var tickSeconds: Int? = null) : PauseCueGateway {
         var beats = 0
         var screenOffReports = 0
+        val breakWrites = mutableListOf<NextBreakState>()
+
+        /** When > 0, the next this-many break writes throw (a device that is offline / the RPC 500s). */
+        var failBreakWrites = 0
 
         override val signedIn: Boolean = true
         override val deviceId: String = "d1"
@@ -43,6 +54,14 @@ class PresenceTickTest {
         override suspend fun publishPresence(state: PresenceState): Int? {
             beats++
             return tickSeconds
+        }
+
+        override suspend fun publishNextBreak(state: NextBreakState) {
+            if (failBreakWrites > 0) {
+                failBreakWrites--
+                throw IllegalStateException("offline")
+            }
+            breakWrites += state
         }
 
         override suspend fun notifyScreenOff() {
@@ -118,6 +137,109 @@ class PresenceTickTest {
         publisher.setPresence(active)
         runCurrent()
         assertEquals(beatsWhileActive + 1, gateway.beats)
+    }
+
+    @Test
+    fun the_next_break_is_written_once_on_change_and_never_on_the_beat() = runTest {
+        // The whole point of migration 20260726000000: an idle-but-present device makes ZERO break writes, so
+        // the beat cannot be the thing carrying the break — and a break change reaches the server at once
+        // instead of waiting up to one active-session beat (30 s) for the next piggyback.
+        val gateway = FakeGateway()
+        val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
+        publisher.setPresence(active)
+        publisher.setNextBreak(breakState(dueMillis = 5_000L))
+        runCurrent()
+        assertEquals(1, gateway.breakWrites.size, "the first window is published immediately")
+
+        // Ten minutes of beating with an unchanged window: sixty beats, still one break write.
+        advanceTimeBy(600_000)
+        assertTrue(gateway.beats >= 60, "the presence tick kept running")
+        publisher.setNextBreak(breakState(dueMillis = 5_000L)) // re-published, identical value
+        runCurrent()
+        assertEquals(1, gateway.breakWrites.size, "an unchanged window costs no request")
+
+        // The pose is served / the schedule is edited → exactly one more write, right away.
+        publisher.setNextBreak(breakState(dueMillis = 9_000L, kind = "15min_break"))
+        runCurrent()
+        assertEquals(2, gateway.breakWrites.size)
+        assertEquals(9_000L, gateway.breakWrites.last().dueMillis)
+        assertEquals("15min_break", gateway.breakWrites.last().breakKind)
+    }
+
+    @Test
+    fun a_failed_break_write_is_retried_until_it_lands() = runTest {
+        // Unlike a beat, nothing re-sends this value on its own: a dropped write would leave the server judging
+        // the cue on a stale break until the NEXT change, which may be hours away.
+        val gateway = FakeGateway().apply { failBreakWrites = 2 }
+        val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
+        publisher.setPresence(active)
+        publisher.setNextBreak(breakState(dueMillis = 5_000L))
+        runCurrent()
+        assertEquals(0, gateway.breakWrites.size, "the first attempt failed")
+
+        advanceTimeBy(DeviceHeartbeatPublisher.BREAK_RETRY_MIN_MILLIS * 4)
+        assertEquals(1, gateway.breakWrites.size, "it landed on a retry")
+        assertEquals(5_000L, gateway.breakWrites.single().dueMillis)
+
+        // And the retry stops once it succeeds — it does not turn into a poll.
+        advanceTimeBy(600_000)
+        assertEquals(1, gateway.breakWrites.size)
+    }
+
+    @Test
+    fun a_newer_window_supersedes_a_pending_retry() = runTest {
+        // Offline while the pose changes twice: only the second (correct) window must reach the server.
+        val gateway = FakeGateway().apply { failBreakWrites = 1 }
+        val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
+        publisher.setPresence(active)
+        publisher.setNextBreak(breakState(dueMillis = 5_000L))
+        runCurrent()
+        publisher.setNextBreak(breakState(dueMillis = 9_000L))
+        advanceTimeBy(DeviceHeartbeatPublisher.BREAK_RETRY_MIN_MILLIS * 4)
+
+        assertEquals(listOf(9_000L), gateway.breakWrites.map { it.dueMillis })
+    }
+
+    @Test
+    fun going_active_again_re_publishes_the_break_even_when_it_is_unchanged() = runTest {
+        // PRD §15 device↔account exclusivity: a device belongs to ONE account, so signing into another account
+        // deletes this account's presence + break pair server-side (migration 20260727000000). Coming back must
+        // restore BOTH — and a break written only on change would otherwise not be rewritten until the pose next
+        // moved, leaving the account with a heartbeat but no break and so never owed a cue.
+        val gateway = FakeGateway()
+        val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
+        publisher.setPresence(active)
+        publisher.setNextBreak(breakState(dueMillis = 5_000L))
+        runCurrent()
+        assertEquals(1, gateway.breakWrites.size)
+
+        publisher.setPresence(null) // lock / sign out
+        runCurrent()
+        publisher.setPresence(active) // unlock / sign back in — the engine re-asserts in the same pass
+        publisher.setNextBreak(breakState(dueMillis = 5_000L)) // identical window
+        runCurrent()
+        assertEquals(2, gateway.breakWrites.size, "the re-assertion goes out despite the unchanged window")
+
+        // …and it is still one write per activation, not a new cadence.
+        advanceTimeBy(600_000)
+        publisher.setNextBreak(breakState(dueMillis = 5_000L))
+        runCurrent()
+        assertEquals(2, gateway.breakWrites.size)
+    }
+
+    @Test
+    fun the_break_row_survives_screen_off_so_the_server_judges_what_the_user_walked_away_in() = runTest {
+        val gateway = FakeGateway()
+        val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
+        publisher.setPresence(active)
+        publisher.setNextBreak(breakState(dueMillis = 5_000L))
+        runCurrent()
+        publisher.setPresence(null) // screen off
+        advanceTimeBy(600_000)
+
+        // No clearing write: the last window published while active IS the state to judge the cue on.
+        assertEquals(1, gateway.breakWrites.size)
+        assertEquals(1, gateway.screenOffReports)
     }
 
     @Test
