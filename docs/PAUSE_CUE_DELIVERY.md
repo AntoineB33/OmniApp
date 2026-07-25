@@ -37,6 +37,20 @@ instant, and flips `data_payload_sent = true` on the account's rows **in the sam
 pushed exactly once per idle episode and the cron path and the screen-off path can race harmlessly. A device
 coming back clears the flag on its next tick, re-arming the next episode.
 
+**Only an OVERDUE break fires a cue (migration `20260725000000`).** "Your pause is over" must be spoken only when
+the account went idle with a rest break actually DUE — the user walked away *to take* the break — never when it
+simply went idle (a lunch break, an errand). So `evaluate_pause_cue` considers only rows whose published window
+was **overdue** at that device's last beat: `next_break_start_ms <= beat_at` (+ a `t_a` clock-skew slack). This
+works because the client clamps an overdue pose's start to the real now-line (`start ≈ beat_at`) while a
+not-yet-due pose keeps a fixed *future* start (`start > beat_at`) — see `nextRestPoseWindowMillis` /
+`RestPosePresenceWindowTest`. Among the overdue rows the **longest** length governs (`max(5min,15min)`; a single
+device already collapsed its two poses client-side, so the server-side max only matters across devices). If none
+is overdue the account is claimed (so it is not re-evaluated every tick) but owes **no** cue. The reference is
+each device's own `beat_at` — the instant the start was "dragged by the now-line" — **not** the later cron
+`now()`, so an *upcoming* break whose fixed start merely elapsed after walk-away (never dragged) does not fire.
+The `t_b` tick pre-filters on the same overdue predicate, so an account with nothing overdue is never handed to
+e1 at all.
+
 **Two paths into e1, and why both exist.** A clean screen-off calls e1 *directly* (with the app's own user JWT),
 so the cue is armed at the lock instant instead of up to `t_b + 2·t_a` later; e1 excludes the calling device
 from the liveness check, since its row is necessarily still fresh. A dirty kill makes no such call — that is
@@ -67,7 +81,7 @@ this just puts the timeout in Postgres.
 | Clean screen-off: stop the tick + call e1 directly (excluding this device); restart-after-kill resumes the tick iff the device is unlocked | ✅ `DeviceHeartbeatPublisher` → `SchedulerSyncEngine.notifyScreenOff`; `isScreenActive()` (`DesktopSessionTracker` / `AndroidUnlockTracker`) sampled on the first activity beat |
 | Sleep/Work toggle → `account_state` (cue suppression; persists across restart until the scheduled wake) | ✅ `SetSleepMode` / `publishAccountState` / `resolveSleepModeOnStartup`; `SleepModeTest` |
 | Server `t_b` job: `tick_pause_cues()` runs one fast grouped query and hands idle accounts to e1 | ✅ migration `20260724000000` + `pause-cue-setup.sql` (`cron.schedule('pause-cue-tick','1 minute', …)`) |
-| Server decision: `evaluate_pause_cue()` re-checks liveness, computes `t2 + break_length`, claims via `data_payload_sent` | ✅ migration `20260724000000` |
+| Server decision: `evaluate_pause_cue()` re-checks liveness, fires only on an **overdue** window (`next_break_start_ms <= beat_at`), computes `t2 + break_length`, claims via `data_payload_sent` | ✅ migrations `20260724000000` + `20260725000000` (overdue gate) |
 | HTTP-changeable config: `t_a` (`app_config.tick_seconds`) and each break's length + vocal message (`break_config`) | ✅ migration `20260724000000`; see **Step 3** below |
 | Supabase schema: `device_heartbeat`, `app_config`, `break_config`, `pause_cue_schedule`, `account_state`, `device_push_token`, `account_last_phone` | ✅ migrations up to `20260724000000`, applied by `deploy-supabase.bat` |
 | `pause-cue` Edge Function ("e1"): evaluate + claim + real FCM v1 / APNs HTTP/2 sends, fan-out to `device_id:'*'` | ✅ `supabase/functions/pause-cue/index.ts` (**needs secrets**, below) |
