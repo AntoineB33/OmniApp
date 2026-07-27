@@ -168,6 +168,32 @@ supabase secrets set APNS_KEY="$(cat AuthKey_XXXX.p8)" APNS_KEY_ID=XXXXXXXXXX AP
 scripts\deploy-supabase.bat   # db push + functions deploy pause-cue AND pause-cue-cron + pause-cue-setup.sql
 ```
 
+> **Windows: do NOT paste the `$(cat …)` lines into PowerShell or cmd.** Neither expands `$( )`, so the secret
+> is stored as the literal text `$(cat firebase-service-account.json)`. Nothing complains — the value is set,
+> the functions deploy, the whole decision path runs — and delivery fails only at the last step, inside
+> `_shared/push.ts`'s `JSON.parse(FCM_SERVICE_ACCOUNT)`. The tell is a `502 push failed: Unexpected token '$',
+> "$(cat …"... is not valid JSON` in the phone's `diagnostics.log` (or in `supabase functions logs pause-cue`).
+> Observed 2026-07-27; cost a full test cycle. On Windows, write the value to a temp env file instead — a
+> secret's value may not span lines, so the JSON has to be flattened first:
+>
+> ```powershell
+> $one = ((Get-Content -Raw firebase-service-account.json) -replace "\r?\n","").Trim()
+> [IO.File]::WriteAllText("$env:TEMP\fcm.env", "FCM_SERVICE_ACCOUNT=$one", (New-Object Text.UTF8Encoding $false))
+> supabase secrets set --env-file "$env:TEMP\fcm.env"
+> ```
+>
+> Verify without waiting for a real pause — a `cancel` fan-out exercises the exact same credential path and is
+> inert on the phone:
+>
+> ```powershell
+> curl.exe -s -X POST "https://<ref>.supabase.co/functions/v1/pause-cue-cron" `
+>   -H "Authorization: Bearer $env:SUPABASE_SERVICE_ROLE_KEY" -H "Content-Type: application/json" `
+>   -d '{\"user_id\":\"<account uuid>\",\"action\":\"cancel\"}'
+> ```
+>
+> `FCM 404 … UNREGISTERED` means the credential is good and only the token is stale; `Unexpected token '$'`
+> means the secret is still the unexpanded string.
+
 The secrets above are **project-wide**, so setting them once covers both Edge Functions. Both must be deployed:
 `tick_pause_cues()` reaches `pause-cue-cron` by name and the app reaches `pause-cue` by name, so deploying only
 one silently disables that half of the delivery (the other half keeps working, which is exactly how it hides).
