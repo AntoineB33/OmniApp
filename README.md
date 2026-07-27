@@ -24,7 +24,7 @@ This is a KMP project targeting Android, iOS, Web, and Desktop (JVM).
 - `/shared/src`: Core shared logic and UI for the Compose Multi-platform applications.
   - `commonMain`: Truly platform-agnostic code (Domain, Data, MVI State Holders, and shared UI).
   - `iosMain` / `jvmMain` / `androidMain` / `wasmJsMain`: Platform-specific integrations and actualizations (e.g., specific file system APIs, platform crypto).
-- `/supabase`: The server half of cross-device sync — SQL migrations (applied via the CLI, never pasted by hand), the `pause-cue` Edge Function, and `pause-cue-setup.sql` (the `tick_pause_cues()` pg_cron job that fires the pause-end voice cue over a `device_heartbeat` table — see `docs/PAUSE_CUE_DELIVERY.md`).
+- `/supabase`: The server half of cross-device sync — SQL migrations (applied via the CLI, never pasted by hand), the two pause-cue Edge Functions (`pause-cue`, called by a device reporting its own clean lock; `pause-cue-cron`, called by the cron when a device died without reporting), and `pause-cue-setup.sql` (the `tick_pause_cues()` pg_cron job that fires the pause-end voice cue over a `device_heartbeat` table — see `docs/PAUSE_CUE_DELIVERY.md`).
 
 ## 🚀 Getting Started
 
@@ -70,7 +70,7 @@ Helper scripts in `scripts/` (Windows batch / PowerShell) open the app already s
 - **`account1-deploy-android.bat`** / **`account2-deploy-android.bat`** — build a **debug** APK, wipe the phone's local app data (uninstall + reinstall over adb — not `pm clear`, which some OEM ROMs deny), and launch it auto-signed-in as account 1 / account 2. Remote data is preserved.
 - **`account3-deploy-windows.bat`** — builds a self-contained release app image (bundled JRE, via `:desktopApp:createDistributable`), installs it outside the project tree, registers it to start at Windows login, and auto-signs-in as account 3 against the release DB (left untouched by updates). Time simulation is off in this build.
 - **`account3-deploy-android.bat`** — builds, signs, installs, and launches the release APK auto-signed-in as account 3 (a BootReceiver keeps the scheduler running across reboots).
-- **`deploy-supabase.bat`** — applies `supabase/migrations/`, deploys the `pause-cue` Edge Function, and runs `supabase/pause-cue-setup.sql`. Idempotent; re-run after any schema edit (needs a one-time `supabase login` + `supabase link`).
+- **`deploy-supabase.bat`** — applies `supabase/migrations/`, deploys **both** pause-cue Edge Functions (`pause-cue` for a device's own clean lock, `pause-cue-cron` for the cron's dirty-kill backstop), and runs `supabase/pause-cue-setup.sql`. Idempotent; re-run after any schema edit (needs a one-time `supabase login` + `supabase link`).
 - **`collect-diagnostics.bat [stateDir]`** — prints the merged cross-device diagnostics timeline (script markers + desktop log + Android log pulled over adb). The first tool to reach for when a calendar/sync anomaly shows up.
 - **`update-supabase-cli.bat`** — updates the standalone Supabase CLI binary in place (note: an npm-global `supabase` may shadow it on `PATH` — see CLAUDE.md).
 - **`setup-piper.ps1`** — installs the local Piper neural text-to-speech voice used for the spoken screen-break cues; without it the app falls back to the system speech voice.

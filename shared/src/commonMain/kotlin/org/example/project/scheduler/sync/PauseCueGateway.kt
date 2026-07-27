@@ -7,10 +7,16 @@ package org.example.project.scheduler.sync
  * device's push token. Implemented by [SchedulerSyncEngine] (which owns the Supabase session); `null`/dormant
  * when sync is disabled or signed out. Injectable so the engine can be tested with a fake.
  *
- * The cue's *timing* decision stays off the client: every active device writes its presence row every `t_a`, the
- * `t_b` cron (`tick_pause_cues()`) spots an account whose newest beat is older than `2·t_a`, and the `pause-cue`
- * Edge Function ("e1") evaluates + claims + pushes (migration 20260724000000). The phone only receives the push
- * ([SchedulerEngine.onPauseCuePush]) and schedules the OS-local cue itself.
+ * The cue's *timing* decision stays off the client, and there are **two** Edge Functions for it, one per way a
+ * pause is detected (migration 20260729000000):
+ *  * **e1**, `pause-cue` — the CLEAN LOCK. This device reports its own screen-off ([notifyScreenOff]) and e1
+ *    decides whether a data payload is owed, timing the cue at `now() + break_length` — on this path the
+ *    request *is* the walk-away, so there is nothing to estimate.
+ *  * **e2**, `pause-cue-cron` — the DIRTY KILL, where no such report is ever sent. Every active device writes
+ *    its presence row every `t_a`; the `t_b` cron (`tick_pause_cues()`) spots an account whose newest beat is
+ *    older than `2·t_a` and owes an overdue break, and hands it to e2, which claims + computes + pushes with
+ *    the estimated walk-away `t2 = max(beat_at) + t_a/2`.
+ * The phone only receives the push ([SchedulerEngine.onPauseCuePush]) and schedules the OS-local cue itself.
  */
 interface PauseCueGateway {
     /** Whether a signed-in session is available (all calls are no-ops otherwise). */
@@ -68,8 +74,11 @@ interface PauseCueGateway {
     /**
      * PRD §15 clean screen-off: this device's screen just went off, so it stopped its `t_a` tick — tell **e1**
      * (the `pause-cue` Edge Function) directly, so it can evaluate the account NOW rather than waiting for the
-     * next `t_b` cron tick to notice the missing beats. e1 excludes this device from the liveness check. A no-op
-     * while signed out; best-effort (the stale presence row is the backstop when the app is killed outright).
+     * next `t_b` cron tick to notice the missing beats. e1 excludes this device from the liveness check and
+     * times the cue from the instant this call lands — the lock event, i.e. the walk-away itself. A no-op while
+     * signed out; best-effort — when this call never happens (the app was killed outright) the presence row
+     * simply goes stale and the cron's own function, **e2** (`pause-cue-cron`), delivers the same cue later,
+     * timed from the estimated midpoint of the tick interval the device vanished in.
      */
     suspend fun notifyScreenOff()
 

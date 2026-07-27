@@ -361,12 +361,16 @@ class RemoteSnapshotClient(
     }
 
     /**
-     * PRD §15 clean screen-off: invokes the `pause-cue` Edge Function (**e1**) directly, with this device's own
-     * user JWT, the moment this device's screen goes off. e1 re-evaluates account liveness server-side —
-     * excluding [deviceId], whose presence row is necessarily still fresh — and arms the cue right away instead
-     * of waiting up to `t_b + 2·t_a` for the cron to notice the tick stopped. Best-effort by construction: if
-     * this call is lost (or the app was killed before making it), the presence row simply goes stale and the
-     * cron tick delivers the same cue, just later.
+     * PRD §15 clean screen-off: invokes the `pause-cue` Edge Function (**e1** — the one that *decides* whether a
+     * data payload must be sent) directly, with this device's own user JWT, the moment this device's screen goes
+     * off. e1 re-evaluates account liveness server-side — excluding [deviceId], whose presence row is
+     * necessarily still fresh — and arms the cue at `now() + break_length` right away instead of waiting up to
+     * `t_b + 2·t_a` for the cron to notice the tick stopped. The account is taken from the JWT's `sub` claim, so
+     * the body is just this device's id.
+     *
+     * Best-effort by construction: if this call is lost (or the app was killed before making it), the presence
+     * row simply goes stale and the cron's own function (**e2**, `pause-cue-cron`) delivers the same cue, just
+     * later and timed from an estimate.
      */
     suspend fun notifyScreenOff(session: SupabaseSession, deviceId: String) {
         val response =

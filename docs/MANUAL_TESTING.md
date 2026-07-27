@@ -37,8 +37,9 @@ ways. "Press Sync" below always means this.
   due (`device_break.break_5min_due_ms` / `break_15min_due_ms`, written only when one of them changes),
   whether the current idle episode has been claimed (`data_payload_sent`), and whether the cron has pushed a
   cue (`pause_cue_schedule` row with `pushed_at`).
-- **`supabase functions logs pause-cue`** shows every push the Edge Function actually sent and any
-  FCM/APNs error.
+- **`supabase functions logs pause-cue`** (the device's own clean-lock report) and **`… logs pause-cue-cron`**
+  (the cron's backstop for a device that died without reporting) show every push actually sent and any
+  FCM/APNs error. Which of the two is empty tells you at once which path delivered the cue.
 
 ---
 
@@ -51,8 +52,8 @@ ways. "Press Sync" below always means this.
       `enable_anonymous_sign_ins` in `supabase/config.toml`) — without the latter no **guest account** can
       be created, so a launch without script credentials stays local-only (§11).
 - [ ] Server schema deployed: `scripts\deploy-supabase.bat` (idempotent; re-run after schema edits). It
-      applies `supabase/migrations/`, deploys the `pause-cue` Edge Function, and runs
-      `pause-cue-setup.sql` (which **schedules** the `pause-cue-tick` cron at `'10 seconds'`).
+      applies `supabase/migrations/`, deploys **both** Edge Functions (`pause-cue` + `pause-cue-cron`),
+      and runs `pause-cue-setup.sql` (which **schedules** the `pause-cue-tick` cron at `'* * * * *'`).
 - [ ] For Android tests: an Android device set up per **Appendix A** (physical phone or emulator —
       the checklists never care which); `adb devices` lists it; `adb` on `PATH` or under SDK
       `platform-tools`.
@@ -229,8 +230,9 @@ Both debug scripts share one app install and wipe local data on deploy by **unin
 
 ## 6. Device heartbeat + pause-end voice cue (pg_cron path)
 
-This is the **live path that is still unverified end-to-end** (client `device_heartbeat` UPSERT ↔
-`tick_pause_cues()` pg_cron ↔ `pause-cue` Edge Function ↔ FCM/APNs ↔ phone). Full procedures live in
+These are the **live paths that are still unverified end-to-end** (clean lock ↔ `pause-cue` Edge Function ↔
+FCM/APNs ↔ phone, and client `device_heartbeat` UPSERT ↔ `tick_pause_cues()` pg_cron ↔ `pause-cue-cron` Edge
+Function ↔ FCM/APNs ↔ phone). Full procedures live in
 **`docs/PAUSE_CUE_DELIVERY.md`** — do them there, tick here. Inert unless §0 push prerequisites are met.
 
 - [ ] **Heartbeats appear.** Foreground the signed-in phone / open the signed-in desktop → `device_heartbeat`
@@ -251,8 +253,8 @@ This is the **live path that is still unverified end-to-end** (client `device_he
       `resolveSleepModeOnStartup`) → cues resume.
 - [ ] **Desktop-only account.** An account with no phone registered gets no push (Edge logs
       "no push token", 200) — and nothing errors.
-- [ ] Watch `supabase functions logs pause-cue` throughout — every `schedule`/`cancel` and any FCM/APNs
-      error is there.
+- [ ] Watch `supabase functions logs pause-cue` **and** `… logs pause-cue-cron` throughout — every
+      `schedule`/`cancel` and any FCM/APNs error is in one of the two, and which one identifies the path.
 
 *(iOS devices run the same steps; where network push isn't available on your device type, tick the push
 boxes **receipt-only** via the injected push — Appendix §A5/§A4.)*
@@ -302,8 +304,9 @@ and `supabase functions logs pause-cue` visible.
 - [ ] **Device bubble.** Hover a past task panel on the desktop → "Open: …" names the desktop/Android
       stretches; the iPhone never appears in the set (no sessions).
 - [ ] **Cue fan-out reaches both phones.** With a screen break pending, background/lock the desktop
-      and the Android (the iPhone's state is irrelevant — it never writes a heartbeat) → within ~10 s the
-      cron issues one `pause-cue` POST with `device_id:'*'` → the Edge Function fans out to **every**
+      and the Android (the iPhone's state is irrelevant — it never writes a heartbeat) → the last device's
+      clean lock POSTs `pause-cue` at once (or, if it was killed instead, the cron POSTs `pause-cue-cron`
+      within `t_b + 2·t_a`) → the Edge Function fans out to **every**
       `device_push_token` row: the Android (FCM) **and** the iPhone (APNs) both schedule and both speak at
       the break's end. (No network-push capability on your iOS device type? Tick receipt-only via the
       injected push — §A5/§A4.)

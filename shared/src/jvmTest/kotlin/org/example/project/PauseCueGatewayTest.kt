@@ -175,11 +175,15 @@ class PauseCueGatewayTest {
         signedIn(cap).notifyScreenOff()
 
         assertEquals("POST", cap.method)
+        // **e1**, the function that decides — never the cron's `pause-cue-cron` (e2), which is service-role only
+        // and exists precisely for the case where no such report is ever sent (migration 20260729000000).
         assertTrue(cap.path!!.endsWith("/functions/v1/pause-cue"), "was ${cap.path}")
         val body = json.parseToJsonElement(cap.body!!).jsonObject
         assertEquals("evaluate", body["action"]!!.jsonPrimitive.content)
-        // e1 excludes the reporting device from the account-liveness check (its row is still fresh).
+        // e1 excludes the reporting device from the account-liveness check (its row is still fresh); it takes
+        // the ACCOUNT from the JWT, so the body never names one.
         assertEquals("self", body["device_id"]!!.jsonPrimitive.content)
+        assertTrue(!cap.body!!.contains("user_id"))
     }
 
     @Test

@@ -7,7 +7,9 @@ REM  Function to Supabase with the CLI, so you never copy-paste SQL into
 REM  the Dashboard SQL Editor again.
 REM
 REM    [1] supabase db push            - applies supabase/migrations/*.sql
-REM    [2] supabase functions deploy   - deploys supabase/functions/pause-cue
+REM    [2] supabase functions deploy   - deploys BOTH pause-cue Edge Functions
+REM                                      (pause-cue = e1, the app's clean-lock report;
+REM                                       pause-cue-cron = e2, the cron's dirty-kill backstop)
 REM    [3] supabase db query           - applies supabase/pause-cue-setup.sql
 REM                                      (pg_cron/pg_net + Vault secrets + cron job), with the secret
 REM                                      service-role key injected from accounts.env. Skipped if unset.
@@ -72,10 +74,16 @@ if defined SUPABASE_DB_PASSWORD (
 )
 if errorlevel 1 (echo [x] db push failed.& exit /b 1)
 
-REM ---- [2/3] Deploy the pause-cue Edge Function ----------------------
-echo [2/3] Deploying Edge Function 'pause-cue'...
+REM ---- [2/3] Deploy the two pause-cue Edge Functions -----------------
+REM  pause-cue      ("e1") - the app's own clean-lock report; DECIDES whether a data payload must be sent.
+REM  pause-cue-cron ("e2") - the t_b cron's backstop for a phone that died without reporting; pushes directly.
+REM  Both must be deployed: tick_pause_cues() calls e2 by name, and the app calls e1 by name.
+echo [2/3] Deploying Edge Function 'pause-cue' ^(e1, clean lock^)...
 call supabase functions deploy pause-cue --workdir "%PROJECT_ROOT%"
-if errorlevel 1 (echo [x] functions deploy failed.& exit /b 1)
+if errorlevel 1 (echo [x] functions deploy 'pause-cue' failed.& exit /b 1)
+echo [2/3] Deploying Edge Function 'pause-cue-cron' ^(e2, cron backstop^)...
+call supabase functions deploy pause-cue-cron --workdir "%PROJECT_ROOT%"
+if errorlevel 1 (echo [x] functions deploy 'pause-cue-cron' failed.& exit /b 1)
 
 REM ---- [3/3] Pause-cue project setup (extensions/GUCs/cron) ----------
 REM Optional: needs the SECRET service-role key, kept only in accounts.env (never committed). Runs the

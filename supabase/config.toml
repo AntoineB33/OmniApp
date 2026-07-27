@@ -12,7 +12,15 @@ project_id = "itoaqbftjemovkzswiyu"
 # flip Authentication → Sign In / Providers → "Allow anonymous sign-ins" once in the Dashboard.
 enable_anonymous_sign_ins = true
 
+# The pause-end voice cue is delivered by TWO Edge Functions, one per way a pause is detected (PRD §15):
+#   * pause-cue      ("e1") - the app's own clean-lock report. Decides whether a data payload must be sent.
+#   * pause-cue-cron ("e2") - the t_b pg_cron tick's backstop for a phone that died without reporting.
+# Both verify the caller THEMSELVES (e1 demands an `authenticated` user JWT and takes the account from its `sub`
+# claim; e2 demands the service-role key, since pg_net names the account in the body), which is stricter than
+# the platform gateway's check — the gateway would accept the project's anon key just as happily. So the gateway
+# check is turned off on both and the function's own check is the real gate.
 [functions.pause-cue]
-# The pause-end voice cue Edge Function verifies its own JWT (it is called by Postgres pg_net with the
-# service-role key), so the platform gateway must not reject unauthenticated invocations.
+verify_jwt = false
+
+[functions.pause-cue-cron]
 verify_jwt = false

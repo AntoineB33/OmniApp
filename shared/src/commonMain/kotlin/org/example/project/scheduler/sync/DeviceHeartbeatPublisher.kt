@@ -81,9 +81,11 @@ interface RealtimePresence {
  * [DEFAULT_TICK_SECONDS]) and this loop adopts it on the next pass, so changing it over HTTP re-paces every
  * device within one tick. [beatMillisOverride] pins it instead (tests).
  *
- * On the inactive transition the tick stops and e1 is called once (the clean screen-off short-circuit), so the
- * cue is armed at the lock instant. A dirty kill makes no such call — there the row simply goes stale and the
- * `t_b` cron tick delivers the same cue, later.
+ * On the inactive transition the tick stops and **e1** (`pause-cue`) is called once — the clean screen-off
+ * short-circuit — so the cue is armed at the lock instant *and timed from it* (`now() + break_length`; this
+ * request is the walk-away, so nothing is estimated). A dirty kill makes no such call: there the row simply
+ * goes stale and the `t_b` cron hands the account to the OTHER function, **e2** (`pause-cue-cron`), which
+ * delivers the same cue later, timed from `max(beat_at) + t_a/2`.
  *
  * All writes are best-effort (a failed beat must never crash the engine); the server's staleness window is the
  * backstop when one is missed. Every call is a no-op while signed out ([PauseCueGateway.signedIn]).

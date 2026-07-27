@@ -41,11 +41,14 @@ begin
 end;
 $$;
 
--- Pause-cue tick cron — this is **`t_b`** (migration 20260724000000): every minute, one fast grouped query over
--- the presence table (`device_heartbeat`) hands each idle account to the `pause-cue` Edge Function, which owns
--- the decision. `t_b` is the *detection* granularity only: the cue instant itself is computed from the
--- server-stamped presence time (`t2 = beat_at + t_a/2`), so it does not drift with which tick noticed — and a
--- clean screen-off short-circuits the wait by calling the Edge Function directly.
+-- Pause-cue tick cron — this is **`t_b`** (migrations 20260724000000 + 20260729000000): every minute, one fast
+-- grouped query over the presence table (`device_heartbeat`) finds each idle account that is owed a cue and
+-- hands it to the `pause-cue-cron` Edge Function (**e2**), which claims, computes and pushes it. This is the
+-- backstop for a phone that died WITHOUT reporting; a clean lock never gets here at all, because the app calls
+-- the OTHER Edge Function (`pause-cue`, **e1**) itself at the lock instant.
+-- `t_b` is the *detection* granularity only: on this path the cue instant is computed from the server-stamped
+-- presence time (`t2 = beat_at + t_a/2`), so it does not drift with which tick noticed. (On the e1 path there
+-- is nothing to estimate — the request IS the walk-away, so the cue is `now() + break_length`.)
 --
 -- pg_cron accepts standard cron syntax OR a sub-minute interval string, but the interval form is only
 -- '[1-59] seconds' — 'N minutes' is rejected with `invalid schedule`. One minute is therefore the cron
