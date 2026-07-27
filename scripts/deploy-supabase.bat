@@ -41,10 +41,9 @@ REM `call supabase ...` everywhere below: if PATH resolves supabase to a .cmd wr
 REM install), invoking it without `call` transfers control and the rest of this script silently never runs.
 where supabase >nul 2>nul || (
   echo [x] The Supabase CLI is not on PATH.
-  echo     Install it with:  npm install -g supabase
-  echo     ^(or update-supabase-cli.bat for a standalone binary under
-  echo     %%LOCALAPPDATA%%\supabase\bin - but an npm global shadows it on PATH^).
-  echo     Then open a NEW terminal and run 'supabase login' + 'supabase link' once.
+  echo     Install/update it with update-supabase-cli.bat ^(npm global if npm is
+  echo     available, else a standalone binary under %%LOCALAPPDATA%%\supabase\bin^),
+  echo     then open a NEW terminal and run 'supabase login' + 'supabase link' once.
   exit /b 1
 )
 

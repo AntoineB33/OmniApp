@@ -45,6 +45,10 @@ object SchedulerHolder {
     fun ensure(context: Context): AppSchedulerHost {
         host?.let { return it }
         AndroidSchedulerStoreHolder.context = context.applicationContext
+        // Debug fast-break knobs, re-applied before anything seeds the screen breaks below. MainActivity gets
+        // them from the deploy script's launch extras, but a reboot comes back through BootReceiver ->
+        // SchedulerService with no Activity at all, so this is the only place every entry point shares.
+        AndroidDebugFlagStore.restore(context)
         // PRD §15: the phone's activity signal is "device unlocked" (see DeviceInfo.android.kt) — the device
         // writes its device_heartbeat while unlocked and closes it at lock. The Activity-lifecycle counter
         // stays installed for the resume-time poke (MainActivity.onResume → engine.onAppForegrounded),

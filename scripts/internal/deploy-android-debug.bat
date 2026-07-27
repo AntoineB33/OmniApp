@@ -124,6 +124,10 @@ REM  (e.g. 5000) before running to shrink the 5-min screen break (its length / h
 REM  pause it comes due), so the pause-cue voice message can be tested on the phone in seconds.
 REM  OMNIAPP_BREAK_PAUSE_THRESHOLD_MS decouples the qualifying-pause length from the drawn break length
 REM  (the account1 fast-break flavor: the pose anchors only after a pause of this length).
+REM  The app REMEMBERS whatever this launch passes (AndroidDebugFlagStore, debug builds only), so a phone
+REM  reboot - which restarts the engine via BootReceiver with no Activity and no extras - keeps the same
+REM  5-min-break rules as the server-side break_config.length_ms this deploy upserted. A later deploy that
+REM  passes none of these CLEARS them, so a plain account{1,2}-deploy-android.bat is back to production timings.
 set "BREAK_EXTRA="
 if defined OMNIAPP_BREAK_DURATION_MS set "BREAK_EXTRA=%BREAK_EXTRA% --es omniapp_break_duration_ms %OMNIAPP_BREAK_DURATION_MS%"
 if defined OMNIAPP_BREAK_INTERVAL_MS set "BREAK_EXTRA=%BREAK_EXTRA% --es omniapp_break_interval_ms %OMNIAPP_BREAK_INTERVAL_MS%"

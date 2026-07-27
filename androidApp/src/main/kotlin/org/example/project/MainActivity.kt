@@ -77,11 +77,13 @@ class MainActivity : ComponentActivity() {
      * the qualifying-pause length from the drawn length (place a short break only after a long pause). Must be
      * applied BEFORE [SchedulerHolder.ensure] builds the VM (which seeds the screen breaks). Absent extras
      * leave production timings.
+     *
+     * [AndroidDebugFlagStore] also REMEMBERS them for the install, so a reboot (which restarts the engine
+     * through the service with no Activity and no extras) keeps the same 5-min-break rules the server-side
+     * `break_config.length_ms` was set to.
      */
     private fun captureBreakOverrides() {
-        intent?.getStringExtra("omniapp_break_duration_ms")?.toLongOrNull()?.let { DebugFlags.breakDurationMillisOverride = it }
-        intent?.getStringExtra("omniapp_break_interval_ms")?.toLongOrNull()?.let { DebugFlags.breakIntervalMillisOverride = it }
-        intent?.getStringExtra("omniapp_break_pause_threshold_ms")?.toLongOrNull()?.let { DebugFlags.breakPauseThresholdMillisOverride = it }
+        AndroidDebugFlagStore.captureFromLaunchIntent(this, intent)
     }
 
     /** PRD §11: on API 33+ the POST_NOTIFICATIONS runtime grant is required or notifications are dropped. */

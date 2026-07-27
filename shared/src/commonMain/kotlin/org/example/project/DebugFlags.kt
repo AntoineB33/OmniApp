@@ -28,8 +28,13 @@ object DebugFlags {
      * Either way, a length below the ~1-min `t_b` can only be armed by the clean screen-off short-circuit.)
      *
      * Set at startup from the platform entry point (`omniapp.breakDurationMs` system property on desktop; the
-     * `omniapp_break_duration_ms` launch-Intent extra on Android), never persisted, always off in release.
-     * Test-only: it changes how a device seeds/records its rest poses, so point it at a scratch account.
+     * `omniapp_break_duration_ms` launch-Intent extra on Android) and always off in release. On desktop it is
+     * not persisted (the launcher script re-passes it every run); on Android a **debug** build remembers it for
+     * the install (`AndroidDebugFlagStore`), because the engine restarts after a reboot with no Activity and so
+     * no extras — and the server-side half of the fast break (`break_config.length_ms`) is a DB row that
+     * persists, so a phone that forgot its override would publish production due instants against a shrunk
+     * server cue. Test-only: it changes how a device seeds/records its rest poses, so point it at a scratch
+     * account.
      */
     var breakDurationMillisOverride: Long? = null
 
@@ -48,7 +53,7 @@ object DebugFlags {
      * (`SchedulerDomain.decoupledPoseOccurrences`), so the calendar shows one 5-min break per day rather than a
      * 5-second flood. The screen-break projection is O(n), so even a seconds interval over the fill horizon
      * stays linear rather than freezing. Startup-only (`omniapp.breakIntervalMs` / `omniapp_break_interval_ms`),
-     * never persisted, off in release.
+     * remembered per install on Android debug builds like [breakDurationMillisOverride], off in release.
      */
     var breakIntervalMillisOverride: Long? = null
 
@@ -59,7 +64,7 @@ object DebugFlags {
      * short break only after a long pause — e.g. `account1-empty-and-open-fast-break.bat` runs under the
      * accelerated time-sim with duration 5 s, interval 5 s, and this threshold at 2 h, so the pose fires 5 s
      * after a ≥2-h pause and lasts 5 s. Companion of the other two; startup-only (`omniapp.breakPauseThresholdMs`
-     * / `omniapp_break_pause_threshold_ms`), never persisted, off in release.
+     * / `omniapp_break_pause_threshold_ms`), remembered per install on Android debug builds, off in release.
      */
     var breakPauseThresholdMillisOverride: Long? = null
 
