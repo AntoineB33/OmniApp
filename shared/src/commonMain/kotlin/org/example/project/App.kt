@@ -1118,19 +1118,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // PRD §5 cross-device sync: account/status chip + sign-in dialog (top-right overlay, above the
             // floating windows). Renders nothing when sync is disabled (chip hides on a null state).
             val syncStateValue = vm.syncState?.collectAsState()?.value
+            val accountValue = vm.account?.collectAsState()?.value
             var showSignIn by remember { mutableStateOf(false) }
             SyncStatusChip(
                 state = syncStateValue,
                 onClick = { showSignIn = true },
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).zIndex(120f),
+                account = accountValue,
             )
             if (showSignIn) {
                 SignInDialog(
                     state = syncStateValue,
                     onSignIn = { e, p -> vm.signIn(e, p) },
-                    onSignUp = { e, p -> vm.signUp(e, p) },
+                    onCreateAccount = { e, p -> vm.createAccount(e, p) },
                     onSignOut = { vm.signOut() },
                     onDismiss = { showSignIn = false },
+                    account = accountValue,
                     // PRD §15: manual server check. The reconcile emits a unified sync moment, which also
                     // runs the side channels (active sessions, derived pauses, exact pause gaps) — see
                     // SchedulerEngine.launchSyncMomentSideChannels.

@@ -54,6 +54,8 @@ Ensure state holders, MVI intents, and the Undo/Redo engine are fully tested bef
 
 ### Development & release scripts (Windows)
 
+> **Accounts:** the app is **always connected to an account** (PRD §5). Started normally it creates a **guest account** — a real account with no email/password, so only the device that created it can use it — and the "Create account" button turns *that* account into a normal one by giving it credentials, keeping all its data. Signing out lands on a fresh guest account; signing in to another account switches which account's data is shown and deletes nothing. The scripts below skip guest creation: they open the app already signed in to the account they name. Requires **anonymous sign-ins enabled** on the Supabase project (`enable_anonymous_sign_ins` in `supabase/config.toml` / the Dashboard toggle).
+
 Helper scripts in `scripts/` (Windows batch / PowerShell) open the app already signed in to a Supabase account, empty an account's data, or deploy the release build. Each account uses its **own isolated state dir** (a separate local SQLite DB) so accounts never share data — set by `-Pomniapp.stateDir` / `OMNIAPP_STATE_DIR`; running with no override uses the default `%USERPROFILE%\.omniapp`:
 
 | Account | State dir | Used by |

@@ -3,6 +3,9 @@ package org.example.project
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.persistence.ActiveSessionRecord
+import org.example.project.scheduler.persistence.HistoryPointerRow
+import org.example.project.scheduler.persistence.HistoryRow
+import org.example.project.scheduler.persistence.PersistedSnapshot
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SleepGapRecord
 import org.example.project.scheduler.persistence.SqlDelightSchedulerStore
@@ -125,13 +128,85 @@ class SchedulerStoreTest {
                 userId = "user-1",
                 email = "a@b.c",
             )
+        // This save CHANGES the active account, so the per-account bookkeeping in hand (which describes the
+        // account being left) is deliberately not copied onto it: user-1 starts from its own defaults.
         store.saveSyncMeta(meta)
-        assertEquals(meta, store.loadSyncMeta())
+        assertEquals(meta.copy(lastKnownRevision = 0, dirty = false), store.loadSyncMeta())
 
-        // Upsert: a second save replaces the single row rather than adding one.
+        // Saves for the SAME account round-trip its bookkeeping as usual.
+        store.saveSyncMeta(meta.copy(lastKnownRevision = 7, dirty = true))
+        assertEquals(meta, store.loadSyncMeta())
         store.saveSyncMeta(meta.copy(lastKnownRevision = 8, dirty = false))
         assertEquals(8, store.loadSyncMeta()!!.lastKnownRevision)
         assertEquals(false, store.loadSyncMeta()!!.dirty)
+    }
+
+    /**
+     * PRD §5: the app is always connected to an account and the local scheduler data is partitioned per
+     * account, so signing in to another account must not show — nor overwrite — the previous account's data,
+     * and switching back must return it verbatim. Nothing is ever deleted by a switch.
+     */
+    @Test
+    fun each_account_keeps_its_own_local_partition_across_switches() {
+        val store = newStore()
+        fun signInAs(user: String) =
+            store.saveSyncMeta(SyncMeta(deviceId = "device-1", userId = user, email = "$user@x.y"))
+
+        signInAs("user-1")
+        store.save(PersistedSnapshot("ONE", listOf(HistoryRow("edit", 0, 1_000, 1, false, "{}")), emptyList()))
+
+        signInAs("user-2")
+        assertNull(store.load(), "a different account starts empty, it must not see user-1's data")
+        store.save(PersistedSnapshot("TWO", emptyList(), listOf(HistoryPointerRow("edit", 3))))
+        assertEquals("TWO", store.load()!!.statePayload)
+
+        signInAs("user-1")
+        val back = store.load()!!
+        assertEquals("ONE", back.statePayload, "the account that was left kept its data")
+        assertEquals(1, back.history.size)
+        assertTrue(back.pointers.isEmpty(), "user-2's pointer must not leak into user-1")
+    }
+
+    /**
+     * The per-ACCOUNT sync bookkeeping (revision baseline / dirty flag) must not travel across an account
+     * switch: under whole-document LWW, carrying account A's `revision` into account B would let this device
+     * push over B's remote snapshot (or ignore it) — see SqlDelightSchedulerStore.saveSyncMeta.
+     */
+    @Test
+    fun the_revision_baseline_is_per_account() {
+        val store = newStore()
+        store.saveSyncMeta(SyncMeta(deviceId = "d", userId = "user-1"))
+        store.saveSyncMeta(SyncMeta(deviceId = "d", userId = "user-1", lastKnownRevision = 12, dirty = true))
+
+        store.saveSyncMeta(SyncMeta(deviceId = "d", userId = "user-2", lastKnownRevision = 12, dirty = true))
+        assertEquals(0, store.loadSyncMeta()!!.lastKnownRevision)
+        assertEquals(false, store.loadSyncMeta()!!.dirty)
+
+        store.saveSyncMeta(SyncMeta(deviceId = "d", userId = "user-1"))
+        assertEquals(12, store.loadSyncMeta()!!.lastKnownRevision, "user-1's own baseline came back")
+        assertEquals(true, store.loadSyncMeta()!!.dirty)
+    }
+
+    /**
+     * Work done before the device had any account (a first launch that could not reach Supabase, or a
+     * pre-v9 DB migrated while signed out) lands in the '' partition; the first GUEST account adopts it, so
+     * nothing the user did is orphaned.
+     */
+    @Test
+    fun the_first_guest_account_adopts_data_written_without_an_account() {
+        val store = newStore()
+        store.save(PersistedSnapshot("BEFORE-ACCOUNT", listOf(HistoryRow("edit", 0, 5, 1, false, "{}")), emptyList()))
+
+        store.saveSyncMeta(SyncMeta(deviceId = "d", userId = "guest-1")) // guest created, no email
+        store.adoptUnclaimedAccountData("guest-1")
+
+        assertEquals("BEFORE-ACCOUNT", store.load()!!.statePayload)
+        assertEquals(1, store.load()!!.history.size)
+
+        // A later account does NOT get it (it was adopted once, and partitions are never merged).
+        store.saveSyncMeta(SyncMeta(deviceId = "d", userId = "user-2", email = "u@v.w"))
+        store.adoptUnclaimedAccountData("user-2")
+        assertNull(store.load())
     }
 
     /**
@@ -626,6 +701,151 @@ class SchedulerStoreTest {
             assertNull(store.loadSleepScanCheckpoint())
             store.saveSleepScanCheckpoint(1_700_000_000_000)
             assertEquals(1_700_000_000_000, store.loadSleepScanCheckpoint())
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
+    }
+
+    /** The on-disk v8 shape (pre-account-partitioning): unscoped app_state/history + a fat sync_meta. */
+    private fun createV8Db(url: String, payload: String, signedInAs: String?) {
+        val raw = JdbcSqliteDriver(url, Properties())
+        raw.execute(null, "CREATE TABLE app_state (id INTEGER NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+        raw.execute(
+            null,
+            "CREATE TABLE history_unit (category TEXT NOT NULL, ordinal INTEGER NOT NULL, " +
+                "time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, debug_tainted INTEGER NOT NULL, " +
+                "delta TEXT NOT NULL, PRIMARY KEY (category, ordinal))",
+            0,
+        )
+        raw.execute(
+            null,
+            "CREATE TABLE history_pointer (category TEXT NOT NULL PRIMARY KEY, pointer INTEGER NOT NULL)",
+            0,
+        )
+        raw.execute(
+            null,
+            "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
+                "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
+                "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT, acknowledged_logout_at INTEGER)",
+            0,
+        )
+        raw.execute(
+            null,
+            "CREATE TABLE window_placement (window_id TEXT NOT NULL PRIMARY KEY, x REAL NOT NULL, " +
+                "y REAL NOT NULL, width REAL NOT NULL DEFAULT 0, height REAL NOT NULL DEFAULT 0, " +
+                "visible INTEGER NOT NULL)",
+            0,
+        )
+        raw.execute(
+            null,
+            "CREATE TABLE device_sleep_gap (device_id TEXT NOT NULL, sleep_start INTEGER NOT NULL, " +
+                "sleep_end INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY (device_id, sleep_start))",
+            0,
+        )
+        raw.execute(
+            null,
+            "CREATE TABLE device_active_session (device_id TEXT NOT NULL, start_ms INTEGER NOT NULL, " +
+                "end_ms INTEGER NOT NULL, updated_at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT '', " +
+                "PRIMARY KEY (device_id, start_ms))",
+            0,
+        )
+        raw.execute(
+            null,
+            "CREATE TABLE sleep_scan_checkpoint (id INTEGER NOT NULL PRIMARY KEY, scanned_through INTEGER NOT NULL)",
+            0,
+        )
+        raw.execute(null, "INSERT INTO app_state(id, payload) VALUES (0, ?)", 1) { bindString(0, payload) }
+        raw.execute(
+            null,
+            "INSERT INTO history_unit(category, ordinal, time_millis, chrono_id, debug_tainted, delta) " +
+                "VALUES ('main', 0, 1000, 1, 0, '{}')",
+            0,
+        )
+        raw.execute(null, "INSERT INTO history_pointer(category, pointer) VALUES ('main', 1)", 0)
+        raw.execute(
+            null,
+            "INSERT INTO sync_meta(id, device_id, last_known_revision, dirty, access_token, refresh_token, " +
+                "user_id, email, acknowledged_logout_at) VALUES (0, 'dev-1', 12, 1, 'at', 'rt', ?, ?, 77)",
+            2,
+        ) {
+            bindString(0, signedInAs)
+            bindString(1, signedInAs?.let { "$it@x.y" })
+        }
+        raw.execute(null, "INSERT INTO device_active_session VALUES ('dev-1', 10, 20, 30, 'desktop')", 0)
+        raw.execute(null, "PRAGMA user_version = 8", 0)
+        raw.close()
+    }
+
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by the previous schema (v8: one unscoped
+     * `app_state` row and a `sync_meta` carrying the revision baseline) must still load after the accounts
+     * rework. Its data belongs to whatever account was signed in, so the 8.sqm migration files it under that
+     * account — data, history, pointer and per-account bookkeeping alike — and the device-level rows (device
+     * id, session, "screen time") are untouched.
+     */
+    @Test
+    fun upgrades_pre_account_partition_v8_db_of_a_signed_in_device() {
+        val dbFile = File.createTempFile("scheduler-v8-in", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            createV8Db(url, payload, signedInAs = "user-1")
+
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            // Still the signed-in account, and its data is exactly where it was.
+            val meta = store.loadSyncMeta()!!
+            assertEquals("user-1", meta.userId)
+            assertEquals("dev-1", meta.deviceId)
+            assertEquals(12, meta.lastKnownRevision, "the revision baseline followed the account")
+            assertEquals(true, meta.dirty)
+            assertEquals(77, meta.acknowledgedLogoutAtMillis)
+            val loaded = store.load()!!
+            assertEquals(payload, loaded.statePayload)
+            assertEquals(1, loaded.history.size)
+            assertEquals(1, loaded.pointers.size)
+            // Device-level "screen time" is not account-scoped and survives untouched.
+            assertEquals(1, store.loadActiveSessions().size)
+
+            // Another account on the same device sees none of it, and does not disturb it.
+            store.saveSyncMeta(SyncMeta(deviceId = "dev-1", userId = "user-2", email = "u2@x.y"))
+            assertNull(store.load())
+            assertEquals(0, store.loadSyncMeta()!!.lastKnownRevision)
+            assertEquals(1, store.loadActiveSessions().size)
+            store.saveSyncMeta(SyncMeta(deviceId = "dev-1", userId = "user-1", email = "user-1@x.y"))
+            assertEquals(payload, store.load()!!.statePayload)
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
+    }
+
+    /**
+     * The same upgrade for a v8 DB written while SIGNED OUT: that data has no account, so it lands in the
+     * unclaimed partition — and the guest account the app now creates on launch adopts it, so the user's
+     * existing work simply becomes the guest account's data instead of disappearing.
+     */
+    @Test
+    fun upgrades_pre_account_partition_v8_db_of_a_signed_out_device_into_the_guest_account() {
+        val dbFile = File.createTempFile("scheduler-v8-out", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            createV8Db(url, payload, signedInAs = null)
+
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            // Loads as before while there is no account (the unclaimed partition is the active one).
+            assertEquals(payload, store.load()!!.statePayload)
+
+            // Startup creates the guest account, which adopts that data.
+            store.saveSyncMeta(SyncMeta(deviceId = "dev-1", userId = "guest-1"))
+            store.adoptUnclaimedAccountData("guest-1")
+            assertEquals(payload, store.load()!!.statePayload)
+            assertEquals(1, store.load()!!.history.size)
             driver.close()
         } finally {
             dbFile.delete()

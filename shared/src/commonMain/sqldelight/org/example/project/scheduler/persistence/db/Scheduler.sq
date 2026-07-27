@@ -1,45 +1,62 @@
 -- PRD §5 Persistence: the scheduler's durable state lives in SQLite.
--- `app_state` holds the non-history part of the state as a single serialized JSON row (id is always 0).
--- The Undo/Redo history is stored per-unit: one row per History Unit in `history_unit`, plus one
+-- `app_state` holds the non-history part of the state as a single serialized JSON row PER ACCOUNT. The
+-- Undo/Redo history is stored per-unit: one row per History Unit in `history_unit`, plus one
 -- `history_pointer` row per category recording where that category's Ctrl+Z/Y cursor sits.
+--
+-- The app is ALWAYS connected to an account (a credential-less GUEST account when the user never signed
+-- in / signed out), so all three tables are ACCOUNT-SCOPED by `account_id` (the Supabase user id; '' is the
+-- "unclaimed" partition a pre-v9 signed-out DB was migrated into, adopted by the first guest account).
+-- Only the ACTIVE account's partition is read/written; switching accounts never deletes the other's rows.
+-- Added in migration 8.sqm; existing DBs (schema v8) are partitioned on upgrade.
 
 CREATE TABLE app_state (
-    id INTEGER NOT NULL PRIMARY KEY,
+    account_id TEXT NOT NULL PRIMARY KEY,
     payload TEXT NOT NULL
 );
 
 CREATE TABLE history_unit (
+    account_id TEXT NOT NULL,
     category TEXT NOT NULL,
     ordinal INTEGER NOT NULL,
     time_millis INTEGER NOT NULL,
     chrono_id INTEGER NOT NULL,
     debug_tainted INTEGER NOT NULL,
     delta TEXT NOT NULL,
-    PRIMARY KEY (category, ordinal)
+    PRIMARY KEY (account_id, category, ordinal)
 );
 
 CREATE TABLE history_pointer (
-    category TEXT NOT NULL PRIMARY KEY,
-    pointer INTEGER NOT NULL
+    account_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    pointer INTEGER NOT NULL,
+    PRIMARY KEY (account_id, category)
 );
 
--- Cross-device sync bookkeeping (PRD §5). One row (id is always 0): the local device id, the last remote
--- `revision` this device has seen/written (optimistic-concurrency baseline), a `dirty` flag set when the
--- local state has unpushed changes, and the cached Supabase session so sign-in survives restarts.
--- Added in migration 1.sqm; existing DBs (schema v1) gain it on upgrade.
+-- DEVICE-level sync bookkeeping (PRD §5). One row (id is always 0): the local device id (allocated once per
+-- install, survives sign-out) and the cached Supabase session of whichever account is currently ACTIVE, so
+-- it survives restarts. `user_id` is that active account — the partition key every account-scoped table
+-- above is read/written under; `email` is NULL for a guest account (it has no credentials).
+-- Added in migration 1.sqm; the account-scoped columns moved to `account_sync` in 8.sqm.
 CREATE TABLE sync_meta (
     id INTEGER NOT NULL PRIMARY KEY,
     device_id TEXT NOT NULL,
-    last_known_revision INTEGER NOT NULL DEFAULT 0,
-    dirty INTEGER NOT NULL DEFAULT 0,
     access_token TEXT,
     refresh_token TEXT,
     user_id TEXT,
-    email TEXT,
-    -- The account's `account_logout.logout_at` (epoch millis) this session recorded at login: its baseline
-    -- for the remote force-logout. NULL = unknown (pre-feature session / a login whose fetch failed); 0 =
-    -- seen, no marker yet. On reconcile the device signs out if the server marker advanced past this. Added
-    -- in migration 5.sqm; existing DBs (schema v5) gain it (as NULL) on upgrade.
+    email TEXT
+);
+
+-- ACCOUNT-level sync bookkeeping, one row per account known on this device (added in 8.sqm): the last
+-- remote `revision` this device saw/wrote for that account (its optimistic-concurrency baseline), a `dirty`
+-- flag set when that account's local state has unpushed changes, and the account's
+-- `account_logout.logout_at` (epoch millis) recorded at login as the baseline for the remote force-logout
+-- (NULL = unknown — a pre-feature session or a login whose fetch failed; 0 = seen, no marker yet).
+-- These are per-ACCOUNT by nature: a revision baseline is meaningless against a different account's row,
+-- so it must never travel with the device across an account switch.
+CREATE TABLE account_sync (
+    account_id TEXT NOT NULL PRIMARY KEY,
+    last_known_revision INTEGER NOT NULL DEFAULT 0,
+    dirty INTEGER NOT NULL DEFAULT 0,
     acknowledged_logout_at INTEGER
 );
 
@@ -105,40 +122,58 @@ CREATE TABLE sleep_scan_checkpoint (
 );
 
 selectAppState:
-SELECT payload FROM app_state WHERE id = 0;
+SELECT payload FROM app_state WHERE account_id = ?;
 
 upsertAppState:
-INSERT OR REPLACE INTO app_state(id, payload) VALUES (0, ?);
+INSERT OR REPLACE INTO app_state(account_id, payload) VALUES (?, ?);
 
 selectAllHistory:
 SELECT category, ordinal, time_millis, chrono_id, debug_tainted, delta
 FROM history_unit
+WHERE account_id = ?
 ORDER BY category, ordinal;
 
 deleteAllHistory:
-DELETE FROM history_unit;
+DELETE FROM history_unit WHERE account_id = ?;
 
 insertHistoryUnit:
-INSERT INTO history_unit(category, ordinal, time_millis, chrono_id, debug_tainted, delta)
-VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO history_unit(account_id, category, ordinal, time_millis, chrono_id, debug_tainted, delta)
+VALUES (?, ?, ?, ?, ?, ?, ?);
 
 selectAllPointers:
-SELECT category, pointer FROM history_pointer;
+SELECT category, pointer FROM history_pointer WHERE account_id = ?;
 
 deleteAllPointers:
-DELETE FROM history_pointer;
+DELETE FROM history_pointer WHERE account_id = ?;
 
 insertPointer:
-INSERT INTO history_pointer(category, pointer) VALUES (?, ?);
+INSERT INTO history_pointer(account_id, category, pointer) VALUES (?, ?, ?);
+
+-- Moves a whole local partition from one account id to another. Used once, when the first guest account is
+-- created on a device whose data sat in the '' (unclaimed) partition — a pre-v9 DB that was signed out, or
+-- a store written before any account existed. Nothing is deleted: the rows are re-keyed onto the account.
+reassignAppState:
+UPDATE app_state SET account_id = ? WHERE account_id = ?;
+
+reassignHistory:
+UPDATE history_unit SET account_id = ? WHERE account_id = ?;
+
+reassignPointers:
+UPDATE history_pointer SET account_id = ? WHERE account_id = ?;
 
 selectSyncMeta:
-SELECT device_id, last_known_revision, dirty, access_token, refresh_token, user_id, email, acknowledged_logout_at
-FROM sync_meta WHERE id = 0;
+SELECT device_id, access_token, refresh_token, user_id, email FROM sync_meta WHERE id = 0;
 
 upsertSyncMeta:
-INSERT OR REPLACE INTO sync_meta(
-    id, device_id, last_known_revision, dirty, access_token, refresh_token, user_id, email, acknowledged_logout_at
-) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO sync_meta(id, device_id, access_token, refresh_token, user_id, email)
+VALUES (0, ?, ?, ?, ?, ?);
+
+selectAccountSync:
+SELECT last_known_revision, dirty, acknowledged_logout_at FROM account_sync WHERE account_id = ?;
+
+upsertAccountSync:
+INSERT OR REPLACE INTO account_sync(account_id, last_known_revision, dirty, acknowledged_logout_at)
+VALUES (?, ?, ?, ?);
 
 selectAllPlacements:
 SELECT window_id, x, y, width, height, visible FROM window_placement;

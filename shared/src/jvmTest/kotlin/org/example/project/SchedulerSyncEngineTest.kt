@@ -33,6 +33,14 @@ class SchedulerSyncEngineTest {
     private val json = Json { ignoreUnknownKeys = true }
     private val config = SupabaseConfig("https://test.supabase.co", "anon-key")
 
+    private companion object {
+        /** The account [FakeServer] models (the one an email+password sign-in lands on). */
+        const val PRIMARY_USER = "user-1"
+
+        /** The account a credential-less (guest) signup creates — a different account with its own rows. */
+        const val GUEST_USER = "guest-1"
+    }
+
     /** A snapshot tagged by its [statePayload] so tests can assert which one round-tripped. */
     private fun snap(tag: String) = PersistedSnapshot(statePayload = tag, history = emptyList(), pointers = emptyList())
 
@@ -48,7 +56,10 @@ class SchedulerSyncEngineTest {
      * Mutable server-side row: the stored payload (a serialized [PersistedSnapshot]) and its revision, plus
      * the account's `account_logout` marker ([logoutAtMillis], null = no row) the force-logout reads.
      */
-    private class FakeServer(var payload: String? = null, var revision: Long = 0, var logoutAtMillis: Long? = null)
+    private class FakeServer(var payload: String? = null, var revision: Long = 0, var logoutAtMillis: Long? = null) {
+        /** Every GoTrue endpoint hit, in order — tells a guest CLAIM (`/user`) from a second signup. */
+        val authCalls = mutableListOf<String>()
+    }
 
     private fun harness(server: FakeServer): RemoteSnapshotClient {
         val engine =
@@ -56,13 +67,30 @@ class SchedulerSyncEngineTest {
                 val path = request.url.encodedPath
                 val body = (request.body as? TextContent)?.text ?: ""
                 val jsonHeader = headersOf("Content-Type", "application/json")
+                // Which account a data call is for: the `user_id=eq.` filter, else the inserted row's user_id.
+                val user =
+                    request.url.parameters["user_id"]?.removePrefix("eq.")
+                        ?: runCatching { json.parseToJsonElement(body).jsonObject["user_id"]?.jsonPrimitive?.content }
+                            .getOrNull()
+                        ?: PRIMARY_USER
                 when {
-                    path.startsWith("/auth/v1") ->
+                    // A credential-less signup is the GUEST account (PRD §5) — a different account, so it gets
+                    // a different user id and its own (here: empty) rows.
+                    path.startsWith("/auth/v1") -> {
+                        server.authCalls += path
                         respond(
-                            """{"access_token":"at","refresh_token":"rt","user":{"id":"user-1"}}""",
+                            """{"access_token":"at","refresh_token":"rt","user":{"id":"${
+                                if ("email" in body) PRIMARY_USER else GUEST_USER
+                            }"}}""",
                             HttpStatusCode.OK,
                             jsonHeader,
                         )
+                    }
+
+                    // Any account other than the one this fake models has no rows of its own; a write from it
+                    // must not touch [server] (that is exactly what "the guest can't re-seed account 1" means).
+                    user != PRIMARY_USER ->
+                        respond(if (request.method == HttpMethod.Get) "[]" else "", HttpStatusCode.OK, jsonHeader)
 
                     path.endsWith("/account_logout") && request.method == HttpMethod.Get -> {
                         val arr =
@@ -188,10 +216,12 @@ class SchedulerSyncEngineTest {
     }
 
     @Test
-    fun remote_logout_after_login_signs_out_and_does_not_reseed() = runTest {
+    fun remote_logout_after_login_signs_out_to_a_guest_account_and_does_not_reseed() = runTest {
         // A device is signed in (its login recorded logout marker = none) and holds local data. The account is
         // then force-logged-out server-side (the empty script bumps account_logout). The next reconcile must
-        // sign this device out and push NOTHING, so it can't re-seed the snapshot the empty deleted.
+        // sign this device out of THAT account and push NOTHING to it, so it can't re-seed the snapshot the
+        // empty deleted — and then (PRD §5: the app is always connected to an account) land on a fresh guest
+        // account, whose own rows are separate.
         val server = FakeServer() // no snapshot on the server (it was just emptied)
         val meta = FakeMetaStore()
         val sync = engine(harness(server), meta, { snap("LOCAL") }, {})
@@ -200,9 +230,66 @@ class SchedulerSyncEngineTest {
         server.logoutAtMillis = 5_000L // account emptied: logout marker set AFTER this device logged in
         sync.reconcile()
 
-        assertNull(server.payload) // never re-seeded
-        assertEquals(SyncState.SignedOut, sync.state.value)
-        assertNull(meta.loadSyncMeta()!!.userId) // session dropped locally
+        assertNull(server.payload) // the emptied account was never re-seeded
+        assertEquals(GUEST_USER, meta.loadSyncMeta()!!.userId) // now on a guest account instead of nothing
+        assertNull(meta.loadSyncMeta()!!.email) // a guest account has no credentials
+        assertEquals(SyncState.Idle, sync.state.value)
+    }
+
+    @Test
+    fun a_device_with_no_account_creates_a_guest_one_and_syncs_with_it() = runTest {
+        // PRD §5: the app is always connected to an account. A fresh device has none, so reconciling (the
+        // startup one included) creates a credential-less guest account and works with it like any other.
+        val server = FakeServer()
+        val meta = FakeMetaStore()
+        val sync = engine(harness(server), meta, { snap("LOCAL") }, {})
+
+        sync.reconcile()
+
+        assertEquals(GUEST_USER, meta.loadSyncMeta()!!.userId)
+        assertNull(meta.loadSyncMeta()!!.email)
+        assertEquals(SyncState.Idle, sync.state.value)
+        assertEquals(GUEST_USER, sync.account.value?.userId)
+        assertEquals(true, sync.account.value?.isGuest)
+    }
+
+    @Test
+    fun creating_an_account_on_a_guest_claims_the_same_account_rather_than_making_a_new_one() = runTest {
+        // The requirement: "when the user is on a guest account and creates an account, this guest account
+        // gets the new email and password". So it must be a PUT /auth/v1/user on the SAME account — no second
+        // signup, no new user id, and therefore nothing to copy over: the data is already there.
+        val server = FakeServer()
+        val meta = FakeMetaStore()
+        val sync = engine(harness(server), meta, { snap("LOCAL") }, {})
+        sync.ensureAccount()
+        assertEquals(GUEST_USER, meta.loadSyncMeta()!!.userId)
+
+        sync.createAccount("a@b.c", "pw")
+
+        assertEquals(GUEST_USER, meta.loadSyncMeta()!!.userId) // same account…
+        assertEquals("a@b.c", meta.loadSyncMeta()!!.email) // …now with credentials
+        assertEquals(false, sync.account.value?.isGuest)
+        assertEquals(
+            listOf("/auth/v1/signup", "/auth/v1/user"),
+            server.authCalls,
+            "the guest must be CLAIMED (PUT /user), never re-created as a second account",
+        )
+    }
+
+    @Test
+    fun signing_out_lands_on_a_fresh_guest_account() = runTest {
+        val server = FakeServer()
+        val meta = FakeMetaStore()
+        val sync = engine(harness(server), meta, { snap("LOCAL") }, {})
+        sync.signIn("a@b.c", "pw")
+        assertEquals(PRIMARY_USER, meta.loadSyncMeta()!!.userId)
+
+        sync.signOutToGuest()
+
+        // Never accountless: signing out of an account puts the device on a guest one (with no credentials).
+        assertEquals(GUEST_USER, meta.loadSyncMeta()!!.userId)
+        assertNull(meta.loadSyncMeta()!!.email)
+        assertEquals(SyncState.Idle, sync.state.value)
     }
 
     @Test

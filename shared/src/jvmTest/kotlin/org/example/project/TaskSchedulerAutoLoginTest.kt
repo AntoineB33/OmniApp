@@ -23,12 +23,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 /**
- * The per-account `/scripts` launch the app with credentials so it opens already signed in. This verifies
- * [TaskSchedulerViewModel] consumes its injected startup credentials: when no session is cached it signs in
- * (synthesizing the email from the username) — and that with no credentials it never touches auth.
+ * The per-account `/scripts` launch the app with credentials so it opens already signed in — skipping the
+ * guest account a plain first launch would get. This verifies [TaskSchedulerViewModel] consumes its injected
+ * startup credentials: when no session is cached it signs in (synthesizing the email from the username), and
+ * that WITHOUT credentials it still ends up on an account, a credential-less GUEST one (PRD §5: the app is
+ * always connected to an account).
  *
- * Sync is BUTTON-ONLY: signing in does NOT reconcile, so nothing is pushed/pulled at launch (the remote is
- * seeded only when the user presses Sync). The assertion therefore observes the completed sign-in, not a seed.
+ * Switching to an account loads that account's data, so the launch reconciles once against it (here: seeding
+ * the empty remote). That is the account switch, not the per-edit auto-push.
  *
  * Auto-login is fire-and-forget (a coroutine off the save dispatcher), so these run it on a real dispatcher
  * and await the observable result rather than virtual-time stepping a launched-then-suspended HTTP call.
@@ -107,14 +109,15 @@ class TaskSchedulerAutoLoginTest {
             startupLogin = { StartupLogin("account1", "pw") },
         )
 
-        // Sign-in completes (userId cached) but does NOT reconcile — the remote stays unseeded (button-only).
+        // Sign-in completes (userId cached) with the username mapped onto the Supabase email domain — and no
+        // guest account was created for this launch, since the credentials say which account to open.
         assertEquals(true, awaitUntil { meta.loadSyncMeta()?.userId == "user-1" }, "auto-login did not complete")
         assertEquals("account1@omniapp.local", server.lastEmail)
-        assertEquals(0L, server.revision, "sign-in must not push/seed the remote (sync is button-only)")
+        assertEquals("account1@omniapp.local", meta.loadSyncMeta()!!.email, "not a guest account")
     }
 
     @Test
-    fun stays_signed_out_when_no_credentials() {
+    fun creates_a_guest_account_when_no_credentials() {
         val server = FakeServer()
         val meta = FakeMetaStore()
         val sync = SchedulerSyncEngine(client(server), meta, json)
@@ -125,9 +128,11 @@ class TaskSchedulerAutoLoginTest {
             startupLogin = { null },
         )
 
-        // Give any stray async work a chance to run, then confirm auth was never hit.
-        Thread.sleep(300)
-        assertNull(server.lastEmail)
-        assertNull(meta.loadSyncMeta()!!.userId)
+        // PRD §5: an ordinary first launch is connected too — to a GUEST account, created with no email and
+        // no password (which is why no other device can ever sign in to it).
+        assertEquals(true, awaitUntil { sync.account.value != null }, "no account was created")
+        assertNull(server.lastEmail, "the guest account must be created without credentials")
+        assertNull(meta.loadSyncMeta()!!.email)
+        assertEquals(true, sync.isGuest)
     }
 }

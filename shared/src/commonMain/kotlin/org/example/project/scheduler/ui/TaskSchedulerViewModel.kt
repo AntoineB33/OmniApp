@@ -23,6 +23,7 @@ import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.sync.AccountInfo
 import org.example.project.scheduler.sync.PauseCueGateway
 import org.example.project.scheduler.sync.RealtimeSnapshotSubscriber
 import org.example.project.scheduler.sync.SchedulerSyncEngine
@@ -56,6 +57,13 @@ class TaskSchedulerViewModel(
 
     /** PRD §5 sync status for an indicator; null when sync is disabled. */
     val syncState: StateFlow<SyncState>? = syncEngine?.state
+
+    /**
+     * PRD §5: the account this device is connected to — always one, a **guest** account (no credentials)
+     * until the user signs in or gives it an email/password. Null when sync is disabled, or in the window
+     * before the first guest account could be created. Drives the account chip/dialog.
+     */
+    val account: StateFlow<AccountInfo?>? = syncEngine?.account
 
     /**
      * Push-token / last-phone / device-heartbeat channel for the pg_cron pause-cue delivery: the device writes
@@ -152,15 +160,54 @@ class TaskSchedulerViewModel(
             // PRD §5 bidirectional sync — remote→local auto-pull: keep the Realtime subscription running; it
             // connects once an account is set below (on restore/login) and pokes [syncNow] on a peer's push.
             snapshotSubscriber?.start()
+            // The local scheduler data is stored per account; flush pending edits into the account being left
+            // before the engine switches away from it.
+            engine.beforeAccountSwitch = { flush() }
+            // Swap the local per-account partition whenever the active account changes (guest created,
+            // sign-in, sign-out, remote force-logout). A guest CLAIMED with an email keeps the same user id,
+            // so it is not a switch and the data simply stays.
+            watchAccountChanges(engine)
             engine.restoreSession()
             // Non-interactive launch (per-account `/scripts`): when no session was restored and startup
-            // credentials were supplied, sign in to that account. Signing in triggers no immediate pull, but the
-            // Realtime subscription (pointed at the account below / after login) then streams peers' changes and
-            // the first local edit auto-pushes.
+            // credentials were supplied, sign in to that account — that is how the scripts open the app
+            // already on account 1/2/3 instead of on a guest account. Otherwise PRD §5 applies: the app is
+            // always connected to an account, so a device without one creates its GUEST account here.
+            // Neither triggers an immediate pull; the Realtime subscription streams peers' changes and the
+            // first local edit auto-pushes.
             if (engine.isSignedIn) {
                 refreshRealtimeSubscription()
             } else {
-                startupLogin()?.let { creds -> signIn(usernameToEmail(creds.username), creds.password) }
+                val creds = startupLogin()
+                if (creds != null) {
+                    signIn(usernameToEmail(creds.username), creds.password)
+                } else {
+                    saveScope.launch { engine.ensureAccount() }
+                }
+            }
+        }
+    }
+
+    /**
+     * PRD §5: the locally persisted scheduler data is partitioned per account, so a change of the ACTIVE
+     * account means the in-memory state must be replaced by that account's own data (empty for a brand-new
+     * guest account). Nothing is deleted — the account being left keeps its partition and gets it back
+     * verbatim if it signs in again — and no data crosses over, so signing in to another account can never
+     * push this account's tree over that one's remote snapshot.
+     */
+    private fun watchAccountChanges(engine: SchedulerSyncEngine) {
+        var loadedAccountId = engine.account.value?.userId
+        saveScope.launch {
+            engine.account.collect { info ->
+                if (info?.userId == loadedAccountId) return@collect
+                loadedAccountId = info?.userId
+                // The engine flushed the previous account's pending edits (beforeAccountSwitch) before
+                // repointing the store, so loading now reads the account we just switched to.
+                val loaded = prepareLoadedState(store?.load()?.let(SchedulerStateCodec::decodeSnapshot) ?: SchedulerState.empty())
+                _state.value = loaded
+                lastSyncedFingerprint = SchedulerStateCodec.syncFingerprint(loaded)
+                refreshRealtimeSubscription()
+                // Pull whatever that account holds server-side (a fresh guest simply seeds it).
+                engine.reconcile()
             }
         }
     }
@@ -316,35 +363,35 @@ class TaskSchedulerViewModel(
     // ---- PRD §5 cross-device sync controls (no-ops when sync is disabled) ----
     //
     // Sync is BIDIRECTIONAL: after sign-in, the Realtime subscription streams peers' pushes (auto-pull) and
-    // authoritative local edits auto-push on a 500 ms debounce. Sign-in / sign-up do NOT force an immediate
-    // whole-document reconcile — they point the subscription at the account (so the first remote change and the
-    // first local edit sync), and the manual Sync button ([syncNow]) remains a force-now fallback.
-
-    /** Signs in, then points the Realtime auto-pull subscription at the account. Errors surface via [syncState]. */
-    fun signIn(email: String, password: String) =
-        saveScope.launch {
-            runCatching { syncEngine?.signIn(email, password) }
-            refreshRealtimeSubscription()
-        }
-
-    /** Registers a new account, then points the Realtime auto-pull subscription at it. Errors via [syncState]. */
-    fun signUp(email: String, password: String) =
-        saveScope.launch {
-            runCatching { syncEngine?.signUp(email, password) }
-            refreshRealtimeSubscription()
-        }
+    // authoritative local edits auto-push on a 500 ms debounce. These controls change WHICH ACCOUNT the device
+    // is connected to; [watchAccountChanges] is what then loads that account's local partition, re-points the
+    // subscription and reconciles once against it. The manual Sync button ([syncNow]) is a force-now fallback.
 
     /**
-     * Signs out — a pure LOCAL drop of the cached session (no farewell push). Any change still inside the save
-     * debounce is flushed to the local SQLite first (nothing is lost locally) and left marked dirty for the next
-     * login. Disconnects the Realtime auto-pull subscription. Does not delete remote data.
+     * Signs in to an existing account, switching this device to it (its data is then loaded/pulled by
+     * [watchAccountChanges]). The account being left — including a guest one — keeps its local partition and
+     * its remote data; nothing is deleted. Errors surface via [syncState].
+     */
+    fun signIn(email: String, password: String) =
+        saveScope.launch { runCatching { syncEngine?.signIn(email, password) } }
+
+    /**
+     * "Create an account" (PRD §5). On the guest account this device is normally on, this gives THAT account
+     * the email + password: same account, same data, now reachable from other devices. Errors via [syncState].
+     */
+    fun createAccount(email: String, password: String) =
+        saveScope.launch { runCatching { syncEngine?.createAccount(email, password) } }
+
+    /**
+     * Signs out and lands on a fresh **guest** account (PRD §5: the app is always connected to one). Any
+     * change still inside the save debounce is flushed into the account being left first, and that account's
+     * local partition and remote data are both left untouched — signing back in restores it verbatim.
      */
     fun signOut() {
         val engine = syncEngine ?: return
         saveScope.launch {
             runCatching { flush() }
-            engine.signOut()
-            refreshRealtimeSubscription() // realtimeAuth() is now null → disconnect the subscription
+            engine.signOutToGuest()
         }
     }
 

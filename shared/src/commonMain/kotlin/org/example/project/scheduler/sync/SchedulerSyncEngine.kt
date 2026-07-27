@@ -19,7 +19,13 @@ import org.example.project.scheduler.platform.Diagnostics
 
 /** Coarse status for a sync status indicator. */
 sealed interface SyncState {
-    /** No signed-in user; sync is dormant. */
+    /**
+     * No account on this device yet, so sync is dormant. The app is always meant to be connected to an
+     * account (a GUEST one when the user never signed in — see [SchedulerSyncEngine.ensureAccount]), so this
+     * only shows in the window before the first account could be created: a first launch that is offline, or
+     * a project without anonymous sign-ins enabled. The app runs fully offline meanwhile and every sync
+     * moment retries creating the guest account.
+     */
     data object SignedOut : SyncState
 
     /** Signed in, nothing in flight. */
@@ -30,6 +36,20 @@ sealed interface SyncState {
 
     /** The last attempt failed (offline, auth, server). Local state is unaffected; sync retries later. */
     data class Error(val message: String) : SyncState
+}
+
+/**
+ * The account this device is currently connected to (PRD §5). The app is **always** connected to one:
+ * either a normal account ([email] set) or a **guest** account — a real Supabase account created
+ * automatically on first launch (or after a sign-out) that simply has no credentials, which is why no other
+ * device can sign in to it. Everything else works identically: its own synced snapshot, its own presence /
+ * break / push rows, its own local partition.
+ *
+ * "Creating an account" from a guest does not make a second account — it gives THIS one an email and a
+ * password ([SchedulerSyncEngine.createAccount]), so the data and the user id are unchanged.
+ */
+data class AccountInfo(val userId: String, val email: String?) {
+    val isGuest: Boolean get() = email == null
 }
 
 /**
@@ -74,6 +94,28 @@ open class SchedulerSyncEngine(
     private val _state = MutableStateFlow<SyncState>(SyncState.SignedOut)
     val state: StateFlow<SyncState> = _state.asStateFlow()
 
+    /**
+     * The account this device is connected to — a guest one unless the user signed in / gave it credentials
+     * (see [AccountInfo]). Null only before the first account could be created. Republished after every
+     * account lifecycle step; the ViewModel watches it to swap the local per-account data partition.
+     */
+    private val _account = MutableStateFlow(loadAccountInfo())
+    val account: StateFlow<AccountInfo?> = _account.asStateFlow()
+
+    /**
+     * Invoked immediately BEFORE the active account changes, so the owner can flush pending local edits into
+     * the account being left (the local scheduler partition is keyed on the active account — see
+     * [org.example.project.scheduler.persistence.SqlDelightSchedulerStore]). Set by the ViewModel.
+     */
+    var beforeAccountSwitch: (() -> Unit)? = null
+
+    private fun loadAccountInfo(): AccountInfo? =
+        metaStore.loadSyncMeta()?.let { m -> m.userId?.let { AccountInfo(it, m.email) } }
+
+    private fun publishAccount() {
+        _account.value = loadAccountInfo()
+    }
+
     /** Emits when a remote snapshot was pulled and applied over the local state (LWW / first load). */
     private val _remoteApplied = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val remoteApplied: SharedFlow<Unit> = _remoteApplied.asSharedFlow()
@@ -110,42 +152,126 @@ open class SchedulerSyncEngine(
         if (m.accessToken != null && m.refreshToken != null && m.userId != null) {
             session = SupabaseSession(m.accessToken, m.refreshToken, m.userId)
             _state.value = SyncState.Idle
-            Diagnostics.log("restored persisted session (${m.email ?: "unknown email"})")
+            publishAccount()
+            Diagnostics.log("restored persisted session (${m.email ?: "guest account"})")
         }
     }
 
-    suspend fun signUp(email: String, password: String) = authenticate(email) { client.signUp(email, password) }
+    /** True when the active account is a **guest** one (no credentials) — see [AccountInfo]. */
+    val isGuest: Boolean get() = _account.value?.isGuest == true
 
-    suspend fun signIn(email: String, password: String) = authenticate(email) { client.signIn(email, password) }
+    /**
+     * Makes sure this device is connected to an account (PRD §5: it always is), creating a **guest** account
+     * when it is not. Returns true when an account is active afterwards.
+     *
+     * Called at startup and at the head of every [reconcile], so a first launch that was offline — or a
+     * project where anonymous sign-ins were still disabled — simply keeps retrying while the app runs fully
+     * offline against its unclaimed local partition. The guest adopts that partition
+     * ([org.example.project.scheduler.persistence.SyncMetaStore.adoptUnclaimedAccountData]), so nothing the
+     * user did before the account existed is lost.
+     *
+     * Skipped entirely once any account is active: a guest is created only when there is nothing else.
+     */
+    suspend fun ensureAccount(): Boolean {
+        if (session != null) return true
+        return try {
+            authenticate(email = null) { client.signUpGuest() }
+            true
+        } catch (e: Exception) {
+            Diagnostics.log("guest-account creation failed (${e.message}); staying local, will retry")
+            false
+        }
+    }
 
-    private suspend fun authenticate(email: String, call: suspend () -> SupabaseSession) =
+    /**
+     * Signs in to an existing account, switching this device to it. The account being left keeps its own
+     * local partition and its remote data untouched — nothing is deleted, and signing back in restores it.
+     */
+    suspend fun signIn(email: String, password: String) =
+        authenticate(email) { client.signIn(email, password) }
+
+    /**
+     * "Create an account" (PRD §5). On a **guest** account this gives THAT account the [email] and
+     * [password] — same user id, same data, same devices, now reachable from another device — rather than
+     * creating a second account. (When the active account already has credentials, or when there is no
+     * account at all because the guest could not be created, this registers a brand-new account and switches
+     * to it.)
+     */
+    suspend fun createAccount(email: String, password: String) {
+        val current = session
+        if (current == null || !isGuest) {
+            authenticate(email) { client.signUp(email, password) }
+            return
+        }
         mutex.withLock {
             _state.value = SyncState.Syncing
             try {
-                val s = call()
-                session = s
-                persistSession(s, email)
-                recordLogoutBaseline(s)
+                withAuth(current) { client.updateCredentials(it, email, password) }
+                // Same account, so no account switch: only the credentials (and the displayed identity) change.
+                setMeta(meta().copy(email = email))
+                publishAccount()
                 _state.value = SyncState.Idle
-                Diagnostics.log("signed in as $email")
+                Diagnostics.log("guest account claimed as $email (same account, data kept)")
             } catch (e: SupabaseException) {
-                _state.value = SyncState.Error(e.message ?: "auth failed")
+                _state.value = SyncState.Error(e.message ?: "could not create the account")
                 throw e
             }
         }
+    }
 
     /**
-     * Signs out: drops the cached session locally. Does not delete the remote snapshot. This is only the
-     * local drop — the user-initiated sign-out's farewell pull/push happens in the caller
-     * ([org.example.project.scheduler.ui.TaskSchedulerViewModel.signOut] reconciles first), so the remote
-     * force-logout path in [runReconcile] can keep using this to sign out while pushing nothing.
+     * Authenticates and makes the result this device's active account.
+     *
+     * [email] is null for a guest account (it has none). Every path here can land on a DIFFERENT account, so
+     * the owner is given a chance to flush pending edits into the account being left first, and the account
+     * being entered keeps whatever per-account sync bookkeeping this device already had for it (the store
+     * refuses to copy the previous account's — see `SqlDelightSchedulerStore.saveSyncMeta`).
+     */
+    private suspend fun authenticate(
+        email: String?,
+        call: suspend () -> SupabaseSession,
+    ) = mutex.withLock {
+        _state.value = SyncState.Syncing
+        try {
+            val s = call()
+            beforeAccountSwitch?.invoke()
+            session = s
+            persistSession(s, email)
+            if (email == null) metaStore.adoptUnclaimedAccountData(s.userId)
+            // Published before the (network) logout-baseline fetch, so the owner swaps to this account's
+            // local partition as soon as the account exists rather than one round-trip later.
+            publishAccount()
+            recordLogoutBaseline(s)
+            _state.value = SyncState.Idle
+            Diagnostics.log(if (email == null) "guest account created (${s.userId})" else "signed in as $email")
+        } catch (e: SupabaseException) {
+            _state.value = SyncState.Error(e.message ?: "auth failed")
+            throw e
+        }
+    }
+
+    /**
+     * Drops the cached session locally — the app is left with no account until [ensureAccount] gives it a
+     * fresh guest one (which [signOutToGuest] and [reconcile] do). Does not delete anything: the account's
+     * remote snapshot and its local partition both stay put, and signing back in picks them up unchanged.
+     *
+     * This is only the local drop, so the remote force-logout path in [runReconcile] can use it to sign out
+     * while pushing nothing.
      */
     fun signOut() {
         Diagnostics.log("signed out")
+        beforeAccountSwitch?.invoke()
         session = null
         val m = meta()
-        metaStore.saveSyncMeta(m.copy(accessToken = null, refreshToken = null, userId = null))
+        metaStore.saveSyncMeta(m.copy(accessToken = null, refreshToken = null, userId = null, email = null))
+        publishAccount()
         _state.value = SyncState.SignedOut
+    }
+
+    /** The user-initiated sign-out: drop the account, then land on a fresh guest account (PRD §5). */
+    suspend fun signOutToGuest() {
+        signOut()
+        ensureAccount()
     }
 
     /** Marks local state as having unpushed changes; the next [reconcile] will push it. */
@@ -161,13 +287,18 @@ open class SchedulerSyncEngine(
      */
     open suspend fun reconcile() {
         try {
+            // PRD §5: the app is always connected to an account. A device that has none yet (first launch
+            // while offline, or one whose guest creation failed) gets its guest account here, so every sync
+            // moment doubles as the retry — and reconciling then proceeds normally against it.
+            ensureAccount()
+            var forcedOut = false
             mutex.withLock {
-                val current = session ?: run { _state.value = SyncState.SignedOut; return }
+                val current = session ?: run { _state.value = SyncState.SignedOut; return@withLock }
                 _state.value = SyncState.Syncing
                 try {
                     runReconcile(current)
                     // runReconcile may have signed us out (remote force-logout); don't clobber SignedOut with Idle.
-                    if (session != null) _state.value = SyncState.Idle
+                    if (session != null) _state.value = SyncState.Idle else forcedOut = true
                 } catch (e: SupabaseException) {
                     _state.value = SyncState.Error(e.message ?: "sync failed")
                 } catch (e: Exception) {
@@ -175,8 +306,12 @@ open class SchedulerSyncEngine(
                     _state.value = SyncState.Error(e.message ?: "offline")
                 }
             }
+            // A remote force-logout dropped the account: land on a fresh guest one rather than on nothing
+            // (outside the lock — [ensureAccount] takes it). The forced-out account's local partition and
+            // whatever survives server-side are left exactly as they are.
+            if (forcedOut) ensureAccount()
         } finally {
-            // Unified sync moment (see [syncMoments]): fires on every outcome — including the signed-out
+            // Unified sync moment (see [syncMoments]): fires on every outcome — including the accountless
             // early return above — so the side channels always run (or locally fall back) at this moment.
             _syncMoments.tryEmit(Unit)
         }
@@ -292,7 +427,7 @@ open class SchedulerSyncEngine(
                 json.decodeFromString<PersistedSnapshot>(remote.payload)
         }.getOrDefault(false)
 
-    private fun persistSession(s: SupabaseSession, email: String) =
+    private fun persistSession(s: SupabaseSession, email: String?) =
         setMeta(meta().copy(accessToken = s.accessToken, refreshToken = s.refreshToken, userId = s.userId, email = email))
 
     /**

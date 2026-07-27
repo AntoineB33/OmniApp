@@ -46,7 +46,10 @@ ways. "Press Sync" below always means this.
 
 - [ ] `scripts/accounts.env` exists (copied from `accounts.env.example`, filled in). Gitignored.
 - [ ] Accounts created: `python scripts/internal/account_db_admin.py signup <user> <pass>` for accounts
-      1, 2, 3. Supabase project has **email confirmation disabled** (usernames map to `<user>@omniapp.local`).
+      1, 2, 3. Supabase project has **email confirmation disabled** (usernames map to `<user>@omniapp.local`)
+      **and anonymous sign-ins enabled** (Dashboard → Authentication → Sign In / Providers, mirrored by
+      `enable_anonymous_sign_ins` in `supabase/config.toml`) — without the latter no **guest account** can
+      be created, so a launch without script credentials stays local-only (§11).
 - [ ] Server schema deployed: `scripts\deploy-supabase.bat` (idempotent; re-run after schema edits). It
       applies `supabase/migrations/`, deploys the `pause-cue` Edge Function, and runs
       `pause-cue-setup.sql` (which **schedules** the `pause-cue-tick` cron at `'10 seconds'`).
@@ -338,6 +341,38 @@ acc3 (release) → `~/.omniapp-release`, default → `~/.omniapp`.
       desktop app signed in as account 1. It does **not** deploy the Android app.
 - [ ] `account2-empty.bat` empties account 2 (local + remote) without relaunching; account 1's data
       untouched.
+
+---
+
+## 11. Accounts — always connected, guest accounts, claiming (PRD §5)
+
+Run this one **without** the account scripts, so the app takes the ordinary first-launch path:
+`./gradlew :desktopApp:run -Pomniapp.stateDir=%USERPROFILE%\.omniapp-guest` (use a throwaway state dir;
+delete it to redo the first-launch case).
+
+- [ ] **First launch is connected.** The account chip reads **"Guest"** (not "Sign in"), a
+      `scheduler_snapshot` row exists for a new user id, and `diagnostics.log` shows
+      `guest account created (<id>)`. Nothing in the UI offers to work "without an account".
+- [ ] **A guest account is an ordinary account.** Edits persist and push (chip goes Syncing → Guest),
+      presence rows appear for it, and the §6 break/pause-cue machinery behaves as on a normal account.
+- [ ] **Claiming keeps the data.** Put some tasks in, open the chip → type an email + password →
+      **Create account**. The chip becomes "Synced", the tasks are **still there**, and the user id is
+      **unchanged** (same `scheduler_snapshot` row, no second row) — the guest account was claimed, not
+      replaced. Signing in to that same email from the other device now shows the same tree (§3).
+- [ ] **Sign-out lands on a new guest account**, never on "signed out": the chip returns to "Guest", the
+      calendar is empty (a brand-new account), and a *new* user id appears server-side.
+- [ ] **Nothing is deleted by switching.** After the sign-out above, sign back in to the claimed account:
+      its data comes back verbatim (and the guest account left behind keeps its own). Same in reverse
+      between two named accounts on one state dir.
+- [ ] **This device's screen time is unaffected by switching** — the Inactivity bands / device-activity
+      bubble (§4) still show this device's own past sessions after an account change.
+- [ ] **Offline first launch degrades gracefully.** Disconnect the network, launch with a fresh state
+      dir: the chip reads "No account", the app is fully usable, and when the network returns the next
+      sync moment creates the guest account and **adopts** the work done offline (it is not lost).
+- [ ] **Upgrade path (existing install).** Launch a build from before this change against a state dir,
+      make edits, then launch the new build on the same dir: the data is still there (schema v8 → v9
+      files it under the signed-in account, or under the guest account that adopts it if it was signed
+      out).
 
 ---
 

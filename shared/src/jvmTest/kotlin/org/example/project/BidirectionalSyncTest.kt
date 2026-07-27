@@ -186,6 +186,32 @@ class BidirectionalSyncTest {
         }
     }
 
+    /**
+     * PRD §5: the local data is partitioned per account, so a change of the ACTIVE account must swap what
+     * the app shows — here a sign-out, which lands on a (different) guest account whose partition is empty.
+     * The edit made on the previous account must not follow the device onto the new one; it stays in the
+     * account it was made on (the store keeps it) and comes back when that account signs in again.
+     */
+    @Test
+    fun changing_account_swaps_the_in_memory_state_for_the_new_account_partition() {
+        val dispatcher = StandardTestDispatcher()
+        runTest(dispatcher) {
+            val engine = FakeEngine(signedInMeta())
+            val vm = vmOn(engine, RecordingSubscription(), dispatcher)
+            advanceUntilIdle()
+
+            vm.dispatch(SchedulerIntent.SetLookAwayVoice(enabled = false))
+            advanceUntilIdle()
+            assertEquals(false, vm.state.value.lookAwayVoiceEnabled)
+
+            // Leaving the account (the store then reads the new account's — here empty — partition).
+            engine.signOut()
+            advanceUntilIdle()
+
+            assertEquals(true, vm.state.value.lookAwayVoiceEnabled, "the new account starts from its own data")
+        }
+    }
+
     @Test
     fun sign_out_clears_the_auto_pull_subscription() {
         val dispatcher = StandardTestDispatcher()

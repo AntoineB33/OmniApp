@@ -9,16 +9,30 @@ import org.example.project.scheduler.persistence.db.SchedulerDatabase
  * per [HistoryRow] in `history_unit`, plus one [HistoryPointerRow] per category in `history_pointer`.
  * [save] replaces the whole history in a single transaction so a redo branch that was discarded in
  * memory (the units after the pointer) leaves no stale rows behind.
+ *
+ * **All three are ACCOUNT-SCOPED** (schema v9): the app is always connected to an account — a credential-less
+ * GUEST account when the user never signed in or signed out — and each account keeps its own partition,
+ * keyed by the Supabase user id in [activeAccountId] (read from `sync_meta.user_id` on every call, so a
+ * sign-in/sign-out simply swaps which partition is live). Signing in to another account therefore never
+ * deletes the data of the account being left; it stops being the active partition and comes back untouched
+ * when that account signs in again. [UNCLAIMED_ACCOUNT_ID] is the partition of a device that has no account
+ * yet (a fresh install still offline, or a pre-v9 DB migrated while signed out); the first guest account
+ * adopts it via [adoptUnclaimedAccountData].
  */
 class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
     SchedulerStore, SyncMetaStore, WindowPlacementStore, DeviceSleepGapStore, ActiveSessionStore,
     SleepScanCheckpointStore {
     private val queries = database.schedulerQueries
 
+    /** The account whose partition [load]/[save] read and write: the signed-in user, else "unclaimed". */
+    private fun activeAccountId(): String =
+        queries.selectSyncMeta().executeAsOneOrNull()?.user_id ?: UNCLAIMED_ACCOUNT_ID
+
     override fun load(): PersistedSnapshot? {
-        val payload = queries.selectAppState().executeAsOneOrNull() ?: return null
+        val account = activeAccountId()
+        val payload = queries.selectAppState(account).executeAsOneOrNull() ?: return null
         val history =
-            queries.selectAllHistory().executeAsList().map { row ->
+            queries.selectAllHistory(account).executeAsList().map { row ->
                 HistoryRow(
                     category = row.category,
                     ordinal = row.ordinal.toInt(),
@@ -29,18 +43,20 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
                 )
             }
         val pointers =
-            queries.selectAllPointers().executeAsList().map { row ->
+            queries.selectAllPointers(account).executeAsList().map { row ->
                 HistoryPointerRow(category = row.category, pointer = row.pointer.toInt())
             }
         return PersistedSnapshot(payload, history, pointers)
     }
 
     override fun save(snapshot: PersistedSnapshot) {
+        val account = activeAccountId()
         database.transaction {
-            queries.upsertAppState(snapshot.statePayload)
-            queries.deleteAllHistory()
+            queries.upsertAppState(account_id = account, payload = snapshot.statePayload)
+            queries.deleteAllHistory(account)
             snapshot.history.forEach { row ->
                 queries.insertHistoryUnit(
+                    account_id = account,
                     category = row.category,
                     ordinal = row.ordinal.toLong(),
                     time_millis = row.timeMillis,
@@ -49,38 +65,69 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
                     delta = row.deltaJson,
                 )
             }
-            queries.deleteAllPointers()
+            queries.deleteAllPointers(account)
             snapshot.pointers.forEach { row ->
-                queries.insertPointer(category = row.category, pointer = row.pointer.toLong())
+                queries.insertPointer(account_id = account, category = row.category, pointer = row.pointer.toLong())
             }
         }
     }
 
     override fun loadSyncMeta(): SyncMeta? =
         queries.selectSyncMeta().executeAsOneOrNull()?.let { row ->
+            val account = queries.selectAccountSync(row.user_id ?: UNCLAIMED_ACCOUNT_ID).executeAsOneOrNull()
             SyncMeta(
                 deviceId = row.device_id,
-                lastKnownRevision = row.last_known_revision,
-                dirty = row.dirty != 0L,
+                lastKnownRevision = account?.last_known_revision ?: 0L,
+                dirty = account?.dirty?.let { it != 0L } ?: false,
                 accessToken = row.access_token,
                 refreshToken = row.refresh_token,
                 userId = row.user_id,
                 email = row.email,
-                acknowledgedLogoutAtMillis = row.acknowledged_logout_at,
+                acknowledgedLogoutAtMillis = account?.acknowledged_logout_at,
             )
         }
 
+    /**
+     * Writes the device-level fields always, and the per-account ones under the account in [meta].
+     *
+     * A save that CHANGES the active account (a sign-in, a guest creation, a sign-out) writes no account
+     * row: the values in hand describe the account being LEFT, and copying them onto the account being
+     * entered would hand it a foreign `revision` baseline — under whole-document LWW that silently pushes
+     * this device's data over that account's remote snapshot (or ignores it). The account being entered
+     * keeps whatever this device already recorded for it (defaults, when it is new here), which the very
+     * next [loadSyncMeta] returns.
+     */
     override fun saveSyncMeta(meta: SyncMeta) {
-        queries.upsertSyncMeta(
-            device_id = meta.deviceId,
-            last_known_revision = meta.lastKnownRevision,
-            dirty = if (meta.dirty) 1L else 0L,
-            access_token = meta.accessToken,
-            refresh_token = meta.refreshToken,
-            user_id = meta.userId,
-            email = meta.email,
-            acknowledged_logout_at = meta.acknowledgedLogoutAtMillis,
-        )
+        val previousAccount = queries.selectSyncMeta().executeAsOneOrNull()?.user_id
+        database.transaction {
+            queries.upsertSyncMeta(
+                device_id = meta.deviceId,
+                access_token = meta.accessToken,
+                refresh_token = meta.refreshToken,
+                user_id = meta.userId,
+                email = meta.email,
+            )
+            if (meta.userId != null && meta.userId == previousAccount) {
+                queries.upsertAccountSync(
+                    account_id = meta.userId,
+                    last_known_revision = meta.lastKnownRevision,
+                    dirty = if (meta.dirty) 1L else 0L,
+                    acknowledged_logout_at = meta.acknowledgedLogoutAtMillis,
+                )
+            }
+        }
+    }
+
+    override fun adoptUnclaimedAccountData(accountId: String) {
+        if (accountId.isEmpty() || accountId == UNCLAIMED_ACCOUNT_ID) return
+        database.transaction {
+            // Only when the account has no partition of its own — never merge two partitions together.
+            if (queries.selectAppState(accountId).executeAsOneOrNull() != null) return@transaction
+            if (queries.selectAppState(UNCLAIMED_ACCOUNT_ID).executeAsOneOrNull() == null) return@transaction
+            queries.reassignAppState(accountId, UNCLAIMED_ACCOUNT_ID)
+            queries.reassignHistory(accountId, UNCLAIMED_ACCOUNT_ID)
+            queries.reassignPointers(accountId, UNCLAIMED_ACCOUNT_ID)
+        }
     }
 
     override fun loadPlacements(): Map<String, WindowPlacement> =
@@ -165,6 +212,15 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
 
     override fun saveSleepScanCheckpoint(scannedThroughMillis: Long) {
         queries.upsertSleepScanCheckpoint(scannedThroughMillis)
+    }
+
+    companion object {
+        /**
+         * Partition key for scheduler data written while the device had no account at all — a first launch
+         * that could not reach Supabase to create its guest account, or a pre-v9 DB migrated while signed
+         * out. The first guest account created on the device adopts it ([adoptUnclaimedAccountData]).
+         */
+        const val UNCLAIMED_ACCOUNT_ID: String = ""
     }
 }
 

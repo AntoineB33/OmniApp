@@ -9,6 +9,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -135,6 +136,37 @@ class RemoteSnapshotClient(
     /** Registers a new account. Throws [SupabaseException] on failure (e.g. the email already exists). */
     suspend fun signUp(email: String, password: String): SupabaseSession =
         token("${config.authUrl}/signup", json.encodeToString(EmailPasswordBody(email, password)))
+
+    /**
+     * Creates a **guest account** (PRD §5): a real Supabase account with no email and no password — GoTrue's
+     * anonymous sign-in, `POST /auth/v1/signup` with an empty body. It behaves exactly like any other account
+     * (own `scheduler_snapshot` row, own device/presence rows, own RLS-scoped data); it simply has no
+     * credentials, so no other device can ever sign in to it — the guest belongs to the device that created
+     * it. [updateCredentials] later turns the very same account into a normal one, keeping all its data.
+     *
+     * Requires **anonymous sign-ins to be enabled** on the Supabase project (Dashboard → Authentication →
+     * Sign In / Providers, or `enable_anonymous_sign_ins` in `supabase/config.toml`); it throws
+     * [SupabaseException] (422) when they are not.
+     */
+    suspend fun signUpGuest(): SupabaseSession = token("${config.authUrl}/signup", "{}")
+
+    /**
+     * Sets the signed-in account's email + password — the "create an account" action on a guest account
+     * (PRD §5): the guest account **becomes** that account (same user id, same data, same devices), rather
+     * than a second account being created and the data copied. `PUT /auth/v1/user`, the same call Supabase's
+     * own clients use to convert an anonymous user to a permanent one. Requires the project's email
+     * confirmation to be disabled (as the account scripts already do), otherwise GoTrue parks the address as
+     * a pending change instead of applying it. Throws [SupabaseException] if the email is already taken.
+     */
+    suspend fun updateCredentials(session: SupabaseSession, email: String, password: String) {
+        val response =
+            http.put("${config.authUrl}/user") {
+                authHeaders(session)
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(EmailPasswordBody(email, password)))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
 
     /** Signs in with email + password. Throws [SupabaseException] on bad credentials. */
     suspend fun signIn(email: String, password: String): SupabaseSession =

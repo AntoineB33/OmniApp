@@ -1,0 +1,89 @@
+-- Schema v8 -> v9: the app is ALWAYS connected to an account (PRD §5). When no account exists the app
+-- creates a GUEST account (a real, credential-less Supabase account), so from now on every locally
+-- persisted scheduler payload belongs to exactly one account: `app_state`, `history_unit` and
+-- `history_pointer` gain an `account_id` (the Supabase user id) and hold one row-set per account, side by
+-- side. Switching accounts therefore never deletes the data of the account being left — it simply stops
+-- being the ACTIVE partition (nothing is deleted; see CLAUDE.md "Accounts").
+--
+-- The per-account sync bookkeeping moves out of the single-row `sync_meta` into `account_sync` for the same
+-- reason: `last_known_revision` is an optimistic-concurrency baseline against ONE account's remote row, and
+-- comparing it against another account's revision would make the engine push over (or silently ignore) that
+-- account's remote snapshot. `sync_meta` keeps only what is device-level: the device id and the cached
+-- session of whichever account is currently active.
+--
+-- Existing rows are assigned to the account that was signed in when the DB was last written; a DB written
+-- while signed out lands in the '' (unclaimed) partition, which the first guest account adopts when it is
+-- created (SqlDelightSchedulerStore.adoptUnclaimedAccountData) — so an upgraded install keeps its data.
+
+CREATE TABLE app_state_v9 (
+    account_id TEXT NOT NULL PRIMARY KEY,
+    payload TEXT NOT NULL
+);
+
+INSERT INTO app_state_v9(account_id, payload)
+SELECT COALESCE((SELECT user_id FROM sync_meta WHERE id = 0), ''), payload FROM app_state;
+
+DROP TABLE app_state;
+
+ALTER TABLE app_state_v9 RENAME TO app_state;
+
+CREATE TABLE history_unit_v9 (
+    account_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    time_millis INTEGER NOT NULL,
+    chrono_id INTEGER NOT NULL,
+    debug_tainted INTEGER NOT NULL,
+    delta TEXT NOT NULL,
+    PRIMARY KEY (account_id, category, ordinal)
+);
+
+INSERT INTO history_unit_v9(account_id, category, ordinal, time_millis, chrono_id, debug_tainted, delta)
+SELECT COALESCE((SELECT user_id FROM sync_meta WHERE id = 0), ''),
+       category, ordinal, time_millis, chrono_id, debug_tainted, delta
+FROM history_unit;
+
+DROP TABLE history_unit;
+
+ALTER TABLE history_unit_v9 RENAME TO history_unit;
+
+CREATE TABLE history_pointer_v9 (
+    account_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    pointer INTEGER NOT NULL,
+    PRIMARY KEY (account_id, category)
+);
+
+INSERT INTO history_pointer_v9(account_id, category, pointer)
+SELECT COALESCE((SELECT user_id FROM sync_meta WHERE id = 0), ''), category, pointer FROM history_pointer;
+
+DROP TABLE history_pointer;
+
+ALTER TABLE history_pointer_v9 RENAME TO history_pointer;
+
+CREATE TABLE account_sync (
+    account_id TEXT NOT NULL PRIMARY KEY,
+    last_known_revision INTEGER NOT NULL DEFAULT 0,
+    dirty INTEGER NOT NULL DEFAULT 0,
+    acknowledged_logout_at INTEGER
+);
+
+INSERT INTO account_sync(account_id, last_known_revision, dirty, acknowledged_logout_at)
+SELECT user_id, last_known_revision, dirty, acknowledged_logout_at
+FROM sync_meta WHERE id = 0 AND user_id IS NOT NULL;
+
+CREATE TABLE sync_meta_v9 (
+    id INTEGER NOT NULL PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    access_token TEXT,
+    refresh_token TEXT,
+    user_id TEXT,
+    email TEXT
+);
+
+INSERT INTO sync_meta_v9(id, device_id, access_token, refresh_token, user_id, email)
+SELECT id, device_id, access_token, refresh_token, user_id, email FROM sync_meta;
+
+DROP TABLE sync_meta;
+
+ALTER TABLE sync_meta_v9 RENAME TO sync_meta;

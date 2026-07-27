@@ -3,6 +3,15 @@
 # This is not a secret. Override for a different project by re-linking: supabase link --project-ref <ref>.
 project_id = "itoaqbftjemovkzswiyu"
 
+[auth]
+# PRD §5: the app is ALWAYS connected to an account. When a device has none (first launch, or after a
+# sign-out) it creates a GUEST account — a real account with no email/password, i.e. GoTrue's anonymous
+# sign-in — which the user can later claim by giving it credentials (PUT /auth/v1/user, same account, same
+# data). Without this the guest creation fails with 422 and a fresh install stays local-only.
+# NOTE: `supabase db push` does NOT apply auth settings. Either run `supabase config push` (CLI ≥ 1.200) or
+# flip Authentication → Sign In / Providers → "Allow anonymous sign-ins" once in the Dashboard.
+enable_anonymous_sign_ins = true
+
 [functions.pause-cue]
 # The pause-end voice cue Edge Function verifies its own JWT (it is called by Postgres pg_net with the
 # service-role key), so the platform gateway must not reject unauthenticated invocations.

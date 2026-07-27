@@ -318,5 +318,5 @@ time-link, but do the **cue-timing** verification (Testing A) at 1× real time.
   signed-in device, so its battery cost is a ~200-byte HTTPS call every 10 s of *active use* and zero otherwise.
   For one phone + one computer that is also well inside the Supabase free plan — DB writes, not Edge
   invocations; e1 is invoked once per idle episode, not once per tick.
-- With no account signed in, the cue path is simply inactive; the in-app look-away/pose cues (which need
+- The app is always connected to an account (core PRD §5), guest accounts included, so this path is live for every launch; only a device that has not managed to create its account yet has it inactive. In that case the in-app look-away/pose cues (which need
   no server) still work.
