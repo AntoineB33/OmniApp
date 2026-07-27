@@ -47,8 +47,16 @@ $$;
 -- server-stamped presence time (`t2 = beat_at + t_a/2`), so it does not drift with which tick noticed — and a
 -- clean screen-off short-circuits the wait by calling the Edge Function directly.
 --
--- pg_cron on Supabase accepts both cron syntax and an interval string like '10 seconds' (pg_cron ≥ 1.5).
--- cron.schedule upserts by jobname, so re-running is safe; to change `t_b`, edit the interval here and re-run
+-- pg_cron accepts standard cron syntax OR a sub-minute interval string, but the interval form is only
+-- '[1-59] seconds' — 'N minutes' is rejected with `invalid schedule`. One minute is therefore the cron
+-- form '* * * * *'; use '30 seconds' etc. only for a sub-minute `t_b`.
+--
+-- NOTE: this file must contain NO double-quote character anywhere, comments included. It is handed to the
+-- CLI as ONE inline argument (see scripts/internal/apply-pause-cue-setup.ps1), and Windows PowerShell 5.1
+-- mangles a native-command argument that embeds one — the SQL is then silently TRUNCATED, so the tail
+-- statements never run while the command still reports success. apply-pause-cue-setup.ps1 hard-fails on a
+-- double quote for that reason. Use backticks or single quotes when quoting in a comment.
+-- cron.schedule upserts by jobname, so re-running is safe; to change `t_b`, edit the schedule here and re-run
 -- scripts/deploy-supabase.bat. (`t_a` and the break lengths/messages are per-account rows changed over HTTP —
 -- see docs/PAUSE_CUE_DELIVERY.md — no redeploy needed.)
-select cron.schedule('pause-cue-tick', '1 minute', $$ select public.tick_pause_cues() $$);
+select cron.schedule('pause-cue-tick', '* * * * *', $$ select public.tick_pause_cues() $$);

@@ -417,11 +417,8 @@ open class SchedulerSyncEngine(
         withAuth(current) {
             client.publishNextBreak(
                 session = it,
-                deviceId = meta().deviceId,
-                kind = state.kind,
-                breakKind = state.breakKind,
-                breakDueMs = state.dueMillis,
-                breakLenMs = state.lengthMillis,
+                fiveMinDueMs = state.fiveMinDueMillis,
+                fifteenMinDueMs = state.fifteenMinDueMillis,
             )
         }
     }

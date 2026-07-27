@@ -289,11 +289,11 @@ class RemoteSnapshotClient(
      * presence table (`device_heartbeat`) through the `publish_presence` RPC and returns the account's current
      * `t_a`, in SECONDS, so the caller can re-pace itself when it is changed over HTTP.
      *
-     * The whole request body is the device id — the presence row is identity + time only since the break window
-     * moved to its own event-driven row ([publishNextBreak]). An RPC rather than a plain PostgREST upsert for
-     * three reasons: the server (not the client clock) stamps `beat_at`; the row's `data_payload_sent` claim flag
-     * is reset to `false` in the same statement, re-arming the next idle episode; and the reply carries `t_a`
-     * back at no extra request.
+     * The whole request body is the device id — the presence row is `{ account, device, time of upsert }` and
+     * nothing else since the break instants moved to their own event-driven row ([publishNextBreak]). An RPC
+     * rather than a plain PostgREST upsert for three reasons: the server (not the client clock) stamps
+     * `beat_at`; the account's `data_payload_sent` row is upserted back to `false` in the same call, re-arming
+     * the next idle episode atomically with the beat; and the reply carries `t_a` back at no extra request.
      */
     suspend fun publishPresence(session: SupabaseSession, deviceId: String): Int? {
         val response =
@@ -308,24 +308,22 @@ class RemoteSnapshotClient(
     }
 
     /**
-     * PRD §15 (migration 20260726000000): upserts this device's `device_break` row — the rest pose it is waiting
-     * on — through the `publish_next_break` RPC. Called **only when that pose changes**, so the server's copy is
-     * never a beat behind the schedule; `breakDueMs` is the pose's fixed DUE instant on the real wall clock, the
-     * value the server's overdue gate compares against this device's last `beat_at`.
+     * PRD §15 (migrations 20260726000000 + 20260728000000): upserts the ACCOUNT's `device_break` row — when each
+     * of the two screen breaks next comes due — through the `publish_next_break` RPC. Called **only when the app
+     * calculates a different pair**, so the server's copy is never a beat behind the schedule. Each value is the
+     * pose's fixed DUE instant on the real wall clock, which the server's overdue gate compares against the
+     * account's last `beat_at`; the account itself comes from the JWT, so the two instants are the entire body.
      */
     suspend fun publishNextBreak(
         session: SupabaseSession,
-        deviceId: String,
-        kind: String,
-        breakKind: String?,
-        breakDueMs: Long?,
-        breakLenMs: Long?,
+        fiveMinDueMs: Long?,
+        fifteenMinDueMs: Long?,
     ) {
         val response =
             http.post("${config.restUrl}/rpc/publish_next_break") {
                 authHeaders(session)
                 contentType(ContentType.Application.Json)
-                setBody(json.encodeToString(PublishNextBreakArgs(deviceId, kind, breakKind, breakDueMs, breakLenMs)))
+                setBody(json.encodeToString(PublishNextBreakArgs(fiveMinDueMs, fifteenMinDueMs)))
             }
         if (!response.status.isSuccess()) throw response.toException()
     }
@@ -476,14 +474,14 @@ private data class PublishPresenceArgs(
     @SerialName("p_device_id") val deviceId: String,
 )
 
-/** Arguments of the `publish_next_break` RPC — the event-driven break write. */
+/**
+ * Arguments of the `publish_next_break` RPC — the event-driven break write. The account comes from the JWT and
+ * the row is account-keyed, so the two due instants are the whole payload.
+ */
 @Serializable
 private data class PublishNextBreakArgs(
-    @SerialName("p_device_id") val deviceId: String,
-    @SerialName("p_kind") val kind: String,
-    @SerialName("p_break_kind") val breakKind: String?,
-    @SerialName("p_break_due_ms") val breakDueMs: Long?,
-    @SerialName("p_break_len_ms") val breakLenMs: Long?,
+    @SerialName("p_break_5min_due_ms") val fiveMinDueMs: Long?,
+    @SerialName("p_break_15min_due_ms") val fifteenMinDueMs: Long?,
 )
 
 /**

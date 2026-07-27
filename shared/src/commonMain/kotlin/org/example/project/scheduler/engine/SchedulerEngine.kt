@@ -308,6 +308,11 @@ class SchedulerEngine(
     // leap by the desktop debug control, and on a linked phone by the time-link frames' inactive flag.
     private var debugForcedInactive = false
 
+    // PRD §15: whether the gateway was signed in at the last sync moment. Only the signed-out→signed-in EDGE
+    // matters — it is what starts the `t_a` presence tick at login rather than at the next 30-s activity beat
+    // (see the sync-moment collector in [start]). Starts false so a startup auto-login counts as the edge.
+    private var lastKnownSignedIn = false
+
     // PRD §15: the user manually declared they are AWAY from this device via the left-menu "I'm away" button.
     // While set, the device reads screen-inactive regardless of the platform sensor, so its active session is
     // finalized and its `t_a` presence tick stopped + reported as a screen-off — telling the server this device
@@ -399,7 +404,22 @@ class SchedulerEngine(
         // reconcile's per-row active-session merge); after every reconcile, reload the stored sessions and
         // re-derive the Inactivity bands so the pulled activity shows at once. Fires on every reconcile
         // outcome and the refresh is local-only, so a failed/push-only reconcile just re-derives in place.
-        pauseCue?.syncMoments?.let { moments -> scope.launch { moments.collect { refreshDerivedPausesNow() } } }
+        pauseCue?.syncMoments?.let { moments ->
+            scope.launch {
+                moments.collect {
+                    refreshDerivedPausesNow()
+                    // PRD §15: the presence tick must start as soon as the app is LOGGED IN, not at the next
+                    // 30-s activity beat. A reconcile is what carries a sign-in, so sample the beat here on the
+                    // signed-out→signed-in edge; [updatePresence] then starts the `t_a` loop (and publishes the
+                    // break dues) right away. Edge-triggered, so an ordinary reconcile costs no extra work.
+                    val signedIn = pauseCue?.signedIn == true
+                    if (signedIn && !lastKnownSignedIn) {
+                        advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended = false)
+                    }
+                    lastKnownSignedIn = signedIn
+                }
+            }
+        }
         // PRD §15 / listener cue delivery: a phone's startup claims the account's last phone so the external
         // listener knows which phone to push. Phones only; a no-op when sync is disabled / signed out.
         claimLastPhoneOnStartup()
@@ -805,17 +825,18 @@ class SchedulerEngine(
         updatePresence()
     }
 
-    // PRD §15: publish what the server needs about this device, on TWO cadences (migration 20260726000000).
+    // PRD §15: publish what the server needs, on TWO cadences (migrations 20260726000000 + 20260728000000).
     //
-    //  * Presence — identity only, every `t_a` while the screen is on and signed in, cleared otherwise. Driven
-    //    from every active-session beat so a walk-away is reflected within a beat; [DeviceHeartbeatPublisher]
-    //    then re-upserts the row on its own ~10 s cadence.
-    //  * The next rest pose — written only when it CHANGES. It used to ride the beat, which left the server up
-    //    to one active-session beat (30 s in production) behind a schedule edit; if every device went dark
-    //    inside that window the cue was judged on the pre-edit break, and the clean screen-off path hit that by
-    //    construction (it calls e1 without a final beat). Publishing on change closes it.
+    //  * Presence — `{ account, device, time of upsert }` plus the account's re-armed claim row, every `t_a`
+    //    from the moment this device is signed in and unlocked, cleared otherwise. Driven from every
+    //    active-session beat so a walk-away is reflected within a beat; [DeviceHeartbeatPublisher] then
+    //    re-upserts the row on its own ~10 s cadence.
+    //  * The two screen breaks' due instants — written only when they CHANGE. They used to ride the beat, which
+    //    left the server up to one active-session beat (30 s in production) behind a schedule edit; if every
+    //    device went dark inside that window the cue was judged on the pre-edit break, and the clean screen-off
+    //    path hit that by construction (it calls e1 without a final beat). Publishing on change closes it.
     //
-    // The break is published ONLY while active, and deliberately never cleared: the last value published while
+    // The breaks are published ONLY while active, and deliberately never cleared: the last pair published while
     // active is exactly the state the user walked away in, which is what the server's overdue gate is judged on.
     private fun updatePresence() {
         val gateway = pauseCue ?: return
@@ -824,20 +845,17 @@ class SchedulerEngine(
         presence.setPresence(if (active) PresenceState(gateway.deviceId) else null)
         if (!active) return
 
-        // Compute the next rest-pose window LIVE from the screen-break config, NOT from the (possibly stale)
-        // stored `state.panels`. Reading stored panels dropped the short (fast-break) now-line break as soon as
-        // its window elapsed and substituted a far-future sleep-anchored occurrence, so the cue aimed hours out.
+        // Compute the due instants LIVE from the screen-break config, NOT from the (possibly stale) stored
+        // `state.panels`. Reading stored panels dropped the short (fast-break) now-line break as soon as its
+        // window elapsed and substituted a far-future sleep-anchored occurrence, so the cue aimed hours out.
         // See RestPosePresenceWindowTest.
         val now = clock.nowMillis()
-        val window = nextRestPoseWindowMillis(vm.state.value.screenBreaks, now)
+        val dues = restPoseDueMillisByKey(vm.state.value.screenBreaks)
         presence.setNextBreak(
             NextBreakState(
-                deviceId = gateway.deviceId,
-                kind = deviceKind.name.lowercase(),
-                // WHICH break type is waiting, so the server resolves its configured length + vocal message.
-                breakKind = window?.key?.takeIf { it.isNotBlank() },
-                dueMillis = window?.let { publishableDueMillis(it.dueMillis, now) },
-                lengthMillis = window?.lengthMillis,
+                fiveMinDueMillis = dues[SchedulerDomain.FIVE_MIN_BREAK_KEY]?.let { publishableDueMillis(it, now) },
+                fifteenMinDueMillis =
+                    dues[SchedulerDomain.FIFTEEN_MIN_BREAK_KEY]?.let { publishableDueMillis(it, now) },
             ),
         )
     }
@@ -1380,52 +1398,44 @@ class SchedulerEngine(
 
     companion object {
         /**
-         * PRD §15 (server-side break computation): the `(due, length)` window of the governing 5/15-min rest
-         * pose as of [now], computed LIVE from the [screenBreaks] config — the value this device writes into its
-         * `device_break` row so the server can decide whether the account went idle with a break owed, and time
-         * the cue as `idleInstant + length`. Null when no rest pose is configured.
+         * PRD §15 (server-side break computation): **when each of the two screen breaks next comes due**, keyed
+         * by [ScreenBreak.key] (`"5min_break"` / `"15min_break"`) and computed LIVE from the [screenBreaks]
+         * config — the whole content of the account's `device_break` row, from which the server decides whether
+         * the account went idle with a break owed and times the cue as `idleInstant + length`. A key is absent
+         * when that pose is not configured, or is configured but not yet anchored (see the gate below).
          *
-         * **`dueMillis` is the pose's mathematical due instant `lastRest + interval`, NOT its drawn start.** The
+         * **The value is the pose's mathematical due instant `lastRest + interval`, NOT its drawn start.** The
          * drawn start is [SchedulerDomain.screenBreakNextStart] = `maxOf(due, now)`, which for an overdue pose
          * rides the now-line and therefore changes at every sample — publishing that is what forced the window
          * onto the `t_a` beat in the first place (migration 20260726000000). The due instant moves only when the
          * pose is served or reconfigured, so it can be written event-driven; it is also the same instant the
          * client's own rest-pose cue keys on (`SchedulerDomain.reachedRestPoseDueByTitle`), so client and server
-         * now agree on one boundary. "Overdue" is `due <= now` either way.
+         * agree on one boundary. "Overdue" is `due <= now` either way.
          *
-         * **Selection rule (PRD §15): when several poses are simultaneously overdue, the LONGEST one governs** —
-         * resting the 15-min pose also discharges the 5-min one due at the same instant, so the user is told to
-         * rest 15 min, not 5. Only when NONE is overdue does the soonest-DUE upcoming pose win (there is nothing
-         * yet to discharge). Deliberately NOT derived from `state.panels`: that frozen snapshot's short
-         * (fast-break) now-line break expires within seconds and is then replaced there by a far-future
-         * sleep-anchored occurrence, which the server would mistime the cue to (hours out). See
-         * RestPosePresenceWindowTest.
+         * **Both dues are published; the SELECTION moved to the server** (migration 20260728000000). The rule is
+         * unchanged in meaning — among the breaks already due at the last beat, the LONGEST governs, because
+         * resting the 15-min pose also discharges a 5-min one due at the same instant — but the server can now
+         * apply it directly to the pair instead of each client pre-collapsing it. Deliberately NOT derived from
+         * `state.panels`: that frozen snapshot's short (fast-break) now-line break expires within seconds and is
+         * then replaced there by a far-future sleep-anchored occurrence, which the server would mistime the cue
+         * to (hours out). See RestPosePresenceWindowTest.
+         *
+         * **Gated on `lastRestMillis > 0`, the same rule the local rest-pose cue follows.** A pose that has
+         * never been anchored carries the 1970 sentinel, so its "due" instant is `interval` after the epoch —
+         * permanently in the past. Published, it would tell the server the account walked away with a break
+         * already owed, and a freshly emptied account that locked its phone would be spoken a pause-end cue it
+         * never earned. An unanchored pose simply has no due instant yet.
          */
-        internal fun nextRestPoseWindowMillis(
-            screenBreaks: List<ScreenBreak>,
-            now: Long,
-        ): RestPoseWindow? {
-            val poses = screenBreaks.asSequence()
-                .filter { it.restBreak && it.intervalMillis > 0 && it.durationMillis > 0 && it.title.isNotBlank() }
-                .map { RestPoseWindow(it.lastRestMillis + it.intervalMillis, it.durationMillis, it.key) }
-                .toList()
-            if (poses.isEmpty()) return null
-            // Among the poses already due, the longest length governs. Fall back to the soonest-due upcoming
-            // pose only when nothing is overdue.
-            val overdue = poses.filter { it.dueMillis <= now }
-            return overdue.maxByOrNull { it.lengthMillis } ?: poses.minByOrNull { it.dueMillis }
-        }
-
-        /**
-         * The governing rest pose as published to the server: when it comes DUE, how long it lasts, and WHICH
-         * break type it is ([ScreenBreak.key] — `"5min_break"`/`"15min_break"`, blank for an ad-hoc break). The
-         * key is what lets the server resolve the break's configured length + vocal message (`break_config`).
-         */
-        internal data class RestPoseWindow(
-            val dueMillis: Long,
-            val lengthMillis: Long,
-            val key: String,
-        )
+        internal fun restPoseDueMillisByKey(screenBreaks: List<ScreenBreak>): Map<String, Long> =
+            screenBreaks.asSequence()
+                .filter {
+                    it.restBreak && it.intervalMillis > 0 && it.durationMillis > 0 &&
+                        it.title.isNotBlank() && it.key.isNotBlank() && it.lastRestMillis > 0
+                }
+                // Several configs sharing one key would be one break as far as the server is concerned; the
+                // soonest due is the one the user reaches first.
+                .groupingBy { it.key }
+                .fold(Long.MAX_VALUE) { soonest, pose -> minOf(soonest, pose.lastRestMillis + pose.intervalMillis) }
 
         /**
          * The `break_due_ms` a device publishes for a pose that is ALREADY due (PRD §15, migration

@@ -142,28 +142,30 @@ class PauseCueGatewayTest {
     }
 
     @Test
-    fun the_next_break_write_carries_the_due_instant_kind_and_length() = runTest {
+    fun the_break_write_carries_both_due_instants_and_nothing_else() = runTest {
+        // Migration 20260728000000 / PRD §15: the row is the ACCOUNT plus the scheduled time of apparition of
+        // both screen breaks. The account comes from the JWT, so the two instants are the entire body — no
+        // device, no kind, no length (the length is the server's, from `break_config`).
         val cap = Captured()
         signedIn(cap).publishNextBreak(
             NextBreakState(
-                deviceId = "ignored", // the engine writes its own meta device id
-                kind = "phone",
-                breakKind = "15min_break",
-                dueMillis = 1_800_000_000_000L,
-                lengthMillis = 900_000L,
+                fiveMinDueMillis = 1_800_000_000_000L,
+                fifteenMinDueMillis = 1_800_000_600_000L,
             ),
         )
 
         assertEquals("POST", cap.method)
         assertTrue(cap.path!!.endsWith("/rpc/publish_next_break"), "was ${cap.path}")
         val body = json.parseToJsonElement(cap.body!!).jsonObject
-        assertEquals("self", body["p_device_id"]!!.jsonPrimitive.content)
-        assertEquals("phone", body["p_kind"]!!.jsonPrimitive.content)
-        assertEquals("15min_break", body["p_break_kind"]!!.jsonPrimitive.content)
-        // The pose's DUE instant, not its drawn (now-line-riding) start — that is what makes this row writable
-        // on change instead of on every beat.
-        assertEquals(1_800_000_000_000L, body["p_break_due_ms"]!!.jsonPrimitive.content.toLong())
-        assertEquals(900_000L, body["p_break_len_ms"]!!.jsonPrimitive.content.toLong())
+        assertEquals(
+            setOf("p_break_5min_due_ms", "p_break_15min_due_ms"),
+            body.keys,
+            "the break row carries the two due instants and nothing else",
+        )
+        // The poses' DUE instants, not their drawn (now-line-riding) starts — that is what makes this row
+        // writable on change instead of on every beat.
+        assertEquals(1_800_000_000_000L, body["p_break_5min_due_ms"]!!.jsonPrimitive.content.toLong())
+        assertEquals(1_800_000_600_000L, body["p_break_15min_due_ms"]!!.jsonPrimitive.content.toLong())
         assertTrue(!cap.body!!.contains("user_id"))
     }
 
@@ -188,7 +190,7 @@ class PauseCueGatewayTest {
         engine.registerPushToken("phone", "fcm", "t")
         engine.publishAccountState(sleeping = true, wakeAtMillis = 1L)
         assertNull(engine.publishPresence(PresenceState("d")))
-        engine.publishNextBreak(NextBreakState("d", "phone", "5min_break", 1L, 2L))
+        engine.publishNextBreak(NextBreakState(fiveMinDueMillis = 1L, fifteenMinDueMillis = 2L))
         engine.notifyScreenOff()
         // Signed out: nothing reached the server.
         assertNull(cap.method)

@@ -45,10 +45,11 @@ interface PauseCueGateway {
     suspend fun registerPushToken(kind: String, platform: String, token: String)
 
     /**
-     * The **`t_a` tick** (migrations 20260724000000 + 20260726000000): upserts this device's row in the presence
-     * table (`device_heartbeat`) via the `publish_presence` RPC while the device is unlocked + signed in. The
-     * server stamps the row's time and clears its `data_payload_sent` claim flag. The row is identity + time
-     * only — the break window travels separately ([publishNextBreak]).
+     * The **`t_a` tick** (migrations 20260724000000 → 20260728000000): one `publish_presence` RPC that upserts
+     * this device's presence row — `{ account, device, server-stamped time of upsert }` and nothing else — and,
+     * in the same call, the account's `data_payload_sent` row back to `false`. Runs from the moment the device
+     * is signed in *and* unlocked, and repeats every `t_a`. The break instants travel separately
+     * ([publishNextBreak]).
      *
      * Returns the account's current `t_a` in **seconds** so [DeviceHeartbeatPublisher] re-paces itself when it
      * is changed over HTTP (null ⇒ keep the current pacing — signed out, or the call failed). Best-effort.
@@ -56,10 +57,11 @@ interface PauseCueGateway {
     suspend fun publishPresence(state: PresenceState): Int?
 
     /**
-     * PRD §15: writes the rest pose this device is waiting on to `device_break` (`publish_next_break` RPC,
-     * migration 20260726000000). Called **only when the pose changes**, so it costs nothing in steady state —
-     * and, unlike the old per-beat piggyback, the server's copy is current the instant the schedule changes
-     * rather than up to one active-session beat later. Throws on failure so the caller can retry.
+     * PRD §15: writes **when both screen breaks next come due** to the account's `device_break` row
+     * (`publish_next_break` RPC, migrations 20260726000000 + 20260728000000). Called **only when the app
+     * calculates a different pair**, so it costs nothing in steady state — and, unlike the old per-beat
+     * piggyback, the server's copy is current the instant the schedule changes rather than up to one
+     * active-session beat later. Throws on failure so the caller can retry.
      */
     suspend fun publishNextBreak(state: NextBreakState)
 

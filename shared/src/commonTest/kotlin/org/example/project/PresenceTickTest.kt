@@ -15,19 +15,21 @@ import org.example.project.scheduler.sync.PresenceState
  * PRD §15 / migrations 20260724000000 + 20260726000000 — the client half of the pause-cue timing model, which
  * runs on **two cadences**:
  *
- *  * while the screen is on, this device writes its presence row every **`t_a`** (10 s by default), and that row
- *    is identity + time only;
+ *  * from the moment the device is signed in and unlocked it writes its presence row every **`t_a`** (10 s by
+ *    default), and that row is `{ account, device, time of upsert }` — the same call re-arms the account's
+ *    `data_payload_sent` row to `false`;
  *  * `t_a` is **server-owned** — the tick RPC returns the account's current value and the loop adopts it, so
  *    changing it over HTTP re-paces every device within one tick;
- *  * the next break is written **only when it changes** — never on the beat, and retried until it lands;
+ *  * the two breaks' due instants are written **only when they change** — never on the beat, and retried until
+ *    they land;
  *  * on screen-off the tick **stops** and the app calls the Edge Function once, so the cue is armed at the lock
  *    instant rather than waiting for the `t_b` cron to notice the missing beats.
  */
 class PresenceTickTest {
     private val active = PresenceState(deviceId = "d1")
 
-    private fun breakState(dueMillis: Long, kind: String = "5min_break") =
-        NextBreakState("d1", "desktop", kind, dueMillis, 300_000L)
+    private fun breakState(fiveMinDue: Long, fifteenMinDue: Long = 900_000L) =
+        NextBreakState(fiveMinDueMillis = fiveMinDue, fifteenMinDueMillis = fifteenMinDue)
 
     /** Records the calls the publisher makes; [tickSeconds] is what the server replies with. */
     private class FakeGateway(var tickSeconds: Int? = null) : PauseCueGateway {
@@ -147,23 +149,23 @@ class PresenceTickTest {
         val gateway = FakeGateway()
         val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
         publisher.setPresence(active)
-        publisher.setNextBreak(breakState(dueMillis = 5_000L))
+        publisher.setNextBreak(breakState(fiveMinDue = 5_000L))
         runCurrent()
         assertEquals(1, gateway.breakWrites.size, "the first window is published immediately")
 
         // Ten minutes of beating with an unchanged window: sixty beats, still one break write.
         advanceTimeBy(600_000)
         assertTrue(gateway.beats >= 60, "the presence tick kept running")
-        publisher.setNextBreak(breakState(dueMillis = 5_000L)) // re-published, identical value
+        publisher.setNextBreak(breakState(fiveMinDue = 5_000L)) // re-published, identical value
         runCurrent()
         assertEquals(1, gateway.breakWrites.size, "an unchanged window costs no request")
 
         // The pose is served / the schedule is edited → exactly one more write, right away.
-        publisher.setNextBreak(breakState(dueMillis = 9_000L, kind = "15min_break"))
+        publisher.setNextBreak(breakState(fiveMinDue = 9_000L, fifteenMinDue = 4_000_000L))
         runCurrent()
         assertEquals(2, gateway.breakWrites.size)
-        assertEquals(9_000L, gateway.breakWrites.last().dueMillis)
-        assertEquals("15min_break", gateway.breakWrites.last().breakKind)
+        assertEquals(9_000L, gateway.breakWrites.last().fiveMinDueMillis)
+        assertEquals(4_000_000L, gateway.breakWrites.last().fifteenMinDueMillis)
     }
 
     @Test
@@ -173,13 +175,13 @@ class PresenceTickTest {
         val gateway = FakeGateway().apply { failBreakWrites = 2 }
         val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
         publisher.setPresence(active)
-        publisher.setNextBreak(breakState(dueMillis = 5_000L))
+        publisher.setNextBreak(breakState(fiveMinDue = 5_000L))
         runCurrent()
         assertEquals(0, gateway.breakWrites.size, "the first attempt failed")
 
         advanceTimeBy(DeviceHeartbeatPublisher.BREAK_RETRY_MIN_MILLIS * 4)
         assertEquals(1, gateway.breakWrites.size, "it landed on a retry")
-        assertEquals(5_000L, gateway.breakWrites.single().dueMillis)
+        assertEquals(5_000L, gateway.breakWrites.single().fiveMinDueMillis)
 
         // And the retry stops once it succeeds — it does not turn into a poll.
         advanceTimeBy(600_000)
@@ -192,12 +194,12 @@ class PresenceTickTest {
         val gateway = FakeGateway().apply { failBreakWrites = 1 }
         val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
         publisher.setPresence(active)
-        publisher.setNextBreak(breakState(dueMillis = 5_000L))
+        publisher.setNextBreak(breakState(fiveMinDue = 5_000L))
         runCurrent()
-        publisher.setNextBreak(breakState(dueMillis = 9_000L))
+        publisher.setNextBreak(breakState(fiveMinDue = 9_000L))
         advanceTimeBy(DeviceHeartbeatPublisher.BREAK_RETRY_MIN_MILLIS * 4)
 
-        assertEquals(listOf(9_000L), gateway.breakWrites.map { it.dueMillis })
+        assertEquals(listOf(9_000L), gateway.breakWrites.map { it.fiveMinDueMillis })
     }
 
     @Test
@@ -209,20 +211,20 @@ class PresenceTickTest {
         val gateway = FakeGateway()
         val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
         publisher.setPresence(active)
-        publisher.setNextBreak(breakState(dueMillis = 5_000L))
+        publisher.setNextBreak(breakState(fiveMinDue = 5_000L))
         runCurrent()
         assertEquals(1, gateway.breakWrites.size)
 
         publisher.setPresence(null) // lock / sign out
         runCurrent()
         publisher.setPresence(active) // unlock / sign back in — the engine re-asserts in the same pass
-        publisher.setNextBreak(breakState(dueMillis = 5_000L)) // identical window
+        publisher.setNextBreak(breakState(fiveMinDue = 5_000L)) // identical window
         runCurrent()
         assertEquals(2, gateway.breakWrites.size, "the re-assertion goes out despite the unchanged window")
 
         // …and it is still one write per activation, not a new cadence.
         advanceTimeBy(600_000)
-        publisher.setNextBreak(breakState(dueMillis = 5_000L))
+        publisher.setNextBreak(breakState(fiveMinDue = 5_000L))
         runCurrent()
         assertEquals(2, gateway.breakWrites.size)
     }
@@ -232,7 +234,7 @@ class PresenceTickTest {
         val gateway = FakeGateway()
         val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
         publisher.setPresence(active)
-        publisher.setNextBreak(breakState(dueMillis = 5_000L))
+        publisher.setNextBreak(breakState(fiveMinDue = 5_000L))
         runCurrent()
         publisher.setPresence(null) // screen off
         advanceTimeBy(600_000)

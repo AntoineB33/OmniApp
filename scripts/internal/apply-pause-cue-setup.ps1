@@ -27,6 +27,18 @@ $sql = (Get-Content -Raw $template).Replace('__SERVICE_ROLE_KEY__', $key).Replac
 # with `--` line comments, which the CLI's parser would misread as a flag if the argument started with a dash
 # (and it doesn't honor a `--` end-of-options separator) — the leading block comment keeps it a positional arg.
 $sql = "/* pause-cue setup */`n" + $sql
+
+# Windows PowerShell 5.1 mangles a native-command argument that embeds a double quote: the CLI receives a
+# TRUNCATED query, runs only the leading statements and still exits 0 — a silent partial apply (observed
+# 2026-07-27: a `"` inside a comment above the cron.schedule call meant the cron job was never rescheduled,
+# yet the script printed [OK]). Fail loudly instead; keep the template free of double quotes.
+if ($sql.Contains('"')) {
+    Write-Error ('supabase/pause-cue-setup.sql contains a double-quote character, which PowerShell would ' +
+                 'silently truncate the query at. Rewrite that text with backticks or single quotes.')
+    exit 1
+}
+
 & supabase db query --linked --workdir "$projectRoot" $sql
+
 if ($LASTEXITCODE -ne 0) { Write-Error "supabase db query failed ($LASTEXITCODE)."; exit 1 }
 Write-Host '[OK] pause-cue project setup applied to the linked DB.'

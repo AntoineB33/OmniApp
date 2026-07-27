@@ -2,12 +2,14 @@
 //
 // This is the ONLY server→device channel (there is never a WebSocket). It owns the *decision*: both callers
 // below hand it an account and it asks `evaluate_pause_cue()` (migration 20260724000000) whether a cue is owed,
-// which atomically claims the episode (`device_heartbeat.data_payload_sent = true`) so it is pushed once.
+// which atomically claims the episode (the account's `data_payload_sent` row → `true`) so it is pushed once.
 //
-// That function reads TWO tables: `device_heartbeat` (the `t_a` presence beat — identity + a server-stamped
-// time, nothing else) and `device_break` (which rest pose each device is waiting on, written by the client only
-// when it CHANGES — migration 20260726000000). Nothing here needs to know the split; it is why the break e1
-// pushes is the one the user actually walked away on rather than whatever the last beat happened to carry.
+// That function reads THREE tables: `device_heartbeat` (the `t_a` presence beat — the account, the device and a
+// server-stamped time, nothing else), `data_payload_sent` (the account-level claim flag, split out of the
+// presence row by migration 20260728000000) and `device_break` (when the account's two screen breaks are next
+// due, written by the client only when one of them CHANGES — migrations 20260726000000 + 20260728000000).
+// Nothing here needs to know the split; it is why the break e1 pushes is the one the user actually walked away
+// on rather than whatever the last beat happened to carry.
 //
 // Callers / actions:
 //   • action:'evaluate' — from the `t_b` pg_cron tick (`tick_pause_cues()`, service-role via pg_net), for an

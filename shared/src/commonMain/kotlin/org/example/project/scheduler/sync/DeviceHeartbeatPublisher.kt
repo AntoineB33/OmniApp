@@ -21,26 +21,27 @@ import org.example.project.scheduler.platform.Diagnostics
 data class PresenceState(val deviceId: String)
 
 /**
- * PRD §15: the governing 5/15-min rest pose this device is waiting on, written to `device_break` **only when it
- * changes** (migration 20260726000000) — a device sitting at its desk publishes nothing.
+ * PRD §15: **when each of the two screen breaks next comes due** — the whole content of the account's
+ * `device_break` row, written **only when the app (re)calculates them into a different pair** (migrations
+ * 20260726000000 + 20260728000000). A device sitting at its desk publishes nothing.
  *
- * [dueMillis] is the pose's mathematical DUE instant (`lastRest + interval`) on the REAL wall clock, **not** its
- * drawn start. That distinction is what makes an event-driven write possible at all: an overdue pose's drawn
- * start is clamped to the now-line and so changes at every sample, whereas the due instant moves only when the
- * pose is served or reconfigured. The server's overdue gate reads it as "was this break already due at that
- * device's last beat?" (`break_due_ms <= beat_at`).
+ * Both instants are the poses' mathematical DUE times (`lastRest + interval`) on the REAL wall clock, **not**
+ * their drawn starts. That distinction is what makes an event-driven write possible at all: an overdue pose's
+ * drawn start is clamped to the now-line and so changes at every sample, whereas the due instant moves only when
+ * the pose is served or reconfigured. The server's overdue gate reads them as "was this break already due at the
+ * last moment we saw this account?" and lets the longest overdue one govern.
+ *
+ * The row is account-keyed, not device-keyed: both instants derive from the synced screen-break config, so every
+ * device of the account computes the same pair. Null means "no such pose configured, or none anchored yet" — an
+ * unanchored pose must NOT be published, or its 1970 sentinel due would read as permanently overdue and earn a
+ * spurious cue on a freshly emptied account.
  *
  * The row is deliberately NEVER cleared on screen-off: the last value published while active is exactly the
  * state the user walked away in, which is what the cue is judged on.
  */
 data class NextBreakState(
-    val deviceId: String,
-    /** `"phone"` / `"desktop"` — moved off the per-beat row, kept here at no steady-state cost. */
-    val kind: String,
-    /** [org.example.project.scheduler.model.ScreenBreak.key] — `"5min_break"` / `"15min_break"`, or null. */
-    val breakKind: String?,
-    val dueMillis: Long?,
-    val lengthMillis: Long?,
+    val fiveMinDueMillis: Long?,
+    val fifteenMinDueMillis: Long?,
 )
 
 /**
@@ -52,8 +53,8 @@ interface RealtimePresence {
     fun setPresence(state: PresenceState?)
 
     /**
-     * The next rest pose. Idempotent per value — re-publishing an unchanged window costs no request. Call it
-     * only while the device is active; it is never cleared (see [NextBreakState]).
+     * The two screen breaks' due instants. Idempotent per value — re-publishing an unchanged pair costs no
+     * request. Call it only while the device is active; it is never cleared (see [NextBreakState]).
      */
     fun setNextBreak(state: NextBreakState)
 }
@@ -63,16 +64,18 @@ interface RealtimePresence {
  * (migrations 20260724000000 + 20260726000000). Two independent cadences, matching two different rates of
  * change:
  *
- *  * **presence**, every `t_a` while active: `publish_presence(device_id)`. The server stamps the row's time and
- *    clears its claim flag; when no row of the account has been refreshed within `2·t_a`, it times the pause-end
- *    cue from `t2 = <row time> + t_a/2` plus the waiting break's length. The payload no longer carries the break
- *    window, so the loop is **not** restarted by a break change — a burst of schedule edits cannot turn the tick
- *    into a request storm.
- *  * **next break**, only on change: `publish_next_break(...)`. Because it is written the instant the governing
- *    pose changes, the server's copy is never up-to-one-beat stale — the race that let a device go dark within
- *    30 s of a schedule edit and be judged on the pre-edit break (and that the clean screen-off path hit *by
- *    construction*, since it calls e1 without a final beat) is closed. A failed write is retried with backoff
- *    until it lands or a newer value supersedes it, so the two paths' freshness guarantees are equivalent.
+ *  * **presence**, every `t_a` from the moment the device is signed in *and* unlocked: `publish_presence(
+ *    device_id)`, which upserts `{account, device, server-stamped time}` into the presence table **and** re-arms
+ *    the account's `data_payload_sent` row to `false`, atomically. When no row of the account has been refreshed
+ *    within `2·t_a`, the server times the pause-end cue from `t2 = <row time> + t_a/2` plus the waiting break's
+ *    length. The payload carries nothing but the device id, so the loop is **not** restarted by a break change —
+ *    a burst of schedule edits cannot turn the tick into a request storm.
+ *  * **the two breaks**, only on change: `publish_next_break(due5, due15)`. Because it is written the instant
+ *    the app recalculates them, the server's copy is never up-to-one-beat stale — the race that let a device go
+ *    dark within 30 s of a schedule edit and be judged on the pre-edit break (and that the clean screen-off path
+ *    hit *by construction*, since it calls e1 without a final beat) is closed. A failed write is retried with
+ *    backoff until it lands or a newer value supersedes it, so the two paths' freshness guarantees are
+ *    equivalent.
  *
  * `t_a` is **server-owned**: [PauseCueGateway.publishPresence] returns the account's current value (default
  * [DEFAULT_TICK_SECONDS]) and this loop adopts it on the next pass, so changing it over HTTP re-paces every
@@ -167,8 +170,8 @@ class DeviceHeartbeatPublisher(
                 val failure = runCatching { gateway.publishNextBreak(state) }.exceptionOrNull()
                 if (failure == null) {
                     Diagnostics.log(
-                        "next break published: kind=${state.breakKind} due=${state.dueMillis} " +
-                            "len=${state.lengthMillis}",
+                        "next breaks published: 5min_due=${state.fiveMinDueMillis} " +
+                            "15min_due=${state.fifteenMinDueMillis}",
                     )
                     return@collectLatest
                 }

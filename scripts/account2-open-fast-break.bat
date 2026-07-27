@@ -14,9 +14,11 @@ REM
 REM  With both at 5s the now-line reaches a 5-min break almost immediately:
 REM  put the computer to sleep and ~DURATION_S later the phone speaks the
 REM  break-end cue. The tick_pause_cues() cron fires it from the client's
-REM  device_break row (`break_len_ms` = the break's drawn length, published when
-REM  the pose changes), so NO Supabase redeploy is needed - the length rides the
-REM  client's own break write.
+REM  device_break row, which since migration 20260728000000 holds only WHEN
+REM  each break comes due - the LENGTH is the server's, from break_config.
+REM  So this script also upserts break_config.length_ms for 5min_break to
+REM  DURATION_S (step 1 below); still NO Supabase redeploy needed, it is a
+REM  plain authenticated HTTP upsert.
 REM
 REM  Runs at REAL time (omniapp.timeSim=false) so the seconds are real, matching
 REM  the wall-clock listener/Edge Function (a sim-accelerated clock does NOT
@@ -45,11 +47,17 @@ if not defined ACC2_USER (echo [x] ACC2_USER/ACC2_PASS missing from accounts.env
 
 pushd "%SCRIPT_DIR%.." || (echo [x] Could not enter project root.& exit /b 1)
 
-REM ---- [1/2] Stop account 2's running instance (only) -----------------
+REM ---- [1/3] Shrink the SERVER's idea of the 5-min break's length ------
+REM  The client publishes only WHEN the break is due; break_config.length_ms is
+REM  what the Edge Function adds to the walk-away instant to time the cue.
+echo [1/3] Setting the server-side 5min_break length to %DURATION_S%s...
+call "%SCRIPT_DIR%internal\set-break-length.bat" "%ACC2_USER%" "%ACC2_PASS%" "5min_break" "%DURATION_MS%"
+
+REM ---- [2/3] Stop account 2's running instance (only) -----------------
 call "%SCRIPT_DIR%internal\kill-app-by-match.bat" ".omniapp-acc2"
 
-REM ---- [2/2] Launch logged in as account 2 with the fast 5-min break --
-echo [2/2] Launching as "%ACC2_USER%" (state %STATE_DIR%) - 5-min break: %DURATION_S%s long, due %INTERVAL_S%s after a pause...
+REM ---- [3/3] Launch logged in as account 2 with the fast 5-min break --
+echo [3/3] Launching as "%ACC2_USER%" (state %STATE_DIR%) - 5-min break: %DURATION_S%s long, due %INTERVAL_S%s after a pause...
 start "OmniApp acc2 fast-break" cmd /c "gradlew.bat :desktopApp:run -Pomniapp.stateDir=%STATE_DIR% -Pomniapp.loginUser=%ACC2_USER% -Pomniapp.loginPass=%ACC2_PASS% -Pomniapp.timeSim=false -Pomniapp.breakDurationMs=%DURATION_MS% -Pomniapp.breakIntervalMs=%INTERVAL_MS%"
 
 popd

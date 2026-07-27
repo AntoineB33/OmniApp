@@ -22,6 +22,12 @@ REM  pause, decoupled from its drawn length). The phone honors the matching
 REM  omniapp_break_* launch extras (internal\deploy-android-debug.bat). The
 REM  15-min pose and the 20-20-20 look-away keep production timings.
 REM
+REM  The break LENGTH must also be shrunk SERVER-side (step 2 below): since
+REM  migration 20260728000000 the app publishes only WHEN each screen break
+REM  comes due, so break_config.length_ms is what the Edge Function adds to
+REM  the walk-away instant to time the cue. Without it the phone would stay
+REM  silent for the default 5 minutes after the walk-away.
+REM
 REM  Meant to be double-clicked, not run from an already-open console: if
 REM  either step fails, the window WAITS for the user to press Enter before
 REM  it closes, so the error is readable instead of vanishing with the window.
@@ -38,7 +44,7 @@ set "OMNIAPP_BREAK_PAUSE_THRESHOLD_MS=7200000"
 
 set "SCRIPT_DIR=%~dp0"
 
-echo ==== [1/2] account1-empty.bat ====
+echo ==== [1/3] account1-empty.bat ====
 call "%SCRIPT_DIR%account1-empty.bat"
 if errorlevel 1 (
   echo.
@@ -49,8 +55,23 @@ if errorlevel 1 (
   exit /b 1
 )
 
+REM  account1-empty.bat runs inside its own setlocal, so its ACC1_* vars do not
+REM  reach us - load accounts.env here too (load-accounts-env.bat has no setlocal).
+call "%SCRIPT_DIR%internal\load-accounts-env.bat" || (
+  echo.
+  echo [x] Could not load scripts\accounts.env.
+  echo.
+  set /p "_WAIT=Press Enter to close... "
+  endlocal
+  exit /b 1
+)
+
 echo.
-echo ==== [2/2] account1-deploy-android.bat (fast-break: 5-min break lasts 5s, due 5s after a ^>=2h pause) ====
+echo ==== [2/3] server-side 5min_break length -^> %OMNIAPP_BREAK_DURATION_MS%ms ====
+call "%SCRIPT_DIR%internal\set-break-length.bat" "%ACC1_USER%" "%ACC1_PASS%" "5min_break" "%OMNIAPP_BREAK_DURATION_MS%"
+
+echo.
+echo ==== [3/3] account1-deploy-android.bat (fast-break: 5-min break lasts 5s, due 5s after a ^>=2h pause) ====
 call "%SCRIPT_DIR%account1-deploy-android.bat"
 if errorlevel 1 (
   echo.

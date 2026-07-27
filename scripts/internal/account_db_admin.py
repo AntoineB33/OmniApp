@@ -14,11 +14,21 @@ Three subcommands, all taking a username + password (the username is an arbitrar
                          it reloads its schema cache, so --wait polls through that lag instead of failing.
   empty  <user> <pass>   Sign in, then DELETE this account's synced data so every device for it goes
                          empty -- the `scheduler_snapshot` row, the `device_heartbeat` presence rows, the
-                         `device_break` next-break rows, the `pause_cue_schedule` bookkeeping, all
-                         `device_active_session` rows, and the retired `device_presence` /
-                         `device_sleep_gap` rows. It deliberately does NOT clear
+                         `device_break` next-break row, the `data_payload_sent` claim row, the
+                         `pause_cue_schedule` bookkeeping, all `device_active_session` rows, and the retired
+                         `device_presence` / `device_sleep_gap` rows. It deliberately does NOT clear
                          `account_logout` (that marker must survive so the running apps still see it) nor
                          `app_config` / `break_config` (operator tuning set over HTTP, not account data).
+
+  break-length <user> <pass> <break_kind> <ms>
+                         Sign in, then upsert `break_config.length_ms` for one break kind ('5min_break' or
+                         '15min_break'); `ms` of 0 or "default" clears it back to null. This is how long the
+                         SERVER waits after the walk-away before pushing "your pause is over" -- since
+                         migration 20260728000000 the client publishes only WHEN each break comes due, never
+                         how long it lasts, so the debug fast-break knobs (OMNIAPP_BREAK_DURATION_MS) no
+                         longer reach the server on their own. The fast-break .bat scripts call this so the
+                         cue still arrives seconds after the walk-away instead of 5 minutes later. Never
+                         needed in production, where the kind's own 5/15-min default is correct.
 
 Config comes from the environment (the .bat exports it from accounts.env), falling back to the public
 values baked into shared SupabaseConfig.kt:
@@ -154,16 +164,18 @@ def cmd_empty(user, password):
     base, key, domain = cfg()
     email = username_to_email(user, domain)
     token, uid = sign_in(base, key, email, password)
-    # device_heartbeat is the presence table, device_break the next-break table, pause_cue_schedule the cue
-    # bookkeeping (PRD §15): a stale unclaimed presence row left behind would make the emptied account read as
-    # "idle" on the next server tick and fire a pause cue for data that no longer exists -- and a stale
-    # device_break row would tell it WHICH break to speak. device_presence / device_sleep_gap are retired
-    # tables, kept here so an older project still gets cleaned. app_config / break_config are deliberately NOT
-    # cleared: they are operator tuning set over HTTP (t_a, break lengths/messages), not account data.
+    # device_heartbeat is the presence table, device_break the next-break table, data_payload_sent the claim
+    # flag, pause_cue_schedule the cue bookkeeping (PRD §15): a stale presence row plus an unclaimed
+    # data_payload_sent row left behind would make the emptied account read as "idle" on the next server tick
+    # and fire a pause cue for data that no longer exists -- and a stale device_break row would tell it WHICH
+    # break to speak. device_presence / device_sleep_gap are retired tables, kept here so an older project still
+    # gets cleaned. app_config / break_config are deliberately NOT cleared: they are operator tuning set over
+    # HTTP (t_a, break lengths/messages), not account data.
     for table in (
         "scheduler_snapshot",
         "device_heartbeat",
         "device_break",
+        "data_payload_sent",
         "pause_cue_schedule",
         "device_presence",
         "device_sleep_gap",
@@ -184,9 +196,45 @@ def cmd_empty(user, password):
     return 0
 
 
+BREAK_KINDS = ("5min_break", "15min_break")
+
+
+def cmd_break_length(user, password, break_kind, millis):
+    """Set (or clear) the SERVER-side length of one break kind -- the delay between the walk-away instant and
+    the pushed "your pause is over" cue.
+
+    Since migration 20260728000000 the client's `device_break` row carries only WHEN each break comes due, so
+    `break_config.length_ms` is the only way to shorten the cue delay for a debug run. Null (0/"default")
+    restores the kind's built-in 5/15-min duration.
+    """
+    if break_kind not in BREAK_KINDS:
+        print("    [x] break kind must be one of {}, got {}.".format("/".join(BREAK_KINDS), break_kind))
+        return 2
+    base, key, domain = cfg()
+    email = username_to_email(user, domain)
+    token, uid = sign_in(base, key, email, password)
+    length = None if str(millis).lower() in ("0", "default", "null") else int(millis)
+    row = {"user_id": uid, "break_kind": break_kind, "length_ms": length}
+    status, payload = _request(
+        "POST", base + "/rest/v1/break_config", key, [row],
+        token=token, prefer="resolution=merge-duplicates",
+    )
+    if status in (200, 201, 204):
+        print("    Set break_config.length_ms for {} to {}.".format(break_kind, length if length else "default"))
+        return 0
+    # A project that has not applied the t_a/t_b migrations yet has no break_config; the caller (a debug
+    # convenience script) must not fail hard for that.
+    code = payload.get("code") if isinstance(payload, dict) else None
+    if status == 404 or code == "PGRST205":
+        print("    Skipped break_config (table not present -- run deploy-supabase.bat to enable it).")
+        return 0
+    print("    [x] failed to set break_config ({}): {}".format(status, payload))
+    return 1
+
+
 def main(argv):
     if len(argv) < 4:
-        print("usage: account_db_admin.py <signup|logout|empty> <user> <pass>")
+        print("usage: account_db_admin.py <signup|logout|empty|break-length> <user> <pass> [args]")
         return 2
     action, user, password = argv[1], argv[2], argv[3]
     flags = argv[4:]
@@ -196,6 +244,11 @@ def main(argv):
         return cmd_logout(user, password, wait_for_schema="--wait" in flags)
     if action == "empty":
         return cmd_empty(user, password)
+    if action == "break-length":
+        if len(flags) < 2:
+            print("usage: account_db_admin.py break-length <user> <pass> <break_kind> <ms|default>")
+            return 2
+        return cmd_break_length(user, password, flags[0], flags[1])
     print("unknown action: {}".format(action))
     return 2
 
