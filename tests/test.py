@@ -1,5 +1,9 @@
 from enum import Enum
+<<<<<<< HEAD
 from typing import List
+=======
+from typing import List, Optional
+>>>>>>> b7b92aec3a94c50dc41a0fc65a1232710a7eed50
 
 class Period(Enum):
     INACTIVE = 0
@@ -14,6 +18,10 @@ class Task:
         self.min_time = min_time
         self.needs_screen = needs_screen
         
+<<<<<<< HEAD
+=======
+        # Scheduling metrics
+>>>>>>> b7b92aec3a94c50dc41a0fc65a1232710a7eed50
         self.normalized_priority = 0.0
         self.ideal_cycle_allocation = 0.0
         self.total_scheduled_time = 0.0
@@ -24,6 +32,10 @@ class TimeBlock:
         self.period_type = period_type
 
 def init_task_metrics(tasks: List[Task]):
+<<<<<<< HEAD
+=======
+    """Calculates the ideal cycle allocation to minimize variance, just like before."""
+>>>>>>> b7b92aec3a94c50dc41a0fc65a1232710a7eed50
     total_priority = sum(t.priority for t in tasks)
     global_cycle_time = 0.0
     
@@ -50,6 +62,7 @@ def is_task_valid_for_period(task: Task, period_type: Period) -> bool:
 def schedule_timeline(tasks: List[Task], timeline: List[TimeBlock]) -> List[dict]:
     init_task_metrics(tasks)
     schedule = []
+<<<<<<< HEAD
     
     for block_idx, block in enumerate(timeline):
         # Handle inactive blocks immediately
@@ -169,10 +182,56 @@ def print_colored_timeline(title: str, schedule: List[dict]):
         
     print(f"Total Timeline Duration: {total_time:.1f} minutes")
     print(f"{'-' * visual_width}\n")
-
-# --- Run Examples ---
-if __name__ == "__main__":
+=======
     
+    for block_idx, block in enumerate(timeline):
+        remaining_time = block.duration
+        
+        while remaining_time > 0:
+            # 1. Filter valid tasks for this specific moment
+            valid_tasks = [
+                t for t in tasks 
+                if is_task_valid_for_period(t, block.period_type) 
+                and t.min_time <= remaining_time
+            ]
+            
+            if not valid_tasks:
+                # No tasks fit the remaining time or constraints. Time becomes idle.
+                if remaining_time > 0 and block.period_type != Period.INACTIVE:
+                    schedule.append({"task": "IDLE / DEAD TIME", "duration": remaining_time, "block": block_idx})
+                break
+                
+            # 2. Find the most "starved" task
+            # Score = Actual Time / Priority. Lower score means it needs time more urgently.
+            valid_tasks.sort(key=lambda t: t.total_scheduled_time / t.normalized_priority)
+            selected_task = valid_tasks[0]
+            
+            # 3. Determine duration (Scale up to ideal allocation if possible, bound by remaining time)
+            duration_to_schedule = max(selected_task.min_time, selected_task.ideal_cycle_allocation)
+            duration_to_schedule = min(duration_to_schedule, remaining_time)
+            
+            # 4. Book it
+            schedule.append({
+                "task": selected_task.name, 
+                "duration": duration_to_schedule,
+                "block": block_idx,
+                "type": block.period_type.name
+            })
+            
+            selected_task.total_scheduled_time += duration_to_schedule
+            remaining_time -= duration_to_schedule
+            
+    return schedule
+>>>>>>> b7b92aec3a94c50dc41a0fc65a1232710a7eed50
+
+# --- Example Run ---
+if __name__ == "__main__":
+    my_tasks = [
+        Task("Task A (Screen)", priority=50, min_time=7, needs_screen=True),
+        Task("Task B (No Screen)", priority=50, min_time=60, needs_screen=False)
+    ]
+    
+<<<<<<< HEAD
     # EXAMPLE 1: The Classic Day
     tasks_1 = [
         Task("Coding (Screen)", priority=50, min_time=30, needs_screen=True),
@@ -219,3 +278,19 @@ if __name__ == "__main__":
     ]
     schedule_3 = schedule_timeline(tasks_3, timeline_3)
     print_colored_timeline("The Catch-Up Effect (Starvation Credit)", schedule_3)
+=======
+    # A realistic day timeline
+    my_timeline = [
+        TimeBlock(duration=480, period_type=Period.INACTIVE),  # 8 hours sleep
+        TimeBlock(duration=45, period_type=Period.NO_SCREEN),  # Morning routine (no screen)
+        TimeBlock(duration=180, period_type=Period.BOTH),      # Work block (anything goes)
+        TimeBlock(duration=30, period_type=Period.SCREEN)      # Short screen-only block
+    ]
+    
+    result = schedule_timeline(my_tasks, my_timeline)
+    
+    print(f"{'BLOCK':<10} | {'CONDITION':<12} | {'TASK':<20} | {'DURATION'}")
+    print("-" * 60)
+    for entry in result:
+        print(f"Block {entry.get('block', '-'):<4} | {entry.get('type', 'INACTIVE'):<12} | {entry['task']:<20} | {entry['duration']:.1f} min")
+>>>>>>> b7b92aec3a94c50dc41a0fc65a1232710a7eed50
