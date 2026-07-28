@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import List
 
 
 class Period(Enum):
@@ -27,15 +26,14 @@ class TimeBlock:
         self.period_type = period_type
 
 
-def init_task_metrics(tasks: List[Task]):
+def init_task_metrics(tasks: list[Task]):
     total_priority = sum(t.priority for t in tasks)
     global_cycle_time = 0.0
 
     for t in tasks:
         t.normalized_priority = t.priority / total_priority
         required_cycle = t.min_time / t.normalized_priority
-        if required_cycle > global_cycle_time:
-            global_cycle_time = required_cycle
+        global_cycle_time = max(global_cycle_time, required_cycle)
 
     for t in tasks:
         t.ideal_cycle_allocation = global_cycle_time * t.normalized_priority
@@ -48,12 +46,10 @@ def is_task_valid_for_period(task: Task, period_type: Period) -> bool:
         return True
     if period_type == Period.SCREEN and task.needs_screen:
         return True
-    if period_type == Period.NO_SCREEN and not task.needs_screen:
-        return True
-    return False
+    return bool(period_type == Period.NO_SCREEN and not task.needs_screen)
 
 
-def schedule_timeline(tasks: List[Task], timeline: List[TimeBlock]) -> List[dict]:
+def schedule_timeline(tasks: list[Task], timeline: list[TimeBlock]) -> list[dict]:
     init_task_metrics(tasks)
     schedule = []
 
@@ -103,7 +99,7 @@ def schedule_timeline(tasks: List[Task], timeline: List[TimeBlock]) -> List[dict
     return schedule
 
 
-def print_colored_timeline(title: str, schedule: List[dict]):
+def print_colored_timeline(title: str, schedule: list[dict]):
     COLORS = [
         '\033[44m',  # Blue
         '\033[42m',  # Green
@@ -149,7 +145,7 @@ def print_colored_timeline(title: str, schedule: List[dict]):
         if i == len(schedule) - 1:
             chars = visual_width - chars_used
         else:
-            chars = int(round((duration / total_time) * visual_width))
+            chars = round((duration / total_time) * visual_width)
             chars_used += chars
 
         # Add oblique lines for NO_SCREEN periods
@@ -195,7 +191,7 @@ if __name__ == "__main__":
         TimeBlock(120, Period.INACTIVE),
         TimeBlock(90, Period.SCREEN),
         TimeBlock(90, Period.NO_SCREEN),
-        TimeBlock(300, Period.BOTH)
+        TimeBlock(180, Period.BOTH)
     ]
     schedule_1 = schedule_timeline(tasks_1, timeline_1)
     print_colored_timeline("The Classic Day (Constraints matched nicely)", schedule_1)
