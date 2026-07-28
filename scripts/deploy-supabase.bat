@@ -34,6 +34,21 @@ REM =====================================================================
 set "SCRIPT_DIR=%~dp0"
 set "PROJECT_ROOT=%SCRIPT_DIR%.."
 
+REM ---- Keep the window open on failure when double-clicked -----------
+REM  Every error path below does `goto :fail`, which pauses so the error stays
+REM  on screen long enough to read/copy. We only pause when the console would
+REM  otherwise vanish, i.e. when this .bat is its own cmd /c command line
+REM  (Explorer double-click). Launched from an existing terminal - or from
+REM  another script / CI - the window stays anyway, so we exit straight away.
+REM  Set OMNIAPP_NO_PAUSE=1 to force the non-pausing behavior.
+REM  (substring test, NOT `echo !cmdcmdline! | find ...`: the left side of a pipe
+REM   runs in a child cmd that has delayed expansion OFF, so !cmdcmdline! would
+REM   stay literal there and the detection would never match.)
+set "PAUSE_ON_FAIL="
+set "OMNI_CMDLINE=!cmdcmdline!"
+if defined OMNI_CMDLINE if not "!OMNI_CMDLINE:%~nx0=!"=="!OMNI_CMDLINE!" set "PAUSE_ON_FAIL=1"
+if defined OMNIAPP_NO_PAUSE set "PAUSE_ON_FAIL="
+
 REM ---- accounts.env is optional here (only for the two vars below) ----
 if exist "%SCRIPT_DIR%accounts.env" call "%SCRIPT_DIR%internal\load-accounts-env.bat"
 
@@ -44,7 +59,7 @@ where supabase >nul 2>nul || (
   echo     Install/update it with update-supabase-cli.bat ^(npm global if npm is
   echo     available, else a standalone binary under %%LOCALAPPDATA%%\supabase\bin^),
   echo     then open a NEW terminal and run 'supabase login' + 'supabase link' once.
-  exit /b 1
+  goto :fail
 )
 
 set "REF="
@@ -56,12 +71,12 @@ if not exist "%PROJECT_ROOT%\supabase\.temp\project-ref" (
   if not defined REF (
     echo [x] No link found and SUPABASE_PROJECT_REF is unset.
     echo     Run once:  supabase link --project-ref ^<ref^>
-    exit /b 1
+    goto :fail
   )
   if defined SUPABASE_DB_PASSWORD (
-    call supabase link --project-ref "%REF%" --password "%SUPABASE_DB_PASSWORD%" || (echo [x] link failed.& exit /b 1)
+    call supabase link --project-ref "%REF%" --password "%SUPABASE_DB_PASSWORD%" || (echo [x] link failed.& goto :fail)
   ) else (
-    call supabase link --project-ref "%REF%" || (echo [x] link failed.& exit /b 1)
+    call supabase link --project-ref "%REF%" || (echo [x] link failed.& goto :fail)
   )
 )
 
@@ -72,7 +87,7 @@ if defined SUPABASE_DB_PASSWORD (
 ) else (
   call supabase db push --workdir "%PROJECT_ROOT%"
 )
-if errorlevel 1 (echo [x] db push failed.& exit /b 1)
+if errorlevel 1 (echo [x] db push failed.& goto :fail)
 
 REM ---- [2/3] Deploy the two pause-cue Edge Functions -----------------
 REM  pause-cue      ("e1") - the app's own clean-lock report; DECIDES whether a data payload must be sent.
@@ -80,10 +95,10 @@ REM  pause-cue-cron ("e2") - the t_b cron's backstop for a phone that died witho
 REM  Both must be deployed: tick_pause_cues() calls e2 by name, and the app calls e1 by name.
 echo [2/3] Deploying Edge Function 'pause-cue' ^(e1, clean lock^)...
 call supabase functions deploy pause-cue --workdir "%PROJECT_ROOT%"
-if errorlevel 1 (echo [x] functions deploy 'pause-cue' failed.& exit /b 1)
+if errorlevel 1 (echo [x] functions deploy 'pause-cue' failed.& goto :fail)
 echo [2/3] Deploying Edge Function 'pause-cue-cron' ^(e2, cron backstop^)...
 call supabase functions deploy pause-cue-cron --workdir "%PROJECT_ROOT%"
-if errorlevel 1 (echo [x] functions deploy 'pause-cue-cron' failed.& exit /b 1)
+if errorlevel 1 (echo [x] functions deploy 'pause-cue-cron' failed.& goto :fail)
 
 REM ---- [3/3] Pause-cue project setup (extensions/GUCs/cron) ----------
 REM Optional: needs the SECRET service-role key, kept only in accounts.env (never committed). Runs the
@@ -92,7 +107,7 @@ REM injecting the key from the environment. Skipped when the key is absent (the 
 if defined SUPABASE_SERVICE_ROLE_KEY (
   echo [3/3] Applying pause-cue project setup ^(supabase/pause-cue-setup.sql^)...
   powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%internal\apply-pause-cue-setup.ps1"
-  if errorlevel 1 (echo [x] pause-cue project setup failed.& exit /b 1)
+  if errorlevel 1 (echo [x] pause-cue project setup failed.& goto :fail)
 ) else (
   echo [3/3] Skipping pause-cue project setup - SUPABASE_SERVICE_ROLE_KEY not set in accounts.env.
   echo       ^(Only needed for the phone pause-end voice cue push; core sync works without it.^)
@@ -104,3 +119,22 @@ echo      Still native-only follow-ups: the Edge Function's FCM_/APNS_ secrets
 echo      ^(supabase secrets set ...^) and each phone registering its push token.
 
 endlocal
+exit /b 0
+
+REM ---- Failure handler: keep the error readable -----------------------
+:fail
+echo.
+echo ======================================================================
+echo  [x] deploy-supabase.bat FAILED - the error is printed above.
+echo      Nothing further was applied; re-run after fixing it (all steps
+echo      are idempotent).
+echo ======================================================================
+if defined PAUSE_ON_FAIL (
+  echo.
+  echo  To copy the error: drag-select the text with the mouse, then press
+  echo  Enter ^(console QuickEdit^) or Ctrl+Shift+C ^(Windows Terminal^).
+  echo.
+  pause
+)
+endlocal
+exit /b 1

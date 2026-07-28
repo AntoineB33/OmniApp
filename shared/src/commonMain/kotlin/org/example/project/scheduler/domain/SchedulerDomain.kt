@@ -1025,8 +1025,77 @@ object SchedulerDomain {
         return if (span <= 0) minimum else span
     }
 
-    /** PRD §9 Scheduling: the auto fill materializes panels out to this far ahead of `now` (168 hours). */
+    /**
+     * PRD §9 Scheduling: the FURTHEST ahead of `now` the auto fill will ever materialize panels into
+     * `state.panels` (168 hours). This is the **ceiling** of the horizon, not a fixed target — the horizon
+     * actually used is [scheduleHorizonEndMillis], which follows the week the calendar is DISPLAYING. A week
+     * further out than this ceiling is never materialized into the state at all: it is filled asynchronously
+     * for display only (see [fillSchedule]'s `horizonMillis`) and dropped when the user navigates away.
+     */
     const val SCHEDULE_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1000
+
+    /**
+     * PRD §9 Scheduling: the **floor** of the schedule horizon (24 hours) — how far the plan is materialized
+     * when nothing further out is being displayed (the calendar window closed, or showing a week that ends
+     * sooner than this).
+     *
+     * The plan is not only a calendar drawing: the engine reads it headlessly for the §11/§13 task-switch
+     * notifications, the §15 wind-down cue and the schedule-unit deadlines, so the horizon can never collapse
+     * to zero. One day is the smallest span that keeps every one of those correct across a phone left in the
+     * background overnight, while costing 1/7 of what the old unconditional 168 h fill cost.
+     */
+    const val MIN_SCHEDULE_HORIZON_MILLIS: Long = 24L * 60 * 60 * 1000
+
+    /**
+     * PRD §9 Scheduling: the instant the auto fill materializes the work plan out to — **the horizon follows
+     * what is displayed**, so the app never computes days the user is not looking at.
+     *
+     * [displayedEndMillis] is the end of the week the calendar window is currently showing (null when no
+     * calendar is open), clamped into `[now + MIN_SCHEDULE_HORIZON_MILLIS, now + SCHEDULE_HORIZON_MILLIS]`:
+     * - staying on the current week fills only to the end of THAT week (on a Sunday, ~24 h — not 168 h);
+     * - the floor keeps the headless engine correct with the calendar closed (see
+     *   [MIN_SCHEDULE_HORIZON_MILLIS]);
+     * - the ceiling keeps a far week out of the persisted state — a week past it is filled for display only,
+     *   off the UI thread, and never retained (`App.kt`'s far-week `LaunchedEffect`).
+     */
+    fun scheduleHorizonEndMillis(nowMillis: Long, displayedEndMillis: Long?): Long =
+        (displayedEndMillis ?: (nowMillis + MIN_SCHEDULE_HORIZON_MILLIS))
+            .coerceIn(nowMillis + MIN_SCHEDULE_HORIZON_MILLIS, nowMillis + SCHEDULE_HORIZON_MILLIS)
+
+    /**
+     * PRD §9 calculation event #1: how far the materialized schedule may fall short of the horizon in force
+     * before the rolling-horizon refill is due (1 hour).
+     *
+     * The margin is what makes the trigger *satisfiable at all*. A fill materializes out to exactly the
+     * horizon, so the coverage it produces can never EXCEED it: without slack, "refill once coverage drops
+     * below the horizon" is already true the instant the fill finishes (the clock has moved on by then), and
+     * since the refill rewrites `panels` — which is what the engine watches to re-evaluate the trigger — it
+     * re-fires forever. See [horizonRefillDueMillis].
+     */
+    const val HORIZON_REFILL_MARGIN_MILLIS: Long = 60L * 60 * 1000
+
+    /**
+     * PRD §9 calculation event #1 (rolling horizon): the instant the auto fill is due to be re-run, i.e. when
+     * the schedule materialized in [panels] has less than `(horizonEndMillis - nowMillis) -
+     * HORIZON_REFILL_MARGIN_MILLIS` of coverage left ahead of [nowMillis].
+     *
+     * [horizonEndMillis] is the horizon in force ([scheduleHorizonEndMillis]) — the caller passes the one it
+     * fills with, so a schedule that already reaches the end of the displayed week is *not* considered short
+     * just because it stops before `now + 168h`. That is the whole point: sitting on the current week must not
+     * keep re-filling the days after it.
+     *
+     * Coverage is measured by [firstFreeMoment] — the end of the contiguous chain of panels covering `now`.
+     * Because a fill reaches at most the horizon, this instant is in the FUTURE right after a successful fill
+     * (that is the property [org.example.project.scheduler.engine.SchedulerEngine] relies on to stop polling)
+     * and in the past whenever the schedule genuinely fell short — a gap opened by an edit, a horizon that has
+     * rolled, or the user navigating to a week further out than the fill covers.
+     */
+    fun horizonRefillDueMillis(
+        panels: List<TaskPanel>,
+        nowMillis: Long,
+        horizonEndMillis: Long = nowMillis + SCHEDULE_HORIZON_MILLIS,
+    ): Long =
+        firstFreeMoment(panels, nowMillis) - (horizonEndMillis - nowMillis) + HORIZON_REFILL_MARGIN_MILLIS
 
     /**
      * PRD §15: shortest account-wide pause worth drawing as an "Inactivity" band (90 s). Below this a
@@ -2036,12 +2105,14 @@ object SchedulerDomain {
         // via [screenBreaksForPlacement] so the screen-break grid moves with a pause the derives haven't
         // banked yet — placement-only; the stored lastRestMillis is untouched.
         liveRest: LiveRest? = null,
-        // How far ahead of [nowMillis] to materialize the plan. Defaults to the standard one-week horizon
-        // (the engine's authoritative near-term fill). A DISPLAY caller viewing a future week passes that
-        // week's end instead, so the plan is computed from the now-line out to the visible week — the
-        // "schedule the whole week displayed" rule. The work is O(horizon); a distant week is meant to be
-        // filled off the UI thread (it "takes time to display", never freezes), and nothing beyond the
-        // requested horizon is retained, so navigating back simply refills the nearer window.
+        // The instant to materialize the plan out to — **the horizon follows what is displayed**, never a
+        // fixed 168h. Live callers pass [scheduleHorizonEndMillis] of the focused week (the reducer, via
+        // `SchedulerReducer.scheduleHorizonEndMillis`), so staying on the current week computes only that
+        // week and no later day. A DISPLAY caller viewing a week past the 168h ceiling passes that week's end
+        // directly. The work is O(horizon); a distant week is meant to be filled off the UI thread (it "takes
+        // time to display", never freezes), and nothing beyond the requested horizon is retained, so
+        // navigating back simply refills the nearer window. The default is the ceiling, for tests and for any
+        // caller that genuinely wants the maximum span.
         horizonMillis: Long = nowMillis + SCHEDULE_HORIZON_MILLIS,
     ): List<TaskPanel> {
         val horizon = maxOf(horizonMillis, nowMillis)
@@ -2069,9 +2140,14 @@ object SchedulerDomain {
         // Each one places its next occurrence at its due time (or the now-line when overdue), with the
         // 5-min↔15-min merge applied. They project straight through the sleep windows too, so the eye-rest /
         // pose cues still fire (and render over the "Sleep" band) for a user working through the night.
+        // Bounded by THIS fill's [horizon], not by the fixed 168h default: a fill for a short horizon (the
+        // displayed week ends tomorrow, or the calendar is closed) must not project a week of breaks it will
+        // then carry in `panels`, and a DISPLAY fill for a far week must project across it (the default would
+        // stop at 168h and leave the far days break-less).
         val sidePanels = screenBreakPanels(
             screenBreaksForPlacement(state.screenBreaks, liveRest),
             nowMillis,
+            horizon,
             qualifyingPauseWindows = sleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
         )
         if (leaves.isEmpty()) return (kept + sidePanels + sleepPanels).sortedBy { it.startEpochMillis }

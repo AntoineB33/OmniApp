@@ -393,14 +393,28 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val focusedWeekStartMillis = startOfWeek(selectedDate).atStartOfDayIn(tz).toEpochMilliseconds()
         val focusedWeekEndMillis =
             startOfWeek(selectedDate).plus(7, DateTimeUnit.DAY).atStartOfDayIn(tz).toEpochMilliseconds()
-        val screenBreakHorizonMillis = maxOf(nowMillis + SchedulerDomain.SCHEDULE_HORIZON_MILLIS, focusedWeekEndMillis)
+        // Every forward DISPLAY projection stops here: the end of the displayed week, floored at the horizon a
+        // closed calendar still needs. Never `now + 168h` unconditionally — a Sunday on the current week
+        // projects ~24h of sleep bands, not a week of them (PRD §9 "the horizon follows what is displayed").
+        val screenBreakHorizonMillis =
+            maxOf(nowMillis + SchedulerDomain.MIN_SCHEDULE_HORIZON_MILLIS, focusedWeekEndMillis)
 
-        // PRD §9/§17 "schedule the whole week displayed": the engine materializes the work plan only out to
-        // its near horizon (168h). When the focused week reaches past that, compute the plan from the now-line
-        // out to that week for DISPLAY — off the UI thread (Dispatchers.Default) so a distant week "simply
-        // takes time to be displayed" instead of freezing, keyed only on the focused week so it doesn't rerun
-        // every now-tick. The result is never stored in the state, so navigating back to a near week just uses
-        // the near panels again and this far fill is dropped ("erased") — no retained multi-week memory.
+        // PRD §9: tell the ENGINE which week is on screen, so its §9 refills materialize the work plan out to
+        // exactly that week (clamped to [24h, 168h]) instead of unconditionally computing 168h of schedule the
+        // user is not looking at. Closing the calendar drops it back to the 24h floor the headless
+        // notification/cue paths need. Growing it (navigating further out) triggers one refill in the engine.
+        LaunchedEffect(engine, calendarOpen, focusedWeekEndMillis) {
+            engine.setCalendarHorizon(if (calendarOpen) focusedWeekEndMillis else null)
+        }
+
+        // PRD §9/§17 "schedule the whole week displayed": the engine materializes the work plan out to the
+        // displayed week, but never past its 168h CEILING. When the focused week reaches past that, compute
+        // the plan from the now-line out to that week for DISPLAY — off the UI thread (Dispatchers.Default) so
+        // a distant week "simply takes time to be displayed" instead of freezing, keyed only on the focused
+        // week so it doesn't rerun every now-tick. The result is never stored in the state, so navigating back
+        // to a near week just uses the near panels again and this far fill is dropped ("erased") — no retained
+        // multi-week memory. Nearer weeks need none of this: the engine already fills exactly to them
+        // (`engine.setCalendarHorizon` above), so `schedulerState.panels` covers the whole displayed week.
         val nearHorizonEndMillis = nowMillis + SchedulerDomain.SCHEDULE_HORIZON_MILLIS
         val focusedWeekBeyondNearHorizon = focusedWeekEndMillis > nearHorizonEndMillis
         var farWeekPlan by remember { mutableStateOf<List<TaskPanel>?>(null) }

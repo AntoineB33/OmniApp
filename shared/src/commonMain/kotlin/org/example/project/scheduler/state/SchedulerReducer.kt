@@ -46,6 +46,16 @@ object SchedulerReducer {
      */
     var liveRestGap: () -> SchedulerDomain.LiveRest? = { null }
 
+    /**
+     * PRD §9: the instant every refill materializes the work plan out to, given `now` — **the horizon follows
+     * the week the calendar is DISPLAYING** ([SchedulerDomain.scheduleHorizonEndMillis]) so the app never
+     * computes days the user is not looking at. The engine injects a provider over the focused week `App.kt`
+     * publishes (`SchedulerEngine.setCalendarHorizon`); the default (no engine / tests) is the calendar-closed
+     * floor, [SchedulerDomain.MIN_SCHEDULE_HORIZON_MILLIS], which is all a headless app needs for its
+     * notifications and cues.
+     */
+    var scheduleHorizonEndMillis: (Long) -> Long = { SchedulerDomain.scheduleHorizonEndMillis(it, null) }
+
     fun reduce(state: SchedulerState, intent: SchedulerIntent): SchedulerState {
         return when (intent) {
             is SchedulerIntent.ClickCell -> reduceClick(state, intent)
@@ -1306,7 +1316,8 @@ object SchedulerReducer {
     }
 
     /**
-     * PRD §9 calculation event: [advanceSchedule] then refill the non-pinned panels out to +168h with
+     * PRD §9 calculation event: [advanceSchedule] then refill the non-pinned panels out to the horizon in
+     * force ([scheduleHorizonEndMillis] — the end of the DISPLAYED week, not a fixed +168h) with
      * [SchedulerDomain.fillSchedule]. Gated by PRD §7: while [SchedulerState.automaticSchedule] is off
      * the refill is skipped (the event waits) — but the advance still runs so completed work is
      * recorded. The refill is NOT recorded as a History Unit (PRD §9): a schedule is derived from the
@@ -1317,7 +1328,13 @@ object SchedulerReducer {
     private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
         val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis))
         if (!advanced.automaticSchedule) return advanced
-        val filled = SchedulerDomain.fillSchedule(advanced, nowMillis, liveRest = liveRestGap())
+        val filled =
+            SchedulerDomain.fillSchedule(
+                advanced,
+                nowMillis,
+                liveRest = liveRestGap(),
+                horizonMillis = scheduleHorizonEndMillis(nowMillis),
+            )
         if (filled == advanced.panels) return advanced
         return advanced.copy(panels = filled)
     }
@@ -1341,7 +1358,14 @@ object SchedulerReducer {
         val committed = commitDelta(state, SleepDelta(state.sleep, anchored))
         // Refill so the nightly sleep window takes effect right away (when auto-scheduling is on).
         if (!committed.automaticSchedule) return committed
-        val filled = SchedulerDomain.fillSchedule(committed, clock.nowMillis(), liveRest = liveRestGap())
+        val now = clock.nowMillis()
+        val filled =
+            SchedulerDomain.fillSchedule(
+                committed,
+                now,
+                liveRest = liveRestGap(),
+                horizonMillis = scheduleHorizonEndMillis(now),
+            )
         return committed.copy(panels = filled)
     }
 

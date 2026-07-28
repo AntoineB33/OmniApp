@@ -22,6 +22,7 @@ The codebase follows a "Shared UI, Native Shell" philosophy.
 OmniApp prioritizes Desktop interactions first. 
 * Mouse events (hover, drag, right-click) and keyboard modifiers (`Ctrl`, `Shift`, `Tab`) are handled via Compose Multi-platform's `PointerEvent` and `KeyEvent` APIs in `commonMain`.
 * When porting to touch interfaces (Android/iOS), adapter logic maps touch gestures (long-press, swipe) to the underlying MVI intents originally designed for mouse/keyboard.
+* **Schedule computation is bounded by the screen and never blocks it (PRD §9).** The §9 fill is O(horizon), so the horizon is not a constant: `App.kt` publishes the calendar's focused week to the engine (`SchedulerEngine.setCalendarHorizon`), which drives `SchedulerReducer.scheduleHorizonEndMillis`, so every refill materializes the plan out to **the displayed week** — clamped into `[24 h, 168 h]` (a floor for the headless notification/cue paths with the calendar closed; a ceiling so a far week never enters stored state). Sitting on the current week computes no later day. A week past the ceiling is filled **for display only**, on `Dispatchers.Default` behind a "Calculating…" hint, and discarded on navigation — the UI thread never runs a multi-week fill, and no multi-week schedule is retained.
 
 ## 4. Local Persistence & Offline-First
 OmniApp is entirely offline-capable.

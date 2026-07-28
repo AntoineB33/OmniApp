@@ -216,7 +216,9 @@ sealed interface SchedulerIntent {
 
     /**
      * PRD §9 calculation event: regenerate the schedule against [nowMillis] — advance past any
-     * completed panel, then refill the non-pinned panels out to +168h ([SchedulerDomain.fillSchedule]).
+     * completed panel, then refill the non-pinned panels out to the horizon in force — the end of the
+     * DISPLAYED week, not a fixed +168h (`SchedulerReducer.scheduleHorizonEndMillis`,
+     * [SchedulerDomain.fillSchedule]).
      * Dispatched by the debounced tree-change event and the deferred calendar timer. Gated by PRD §7:
      * a no-op while [SchedulerState.automaticSchedule] is off (the event waits for it to turn on). The
      * refill is committed as a Calendar History Unit (PRD §9); the record side effects are not undoable.
