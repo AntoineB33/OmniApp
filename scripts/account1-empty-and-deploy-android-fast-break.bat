@@ -38,7 +38,7 @@ REM The 5-min-break timing overrides: the break LASTS 5 s, comes due 5 s after
 REM the previous qualifying pause, and only a >=2h no-screen period qualifies as
 REM that pause. account1-deploy-android.bat reads these env vars and forwards
 REM them to the phone as am-start extras.
-set "OMNIAPP_BREAK_DURATION_MS=5000"
+set "OMNIAPP_BREAK_DURATION_MS=20000"
 set "OMNIAPP_BREAK_INTERVAL_MS=5000"
 set "OMNIAPP_BREAK_PAUSE_THRESHOLD_MS=7200000"
 

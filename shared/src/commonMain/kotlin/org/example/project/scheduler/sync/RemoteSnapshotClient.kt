@@ -3,6 +3,7 @@ package org.example.project.scheduler.sync
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpSend
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.plugin
 import io.ktor.client.request.get
@@ -38,8 +39,14 @@ data class SupabaseSession(
     val userId: String,
 )
 
-/** The remote mirror of one user's [org.example.project.scheduler.persistence.PersistedSnapshot]. */
-data class RemoteSnapshot(val payload: String, val revision: Long)
+/**
+ * The remote mirror of one user's [org.example.project.scheduler.persistence.PersistedSnapshot].
+ *
+ * [writerDeviceId] is the device that wrote this revision (migration `20260730000000`); `null` when the
+ * revision was written by a client older than that migration. [SchedulerSyncEngine] uses it to tell a
+ * genuine peer write from its OWN push whose acknowledgement was lost in transit.
+ */
+data class RemoteSnapshot(val payload: String, val revision: Long, val writerDeviceId: String? = null)
 
 /** Raised when Supabase returns a non-success response we did not specifically handle. */
 class SupabaseException(val status: Int, message: String) : Exception("Supabase $status: $message")
@@ -202,24 +209,24 @@ class RemoteSnapshotClient(
             http.get("${config.restUrl}/scheduler_snapshot") {
                 authHeaders(session)
                 url.parameters.append("user_id", "eq.${session.userId}")
-                url.parameters.append("select", "payload,revision")
+                url.parameters.append("select", "payload,revision,writer_device_id")
             }
         if (!response.status.isSuccess()) throw response.toException()
         val rows = json.decodeFromString<List<SnapshotRow>>(response.bodyAsText())
-        return rows.firstOrNull()?.let { RemoteSnapshot(it.payload, it.revision) }
+        return rows.firstOrNull()?.let { RemoteSnapshot(it.payload, it.revision, it.writerDeviceId) }
     }
 
     /**
      * Inserts the first revision for this user. Returns `false` if a row already exists (another device
      * created it first) — the caller should [fetch] and reconcile instead. Throws on other errors.
      */
-    suspend fun insert(session: SupabaseSession, payload: String): Boolean {
+    suspend fun insert(session: SupabaseSession, payload: String, deviceId: String): Boolean {
         val response =
             http.post("${config.restUrl}/scheduler_snapshot") {
                 authHeaders(session)
                 header("Prefer", "return=minimal")
                 contentType(ContentType.Application.Json)
-                setBody(json.encodeToString(SnapshotInsert(session.userId, payload, 1)))
+                setBody(json.encodeToString(SnapshotInsert(session.userId, payload, 1, deviceId)))
             }
         if (response.status == HttpStatusCode.Conflict) return false
         if (!response.status.isSuccess()) throw response.toException()
@@ -230,8 +237,18 @@ class RemoteSnapshotClient(
      * Optimistic-concurrency update: writes [payload] at `revision = expectedRevision + 1` only if the
      * remote row still sits at [expectedRevision]. Returns `false` if the guard matched no row (the remote
      * moved underneath us — the caller must pull and reconcile), `true` on success.
+     *
+     * [deviceId] is stamped into `writer_device_id` so the caller can later recognise this very revision as
+     * its own if the response below never comes back (see [RemoteSnapshot.writerDeviceId]). It must be
+     * written in the SAME statement as the payload: a separate write would leave a window where the row is
+     * advanced but unattributed, which is exactly the state the repair keys on.
      */
-    suspend fun update(session: SupabaseSession, payload: String, expectedRevision: Long): Boolean {
+    suspend fun update(
+        session: SupabaseSession,
+        payload: String,
+        expectedRevision: Long,
+        deviceId: String,
+    ): Boolean {
         val response =
             http.patch("${config.restUrl}/scheduler_snapshot") {
                 authHeaders(session)
@@ -239,7 +256,7 @@ class RemoteSnapshotClient(
                 contentType(ContentType.Application.Json)
                 url.parameters.append("user_id", "eq.${session.userId}")
                 url.parameters.append("revision", "eq.$expectedRevision")
-                setBody(json.encodeToString(SnapshotUpdate(payload, expectedRevision + 1)))
+                setBody(json.encodeToString(SnapshotUpdate(payload, expectedRevision + 1, deviceId)))
             }
         if (!response.status.isSuccess()) throw response.toException()
         val updated = json.decodeFromString<List<SnapshotRow>>(response.bodyAsText())
@@ -449,6 +466,16 @@ class RemoteSnapshotClient(
         private fun defaultHttpClient(): HttpClient =
             HttpClient {
                 install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+                // Without a timeout a response that never arrives (dropped connection, the machine
+                // suspending mid-request) leaves the call parked forever — and because every snapshot path
+                // funnels through the one mutex-guarded `SchedulerSyncEngine.reconcile()`, that wedges ALL
+                // syncing behind it until the socket eventually errors (observed: ~40 min, across an OS
+                // sleep). Fail in seconds instead; the next sync moment retries.
+                install(HttpTimeout) {
+                    requestTimeoutMillis = 45_000
+                    connectTimeoutMillis = 15_000
+                    socketTimeoutMillis = 30_000
+                }
             }
     }
 }
@@ -466,16 +493,29 @@ private data class TokenResponse(
 
 @Serializable private data class TokenUser(val id: String)
 
-@Serializable private data class SnapshotRow(val payload: String, val revision: Long)
+@Serializable
+private data class SnapshotRow(
+    val payload: String,
+    val revision: Long,
+    // Null on a row last written by a client older than migration 20260730000000, and absent altogether
+    // from a project that has not applied it — hence the default, so an unmigrated project still decodes.
+    @SerialName("writer_device_id") val writerDeviceId: String? = null,
+)
 
 @Serializable
 private data class SnapshotInsert(
     @SerialName("user_id") val userId: String,
     val payload: String,
     val revision: Long,
+    @SerialName("writer_device_id") val writerDeviceId: String,
 )
 
-@Serializable private data class SnapshotUpdate(val payload: String, val revision: Long)
+@Serializable
+private data class SnapshotUpdate(
+    val payload: String,
+    val revision: Long,
+    @SerialName("writer_device_id") val writerDeviceId: String,
+)
 
 @Serializable private data class AccountLogoutRow(@SerialName("logout_at") val logoutAt: String)
 

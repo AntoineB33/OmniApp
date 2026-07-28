@@ -56,7 +56,18 @@ class SchedulerSyncEngineTest {
      * Mutable server-side row: the stored payload (a serialized [PersistedSnapshot]) and its revision, plus
      * the account's `account_logout` marker ([logoutAtMillis], null = no row) the force-logout reads.
      */
-    private class FakeServer(var payload: String? = null, var revision: Long = 0, var logoutAtMillis: Long? = null) {
+    private class FakeServer(
+        var payload: String? = null,
+        var revision: Long = 0,
+        var logoutAtMillis: Long? = null,
+        /** `writer_device_id` (migration 20260730000000): which device wrote the stored revision. */
+        var writerDeviceId: String? = null,
+        /**
+         * When set, the PATCH is applied server-side and then the connection "drops" — the client sees an
+         * exception instead of the response. Models the lost-acknowledgement push the repair keys on.
+         */
+        var dropPatchResponse: Boolean = false,
+    ) {
         /** Every GoTrue endpoint hit, in order — tells a guest CLAIM (`/user`) from a second signup. */
         val authCalls = mutableListOf<String>()
     }
@@ -101,8 +112,12 @@ class SchedulerSyncEngineTest {
 
                     path.endsWith("/scheduler_snapshot") && request.method == HttpMethod.Get -> {
                         val arr =
-                            server.payload?.let { """[{"payload":${json.encodeToString(it)},"revision":${server.revision}}]""" }
-                                ?: "[]"
+                            server.payload?.let {
+                                """[{"payload":${json.encodeToString(it)},"revision":${server.revision},""" +
+                                    """"writer_device_id":${
+                                        server.writerDeviceId?.let { w -> json.encodeToString(w) } ?: "null"
+                                    }}]"""
+                            } ?: "[]"
                         respond(arr, HttpStatusCode.OK, jsonHeader)
                     }
 
@@ -111,6 +126,8 @@ class SchedulerSyncEngineTest {
                             respond("", HttpStatusCode.Conflict, jsonHeader)
                         } else {
                             server.payload = json.parseToJsonElement(body).jsonObject["payload"]!!.jsonPrimitive.content
+                            server.writerDeviceId =
+                                json.parseToJsonElement(body).jsonObject["writer_device_id"]?.jsonPrimitive?.content
                             server.revision = 1
                             respond("", HttpStatusCode.Created, jsonHeader)
                         }
@@ -120,7 +137,12 @@ class SchedulerSyncEngineTest {
                         val expected = request.url.parameters["revision"]?.removePrefix("eq.")?.toLong()
                         if (server.payload != null && server.revision == expected) {
                             server.payload = json.parseToJsonElement(body).jsonObject["payload"]!!.jsonPrimitive.content
+                            server.writerDeviceId =
+                                json.parseToJsonElement(body).jsonObject["writer_device_id"]?.jsonPrimitive?.content
                             server.revision += 1
+                            // The write is applied BEFORE the response is read, so "the connection dropped"
+                            // still leaves the server one revision ahead — the state the client must recognise.
+                            if (server.dropPatchResponse) throw java.io.IOException("connection reset")
                             respond(
                                 """[{"payload":${json.encodeToString(server.payload!!)},"revision":${server.revision}}]""",
                                 HttpStatusCode.OK,
@@ -213,6 +235,76 @@ class SchedulerSyncEngineTest {
         assertEquals(2, meta.loadSyncMeta()!!.lastKnownRevision)
         assertEquals(false, meta.loadSyncMeta()!!.dirty) // flag cleared, nothing to send
         assertNull(applied) // nothing pulled either
+    }
+
+    @Test
+    fun a_push_whose_response_was_lost_is_adopted_not_pulled_back_over_newer_local_edits() = runTest {
+        // Regression (observed 2026-07-27 on a SINGLE-device account: two task cells were deleted and came
+        // back seconds later). A push is not atomic from the client's side — the server applies the PATCH and
+        // only then does the client read the response. When that response is lost (dropped connection, the
+        // machine suspending mid-request) the remote sits one revision ahead while this device still holds the
+        // old baseline with `dirty` set. Reading that as "a peer wrote something newer" and pulling would
+        // apply THIS DEVICE'S OWN older push over everything the user edited since. `writer_device_id` tells
+        // the two apart: the revision must be adopted, and the newer local state pushed on top of it.
+        val server = FakeServer(payload = json.encodeToString(snap("V1")), revision = 62, writerDeviceId = "desk")
+        val meta = FakeMetaStore(SyncMeta(deviceId = "desk", lastKnownRevision = 62, dirty = true))
+        var applied: PersistedSnapshot? = null
+        var local = snap("V2")
+        val sync = engine(harness(server), meta, { local }, { applied = it })
+        sync.signIn("a@b.c", "pw")
+
+        server.dropPatchResponse = true
+        sync.reconcile()
+
+        // The write landed (63) but the acknowledgement did not: the baseline is stale and still dirty.
+        assertEquals(63, server.revision)
+        assertEquals(62, meta.loadSyncMeta()!!.lastKnownRevision)
+        assertEquals(true, meta.loadSyncMeta()!!.dirty)
+
+        // The user now makes the edit that must survive (in the field: deleting the two task cells).
+        local = snap("V3")
+        server.dropPatchResponse = false
+        sync.reconcile()
+
+        assertNull(applied) // nothing was applied over the local state — the edit stands
+        assertEquals("V3", json.decodeFromString<PersistedSnapshot>(server.payload!!).statePayload)
+        assertEquals(64, server.revision)
+        assertEquals(64, meta.loadSyncMeta()!!.lastKnownRevision)
+        assertEquals(false, meta.loadSyncMeta()!!.dirty)
+    }
+
+    @Test
+    fun a_peers_write_one_revision_ahead_still_wins_over_local_changes() = runTest {
+        // The repair above must stay narrow: same shape (one revision ahead, local dirty), but written by
+        // ANOTHER device, which is a genuine conflict — whole-document LWW still applies and the remote wins.
+        val server = FakeServer(payload = json.encodeToString(snap("PEER")), revision = 63, writerDeviceId = "phone")
+        val meta = FakeMetaStore(SyncMeta(deviceId = "desk", lastKnownRevision = 62, dirty = true))
+        var applied: PersistedSnapshot? = null
+        val sync = engine(harness(server), meta, { snap("LOCAL") }, { applied = it })
+
+        sync.signIn("a@b.c", "pw")
+        sync.reconcile()
+
+        assertEquals("PEER", applied!!.statePayload)
+        assertEquals(63, server.revision) // remote untouched; the local change was dropped (LWW)
+        assertEquals(63, meta.loadSyncMeta()!!.lastKnownRevision)
+    }
+
+    @Test
+    fun an_unattributed_revision_falls_back_to_the_plain_last_write_wins_pull() = runTest {
+        // A row last written by a client older than migration 20260730000000 — or read from a project that has
+        // not applied it — carries no writer id. Unknown writer must behave exactly as before (pull), never
+        // guess that it was ours.
+        val server = FakeServer(payload = json.encodeToString(snap("REMOTE")), revision = 63, writerDeviceId = null)
+        val meta = FakeMetaStore(SyncMeta(deviceId = "desk", lastKnownRevision = 62, dirty = true))
+        var applied: PersistedSnapshot? = null
+        val sync = engine(harness(server), meta, { snap("LOCAL") }, { applied = it })
+
+        sync.signIn("a@b.c", "pw")
+        sync.reconcile()
+
+        assertEquals("REMOTE", applied!!.statePayload)
+        assertEquals(63, meta.loadSyncMeta()!!.lastKnownRevision)
     }
 
     @Test

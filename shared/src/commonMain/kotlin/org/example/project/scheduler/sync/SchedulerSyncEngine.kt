@@ -63,6 +63,12 @@ data class AccountInfo(val userId: String, val email: String?) {
  * [remoteApplied] event fires so the UI can tell the user it reloaded). Field-level merge of concurrent
  * offline edits is Phase 2 (per-entity HLC registers); [SyncMeta.deviceId] is the future tie-breaker.
  *
+ * The one revision LWW does **not** apply to is a revision THIS device wrote: a push whose response was lost
+ * in transit advances the remote without this device recording the new baseline, and pulling it back would
+ * revert the user's own newer edits for no reason. [RemoteSnapshot.writerDeviceId] identifies that case
+ * ([isOwnUnacknowledgedPush]) so the revision is adopted rather than applied. It is not a weakening of the
+ * conflict policy — a genuine peer write at the same revision still wins.
+ *
  * The engine is transport-only: [localSnapshot] supplies the current state to push and [applyRemote]
  * installs a pulled one — both wired by [org.example.project.scheduler.ui.TaskSchedulerViewModel].
  */
@@ -300,9 +306,15 @@ open class SchedulerSyncEngine(
                     // runReconcile may have signed us out (remote force-logout); don't clobber SignedOut with Idle.
                     if (session != null) _state.value = SyncState.Idle else forcedOut = true
                 } catch (e: SupabaseException) {
+                    Diagnostics.log("reconcile FAILED (server ${e.status}): ${e.message}")
                     _state.value = SyncState.Error(e.message ?: "sync failed")
                 } catch (e: Exception) {
                     // Offline / transport errors: stay calm, keep local state, retry on the next trigger.
+                    // ALWAYS logged: a push that threw here may still have landed server-side (the write is
+                    // applied before the response is read), which is exactly the lost-acknowledgement case
+                    // [runReconcile] repairs on the next pass — and without this line that whole episode was
+                    // invisible in the diagnostics timeline.
+                    Diagnostics.log("reconcile FAILED (transport): ${e.message}")
                     _state.value = SyncState.Error(e.message ?: "offline")
                 }
             }
@@ -331,10 +343,37 @@ open class SchedulerSyncEngine(
         var m = meta()
         val remote = withAuth(session) { client.fetch(it) }
 
+        // Lost-ACKNOWLEDGEMENT repair — must run BEFORE the LWW branches below, because it decides what the
+        // remote revision MEANS. A push is not atomic from this side: [RemoteSnapshotClient.update] PATCHes
+        // the row and then reads the response. The server can apply the write (revision N -> N+1) and the
+        // response never come back — a dropped connection, the machine suspending mid-request — in which case
+        // `update` throws, `runReconcile` unwinds, and this device never records the new baseline: it stays at
+        // N with `dirty` still set. The next reconcile then sees `remote.revision > lastKnownRevision`, reads
+        // it as a PEER's newer write, and takes the `pull` branch — applying THIS DEVICE'S OWN older push over
+        // everything the user edited since, silently. Observed on a single-device account: two task cells were
+        // deleted and reappeared seconds later.
+        //
+        // `writer_device_id` (migration 20260730000000) is what tells the two apart. The guard is deliberately
+        // narrow — exactly one revision ahead, still dirty, and stamped with OUR device id:
+        //  * exactly one ahead, because a lost ack can only ever be one: the retry PATCHes against the stale
+        //    `revision = eq.N` guard, matches no row, and falls into the ordinary pull;
+        //  * still dirty, because that is the only case where pulling would DESTROY something;
+        //  * our device id, because a peer's write at N+1 is a genuine conflict and LWW must still apply.
+        // Null writer (a row last written by an older client, or a project without the migration) reads as
+        // "unknown" and falls through to the existing behaviour.
+        if (remote != null && isOwnUnacknowledgedPush(remote, m)) {
+            Diagnostics.log(
+                "reconcile: remote revision ${remote.revision} is THIS device's own unacknowledged push — " +
+                    "adopting the revision instead of pulling it back over local changes",
+            )
+            m = m.copy(lastKnownRevision = remote.revision)
+            setMeta(m)
+        }
+
         when {
             // First device for this account: seed the remote from local.
             remote == null -> {
-                val ok = withAuth(session) { client.insert(it, payload()) }
+                val ok = withAuth(session) { client.insert(it, payload(), m.deviceId) }
                 if (ok) {
                     Diagnostics.log("reconcile: seeded remote snapshot (revision 1)")
                     setMeta(m.copy(lastKnownRevision = 1, dirty = false))
@@ -358,7 +397,7 @@ open class SchedulerSyncEngine(
             }
             // We have unpushed local changes and the remote is still where we left it: push them.
             m.dirty -> {
-                val ok = withAuth(session) { client.update(it, payload(), m.lastKnownRevision) }
+                val ok = withAuth(session) { client.update(it, payload(), m.lastKnownRevision, m.deviceId) }
                 if (ok) {
                     Diagnostics.log("reconcile: pushed local changes (revision ${m.lastKnownRevision + 1})")
                     setMeta(meta().copy(lastKnownRevision = m.lastKnownRevision + 1, dirty = false))
@@ -403,8 +442,23 @@ open class SchedulerSyncEngine(
         }.onFailure { Diagnostics.log("reconcile: active-session merge failed (${it.message}); rows ride the next sync") }
     }
 
+    /**
+     * True when [remote] is this device's OWN push whose acknowledgement was lost in transit, rather than a
+     * peer's newer write — see the long note at the call site in [runReconcile] for why each clause is
+     * needed. Pulling such a revision would silently revert every local edit made since that push.
+     */
+    private fun isOwnUnacknowledgedPush(remote: RemoteSnapshot, m: SyncMeta): Boolean =
+        m.dirty &&
+            remote.revision == m.lastKnownRevision + 1 &&
+            remote.writerDeviceId != null &&
+            remote.writerDeviceId == m.deviceId
+
     private fun pull(remote: RemoteSnapshot) {
-        Diagnostics.log("reconcile: pulled remote snapshot (revision ${remote.revision})")
+        // Log the LWW casualty explicitly: `dirty` here means unpushed local edits are being dropped by the
+        // pull (PRD Phase 1 policy). Without this line a silent revert leaves no trace at all in the
+        // diagnostics timeline — which is what made the "my deleted cells came back" report so hard to place.
+        val dropping = if (meta().dirty) " — DROPPING this device's unpushed local changes (whole-doc LWW)" else ""
+        Diagnostics.log("reconcile: pulled remote snapshot (revision ${remote.revision})$dropping")
         val snapshot = json.decodeFromString<PersistedSnapshot>(remote.payload)
         checkNotNull(applyRemote) { "SchedulerSyncEngine.bind() not called" }(snapshot)
         setMeta(meta().copy(lastKnownRevision = remote.revision, dirty = false))
