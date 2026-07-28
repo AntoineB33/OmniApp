@@ -1,5 +1,6 @@
+import itertools
 from enum import Enum
-
+from typing import Iterable, Iterator
 
 class Period(Enum):
     INACTIVE = 0
@@ -49,18 +50,17 @@ def is_task_valid_for_period(task: Task, period_type: Period) -> bool:
     return bool(period_type == Period.NO_SCREEN and not task.needs_screen)
 
 
-def schedule_timeline(tasks: list[Task], timeline: list[TimeBlock]) -> list[dict]:
+def schedule_timeline(tasks: list[Task], timeline: Iterable[TimeBlock]) -> Iterator[dict]:
     init_task_metrics(tasks)
-    schedule = []
-
+    
     for block_idx, block in enumerate(timeline):
         if block.period_type == Period.INACTIVE:
-            schedule.append({
+            yield {
                 "task": "INACTIVE",
                 "duration": block.duration,
                 "block": block_idx,
                 "type": "INACTIVE"
-            })
+            }
             continue
 
         remaining_time = block.duration
@@ -72,12 +72,12 @@ def schedule_timeline(tasks: list[Task], timeline: list[TimeBlock]) -> list[dict
             ]
 
             if not valid_tasks:
-                schedule.append({
+                yield {
                     "task": "IDLE / DEAD TIME",
                     "duration": remaining_time,
                     "block": block_idx,
                     "type": block.period_type.name
-                })
+                }
                 break
 
             valid_tasks.sort(key=lambda t: t.total_scheduled_time / t.normalized_priority)
@@ -86,17 +86,15 @@ def schedule_timeline(tasks: list[Task], timeline: list[TimeBlock]) -> list[dict
             duration_to_schedule = max(selected_task.min_time, selected_task.ideal_cycle_allocation)
             duration_to_schedule = min(duration_to_schedule, remaining_time)
 
-            schedule.append({
+            yield {
                 "task": selected_task.name,
                 "duration": duration_to_schedule,
                 "block": block_idx,
                 "type": block.period_type.name
-            })
+            }
 
             selected_task.total_scheduled_time += duration_to_schedule
             remaining_time -= duration_to_schedule
-
-    return schedule
 
 
 def print_colored_timeline(title: str, schedule: list[dict]):
@@ -175,50 +173,83 @@ def print_colored_timeline(title: str, schedule: list[dict]):
     for i in range(0, len(legend_items), 3):
         print(" | ".join(legend_items[i:i+3]))
 
-    print(f"Total Timeline Duration: {total_time:.1f} minutes")
+    print(f"Total Displayed Timeline Duration: {total_time:.1f} minutes")
     print(f"{'-' * visual_width}\n")
 
 
 # --- Run Examples ---
 if __name__ == "__main__":
 
-    # EXAMPLE 1: The Classic Day
+    # EXAMPLE 1: The Requested 1h/1h Balancing Test on an Infinite Timeline
     tasks_1 = [
-        Task("Coding (Screen)", priority=50, min_time=30, needs_screen=True),
-        Task("Reading (No Screen)", priority=50, min_time=60, needs_screen=False)
+        Task("Task A (7m min)", priority=50, min_time=7, needs_screen=True),
+        Task("Task B (1h min)", priority=50, min_time=60, needs_screen=True)
     ]
-    timeline_1 = [
-        TimeBlock(120, Period.INACTIVE),
-        TimeBlock(90, Period.SCREEN),
-        TimeBlock(90, Period.NO_SCREEN),
-        TimeBlock(180, Period.BOTH)
-    ]
-    schedule_1 = schedule_timeline(tasks_1, timeline_1)
-    print_colored_timeline("The Classic Day (Constraints matched nicely)", schedule_1)
-
-    # EXAMPLE 2: Fragmented Availability (Creates Dead Time)
-    tasks_2 = [
-        Task("Deep Work (Screen)", priority=70, min_time=90, needs_screen=True),
-        Task("Quick Tasks (Screen)", priority=30, min_time=15, needs_screen=True)
-    ]
-    timeline_2 = [
+    
+    # Define a custom pattern right here as a standard list
+    base_pattern_1 = [
         TimeBlock(60, Period.BOTH),
-        TimeBlock(30, Period.INACTIVE),
-        TimeBlock(120, Period.BOTH)
+        TimeBlock(60, Period.NO_SCREEN)
     ]
-    schedule_2 = schedule_timeline(tasks_2, timeline_2)
-    print_colored_timeline("Fragmented Availability (Forces Dead Time)", schedule_2)
+    # itertools.cycle turns the list into an infinitely repeating sequence
+    infinite_timeline_1 = itertools.cycle(base_pattern_1)
+    
+    scheduler_1 = schedule_timeline(tasks_1, infinite_timeline_1)
+    # We slice out the first 6 scheduled outputs (6 hours total)
+    schedule_1_slice = list(itertools.islice(scheduler_1, 6))
+    print_colored_timeline("Infinite Loop - Perfect 1h/1h Balancing", schedule_1_slice)
 
-    # EXAMPLE 3: The Catch-Up Effect (Starvation)
+
+    # EXAMPLE 2: A highly customized daily routine repeating infinitely
+    tasks_2 = [
+        Task("Deep Work", priority=60, min_time=90, needs_screen=True),
+        Task("Reading", priority=20, min_time=45, needs_screen=False),
+        Task("Quick Chores", priority=20, min_time=15, needs_screen=False)
+    ]
+    
+    # Define a complex repeating day right here
+    base_pattern_2 = [
+        TimeBlock(120, Period.SCREEN),    # 2 hours of screen time
+        TimeBlock(60, Period.NO_SCREEN),  # 1 hour break from screens
+        TimeBlock(420, Period.BOTH),      # 7 hours of flexible time
+        TimeBlock(30, Period.INACTIVE)    # 30 minute hard break
+    ]
+    # Cycle it infinitely
+    infinite_timeline_2 = itertools.cycle(base_pattern_2)
+    
+    scheduler_2 = schedule_timeline(tasks_2, infinite_timeline_2)
+    # Grab the first 15 scheduled events to see how the pattern handles the transitions
+    schedule_2_slice = list(itertools.islice(scheduler_2, 15))
+    print_colored_timeline("Infinite Loop - Custom Daily Pattern", schedule_2_slice)
+
+
+    # EXAMPLE 3: One-off starting timeline followed by an infinite loop
     tasks_3 = [
-        Task("Task X (Screen)", priority=33, min_time=20, needs_screen=True),
-        Task("Task Y (No Screen)", priority=33, min_time=20, needs_screen=False),
-        Task("Task Z (Both)", priority=34, min_time=30, needs_screen=False)
+        Task("a", priority=45, min_time=45, needs_screen=True),
+        Task("b", priority=45, min_time=45, needs_screen=True),
+        Task("c", priority=10, min_time=45, needs_screen=True)
     ]
-    timeline_3 = [
-        TimeBlock(120, Period.SCREEN),
-        TimeBlock(120, Period.NO_SCREEN),
-        TimeBlock(180, Period.BOTH)
+    
+    # 1. Define the one-off initial pattern (runs exactly once)
+    initial_timeline = [
+        TimeBlock(120, Period.INACTIVE),  # E.g., system startup or morning routine
+        TimeBlock(60, Period.SCREEN)      # E.g., forced initial catch-up window
     ]
-    schedule_3 = schedule_timeline(tasks_3, timeline_3)
-    print_colored_timeline("The Catch-Up Effect (Starvation Credit)", schedule_3)
+    
+    # 2. Define the pattern that will repeat forever
+    repeating_pattern = [
+        TimeBlock(180, Period.BOTH),      # 3 hours of work
+        TimeBlock(30, Period.INACTIVE)    # 30 minute break
+    ]
+    
+    # 3. Chain them together
+    combined_timeline = itertools.chain(
+        initial_timeline, 
+        itertools.cycle(repeating_pattern)
+    )
+    
+    # Run the generator and slice the first 10 scheduled events
+    scheduler_3 = schedule_timeline(tasks_3, combined_timeline)
+    schedule_3_slice = list(itertools.islice(scheduler_3, 10))
+    
+    print_colored_timeline("Mixed Timeline - One-Off Start + Infinite Loop", schedule_3_slice)
