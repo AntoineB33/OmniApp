@@ -34,7 +34,7 @@ interface PauseCueGateway {
 
     /**
      * Forces a session access-token refresh (used when the Realtime join is rejected for an expired JWT — the
-     * button-only sync model means the token isn't otherwise refreshed on launch). Serialized with the reconcile
+     * reconcile may not have run recently enough to have refreshed it). Serialized with the reconcile
      * refresh so the single-use refresh token isn't double-spent. Best-effort; after it, [realtimeAuth] returns
      * the fresh token.
      */
@@ -83,7 +83,7 @@ interface PauseCueGateway {
     suspend fun notifyScreenOff()
 
     /**
-     * Emits after every Sync-button reconcile (any outcome) — the only moment peer active-session rows can
+     * Emits after every reconcile (any trigger, any outcome) — the only moment peer active-session rows can
      * land in the local store. The engine collects this to re-derive the Inactivity bands / refresh the
      * calendar's device-set data right after a sync. Null on gateways without a reconcile loop (tests).
      */

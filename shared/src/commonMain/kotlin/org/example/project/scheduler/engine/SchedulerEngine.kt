@@ -98,7 +98,7 @@ private const val LOCAL_DEVICE_ID: String = "local"
 // PRD §15: how often the active-session beat samples `isScreenActive()` and extends the current session in the
 // LOCAL store. Mirrors the advance-tick cadence (1 s under sim / 30 s in production) so the session timeline
 // tracks the same `now` the schedule does. The beat NEVER talks to the server — opens, extends and finalizes
-// are all local-only; the rows ride the next manual Sync-button reconcile.
+// are all local-only; the rows ride the next reconcile, whichever trigger fires it.
 private const val ACTIVE_SESSION_BEAT_MILLIS_SIM: Long = 1_000
 private const val ACTIVE_SESSION_BEAT_MILLIS_PROD: Long = 30L * 1_000
 
@@ -216,8 +216,9 @@ class SchedulerEngine(
     // the peers' rows the manual Sync button pulls in. The input to the "Inactivity" bands / "Sleep"-band
     // carve / live-rest placement and the calendar's per-panel device sets. Null disables activity tracking.
     // The beat itself only writes the local store + the ~10 s device_heartbeat row (via [pauseCue]); the
-    // active-session rows travel to peers ONLY inside the Sync-button reconcile. There is no live cross-device
-    // activity channel — peers learn of activity at the next Sync.
+    // active-session rows travel to peers ONLY inside a reconcile (any trigger: startup, an account change,
+    // the debounced auto-push, a Realtime poke, the button) — never on a timer of their own. There is no live
+    // cross-device activity channel, so peers learn of activity at their next reconcile.
     private val activeSessionStore: ActiveSessionStore? = null,
     // Push-token / last-phone / device-heartbeat channel (the sync engine) for the pg_cron pause-cue delivery:
     // the device writes its activity heartbeat, and a phone registers its FCM/APNs token + claims the account's
@@ -287,7 +288,7 @@ class SchedulerEngine(
     /** End of this device's last finalized session — the live "Inactivity" tail's start (null = none pending). */
     val inactiveSince: StateFlow<Long?> = _inactiveSince.asStateFlow()
 
-    // Every stored active session — this device's own AND the peers' rows the Sync-button reconcile pulled
+    // Every stored active session — this device's own AND the peers' rows the last reconcile pulled
     // in. The calendar reads these to label past panels with which devices were open (hover bubble) and to
     // draw the dashed separators where the device set changed. Display-only and local: loaded from the store
     // at startup / after each derive-refresh, and patched in-memory as the beat extends the open session.
@@ -941,8 +942,8 @@ class SchedulerEngine(
 
     /**
      * PRD §15: refresh the calendar's "Inactivity" bands from the stored active sessions — this device's own
-     * rows plus the peers' rows the last Sync-button reconcile pulled, so a pause is account-wide ("no device
-     * was active") with Sync-bounded staleness. A purely LOCAL derivation (no server RPC; the derived pauses
+     * rows plus the peers' rows the last reconcile pulled, so a pause is account-wide ("no device
+     * was active") with reconcile-bounded staleness. A purely LOCAL derivation (no server RPC; the derived pauses
      * are never stored). The freshly derived pauses also seed the §15 rest poses (advancing `lastRestMillis`
      * only). Public for the debug "simulate pause + leap" control so the bands / rest poses reflect the
      * just-simulated pause at once.
@@ -996,7 +997,7 @@ class SchedulerEngine(
     }
 
     // Derive the pauses from EVERY stored session — this device's own rows plus the peers' rows the last
-    // Sync-button reconcile pulled in, so the bands are account-wide again with Sync-bounded staleness (a
+    // reconcile pulled in, so the bands are account-wide again with reconcile-bounded staleness (a
     // pause = no device active). Also refreshes [activeSessions] from the store, since this runs at exactly
     // the moments the stored set can change structurally (startup, post-reconcile, leap end).
     private fun localDerivedPauses(since: Long, until: Long): List<TaskTimeRange> {

@@ -399,7 +399,7 @@ class RemoteSnapshotClient(
         if (!response.status.isSuccess()) throw response.toException()
     }
 
-    // ---- PRD §15 device-active sessions (PostgREST) — ride the manual Sync-button reconcile only ----
+    // ---- PRD §15 device-active sessions (PostgREST) — ride a reconcile (any trigger), never a timer ----
 
     /**
      * Upserts this device's active-session [rows] (keyed `(user_id, device_id, start_ms)`) so peers can show

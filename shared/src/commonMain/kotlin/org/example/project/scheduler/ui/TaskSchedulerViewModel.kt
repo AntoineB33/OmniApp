@@ -338,9 +338,10 @@ class TaskSchedulerViewModel(
 
     /**
      * Marks the sync engine dirty when the authoritative projection of the current state
-     * ([SchedulerStateCodec.syncFingerprint]) differs from what was last flagged, so the next Sync-button
-     * [reconcile] pushes it. Sync is BUTTON-ONLY: this never triggers a server push on its own — it only sets
-     * the durable dirty flag. A no-op when sync is disabled or when nothing authoritative changed (an
+     * ([SchedulerStateCodec.syncFingerprint]) differs from what was last flagged, so the next reconcile
+     * pushes it — **and** enqueues that reconcile itself on the 500 ms auto-push debounce (see
+     * [startAutoPush]); the durable dirty flag is what survives if the app dies before it fires, and the
+     * button remains the force-now fallback. A no-op when sync is disabled or when nothing authoritative changed (an
      * engine-tick reschedule that only re-derived the auto/side/sleep panels leaves the fingerprint unchanged).
      */
     private fun markDirtyIfAuthoritativeChanged() {
@@ -364,7 +365,7 @@ class TaskSchedulerViewModel(
         saveJob = null
         store.save(SchedulerStateCodec.encodeSnapshot(_state.value))
         // A change within the debounce window never reached the dirty-flag above; flag it (only if it was an
-        // authoritative, user-authored change) so the next Sync-button reconcile sends it. No-op when the
+        // authoritative, user-authored change) so the next reconcile sends it. No-op when the
         // debounced save already accounted for it (savePending false), when only schedule-advance ticks ran
         // (syncPending false), or when nothing authoritative changed.
         if (savePending && syncPending) {
@@ -418,7 +419,7 @@ class TaskSchedulerViewModel(
      * to the `account_state` table immediately, so the server cron (`tick_pause_cues()`) suppresses the
      * pause-end cue while the user is deliberately away. Pass the next scheduled wake instant when pressing **Sleep**, or null when
      * pressing **Work** (or when the wake instant lapses on launch). The local dispatch persists on the save
-     * debounce and marks the snapshot dirty for the next Sync; the account_state write is its own targeted,
+     * debounce and marks the snapshot dirty for the next reconcile; the account_state write is its own targeted,
      * event-driven call (not the snapshot reconcile).
      */
     fun setSleepMode(sleepingUntilMillis: Long?) {

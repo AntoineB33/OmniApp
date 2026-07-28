@@ -12,7 +12,9 @@ evidence (see "Spotting problems" below) before touching anything else.
 **The sync model under test (ARCHITECTURE.md §8):** snapshot sync is **bidirectional and automatic** —
 an authoritative local edit auto-pushes ~500 ms after you stop editing, and a peer's push auto-pulls over a
 Realtime `postgres_changes` subscription within ~a second. The manual **Sync button** remains as a
-force-now fallback. Cross-device *activity* is a **`device_heartbeat`** row each active device UPSERTs
+force-now fallback — the same reconcile runs on its own at **startup**, on an **account change**, ~500 ms
+after an edit, and whenever the Realtime channel pokes or (re)subscribes, and each of those also merges the
+**device activity rows** (§4). Cross-device *activity* is a **`device_heartbeat`** row each active device UPSERTs
 every ~10 s (the account, the device and the time — the two screen breaks it is waiting on live in the
 account-keyed **`device_break`**, written only when one of their due instants changes); the pause-end voice cue is fired by the **`tick_pause_cues()` pg_cron** job through the
 `pause-cue` Edge Function. An **idle** signed-in app (no edits, no peer changes) makes no snapshot REST
@@ -22,7 +24,8 @@ heartbeat; the snapshot push only fires on an authoritative change.
 **The Sync button (force-now fallback):** click the **☁ status chip** (top of the app) → the sync dialog
 opens → press **"Fetch from server"**. That button is `TaskSchedulerViewModel.syncNow()`: it pushes the
 local snapshot if dirty, pulls the remote one (last-writer-wins), and merges the device active-session rows both
-ways. "Press Sync" below always means this.
+ways. "Press Sync" below always means this. It does **exactly what an automatic reconcile does** — it only
+forces the timing, so wherever a step says "press Sync" you are collapsing a wait, not enabling an exchange.
 
 ## Spotting problems
 
@@ -157,7 +160,10 @@ carried by the already-open WebSocket; a push fires only on an authoritative edi
       untouched (it is written only when one of the two break due instants changes), and exactly once shortly
       after you edit the schedule in a way that moves either break.
 - [ ] Press Sync once → a small burst: the `scheduler_snapshot` read/write, the `device_active_session`
-      merge, the `account_logout` check. Nothing recurs afterwards.
+      merge, the `account_logout` check. Nothing recurs afterwards. **The same burst appears at every
+      automatic reconcile** (startup, an account change, ~500 ms after an edit, a Realtime poke or
+      (re)subscribe) — it is one reconcile's traffic, not the button's; what makes the idle case quiet is
+      that none of those triggers fires, not that the exchange requires a press.
 - [ ] Exact grouped count — **Logs Explorer**:
       ```sql
       select request.path as path, request.method as method,
@@ -178,8 +184,12 @@ carried by the already-open WebSocket; a push fires only on an authoritative edi
 
 Activity facts: the desktop is "active" while the app runs signed-in with an interactive screen
 (heartbeat-extended sessions); the phone is "active" while the app is **foregrounded** (one-minute
-leases — a backgrounded/killed app reads inactive within ≤1 min). Sessions ride **only** the Sync-button
-reconcile; Inactivity bands are derived **locally** over own + pulled peer rows.
+leases — a backgrounded/killed app reads inactive within ≤1 min). Sessions ride **every reconcile**, not
+just the button's: `syncActiveSessions` runs at the tail of `reconcile()`, so startup, an account change, the
+~500 ms auto-push after an edit, a Realtime poke and a (re)subscribe catch-up all exchange them too. What
+they never do is ride a *timer* — two idle apps that neither edit nor restart exchange nothing, which is the
+only case where a Sync press is still needed. Inactivity bands are derived **locally** over own + pulled peer
+rows, and re-derive right after each reconcile.
 
 - [ ] **Own gap.** Sign in on the desktop, close the app for ~5 min, reopen → a greyed **"Inactivity"**
       band covers the gap exactly (leading, interior and trailing gaps all count; the fresh open session
@@ -188,15 +198,20 @@ reconcile; Inactivity bands are derived **locally** over own + pulled peer rows.
       behind the now-line (`live-inactivity-tail` note); come back → it stops growing and stays until a
       derive retires it.
 - [ ] **Peer coverage removes the band.** Desktop and phone signed into account 1, phone foregrounded
-      while the desktop is closed → after pressing Sync on both sides, the desktop-closed window shows
-      **no** band (the phone covered it). A window where **both** were inactive shows the band on both
-      calendars after each pressed Sync.
-- [ ] **Staleness is Sync-bounded.** Before the second device presses Sync, it may still presume the
-      peer inactive/active for the un-synced stretch — that is by design. After Sync on both sides, both
-      calendars agree.
+      while the desktop is closed → after each side has reconciled (make an edit on each, or press Sync to
+      force it), the desktop-closed window shows **no** band (the phone covered it). A window where **both**
+      were inactive shows the band on both calendars once each has reconciled.
+- [ ] **An ordinary edit carries the sessions too.** With both devices idle, edit a task title on the phone
+      (nothing else) → its ~500 ms auto-push reconcile also pushes its activity rows; the desktop's own next
+      reconcile (its next edit, or a Realtime poke from that push) then shows the corrected bands **without
+      anyone pressing Sync**.
+- [ ] **Staleness is reconcile-bounded, not Sync-bounded.** Until a device has reconciled, it may still
+      presume the peer inactive/active for the un-synced stretch — by design. A reconcile happens at startup,
+      on an account change, after any edit, and on a Realtime poke/(re)subscribe; only two apps that are
+      *both* idle and never restarted stay stale, and the Sync button is the manual collapse for that case.
 - [ ] **Phone lease granularity.** Background the phone app (home button, don't kill) → within ~1 min
-      its activity ends (visible after the next Sync as the session's end). Foreground it → activity
-      resumes. Over-reporting by ≤1 min is the spec's granularity.
+      its activity ends (visible on the peer after the next reconcile on each side as the session's end).
+      Foreground it → activity resumes. Over-reporting by ≤1 min is the spec's granularity.
 - [ ] **Freshly emptied account** (`account1-empty-and-open.bat`) shows the whole past as one Inactivity
       pause on first load — and **stays** that way (no phantom activity resurrected from an old install;
       `allowBackup=false` guards the Android side — `empty-account-whole-past-inactivity` note).
@@ -206,7 +221,8 @@ reconcile; Inactivity bands are derived **locally** over own + pulled peer rows.
       rendering and that hover zones tile without overlap).
 - [ ] **Sleep-band carving.** Work through (or simulate, §16 time panel) a scheduled Sleep window on the
       desktop → the "Sleep" band shows a gap over the active stretch, retracting live at the now-line.
-      The peer shows the same gap only after **both** sides pressed Sync. Nights with no activity
+      The peer shows the same gap only after **both** sides have reconciled (any trigger; press Sync to
+      force it). Nights with no activity
       evidence stay solid. Nothing is pushed by the carving itself (check §3a: zero writes).
 
 ---
@@ -219,8 +235,8 @@ Both debug scripts share one app install and wipe local data on deploy by **unin
 `internal\deploy-android-debug.bat`.
 
 - [ ] `scripts\account1-deploy-android.bat` — builds the debug APK, uninstalls + reinstalls over adb,
-      launches auto-signed-in as account 1 → app opens signed in; local state starts empty until a Sync
-      press pulls.
+      launches auto-signed-in as account 1 → app opens signed in; local state starts empty and the
+      sign-in's own reconcile pulls the account's data (no Sync press needed).
 - [ ] `scripts\account2-deploy-android.bat` — same for account 2 → confirms the wipe + re-sign-in swaps
       accounts cleanly (no account-1 data bleed).
 - [ ] If a signature clash with the account-3 release build occurs → uninstall + clean install (debug is
@@ -235,18 +251,35 @@ FCM/APNs ↔ phone, and client `device_heartbeat` UPSERT ↔ `tick_pause_cues()`
 Function ↔ FCM/APNs ↔ phone). Full procedures live in
 **`docs/PAUSE_CUE_DELIVERY.md`** — do them there, tick here. Inert unless §0 push prerequisites are met.
 
+**Expected latency, so you don't call a slow tick a failure.** A **clean lock** is reported by the device the
+instant its screen goes off, so e1 arms the cue immediately. A **dirty kill** is found only by the cron: an
+account is eligible once its newest `beat_at` is older than `2·t_a` (20 s by default) and is picked up by the
+next `t_b` pass (`'* * * * *'` — **1 minute**), i.e. up to **~80 s** after the walk-away. Either way the cue
+*instant* is anchored on the walk-away (`now()` for e1, `max(beat_at) + t_a/2` for e2) plus `break_length`, so
+detection latency delays the arming, never the speaking.
+
 - [ ] **Heartbeats appear.** Foreground the signed-in phone / open the signed-in desktop → `device_heartbeat`
       gains a fresh row per device (recent `beat_at`, and the row holds nothing but the account, the device and
       that time), the account's `data_payload_sent` row reads `false`, and `device_break` holds ONE row for the
       account with `break_5min_due_ms` + `break_15min_due_ms`. Background/lock the phone → its `beat_at`
       stops advancing while the `device_break` row stays put (that is deliberate — it records the state the
       user walked away in); close the desktop → likewise.
-- [ ] **Cue fires when everyone is gone.** With a screen break pending, background/lock every device on
-      the account → within ~10 s of the last device going idle, `pause_cue_schedule` gains a row with
-      `pushed_at`, and the phone receives the push, schedules an OS alarm, and **speaks at the break's end**
+- [ ] **Cue fires when everyone is gone — clean lock (e1), armed at once.** With a screen break pending,
+      **lock** every device on the account (screen off, app alive) → the last one POSTs `pause-cue`
+      immediately, so `pause_cue_schedule` gains a row with `pushed_at` within **a second or two**, the cue
+      instant is `lock + break_length`, and the phone schedules an OS alarm and **speaks at the break's end**
       — kill the app before the fire instant to prove the OS alarm path.
-- [ ] **Reconnect suppresses.** Repeat, but re-foreground a device before the cue instant → the next tick
-      deletes the `pause_cue_schedule` row and pushes a `cancel`; the phone stays silent.
+- [ ] **Cue fires when everyone is gone — dirty kill (e2), up to ~80 s later.** Repeat, but make the last
+      device die without reporting (`adb shell am force-stop org.example.project`) → detection now waits for
+      the cron: the account must beat older than **`2·t_a`** (20 s at the default `t_a` = 10 s) and be caught
+      by the next **`t_b`** pass, which `pause-cue-setup.sql` schedules at `'* * * * *'` — **one minute**. So
+      the push is armed up to **`t_b + 2·t_a` ≈ 80 s** after the walk-away. This is *detection* latency only:
+      the cue instant is `t2 + break_length` with `t2 = max(beat_at) + t_a/2`, so a late tick never moves when
+      the phone speaks — only how late it learns of it. Verify in `supabase functions logs pause-cue-cron`;
+      a **force-stopped** app cannot receive FCM until relaunched, so expect it computed and silent (to hear
+      it, kill the app from Recents instead).
+- [ ] **Reconnect suppresses.** Repeat, but re-foreground a device before the cue instant → the next `t_b`
+      pass (so within ~1 min) deletes the `pause_cue_schedule` row and pushes a `cancel`; the phone stays silent.
 - [ ] **Sleep mode suppresses.** Press the left menu's **Sleep** toggle (it flips to "Work") → the
       `account_state` row shows `mode='sleeping'` with `wake_at`; going all-inactive now fires **no**
       cue. Press **Work** (or let the scheduled wake pass, surviving an app restart —
@@ -282,17 +315,18 @@ below is device-agnostic and identical either way (§A5 lists the few capabiliti
 ### The three-device run
 
 Get all three signed in to account 1: desktop via `scripts\account1-empty-and-open.bat`, Android via
-`scripts\account1-deploy-android.bat` (device per §A1/§A2), iPhone per §A3/§A4 (with one Sync pressed
-after sign-in so it holds the data). Have the Supabase `device_heartbeat` / `pause_cue_schedule` tables
+`scripts\account1-deploy-android.bat` (device per §A1/§A2), iPhone per §A3/§A4 (signing in reconciles on
+its own, so the data arrives without a press). Have the Supabase `device_heartbeat` / `pause_cue_schedule` tables
 and `supabase functions logs pause-cue` visible.
 
 - [ ] **Three-way LWW convergence.** Give each device a distinct edit (rename a different task on
-      each). Press Sync desktop → Android → iPhone → desktop → Android → all **three** show the same
-      state (whole-doc last-writer-wins; no lost tree, no duplicates).
-- [ ] **Edits stay local until each device's own Sync.** After the desktop edit + desktop Sync, the
-      Android and iPhone still show their pre-edit state until **their own** Sync press (sign-in never
-      pulls, nothing pushes on a timer) — and Supabase Logs show `scheduler_snapshot` writes only at
-      the Sync presses.
+      each), one after another. They converge on their own; pressing Sync desktop → Android → iPhone →
+      desktop → Android just forces the ordering — either way all **three** end on the same state (whole-doc
+      last-writer-wins; no lost tree, no duplicates).
+- [ ] **Edits propagate without any press.** Edit on the desktop and touch nothing else → the Android and
+      the iPhone show it within ~a second or two (auto-push, then each peer's Realtime poke → pull). Supabase
+      Logs show **one** `scheduler_snapshot` write per edit burst, at the edit — not at a Sync press. A device
+      that was closed/offline during the edit catches up at its next launch or reconnect, not at a press.
 - [ ] **Heartbeats show exactly two devices.** With all three foregrounded/unlocked, `device_heartbeat`
       has fresh rows for the **desktop and Android** — and no iOS row. The iPhone's absence is expected
       (see the capability note above), not a bug.
@@ -312,11 +346,14 @@ and `supabase functions logs pause-cue` visible.
       injected push — §A5/§A4.)
 - [ ] **Suppression is desktop/Android-only.** Repeat, but re-foreground the **iPhone** before the cue
       instant → nothing is cancelled (it writes no heartbeat) and both phones still fire. Re-foreground the
-      **Android or desktop** instead → the next tick cancels; both phones stay silent. (iOS cancel is
+      **Android or desktop** instead → the next `t_b` tick cancels (within ~1 min); both phones stay silent. (iOS cancel is
       best-effort: iOS cannot re-run the eligibility gate at fire time — runbook caveat.)
 - [ ] **Three-way force-logout.** With all three signed in, run `account1-empty-and-open.bat` → the
-      Android and the iPhone each keep their session until their next Sync press, at which point each
-      signs itself **out** (the `account_logout` marker) without re-seeding the emptied server.
+      Android and the iPhone each keep their session until their **next reconcile**, at which point each signs
+      itself **out** (the `account_logout` marker is re-read on every reconcile) without re-seeding the emptied
+      server. The script's wipe of the `scheduler_snapshot` row pokes each subscribed peer over Realtime, so
+      expect it within seconds; the marker itself is on no Realtime channel, so a bare logout bump would instead
+      land at the peer's next edit, launch or Sync press.
 
 ---
 
@@ -339,9 +376,9 @@ State dirs keep accounts from sharing data: acc1 → `~/.omniapp-acc1`, acc2 →
 acc3 (release) → `~/.omniapp-release`, default → `~/.omniapp`.
 
 - [ ] `account1-empty-and-open.bat` does its three things in order: (1) server-side logout of every
-      account-1 app (watch a still-running peer sign itself out on its next Sync, §3), (2) empties
-      **local and remote** — after relaunch it does **not** re-pull old cloud data on Sync, (3) opens the
-      desktop app signed in as account 1. It does **not** deploy the Android app.
+      account-1 app (watch a still-running peer sign itself out on its next reconcile — the wipe pokes it
+      over Realtime, §3), (2) empties **local and remote** — after relaunch it does **not** re-pull old
+      cloud data, (3) opens the desktop app signed in as account 1. It does **not** deploy the Android app.
 - [ ] `account2-empty.bat` empties account 2 (local + remote) without relaunching; account 1's data
       untouched.
 
@@ -470,12 +507,13 @@ macOS — Kotlin/Native constraint).
    Sign in. Accept the notification-permission prompt.
 5. Push prereq (§0): `APNS_*` secrets set with `APNS_HOST=api.sandbox.push.apple.com` (an Xcode dev
    build uses the APNs **sandbox**) → `device_push_token` gains an `apns` row for the iPhone.
-6. Press **Sync** → the account's data appears (sign-in alone does not pull — §3).
+6. The account's data appears on its own — signing in is an account change, which reconciles once (§3). Press
+   **Sync** only to force it.
 
 ### A4. iPhone — Simulator
 
 1. Same Xcode project and Mac prerequisites as §A3; pick any iPhone Simulator as the run target → Run.
-   Sign in in-app exactly as §A3 step 4 and press Sync.
+   Sign in in-app exactly as §A3 step 4 (the sign-in pulls on its own — §A3 step 6).
 2. **Network-push fallback** (the one capability the Simulator lacks — §A5): inject the push locally
    (Xcode 14+), which exercises the app-side schedule/cancel + speak path only, never the server→APNs
    leg. Save the JSON payload from `docs/PAUSE_CUE_DELIVERY.md` (Testing B) as `schedule.apns`, then

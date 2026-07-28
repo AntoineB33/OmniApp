@@ -287,8 +287,9 @@ open class SchedulerSyncEngine(
     }
 
     /**
-     * Pull-or-push reconcile against the remote (Phase 1 whole-document LWW). Safe to call repeatedly —
-     * on startup, on window focus, and after a debounced save. No-op (and never throws) when signed out;
+     * Pull-or-push reconcile against the remote (Phase 1 whole-document LWW). Safe to call repeatedly — the
+     * triggers are startup, an account change, the 500 ms debounce after an authoritative edit, a Realtime
+     * poke or (re)subscribe catch-up, and the manual Sync button. No-op (and never throws) when signed out;
      * on network/server failure it records [SyncState.Error] and leaves local state untouched.
      */
     open suspend fun reconcile() {
@@ -410,11 +411,13 @@ open class SchedulerSyncEngine(
             else -> Unit
         }
 
-        // Active sessions ride the SAME (button-only) reconcile, merged per-row rather than LWW: this
-        // device's rows are pushed and every peer's are pulled into the local store, so the calendar can
-        // label past panels with the devices that were open. Best-effort — a failure here never fails the
-        // snapshot reconcile (the rows simply ride the next press). Skipped entirely on the remote
-        // force-logout return above, which must push nothing.
+        // Active sessions ride the SAME reconcile as the snapshot — EVERY one of them (startup, an account
+        // change, the debounced auto-push, a Realtime poke or (re)subscribe, the button) — merged per-row
+        // rather than LWW: this device's rows are pushed and every peer's are pulled into the local store,
+        // so the calendar can label past panels with the devices that were open. Nothing else carries them
+        // (no timer, no presence beat), so peer activity is reconcile-bounded. Best-effort — a failure here
+        // never fails the snapshot reconcile (the rows simply ride the next one). Skipped entirely on the
+        // remote force-logout return above, which must push nothing.
         syncActiveSessions(session)
     }
 

@@ -31,8 +31,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * PRD §15 active sessions under the button-only sync model: the Sync-button reconcile is the ONLY channel —
- * it pushes this device's own rows (never the signed-out `local` / legacy `remote-activity` rows) and pulls
+ * PRD §15 active sessions: a reconcile is the ONLY channel that carries them (any trigger — startup, an
+ * account change, the debounced auto-push, a Realtime poke, the button — but never a timer of their own).
+ * It pushes this device's own rows (never the signed-out `local` / legacy `remote-activity` rows) and pulls
  * every peer's into the local store, so the calendar can show which devices were open during past panels.
  * Also covers the phone's foreground activity model: each beat claims a one-minute lease (`[now, now+1min]`)
  * while the desktop claims only what its beat observed.
