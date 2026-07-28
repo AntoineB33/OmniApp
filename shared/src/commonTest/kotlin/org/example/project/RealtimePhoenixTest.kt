@@ -91,6 +91,36 @@ class RealtimePhoenixTest {
         )
     }
 
+    /**
+     * The "subscription is live" frame drives the CATCH-UP reconcile on every (re)subscribe — Realtime never
+     * replays what landed while the socket was down, so this frame is the only cue that a gap may have opened.
+     * It must be told apart from the rejection frame (same extension, `"status":"error"`) and from the plain
+     * `phx_reply` join ack, which arrives before streaming actually starts.
+     */
+    @Test
+    fun postgres_subscription_ready_is_detected_but_not_the_error_or_the_join_reply() {
+        assertTrue(
+            RealtimePhoenix.isPostgresSubscriptionReady(
+                """{"ref":null,"event":"system","payload":{"message":"Subscribed to PostgreSQL","status":"ok",""" +
+                    """"extension":"postgres_changes","channel":"db:scheduler_snapshot:u1"},"topic":"x"}""",
+            ),
+        )
+        // The rejection frame must NOT read as ready (it would reconcile in a hot loop against a dead channel).
+        assertTrue(
+            !RealtimePhoenix.isPostgresSubscriptionReady(
+                """{"ref":null,"event":"system","payload":{"message":"Unable to subscribe to changes with given""" +
+                    """ parameters...","status":"error","extension":"postgres_changes","channel":"c"},"topic":"x"}""",
+            ),
+        )
+        // The channel-join ack is not the streaming signal.
+        assertTrue(
+            !RealtimePhoenix.isPostgresSubscriptionReady(
+                """{"ref":"1","event":"phx_reply","payload":{"status":"ok","response":{"postgres_changes":[""" +
+                    """{"id":73736891,"event":"*","schema":"public","table":"scheduler_snapshot"}]}},"topic":"x"}""",
+            ),
+        )
+    }
+
     @Test
     fun postgres_subscription_error_is_detected_but_not_the_success_frame() {
         // The real rejection `system` frame Supabase sends when the table is absent from the Realtime

@@ -63,6 +63,17 @@ internal object RealtimePhoenix {
     fun isPostgresChange(text: String): Boolean = text.contains("\"event\":\"postgres_changes\"")
 
     /**
+     * True for the `system` frame confirming the postgres_changes subscription is LIVE and streaming
+     * (`"message":"Subscribed to PostgreSQL","status":"ok"`), as opposed to the `phx_reply` that merely
+     * acknowledges the channel join. This is the moment row changes start flowing — and therefore the moment
+     * the client must reconcile, because Realtime streams only while connected and **never replays what was
+     * missed** while it was not (see [RealtimeSnapshotSubscriber]).
+     */
+    fun isPostgresSubscriptionReady(text: String): Boolean =
+        text.contains("\"event\":\"system\"") && text.contains("\"extension\":\"postgres_changes\"") &&
+            text.contains("\"status\":\"ok\"")
+
+    /**
      * True for a `system` frame reporting the postgres_changes subscription was REJECTED — the server accepted
      * the channel join but refuses to stream row changes (most commonly the table is not in the
      * `supabase_realtime` publication, i.e. the enabling migration was never applied). Deliberately distinct

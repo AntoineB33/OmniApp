@@ -44,9 +44,16 @@ interface SnapshotChangeSubscription {
  * being **signed in** (not "active"), because a device wants to receive peers' edits whenever it is logged in;
  * it only reads (no `track`/`untrack`).
  *
- * NOTE: the exact Realtime wire shape can only be validated against a live Supabase endpoint (see
- * docs/PAUSE_CUE_DELIVERY.md); the pure builders are unit-tested and the reconcile poke is defensive (no trust
- * of the event body).
+ * **Streaming is not the same as synchronized.** Realtime delivers a row change only to sockets that are
+ * connected *at that instant*, and a `postgres_changes` subscription has no cursor to resume from — so anything
+ * that lands while this device is disconnected (OS sleep, network blip, the JWT-expiry rejoin) is lost to it
+ * permanently. Live-streaming alone therefore cannot keep devices converged; it must be paired with a reconcile
+ * on every **(re)subscribe** (below) and one at **startup** (`TaskSchedulerViewModel`). Those two make the stale
+ * window bounded by the reconnect rather than open-ended.
+ *
+ * Wire shape VERIFIED live 2026-07-28 against the real project: a row UPDATE reached a subscribed desktop and
+ * poked the reconcile. The builders are unit-tested besides, and the poke is defensive (the event body is never
+ * trusted or parsed).
  */
 class RealtimeSnapshotSubscriber(
     private val scope: CoroutineScope,
@@ -145,6 +152,21 @@ class RealtimeSnapshotSubscriber(
                         )
                         delay(SUBSCRIPTION_ERROR_RETRY_MILLIS)
                         break // reconnect (re-joins the channel); a redeploy of the migration then succeeds
+                    }
+                    if (RealtimePhoenix.isPostgresSubscriptionReady(text)) {
+                        // CATCH-UP ON (RE)SUBSCRIBE. Realtime streams changes only while the socket is up and
+                        // **never replays** what happened while it was down — a `postgres_changes` subscription has
+                        // no cursor/resume point. So every disconnection (OS sleep, network blip, the JWT-expiry
+                        // rejoin, a Phoenix drop) is a window in which a peer's push is missed FOREVER: the device
+                        // then sits stale until an edit or a restart, and an edit is the dangerous one — its own
+                        // auto-push fetch finds the remote ahead and LWW-pulls over it (see the startup reconcile in
+                        // TaskSchedulerViewModel). Reconciling here turns every reconnect into a catch-up, so the
+                        // stale window is bounded by the reconnect, not by the next user action. This fires on the
+                        // FIRST subscribe of a connection too, which is harmless: reconcile is mutex-guarded and
+                        // no-ops when the revision already matches.
+                        Diagnostics.log("realtime snapshot: subscription live — reconciling to catch up")
+                        runCatching { onRemoteChange() }
+                            .onFailure { Diagnostics.log("realtime snapshot catch-up reconcile failed: ${it.message}") }
                     }
                     if (RealtimePhoenix.isPostgresChange(text)) {
                         Diagnostics.log("realtime snapshot: remote change — poking reconcile")

@@ -29,11 +29,16 @@ import kotlin.test.assertEquals
 /**
  * PRD §5 bidirectional auto-sync WIRING at the [TaskSchedulerViewModel] level (the reconcile push/pull/conflict
  * semantics themselves are covered by [SchedulerSyncEngineTest]). Verifies deterministically, under virtual time
- * and with no network, that: an authoritative edit auto-reconciles once after the 500 ms debounce (local→remote),
- * a burst of edits coalesces into one reconcile, a pulled remote snapshot never triggers a push-back (echo
- * prevention), and the Realtime auto-pull subscription is pointed at the account on sign-in and cleared on
- * sign-out. A recording [FakeEngine] stands in for the transport so reconcile() records a call instead of doing
- * HTTP; the session is pre-seeded so sign-in needs no round-trip.
+ * and with no network, that: a restored session checks the server once at startup, an authoritative edit
+ * auto-reconciles once after the 500 ms debounce (local→remote), a burst of edits coalesces into one reconcile,
+ * a pulled remote snapshot never triggers a push-back (echo prevention), and the Realtime auto-pull subscription
+ * is pointed at the account on sign-in and cleared on sign-out. A recording [FakeEngine] stands in for the
+ * transport so reconcile() records a call instead of doing HTTP; the session is pre-seeded so sign-in needs no
+ * round-trip.
+ *
+ * The tests that assert "this must NOT reconcile" measure a DELTA against the count left by the startup
+ * reconcile, not an absolute 0 — the launch check is expected traffic, the thing under test is that nothing
+ * further was enqueued.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class BidirectionalSyncTest {
@@ -96,6 +101,30 @@ class BidirectionalSyncTest {
             snapshotSubscription = sub,
         )
 
+    /**
+     * The app must check the server for remote changes at every launch. A restored session is NOT an account
+     * change ([SchedulerSyncEngine.account] is seeded from the persisted meta at construction), so
+     * `watchAccountChanges` filters its first emission out and this startup reconcile is the ONLY thing that
+     * runs. Regression guard for 2026-07-28: without it the device opened one revision behind, and the user's
+     * first edit — the very thing that finally triggered a reconcile — was destroyed by the LWW pull it caused.
+     */
+    @Test
+    fun a_restored_session_checks_the_server_once_at_startup() {
+        val dispatcher = StandardTestDispatcher()
+        runTest(dispatcher) {
+            val engine = FakeEngine(signedInMeta())
+            val vm = vmOn(engine, RecordingSubscription(), dispatcher)
+            advanceUntilIdle()
+
+            assertEquals(1, engine.reconcileCount, "a launch on a restored session must check the server")
+
+            // ...and exactly once: no further traffic while the app simply sits there.
+            advanceUntilIdle()
+            assertEquals(1, engine.reconcileCount)
+            assertEquals(true, vm.state.value.lookAwayVoiceEnabled) // untouched by the check
+        }
+    }
+
     @Test
     fun authoritative_edit_auto_reconciles_after_the_debounce() {
         val dispatcher = StandardTestDispatcher()
@@ -105,14 +134,14 @@ class BidirectionalSyncTest {
             val vm = vmOn(engine, sub, dispatcher)
             advanceUntilIdle()
 
-            // Restored session pointed the auto-pull subscription at the account; sign-in reconciles nothing.
+            // Restored session pointed the auto-pull subscription at the account and checked the server once.
             assertEquals(listOf<String?>("user-1"), sub.accounts)
-            assertEquals(0, engine.reconcileCount)
+            val afterStartup = engine.reconcileCount
 
             // An authoritative edit moves the fingerprint → exactly one auto-push reconcile after the debounce.
             vm.dispatch(SchedulerIntent.SetLookAwayVoice(enabled = false))
             advanceUntilIdle()
-            assertEquals(1, engine.reconcileCount)
+            assertEquals(afterStartup + 1, engine.reconcileCount)
         }
     }
 
@@ -123,13 +152,14 @@ class BidirectionalSyncTest {
             val engine = FakeEngine(signedInMeta())
             val vm = vmOn(engine, RecordingSubscription(), dispatcher)
             advanceUntilIdle()
+            val afterStartup = engine.reconcileCount
 
             vm.dispatch(SchedulerIntent.SetLookAwayVoice(enabled = false))
             vm.dispatch(SchedulerIntent.SetLookAwayVoice(enabled = true))
             vm.dispatch(SchedulerIntent.SetLookAwayVoice(enabled = false))
             advanceUntilIdle()
 
-            assertEquals(1, engine.reconcileCount) // one coalesced push, not three
+            assertEquals(afterStartup + 1, engine.reconcileCount) // one coalesced push, not three
         }
     }
 
@@ -140,11 +170,12 @@ class BidirectionalSyncTest {
             val engine = FakeEngine(signedInMeta())
             val vm = vmOn(engine, RecordingSubscription(), dispatcher)
             advanceUntilIdle()
+            val afterStartup = engine.reconcileCount
 
             // A local-only view change (neutralized in the sync fingerprint) must never enqueue a push.
             vm.dispatch(SchedulerIntent.SetShowReminders(show = false))
             advanceUntilIdle()
-            assertEquals(0, engine.reconcileCount)
+            assertEquals(afterStartup, engine.reconcileCount)
         }
     }
 
@@ -155,6 +186,7 @@ class BidirectionalSyncTest {
             val engine = FakeEngine(signedInMeta())
             val vm = vmOn(engine, RecordingSubscription(), dispatcher)
             advanceUntilIdle()
+            val afterStartup = engine.reconcileCount
 
             // Time-driven past-sleep materialization: it DOES mutate state (a "Sleep" panel is banked and the
             // persisted `nextPanelCounter` advances), so it moves the sync fingerprint — but it is DERIVED
@@ -163,7 +195,7 @@ class BidirectionalSyncTest {
             vm.dispatch(SchedulerIntent.MaterializePastSleep(listOf(TaskTimeRange(0L, 3_600_000L))))
             advanceUntilIdle()
 
-            assertEquals(0, engine.reconcileCount)
+            assertEquals(afterStartup, engine.reconcileCount)
         }
     }
 
@@ -174,6 +206,7 @@ class BidirectionalSyncTest {
             val engine = FakeEngine(signedInMeta())
             val vm = vmOn(engine, RecordingSubscription(), dispatcher)
             advanceUntilIdle()
+            val afterStartup = engine.reconcileCount
 
             // Simulate a Realtime-driven pull landing through the engine's bound sink.
             val remote = SchedulerStateCodec.syncFingerprint(SchedulerState.empty().copy(lookAwayVoiceEnabled = false))
@@ -182,7 +215,7 @@ class BidirectionalSyncTest {
 
             assertEquals(false, vm.state.value.lookAwayVoiceEnabled) // remote applied
             // The pull reset the sync baseline and never went through the edit path — no push-back was enqueued.
-            assertEquals(0, engine.reconcileCount)
+            assertEquals(afterStartup, engine.reconcileCount)
         }
     }
 

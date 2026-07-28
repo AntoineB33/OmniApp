@@ -172,10 +172,24 @@ class TaskSchedulerViewModel(
             // credentials were supplied, sign in to that account — that is how the scripts open the app
             // already on account 1/2/3 instead of on a guest account. Otherwise PRD §5 applies: the app is
             // always connected to an account, so a device without one creates its GUEST account here.
-            // Neither triggers an immediate pull; the Realtime subscription streams peers' changes and the
-            // first local edit auto-pushes.
+            // Both of those land in [watchAccountChanges], which reconciles once against the new account.
             if (engine.isSignedIn) {
                 refreshRealtimeSubscription()
+                // STARTUP RECONCILE — the app checks the server for remote changes every launch.
+                //
+                // A RESTORED session is NOT an account change: [SchedulerSyncEngine._account] is seeded from the
+                // persisted `sync_meta` at engine construction, so by the time [watchAccountChanges] subscribes the
+                // value is already this account and its first emission is filtered out. Without this call nothing
+                // else reconciles at startup, and the device opens on whatever `revision` it last saw — for as long
+                // as the user makes no edit. That is not merely stale: the FIRST authoritative edit is what then
+                // triggers the auto-push reconcile, which fetches, finds the remote ahead, and takes the LWW `pull`
+                // branch — silently DESTROYING that very edit. Observed 2026-07-28 on account 3: a restart left the
+                // device one revision behind for 17 h; the user deleted two task cells and the pull put them back.
+                // Reconciling here collapses that window: the launch adopts (or pulls) whatever the server holds
+                // before the user can touch anything, and equally FLUSHES any edit a previous session left unpushed.
+                // Offline is a non-event — [SchedulerSyncEngine.reconcile] catches transport failures, logs them and
+                // keeps the local state for the next trigger.
+                saveScope.launch { engine.reconcile() }
             } else {
                 val creds = startupLogin()
                 if (creds != null) {
@@ -362,10 +376,11 @@ class TaskSchedulerViewModel(
 
     // ---- PRD §5 cross-device sync controls (no-ops when sync is disabled) ----
     //
-    // Sync is BIDIRECTIONAL: after sign-in, the Realtime subscription streams peers' pushes (auto-pull) and
-    // authoritative local edits auto-push on a 500 ms debounce. These controls change WHICH ACCOUNT the device
-    // is connected to; [watchAccountChanges] is what then loads that account's local partition, re-points the
-    // subscription and reconciles once against it. The manual Sync button ([syncNow]) is a force-now fallback.
+    // Sync is BIDIRECTIONAL: every launch checks the server once (the startup reconcile in `init`), the Realtime
+    // subscription then streams peers' pushes (auto-pull) and authoritative local edits auto-push on a 500 ms
+    // debounce. These controls change WHICH ACCOUNT the device is connected to; [watchAccountChanges] is what then
+    // loads that account's local partition, re-points the subscription and reconciles once against it. The manual
+    // Sync button ([syncNow]) is a force-now fallback.
 
     /**
      * Signs in to an existing account, switching this device to it (its data is then loaded/pulled by
