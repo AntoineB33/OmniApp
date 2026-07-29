@@ -247,7 +247,7 @@ if __name__ == "__main__":
     # EXAMPLE 1: The Requested 1h/1h Balancing Test on an Infinite Timeline
     tasks_1 = [
         Task("Task A (7m min)", priority=50, min_time=7, needs_screen=True),
-        Task("Task B (1h min)", priority=50, min_time=60, needs_screen=True)
+        Task("Task B (1h min)", priority=50, min_time=60, needs_screen=False)
     ]
     
     base_pattern_1 = [

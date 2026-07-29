@@ -1,12 +1,7 @@
-The scheduler must schedule tasks on a timeline, so that the presence of a task over a window is as close as possible to the priority percentage, when looking at every window (every size and every position). There must be some kind of difference average over window size and position that must be as small as possible.
-
-On an infinite timeline, some periods are associated to a task, some to several with a defined percentage for each task. Some periods are inactivity periods, some periods allow only screen tasks, some only no screen tasks, some allow both.
-The scheduler must add tasks to the future part of the timeline. Each tasks has a minimum time that must be respected by the scheduler (but not necessarily respected by the already placed tasks).
-
-Example with a clean starting timeline: task A 50% 7min task B 50% 1h
-result: 1h of task A, 1h of task B, and so on...
-why? because compared to another result like 56min of task A, 1h of task B, 63min of task A, 1h of task B, and so on..., the average score over window position and size is even lower.
-
+There are tasks. Each task has a minimum time (they can't be scheduled with a continuous time that is shorter) and a priority percentage. The scheduler must place panels of tasks in a timeline from t_current to +infinity. That means the result of the scheduler must be a function that takes t and returns the task (the result can't be directly the whole schedule because it is infinite).
+The starting timeline has already placed tasks. It also has periods where only some tasks are allowed.
+With a window from t1 to t2, we calculate the sum for each task of the absolute difference between its presence percentage and its priority percentage. We have an infinite continuous 2d graph of this sum over t1 and t2, and the scheduler must efficiently find a function that gives the 2d graph f where $$\liminf_{T \to \infty} \int_{0}^{T} \int_{0}^{T} (f(t1, t2) - g(t1, t2)) \,dt2 \,dt1 <= 0$$ with g every other possible graphs (or as much as possible if such function doesn't exist).
+Would be the most efficient algorithm to find the best return function?
 
 
 # Optimizer Comparison
@@ -17,3 +12,13 @@ why? because compared to another result like 56min of task A, 1h of task B, 63mi
 | **Timeline** | Can be truly infinite | Can be truly infinite | Must be strictly bounded (capped duration) |
 | **Result Quality** | "Good enough" / Approximate | Locally optimal (perfectly packed within each block) | Mathematically optimal (minimizes exact global error) |
 | **Memory usage** | Very low | Low (only stores state for the current block) | High (builds massive equation matrices) |
+
+
+new requirements:
+When several choices are possible, the tasks already placed in the past part of the timeline are taken into account to choose the best option.
+Example:
+choice 1 : task A 1h, task B 1h, task A 1h, task C 1h and so on...
+choice 2 : task A 1h, task C 1h, task A 1h, task B 1h and so on...
+if B is more present than C in the past, then take choice 2.
+
+$$\liminf_{T \to \infty} \int_{0}^{T} (f(x) - g(x)) dx < 0$$
