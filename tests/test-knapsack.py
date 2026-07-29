@@ -1,6 +1,7 @@
 import itertools
+from collections.abc import Iterable, Iterator
 from enum import Enum
-from typing import Iterable, Iterator
+
 
 class Period(Enum):
     INACTIVE = 0
