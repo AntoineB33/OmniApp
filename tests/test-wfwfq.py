@@ -24,9 +24,10 @@ class Task:
 
 
 class TimeBlock:
-    def __init__(self, duration: float, period_type: Period):
+    def __init__(self, duration: float, period_type: Period, forced_task: 'Task' = None):
         self.duration = duration
         self.period_type = period_type
+        self.forced_task = forced_task  # New attribute
 
 
 def is_task_valid_for_period(task: Task, period_type: Period) -> bool:
@@ -58,7 +59,8 @@ class TimelineStream:
                     "type": b.period_type,
                     "start": self.cached_end_time,
                     "end": self.cached_end_time + b.duration,
-                    "duration": b.duration
+                    "duration": b.duration,
+                    "forced_task": b.forced_task  # Add this line
                 })
                 self.cached_end_time += b.duration
             except StopIteration:
@@ -123,6 +125,22 @@ def schedule_timeline_raw(tasks: list[Task], timeline: Iterable[TimeBlock]) -> I
         if current_block["type"] == Period.INACTIVE:
             dur = stream.get_time_until_next_boundary(t)
             yield {"task": "INACTIVE", "duration": dur, "type": "INACTIVE"}
+            t += dur
+            continue
+            
+        if current_block.get("forced_task"):
+            forced_task = current_block["forced_task"]
+            dur = stream.get_time_until_next_boundary(t)
+            
+            # Update metrics so the scheduler accounts for this time mathematically
+            forced_task.allocated += dur
+            V += dur
+            
+            yield {
+                "task": forced_task.name, 
+                "duration": dur, 
+                "type": "PRE-PLACED"
+            }
             t += dur
             continue
             
@@ -369,3 +387,22 @@ if __name__ == "__main__":
     scheduler_3 = schedule_timeline(tasks_3, combined_timeline)
     schedule_3_slice = list(itertools.islice(scheduler_3, 10))
     print_colored_timeline("Mixed Timeline - One-Off Start + Infinite Loop", schedule_3_slice)
+
+    # EXAMPLE 4
+    # Define tasks
+    t_deep_work = Task("Deep Work", priority=50, min_time=45, needs_screen=True)
+    t_reading = Task("Reading", priority=50, min_time=45, needs_screen=True)
+    
+    tasks_list = [t_deep_work, t_reading]
+
+    # Create a timeline with a pre-placed task
+    timeline = [
+        # Hardcoded: 120 mins of Deep Work exactly at the start
+        TimeBlock(120, Period.SCREEN, forced_task=t_deep_work),
+        TimeBlock(60, Period.NO_SCREEN),
+        TimeBlock(1800, Period.BOTH)
+    ]
+    
+    scheduler = schedule_timeline(tasks_list, timeline)
+    schedule_4_slice = list(itertools.islice(scheduler, 10))
+    print_colored_timeline("Forced Task Initialization", schedule_4_slice)
