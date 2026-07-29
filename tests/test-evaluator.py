@@ -60,7 +60,8 @@ def calculate_scores(schedule, tasks, t_max):
                     window_error += abs(actual_ratio - targets[tk.name])
                 
                 total_error_integral += window_error
-                max_window_error = max(max_window_error, window_error)
+                if window_error > max_window_error:
+                    max_window_error = window_error
                 valid_windows += 1
 
     avg_integral = total_error_integral / valid_windows if valid_windows > 0 else float('inf')
@@ -71,7 +72,15 @@ def run_evaluation(algo_module, t_max, tasks_builder, pattern_builder):
     tasks = tasks_builder(algo_module)
     timeline = pattern_builder(algo_module)
     
-    scheduler = algo_module.schedule_timeline(tasks, timeline)
+    # Detect which function the module uses to yield schedule chunks
+    if hasattr(algo_module, "schedule_timeline"):
+        scheduler_func = algo_module.schedule_timeline
+    elif hasattr(algo_module, "max_weight_scheduler"):
+        scheduler_func = algo_module.max_weight_scheduler
+    else:
+        raise AttributeError(f"No valid scheduler function found in {algo_module.__name__}.")
+    
+    scheduler = scheduler_func(tasks, timeline)
     schedule = []
     accumulated_time = 0
     
@@ -89,6 +98,7 @@ def main():
     current_dir = Path(__file__).parent
     wfwfq_mod = load_module("wfwfq", str(current_dir / "test-wfwfq.py"))
     ffq_mod = load_module("ffq", str(current_dir / "test-ccb.py"))
+    bld_mod = load_module("bld", str(current_dir / "test-bld.py"))
     
     T_MAX = 1500
 
@@ -110,10 +120,7 @@ def main():
         ])
     scenarios.append(("1. Standard Daily Pattern (Low Contention)", build_tasks_1, build_pattern_1))
 
-    # --- SCENARIO 2: Adversarial Credit Starvation (The WF²Q Killer Feature) ---
-    # Background task runs during NO_SCREEN, forcing Screen tasks to build massive credit.
-    # FFQ will burst the high priority screen task and starve the low priority one.
-    # WF²Q will neatly interleave them using Virtual Finish Times.
+    # --- SCENARIO 2: Adversarial Credit Starvation (High Contention) ---
     def build_tasks_2(mod):
         return [
             mod.Task("High Pri Screen", priority=80, min_time=10, needs_screen=True),
@@ -130,26 +137,27 @@ def main():
     # --- RUN EVALUATIONS ---
     for name, t_builder, p_builder in scenarios:
         print(f"\n{name} (T = {T_MAX} minutes)")
-        print("-" * 70)
+        print("-" * 75)
         
-        wf_int, wf_max = run_evaluation(wfwfq_mod, T_MAX, t_builder, p_builder)
-        ffq_int, ffq_max = run_evaluation(ffq_mod, T_MAX, t_builder, p_builder)
+        results = {
+            "WF²Q": run_evaluation(wfwfq_mod, T_MAX, t_builder, p_builder),
+            "FFQ (Credit)": run_evaluation(ffq_mod, T_MAX, t_builder, p_builder),
+            "BLD (Max-Weight)": run_evaluation(bld_mod, T_MAX, t_builder, p_builder)
+        }
         
-        print(f"{'Algorithm':<10} | {'Integral Score (Avg)':<22} | {'Worst-case Discrepancy (Max)':<25}")
-        print("-" * 70)
-        print(f"{'WF²Q':<10} | {wf_int:<22.5f} | {wf_max:<25.5f}")
-        print(f"{'FFQ':<10} | {ffq_int:<22.5f} | {ffq_max:<25.5f}")
+        print(f"{'Algorithm':<18} | {'Integral Score (Avg)':<22} | {'Worst-case Discrepancy (Max)':<25}")
+        print("-" * 75)
         
-        print("-" * 70)
-        if wf_int < ffq_int:
-            print(f"🏆 Integral Winner: WF²Q (by {ffq_int - wf_int:.5f})")
-        else:
-            print(f"🏆 Integral Winner: FFQ  (by {wf_int - ffq_int:.5f})")
+        for algo, (avg_int, max_val) in results.items():
+            print(f"{algo:<18} | {avg_int:<22.5f} | {max_val:<25.5f}")
             
-        if wf_max < ffq_max:
-            print(f"🛡️ Worst-Case Winner: WF²Q (by {ffq_max - wf_max:.5f})")
-        else:
-            print(f"🛡️ Worst-Case Winner: FFQ  (by {wf_max - ffq_max:.5f})")
+        print("-" * 75)
+        
+        best_int = min(results.items(), key=lambda x: x[1][0])
+        best_max = min(results.items(), key=lambda x: x[1][1])
+        
+        print(f"🏆 Integral Winner  : {best_int[0]} ({best_int[1][0]:.5f})")
+        print(f"🛡️ Worst-Case Winner: {best_max[0]} ({best_max[1][1]:.5f})")
 
 if __name__ == "__main__":
     main()
