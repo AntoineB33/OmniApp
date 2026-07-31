@@ -1,3 +1,4 @@
+import math
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 
@@ -8,24 +9,42 @@ class Task:
         self.priority = priority / 100.0  # Normalize percentage to 0-1
         self.min_time = min_time
 
-def infinite_scheduler(tasks, starting_timeline=None, periods=None):
+def infinite_scheduler(tasks, starting_timeline=None, periods=None, half_life=30.0):
     """
-    Generator that yields the next scheduled task indefinitely, respecting a pre-existing 
-    starting timeline and specific task periods.
+    Generator that yields the next scheduled task indefinitely.
+    
+    Debt caused by tasks is a two-sided exponential decay kernel e^(-k|Δt|).
+    - Past executions decay as we move forward.
+    - Future pre-scheduled executions radiate debt backwards, growing as we approach them.
     """
-    historical_time = {task.name: 0.0 for task in tasks}
+    # past_debt tracks the integral of e^{-k(t - τ)} for all τ < t
+    past_debt = {task.name: 0.0 for task in tasks}
     future_pre = []
 
-    # 1. Separate the timeline into "past" (for tie-breaking) and "future" (fixed schedule)
+    k = math.log(2) / half_life if half_life else 0.0
+
+    # 1. Initialize past_debt at t=0 and separate future blocks
     if starting_timeline:
         for b in starting_timeline:
-            task_name = b['task']
+            t_name = b['task']
+            if t_name not in past_debt:
+                continue
+                
             if b['end'] <= 0:
-                historical_time[task_name] += (b['end'] - b['start'])
+                # Completely in the past
+                if k > 0:
+                    past_debt[t_name] += (math.exp(k * b['end']) - math.exp(k * b['start'])) / k
+                else:
+                    past_debt[t_name] += (b['end'] - b['start'])
             elif b['start'] < 0:
-                historical_time[task_name] += (0 - b['start'])
-                future_pre.append({'task': task_name, 'start': 0, 'end': b['end']})
+                # Straddling t=0
+                if k > 0:
+                    past_debt[t_name] += (1.0 - math.exp(k * b['start'])) / k
+                else:
+                    past_debt[t_name] += (0 - b['start'])
+                future_pre.append({'task': t_name, 'start': 0, 'end': b['end']})
             else:
+                # Completely in the future
                 future_pre.append(b)
                 
     future_pre.sort(key=lambda x: x['start'])
@@ -33,8 +52,6 @@ def infinite_scheduler(tasks, starting_timeline=None, periods=None):
     if periods is not None:
         periods = sorted(periods, key=lambda x: x['start'])
     
-    # 2. Track allocated time strictly starting from t_now (t=0)
-    allocated_time = {task.name: 0.0 for task in tasks}
     current_time = 0.0
     
     while True:
@@ -54,8 +71,19 @@ def infinite_scheduler(tasks, starting_timeline=None, periods=None):
                 'end': overlapping_block['end'],
                 'type': 'pre-scheduled'
             }
-            # Pre-scheduled tasks accumulate debt normally in the future
-            allocated_time[overlapping_block['task']] += dur
+            
+            # Advance time and accumulate past_debt
+            if k > 0:
+                decay = math.exp(-k * dur)
+                for t_name in past_debt:
+                    past_debt[t_name] *= decay
+                    if t_name == overlapping_block['task']:
+                        past_debt[t_name] += (1 - decay) / k
+            else:
+                for t_name in past_debt:
+                    if t_name == overlapping_block['task']:
+                        past_debt[t_name] += dur
+                        
             current_time = overlapping_block['end']
             continue
             
@@ -65,8 +93,8 @@ def infinite_scheduler(tasks, starting_timeline=None, periods=None):
             if b['start'] > current_time:
                 next_start = min(next_start, b['start'])
                 
-        # 3. Determine if we are inside a valid period and which tasks are allowed
-        accepted_tasks = [t.name for t in tasks]  # Default to all tasks
+        # Determine if we are inside a valid period and which tasks are allowed
+        accepted_tasks = [t.name for t in tasks]
         current_period_end = float('inf')
         
         if periods is not None:
@@ -84,42 +112,64 @@ def infinite_scheduler(tasks, starting_timeline=None, periods=None):
                 accepted_tasks = current_p['accepted_tasks']
                 current_period_end = current_p['end']
             else:
-                # We are outside any valid period. Advance to the next event.
+                # Outside any valid period. Advance to the next event.
                 advance_to = min(next_start, next_p_start)
                 if advance_to == float('inf'):
-                    break  # No tasks fit and no future blocks/periods exist
+                    break
+                
+                dur = advance_to - current_time
+                if k > 0:
+                    decay = math.exp(-k * dur)
+                    for t_name in past_debt:
+                        past_debt[t_name] *= decay
+                        
                 current_time = advance_to
                 continue
 
-        # Clamp the gap by the end of the current period so tasks don't bleed out of bounds
+        # Clamp the gap by the end of the current period
         gap = min(next_start, current_period_end) - current_time
-        
-        # Only consider tasks that can actually fit in the gap and are accepted in this period
         valid_tasks = [t for t in tasks if t.min_time <= gap and t.name in accepted_tasks]
         
         if not valid_tasks:
             advance_to = min(next_start, current_period_end)
             if advance_to == float('inf'):
-                break # No more time blocks or periods left
+                break 
+            
+            dur = advance_to - current_time
+            if k > 0:
+                decay = math.exp(-k * dur)
+                for t_name in past_debt:
+                    past_debt[t_name] *= decay
+                    
             current_time = advance_to
             continue
             
-        # Find the task that is currently most starved.
-        # TIE-BREAKER: if (allocated/priority) is equal, look at historical time to ignore massive
-        # past debt mathematically but still shift the starting task correctly.
+        # Calculate Total Debt = Past Debt + Future Debt (Bidirectional Exponential)
+        def get_total_debt(t_name):
+            f_debt = 0.0
+            if k > 0:
+                for b in future_pre:
+                    if b['task'] == t_name and b['end'] > current_time:
+                        s = max(current_time, b['start'])
+                        e = b['end']
+                        # Integral of e^{-k(τ - current_time)} from s to e
+                        f_debt += (math.exp(-k * (s - current_time)) - math.exp(-k * (e - current_time))) / k
+            else:
+                for b in future_pre:
+                    if b['task'] == t_name and b['end'] > current_time:
+                        f_debt += (b['end'] - max(current_time, b['start']))
+                        
+            return past_debt[t_name] + f_debt
+
+        # Pick the most starved task taking BOTH the decaying past and looming future into account
         best_task = min(
             valid_tasks,
-            key=lambda t: (
-                allocated_time[t.name] / t.priority,
-                historical_time[t.name] / t.priority
-            )
+            key=lambda t: get_total_debt(t.name) / t.priority
         )
         
         duration = best_task.min_time
         min_valid = min(t.min_time for t in valid_tasks)
         
-        # If the remaining gap after placing this task is too small for ANY valid task,
-        # extend the current task to fill the gap. (Avoids dead space).
         if gap - duration < min_valid and gap >= duration:
             duration = gap
             
@@ -131,27 +181,30 @@ def infinite_scheduler(tasks, starting_timeline=None, periods=None):
             'type': 'scheduled'
         }
         
-        allocated_time[best_task.name] += duration
+        # Advance time and past_debt
+        if k > 0:
+            decay = math.exp(-k * duration)
+            for t_name in past_debt:
+                past_debt[t_name] *= decay
+                if t_name == best_task.name:
+                    past_debt[t_name] += (1 - decay) / k
+        else:
+            past_debt[best_task.name] += duration
+            
         current_time += duration
 
-def get_schedule(tasks, time_limit, starting_timeline=None, periods=None):
-    """
-    Extracts scheduled tasks up to a given time limit.
-    """
-    scheduler = infinite_scheduler(tasks, starting_timeline, periods)
+
+def get_schedule(tasks, time_limit, starting_timeline=None, periods=None, half_life=30.0):
+    scheduler = infinite_scheduler(tasks, starting_timeline, periods, half_life)
     schedule = []
-    
     for block in scheduler:
         if block['start'] >= time_limit:
             break
         schedule.append(block)
-        
     return schedule
 
+
 def visualize_schedule(schedule, tasks, time_limit, ax, title):
-    """
-    Plots the timeline on the provided Matplotlib axis.
-    """
     colors = list(mcolors.TABLEAU_COLORS.values())
     task_colors = {task.name: colors[i % len(colors)] for i, task in enumerate(tasks)}
     
@@ -163,7 +216,6 @@ def visualize_schedule(schedule, tasks, time_limit, ax, title):
         task_blocks = []
         for b in schedule:
             if b['task'] == name:
-                # Clamp visual blocks so they don't stretch infinitely off-screen
                 start_clamped = max(0, b['start'])
                 end_clamped = min(time_limit, b['end'])
                 if end_clamped > start_clamped:
@@ -176,7 +228,6 @@ def visualize_schedule(schedule, tasks, time_limit, ax, title):
         y_ticks.append(y_pos + 5)
         y_labels.append(name)
 
-    # Calculate actual achieved percentages in this timeframe
     stats_text = "Target vs Actual:\n"
     for task in tasks:
         actual_time = 0
@@ -197,16 +248,10 @@ def visualize_schedule(schedule, tasks, time_limit, ax, title):
     ax.grid(True, axis='x', linestyle='--', alpha=0.7)
     
     props = {'boxstyle': 'round', 'facecolor': 'wheat', 'alpha': 0.5}
-    ax.text(1.02, 0.95, stats_text, transform=ax.transAxes, fontsize=10,
-            verticalalignment='top', bbox=props)
+    ax.text(1.02, 0.95, stats_text, transform=ax.transAxes, fontsize=10, verticalalignment='top', bbox=props)
 
 
 def show_scrollable(fig, window_title="Scheduler tests"):
-    """
-    Show `fig` in a window with a vertical scrollbar, so every subplot keeps its
-    full height instead of being crushed to fit the screen. Falls back to the
-    normal plt.show() if Tk isn't available.
-    """
     try:
         import tkinter as tk
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -236,62 +281,45 @@ def show_scrollable(fig, window_title="Scheduler tests"):
 
     def on_holder_configure(_event=None):
         scroll_canvas.configure(scrollregion=scroll_canvas.bbox("all"))
-
     def on_canvas_configure(event):
-        # Follow the window width; the height stays fixed so the plots keep their size.
         scroll_canvas.itemconfigure(window_id, width=event.width)
-
     def on_mousewheel(event):
         scroll_canvas.yview_scroll(-event.delta // 120, "units")
 
     holder.bind("<Configure>", on_holder_configure)
     scroll_canvas.bind("<Configure>", on_canvas_configure)
-    root.bind_all("<MouseWheel>", on_mousewheel)              # Windows / macOS
-    root.bind_all("<Button-4>", lambda e: scroll_canvas.yview_scroll(-1, "units"))  # X11
+    root.bind_all("<MouseWheel>", on_mousewheel)              
+    root.bind_all("<Button-4>", lambda e: scroll_canvas.yview_scroll(-1, "units"))  
     root.bind_all("<Button-5>", lambda e: scroll_canvas.yview_scroll(1, "units"))
 
     root.mainloop()
 
 
 if __name__ == "__main__":
-    # Each subplot gets a fixed height; the window scrolls instead of squeezing them.
-    TEST_COUNT = 6
+    TEST_COUNT = 7
     SUBPLOT_HEIGHT_IN = 3.5
     fig, axes = plt.subplots(TEST_COUNT, 1, figsize=(14, SUBPLOT_HEIGHT_IN * TEST_COUNT))
 
     # ==========================================
     # TEST 1: Original base behavior
     # ==========================================
-    tasks_1 = [
-        Task(name="Task A", priority=50, min_time=10),
-        Task(name="Task B", priority=30, min_time=15),
-        Task(name="Task C", priority=20, min_time=5)
-    ]
+    tasks_1 = [Task(name="Task A", priority=50, min_time=10), Task(name="Task B", priority=30, min_time=15), Task(name="Task C", priority=20, min_time=5)]
     time_limit_1 = 100
     schedule_1 = get_schedule(tasks_1, time_limit_1, starting_timeline=[])
-    visualize_schedule(schedule_1, tasks_1, time_limit_1, axes[0], 
-                       "Test 1: Original Scenario (No Starting Timeline)")
+    visualize_schedule(schedule_1, tasks_1, time_limit_1, axes[0], "Test 1: Original Scenario (No Starting Timeline)")
 
     # ==========================================
     # TEST 2: Ignoring Debt but Shifting Start
     # ==========================================
-    tasks_2 = [
-        Task(name="Task A", priority=50, min_time=10),
-        Task(name="Task B", priority=50, min_time=10)
-    ]
+    tasks_2 = [Task(name="Task A", priority=50, min_time=10), Task(name="Task B", priority=50, min_time=10)]
     time_limit_2 = 100
-    starting_timeline_2 = [{'task': 'Task A', 'start': -1000, 'end': 0}]
-    schedule_2 = get_schedule(tasks_2, time_limit_2, starting_timeline=starting_timeline_2)
-    visualize_schedule(schedule_2, tasks_2, time_limit_2, axes[1], 
-                       "Test 2: Massive Task A before t_now (Debt Ignored, Starts with B)")
+    schedule_2 = get_schedule(tasks_2, time_limit_2, starting_timeline=[{'task': 'Task A', 'start': -1000, 'end': 0}])
+    visualize_schedule(schedule_2, tasks_2, time_limit_2, axes[1], "Test 2: Massive Task A past debt decays")
 
     # ==========================================
-    # TEST 3: Infinite Pattern pre-scheduled
+    # TEST 3: Infinite Pattern pre-scheduled (Bidirectional Check)
     # ==========================================
-    tasks_3 = [
-        Task(name="Task A", priority=50, min_time=10),
-        Task(name="Task B", priority=50, min_time=10)
-    ]
+    tasks_3 = [Task(name="Task A", priority=50, min_time=10), Task(name="Task B", priority=50, min_time=10)]
     time_limit_3 = 200
     starting_timeline_3 = []
     start_time = 0
@@ -299,68 +327,49 @@ if __name__ == "__main__":
         starting_timeline_3.append({'task': 'Task A', 'start': start_time, 'end': start_time + 60})
         start_time += 60 + 60 + 10
         
-    schedule_3 = get_schedule(tasks_3, time_limit_3, starting_timeline=starting_timeline_3)
-    visualize_schedule(schedule_3, tasks_3, time_limit_3, axes[2], 
-                       "Test 3: Pre-Scheduled Infinite Pattern (Scheduler fills gaps dynamically)")
+    schedule_3 = get_schedule(tasks_3, time_limit_3, starting_timeline=starting_timeline_3, half_life=30.0)
+    visualize_schedule(schedule_3, tasks_3, time_limit_3, axes[2], "Test 3: Symmetrical valley between two massive A blocks")
 
     # ==========================================
     # TEST 4: Double massive debt
     # ==========================================
-    tasks_4 = [
-        Task(name="Task A", priority=45, min_time=45),
-        Task(name="Task B", priority=45, min_time=45),
-        Task(name="Task C", priority=10, min_time=45)
-    ]
-    time_limit_4 = 200
-    starting_timeline_4 = [
-        {'task': 'Task A', 'start': -1000, 'end': 0},
-        {'task': 'Task B', 'start': -1000, 'end': 0}
-    ]
-    schedule_4 = get_schedule(tasks_4, time_limit_4, starting_timeline=starting_timeline_4)
-    visualize_schedule(schedule_4, tasks_4, time_limit_4, axes[3],
-                       "Test 4: Massive Task A and B before t_now (Debt Ignored, Starts with C)")
+    tasks_4 = [Task(name="Task A", priority=45, min_time=45), Task(name="Task B", priority=45, min_time=45), Task(name="Task C", priority=10, min_time=45)]
+    time_limit_4 = 2000
+    schedule_4 = get_schedule(tasks_4, time_limit_4, starting_timeline=[{'task': 'Task A', 'start': -1000, 'end': 0}, {'task': 'Task B', 'start': -1000, 'end': 0}])
+    visualize_schedule(schedule_4, tasks_4, time_limit_4, axes[3], "Test 4: Massive Task A and B before t_now")
 
     # ==========================================
     # TEST 5: Exclusive Periods
     # ==========================================
-    tasks_5 = [
-        Task(name="Task A", priority=50, min_time=10),
-        Task(name="Task B", priority=50, min_time=10)
-    ]
+    tasks_5 = [Task(name="Task A", priority=50, min_time=10), Task(name="Task B", priority=50, min_time=10)]
     time_limit_5 = 100
-    periods_5 = [
-        {'start': 0, 'end': 50, 'accepted_tasks': ['Task A']},
-        {'start': 50, 'end': 100, 'accepted_tasks': ['Task B']}
-    ]
-    schedule_5 = get_schedule(tasks_5, time_limit_5, periods=periods_5)
-    visualize_schedule(schedule_5, tasks_5, time_limit_5, axes[4],
-                       "Test 5: Exclusive Periods (0-50 Task A only, 50-100 Task B only)")
+    schedule_5 = get_schedule(tasks_5, time_limit_5, periods=[{'start': 0, 'end': 50, 'accepted_tasks': ['Task A']}, {'start': 50, 'end': 100, 'accepted_tasks': ['Task B']}])
+    visualize_schedule(schedule_5, tasks_5, time_limit_5, axes[4], "Test 5: Exclusive Periods")
 
     # ==========================================
     # TEST 6: Complex Intersecting Periods
     # ==========================================
-    tasks_6 = [
-        Task(name="Task A", priority=40, min_time=10),
-        Task(name="Task B", priority=40, min_time=10),
-        Task(name="Task C", priority=20, min_time=10)
-    ]
+    tasks_6 = [Task(name="Task A", priority=40, min_time=10), Task(name="Task B", priority=40, min_time=10), Task(name="Task C", priority=20, min_time=10)]
     time_limit_6 = 150
-    # In P1, B is missing. In P2, A is missing. In P3, all are available.
-    periods_6 = [
-        {'start': 0, 'end': 60, 'accepted_tasks': ['Task A', 'Task C']},
-        {'start': 60, 'end': 120, 'accepted_tasks': ['Task B', 'Task C']},
-        {'start': 120, 'end': 150, 'accepted_tasks': ['Task A', 'Task B', 'Task C']}
-    ]
-    schedule_6 = get_schedule(tasks_6, time_limit_6, periods=periods_6)
-    visualize_schedule(schedule_6, tasks_6, time_limit_6, axes[5],
-                       "Test 6: Overlapping Allow-lists across Periods (A+C -> B+C -> A+B+C)")
+    schedule_6 = get_schedule(tasks_6, time_limit_6, periods=[{'start': 0, 'end': 60, 'accepted_tasks': ['Task A', 'Task C']}, {'start': 60, 'end': 120, 'accepted_tasks': ['Task B', 'Task C']}, {'start': 120, 'end': 150, 'accepted_tasks': ['Task A', 'Task B', 'Task C']}])
+    visualize_schedule(schedule_6, tasks_6, time_limit_6, axes[5], "Test 6: Overlapping Allow-lists")
 
-    # Console output to verify block generation natively
-    for idx, sched in enumerate([schedule_1, schedule_2, schedule_3, schedule_4, schedule_5, schedule_6]):
+    # ==========================================
+    # TEST 7: Looming Future Debt Simulation
+    # ==========================================
+    tasks_7 = [Task(name="Task A", priority=50, min_time=10), Task(name="Task B", priority=50, min_time=10)]
+    time_limit_7 = 100
+    # Task A will monopolize time from 70 to 130. 
+    # Notice how B executes heavily right BEFORE 70, due to Task A radiating future debt.
+    starting_timeline_7 = [{'task': 'Task A', 'start': 70, 'end': 130}]
+    schedule_7 = get_schedule(tasks_7, time_limit_7, starting_timeline=starting_timeline_7, half_life=20.0)
+    visualize_schedule(schedule_7, tasks_7, time_limit_7, axes[6], "Test 7: Future Debt Growth (B runs pre-emptively because A looms at t=70)")
+
+    for idx, sched in enumerate([schedule_1, schedule_2, schedule_3, schedule_4, schedule_5, schedule_6, schedule_7]):
         print(f"\n--- Schedule {idx+1} ---")
-        for b in sched[:8]:
-            print(f"[{b['start']:>3}m -> {b['end']:>3}m] {b['task']} (Type: {b.get('type')})")
-        if len(sched) > 8: print("...")
+        for b in sched[:12]:
+            print(f"[{b['start']:>3.1f}m -> {b['end']:>3.1f}m] {b['task']} (Type: {b.get('type')})")
+        if len(sched) > 12: print("...")
 
     fig.subplots_adjust(left=0.08, right=0.80, top=0.96, bottom=0.04, hspace=0.85)
     show_scrollable(fig)
