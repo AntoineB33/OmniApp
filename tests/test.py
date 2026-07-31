@@ -71,32 +71,76 @@ class SchedulerFunction:
         
         def simulate_interval(dt, task_running):
             """
-            Euler integration for time advancing. Applies decay only to the EXCESS 
-            debt, while accumulating natural ideal debt and actual execution continuously.
+            Exact piecewise ODE solver for time advancing. Applies continuous exponential
+            decay to the EXCESS debt while naturally integrating ideal debt and actual execution.
             """
-            step = 5.0
-            while dt > 0:
-                current_dt = min(dt, step)
-                decay = math.exp(-k * current_dt) if k > 0 else 1.0
+            for t in self.tasks:
+                name = t.name
+                e = 1.0 if name == task_running else 0.0
+                R = t.priority - e  # Rate of change of debt inside the bounds
                 
-                for t in self.tasks:
-                    name = t.name
+                t_rem = dt
+                while t_rem > 0:
                     d = debts[name]
+                    eps = 1e-9  # Epsilon for floating point safety
                     
-                    # 1. Decay only the portion of debt that exceeds the natural bound C
-                    if d > C:
-                        debts[name] = C + (d - C) * decay
-                    elif d < -C:
-                        debts[name] = -C + (d + C) * decay
-                    
-                    # 2. Add ideal proportion
-                    debts[name] += current_dt * t.priority
-                    
-                    # 3. Subtract actual execution
-                    if name == task_running:
-                        debts[name] -= current_dt
+                    # 1. Excess debt (or sitting on the boundary wanting to grow)
+                    if d > C + eps or (d >= C - eps and R > 0):
+                        y0 = d - C
+                        denominator = R - k * y0
+                        ratio = R / denominator if abs(denominator) > 1e-12 else -1.0
                         
-                dt -= current_dt
+                        target_t = float('inf')
+                        # Check if it will hit the boundary 'C' (y=0) within finite time
+                        if k > 0 and 0 < ratio < 1:
+                            target_t = -math.log(ratio) / k
+                            
+                        step_t = min(t_rem, target_t)
+                        if k > 0:
+                            debts[name] = C + R/k + (y0 - R/k) * math.exp(-k * step_t)
+                        else:
+                            debts[name] = d + R * step_t
+                            
+                        t_rem -= step_t
+                        if abs(debts[name] - C) < eps:
+                            debts[name] = C
+
+                    # 2. Deficit debt (or sitting on the bottom boundary wanting to shrink)
+                    elif d < -C - eps or (d <= -C + eps and R < 0):
+                        y0 = d + C
+                        denominator = R - k * y0
+                        ratio = R / denominator if abs(denominator) > 1e-12 else -1.0
+                        
+                        target_t = float('inf')
+                        if k > 0 and 0 < ratio < 1:
+                            target_t = -math.log(ratio) / k
+                            
+                        step_t = min(t_rem, target_t)
+                        if k > 0:
+                            debts[name] = -C + R/k + (y0 - R/k) * math.exp(-k * step_t)
+                        else:
+                            debts[name] = d + R * step_t
+                            
+                        t_rem -= step_t
+                        if abs(debts[name] - (-C)) < eps:
+                            debts[name] = -C
+                            
+                    # 3. Inside the safe boundaries [-C, C], integration is purely linear
+                    else:
+                        target_t = float('inf')
+                        if R > 0:
+                            target_t = (C - d) / R
+                        elif R < 0:
+                            target_t = (-C - d) / R
+                            
+                        step_t = min(t_rem, target_t)
+                        debts[name] += R * step_t
+                        t_rem -= step_t
+                        
+                        if abs(debts[name] - C) < eps:
+                            debts[name] = C
+                        elif abs(debts[name] - (-C)) < eps:
+                            debts[name] = -C
 
         # Process starting blocks that occurred entirely in the past
         if past_blocks:
@@ -193,24 +237,33 @@ class SchedulerFunction:
                 continue
 
             # Calculate scores to pick the most starved task based on priority ratio
-            best_task = valid_tasks[0]  # Satisfies Pylance (valid_tasks is guaranteed non-empty here)
+            best_task = valid_tasks[0]  
             best_score = float('-inf')
             
             for t in valid_tasks:
                 f_eff = 0.0
+                
+                # Merge contiguous future blocks mathematically to prevent chunking dependencies 
+                merged_blocks = []
                 for b in future_pre:
                     if b['task'] == t.name and b['end'] > current_time:
                         s = max(current_time, b['start'])
                         e = b['end']
-                        D = e - s
-                        dist = s - current_time
-                        
-                        # Only decay the EXCESS duration of future blocks
-                        if D > C:
-                            f_eff += C + (D - C) * (math.exp(-k * dist) if k > 0 else 1.0)
+                        if merged_blocks and abs(merged_blocks[-1]['end'] - s) < 1e-9:
+                            merged_blocks[-1]['end'] = e
                         else:
-                            f_eff += D
-                            
+                            merged_blocks.append({'start': s, 'end': e})
+                
+                for mb in merged_blocks:
+                    D = mb['end'] - mb['start']
+                    dist = mb['start'] - current_time
+                    
+                    # Only decay the EXCESS duration of future blocks
+                    if D > C:
+                        f_eff += C + (D - C) * (math.exp(-k * dist) if k > 0 else 1.0)
+                    else:
+                        f_eff += D
+                        
                 total_debt = debts[t.name] - f_eff
                 score = total_debt / t.priority
                 
