@@ -585,38 +585,9 @@ object SchedulerDomain {
                 state.tasks[it]?.title?.isNotBlank() == true
         }
 
-    /**
-     * PRD §9 EDF: the period `T = m / p` (millis) of a leaf task — its minimum time `m` divided by its
-     * absolute priority percentage `p`. The task releases an `m`-long job every `T`, so its utilization
-     * `m / T = p` is exactly its priority share. A zero-priority task has an infinite period (it is only
-     * ever scheduled as a last resort when nothing else is due, PRD §9 "satisfy the priorities").
-     */
-    fun edfPeriodMillis(minimumMinutes: Int, priority: Double): Double {
-        if (priority <= 0.0) return Double.POSITIVE_INFINITY
-        return (minimumMinutes.toLong() * MILLIS_PER_MINUTE).toDouble() / priority
-    }
-
-    /**
-     * PRD §9 task choice (Earliest Deadline First): the leaf task the EDF fill picks *first* at [nowMillis]
-     * — the one with the earliest initial deadline, i.e. the shortest period `T = m / p` ([edfPeriodMillis]).
-     * Ties (equal periods, e.g. equal minimum + equal priority) break by **higher priority, then
-     * alphabetically** (matching §8 manual add and the §9 tie order). Returns null when there is no real
-     * leaf task. This is the convenience point-query; the full window fill ([fillSchedule]) tracks each
-     * task's deadline across the simulation.
-     */
-    fun nextTask(
-        state: SchedulerState,
-        @Suppress("UNUSED_PARAMETER") nowMillis: Long,
-    ): TaskId? {
-        val absolute = absoluteTaskPriorities(state)
-        val leaves = schedulableLeaves(state)
-        if (leaves.isEmpty()) return null
-        return leaves.minWithOrNull(
-            compareBy<TaskId> { edfPeriodMillis(state.tasks[it]?.minimumMinutes ?: 0, absolute[it] ?: 0.0) }
-                .thenByDescending { absolute[it] ?: 0.0 }
-                .thenBy { state.tasks[it]?.title.orEmpty() },
-        )
-    }
+    // The §9 pick is the debt model ([fillSchedule] / [DebtLedger]); the §8 manual-add pick is
+    // [manualAddTaskId]. The EDF-era helpers `edfPeriodMillis` / `nextTask` were deleted with that fill —
+    // they scored a static period `T = m / p`, which no longer predicts anything the scheduler does.
 
     private const val MILLIS_PER_MINUTE: Long = 60_000L
 
@@ -2062,23 +2033,39 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §9 Scheduling: regenerate the auto schedule with an Earliest-Deadline-First simulation. Every
-     * **non-pinned** panel in the window `[now, now + 168h]` is cut and replaced; the only panels kept
-     * are the **fixed** ones (pinned + chore, [isSchedulerFixed]) and any panel entirely **outside** the
-     * window — already past (`end ≤ now`) or starting beyond the horizon (`start > now + 168h`). Cutting
-     * the in-progress non-pinned panel too means the current task is re-derived from `now` each run, so a
-     * task added to the tree always reschedules immediately (no kept block can swallow the window); the
-     * fill is deterministic, so a refill at the same instant reproduces the same panels (the §9 no-op
-     * short-circuit still fires) and re-picks the same current task (notification continuity, §11).
+     * CLAUDE.md reconstructibility rule: true for a panel [fillSchedule] **regenerates** deterministically
+     * from `now` + the tree + the sleep/screen-break config — the screen-break and sleep obstacle panels and the
+     * non-pinned auto-fill panels. These carry no authoritative user state, so a re-derive that only moves
+     * them is not a syncable change. Pinned panels (user-fixed) and reminder tags (`chore`, which carry the
+     * authoritative `checked` state) are NOT regenerated and so are never treated as derived. Mirrors the
+     * `kept` filter in [fillSchedule] (screenBreak/sleep always cut; everything else kept when fixed or a
+     * reminder). Used by [org.example.project.scheduler.persistence.SchedulerStateCodec.syncFingerprint] to
+     * exclude derived panels from the sync fingerprint, so an engine-tick reschedule that only re-derives
+     * them neither marks state dirty nor pushes ("known deviation" fix).
+     */
+    fun isRegeneratedPanel(panel: TaskPanel): Boolean =
+        panel.screenBreak || panel.sleep || (panel.auto && !panel.pinned && !panel.chore)
+
+    /**
+     * PRD §9 Scheduling: regenerate the auto schedule with the **debt** simulation of `tests/README.md`.
+     * Every **non-pinned** panel in the window `[now, horizonMillis]` is cut and replaced; the only panels
+     * kept are the **fixed** ones (pinned + chore, [isSchedulerFixed]), any panel entirely **outside** the
+     * window — already past (`end ≤ now`) or starting beyond the horizon — and, when this call is an
+     * *extension* rather than a re-plan, the auto head already materialized ([keepExistingUntilMillis]).
+     * On a full re-plan, cutting the in-progress non-pinned panel too means the current task is re-derived
+     * from `now` each run, so a task added to the tree always reschedules immediately (no kept block can
+     * swallow the window); the fill is deterministic, so a refill at the same instant reproduces the same
+     * panels (the §9 no-op short-circuit still fires) and re-picks the same current task (notification
+     * continuity, §11).
      *
      * The pick rule is the **debt model** of `tests/README.md` ([DebtLedger] — the Kotlin port of the
-     * reference `tests/test.py`). Each leaf carries a signed debt in millis that integrates `pᵢ − eᵢ` as the
-     * timeline advances (`eᵢ` = 1 while it is the task being served); the cursor always places the task with
-     * the highest `debt / priority`, so the served shares converge on the priority percentages **at the
-     * smallest scale the minima allow** (two 50 % / 10-min tasks alternate every 10 min, not every hour).
-     * A chunk is shortened so it never overlaps the next fixed panel (PRD §10); the cursor skips over a
-     * fixed panel it lands inside — and while it does, the ledger integrates that panel's task as served,
-     * so committed work counts exactly like auto-placed work.
+     * reference `tests/test.py`), which replaced an Earliest-Deadline-First fill. Each leaf carries a signed
+     * debt in millis that integrates `pᵢ − eᵢ` as the timeline advances (`eᵢ` = 1 while it is the task being
+     * served); the cursor always places the task with the highest `debt / priority`, so the served shares
+     * converge on the priority percentages **at the smallest scale the minima allow** (two 50 % / 10-min
+     * tasks alternate every 10 min, not every hour). A chunk is shortened so it never overlaps the next
+     * fixed panel (PRD §10); the cursor skips over a fixed panel it lands inside — and while it does, the
+     * ledger integrates that panel's task as served, so committed work counts exactly like auto-placed work.
      *
      * PRD §9 "the deficits/excess from the already-placed panels before `now` … influence the chosen
      * result" (example 1): the ledger is **seeded by replaying the past** over [DEBT_PAST_LOOKBACK_MILLIS]
@@ -2101,22 +2088,12 @@ object SchedulerDomain {
      * around them) with one difference: when a task chunk meets a screen break, the chunk is **split** around
      * it and the task **resumes after** with its remaining work, so its minimum is never charged for the
      * screen-break time (a 45-min task crossing a 5-min screen break occupies a 50-min wall-clock span). A pinned
-     * obstacle, by contrast, truncates the chunk (the minimum is cut). Side panels regenerate every fill.
+     * obstacle, by contrast, truncates the chunk (the minimum is cut). Screen-break panels regenerate every fill.
+     *
+     * PRD §9 trigger: this runs only when [schedulingSignature] moves — never because time passed. The
+     * `SchedulerIntent.ExtendSchedule` path merely materializes more of the same plan (see
+     * [keepExistingUntilMillis]).
      */
-    /**
-     * CLAUDE.md reconstructibility rule: true for a panel [fillSchedule] **regenerates** deterministically
-     * from `now` + the tree + the sleep/side config — the screen-break and sleep obstacle panels and the
-     * non-pinned auto-fill panels. These carry no authoritative user state, so a re-derive that only moves
-     * them is not a syncable change. Pinned panels (user-fixed) and reminder tags (`chore`, which carry the
-     * authoritative `checked` state) are NOT regenerated and so are never treated as derived. Mirrors the
-     * `kept` filter in [fillSchedule] (screenBreak/sleep always cut; everything else kept when fixed or a
-     * reminder). Used by [org.example.project.scheduler.persistence.SchedulerStateCodec.syncFingerprint] to
-     * exclude derived panels from the sync fingerprint, so an engine-tick reschedule that only re-derives
-     * them neither marks state dirty nor pushes ("known deviation" fix).
-     */
-    fun isRegeneratedPanel(panel: TaskPanel): Boolean =
-        panel.screenBreak || panel.sleep || (panel.auto && !panel.pinned && !panel.chore)
-
     fun fillSchedule(
         state: SchedulerState,
         nowMillis: Long,

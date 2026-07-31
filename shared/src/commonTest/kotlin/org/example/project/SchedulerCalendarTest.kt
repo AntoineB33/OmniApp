@@ -704,15 +704,19 @@ class SchedulerCalendarTest {
         assertTrue(periods.any { it == range(now - 30 * MIN, now) })
     }
 
-    // ----- §9 next task is leaf-only (no child task) ------------------------------------------
+    // ----- §9 scheduling is leaf-only (a task with children is never placed) -------------------
 
     @Test
-    fun next_task_excludes_tasks_that_have_child_tasks() {
+    fun the_fill_excludes_tasks_that_have_child_tasks() {
+        val now = 1_000_000_000_000L
         val (s0, a, b) = stateWithTwoTasks()
+        // Give A a child → A stops being a leaf, so only the leaf B may be scheduled.
         val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(childTaskIds = listOf(b))))
         assertFalse(SchedulerDomain.isLeafTask(s, a))
         assertTrue(SchedulerDomain.isLeafTask(s, b))
-        assertEquals(b, SchedulerDomain.nextTask(s, 1_000_000_000_000L))
+        val panels = SchedulerDomain.fillSchedule(s, now)
+        assertTrue(panels.none { it.taskId == a }, "non-leaf A was scheduled: ${panels.map { it.taskId }}")
+        assertTrue(panels.any { it.taskId == b }, "leaf B was not scheduled")
     }
 
     // ----- §8 calendar edit window: leaf-only menus + first-task default ----------------------

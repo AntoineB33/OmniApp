@@ -72,36 +72,8 @@ class SchedulerSchedulerTest {
         return s to solo
     }
 
-    // ----- §9 task choice: Earliest Deadline First --------------------------------------------
-
-    @Test
-    fun edf_period_is_minimum_time_over_priority() {
-        // PRD §9: T = m / p. A 45-min task at 50% priority recurs every 90 min; at 25% every 180 min.
-        assertEquals(90.0 * MIN, SchedulerDomain.edfPeriodMillis(45, 0.5), 1e-6)
-        assertEquals(180.0 * MIN, SchedulerDomain.edfPeriodMillis(45, 0.25), 1e-6)
-        // Zero priority → infinite period (only scheduled as a last resort, never "due").
-        assertTrue(SchedulerDomain.edfPeriodMillis(45, 0.0).isInfinite())
-    }
-
-    @Test
-    fun next_task_picks_the_earliest_deadline_highest_priority_first() {
-        // PRD §9 EDF: A (p=0.75) has the shorter period T=45/0.75=60min, so it is due before B
-        // (p=0.25, T=180min) → the earliest-deadline task A is chosen first.
-        val (s, a, _) = stateWithWeightedTasks()
-        assertEquals(a, SchedulerDomain.nextTask(s, 1_000_000_000_000L))
-    }
-
-    @Test
-    fun next_task_breaks_equal_period_ties_alphabetically() {
-        // A and B: equal priority (0.5) and equal minimum → equal period → the alphabetically-first wins.
-        val (s, a, _) = stateWithTwoTasks()
-        assertEquals(a, SchedulerDomain.nextTask(s, 1_000_000_000_000L))
-    }
-
-    @Test
-    fun next_task_is_null_when_there_is_no_real_leaf_task() {
-        assertNull(SchedulerDomain.nextTask(SchedulerState.empty(), 1_000_000_000_000L))
-    }
+    // ----- §9 task choice: which tasks are schedulable at all ---------------------------------
+    // The pick rule itself (the debt model) is covered by SchedulerDebtTest.
 
     @Test
     fun schedulable_leaves_exclude_root_main_and_removed_tasks() {
@@ -120,11 +92,10 @@ class SchedulerSchedulerTest {
         val c0 = s0.lists[s0.rootListId]!!.cellIds[0]
         // "Remove" A from the tree by emptying its cell.
         val s1 = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(c0, ""))
-        val next = SchedulerDomain.nextTask(s1, now)
         val priorities = SchedulerDomain.absoluteTaskPriorities(s1)
         val panels = SchedulerDomain.fillSchedule(s1, now)
-        assertEquals(b, next, "nextTask should pick B, not removed A. priorities=$priorities")
         assertTrue(panels.none { it.taskId == a }, "removed A still scheduled: ${panels.map { it.taskId }}")
+        assertTrue(panels.any { it.taskId == b }, "survivor B not scheduled. priorities=$priorities")
     }
 
     @Test
@@ -913,7 +884,6 @@ class SchedulerSchedulerTest {
 
         val refreshed = SchedulerReducer.reduce(deleted, SchedulerIntent.RefreshSchedule(now))
 
-        assertTrue(SchedulerDomain.nextTask(refreshed, now) != b) // the emptied task is never chosen
         assertTrue(refreshed.panels.any { it.taskId == a }) // the survivor fills the window
         assertTrue(refreshed.panels.none { it.taskId == b }) // no blank "(untitled)" B panels
         assertTrue(refreshed.panels.none { it.title.isBlank() }) // nothing renders as "(untitled)"
