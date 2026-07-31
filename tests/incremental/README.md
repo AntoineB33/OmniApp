@@ -8,6 +8,4 @@ The starting timeline has already placed tasks.
 
 The timeline is formed of periods. Each period defines a set of tasks it accepts.
 
-requirement update: The debt caused by tasks already placed is ignored exponentially as we move away from it.
-
-Modify the Python script to strictly follow those requirements. Keep the current example tests and add new ones to better test this new requirement.
+Debt and Excess gets ignored exponentially as we move away from it (in both direction). The decay speed is always the same.
