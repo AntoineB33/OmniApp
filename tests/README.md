@@ -13,5 +13,3 @@ A debt or an excess that is higher that it could be in a scheduling on a clear a
 Since the timeline is infinite, the result of the scheduler is a function that takes time as a parameter and returns a task or null.
 
 For now, I am looking for the algorithm that does exactly that, even if it takes time with hundreds of tasks and hundreds of tasks and periods in the starting timeline.
-
-Does the script strictly satisfies the requirements? If not fix it. Keep the current example tests, and add more if needed.

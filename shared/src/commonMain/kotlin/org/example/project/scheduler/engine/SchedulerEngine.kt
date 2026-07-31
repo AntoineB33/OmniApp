@@ -72,6 +72,13 @@ private const val LOOK_AWAY_SWEEP_CAP_MILLIS: Long = 10L * 60 * 1_000
 // trigger is a function of the timeline, not of how the sweep wake-ups align with the calendar.
 private const val LOOK_AWAY_START_FRESH_MILLIS: Long = 2_000
 
+// PRD §9: the debounce on the ONE thing that re-plans the schedule — a change to the scheduling rules
+// ([SchedulerDomain.schedulingSignature]), made here or pulled from another device. One second: long enough
+// that typing a task title, dragging a panel or a burst of pulled changes costs a single fill, short enough
+// that the calendar visibly answers the edit. Sim time, like every other engine delay: an accelerated clock
+// is meant to reach the next fill sooner, not to change how many fills a burst produces.
+private const val RESCHEDULE_DEBOUNCE_MILLIS: Long = 1_000
+
 // Real-time cap on each sleep while the manual "Look away now" rest counts down (see [restartLookAway]).
 private const val LOOK_AWAY_RESUME_POLL_MILLIS: Long = 200
 
@@ -407,7 +414,7 @@ class SchedulerEngine(
         SchedulerReducer.scheduleHorizonEndMillis = { now -> scheduleHorizonEndMillis(now) }
         launchAdvanceTick()
         launchScreenBreakSeeding()
-        launchTreeChangeReschedule()
+        launchRuleChangeReschedule()
         launchHorizonReschedule()
         launchCalendarHorizonReschedule()
         launchPendingRescheduleOnSwitch()
@@ -592,23 +599,16 @@ class SchedulerEngine(
     // so an over-eager call is cheap; the step guard just keeps the reducer from churning under acceleration.
     private fun dispatchScheduleAdvance(now: Long) {
         val current = vm.state.value
-        // A refill (not just an advance) is needed when a restBreak pose is overdue (it re-pins to the
-        // now-line), or when the live pause overlay would move a screen break's placement — an ongoing gap
-        // keeps re-presuming/re-satisfying, so the projected grid moves ahead of the racing now-line
-        // instead of being crossed at (or frozen behind) a stale slot. RefreshSchedule is a non-syncing
-        // intent, so this refill makes zero server writes (sync-gating rule).
-        val liveRest = SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, now)
-        val screenBreakDue =
-            current.automaticSchedule &&
-                (
-                    current.screenBreaks.any { it.restBreak && SchedulerDomain.isScreenBreakOverdue(it, now) } ||
-                        SchedulerDomain.screenBreaksForPlacement(current.screenBreaks, liveRest) != current.screenBreaks
-                    )
-        if (screenBreakDue) {
-            vm.dispatch(SchedulerIntent.RefreshSchedule(now))
-        } else {
-            vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
-        }
+        // Time passing only ADVANCES the plan (banking the records of panels that elapsed) — it never
+        // re-plans. The scheduler itself runs only on a rule change ([launchRuleChangeReschedule]) and the
+        // rolling horizon only extends the plan's tail ([SchedulerIntent.ExtendSchedule]).
+        //
+        // This used to fire a full RefreshSchedule on every tick where a rest pose was overdue or a live
+        // pause moved the screen-break grid, i.e. continuously while the user was away — churning the whole
+        // work plan out of a purely time-driven event. The calendar does not need it: `App.kt` projects the
+        // screen-break markers for DISPLAY itself, from the same live-pause overlay, so what is drawn keeps
+        // moving with the pause; and the cue sweep keys on the poses' fixed due instants, not on panels.
+        vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
         // PRD §17: the Sleep toggle auto-wakes when its scheduled wake instant lapses mid-session — finalize
         // the sleep session as a past "Sleep" panel (reduceSetSleepMode) and stop suppressing the pause cue.
         current.sleepingUntilMillis?.let { until -> if (now >= until) vm.setSleepMode(null) }
@@ -1018,16 +1018,29 @@ class SchedulerEngine(
     private fun applySeededScreenBreaks(rested: List<ScreenBreak>) {
         val live = vm.state.value.screenBreaks
         val merged = SchedulerDomain.advanceRestsForward(live, rested)
-        if (merged != live) {
-            vm.dispatch(SchedulerIntent.SetScreenBreaks(merged))
-            vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
-        }
+        // The screen-break anchors are a scheduling input ([SchedulerDomain.schedulingSignature]), so the
+        // debounced rule-change watcher picks this up and refills — no explicit dispatch here.
+        if (merged != live) vm.dispatch(SchedulerIntent.SetScreenBreaks(merged))
     }
 
-    // PRD §9 calculation event #2 (tree change): recompute on a 1-second debounce after the task tree changes.
-    private fun launchTreeChangeReschedule() = scope.launch {
-        vm.state.map { it.tasks to it.cells }.distinctUntilChanged().collectLatest {
-            delay(1_000)
+    /**
+     * PRD §9 calculation event #2 — **the only thing that re-plans the schedule.**
+     *
+     * The scheduler runs when, and only when, someone CHANGED a rule it depends on: this user editing the
+     * task tree / priorities / minimum times, pinning or moving a calendar block, editing the sleep or
+     * screen-break configuration, flipping the §7 switch — or a **remote** user doing any of that, which
+     * reaches this device as a pulled snapshot written straight into `vm.state` (`applyRemoteSnapshot`) and
+     * so lands in this same flow. [SchedulerDomain.schedulingSignature] is exactly that input set; time
+     * passing is deliberately outside it, and so are the panels the fill itself regenerates (else every fill
+     * would trigger the next one).
+     *
+     * Debounced by [RESCHEDULE_DEBOUNCE_MILLIS] via `collectLatest`, so a burst — typing a task title
+     * character by character, dragging a panel, a sync pull landing on top of a local edit — costs one fill,
+     * not one per keystroke.
+     */
+    private fun launchRuleChangeReschedule() = scope.launch {
+        vm.state.map { SchedulerDomain.schedulingSignature(it) }.distinctUntilChanged().collectLatest {
+            delay(RESCHEDULE_DEBOUNCE_MILLIS)
             if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
             else pendingReschedule = true
         }
@@ -1067,7 +1080,9 @@ class SchedulerEngine(
                 tickDelay(pollInterval())
             }
             lastRefillMillis = clock.nowMillis()
-            if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
+            // An EXTENSION, not a re-plan: the horizon rolling forward is not a rule change, so the plan
+            // already on screen is kept and only its tail is materialized.
+            if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.ExtendSchedule(clock.nowMillis()))
             else pendingReschedule = true
         }
     }
@@ -1086,7 +1101,9 @@ class SchedulerEngine(
             val now = clock.nowMillis()
             val horizon = SchedulerDomain.scheduleHorizonEndMillis(now, end)
             if (SchedulerDomain.horizonRefillDueMillis(vm.state.value.panels, now, horizon) > now) return@collect
-            if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(now))
+            // Navigating the calendar shows more days; it does not change any scheduling rule, so this too
+            // extends the plan's tail rather than re-planning it.
+            if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.ExtendSchedule(now))
             else pendingReschedule = true
         }
     }

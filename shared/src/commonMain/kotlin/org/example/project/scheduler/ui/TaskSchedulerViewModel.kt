@@ -286,6 +286,9 @@ class TaskSchedulerViewModel(
         when (this) {
             is SchedulerIntent.AdvanceSchedule,
             is SchedulerIntent.RefreshSchedule,
+            // Materializes more of the SAME plan as the horizon rolls (see SchedulerIntent.ExtendSchedule) —
+            // derived panels only, exactly like the two above.
+            is SchedulerIntent.ExtendSchedule,
             is SchedulerIntent.ReportDeviceSleep,
             // Derived time-driven materialization — see the KDoc above: its `allocatePanelId()` counter bump
             // would otherwise phantom-push identical content and clobber peers' edits via whole-doc LWW.

@@ -228,6 +228,22 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §9 rolling horizon: materialize MORE of the existing plan, without re-planning it.
+     *
+     * Dispatched when the horizon grows — the user navigates the calendar to a further-out week, or `now`
+     * advances far enough that the materialized tail falls short ([SchedulerDomain.horizonRefillDueMillis]).
+     * Neither is a change to the scheduling *rules*, so the plan the user is already looking at must not be
+     * rewritten: the auto panels ahead of the now-line are kept and only the tail past them is generated
+     * ([SchedulerDomain.fillSchedule]'s `keepExistingUntilMillis`). Re-planning from `now` happens only on a
+     * [RefreshSchedule], which the engine fires only when [SchedulerDomain.schedulingSignature] moves.
+     *
+     * Derived state only (like [AdvanceSchedule]): never a syncable change, never a History Unit.
+     */
+    data class ExtendSchedule(
+        val nowMillis: Long,
+    ) : SchedulerIntent
+
+    /**
      * PRD §9: the frequent tick — advance the schedule to [nowMillis] without refilling. Records the
      * elapsed period of any completed auto panel (and cuts the current one if its task was deleted or
      * gained a child), so the calendar stays truthful even while §7 auto-scheduling is off. Touches

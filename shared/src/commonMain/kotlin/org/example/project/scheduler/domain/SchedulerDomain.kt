@@ -1035,6 +1035,24 @@ object SchedulerDomain {
     const val SCHEDULE_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1000
 
     /**
+     * `tests/README.md`: "the decay speed is **always the same**" — this is that one speed, the half-life of
+     * the part of a debt/excess that exceeds what a clear, all-accepting timeline could produce
+     * ([DebtLedger.boundary]). Four hours: long enough that the imbalance of a working morning still steers
+     * the afternoon, short enough that a week-old anomaly (a task pinned all of last Sunday) is forgotten
+     * rather than repaid. Debt *within* the natural bound never decays at all, so an ordinary one-rotation
+     * imbalance is always repaid in full whatever this is set to.
+     */
+    const val DEBT_HALF_LIFE_MILLIS: Long = 4L * 60 * 60 * 1000
+
+    /**
+     * How far back [fillSchedule] replays committed work to seed the debt ledger (one week — the same span
+     * as the horizon ceiling). Beyond it any excess has decayed to the natural bound many times over, so
+     * reading further into the record would cost history-proportional work for no change in the plan
+     * (CLAUDE.md: hot-path derivations scale with the screen, not with total history).
+     */
+    const val DEBT_PAST_LOOKBACK_MILLIS: Long = 168L * 60 * 60 * 1000
+
+    /**
      * PRD §9 Scheduling: the **floor** of the schedule horizon (24 hours) — how far the plan is materialized
      * when nothing further out is being displayed (the calendar window closed, or showing a week that ends
      * sooner than this).
@@ -2053,22 +2071,26 @@ object SchedulerDomain {
      * fill is deterministic, so a refill at the same instant reproduces the same panels (the §9 no-op
      * short-circuit still fires) and re-picks the same current task (notification continuity, §11).
      *
-     * EDF: each schedulable leaf ([schedulableLeaves]) releases an `mᵢ`-long job every `Tᵢ = mᵢ / pᵢ`
-     * ([edfPeriodMillis]), so its long-run utilization `mᵢ/Tᵢ = pᵢ` is its priority share. Walking a cursor
-     * from [firstFreeMoment] to the horizon, the task with the earliest current deadline runs next (ties →
-     * higher priority → alphabetical); its deadline then advances by `Tᵢ`. Because the leaves' priorities
-     * sum to 1, total utilization is 1 and the window packs with no idle gaps. A chunk is shortened so it
-     * never overlaps the next fixed panel (PRD §10); the cursor skips over a fixed panel it lands inside.
+     * The pick rule is the **debt model** of `tests/README.md` ([DebtLedger] — the Kotlin port of the
+     * reference `tests/test.py`). Each leaf carries a signed debt in millis that integrates `pᵢ − eᵢ` as the
+     * timeline advances (`eᵢ` = 1 while it is the task being served); the cursor always places the task with
+     * the highest `debt / priority`, so the served shares converge on the priority percentages **at the
+     * smallest scale the minima allow** (two 50 % / 10-min tasks alternate every 10 min, not every hour).
+     * A chunk is shortened so it never overlaps the next fixed panel (PRD §10); the cursor skips over a
+     * fixed panel it lands inside — and while it does, the ledger integrates that panel's task as served,
+     * so committed work counts exactly like auto-placed work.
      *
      * PRD §9 "the deficits/excess from the already-placed panels before `now` … influence the chosen
-     * result" (example 1): each leaf's **first** deadline is seeded from its *committed* service before
-     * `now` — its records and the kept fixed/past panels ([pastPeriodsForTask] over [working], so the
-     * soon-to-be-cut auto panels never feed back and flip-flop the pick, §11 continuity). A task served
-     * right up to `now` is seeded one full period out (`lastEnd + Tᵢ`); one never served (or last served
-     * long ago) is due at `start`. The seed is clamped to never start *before* `start`, so an over-served
-     * task only changes who runs *first* — it never buys the others catch-up time. Hence A served heavily
-     * before `now` plus a fresh B (both 50 %, 45 min) yields B, A, B, A: the excess is not balanced, it
-     * only sets the starting phase.
+     * result" (example 1): the ledger is **seeded by replaying the past** over [DEBT_PAST_LOOKBACK_MILLIS]
+     * — each leaf's records and past/fixed panels ([pastPeriodsForTask], merged per task so a record and the
+     * panel that banked it are not counted twice). So A served heavily right before `now` plus a fresh B
+     * (both 50 %) yields B first, and B keeps the cursor until the imbalance is repaid — but only up to the
+     * natural bound `C = Σ mᵢ` ([DebtLedger.boundary]): an excess *larger* than one full rotation of the
+     * round-robin is forgotten exponentially instead of being repaid in full ("a debt or an excess higher
+     * than it could be in a scheduling on a clear and all-task-accepted timeline is ignored exponentially",
+     * `tests/README.md`). Work committed *ahead* of the cursor is the same rule in the other direction: a
+     * pinned block looming soon discharges its task's debt now ([DebtLedger.futureCommitmentMillis]), so its
+     * peers get the cursor instead of the task being served twice over.
      *
      * PRD §9 merge: two consecutive auto panels of the same task are fused into one block
      * ([mergeSameTaskPanels]), so a sole task shows as a single continuous panel. Auto panels get
@@ -2114,6 +2136,13 @@ object SchedulerDomain {
         // navigating back simply refills the nearer window. The default is the ceiling, for tests and for any
         // caller that genuinely wants the maximum span.
         horizonMillis: Long = nowMillis + SCHEDULE_HORIZON_MILLIS,
+        // PRD §9 / CLAUDE.md trigger rule: when non-null, this is an **extension**, not a re-plan — the auto
+        // panels already materialized before this instant are KEPT (the cursor walks over them, feeding the
+        // debt ledger exactly as if it had just placed them) and only the tail past them is generated. The
+        // rolling-horizon / calendar-navigation refills use it so that merely *displaying* more days never
+        // rewrites the plan the user is already looking at; only a change to the scheduling rules
+        // ([schedulingSignature]) re-plans from `now` (null).
+        keepExistingUntilMillis: Long? = null,
     ): List<TaskPanel> {
         val horizon = maxOf(horizonMillis, nowMillis)
         // Cut every non-pinned panel in [now, horizon]; keep fixed (pinned) panels, reminder tags (PRD
@@ -2128,7 +2157,9 @@ object SchedulerDomain {
                 it.sleep -> !it.id.startsWith("sleep/")
                 else ->
                     isSchedulerFixed(it) || it.chore || it.noScreen || it.inactivity ||
-                        it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon
+                        it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon ||
+                        // An EXTENSION keeps the already-materialized head of the plan (see the parameter).
+                        (keepExistingUntilMillis != null && it.auto && it.startEpochMillis < keepExistingUntilMillis)
             }
         }
         // The user's sleep windows: rendered as "Sleep" bands, but NO LONGER task obstacles. The work plan
@@ -2159,7 +2190,6 @@ object SchedulerDomain {
         // — an on-screen task may only run outside them, an off-screen task only inside. Inactivity
         // periods classify nothing (they stay screen periods). Neither is an occupancy obstacle, so the
         // fill's start walks only the real blocks.
-        val start = firstFreeMoment(kept.filter { !it.noScreen && !it.inactivity }, nowMillis)
         val noScreenRegions =
             mergeOccupied(
                 kept.filter { it.noScreen }
@@ -2185,36 +2215,54 @@ object SchedulerDomain {
         fun nextSideRegionStart(t: Long): Long? =
             sideRegions.asSequence().map { it.startEpochMillis }.filter { it > t }.minOrNull()
 
-        // EDF state: each leaf's recurrence period Tᵢ and its current deadline (Double millis so an
-        // infinite-period zero-priority task is representable and always sorts last).
-        val period = HashMap<TaskId, Double>(leaves.size)
-        val deadline = HashMap<TaskId, Double>(leaves.size)
-        for (t in leaves) {
-            val p = edfPeriodMillis(state.tasks[t]?.minimumMinutes ?: 0, priorities[t] ?: 0.0)
-            period[t] = p
-            // PRD §9 example 1: seed the first deadline from committed pre-now service (records + kept
-            // fixed/past panels in `working`, not the auto panels being regenerated). A task served up to
-            // now is one period out (`lastEnd + p`); a never-served task defaults to `start - p` so it is
-            // due at `start`. Clamping at `start` keeps an over-served task from forcing catch-up for the
-            // others — the excess only sets who goes first, it is not balanced away.
-            deadline[t] =
-                if (p.isInfinite()) {
-                    p
-                } else {
-                    val lastEnd =
-                        pastPeriodsForTask(working, t, nowMillis).maxOfOrNull { it.endEpochMillis }?.toDouble()
-                            ?: (start.toDouble() - p)
-                    maxOf(start.toDouble(), lastEnd + p)
-                }
-        }
+        // `tests/README.md` debt model. The candidate order is the deterministic tie-break (higher priority,
+        // then alphabetical): the pick below takes a candidate only on a STRICTLY better score, so equal
+        // scores — every task at the very first placement, for one — resolve in this order.
         val tieBreak =
             compareByDescending<TaskId> { priorities[it] ?: 0.0 }.thenBy { state.tasks[it]?.title.orEmpty() }
-        // Earliest Deadline First (ties → priority → title) — the pick order for the regular fill and for
-        // the break-doable fill inside a screen break.
-        val edfOrder = compareBy<TaskId> { deadline[it] ?: Double.POSITIVE_INFINITY }.then(tieBreak)
+        val ordered = leaves.sortedWith(tieBreak)
+        val minimumMillisOf = ordered.associateWith { (state.tasks[it]?.minimumMinutes ?: 0).toLong() * MILLIS_PER_MINUTE }
+        val ledger =
+            DebtLedger(ordered.map { DebtTask(it, priorities[it] ?: 0.0, minimumMillisOf[it] ?: 0L) })
+
+        // PRD §9 example 1: seed the debts by replaying the committed past — every leaf's records and its
+        // past/fixed panels, merged per task so a record and the auto panel that banked it count once, then
+        // walked in chronological order (an idle stretch advances the ledger with nothing running). Bounded
+        // to [DEBT_PAST_LOOKBACK_MILLIS]: beyond that any excess has decayed to the natural bound anyway.
+        val pastAnchor = nowMillis - DEBT_PAST_LOOKBACK_MILLIS
+        val pastService =
+            ordered.flatMap { id ->
+                mergeOccupied(pastPeriodsForTask(working, id, nowMillis))
+                    .map { TaskTimeRange(maxOf(it.startEpochMillis, pastAnchor), it.endEpochMillis) }
+                    .filter { it.endEpochMillis > it.startEpochMillis }
+                    .map { it to id }
+            }.sortedBy { it.first.startEpochMillis }
+        var pastCursor = pastAnchor
+        for ((range, id) in pastService) {
+            if (range.startEpochMillis > pastCursor) {
+                ledger.advance(range.startEpochMillis - pastCursor, null)
+                pastCursor = range.startEpochMillis
+            }
+            if (range.endEpochMillis > pastCursor) {
+                ledger.advance(range.endEpochMillis - pastCursor, id)
+                pastCursor = range.endEpochMillis
+            }
+        }
+        if (pastCursor < nowMillis) ledger.advance(nowMillis - pastCursor, null)
+
+        // The panels the cursor must walk OVER rather than through: the user's fixed (pinned) blocks and —
+        // on an extension — the head of the plan that is being kept. Both are committed service, so the
+        // ledger integrates them as their task running.
+        val obstacles =
+            kept.filter { (isSchedulerFixed(it) || it.auto) && it.endEpochMillis > nowMillis && !it.chore }
+        // "In both directions": each task's committed future work, netted off its debt when scoring.
+        val futureService =
+            obstacles.asSequence()
+                .filter { it.taskId != null }
+                .groupBy({ it.taskId!! }, { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
 
         val generated = mutableListOf<TaskPanel>()
-        var cursor = start
+        var cursor = nowMillis
         var index = 0
         var idCounter = 0
         fun nextAutoId(): String {
@@ -2222,12 +2270,23 @@ object SchedulerDomain {
             return "auto/${idCounter++}"
         }
         // PRD §15: the task whose minimum chunk is mid-placement, split across a screen break, with the work
-        // it still owes. Carried across iterations so it resumes after the side region rather than the EDF
-        // re-picking and its deadline only advances once the whole chunk (or a pinned-truncated one) lands.
+        // it still owes. Carried across iterations so it resumes after the side region rather than the pick
+        // being re-run mid-chunk.
         var pending: Pair<TaskId, Long>? = null
-        fun advance(t: TaskId) {
-            val p = period[t] ?: Double.POSITIVE_INFINITY
-            if (!p.isInfinite()) deadline[t] = (deadline[t] ?: start.toDouble()) + p
+        // `tests/README.md`: the most starved task, i.e. the highest `debt / priority` once its committed
+        // future work is netted off. [candidates] arrives in the deterministic tie order and a candidate is
+        // taken only on a strictly better score, so ties resolve by priority then title.
+        fun pick(candidates: List<TaskId>): TaskId? {
+            var best: TaskId? = null
+            var bestScore = Double.NEGATIVE_INFINITY
+            for (id in candidates) {
+                val score = ledger.score(id, ledger.futureCommitmentMillis(futureService[id].orEmpty(), cursor))
+                if (best == null || score > bestScore) {
+                    best = id
+                    bestScore = score
+                }
+            }
+            return best
         }
         // Bound the loop defensively: with positive spans this can't run away, but a degenerate zero
         // span (only possible if minima are clamped to 0) would otherwise spin. The cap SCALES with the
@@ -2235,12 +2294,14 @@ object SchedulerDomain {
         // the way a fixed 168h-sized cap would be — bounded by the absolute [MAX_SCHEDULE_PANELS] ceiling.
         val maxPanels = ((horizon - nowMillis) / 30_000L).coerceIn(1L, MAX_SCHEDULE_PANELS.toLong()).toInt()
         while (cursor < horizon && index < maxPanels) {
-            val pinnedCovering = kept.firstOrNull {
-                isSchedulerFixed(it) && it.startEpochMillis <= cursor && cursor < it.endEpochMillis
+            val fixedCovering = obstacles.firstOrNull {
+                it.startEpochMillis <= cursor && cursor < it.endEpochMillis
             }
-            if (pinnedCovering != null) {
-                // A pinned obstacle cuts the minimum (PRD §9/§10): abandon any pending chunk's remainder.
-                cursor = pinnedCovering.endEpochMillis
+            if (fixedCovering != null) {
+                // A fixed obstacle cuts the minimum (PRD §9/§10): abandon any pending chunk's remainder.
+                // Its span is committed service, so the ledger runs its task across it.
+                ledger.advance(fixedCovering.endEpochMillis - cursor, fixedCovering.taskId)
+                cursor = fixedCovering.endEpochMillis
                 pending = null
                 continue
             }
@@ -2253,14 +2314,15 @@ object SchedulerDomain {
             if (sideCovering != null) {
                 val remainingBreak = sideCovering.endEpochMillis - cursor
                 val breakTask =
-                    leaves.asSequence()
-                        .filter { it != pending?.first && working.tasks[it]?.doableDuringBreak == true }
-                        .filter {
-                            val minMillis = (working.tasks[it]?.minimumMinutes ?: 0) * MILLIS_PER_MINUTE
-                            minMillis in 1..remainingBreak
-                        }
-                        .minWithOrNull(edfOrder)
+                    pick(
+                        ordered.filter {
+                            it != pending?.first && working.tasks[it]?.doableDuringBreak == true &&
+                                (minimumMillisOf[it] ?: 0L) in 1..remainingBreak
+                        },
+                    )
                 if (breakTask == null) {
+                    // Nobody can work through it: the break is idle time for every task's debt.
+                    ledger.advance(sideCovering.endEpochMillis - cursor, null)
                     cursor = sideCovering.endEpochMillis
                     continue
                 }
@@ -2276,7 +2338,7 @@ object SchedulerDomain {
                     auto = true,
                 )
                 working = working.copy(panels = kept + generated)
-                advance(breakTask)
+                ledger.advance(breakEnd - cursor, breakTask)
                 cursor = breakEnd
                 index++
                 continue
@@ -2288,28 +2350,41 @@ object SchedulerDomain {
             // a pinned obstacle.
             val inNoScreen = noScreenCovering(cursor) != null
             fun placeableHere(id: TaskId): Boolean = (working.tasks[id]?.onScreen ?: true) != inNoScreen
-            pending?.first?.takeIf { !placeableHere(it) }?.let {
-                advance(it)
-                pending = null
-            }
-            // Continue the interrupted task, else Earliest Deadline First among the zone's tasks.
-            val taskId =
-                pending?.first ?: leaves.filter { placeableHere(it) }.minWithOrNull(edfOrder)
+            pending?.first?.takeIf { !placeableHere(it) }?.let { pending = null }
+            // The instants a chunk may not cross. The screen break is deliberately NOT one of them for the
+            // "does its minimum fit?" test below: a break suspends the chunk and it resumes on the far side
+            // with its remaining work intact (PRD §15), so the minimum is never lost to it. A fixed panel or
+            // a screen-zone edge, by contrast, truncates it.
+            val nextSide = nextSideRegionStart(cursor) ?: Long.MAX_VALUE
+            val nextFixed = obstacles.asSequence()
+                .filter { it.startEpochMillis > cursor }.minOfOrNull { it.startEpochMillis } ?: Long.MAX_VALUE
+            val nextZoneEdge = nextNoScreenEdge(cursor) ?: Long.MAX_VALUE
+            val cuttingBoundary = minOf(nextFixed, nextZoneEdge, horizon)
+            val gap = cuttingBoundary - cursor
+            val placeable = ordered.filter { placeableHere(it) }
+            // `tests/README.md`: a task is a candidate here only if its minimum time fits the gap. When none
+            // does, PRD §9/§10 still wins over leaving the calendar hollow: the best-scoring task is placed
+            // and truncated by the obstacle (its minimum IS cut there).
+            val fitting = placeable.filter { (minimumMillisOf[it] ?: 0L) <= gap }
+            val taskId = pending?.first ?: pick(fitting.ifEmpty { placeable })
             if (taskId == null) {
                 // Nothing may occupy this zone (e.g. a no-screen span and no off-screen task, or only
                 // off-screen tasks outside one): jump to the next screen-zone edge; none left → done.
-                cursor = nextNoScreenEdge(cursor) ?: break
+                val edge = nextNoScreenEdge(cursor) ?: break
+                ledger.advance(edge - cursor, null)
+                cursor = edge
                 continue
             }
             val task = working.tasks[taskId] ?: break
-            val need = pending?.second ?: (scheduledSpanMinutes(working, taskId, cursor) * MILLIS_PER_MINUTE)
+            var need = pending?.second ?: (scheduledSpanMinutes(working, taskId, cursor) * MILLIS_PER_MINUTE)
             if (need <= 0) break
-            // This piece runs until the chunk is satisfied, the next side region, the next pinned panel,
+            // `tests/test.py` anti-fragmentation: if taking just the minimum would leave a remainder too
+            // short for any candidate to use, take the whole gap instead of stranding it.
+            val shortestFitting = fitting.minOfOrNull { minimumMillisOf[it] ?: 0L }
+            if (shortestFitting != null && gap >= need && gap - need < shortestFitting) need = gap
+            // This piece runs until the chunk is satisfied, the next side region, the next fixed panel,
             // the next screen-zone edge, or the horizon — whichever comes first.
-            val nextSide = nextSideRegionStart(cursor) ?: Long.MAX_VALUE
-            val nextPinned = nextPinnedStartAfter(kept, cursor) ?: Long.MAX_VALUE
-            val nextZoneEdge = nextNoScreenEdge(cursor) ?: Long.MAX_VALUE
-            val boundary = minOf(nextSide, nextPinned, nextZoneEdge, horizon)
+            val boundary = minOf(nextSide, cuttingBoundary)
             val pieceEnd = minOf(cursor + need, boundary)
             if (pieceEnd <= cursor) break
             generated += TaskPanel(
@@ -2323,22 +2398,76 @@ object SchedulerDomain {
             )
             working = working.copy(panels = kept + generated)
             val placed = pieceEnd - cursor
+            ledger.advance(placed, taskId)
             cursor = pieceEnd
-            when {
-                placed >= need -> { advance(taskId); pending = null } // chunk complete → next EDF release
-                boundary == nextSide && nextSide < nextPinned && nextSide < nextZoneEdge ->
-                    pending = taskId to (need - placed) // interrupted by a screen break → resume after it
-                else -> {
-                    // Truncated by a pinned obstacle or a screen-zone edge: the minimum IS cut here
-                    // (PRD §9/§10), the chunk ends.
-                    advance(taskId); pending = null
+            pending =
+                if (placed < need && nextSide < cuttingBoundary) {
+                    // Interrupted by a screen break → resume after it with the work still owed.
+                    taskId to (need - placed)
+                } else {
+                    // Chunk complete, or truncated by a fixed obstacle / screen-zone edge (PRD §9/§10:
+                    // the minimum IS cut there).
+                    null
                 }
-            }
             index++
         }
         // PRD §9: two consecutive auto panels of the same task merge into one block. Screen-break and sleep
         // panels are added as-is (they split the run, so adjacent same-task pieces don't touch and stay apart).
         return (kept + sidePanels + sleepPanels + mergeSameTaskPanels(generated)).sortedBy { it.startEpochMillis }
+    }
+
+    /**
+     * PRD §9 / CLAUDE.md trigger rule: **everything the plan is a function of, except `now`.**
+     *
+     * The scheduler is re-run only when this value changes — i.e. only when the user (or, through a pulled
+     * remote snapshot, another device's user) changed something that can change the scheduling rules. Time
+     * passing is deliberately NOT in it: the plan is a function from an instant to a task
+     * (`tests/README.md`), so advancing the now-line only *consumes* it, and materializing more of its tail
+     * is an extension ([fillSchedule]'s `keepExistingUntilMillis`), never a re-plan.
+     *
+     * What is in it: the tree that carries the priorities (lists, cells, weights), each schedulable leaf's
+     * scheduling attributes (title, minimum time, on/off-screen, doable-during-break), the panels the fill
+     * treats as input rather than output (pinned/user blocks, no-screen and inactivity periods — anything
+     * [isRegeneratedPanel] says is NOT regenerated), the sleep schedule, the screen-break configuration and
+     * anchors, and the PRD §7 automatic-schedule switch.
+     *
+     * What is deliberately NOT in it:
+     * - the regenerated panels themselves — including them would make every fill re-trigger the next one;
+     * - the **records**, which the schedule-advance banks continuously as auto panels elapse (CLAUDE.md's
+     *   reconstructibility rule puts them on the derived side). A record edit that IS user-authored
+     *   (`RemoveRecordPeriod`) therefore refills inside its own reducer instead of through this signature.
+     */
+    fun schedulingSignature(state: SchedulerState): Int {
+        var result = if (state.automaticSchedule) 1 else 0
+        result = 31 * result + state.sleep.hashCode()
+        result = 31 * result + state.screenBreaks.hashCode()
+        for (list in state.lists.values.sortedBy { it.id.value }) {
+            result = 31 * result + list.id.value.hashCode()
+            result = 31 * result + list.cellIds.hashCode()
+            result = 31 * result + list.weightColumns.hashCode()
+        }
+        for (cell in state.cells.values.sortedBy { it.id.value }) {
+            result = 31 * result + cell.id.value.hashCode()
+            result = 31 * result + (cell.taskId?.value?.hashCode() ?: 0)
+            result = 31 * result + cell.priorityWeights.hashCode()
+        }
+        for (task in state.tasks.values.sortedBy { it.id.value }) {
+            result = 31 * result + task.id.value.hashCode()
+            result = 31 * result + task.title.hashCode()
+            result = 31 * result + task.minimumMinutes
+            result = 31 * result + (if (task.onScreen) 1 else 0)
+            result = 31 * result + (if (task.doableDuringBreak) 1 else 0)
+        }
+        for (panel in state.panels.filterNot(::isRegeneratedPanel).sortedBy { it.id }) {
+            result = 31 * result + panel.id.hashCode()
+            result = 31 * result + (panel.taskId?.value?.hashCode() ?: 0)
+            result = 31 * result + panel.startEpochMillis.hashCode()
+            result = 31 * result + panel.endEpochMillis.hashCode()
+            result = 31 * result + (if (panel.noScreen) 1 else 0)
+            result = 31 * result + (if (panel.inactivity) 1 else 0)
+            result = 31 * result + (if (panel.pinned) 1 else 0)
+        }
+        return result
     }
 
     /**

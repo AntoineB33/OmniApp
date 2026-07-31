@@ -100,6 +100,7 @@ object SchedulerReducer {
                 if (state.screenBreaks == intent.screenBreaks) state
                 else state.copy(screenBreaks = intent.screenBreaks)
             is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
+            is SchedulerIntent.ExtendSchedule -> reduceExtendSchedule(state, intent.nowMillis)
             is SchedulerIntent.AdvanceSchedule ->
                 commitRecordChanges(state, advanceSchedule(state, intent.nowMillis))
             is SchedulerIntent.SetAutomaticSchedule ->
@@ -1340,6 +1341,29 @@ object SchedulerReducer {
     }
 
     /**
+     * PRD §9 rolling horizon ([SchedulerIntent.ExtendSchedule]): advance, then materialize the plan further
+     * WITHOUT re-planning it. Everything already laid down ahead of the now-line is kept and fed to the debt
+     * ledger as committed work, so the tail continues the same plan rather than replacing it — a horizon that
+     * grew (time passing, or the calendar navigating to a further week) is not a change to the scheduling
+     * rules and must not rewrite what the user is looking at. A no-op tick returns the same instance.
+     */
+    private fun reduceExtendSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
+        val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis))
+        if (!advanced.automaticSchedule) return advanced
+        val materializedUntil = SchedulerDomain.firstFreeMoment(advanced.panels, nowMillis)
+        val filled =
+            SchedulerDomain.fillSchedule(
+                advanced,
+                nowMillis,
+                liveRest = liveRestGap(),
+                horizonMillis = scheduleHorizonEndMillis(nowMillis),
+                keepExistingUntilMillis = materializedUntil,
+            )
+        if (filled == advanced.panels) return advanced
+        return advanced.copy(panels = filled)
+    }
+
+    /**
      * Store the user's sleep schedule and refill so the calendar immediately reflects the new sleep window.
      * The 15-min-per-2-days wake drift is anchored at [todayEpochDay] when a goal different from the current
      * wake is set (else there is no drift). Recorded as a [SleepDelta] History Unit so the change shows in
@@ -1369,7 +1393,14 @@ object SchedulerReducer {
         return committed.copy(panels = filled)
     }
 
-    /** PRD §8 "Remove" on a record block: drop the period from the task's record (history-excluded). */
+    /**
+     * PRD §8 "Remove" on a record block: drop the period from the task's record (history-excluded).
+     *
+     * This is the one user-authored change the engine's [SchedulerDomain.schedulingSignature] watcher cannot
+     * see (records are on the derived side of that signature — the schedule-advance banks them continuously,
+     * so watching them would re-plan on every tick), yet it genuinely changes the past service the debt
+     * ledger is seeded from. So it refills right here, like [reduceSetSleepSchedule] does.
+     */
     private fun reduceRemoveRecordPeriod(
         state: SchedulerState,
         intent: SchedulerIntent.RemoveRecordPeriod,
@@ -1377,7 +1408,18 @@ object SchedulerReducer {
         val task = state.tasks[intent.taskId] ?: return state
         val range = TaskTimeRange(intent.startEpochMillis, intent.endEpochMillis)
         if (range !in task.record) return state
-        return state.copy(tasks = state.tasks + (intent.taskId to task.copy(record = task.record - range)))
+        val updated =
+            state.copy(tasks = state.tasks + (intent.taskId to task.copy(record = task.record - range)))
+        if (!updated.automaticSchedule) return updated
+        val now = clock.nowMillis()
+        return updated.copy(
+            panels = SchedulerDomain.fillSchedule(
+                updated,
+                now,
+                liveRest = liveRestGap(),
+                horizonMillis = scheduleHorizonEndMillis(now),
+            ),
+        )
     }
 
     private fun reduceResizeTaskPanel(
