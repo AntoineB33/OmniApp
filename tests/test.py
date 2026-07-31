@@ -1,4 +1,5 @@
 import math
+
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 
@@ -9,199 +10,250 @@ class Task:
         self.priority = priority / 100.0  # Normalize percentage to 0-1
         self.min_time = min_time
 
-def infinite_scheduler(tasks, starting_timeline=None, periods=None):
-    """
-    Generator that yields the next scheduled task indefinitely.
-    
-    Debt caused by ANY task (whether in the starting_timeline, pre-scheduled, 
-    or dynamically placed by the scheduler itself) decays exponentially.
-    - Past executions decay as we move forward.
-    - Future pre-scheduled executions radiate debt backwards, growing as we approach them.
-    """
-    # past_debt tracks the integral of e^{-k(t - τ)} for all executed tasks (DECAYS)
-    past_debt = {task.name: 0.0 for task in tasks}
-    future_pre = []
 
-    k = math.log(2) / HALF_LIFE if HALF_LIFE else 0.0
+class SchedulerFunction:
+    """
+    A callable scheduler that acts as a function f(time) -> Task | None.
+    It generates the timeline dynamically and caches history for fast querying.
+    """
+    def __init__(self, tasks, starting_timeline=None, periods=None, half_life=30.0):
+        self.tasks = tasks
+        self.starting_timeline = starting_timeline or []
+        self.periods = periods or []
+        self.half_life = half_life
+        
+        self.generator = self._run()
+        self.history = []
 
-    # 1. Initialize past_debt at t=0 and separate future blocks
-    if starting_timeline:
-        for b in starting_timeline:
-            t_name = b['task']
-            if t_name not in past_debt:
-                continue
+    def __call__(self, t):
+        if t < 0:
+            return None
             
-            if b['end'] <= 0:
-                # Completely in the past
-                if k > 0:
-                    past_debt[t_name] += (math.exp(k * b['end']) - math.exp(k * b['start'])) / k
-                else:
-                    past_debt[t_name] += (b['end'] - b['start'])
-            elif b['start'] < 0:
-                # Straddling t=0
-                if k > 0:
-                    past_debt[t_name] += (1.0 - math.exp(k * b['start'])) / k
-                else:
-                    past_debt[t_name] += (0 - b['start'])
-                future_pre.append({'task': t_name, 'start': 0, 'end': b['end']})
-            else:
-                # Completely in the future
-                future_pre.append(b)
-            
-    future_pre.sort(key=lambda x: x['start'])
-    
-    if periods is not None:
-        periods = sorted(periods, key=lambda x: x['start'])
-    
-    current_time = 0.0
-    
-    while True:
-        # Check if current_time falls inside a pre-scheduled block
-        overlapping_block = None
-        for b in future_pre:
-            if b['start'] <= current_time < b['end']:
-                overlapping_block = b
+        # Advance the generator until our history covers time t
+        while not self.history or self.history[-1]['end'] <= t:
+            try:
+                self.history.append(next(self.generator))
+            except StopIteration:
                 break
-        
-        if overlapping_block:
-            dur = overlapping_block['end'] - current_time
-            yield {
-                'task': overlapping_block['task'],
-                'start': current_time,
-                'duration': dur,
-                'end': overlapping_block['end'],
-                'type': 'pre-scheduled'
-            }
-            
-            # Advance time and accumulate past_debt
-            if k > 0:
-                decay = math.exp(-k * dur)
-                for t_name in past_debt:
-                    past_debt[t_name] *= decay
-                if overlapping_block['task'] in past_debt:
-                    past_debt[overlapping_block['task']] += (1 - decay) / k
-            else:
-                if overlapping_block['task'] in past_debt:
-                    past_debt[overlapping_block['task']] += dur
-                        
-            current_time = overlapping_block['end']
-            continue
-            
-        # We are in a gap. Find how long the gap lasts until the next pre-scheduled block
-        next_start = float('inf')
-        for b in future_pre:
-            if b['start'] > current_time:
-                next_start = min(next_start, b['start'])
                 
-        # Determine if we are inside a valid period and which tasks are allowed
-        accepted_tasks = [t.name for t in tasks]
-        current_period_end = float('inf')
+        # Find the block that intersects t
+        for b in self.history:
+            if b['start'] <= t < b['end']:
+                if b['task'] is None: 
+                    return None
+                return next((task for task in self.tasks if task.name == b['task']), None)
+                
+        return None
+
+    def _run(self):
+        k = math.log(2) / self.half_life if self.half_life else 0.0
         
-        if periods is not None:
-            current_p = None
-            next_p_start = float('inf')
-            
-            for p in periods:
-                if p['start'] <= current_time < p['end']:
-                    current_p = p
-                    break
-                elif p['start'] > current_time:
-                    next_p_start = min(next_p_start, p['start'])
-                    
-            if current_p:
-                accepted_tasks = current_p['accepted_tasks']
-                current_period_end = current_p['end']
+        # C is the natural debt boundary. A task's natural cyclical debt in a clear 
+        # schedule is safely bounded by the sum of minimum times of all tasks.
+        # Only debt EXCESS beyond C decays.
+        C = sum(t.min_time for t in self.tasks)
+        debts = {t.name: 0.0 for t in self.tasks}
+        
+        past_blocks = []
+        future_pre = []
+        
+        for b in self.starting_timeline:
+            if b['end'] <= 0:
+                past_blocks.append(b)
+            elif b['start'] < 0:
+                past_blocks.append({'task': b['task'], 'start': b['start'], 'end': 0})
+                future_pre.append({'task': b['task'], 'start': 0, 'end': b['end']})
             else:
-                # Outside any valid period. Advance to the next event.
-                advance_to = min(next_start, next_p_start)
-                if advance_to == float('inf'):
+                future_pre.append(b)
+                
+        past_blocks.sort(key=lambda x: x['start'])
+        future_pre.sort(key=lambda x: x['start'])
+        
+        def simulate_interval(dt, task_running):
+            """
+            Euler integration for time advancing. Applies decay only to the EXCESS 
+            debt, while accumulating natural ideal debt and actual execution continuously.
+            """
+            step = 5.0
+            while dt > 0:
+                current_dt = min(dt, step)
+                decay = math.exp(-k * current_dt) if k > 0 else 1.0
+                
+                for t in self.tasks:
+                    name = t.name
+                    d = debts[name]
+                    
+                    # 1. Decay only the portion of debt that exceeds the natural bound C
+                    if d > C:
+                        debts[name] = C + (d - C) * decay
+                    elif d < -C:
+                        debts[name] = -C + (d + C) * decay
+                    
+                    # 2. Add ideal proportion
+                    debts[name] += current_dt * t.priority
+                    
+                    # 3. Subtract actual execution
+                    if name == task_running:
+                        debts[name] -= current_dt
+                        
+                dt -= current_dt
+
+        # Process starting blocks that occurred entirely in the past
+        if past_blocks:
+            current_sim_time = past_blocks[0]['start']
+            for b in past_blocks:
+                if b['start'] > current_sim_time:
+                    simulate_interval(b['start'] - current_sim_time, None)
+                simulate_interval(b['end'] - b['start'], b['task'])
+                current_sim_time = b['end']
+            if current_sim_time < 0:
+                simulate_interval(0 - current_sim_time, None)
+                
+        current_time = 0.0
+        
+        while True:
+            # 1. Check if we overlap a pre-scheduled block
+            overlapping_block = None
+            for b in future_pre:
+                if b['start'] <= current_time < b['end']:
+                    overlapping_block = b
                     break
+            
+            if overlapping_block:
+                dur = overlapping_block['end'] - current_time
+                yield {
+                    'task': overlapping_block['task'],
+                    'start': current_time,
+                    'duration': dur,
+                    'end': overlapping_block['end'],
+                    'type': 'pre-scheduled'
+                }
+                simulate_interval(dur, overlapping_block['task'])
+                current_time = overlapping_block['end']
+                continue
+                
+            # 2. We are in a gap
+            next_start = float('inf')
+            for b in future_pre:
+                if b['start'] > current_time:
+                    next_start = min(next_start, b['start'])
+            
+            accepted_tasks = [t.name for t in self.tasks]
+            current_period_end = float('inf')
+            
+            if self.periods:
+                current_p = None
+                next_p_start = float('inf')
+                
+                for p in self.periods:
+                    if p['start'] <= current_time < p['end']:
+                        current_p = p
+                        break
+                    elif p['start'] > current_time:
+                        next_p_start = min(next_p_start, p['start'])
+                        
+                if current_p:
+                    accepted_tasks = current_p['accepted_tasks']
+                    current_period_end = current_p['end']
+                else:
+                    advance_to = min(next_start, next_p_start)
+                    if advance_to == float('inf'):
+                        break
+                    
+                    dur = advance_to - current_time
+                    yield {
+                        'task': None,
+                        'start': current_time,
+                        'duration': dur,
+                        'end': advance_to,
+                        'type': 'gap (outside periods)'
+                    }
+                    simulate_interval(dur, None)
+                    current_time = advance_to
+                    continue
+
+            gap = min(next_start, current_period_end) - current_time
+            valid_tasks = [t for t in self.tasks if t.min_time <= gap and t.name in accepted_tasks]
+            
+            if not valid_tasks:
+                advance_to = min(next_start, current_period_end)
+                if advance_to == float('inf'):
+                    break 
                 
                 dur = advance_to - current_time
-                if k > 0:
-                    decay = math.exp(-k * dur)
-                    for t_name in past_debt:
-                        past_debt[t_name] *= decay
-                        
+                yield {
+                    'task': None,
+                    'start': current_time,
+                    'duration': dur,
+                    'end': advance_to,
+                    'type': 'gap (no valid tasks)'
+                }
+                simulate_interval(dur, None)
                 current_time = advance_to
                 continue
 
-        # Clamp the gap by the end of the current period
-        gap = min(next_start, current_period_end) - current_time
-        valid_tasks = [t for t in tasks if t.min_time <= gap and t.name in accepted_tasks]
-        
-        if not valid_tasks:
-            advance_to = min(next_start, current_period_end)
-            if advance_to == float('inf'):
-                break 
+            # Calculate scores to pick the most starved task based on priority ratio
+            best_task = valid_tasks[0]  # Satisfies Pylance (valid_tasks is guaranteed non-empty here)
+            best_score = float('-inf')
             
-            dur = advance_to - current_time
-            if k > 0:
-                decay = math.exp(-k * dur)
-                for t_name in past_debt:
-                    past_debt[t_name] *= decay
-                    
-            current_time = advance_to
-            continue
-            
-        # Calculate Total Debt = Decaying Past Debt + Decaying Future Pre-scheduled Debt
-        def get_total_debt(t_name):
-            f_debt = 0.0
-            if k > 0:
+            for t in valid_tasks:
+                f_eff = 0.0
                 for b in future_pre:
-                    if b['task'] == t_name and b['end'] > current_time:
+                    if b['task'] == t.name and b['end'] > current_time:
                         s = max(current_time, b['start'])
                         e = b['end']
-                        f_debt += (math.exp(-k * (s - current_time)) - math.exp(-k * (e - current_time))) / k
-            else:
-                for b in future_pre:
-                    if b['task'] == t_name and b['end'] > current_time:
-                        f_debt += (b['end'] - max(current_time, b['start']))
+                        D = e - s
+                        dist = s - current_time
                         
-            return past_debt[t_name] + f_debt
-
-        # Pick the most starved task based entirely on the unified decaying debt
-        best_task = min(
-            valid_tasks,
-            key=lambda t: get_total_debt(t.name) / t.priority
-        )
-        
-        duration = best_task.min_time
-        min_valid = min(t.min_time for t in valid_tasks)
-        
-        # Avoid leaving unschedulable microscopic slivers of time in the gap
-        if gap - duration < min_valid and gap >= duration:
-            duration = gap
+                        # Only decay the EXCESS duration of future blocks
+                        if D > C:
+                            f_eff += C + (D - C) * (math.exp(-k * dist) if k > 0 else 1.0)
+                        else:
+                            f_eff += D
+                            
+                total_debt = debts[t.name] - f_eff
+                score = total_debt / t.priority
+                
+                if score > best_score:
+                    best_score = score
+                    best_task = t
             
-        yield {
-            'task': best_task.name,
-            'start': current_time,
-            'duration': duration,
-            'end': current_time + duration,
-            'type': 'scheduled'
-        }
-        
-        # Advance time and decay ALL past debt
-        if k > 0:
-            decay = math.exp(-k * duration)
-            for t_name in past_debt:
-                past_debt[t_name] *= decay
+            duration = best_task.min_time
+            min_valid = min(t.min_time for t in valid_tasks)
             
-            # The scheduler's ongoing executions add equivalent decaying debt
-            past_debt[best_task.name] += (1 - decay) / k
-        else:
-            past_debt[best_task.name] += duration
+            if gap - duration < min_valid and gap >= duration:
+                duration = gap
+                
+            yield {
+                'task': best_task.name,
+                'start': current_time,
+                'duration': duration,
+                'end': current_time + duration,
+                'type': 'scheduled'
+            }
             
-        current_time += duration
+            simulate_interval(duration, best_task.name)
+            current_time += duration
 
 
 def get_schedule(tasks, time_limit, starting_timeline=None, periods=None):
-    scheduler = infinite_scheduler(tasks, starting_timeline, periods)
+    """
+    Wrapper function to extract discrete blocks up to `time_limit` for plotting.
+    Under the hood, it just pushes the functional scheduler forward.
+    """
+    hl = HALF_LIFE if 'HALF_LIFE' in globals() else 30.0
+    scheduler_func = SchedulerFunction(tasks, starting_timeline, periods, half_life=hl)
+    
+    # We query the function at the target time to force it to generate the timeline up to `time_limit`.
+    scheduler_func(time_limit)
+    
     schedule = []
-    for block in scheduler:
-        if block['start'] >= time_limit:
+    for b in scheduler_func.history:
+        if b['start'] >= time_limit:
             break
-        schedule.append(block)
+        if b['task'] is not None:  # Exclude raw gaps from final visualization
+            schedule.append(b)
+            
     return schedule
 
 
@@ -255,6 +307,7 @@ def visualize_schedule(schedule, tasks, time_limit, ax, title):
 def show_scrollable(fig, window_title="Scheduler tests"):
     try:
         import tkinter as tk
+
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     except ImportError:
         plt.show()
@@ -361,8 +414,6 @@ if __name__ == "__main__":
     # ==========================================
     tasks_7 = [Task(name="Task A", priority=50, min_time=10), Task(name="Task B", priority=50, min_time=10)]
     time_limit_7 = 100
-    # Task A will monopolize time from 70 to 130. 
-    # Notice how B executes heavily right BEFORE 70, due to Task A radiating future debt.
     starting_timeline_7 = [{'task': 'Task A', 'start': 70, 'end': 130}]
     schedule_7 = get_schedule(tasks_7, time_limit_7, starting_timeline=starting_timeline_7)
     visualize_schedule(schedule_7, tasks_7, time_limit_7, axes[6], "Test 7: Future Debt Growth (B runs pre-emptively because A looms at t=70)")
@@ -372,8 +423,6 @@ if __name__ == "__main__":
     # ==========================================
     tasks_8 = [Task(name="Task A", priority=50, min_time=10), Task(name="Task B", priority=50, min_time=10)]
     time_limit_8 = 100
-    # A dominated heavily just prior to t=0, but exponential decay means the scheduler rapidly 
-    # forgets the past debt and resumes natural swapping behavior.
     schedule_8 = get_schedule(tasks_8, time_limit_8, starting_timeline=[{'task': 'Task A', 'start': -100, 'end': 0}])
     visualize_schedule(schedule_8, tasks_8, time_limit_8, axes[7], "Test 8: Exponential Decay - B catches up quickly")
 
@@ -382,8 +431,6 @@ if __name__ == "__main__":
     # ==========================================
     tasks_9 = [Task(name="Task A", priority=25, min_time=10), Task(name="Task B", priority=25, min_time=10), Task(name="Task C", priority=50, min_time=10)]
     time_limit_9 = 2000
-    # Because all debts dynamically decay now, the percentages over a very long time scale adapt smoothly
-    # to recent states rather than obsessively tracking absolute long-term lifetimes.
     schedule_9 = get_schedule(tasks_9, time_limit_9, starting_timeline=[{'task': 'Task C', 'start': -1000, 'end': 0}])
     visualize_schedule(schedule_9, tasks_9, time_limit_9, axes[8], "Test 9: Long-term Fluid Decay Priority Matching")
 
@@ -392,8 +439,6 @@ if __name__ == "__main__":
     # ==========================================
     tasks_10 = [Task(name="Task A", priority=80, min_time=10), Task(name="Task B", priority=20, min_time=10)]
     time_limit_10 = 500
-    # Task B is pre-scheduled right in the middle for a huge chunk (200 minutes). 
-    # Its placed future debt will starve it slightly before it happens, and its placed past debt will decay away afterwards.
     schedule_10 = get_schedule(tasks_10, time_limit_10, starting_timeline=[{'task': 'Task B', 'start': 200, 'end': 400}])
     visualize_schedule(schedule_10, tasks_10, time_limit_10, axes[9], "Test 10: Handling large mid-run pre-scheduled blocks smoothly")
 
@@ -428,6 +473,12 @@ if __name__ == "__main__":
             
             actual_pct = (actual_time / t_limit * 100) if t_limit > 0 else 0
             print(f"  {task.name}: Target {task.priority*100:.0f}%, Actual {actual_pct:.1f}%")
+
+    print("\n--- Functional API Test ---")
+    my_func = SchedulerFunction(tasks_1, half_life=30.0)
+    test_time = 17.5
+    current_task = my_func(test_time)
+    print(f"At t={test_time} minutes, the executing task is: {current_task.name if current_task else 'None'}")
 
     fig.subplots_adjust(left=0.08, right=0.80, top=0.96, bottom=0.04, hspace=0.85)
     show_scrollable(fig)
