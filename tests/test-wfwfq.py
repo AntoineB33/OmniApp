@@ -1,22 +1,13 @@
 import itertools
 import math
 from collections.abc import Callable, Iterable, Iterator
-from enum import Enum
-
-
-class Period(Enum):
-    INACTIVE = 0
-    SCREEN = 1
-    NO_SCREEN = 2
-    BOTH = 3
 
 
 class Task:
-    def __init__(self, name: str, priority: float, min_time: float, needs_screen: bool):
+    def __init__(self, name: str, priority: float, min_time: float):
         self.name = name
         self.priority = priority
         self.min_time = min_time
-        self.needs_screen = needs_screen
 
         # WF²Q State Tracking (Virtual Time)
         self.weight = 0.0      # Normalized priority (0.0 to 1.0)
@@ -24,20 +15,17 @@ class Task:
 
 
 class TimeBlock:
-    def __init__(self, duration: float, period_type: Period, forced_task: 'Task | None' = None):
+    def __init__(self, duration: float, allowed_tasks: set[str] | None = None, forced_task: 'Task | None' = None):
         self.duration = duration
-        self.period_type = period_type
+        # None means all tasks are permitted. An empty set() implies inactivity.
+        self.allowed_tasks = allowed_tasks
         self.forced_task = forced_task
 
 
-def is_task_valid_for_period(task: Task, period_type: Period) -> bool:
-    if period_type == Period.INACTIVE:
-        return False
-    if period_type == Period.BOTH:
+def is_task_valid_for_period(task: Task, allowed_tasks: set[str] | None) -> bool:
+    if allowed_tasks is None:
         return True
-    if period_type == Period.SCREEN and task.needs_screen:
-        return True
-    return bool(period_type == Period.NO_SCREEN and not task.needs_screen)
+    return task.name in allowed_tasks
 
 
 class TimelineStream:
@@ -56,7 +44,7 @@ class TimelineStream:
             try:
                 b = next(self.iterator)
                 self.blocks.append({
-                    "type": b.period_type,
+                    "allowed_tasks": b.allowed_tasks,
                     "start": self.cached_end_time,
                     "end": self.cached_end_time + b.duration,
                     "duration": b.duration,
@@ -86,14 +74,14 @@ class TimelineStream:
                     b = blk
                     break
             
-            if not b or not is_valid_func(task, b["type"]):
+            if not b or not is_valid_func(task, b["allowed_tasks"]):
                 break
                 
             duration_in_block = b["end"] - curr_t
             allowed += duration_in_block
             curr_t = b["end"]
             
-            # Prevent infinite lookahead loops on 'BOTH' blocks
+            # Prevent infinite lookahead loops on completely unrestricted blocks
             if allowed > 14400: # Cap lookahead at 10 days
                 return float('inf')
                 
@@ -109,10 +97,10 @@ def side_scheduler(tasks: list[Task]) -> dict[str, float]:
     Uses the scheduler logic on a clean timeline to determine the 
     maximum continuous time (t_max_i) each task can get in a row.
     """
-    sim_tasks = [Task(t.name, t.priority, t.min_time, t.needs_screen) for t in tasks]
+    sim_tasks = [Task(t.name, t.priority, t.min_time) for t in tasks]
     
     # A completely clean infinite timeline
-    clean_timeline = [TimeBlock(1000000, Period.BOTH)]
+    clean_timeline = [TimeBlock(1000000, allowed_tasks=None)]
     max_durations = {tk.name: 0.0 for tk in sim_tasks}
     
     # Run the raw scheduler without recursion
@@ -181,8 +169,10 @@ def _schedule_timeline_raw(tasks: list[Task], timeline: Iterable[TimeBlock], t_n
         if not current_block:
             break  # Timeline exhausted
             
+        block_type = "ALL" if current_block["allowed_tasks"] is None else ("INACTIVE" if not current_block["allowed_tasks"] else "RESTRICTED")
+
         # If we are starting mid-block because of t_now, time_to_boundary will adapt
-        if current_block["type"] == Period.INACTIVE:
+        if block_type == "INACTIVE":
             dur = stream.get_time_until_next_boundary(t)
             yield {"task": "INACTIVE", "duration": dur, "type": "INACTIVE"}
             t += dur
@@ -207,7 +197,7 @@ def _schedule_timeline_raw(tasks: list[Task], timeline: Iterable[TimeBlock], t_n
         # 1. Filter Eligible Candidates (Must be valid AND have enough continuous space)
         valid_candidates = []
         for tk in tasks:
-            if is_task_valid_for_period(tk, current_block["type"]):
+            if is_task_valid_for_period(tk, current_block["allowed_tasks"]):
                 allowed_space = stream.get_allowed_continuous(t, tk, is_task_valid_for_period)
                 if allowed_space >= tk.min_time:
                     valid_candidates.append((tk, allowed_space))
@@ -215,7 +205,7 @@ def _schedule_timeline_raw(tasks: list[Task], timeline: Iterable[TimeBlock], t_n
         # 2. Idle if constrained
         if not valid_candidates:
             dur = stream.get_time_until_next_boundary(t)
-            yield {"task": "IDLE / DEAD TIME", "duration": dur, "type": current_block["type"].name}
+            yield {"task": "IDLE / DEAD TIME", "duration": dur, "type": block_type}
             t += dur
             continue
             
@@ -251,8 +241,6 @@ def _schedule_timeline_raw(tasks: list[Task], timeline: Iterable[TimeBlock], t_n
         winner, max_allowed, _, _ = winner_info
         
         # 6. Determine Optimal Scheduling Duration
-        # FIX: We subtract winner.min_time because picking this task inherently advances its 
-        # execution by at least min_time. We want its *next* theoretical VFT to tie with the target_vft.
         dt_eq = max(0.0, (target_vft * winner.weight) - winner.allocated - winner.min_time)
         
         dt_eligible = float('inf')
@@ -285,10 +273,12 @@ def _schedule_timeline_raw(tasks: list[Task], timeline: Iterable[TimeBlock], t_n
             to_boundary = b["end"] - t
             step = min(rem, to_boundary)
             
+            b_type = "ALL" if b["allowed_tasks"] is None else ("INACTIVE" if not b["allowed_tasks"] else "RESTRICTED")
+
             yield {
                 "task": winner.name,
                 "duration": step,
-                "type": b["type"].name
+                "type": b_type
             }
             rem -= step
             t += step
@@ -399,7 +389,6 @@ def print_colored_timeline(title: str, schedule: list[dict]):
     for i, entry in enumerate(schedule):
         name = entry["task"]
         duration = entry["duration"]
-        period_type = entry.get("type", "")
 
         if name == "INACTIVE":
             color = INACTIVE_COLOR
@@ -414,19 +403,13 @@ def print_colored_timeline(title: str, schedule: list[dict]):
             chars = round((duration / total_time) * visual_width)
             chars_used += chars
 
-        fill_char = '/' if period_type == "NO_SCREEN" else ' '
-
-        if fill_char == '/':
-            timeline_bar += f"{color}\033[30m{fill_char * chars}{RESET}"
-        else:
-            timeline_bar += f"{color}{fill_char * chars}{RESET}"
+        timeline_bar += f"{color}{' ' * chars}{RESET}"
 
     print(timeline_bar)
     print()
 
     # Build legend
     legend_items = []
-    legend_items.append(f"\033[47m\033[30m///{RESET} NO SCREEN")
 
     if any(e["task"] == "INACTIVE" for e in schedule):
         legend_items.append(f"{INACTIVE_COLOR}  {RESET} INACTIVE")
@@ -449,28 +432,29 @@ if __name__ == "__main__":
 
     # EXAMPLE 1: Infinite Timeline, 1h/1h perfect balancing
     tasks_1 = [
-        Task("Task A (7m min)", priority=50, min_time=7, needs_screen=True),
-        Task("Task B (1h min)", priority=50, min_time=60, needs_screen=False)
+        Task("Task A (7m min)", priority=50, min_time=7),
+        Task("Task B (1h min)", priority=50, min_time=60)
     ]
     base_pattern_1 = [
-        TimeBlock(60, Period.BOTH),
-        TimeBlock(60, Period.NO_SCREEN)
+        TimeBlock(60, allowed_tasks=None),
+        TimeBlock(60, allowed_tasks={tasks_1[1].name})
     ]
     scheduler_1 = schedule_timeline(tasks_1, itertools.cycle(base_pattern_1))
     schedule_1_slice = list(itertools.islice(scheduler_1, 6))
     print_colored_timeline("WF²Q Continuous Lookahead - Perfect 1h/1h Balancing", schedule_1_slice)
 
     # EXAMPLE 2: Custom Daily Pattern
-    tasks_2 = [
-        Task("Deep Work", priority=60, min_time=90, needs_screen=True),
-        Task("Reading", priority=20, min_time=45, needs_screen=False),
-        Task("Quick Chores", priority=20, min_time=15, needs_screen=False)
-    ]
+    t_dw = Task("Deep Work", priority=60, min_time=90)
+    t_reading = Task("Reading", priority=20, min_time=45)
+    t_chores = Task("Quick Chores", priority=20, min_time=15)
+    
+    tasks_2 = [t_dw, t_reading, t_chores]
+    
     base_pattern_2 = [
-        TimeBlock(120, Period.SCREEN),
-        TimeBlock(60, Period.NO_SCREEN),
-        TimeBlock(420, Period.BOTH),
-        TimeBlock(30, Period.INACTIVE)
+        TimeBlock(120, allowed_tasks={t_dw.name}),
+        TimeBlock(60, allowed_tasks={t_reading.name, t_chores.name}),
+        TimeBlock(420, allowed_tasks=None),
+        TimeBlock(30, allowed_tasks=set())
     ]
     scheduler_2 = schedule_timeline(tasks_2, itertools.cycle(base_pattern_2))
     schedule_2_slice = list(itertools.islice(scheduler_2, 30))
@@ -478,17 +462,17 @@ if __name__ == "__main__":
 
     # EXAMPLE 3: One-off initialization followed by an infinite loop
     tasks_3 = [
-        Task("Task X", priority=45, min_time=45, needs_screen=True),
-        Task("Task Y", priority=45, min_time=45, needs_screen=True),
-        Task("Task Z", priority=10, min_time=45, needs_screen=True)
+        Task("Task X", priority=45, min_time=45),
+        Task("Task Y", priority=45, min_time=45),
+        Task("Task Z", priority=10, min_time=45)
     ]
     initial_timeline = [
-        TimeBlock(120, Period.INACTIVE),
-        TimeBlock(60, Period.SCREEN)
+        TimeBlock(120, allowed_tasks=set()),
+        TimeBlock(60, allowed_tasks={"Task X", "Task Y", "Task Z"}) 
     ]
     repeating_pattern = [
-        TimeBlock(180, Period.BOTH),
-        TimeBlock(30, Period.INACTIVE)
+        TimeBlock(180, allowed_tasks=None),
+        TimeBlock(30, allowed_tasks=set())
     ]
     combined_timeline = itertools.chain(initial_timeline, itertools.cycle(repeating_pattern))
     scheduler_3 = schedule_timeline(tasks_3, combined_timeline)
@@ -496,19 +480,19 @@ if __name__ == "__main__":
     print_colored_timeline("Mixed Timeline - One-Off Start + Infinite Loop", schedule_3_slice)
 
     # EXAMPLE 4
-    t_deep_work = Task("Deep Work", priority=50, min_time=45, needs_screen=True)
-    t_reading = Task("Reading", priority=50, min_time=45, needs_screen=True)
+    t_deep_work_4 = Task("Deep Work", priority=50, min_time=45)
+    t_reading_4 = Task("Reading", priority=50, min_time=45)
     
-    tasks_list = [t_deep_work, t_reading]
+    tasks_list = [t_deep_work_4, t_reading_4]
 
     timeline = [
-        TimeBlock(120, Period.SCREEN, forced_task=t_deep_work),
-        TimeBlock(60, Period.NO_SCREEN),
-        TimeBlock(1800, Period.BOTH)
+        TimeBlock(120, allowed_tasks={t_deep_work_4.name}, forced_task=t_deep_work_4),
+        TimeBlock(60, allowed_tasks={t_reading_4.name}),
+        TimeBlock(1800, allowed_tasks=None)
     ]
     
     # We now test `t_now = 120` to verify how it caps past execution memory.
-    scheduler_4 = schedule_timeline(tasks_list, timeline, t_now=120)
+    scheduler_4 = schedule_timeline(tasks_list, timeline)
     schedule_4_slice = list(itertools.islice(scheduler_4, 10))
     print_colored_timeline("Forced Task Initialization (t_now = 120, bounded past context)", schedule_4_slice)
     
