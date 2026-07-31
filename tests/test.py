@@ -303,7 +303,10 @@ class SchedulerFunction:
                         f_eff += D
                         
                 total_debt = debts[t.name] - f_eff
-                score = total_debt / t.priority
+                
+                # Protect against ZeroDivisionError for 0 priority tasks
+                safe_priority = max(t.priority, 1e-9)
+                score = total_debt / safe_priority
                 
                 if score > best_score:
                     best_score = score
@@ -439,7 +442,7 @@ def show_scrollable(fig, window_title="Scheduler tests"):
 
 if __name__ == "__main__":
     HALF_LIFE = 30.0
-    TEST_COUNT = 11
+    TEST_COUNT = 12
     SUBPLOT_HEIGHT_IN = 3.5
     fig, axes = plt.subplots(TEST_COUNT, 1, figsize=(14, SUBPLOT_HEIGHT_IN * TEST_COUNT))
 
@@ -543,6 +546,19 @@ if __name__ == "__main__":
     t1 = time.time()
     
     visualize_schedule(schedule_11, tasks_11, time_limit_11, axes[10], f"Test 11: 50 Tasks, 100 Periods, 100 future chunks [{t1-t0:.3f}s Execution]")
+
+    # ==========================================
+    # TEST 12: Zero Priority Edge Case
+    # ==========================================
+    tasks_12 = [Task(name="Task A", priority=100, min_time=10), Task(name="Task B", priority=0, min_time=10)]
+    time_limit_12 = 100
+    periods_12 = [
+        {'start': 0, 'end': 40, 'accepted_tasks': ['Task A', 'Task B']},
+        {'start': 40, 'end': 60, 'accepted_tasks': ['Task B']},
+        {'start': 60, 'end': 100, 'accepted_tasks': ['Task A', 'Task B']}
+    ]
+    schedule_12 = get_schedule(tasks_12, time_limit_12, periods=periods_12)
+    visualize_schedule(schedule_12, tasks_12, time_limit_12, axes[11], "Test 12: Priority Zero (B only runs when forced by period)")
 
 
     print("\n--- Functional API Test ---")
