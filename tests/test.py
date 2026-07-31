@@ -1,4 +1,5 @@
 import math
+import time
 
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
@@ -68,6 +69,23 @@ class SchedulerFunction:
                 
         past_blocks.sort(key=lambda x: x['start'])
         future_pre.sort(key=lambda x: x['start'])
+        
+        # O(1) Pre-process future blocks to resolve contiguous/overlapping chunks per task
+        merged_future = {t.name: [] for t in self.tasks}
+        for b in future_pre:
+            t_name = b['task']
+            if t_name not in merged_future: continue
+            
+            s, e = b['start'], b['end']
+            if merged_future[t_name] and abs(merged_future[t_name][-1]['end'] - s) < 1e-9:
+                merged_future[t_name][-1]['end'] = e
+            elif merged_future[t_name] and merged_future[t_name][-1]['end'] > s:
+                merged_future[t_name][-1]['end'] = max(merged_future[t_name][-1]['end'], e)
+            else:
+                merged_future[t_name].append({'start': s, 'end': e})
+        
+        # Sort periods strictly for sweep line
+        sorted_periods = sorted(self.periods, key=lambda x: x['start']) if self.periods else []
         
         def simulate_interval(dt, task_running):
             """
@@ -142,26 +160,43 @@ class SchedulerFunction:
                         elif abs(debts[name] - (-C)) < eps:
                             debts[name] = -C
 
-        # Process starting blocks that occurred entirely in the past
+        # Process starting blocks that occurred entirely in the past (resolves overlaps)
         if past_blocks:
             current_sim_time = past_blocks[0]['start']
             for b in past_blocks:
                 if b['start'] > current_sim_time:
                     simulate_interval(b['start'] - current_sim_time, None)
-                simulate_interval(b['end'] - b['start'], b['task'])
-                current_sim_time = b['end']
+                    current_sim_time = b['start']
+                if b['end'] > current_sim_time:
+                    dur = b['end'] - current_sim_time
+                    simulate_interval(dur, b['task'])
+                    current_sim_time = b['end']
             if current_sim_time < 0:
                 simulate_interval(0 - current_sim_time, None)
                 
         current_time = 0.0
         
+        # Pointers mapped to the exact position to eliminate continuous recalculations.
+        future_pre_idx = 0
+        period_idx = 0
+        future_task_idx = {t.name: 0 for t in self.tasks}
+        
         while True:
+            # Shift fast-lookup pointers forward
+            while future_pre_idx < len(future_pre) and future_pre[future_pre_idx]['end'] <= current_time:
+                future_pre_idx += 1
+            while period_idx < len(sorted_periods) and sorted_periods[period_idx]['end'] <= current_time:
+                period_idx += 1
+
             # 1. Check if we overlap a pre-scheduled block
             overlapping_block = None
-            for b in future_pre:
+            for i in range(future_pre_idx, len(future_pre)):
+                b = future_pre[i]
                 if b['start'] <= current_time < b['end']:
                     overlapping_block = b
                     break
+                elif b['start'] > current_time:
+                    break  # Early exit: list is sorted by start time
             
             if overlapping_block:
                 dur = overlapping_block['end'] - current_time
@@ -178,9 +213,10 @@ class SchedulerFunction:
                 
             # 2. We are in a gap
             next_start = float('inf')
-            for b in future_pre:
-                if b['start'] > current_time:
-                    next_start = min(next_start, b['start'])
+            for i in range(future_pre_idx, len(future_pre)):
+                if future_pre[i]['start'] > current_time:
+                    next_start = future_pre[i]['start']
+                    break
             
             accepted_tasks = [t.name for t in self.tasks]
             current_period_end = float('inf')
@@ -189,12 +225,14 @@ class SchedulerFunction:
                 current_p = None
                 next_p_start = float('inf')
                 
-                for p in self.periods:
+                if period_idx < len(sorted_periods):
+                    p = sorted_periods[period_idx]
                     if p['start'] <= current_time < p['end']:
                         current_p = p
-                        break
-                    elif p['start'] > current_time:
-                        next_p_start = min(next_p_start, p['start'])
+                        if period_idx + 1 < len(sorted_periods):
+                            next_p_start = sorted_periods[period_idx + 1]['start']
+                    else:
+                        next_p_start = p['start']
                         
                 if current_p:
                     accepted_tasks = current_p['accepted_tasks']
@@ -241,22 +279,22 @@ class SchedulerFunction:
             best_score = float('-inf')
             
             for t in valid_tasks:
+                idx = future_task_idx[t.name]
+                m_blocks = merged_future[t.name]
+                
+                while idx < len(m_blocks) and m_blocks[idx]['end'] <= current_time:
+                    idx += 1
+                future_task_idx[t.name] = idx
+                
                 f_eff = 0.0
-                
-                # Merge contiguous future blocks mathematically to prevent chunking dependencies 
-                merged_blocks = []
-                for b in future_pre:
-                    if b['task'] == t.name and b['end'] > current_time:
-                        s = max(current_time, b['start'])
-                        e = b['end']
-                        if merged_blocks and abs(merged_blocks[-1]['end'] - s) < 1e-9:
-                            merged_blocks[-1]['end'] = e
-                        else:
-                            merged_blocks.append({'start': s, 'end': e})
-                
-                for mb in merged_blocks:
-                    D = mb['end'] - mb['start']
-                    dist = mb['start'] - current_time
+                for i in range(idx, len(m_blocks)):
+                    mb = m_blocks[i]
+                    s = max(current_time, mb['start'])
+                    e = mb['end']
+                    if e <= s: continue
+                    
+                    D = e - s
+                    dist = s - current_time
                     
                     # Only decay the EXCESS duration of future blocks
                     if D > C:
@@ -274,6 +312,7 @@ class SchedulerFunction:
             duration = best_task.min_time
             min_valid = min(t.min_time for t in valid_tasks)
             
+            # Close minute fragmentation. If we fit 'min_time' but the remaining gap won't fit any valid task, take the full gap.
             if gap - duration < min_valid and gap >= duration:
                 duration = gap
                 
@@ -290,21 +329,16 @@ class SchedulerFunction:
 
 
 def get_schedule(tasks, time_limit, starting_timeline=None, periods=None):
-    """
-    Wrapper function to extract discrete blocks up to `time_limit` for plotting.
-    Under the hood, it just pushes the functional scheduler forward.
-    """
     hl = HALF_LIFE if 'HALF_LIFE' in globals() else 30.0
     scheduler_func = SchedulerFunction(tasks, starting_timeline, periods, half_life=hl)
     
-    # We query the function at the target time to force it to generate the timeline up to `time_limit`.
     scheduler_func(time_limit)
     
     schedule = []
     for b in scheduler_func.history:
         if b['start'] >= time_limit:
             break
-        if b['task'] is not None:  # Exclude raw gaps from final visualization
+        if b['task'] is not None:
             schedule.append(b)
             
     return schedule
@@ -312,9 +346,10 @@ def get_schedule(tasks, time_limit, starting_timeline=None, periods=None):
 
 def visualize_schedule(schedule, tasks, time_limit, ax, title):
     colors = list(mcolors.TABLEAU_COLORS.values())
-    task_colors = {task.name: colors[i % len(colors)] for i, task in enumerate(tasks)}
+    display_tasks = tasks[:8]  # Render a max of 8 tasks to avoid crashing UI when testing performance scale
+    task_colors = {task.name: colors[i % len(colors)] for i, task in enumerate(display_tasks)}
     
-    task_names = [t.name for t in tasks]
+    task_names = [t.name for t in display_tasks]
     y_ticks = []
     y_labels = []
 
@@ -334,8 +369,8 @@ def visualize_schedule(schedule, tasks, time_limit, ax, title):
         y_ticks.append(y_pos + 5)
         y_labels.append(name)
 
-    stats_text = "Target vs Actual:\n"
-    for task in tasks:
+    stats_text = "Target vs Actual (Shown):\n"
+    for task in display_tasks:
         actual_time = 0
         for b in schedule:
             if b['task'] == task.name:
@@ -404,7 +439,7 @@ def show_scrollable(fig, window_title="Scheduler tests"):
 
 if __name__ == "__main__":
     HALF_LIFE = 30.0
-    TEST_COUNT = 10
+    TEST_COUNT = 11
     SUBPLOT_HEIGHT_IN = 3.5
     fig, axes = plt.subplots(TEST_COUNT, 1, figsize=(14, SUBPLOT_HEIGHT_IN * TEST_COUNT))
 
@@ -495,37 +530,20 @@ if __name__ == "__main__":
     schedule_10 = get_schedule(tasks_10, time_limit_10, starting_timeline=[{'task': 'Task B', 'start': 200, 'end': 400}])
     visualize_schedule(schedule_10, tasks_10, time_limit_10, axes[9], "Test 10: Handling large mid-run pre-scheduled blocks smoothly")
 
-    tests = [
-        (tasks_1, time_limit_1, schedule_1),
-        (tasks_2, time_limit_2, schedule_2),
-        (tasks_3, time_limit_3, schedule_3),
-        (tasks_4, time_limit_4, schedule_4),
-        (tasks_5, time_limit_5, schedule_5),
-        (tasks_6, time_limit_6, schedule_6),
-        (tasks_7, time_limit_7, schedule_7),
-        (tasks_8, time_limit_8, schedule_8),
-        (tasks_9, time_limit_9, schedule_9),
-        (tasks_10, time_limit_10, schedule_10),
-    ]
+    # ==========================================
+    # TEST 11: High Performance Scaling
+    # ==========================================
+    tasks_11 = [Task(name=f"Task {i}", priority=100.0/50, min_time=5) for i in range(50)]
+    time_limit_11 = 1000
+    periods_11 = [{'start': i*20, 'end': i*20+15, 'accepted_tasks': [f"Task {j}" for j in range(50)]} for i in range(100)]
+    starting_timeline_11 = [{'task': f"Task {i%50}", 'start': i*20+15, 'end': i*20+20} for i in range(100)]
+    
+    t0 = time.time()
+    schedule_11 = get_schedule(tasks_11, time_limit_11, starting_timeline=starting_timeline_11, periods=periods_11)
+    t1 = time.time()
+    
+    visualize_schedule(schedule_11, tasks_11, time_limit_11, axes[10], f"Test 11: 50 Tasks, 100 Periods, 100 future chunks [{t1-t0:.3f}s Execution]")
 
-    for idx, (t_list, t_limit, sched) in enumerate(tests):
-        print(f"\n--- Schedule {idx+1} ---")
-        for b in sched[:12]:
-            print(f"[{b['start']:>3.1f}m -> {b['end']:>3.1f}m] {b['task']} (Type: {b.get('type')})")
-        if len(sched) > 12: print("...")
-        
-        print("\nTarget vs Actual:")
-        for task in t_list:
-            actual_time = 0
-            for b in sched:
-                if b['task'] == task.name:
-                    start_clamped = max(0, b['start'])
-                    end_clamped = min(t_limit, b['end'])
-                    if end_clamped > start_clamped:
-                        actual_time += end_clamped - start_clamped
-            
-            actual_pct = (actual_time / t_limit * 100) if t_limit > 0 else 0
-            print(f"  {task.name}: Target {task.priority*100:.0f}%, Actual {actual_pct:.1f}%")
 
     print("\n--- Functional API Test ---")
     my_func = SchedulerFunction(tasks_1, half_life=30.0)
@@ -533,5 +551,5 @@ if __name__ == "__main__":
     current_task = my_func(test_time)
     print(f"At t={test_time} minutes, the executing task is: {current_task.name if current_task else 'None'}")
 
-    fig.subplots_adjust(left=0.08, right=0.80, top=0.96, bottom=0.04, hspace=0.85)
+    fig.subplots_adjust(left=0.08, right=0.80, top=0.97, bottom=0.03, hspace=0.85)
     show_scrollable(fig)

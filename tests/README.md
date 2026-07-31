@@ -14,4 +14,4 @@ Since the timeline is infinite, the result of the scheduler is a function that t
 
 For now, I am looking for the algorithm that does exactly that, even if it takes time with hundreds of tasks and hundreds of tasks and periods in the starting timeline.
 
-Modify the script to strictly follow the requirements. Keep the current example tests, and add more if needed.
+Does the script strictly satisfies the requirements? If not fix it. Keep the current example tests, and add more if needed.
