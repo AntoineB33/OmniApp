@@ -13,3 +13,9 @@ But here are the problems I had in mind:
 - If the starting timeline has this infinite pattern: task A 1h, then nothing for 15min, then task A 1h and so on... If the previous point is strictly applied here, each window of the timeline that has no task yet will be a window in the normal schedule, so it will be task A 1h, then task B 10min, then task A 5min, then task A 1h and so on... it would add task A even though task A is already too much present. In this case, it should be task A 1h, task B 15min, task A 1h and so on...
 
 Modify the previous Python script to satisfy this new requirement. Keep the same example test, and add two more for the two scenarios described above. The three example tests must be visible in the same window (with a vertical scrollbar if necessary).
+
+
+
+Now, the timeline is formed of periods. Each period defines a set of tasks it accepts.
+
+Modify the current Python script to satisfy this new requirement. Keep the four current example tests, and add more to test this new requirement.
