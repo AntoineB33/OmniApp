@@ -156,7 +156,7 @@ def visualize_schedule(schedule, tasks, time_limit, ax, title):
                 if end_clamped > start_clamped:
                     actual_time += end_clamped - start_clamped
         actual_pct = (actual_time / time_limit * 100) if time_limit > 0 else 0
-        stats_text += f"{task.name}: Target {task.priority*100:.0f}%, Actual {actual_pct:.1f}%\n"
+        stats_text += f"\n{task.name}: Target {task.priority*100:.0f}%, Actual {actual_pct:.1f}%"
 
     ax.set_yticks(y_ticks)
     ax.set_yticklabels(y_labels)
@@ -170,8 +170,8 @@ def visualize_schedule(schedule, tasks, time_limit, ax, title):
             verticalalignment='top', bbox=props)
 
 if __name__ == "__main__":
-    # Use a large vertical figure size to naturally fit 3 subplots in the same window
-    fig, axes = plt.subplots(3, 1, figsize=(14, 12))
+    # Use a large vertical figure size to naturally fit the 4 subplots in the same window
+    fig, axes = plt.subplots(4, 1, figsize=(14, 14))
 
     # ==========================================
     # TEST 1: Original base behavior
@@ -231,7 +231,7 @@ if __name__ == "__main__":
         {'task': 'Task B', 'start': -1000, 'end': 0}
     ]
     schedule_4 = get_schedule(tasks_4, time_limit_4, starting_timeline=starting_timeline_4)
-    visualize_schedule(schedule_4, tasks_4, time_limit_4, axes[2],
+    visualize_schedule(schedule_4, tasks_4, time_limit_4, axes[3],
                        "Test 4: Massive Task A and B before t_now (Debt Ignored, Starts with C)")
 
 
@@ -245,8 +245,10 @@ if __name__ == "__main__":
             print(f"[{b['start']:>3}m -> {b['end']:>3}m] {b['task']} (Type: {b.get('type')})")
         if len(sched) > 8: print("...")
 
-    # Adjust layout so the side text boxes don't overlap boundaries
-    plt.tight_layout()
+    # tight_layout() cannot see the stat boxes (they are drawn outside the axes at x=1.02),
+    # so lay the grid out manually: a right gutter for the boxes and enough vertical
+    # spacing that an x-label never collides with the title below it.
+    fig.subplots_adjust(left=0.08, right=0.80, top=0.95, bottom=0.05, hspace=0.75)
     # By default, a 14x12 window will fit smoothly on standard modern displays.
     # Matplotlib's native UI allows zooming/panning instead of raw window scrollbars.
     plt.show()
