@@ -1,7 +1,17 @@
-There are tasks. Each task has a minimum time and a priority percentage. The scheduler must place panels of tasks in a timeline from t_now to +infinity. The starting timeline has already placed tasks. It also has periods where only some tasks are allowed. When the scheduler places a task, it cannot then place another task until this one reaches its minimum time (can only be interrupted by already placed tasks or periods).
+There are tasks. Each task has a minimum time and a priority percentage. The scheduler must place panels of tasks in a timeline from t_now to +infinity. When the scheduler places a task, it cannot then place another task until the placed one reaches its minimum time.
+The scheduler must satisfy as much as possible the priority percentages, in a scale as small as possible.
+Example: task A 50% 10min and task B 50% 10min
+wrong: task A 1h, then task B 1h and so on...
+right: task A 10min, then task B 10min and so on...
 
-The result of the scheduler is a function that takes time as a parameter and returns a task. With a window from t1 to t2, we calculate the sum for each task of the absolute difference between its presence percentage and its priority percentage. We have an infinite continuous 2d graph of this sum over t1 and t2, with t1 < t2, and the scheduler must efficiently find a function that gives the 2d graph f where $$\liminf_{T \to \infty} \frac{2}{(T - t_i)^2} \int_{t_i}^{T-\Delta} \int_{t_1+\Delta}^{T} (f(t_1, t_2) - g(t_1, t_2)) \,dt_2 \,dt_1 \le 0$$ with g every other possible graphs (or as much as possible if it is not possible), and t_i the time of the first placed task, or t_now if there is no task in the past.
+The starting timeline has already placed tasks.
 
-The side scheduler uses the same logic, but for a completely clean timeline, and returns for each task i the maximum time t_max_i it can have in a row in this calculated schedule.
+The timeline is formed of periods. Each period defines a set of tasks it accepts.
 
-When calculating, the main schedule will see what is before t1 differently than what it really is: if task i appears before t1, i is removed from [-infinity, t_fst_i], where t_fst_i is the latest time where [t_fst_i, t1] has t_max_i of i.
+A debt or an excess that is higher that it could be in a scheduling on a clear and all task accepted timeline is ignored exponentially as we move away from it (in both direction). The decay speed is always the same.
+
+Since the timeline is infinite, the result of the scheduler is a function that takes time as a parameter and returns a task or null.
+
+For now, I am looking for the algorithm that does exactly that, even if it takes time with hundreds of tasks and hundreds of tasks and periods in the starting timeline.
+
+Modify the script to strictly follow the requirements. Keep the current example tests, and add more if needed.
