@@ -136,6 +136,14 @@ private const val ADVANCE_TICK_MILLIS_ACCEL: Long = 1_000
 // records at sub-second sim resolution is pointless and just churns the reducer.
 private const val SCHEDULE_ADVANCE_STEP_MILLIS: Long = 1_000
 
+// PRD §18 Alarms: how late (in REAL time, measured by [BoundarySweep] like every other boundary) a crossed
+// alarm instant may be and still ring on a device that has no OS alarm clock (see [launchAlarmSweep]). That
+// sweep self-delays to each ring's instant, so a running app crosses it within milliseconds; a larger real
+// age means the process was suspended (machine asleep, lid shut) straight through the ring, where sounding
+// it on resume is only noise. More generous than [LOOK_AWAY_START_FRESH_MILLIS] because an alarm is still
+// worth hearing a few seconds late, whereas a stale look-away cue is not.
+private const val ALARM_FRESH_MILLIS: Long = 60_000
+
 // PRD §18 Alarms: how far the recomputed real instant of the armed ring may drift before the OS alarm is
 // rewritten. Only the debug sim clock drifts at all (it re-derives the real instant every display tick); on the
 // production clock the value is exactly stable, so this never applies.
@@ -461,6 +469,8 @@ class SchedulerEngine(
         resolveSleepModeOnStartup()
         // PRD §18 Alarms: keep this phone's OS alarm armed for the next ring in the synced alarm list.
         launchAlarmArming()
+        // PRD §18 Alarms: on a device with no OS alarm clock (the desktop), ring from the now-line instead.
+        launchAlarmSweep()
     }
 
     // ----- PRD §18 Alarms -------------------------------------------------------------------------
@@ -469,10 +479,22 @@ class SchedulerEngine(
     // (alarm, instant) doesn't re-arm on every tick. Null when nothing is armed.
     private var armedAlarm: ArmedAlarm? = null
 
+    // [launchAlarmSweep]'s own real-age bookkeeping (a field, so the sweep's collectLatest re-key on every
+    // now-tick never resets the previous-sweep anchor) and the rings it has already sounded, as
+    // (alarm id, boundary instant) — keyed on BOTH because two alarms may share one instant, and one
+    // de-duped on the instant alone would silence the second.
+    private val alarmSweep = BoundarySweep()
+    private var rungAlarms = setOf<Pair<String, Long>>()
+
     /**
      * PRD §18 Alarms: keep the OS-level alarm armed for the soonest ring in the synced alarm list. Re-runs on
      * every now-tick and whenever the list changes (an edit here, or a peer's edit arriving over sync), and
-     * only touches the OS when the target actually moves. Phones only — a desktop never rings.
+     * only touches the OS when the target actually moves.
+     *
+     * **Phones only** — not because other devices stay silent (the desktop rings too, see [launchAlarmSweep]),
+     * but because only a phone has an OS alarm clock to hand the ring to. A phone must ring with the app
+     * killed and the device dozing, which nothing in this process can promise; a desktop app that is not
+     * running cannot ring at all, so there is nothing to arm and the now-line IS the trigger.
      */
     private fun launchAlarmArming() = scope.launch {
         if (deviceKind != DeviceKind.Phone) return@launch
@@ -502,6 +524,68 @@ class SchedulerEngine(
             )
         }
         scheduleDeviceAlarm(armed)
+    }
+
+    /**
+     * PRD §18 Alarms on a device with **no OS alarm clock** (the desktop): ring from the now-line. Every sweep
+     * fires the alarm instants the clock crossed since the previous one, in boundary order, then self-delays
+     * to the next ring — without that delay a ring would sound up to one production tick
+     * ([ADVANCE_TICK_MILLIS_PROD], 30 s) late and then be swallowed as stale by its own freshness budget.
+     *
+     * Per CLAUDE.md the trigger is a pure function of the boundary instants the clock crossed: the ring
+     * instants come from [AlarmDomain.crossingsBetween] (a fixed wall-clock instant per local day, so a leap
+     * over several days still fires each one, in order), consecutive sweeps tile the timeline via
+     * [BoundarySweep.scanFloorMillis] so a clock jump cannot clip a crossing out of the scan, and whether a
+     * scanned crossing actually rings is decided ONLY by its REAL age ([ALARM_FRESH_MILLIS]) — an alarm the
+     * machine slept through stays silent, one the running app merely observed late still rings.
+     *
+     * No screen-active gate, unlike the §15 break cues: an alarm exists precisely to be heard by a user who
+     * is not at the screen.
+     */
+    private fun launchAlarmSweep() = scope.launch {
+        if (deviceKind == DeviceKind.Phone) return@launch
+        combine(_nowMillis, vm.state.map { it.alarms }.distinctUntilChanged()) { _, alarms -> alarms }
+            .collectLatest { alarms ->
+                while (true) {
+                    val simNow = clock.nowMillis()
+                    val speed = (clock as? SimAppClock)?.speed ?: 1.0
+                    alarmSweep.beginSweep(simNow, speed, clockGeneration())
+                    val scanFloor = alarmSweep.scanFloorMillis(LOOK_AWAY_SWEEP_CAP_MILLIS)
+                    rungAlarms = rungAlarms.filterTo(mutableSetOf()) { it.second >= scanFloor }
+
+                    for (crossing in AlarmDomain.crossingsBetween(alarms, scanFloor, simNow, tz)) {
+                        val key = crossing.entry.id to crossing.instant
+                        if (key in rungAlarms) continue
+                        rungAlarms = rungAlarms + key
+                        val lateness = alarmSweep.realLatenessMillis(crossing.instant)
+                        if (lateness > ALARM_FRESH_MILLIS) {
+                            Diagnostics.log(
+                                "alarm ${crossing.entry.id} at ${Diagnostics.formatInstant(crossing.instant)} " +
+                                    "swallowed: crossed ~$lateness ms (real) ago — process was suspended or " +
+                                    "engine just started (budget $ALARM_FRESH_MILLIS ms, speed ${speed}x)",
+                            )
+                            continue
+                        }
+                        // Same entry point the phone's OS receiver uses, so both rings behave identically
+                        // (ring what was decided, disarm a one-off, log it).
+                        onAlarmFire(
+                            ArmedAlarm(
+                                alarmId = crossing.entry.id,
+                                atMillis = crossing.instant,
+                                label = crossing.entry.label,
+                                soundSeconds = crossing.entry.soundSeconds,
+                                vibrate = crossing.entry.vibrate,
+                            ),
+                        )
+                    }
+
+                    // Sleep to the next ring so it sounds AT its instant. Re-read the list: a one-off just
+                    // rung has disarmed itself in the dispatch above.
+                    val next = AlarmDomain.nextOccurrence(vm.state.value.alarms, simNow, tz)?.instant ?: break
+                    if (speed <= 0.0) break
+                    delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
+                }
+            }
     }
 
     /**
@@ -539,9 +623,11 @@ class SchedulerEngine(
         if (entry != null && !entry.repeatDaily) {
             vm.dispatch(SchedulerIntent.SetAlarmEnabled(entry.id, false))
         }
-        // Re-arm from the state as it is AFTER that dispatch, so a one-off doesn't re-arm itself.
+        // Re-arm from the state as it is AFTER that dispatch, so a one-off doesn't re-arm itself. Only a
+        // phone arms anything: [launchAlarmSweep] (which is what called us on every other device) finds the
+        // next ring itself, and running the arming path there would log an OS arming that never happened.
         armedAlarm = null
-        armNextAlarm(clock.nowMillis(), vm.state.value.alarms)
+        if (deviceKind == DeviceKind.Phone) armNextAlarm(clock.nowMillis(), vm.state.value.alarms)
     }
 
     /**

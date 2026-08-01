@@ -18,6 +18,8 @@ import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 
 /**
@@ -137,6 +139,76 @@ class AlarmEngineTest {
         assertNotNull(next)
         assertEquals("alarm-1", next.alarmId, "arming falls through to the alarm that is still there")
         assertEquals(at(9, 0), next.atMillis)
+    }
+
+    @Test
+    fun a_desktop_rings_from_the_now_line_since_it_has_no_os_alarm_to_arm() = runTest {
+        // PRD §18 + CLAUDE.md: a device with no OS alarm clock rings from the boundary the now-line crossed.
+        // The clock follows virtual time so `advanceTimeBy` moves the engine's now-line with the scheduler.
+        val start = at(6, 59)
+        val scheduler = testScheduler
+        val clock = object : AppClock {
+            override fun nowMillis(): Long = start + scheduler.currentTime
+        }
+        val rung = mutableListOf<ArmedAlarm>()
+        val armed = mutableListOf<ArmedAlarm?>()
+        val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        val engine = SchedulerEngine(
+            vm = vm,
+            clock = clock,
+            scope = backgroundScope,
+            deviceKind = DeviceKind.Desktop,
+            screenActive = { true },
+            scheduleDeviceAlarm = { armed.add(it) },
+            ringAlarm = { rung.add(it) },
+        )
+        vm.dispatch(
+            SchedulerIntent.SetAlarms(listOf(alarm("alarm-0", 7 * 60, label = "Wake up", soundSeconds = 45))),
+        )
+        engine.start()
+        runCurrent()
+        assertTrue(rung.isEmpty(), "nothing rings before the alarm's instant")
+
+        advanceTimeBy(60_001) // cross 07:00
+        runCurrent()
+
+        assertEquals(1, rung.size, "the desktop rings when the now-line crosses the alarm's instant")
+        assertEquals("alarm-0", rung.single().alarmId)
+        assertEquals(45, rung.single().soundSeconds, "it rings for the length the user configured")
+        assertTrue(armed.isEmpty(), "a desktop arms no OS alarm — it has none")
+
+        // Once only: later sweeps re-scan the same crossing and must not ring it again.
+        advanceTimeBy(10 * 60_000)
+        runCurrent()
+        assertEquals(1, rung.size, "a crossed ring fires exactly once")
+    }
+
+    @Test
+    fun a_desktop_stays_silent_for_an_alarm_the_machine_slept_through() = runTest {
+        // The engine starts well PAST the alarm's instant: the first sweep has no previous sweep, so the
+        // crossing measures Long.MAX_VALUE old and is swallowed. An app launch never replays a missed ring.
+        val start = at(9, 0)
+        val scheduler = testScheduler
+        val clock = object : AppClock {
+            override fun nowMillis(): Long = start + scheduler.currentTime
+        }
+        val rung = mutableListOf<ArmedAlarm>()
+        val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        val engine = SchedulerEngine(
+            vm = vm,
+            clock = clock,
+            scope = backgroundScope,
+            deviceKind = DeviceKind.Desktop,
+            screenActive = { true },
+            ringAlarm = { rung.add(it) },
+        )
+        vm.dispatch(SchedulerIntent.SetAlarms(listOf(alarm("alarm-0", 7 * 60))))
+        engine.start()
+        runCurrent()
+        advanceTimeBy(60_000)
+        runCurrent()
+
+        assertTrue(rung.isEmpty(), "an alarm crossed while the process was down does not ring on resume")
     }
 
     @Test

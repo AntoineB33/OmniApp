@@ -59,6 +59,7 @@ import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.scheduler.platform.installPauseCuePushBridge
 import org.example.project.scheduler.platform.installPlatformActivityListener
 import org.example.project.scheduler.platform.localPauseCueDeliveryPlatform
+import org.example.project.scheduler.platform.ringAlarmPlatform
 import org.example.project.scheduler.platform.scheduleLocalPauseCuePlatform
 import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
@@ -221,6 +222,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // injects an AlarmManager seam via SchedulerHolder.
                     scheduleLocalPauseCue = ::scheduleLocalPauseCuePlatform,
                     localPauseCueDelivery = localPauseCueDeliveryPlatform,
+                    // PRD §18 Alarms: ring on this device too. The desktop has no OS alarm clock, so the
+                    // engine rings from its now-line sweep and this seam plays the sound (Android does not
+                    // reach here — SchedulerHolder injects AlarmRingService instead).
+                    ringAlarm = { armed ->
+                        ringAlarmPlatform(armed.label, armed.soundSeconds, armed.vibrate)
+                    },
                 )
         }
         LaunchedEffect(engine) { if (host == null) engine.start() }
