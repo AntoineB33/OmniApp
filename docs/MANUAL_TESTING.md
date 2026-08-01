@@ -129,9 +129,14 @@ auto-signed-in as account 1). Requires migration `20260722000000` applied (`depl
       and the reset sync baseline).
 - [ ] **Idle is quiet.** Two signed-in apps with no edits → **no** `scheduler_snapshot` writes at all over
       minutes (the pull is WebSocket-driven; the push only fires on an authoritative change).
-- [ ] **LWW convergence under a conflict.** Take one device briefly offline (kill its network), edit a
-      different task title on each side, bring it back → both sides converge to the same state (last writer
-      wins, whole-doc; no lost tree, no duplicates).
+- [ ] **Concurrent edits MERGE under a conflict.** Take one device briefly offline (kill its network), then
+      **add a different task row on each side**, and bring it back → both sides converge on the same state
+      **containing BOTH new rows** (three-way merge, not a winner). No lost tree, no duplicates, no cell left
+      dangling. Repeat with each side renaming a *different* task (both renames stick) and with one side
+      deleting a row the other did not touch (the deletion sticks). Only when both edit **the same field**
+      does one win — the remote's value. `diagnostics.log` shows `reconcile: MERGED local changes with remote
+      revision N`; a line saying it fell back to the last-write-wins pull instead means no merge ancestor was
+      recorded yet (expected exactly once on a DB upgraded from schema v9 — retry the check afterwards).
 - [ ] **Manual Sync still works.** Press the Sync button → it still force-reconciles (push-if-dirty /
       pull), a harmless no-op when already converged.
 - [ ] **Kill mid-edit.** Kill the desktop app right after an edit (before the ~500 ms push fires) → on
@@ -319,10 +324,10 @@ Get all three signed in to account 1: desktop via `scripts\account1-empty-and-op
 its own, so the data arrives without a press). Have the Supabase `device_heartbeat` / `pause_cue_schedule` tables
 and `supabase functions logs pause-cue` visible.
 
-- [ ] **Three-way LWW convergence.** Give each device a distinct edit (rename a different task on
+- [ ] **Three-device convergence.** Give each device a distinct edit (rename a different task on
       each), one after another. They converge on their own; pressing Sync desktop → Android → iPhone →
-      desktop → Android just forces the ordering — either way all **three** end on the same state (whole-doc
-      last-writer-wins; no lost tree, no duplicates).
+      desktop → Android just forces the ordering — either way all **three** end on the same state, and since
+      the edits are independent **all three renames survive** (three-way merge). No lost tree, no duplicates.
 - [ ] **Edits propagate without any press.** Edit on the desktop and touch nothing else → the Android and
       the iPhone show it within ~a second or two (auto-push, then each peer's Realtime poke → pull). Supabase
       Logs show **one** `scheduler_snapshot` write per edit burst, at the edit — not at a Sync press. A device

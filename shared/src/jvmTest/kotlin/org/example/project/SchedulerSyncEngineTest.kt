@@ -11,9 +11,13 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.persistence.PersistedSnapshot
+import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.SyncMetaStore
+import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.sync.SupabaseConfig
@@ -24,10 +28,12 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 /**
- * Exercises [SchedulerSyncEngine]'s Phase 1 whole-document last-write-wins reconcile against a stateful
- * in-memory fake of Supabase (GoTrue auth + the single `scheduler_snapshot` row) driven through Ktor's
- * [MockEngine]. Covers: first-device seed (insert), pull-when-remote-newer, push-when-dirty, and the
- * conflict case where the remote advanced past what this device last saw.
+ * Exercises [SchedulerSyncEngine]'s reconcile against a stateful in-memory fake of Supabase (GoTrue auth +
+ * the single `scheduler_snapshot` row) driven through Ktor's [MockEngine]. Covers: first-device seed
+ * (insert), pull-when-remote-newer, push-when-dirty, and the conflict case where the remote advanced past
+ * what this device last saw — which now MERGES both sides
+ * ([org.example.project.scheduler.sync.SnapshotMerge], whose rules are pinned down in `SnapshotMergeTest`)
+ * and only falls back to whole-document last-write-wins when no common ancestor is on record.
  */
 class SchedulerSyncEngineTest {
     private val json = Json { ignoreUnknownKeys = true }
@@ -400,8 +406,95 @@ class SchedulerSyncEngineTest {
         assertEquals("user-1", meta.loadSyncMeta()!!.userId)
     }
 
+    /**
+     * The concurrent-edit case, end to end: this device holds an unpushed edit and the remote has meanwhile
+     * moved to a revision carrying a DIFFERENT edit. Neither may be lost — the engine must merge the two over
+     * the recorded ancestor, apply the merge locally, and push it so the peer converges on the same document.
+     */
     @Test
-    fun conflict_remote_wins_and_local_change_is_dropped() = runTest {
+    fun concurrent_edits_on_two_devices_are_merged_and_the_merge_is_pushed() = runTest {
+        val base = SchedulerState.empty()
+        val ancestor = SchedulerStateCodec.encodeSnapshot(base)
+        // The peer added an alarm and pushed it; this device added a reminder and has not pushed yet.
+        val peerState = base.copy(alarms = listOf(AlarmEntry(id = "alarm-1", label = "Wake", timeOfDayMinutes = 450)))
+        val ourState = base.copy(chores = listOf(ChoreEntry(title = "Water plants", spanDays = 3.0, id = "reminder-1")))
+
+        val server =
+            FakeServer(
+                payload = json.encodeToString(SchedulerStateCodec.encodeSnapshot(peerState)),
+                revision = 3,
+                writerDeviceId = "phone",
+            )
+        val meta =
+            FakeMetaStore(
+                SyncMeta(
+                    deviceId = "desk",
+                    lastKnownRevision = 2,
+                    dirty = true,
+                    baseSnapshot = json.encodeToString(ancestor),
+                ),
+            )
+        // Mirrors the ViewModel: what is applied becomes what this device holds (and therefore pushes).
+        var local = SchedulerStateCodec.encodeSnapshot(ourState)
+        val sync = engine(harness(server), meta, { local }, { local = it })
+
+        sync.signIn("a@b.c", "pw")
+        sync.reconcile()
+
+        // Both edits are in the state this device now holds…
+        val merged = SchedulerStateCodec.decodeSnapshot(local)!!
+        assertEquals(listOf("reminder-1"), merged.chores.map { it.id })
+        assertEquals(listOf("alarm-1"), merged.alarms.map { it.id })
+
+        // …and in what the server holds, so the peer gets the merge rather than losing its alarm.
+        val pushed =
+            SchedulerStateCodec.decodeSnapshot(json.decodeFromString<PersistedSnapshot>(server.payload!!))!!
+        assertEquals(listOf("reminder-1"), pushed.chores.map { it.id })
+        assertEquals(listOf("alarm-1"), pushed.alarms.map { it.id })
+        assertEquals(4, server.revision, "the merge is pushed on top of the revision it merged over")
+        assertEquals(4, meta.loadSyncMeta()!!.lastKnownRevision)
+        assertEquals(false, meta.loadSyncMeta()!!.dirty)
+        assertEquals(
+            json.encodeToString(json.decodeFromString<PersistedSnapshot>(server.payload!!)),
+            json.encodeToString(json.decodeFromString<PersistedSnapshot>(meta.loadSyncMeta()!!.baseSnapshot!!)),
+            "the pushed merge becomes the ancestor for the next divergence",
+        )
+    }
+
+    @Test
+    fun a_successful_push_and_a_pull_both_record_the_merge_base_they_agreed_on() = runTest {
+        // The ancestor is what makes the NEXT concurrent edit mergeable, so every path that advances the
+        // revision must record one — otherwise a device silently degrades to last-write-wins forever.
+        val pushServer = FakeServer(payload = json.encodeToString(snap("OLD")), revision = 2)
+        val pushMeta = FakeMetaStore(SyncMeta(deviceId = "d", lastKnownRevision = 2, dirty = true))
+        val pushSync = engine(harness(pushServer), pushMeta, { snap("NEW") }, {})
+        pushSync.signIn("a@b.c", "pw")
+        pushSync.reconcile()
+        assertEquals("NEW", json.decodeFromString<PersistedSnapshot>(pushMeta.loadSyncMeta()!!.baseSnapshot!!).statePayload)
+
+        val pullServer = FakeServer(payload = json.encodeToString(snap("REMOTE")), revision = 5)
+        val pullMeta = FakeMetaStore(SyncMeta(deviceId = "d", lastKnownRevision = 1))
+        val pullSync = engine(harness(pullServer), pullMeta, { snap("LOCAL") }, {})
+        pullSync.signIn("a@b.c", "pw")
+        pullSync.reconcile()
+        assertEquals(
+            "REMOTE",
+            json.decodeFromString<PersistedSnapshot>(pullMeta.loadSyncMeta()!!.baseSnapshot!!).statePayload,
+        )
+
+        val seedServer = FakeServer()
+        val seedMeta = FakeMetaStore()
+        val seedSync = engine(harness(seedServer), seedMeta, { snap("SEED") }, {})
+        seedSync.signIn("a@b.c", "pw")
+        seedSync.reconcile()
+        assertEquals("SEED", json.decodeFromString<PersistedSnapshot>(seedMeta.loadSyncMeta()!!.baseSnapshot!!).statePayload)
+    }
+
+    @Test
+    fun conflict_with_no_recorded_ancestor_falls_back_to_the_last_write_wins_pull() = runTest {
+        // The merge needs a common ancestor: without one, "absent here" cannot be told from "added there". A
+        // device that has never completed a sync (or whose DB predates schema v10) therefore keeps the old
+        // behaviour — the remote wins — and the pull records an ancestor so the NEXT conflict can be merged.
         // We think we're at revision 2 with a dirty local edit, but the remote already moved to 4.
         val server = FakeServer(payload = json.encodeToString(snap("REMOTE_WINS")), revision = 4)
         val meta = FakeMetaStore(SyncMeta(deviceId = "d", lastKnownRevision = 2, dirty = true))
@@ -415,5 +508,10 @@ class SchedulerSyncEngineTest {
         assertEquals(4, meta.loadSyncMeta()!!.lastKnownRevision)
         assertEquals(false, meta.loadSyncMeta()!!.dirty)
         assertEquals(4, server.revision) // local edit never pushed
+        // …and the fallback is self-healing: the pull leaves an ancestor behind.
+        assertEquals(
+            "REMOTE_WINS",
+            json.decodeFromString<PersistedSnapshot>(meta.loadSyncMeta()!!.baseSnapshot!!).statePayload,
+        )
     }
 }

@@ -28,13 +28,14 @@ data class Task(
     /**
      * PRD §13 Schedule Unit: an ordered list of named sub-steps (each with its own spanning time) that
      * subdivide this task's allotted slot. Empty when the task has no schedule unit. Only meaningful for
-     * leaf tasks (PRD §13 exposes the "define schedule unit" menu only when the task has no child task).
+     * leaf tasks (PRD §13: the Edit window shows the schedule-unit section only when the task has no
+     * child task).
      * Part of the Task Tree domain object (PRD §6), so edits go through the content Undo/Redo history.
      */
     val scheduleUnit: List<ScheduleUnitEntry> = emptyList(),
     /**
-     * Free-form text document attached to this task, shown/edited in the "see text" floating window
-     * (opened from a populated cell's right-click menu). Empty when the task has no notes. Part of the
+     * Free-form text document attached to this task, shown/edited in the third section of the PRD §13
+     * Edit window (opened from a populated cell's right-click menu). Empty when the task has no notes. Part of the
      * Task Tree domain object (PRD §6), so edits go through the content Undo/Redo history.
      */
     val text: String = "",

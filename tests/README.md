@@ -13,3 +13,11 @@ A debt or an excess that is higher that it could be in a scheduling on a clear a
 Since the timeline is infinite, the result of the scheduler is a function that takes time as a parameter and returns a task or null.
 
 For now, I am looking for the algorithm that does exactly that, even if it takes time with hundreds of tasks and hundreds of tasks and periods in the starting timeline.
+
+New requirement: The definitions of periods forming the starting timeline can be relative to real time. The scheduling must be updated continuously, instead of every x time.
+Example 1:
+The end edge of a period can go to the right at 1min per real minute and the starting edge of the period right after moves to the right at 1min per real minute.
+Example 2:
+30 seconds after the run, The whole period set is completely changed.
+
+Change the script to satisfy the added requirement. Keep the current example tests and add new ones where the moving t_now changes the periods.

@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -35,9 +34,11 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -97,6 +98,7 @@ import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ScheduleUnitEntry
+import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import kotlin.math.roundToInt
 import org.example.project.scheduler.persistence.SchedulerStore
@@ -184,8 +186,6 @@ fun TaskSchedulerScreen(
     // on the top floating-window layer (above the calendar) and dismissed by clicks anywhere. Pass the
     // sub-list id to open it, or null to close. Defaults make the screen usable standalone (previews/tests).
     onSetWeightWindow: (CellListId?) -> Unit = {},
-    // PRD §13: same hoisting for the "see text" task-text window — pass the task id to open it, null to close.
-    onSetTaskTextWindow: (TaskId?) -> Unit = {},
 ) {
     val state by vm.state.collectAsState()
     val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
@@ -201,9 +201,9 @@ fun TaskSchedulerScreen(
     // PRD §10: the minimum-time value the open input started with, so Escape can restore it (mirroring
     // how Edit Mode's Escape reverts a cell to its pre-edit text). Null when no input is open.
     var minTimeEditOriginal by remember { mutableStateOf<Int?>(null) }
-    // PRD §13: the leaf task whose "define schedule unit" floating edit window is open, or null when
-    // it is closed. Opened from a cell's right-click contextual menu.
-    var scheduleUnitTaskId by remember { mutableStateOf<TaskId?>(null) }
+    // PRD §13: the task whose "edit" window is open, or null when it is closed. Opened from a cell's
+    // right-click contextual menu.
+    var editTaskId by remember { mutableStateOf<TaskId?>(null) }
 
     // PRD §5: the weight-table window closes if any cell enters Edit Mode. (A vanished sub-list — e.g.
     // via undo — is handled where the window is rendered.)
@@ -481,8 +481,13 @@ fun TaskSchedulerScreen(
                         minTimeEditCellId = cellId
                     }
                 },
-                onOpenScheduleUnit = { taskId -> scheduleUnitTaskId = taskId },
-                onOpenTaskText = { taskId -> onSetTaskTextWindow(taskId) },
+                onOpenTaskEdit = { taskId -> editTaskId = taskId },
+                // PRD §13 "copy" / "deep copy": the cell's task (optionally with everything under it)
+                // serialized to the clipboard in the same format Ctrl+V pastes back.
+                onCopyCell = { cellId, deep ->
+                    val text = SchedulerDomain.copyCellText(state, cellId, deep)
+                    if (text.isNotEmpty()) writeSystemClipboardText(text)
+                },
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -527,27 +532,46 @@ fun TaskSchedulerScreen(
         }
     }
 
-        // PRD §13: the floating "define schedule unit" window, overlaying the tree.
-        scheduleUnitTaskId?.let { taskId ->
+        // PRD §13: the floating "edit" window, overlaying the tree.
+        editTaskId?.let { taskId ->
             val task = state.tasks[taskId]
             if (task == null) {
-                scheduleUnitTaskId = null
+                editTaskId = null
             } else {
-                ScheduleUnitEditWindow(
-                    initialEntries = task.scheduleUnit,
-                    minimumMinutes = task.minimumMinutes,
-                    onSave = { entries ->
-                        vm.dispatch(SchedulerIntent.SetScheduleUnit(taskId, entries))
-                        scheduleUnitTaskId = null
+                TaskEditWindow(
+                    task = task,
+                    // PRD §13: the screen switch and the schedule unit only exist for a schedulable leaf
+                    // task — a parent task is a grouping and is never placed, so its window is text only.
+                    isLeaf = SchedulerDomain.isLeafTask(state, taskId),
+                    onSave = { noScreenDoable, entries, text ->
+                        // One intent per section, and only for the sections that actually changed — so
+                        // Save on an untouched window adds nothing to the Undo/Redo history (PRD §6).
+                        val onScreen = !noScreenDoable
+                        if (onScreen != task.onScreen) {
+                            vm.dispatch(
+                                SchedulerIntent.SetTaskScreenFlags(
+                                    taskId = taskId,
+                                    onScreen = onScreen,
+                                    doableDuringBreak = task.doableDuringBreak,
+                                ),
+                            )
+                        }
+                        if (entries != task.scheduleUnit) {
+                            vm.dispatch(SchedulerIntent.SetScheduleUnit(taskId, entries))
+                        }
+                        if (text != task.text) {
+                            vm.dispatch(SchedulerIntent.SetTaskText(taskId, text))
+                        }
+                        editTaskId = null
                     },
-                    onDismiss = { scheduleUnitTaskId = null },
+                    onDismiss = { editTaskId = null },
                 )
             }
         }
 
-        // PRD §5/§13: the priority-weight window and the "see text" window are both drawn by the app
-        // (App.kt) on the top floating-window layer, above the calendar — not here — so they sit over
-        // every other window and dismiss on a click anywhere else (which still does its normal job).
+        // PRD §5: the priority-weight window is drawn by the app (App.kt) on the top floating-window
+        // layer, above the calendar — not here — so it sits over every other window and dismisses on a
+        // click anywhere else (which still does its normal job).
     }
 }
 
@@ -599,8 +623,8 @@ private fun CellListSection(
     onTogglePriorityWeights: (CellListId) -> Unit,
     minTimeEditCellId: CellId?,
     onToggleMinTimeEdit: (CellId) -> Unit,
-    onOpenScheduleUnit: (TaskId) -> Unit,
-    onOpenTaskText: (TaskId) -> Unit,
+    onOpenTaskEdit: (TaskId) -> Unit,
+    onCopyCell: (CellId, deep: Boolean) -> Unit,
     moveDragActive: Boolean,
     moveDropTarget: MoveDropTarget?,
     resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>?,
@@ -680,17 +704,18 @@ private fun CellListSection(
             textOverflow = (cellTextPx[cellId] ?: 0) > priorityColumnPx,
             minMinutes = cell.taskId?.let { state.tasks[it]?.minimumMinutes } ?: 0,
             minTimeEditing = minTimeEditCellId == cellId,
-            // PRD §13: the "define schedule unit" menu only appears for a populated leaf cell (a task
-            // with no child task); null hides it (empty cells, the root/main, and parent tasks).
-            onDefineScheduleUnit =
-                cell.taskId
-                    ?.takeIf { selectable && SchedulerDomain.isLeafTask(state, it) }
-                    ?.let { taskId -> { onOpenScheduleUnit(taskId) } },
-            // "See text" appears for any populated cell (leaf or parent); null for empty / root-main cells.
-            onSeeText =
+            // PRD §13: the contextual menu appears for any populated cell (leaf or parent); null for
+            // empty cells and the root/main cell.
+            cellMenu =
                 cell.taskId
                     ?.takeIf { selectable }
-                    ?.let { taskId -> { onOpenTaskText(taskId) } },
+                    ?.let { taskId ->
+                        TaskCellMenuActions(
+                            onEdit = { onOpenTaskEdit(taskId) },
+                            onCopy = { onCopyCell(cellId, false) },
+                            onDeepCopy = { onCopyCell(cellId, true) },
+                        )
+                    },
             onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
             onSetMinTime = { minutes ->
                 cell.taskId?.let { onIntent(SchedulerIntent.SetTaskMinimumTime(it, minutes)) }
@@ -782,8 +807,8 @@ private fun CellListSection(
                 onTogglePriorityWeights = onTogglePriorityWeights,
                 minTimeEditCellId = minTimeEditCellId,
                 onToggleMinTimeEdit = onToggleMinTimeEdit,
-                onOpenScheduleUnit = onOpenScheduleUnit,
-                onOpenTaskText = onOpenTaskText,
+                onOpenTaskEdit = onOpenTaskEdit,
+                onCopyCell = onCopyCell,
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -1473,10 +1498,8 @@ private fun TaskRow(
     textOverflow: Boolean,
     minMinutes: Int,
     minTimeEditing: Boolean,
-    /** PRD §13: non-null only for a leaf cell — opens its "define schedule unit" window via right-click. */
-    onDefineScheduleUnit: (() -> Unit)?,
-    /** Non-null for any populated cell — opens its "see text" document window via right-click. */
-    onSeeText: (() -> Unit)?,
+    /** PRD §13: the right-click contextual menu's three actions; null for a cell that has no menu. */
+    cellMenu: TaskCellMenuActions?,
     /** PRD §5: clicking the percentage opens the sub-list's priority-weight window. */
     onTogglePriorityWeights: () -> Unit,
     onSetMinTime: (Int) -> Unit,
@@ -1496,9 +1519,9 @@ private fun TaskRow(
     editMenus: (@Composable () -> Unit)?,
 ) {
     val editFocusRequester = remember { FocusRequester() }
-    // Whether this cell's right-click contextual menu ("define schedule unit" / "see text") is showing.
+    // Whether this cell's right-click contextual menu ("edit" / "copy" / "deep copy") is showing.
     var contextMenuOpen by remember(cellId) { mutableStateOf(false) }
-    val hasContextMenu = onDefineScheduleUnit != null || onSeeText != null
+    val hasContextMenu = cellMenu != null
     // Layout coordinates of this row, used to convert in-row pointer positions to window space so
     // the originating row can map an ongoing drag to the cell currently under the cursor.
     val rowCoordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
@@ -1679,31 +1702,33 @@ private fun TaskRow(
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Right-click contextual menu: "define schedule unit" (leaf cells, PRD §13) and "see text"
-            // (any populated cell).
-            if (hasContextMenu) {
+            // PRD §13 right-click contextual menu on a populated cell: exactly three options.
+            if (cellMenu != null) {
                 DropdownMenu(
                     expanded = contextMenuOpen,
                     onDismissRequest = { contextMenuOpen = false },
                 ) {
-                    if (onDefineScheduleUnit != null) {
-                        DropdownMenuItem(
-                            text = { Text("define schedule unit") },
-                            onClick = {
-                                contextMenuOpen = false
-                                onDefineScheduleUnit()
-                            },
-                        )
-                    }
-                    if (onSeeText != null) {
-                        DropdownMenuItem(
-                            text = { Text("see text") },
-                            onClick = {
-                                contextMenuOpen = false
-                                onSeeText()
-                            },
-                        )
-                    }
+                    DropdownMenuItem(
+                        text = { Text("edit") },
+                        onClick = {
+                            contextMenuOpen = false
+                            cellMenu.onEdit()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("copy") },
+                        onClick = {
+                            contextMenuOpen = false
+                            cellMenu.onCopy()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("deep copy") },
+                        onClick = {
+                            contextMenuOpen = false
+                            cellMenu.onDeepCopy()
+                        },
+                    )
                 }
             }
             Box(
@@ -1949,9 +1974,9 @@ private fun TaskRow(
 }
 
 /**
- * A right-click (secondary button) on a cell opens its contextual menu ("define schedule unit" / "see
- * text"). Returns a no-op modifier when [enabled] is false (cells with no menu items — empty / root-main),
- * so only eligible cells react. [onOpen] flips the row's local menu-visible flag.
+ * A right-click (secondary button) on a cell opens its contextual menu ("edit" / "copy" / "deep copy").
+ * Returns a no-op modifier when [enabled] is false (cells with no menu — empty / root-main), so only
+ * eligible cells react. [onOpen] flips the row's local menu-visible flag.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 private fun contextMenuModifier(
@@ -1977,21 +2002,39 @@ private fun contextMenuModifier(
 }
 
 /**
- * PRD §13 Edition Window: the floating "define schedule unit" editor. Lists the entries vertically —
- * each a title field plus a spanning-time field with increment/decrement buttons, a bin (remove) and a
- * plus (insert above); a single trailing plus appends. The Save button is disabled while the summed
- * spanning times exceed [minimumMinutes] ([SchedulerDomain.canSaveScheduleUnit]).
+ * PRD §13 the three actions of a populated cell's right-click contextual menu. Bundled so a cell either
+ * has the whole menu or none of it (empty cells and the root/main cell get null).
+ */
+private class TaskCellMenuActions(
+    val onEdit: () -> Unit,
+    val onCopy: () -> Unit,
+    val onDeepCopy: () -> Unit,
+)
+
+/**
+ * PRD §13 Edition Window: the floating "edit" editor opened from a cell's contextual menu, in three
+ * sections — the no-screen switch, the schedule unit, and the task's text document. The first two only
+ * exist for a schedulable leaf task ([isLeaf]); a parent task gets the text section alone.
+ *
+ * Schedule unit: the entries listed vertically — each a title field plus a spanning-time field with
+ * increment/decrement buttons, a bin (remove) and a plus (insert above); a single trailing plus appends.
+ * The Save button is disabled while the summed spanning times exceed the task's minimum time
+ * ([SchedulerDomain.canSaveScheduleUnit]).
  */
 @Composable
-private fun ScheduleUnitEditWindow(
-    initialEntries: List<ScheduleUnitEntry>,
-    minimumMinutes: Int,
-    onSave: (List<ScheduleUnitEntry>) -> Unit,
+private fun TaskEditWindow(
+    task: Task,
+    isLeaf: Boolean,
+    onSave: (noScreenDoable: Boolean, entries: List<ScheduleUnitEntry>, text: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var entries by remember { mutableStateOf(initialEntries) }
+    val minimumMinutes = task.minimumMinutes
+    var noScreenDoable by remember(task.id) { mutableStateOf(!task.onScreen) }
+    var entries by remember(task.id) { mutableStateOf(task.scheduleUnit) }
+    var text by remember(task.id) { mutableStateOf(task.text) }
     val sum = SchedulerDomain.scheduleUnitSumMinutes(entries)
-    val canSave = SchedulerDomain.canSaveScheduleUnit(entries, minimumMinutes)
+    // A parent task's schedule unit is not editable here, so it can never block its own Save.
+    val canSave = !isLeaf || SchedulerDomain.canSaveScheduleUnit(entries, minimumMinutes)
 
     Box(
         modifier = Modifier
@@ -2010,10 +2053,39 @@ private fun ScheduleUnitEditWindow(
             // Swallow taps so clicking inside the window doesn't reach the dismissing scrim.
             modifier = Modifier.width(360.dp).pointerInput(Unit) { detectTapGestures { } },
         ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Define schedule unit", style = MaterialTheme.typography.titleSmall)
+            Column(
+                Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(task.title.ifBlank { "Task" }, style = MaterialTheme.typography.titleSmall)
 
-                entries.forEachIndexed { index, entry ->
+                // Section 1 (leaf only): the screen switch. "On" means the task is done away from a
+                // screen, so the §9 fill may only place it inside a no-screen period.
+                if (isLeaf) {
+                    HorizontalDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Can be done during a no-screen period",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(
+                            checked = noScreenDoable,
+                            onCheckedChange = { noScreenDoable = it },
+                        )
+                    }
+                }
+
+                // Section 2 (leaf only): the schedule unit.
+                if (isLeaf) {
+                    HorizontalDivider()
+                    Text("Schedule unit", style = MaterialTheme.typography.labelMedium)
+                }
+
+                if (isLeaf) entries.forEachIndexed { index, entry ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -2062,17 +2134,28 @@ private fun ScheduleUnitEditWindow(
                     }
                 }
 
-                // Trailing single plus: append a new pair at the end of the list.
-                TextButton(onClick = { entries = entries + ScheduleUnitEntry("", 0) }) {
-                    Text("+ add step")
+                if (isLeaf) {
+                    // Trailing single plus: append a new pair at the end of the list.
+                    TextButton(onClick = { entries = entries + ScheduleUnitEntry("", 0) }) {
+                        Text("+ add step")
+                    }
+
+                    Text(
+                        text = "Total: $sum min (max $minimumMinutes)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color =
+                            if (canSave) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.error,
+                    )
                 }
 
-                Text(
-                    text = "Total: $sum min (max $minimumMinutes)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color =
-                        if (canSave) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.error,
+                // Section 3: the free-form text document attached to the task (any populated cell).
+                HorizontalDivider()
+                Text("Text", style = MaterialTheme.typography.labelMedium)
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
                 )
 
                 Row(
@@ -2082,61 +2165,12 @@ private fun ScheduleUnitEditWindow(
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
                     // PRD §13: Save is not clickable while the spans exceed the task's minimum time.
-                    TextButton(enabled = canSave, onClick = { onSave(entries) }) { Text("Save") }
+                    TextButton(
+                        enabled = canSave,
+                        onClick = { onSave(noScreenDoable, entries, text) },
+                    ) { Text("Save") }
                 }
             }
-        }
-    }
-}
-
-/**
- * The floating "see text" window: a free-form, multi-line text document attached to a task. Opened from a
- * populated cell's right-click menu. The editor auto-saves: every change is pushed to [onTextChange]
- * immediately (each becomes its own undoable History Unit), so there is no Save/Close button.
- *
- * Drawn by the app (App.kt) on the top floating-window layer; the app dismisses it when a press lands
- * outside [onBoundsChange]'s reported bounds — and that press still does its normal job. The text field
- * auto-focuses so keystrokes land in it immediately.
- */
-@Composable
-internal fun TaskTextWindow(
-    taskTitle: String,
-    initialText: String,
-    onTextChange: (String) -> Unit,
-    onBoundsChange: (Rect?) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var text by remember { mutableStateOf(initialText) }
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
-    // Stop reporting bounds once the window goes away, so the app's outside-press check has no stale rect.
-    DisposableEffect(Unit) { onDispose { onBoundsChange(null) } }
-
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 12.dp,
-        border = BorderStroke(1.dp, SheetColors.grid),
-        // Publish window-space bounds (the app ignores presses inside them) and swallow inside taps so a
-        // click on the window chrome isn't mistaken for an outside-press.
-        modifier = modifier
-            // requiredWidth (not width) so the window keeps its size when the content area is narrower
-            // than it — it must not adapt its size to the app's width.
-            .requiredWidth(420.dp)
-            .onGloballyPositioned { onBoundsChange(it.boundsInWindow()) }
-            .pointerInput(Unit) { detectTapGestures { } },
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = taskTitle.ifBlank { "Text" },
-                style = MaterialTheme.typography.titleSmall,
-            )
-            OutlinedTextField(
-                value = text,
-                // Auto-save: push every change straight to the model (one History Unit per change).
-                onValueChange = { text = it; onTextChange(it) },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp).focusRequester(focusRequester),
-            )
         }
     }
 }

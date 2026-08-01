@@ -852,6 +852,132 @@ class SchedulerStoreTest {
         }
     }
 
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by the previous schema (v9: `account_sync` without
+     * a `base_payload`) must still load after the sync-merge work, keeping its account partition and its
+     * revision baseline. The upgraded DB simply has no merge ancestor yet — `null`, which the sync engine
+     * reads as "fall back to the last-write-wins pull" — and the column must be usable straight afterwards so
+     * the very next completed sync records one.
+     */
+    @Test
+    fun upgrades_pre_merge_base_v9_db_and_leaves_the_ancestor_unknown_until_the_next_sync() {
+        val dbFile = File.createTempFile("scheduler-v9", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            val raw = JdbcSqliteDriver(url, Properties())
+            // The v9 shape, exactly as 8.sqm left it.
+            raw.execute(null, "CREATE TABLE app_state (account_id TEXT NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+            raw.execute(
+                null,
+                "CREATE TABLE history_unit (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
+                    "ordinal INTEGER NOT NULL, time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, " +
+                    "debug_tainted INTEGER NOT NULL, delta TEXT NOT NULL, PRIMARY KEY (account_id, category, ordinal))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE history_pointer (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
+                    "pointer INTEGER NOT NULL, PRIMARY KEY (account_id, category))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
+                    "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE account_sync (account_id TEXT NOT NULL PRIMARY KEY, " +
+                    "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
+                    "acknowledged_logout_at INTEGER)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE window_placement (window_id TEXT NOT NULL PRIMARY KEY, x REAL NOT NULL, " +
+                    "y REAL NOT NULL, width REAL NOT NULL DEFAULT 0, height REAL NOT NULL DEFAULT 0, " +
+                    "visible INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_sleep_gap (device_id TEXT NOT NULL, sleep_start INTEGER NOT NULL, " +
+                    "sleep_end INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY (device_id, sleep_start))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_active_session (device_id TEXT NOT NULL, start_ms INTEGER NOT NULL, " +
+                    "end_ms INTEGER NOT NULL, updated_at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT '', " +
+                    "PRIMARY KEY (device_id, start_ms))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sleep_scan_checkpoint (id INTEGER NOT NULL PRIMARY KEY, scanned_through INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(null, "INSERT INTO app_state(account_id, payload) VALUES ('user-1', ?)", 1) {
+                bindString(0, payload)
+            }
+            raw.execute(
+                null,
+                "INSERT INTO sync_meta(id, device_id, access_token, refresh_token, user_id, email) " +
+                    "VALUES (0, 'dev-1', 'at', 'rt', 'user-1', 'u1@x.y')",
+                0,
+            )
+            raw.execute(
+                null,
+                "INSERT INTO account_sync(account_id, last_known_revision, dirty, acknowledged_logout_at) " +
+                    "VALUES ('user-1', 12, 1, 77)",
+                0,
+            )
+            raw.execute(null, "PRAGMA user_version = 9", 0)
+            raw.close()
+
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            val meta = store.loadSyncMeta()!!
+            assertEquals("user-1", meta.userId)
+            assertEquals(12, meta.lastKnownRevision, "the revision baseline survives the upgrade")
+            assertEquals(true, meta.dirty)
+            assertEquals(77, meta.acknowledgedLogoutAtMillis)
+            assertNull(meta.baseSnapshot, "an upgraded DB has no ancestor on record yet")
+            assertEquals(payload, store.load()!!.statePayload)
+
+            // The next completed sync records one, and it round-trips with the rest of the account bookkeeping.
+            store.saveSyncMeta(meta.copy(lastKnownRevision = 13, dirty = false, baseSnapshot = payload))
+            assertEquals(payload, store.loadSyncMeta()!!.baseSnapshot)
+            assertEquals(13, store.loadSyncMeta()!!.lastKnownRevision)
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
+    }
+
+    /**
+     * The merge ancestor is per ACCOUNT for the same reason the revision is — one account's document is not a
+     * usable ancestor for another's, and merging over it would read every entry as added or deleted.
+     */
+    @Test
+    fun the_merge_base_does_not_travel_across_an_account_switch() {
+        val store = newStore()
+        store.saveSyncMeta(SyncMeta(deviceId = "dev-1", userId = "user-1"))
+        store.saveSyncMeta(
+            SyncMeta(deviceId = "dev-1", userId = "user-1", lastKnownRevision = 4, baseSnapshot = "ANCESTOR-1"),
+        )
+        assertEquals("ANCESTOR-1", store.loadSyncMeta()!!.baseSnapshot)
+
+        store.saveSyncMeta(SyncMeta(deviceId = "dev-1", userId = "user-2"))
+        assertNull(store.loadSyncMeta()!!.baseSnapshot, "the other account's ancestor must not follow the device")
+
+        store.saveSyncMeta(SyncMeta(deviceId = "dev-1", userId = "user-1"))
+        assertEquals("ANCESTOR-1", store.loadSyncMeta()!!.baseSnapshot, "and comes back with its own account")
+    }
+
     @Test
     fun file_backed_db_persists_across_reopen() {
         val dbFile = File.createTempFile("scheduler-test", ".db").also { it.delete() }

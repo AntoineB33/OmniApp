@@ -1574,8 +1574,9 @@ private fun pasteTreeAtCell(
 /**
  * Set [cellId]'s title to [node]'s and rebuild [node]'s children under it (recursively). PRD §4: also
  * restores the copied priority-weight values — the cell's own weight row, the minimum time of its task,
- * and (before recursing) the header of the sub-list it parents. Pasted cells always get freshly
- * allocated tasks/lists, so writing these never clobbers a pre-existing task.
+ * and (before recursing) the header of the sub-list it parents. PRD §13: plus everything the cell's Edit
+ * window holds — the no-screen switch, the schedule unit and the task text. Pasted cells always get
+ * freshly allocated tasks/lists, so writing these never clobbers a pre-existing task.
  */
 private fun pasteNodeInto(
     state: SchedulerState,
@@ -1587,12 +1588,21 @@ private fun pasteNodeInto(
     working.cells[cellId]?.let { c ->
         working = working.copy(cells = working.cells + (cellId to c.copy(priorityWeights = node.rowWeights)))
     }
-    // Restore this task's minimum time (PRD §4/§10), when the clipboard carried one.
     val pastedTaskId = working.cells[cellId]?.taskId
-    if (pastedTaskId != null && node.minMinutes != null) {
+    if (pastedTaskId != null) {
         working.tasks[pastedTaskId]?.let { t ->
+            // Restore the minimum time (PRD §4/§10) only when the clipboard carried one — a plain
+            // tab-indented title tree must leave the fresh task's default alone. The PRD §13 Edit-window
+            // fields have no such distinction: their empty value *is* the default a fresh task gets.
             working = working.copy(
-                tasks = working.tasks + (pastedTaskId to t.copy(minimumMinutes = node.minMinutes.coerceAtLeast(0))),
+                tasks = working.tasks + (
+                    pastedTaskId to t.copy(
+                        minimumMinutes = node.minMinutes?.coerceAtLeast(0) ?: t.minimumMinutes,
+                        onScreen = !node.noScreenDoable,
+                        scheduleUnit = node.scheduleUnit,
+                        text = node.text,
+                    )
+                ),
             )
         }
     }

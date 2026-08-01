@@ -15,6 +15,7 @@ import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.persistence.SchedulerStateCodec
+import org.example.project.scheduler.platform.AlarmTone
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
@@ -264,5 +265,43 @@ class AlarmTest {
             SchedulerStateCodec.syncFingerprint(s1) != SchedulerStateCodec.syncFingerprint(s2),
             "disarming an alarm must change the sync fingerprint",
         )
+    }
+
+    // ---- The alarm sound (PRD §18: an acoustic guitar, synthesized in common code) ----
+
+    /** Signed 16-bit little-endian sample `i` of a PCM buffer. */
+    private fun sampleAt(pcm: ByteArray, i: Int): Int {
+        val lo = pcm[i * 2].toInt() and 0xFF
+        val hi = pcm[i * 2 + 1].toInt()
+        return (hi shl 8) or lo
+    }
+
+    @Test
+    fun the_alarm_tone_is_one_loopable_cycle_of_playable_pcm() {
+        val pcm = AlarmTone.loopPcm()
+        // 16-bit mono: two bytes a frame, exactly one LOOP_MILLIS cycle.
+        val frames = AlarmTone.SAMPLE_RATE * AlarmTone.LOOP_MILLIS / 1000
+        assertEquals(frames * 2, pcm.size)
+
+        var peak = 0
+        for (i in 0 until frames) {
+            val value = sampleAt(pcm, i)
+            if (kotlin.math.abs(value) > peak) peak = kotlin.math.abs(value)
+        }
+        // Actually audible…
+        assertTrue(peak > Short.MAX_VALUE / 8, "the alarm tone must not be near-silent (peak=$peak)")
+        // …and normalized under full scale, so neither platform's line clips.
+        assertTrue(peak < Short.MAX_VALUE, "the alarm tone must stay under full scale (peak=$peak)")
+
+        // The cycle is written back-to-back for the whole ring, so both seam edges must be silent — a
+        // non-zero sample there clicks once per loop.
+        assertEquals(0, sampleAt(pcm, 0))
+        assertEquals(0, sampleAt(pcm, frames - 1))
+    }
+
+    @Test
+    fun the_alarm_tone_is_deterministic_so_every_device_rings_identically() {
+        // The pluck is seeded noise, not random noise: the desktop and the phone synthesize the same bytes.
+        assertTrue(AlarmTone.loopPcm().contentEquals(AlarmTone.loopPcm()))
     }
 }

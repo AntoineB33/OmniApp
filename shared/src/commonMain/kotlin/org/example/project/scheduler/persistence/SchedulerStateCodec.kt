@@ -926,7 +926,7 @@ private data class PersistedTask(
     val record: List<PersistedTimeRange> = emptyList(),
     // PRD §13: a missing schedule unit decodes to empty (a task with no schedule unit).
     val scheduleUnit: List<PersistedScheduleUnitEntry> = emptyList(),
-    // "See text": a missing text document decodes to empty (a task with no notes).
+    // PRD §13 Edit window: a missing text document decodes to empty (a task with no notes).
     val text: String = "",
     // PRD §8 screen switches: payloads written before these fields existed decode to the pre-switch
     // behaviour — every task on-screen, none doable during a screen break.

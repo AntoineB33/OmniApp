@@ -24,6 +24,8 @@ package org.example.project.scheduler.persistence
  *   logged in. `null` = unknown (a pre-feature session, or a login whose fetch failed); `0` = seen, no marker
  *   yet. On the next reconcile the device signs itself out when the server marker advances past this
  *   baseline, so a still-running app can't re-seed a snapshot the empty just deleted.
+ * - [baseSnapshot] is the MERGE BASE that goes with [lastKnownRevision] (see
+ *   [org.example.project.scheduler.sync.SnapshotMerge]).
  */
 data class SyncMeta(
     val deviceId: String,
@@ -34,6 +36,18 @@ data class SyncMeta(
     val userId: String? = null,
     val email: String? = null,
     val acknowledgedLogoutAtMillis: Long? = null,
+    /**
+     * The serialized [PersistedSnapshot] of [lastKnownRevision] — the last content this device and the server
+     * agreed on, i.e. the **common ancestor** of any later divergence. It is what turns a "both sides changed"
+     * reconcile from a last-write-wins coin flip into a three-way merge: without an ancestor, an entry missing
+     * on one side cannot be told from an entry added on the other.
+     *
+     * Written by whatever advances [lastKnownRevision] (the first-device seed, a successful push, a pull), so
+     * the pair is always consistent. `null` means no ancestor is known — a DB upgraded from schema v9, or an
+     * account this device has never completed a sync with — and the engine then falls back to the plain pull
+     * until the next successful push/pull records one.
+     */
+    val baseSnapshot: String? = null,
 )
 
 /** Durable storage for [SyncMeta]; implemented by the platform store next to the scheduler payload. */

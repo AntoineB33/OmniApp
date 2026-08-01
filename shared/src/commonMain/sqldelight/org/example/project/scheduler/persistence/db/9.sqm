@@ -1,0 +1,17 @@
+-- Schema v9 -> v10: remember the MERGE BASE of each account's sync baseline.
+--
+-- Until now a reconcile that found the remote ahead while this device held unpushed edits could only pick a
+-- winner (whole-document last-write-wins) — the loser's edits were dropped. A real merge needs the common
+-- ancestor: the snapshot content the account's `last_known_revision` corresponds to. Without it, "the task is
+-- absent on this side" is ambiguous between "the other side added it" and "this side deleted it".
+--
+-- `base_payload` is that ancestor — the serialized PersistedSnapshot of the revision in
+-- `last_known_revision`, written by the same statement that advances the revision (push, pull, seed) so the
+-- pair can never drift apart. It is per ACCOUNT for exactly the reason the revision is: a base from another
+-- account's document would make every entry read as "added/deleted".
+--
+-- NULL is legitimate and means "no ancestor known" (a DB upgraded from v9, or an account this device has
+-- never pushed to / pulled from). SchedulerSyncEngine falls back to the old last-write-wins pull in that
+-- case, and the very next successful push/pull fills the column in.
+
+ALTER TABLE account_sync ADD COLUMN base_payload TEXT;

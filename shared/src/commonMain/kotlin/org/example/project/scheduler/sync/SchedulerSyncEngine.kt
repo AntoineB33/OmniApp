@@ -57,11 +57,17 @@ data class AccountInfo(val userId: String, val email: String?) {
  * this engine mirrors the whole [PersistedSnapshot] to/from the Supabase `scheduler_snapshot` row through
  * [RemoteSnapshotClient], versioned by an optimistic-concurrency `revision`.
  *
- * **Phase 1 conflict policy = whole-document last-write-wins.** [reconcile] pushes local changes only when
- * the remote still sits at the revision this device last saw; if the remote has advanced, the remote wins
- * and is applied locally (any local change made since the last successful push is dropped, and a
- * [remoteApplied] event fires so the UI can tell the user it reloaded). Field-level merge of concurrent
- * offline edits is Phase 2 (per-entity HLC registers); [SyncMeta.deviceId] is the future tie-breaker.
+ * **Conflict policy = three-way MERGE, falling back to last-write-wins.** [reconcile] pushes local changes
+ * when the remote still sits at the revision this device last saw. When the remote has advanced *and* this
+ * device has unpushed edits, both sides changed concurrently and [SnapshotMerge] combines them against the
+ * common ancestor recorded in [SyncMeta.baseSnapshot] — each side's additions, deletions and field edits are
+ * attributed and kept, so neither user's work disappears. The merged document is applied locally and pushed
+ * on top of the remote revision, which is what makes every device converge on it.
+ *
+ * The old whole-document last-write-wins (remote wins, local edits dropped) survives only as the fallback for
+ * the cases a merge cannot be attempted: no ancestor is on record (a DB upgraded from schema v9, or an account
+ * never yet synced on this device) or one of the three snapshots fails to decode. A [remoteApplied] event
+ * fires on both paths so the UI can tell the user the state reloaded.
  *
  * The one revision LWW does **not** apply to is a revision THIS device wrote: a push whose response was lost
  * in transit advances the remote without this device recording the new baseline, and pulling it back would
@@ -287,7 +293,7 @@ open class SchedulerSyncEngine(
     }
 
     /**
-     * Pull-or-push reconcile against the remote (Phase 1 whole-document LWW). Safe to call repeatedly — the
+     * Pull-or-merge-or-push reconcile against the remote. Safe to call repeatedly — the
      * triggers are startup, an account change, the 500 ms debounce after an authoritative edit, a Realtime
      * poke or (re)subscribe catch-up, and the manual Sync button. No-op (and never throws) when signed out;
      * on network/server failure it records [SyncState.Error] and leaves local state untouched.
@@ -367,44 +373,61 @@ open class SchedulerSyncEngine(
                 "reconcile: remote revision ${remote.revision} is THIS device's own unacknowledged push — " +
                     "adopting the revision instead of pulling it back over local changes",
             )
-            m = m.copy(lastKnownRevision = remote.revision)
+            // The content the server holds IS what we pushed, so it is also the new common ancestor.
+            m = m.copy(lastKnownRevision = remote.revision, baseSnapshot = remote.payload)
             setMeta(m)
         }
 
         when {
             // First device for this account: seed the remote from local.
             remote == null -> {
-                val ok = withAuth(session) { client.insert(it, payload(), m.deviceId) }
+                val body = payload()
+                val ok = withAuth(session) { client.insert(it, body, m.deviceId) }
                 if (ok) {
                     Diagnostics.log("reconcile: seeded remote snapshot (revision 1)")
-                    setMeta(m.copy(lastKnownRevision = 1, dirty = false))
+                    setMeta(m.copy(lastKnownRevision = 1, dirty = false, baseSnapshot = body))
                 } else {
                     // Lost the race; another device inserted first — re-fetch and apply it.
                     withAuth(session) { client.fetch(it) }?.let { pull(it) }
                 }
             }
-            // Remote advanced past what we last saw: remote wins (LWW). Drop any local unpushed change.
+            // Remote advanced past what we last saw AND we hold unpushed edits: both sides changed
+            // concurrently. Merge them over the recorded ancestor rather than picking a winner.
+            remote.revision > m.lastKnownRevision && m.dirty -> mergeAndPush(session, remote, m)
+            // Remote advanced and we have nothing pending: adopt it as-is.
             remote.revision > m.lastKnownRevision -> pull(remote)
             // `dirty` is set, but our authoritative projection is already byte-identical to the remote — a
             // PHANTOM push. A transient DERIVED change (a time-passing reschedule/materialization that briefly
             // perturbs the sync fingerprint before reverting to the same content) can leave `dirty` set with
-            // nothing real to send. Pushing it would advance the `revision` for no content change, which makes
-            // every peer take the `pull` branch above and silently DROP its own genuine unpushed edit
-            // (whole-doc LWW). This actually happened: an idle peer pushed a content-identical snapshot that
-            // clobbered a concurrent sleep-schedule edit on another device. Clear the flag and send nothing.
+            // nothing real to send. Pushing it would advance the `revision` for no content change, forcing
+            // every peer through a conflict resolution over nothing. Back when that resolution was plain LWW
+            // it silently DROPPED the peer's genuine unpushed edit — an idle device once clobbered a
+            // concurrent sleep-schedule edit that way. The merge makes the damage far milder, but a revision
+            // that says nothing is still pure churn. Clear the flag and send nothing.
             m.dirty && localMatchesRemote(remote) -> {
                 Diagnostics.log("reconcile: dirty but local == remote (revision ${m.lastKnownRevision}); skipping phantom push")
-                setMeta(m.copy(dirty = false))
+                setMeta(m.copy(dirty = false, baseSnapshot = remote.payload))
             }
             // We have unpushed local changes and the remote is still where we left it: push them.
             m.dirty -> {
-                val ok = withAuth(session) { client.update(it, payload(), m.lastKnownRevision, m.deviceId) }
+                val body = payload()
+                val ok = withAuth(session) { client.update(it, body, m.lastKnownRevision, m.deviceId) }
                 if (ok) {
                     Diagnostics.log("reconcile: pushed local changes (revision ${m.lastKnownRevision + 1})")
-                    setMeta(meta().copy(lastKnownRevision = m.lastKnownRevision + 1, dirty = false))
+                    setMeta(
+                        meta().copy(
+                            lastKnownRevision = m.lastKnownRevision + 1,
+                            dirty = false,
+                            // What we just pushed is now the agreed content: it is the ancestor any later
+                            // concurrent edit must be merged over.
+                            baseSnapshot = body,
+                        ),
+                    )
                 } else {
-                    // The remote moved between fetch and patch; pull the newer revision.
-                    withAuth(session) { client.fetch(it) }?.let { pull(it) }
+                    // The remote moved between fetch and patch. We still hold unpushed edits, so this is the
+                    // concurrent case again — merge against the newer revision rather than dropping them.
+                    withAuth(session) { client.fetch(it) }
+                        ?.let { newer -> mergeAndPush(session, newer, meta()) }
                 }
             }
             // In sync, nothing pending.
@@ -456,15 +479,88 @@ open class SchedulerSyncEngine(
             remote.writerDeviceId != null &&
             remote.writerDeviceId == m.deviceId
 
+    /**
+     * The concurrent-edit path: the remote advanced while this device held unpushed edits. Both sides' work is
+     * combined by [SnapshotMerge] against the ancestor in [SyncMeta.baseSnapshot], the result is applied
+     * locally, and it is then pushed **on top of the remote revision** — that push is what makes the peer (and
+     * every other device) end up with the same merged document instead of two halves.
+     *
+     * Falls back to the plain last-write-wins [pull] when a merge is impossible: no ancestor on record (a DB
+     * upgraded from schema v9, or an account this device has never completed a sync with) or a snapshot that
+     * will not decode. That is the pre-merge behaviour, so the fallback can only ever lose what it already
+     * lost — and it self-heals, since the pull records an ancestor for next time.
+     *
+     * A failed push leaves the merged state applied locally with `dirty` still set and the ancestor advanced
+     * to the remote we merged over, so the next reconcile merges again from there rather than re-merging work
+     * that is already in hand.
+     */
+    private suspend fun mergeAndPush(session: SupabaseSession, remote: RemoteSnapshot, m: SyncMeta) {
+        val base = m.baseSnapshot
+        if (base == null) {
+            Diagnostics.log(
+                "reconcile: remote revision ${remote.revision} conflicts with local edits but no merge base is " +
+                    "recorded for this account — falling back to the last-write-wins pull",
+            )
+            pull(remote)
+            return
+        }
+        val merged =
+            runCatching {
+                SnapshotMerge.merge(
+                    base = json.decodeFromString<PersistedSnapshot>(base),
+                    local = checkNotNull(localSnapshot) { "SchedulerSyncEngine.bind() not called" }(),
+                    remote = json.decodeFromString<PersistedSnapshot>(remote.payload),
+                )
+            }.getOrNull()
+        if (merged == null) {
+            Diagnostics.log(
+                "reconcile: could not merge revision ${remote.revision} with local edits (undecodable snapshot) " +
+                    "— falling back to the last-write-wins pull",
+            )
+            pull(remote)
+            return
+        }
+        Diagnostics.log("reconcile: MERGED local changes with remote revision ${remote.revision}")
+        checkNotNull(applyRemote) { "SchedulerSyncEngine.bind() not called" }(merged)
+        // The remote we merged over is the ancestor from here on, whether or not the push below lands.
+        setMeta(m.copy(lastKnownRevision = remote.revision, dirty = true, baseSnapshot = remote.payload))
+        _remoteApplied.tryEmit(Unit)
+
+        // The local edits may have contributed nothing the remote does not already say — the `dirty` flag can
+        // be left set by a purely derived change (see the phantom-push guard in [runReconcile]). Advancing the
+        // revision for identical content is pure churn, so stop here; the merge already reset local state to
+        // the remote's content.
+        if (localMatchesRemote(remote)) {
+            Diagnostics.log("reconcile: the merge is identical to remote revision ${remote.revision}; nothing to push")
+            setMeta(meta().copy(dirty = false))
+            return
+        }
+
+        // Push the merge. [payload] is re-read rather than reusing `merged` because applying it ran the state
+        // through the ViewModel's load normalization (seeded screen breaks, debug-tainted rollback), and what
+        // this device now HOLDS is what its peers must receive.
+        val body = payload()
+        val ok = withAuth(session) { client.update(it, body, remote.revision, m.deviceId) }
+        if (ok) {
+            Diagnostics.log("reconcile: pushed the merge (revision ${remote.revision + 1})")
+            setMeta(meta().copy(lastKnownRevision = remote.revision + 1, dirty = false, baseSnapshot = body))
+        } else {
+            Diagnostics.log("reconcile: the merge could not be pushed (remote moved again); retrying next sync")
+        }
+    }
+
     private fun pull(remote: RemoteSnapshot) {
         // Log the LWW casualty explicitly: `dirty` here means unpushed local edits are being dropped by the
-        // pull (PRD Phase 1 policy). Without this line a silent revert leaves no trace at all in the
-        // diagnostics timeline — which is what made the "my deleted cells came back" report so hard to place.
+        // pull. Reached only when a three-way merge was impossible (no recorded ancestor / an undecodable
+        // snapshot) — see [mergeAndPush]. Without this line a silent revert leaves no trace at all in the
+        // diagnostics timeline, which is what made the "my deleted cells came back" report so hard to place.
         val dropping = if (meta().dirty) " — DROPPING this device's unpushed local changes (whole-doc LWW)" else ""
         Diagnostics.log("reconcile: pulled remote snapshot (revision ${remote.revision})$dropping")
         val snapshot = json.decodeFromString<PersistedSnapshot>(remote.payload)
         checkNotNull(applyRemote) { "SchedulerSyncEngine.bind() not called" }(snapshot)
-        setMeta(meta().copy(lastKnownRevision = remote.revision, dirty = false))
+        // The pulled content is now the agreed one, so it is also the ancestor for the next divergence — which
+        // is how a device that had no base (upgraded DB, first sync) acquires one.
+        setMeta(meta().copy(lastKnownRevision = remote.revision, dirty = false, baseSnapshot = remote.payload))
         _remoteApplied.tryEmit(Unit)
     }
 

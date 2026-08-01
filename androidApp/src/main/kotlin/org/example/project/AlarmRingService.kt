@@ -9,6 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.os.Build
@@ -19,12 +22,15 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
+import org.example.project.scheduler.platform.AlarmTone
 import org.example.project.scheduler.platform.Diagnostics
 
 /**
- * PRD §18 Alarms (Android): rings one alarm — plays the device's alarm ringtone on the **alarm** audio stream
- * (looping, so it is audible for the whole configured length) and vibrates alongside it when asked, then
- * stops itself.
+ * PRD §18 Alarms (Android): rings one alarm — plays the **acoustic guitar** arpeggio ([AlarmTone], synthesized
+ * in shared code so the phone and the desktop ring with the identical waveform) on the **alarm** audio stream,
+ * looping so it is audible for the whole configured length, and vibrates alongside it when asked, then stops
+ * itself. If the raw PCM track cannot be created the device's own alarm ringtone rings instead — an alarm must
+ * never fail silently.
  *
  * It is a foreground service rather than work done in [AlarmClockReceiver], because a receiver's process may
  * be torn down seconds after `onReceive` returns while an alarm may ring for minutes. Its notification
@@ -32,6 +38,10 @@ import org.example.project.scheduler.platform.Diagnostics
  * ringing replaces the first (one ring at a time).
  */
 class AlarmRingService : Service() {
+    /** The looping guitar track (the normal path). */
+    private var track: AudioTrack? = null
+
+    /** The ringtone fallback, used only when a PCM track could not be had. */
     private var player: MediaPlayer? = null
     private var vibrator: Vibrator? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -66,23 +76,14 @@ class AlarmRingService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startRinging(vibrate: Boolean) {
-        runCatching {
-            val uri = RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_NOTIFICATION)
-                ?: return@runCatching
-            player = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build(),
-                )
-                setDataSource(this@AlarmRingService, uri)
-                isLooping = true
-                prepare()
-                start()
-            }
-        }.onFailure { Diagnostics.log("alarm sound failed: ${it.message}") }
+        // The acoustic guitar arpeggio, synthesized in shared code so the phone and the desktop ring with the
+        // identical waveform (PRD §18 / AlarmTone). The device ringtone is only the fallback below.
+        val played = runCatching { startGuitarLoop() }
+            .onFailure { Diagnostics.log("alarm guitar sound failed: ${it.message}") }
+            .getOrDefault(false)
+        // An alarm that fails silently is the worst outcome there is, so a device that would not give us a
+        // raw PCM track still rings — with its own alarm ringtone.
+        if (!played) startRingtoneFallback()
 
         if (!vibrate) return
         runCatching {
@@ -104,7 +105,72 @@ class AlarmRingService : Service() {
         }.onFailure { Diagnostics.log("alarm vibration failed: ${it.message}") }
     }
 
+    /**
+     * Plays [AlarmTone]'s loop cycle on the **alarm** stream, looping in hardware until the service stops it —
+     * a `MODE_STATIC` track holding the whole cycle, with `setLoopPoints(…, -1)`. No writer thread is needed
+     * (the cycle fits in one buffer, ~260 kB) and no polling: the service's own `stopSelfRunnable` ends the
+     * ring at the configured length. Returns false if the track could not be created or filled.
+     */
+    private fun startGuitarLoop(): Boolean {
+        val pcm = AlarmTone.loopPcm()
+        val frames = pcm.size / 2 // 16-bit mono
+        if (frames <= 0) return false
+        val audioTrack = AudioTrack(
+            AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build(),
+            AudioFormat.Builder()
+                .setSampleRate(AlarmTone.SAMPLE_RATE)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                .build(),
+            pcm.size,
+            AudioTrack.MODE_STATIC,
+            AudioManager.AUDIO_SESSION_ID_GENERATE,
+        )
+        if (audioTrack.state != AudioTrack.STATE_NO_STATIC_DATA) {
+            runCatching { audioTrack.release() }
+            return false
+        }
+        track = audioTrack
+        if (audioTrack.write(pcm, 0, pcm.size) < pcm.size) {
+            stopRinging()
+            return false
+        }
+        // Loop points are only settable on a filled MODE_STATIC track; -1 = repeat until stopped.
+        audioTrack.setLoopPoints(0, frames, -1)
+        audioTrack.play()
+        return true
+    }
+
+    /** The device's own alarm (else notification) ringtone, looping — used only when [startGuitarLoop] fails. */
+    private fun startRingtoneFallback() {
+        runCatching {
+            val uri = RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM)
+                ?: RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_NOTIFICATION)
+                ?: return@runCatching
+            player = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                )
+                setDataSource(this@AlarmRingService, uri)
+                isLooping = true
+                prepare()
+                start()
+            }
+        }.onFailure { Diagnostics.log("alarm ringtone fallback failed: ${it.message}") }
+    }
+
     private fun stopRinging() {
+        runCatching { track?.pause() }
+        runCatching { track?.flush() }
+        runCatching { track?.stop() }
+        runCatching { track?.release() }
+        track = null
         runCatching { player?.stop() }
         runCatching { player?.release() }
         player = null

@@ -11,8 +11,9 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * "See text": a free-form text document attached to a task, opened from a populated cell's right-click
- * menu. Covers the undoable [SchedulerIntent.SetTaskText] mutation and codec round-tripping.
+ * PRD §13 Edit window, text section: a free-form text document attached to a task, edited from a
+ * populated cell's right-click menu. Covers the undoable [SchedulerIntent.SetTaskText] mutation and codec
+ * round-tripping.
  */
 class SchedulerTaskTextTest {
 

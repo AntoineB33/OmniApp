@@ -139,12 +139,12 @@ class SchedulerScheduleUnitTest {
         assertTrue(cleared.tasks[solo]!!.scheduleUnit.isEmpty())
     }
 
-    // ----- §13 the "define schedule unit" menu is leaf-only -----------------------------------
+    // ----- §13 the Edit window's schedule-unit section is leaf-only ----------------------------
 
     @Test
     fun schedule_unit_menu_gate_is_leaf_only() {
-        // PRD §13: the contextual menu offers "define schedule unit" only when the task has no child
-        // task — the same leaf predicate the calendar/scheduler use.
+        // PRD §13: the Edit window shows the screen switch and the schedule unit only when the task has
+        // no child task — the same leaf predicate the calendar/scheduler use.
         val (s, solo) = stateWithOneTask()
         assertTrue(SchedulerDomain.isLeafTask(s, solo))
     }

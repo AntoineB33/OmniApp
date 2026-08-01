@@ -135,7 +135,7 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * "See text" window Save: replace a task's free-form [text] document. Recorded as a content delta so
+     * PRD §13 Edit window Save (text section): replace a task's free-form [text] document. Recorded as a content delta so
      * it is part of the Undo/Redo history (PRD §6).
      */
     data class SetTaskText(

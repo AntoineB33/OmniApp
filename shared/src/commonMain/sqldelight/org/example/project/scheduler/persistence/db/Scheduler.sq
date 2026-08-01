@@ -53,11 +53,19 @@ CREATE TABLE sync_meta (
 -- (NULL = unknown — a pre-feature session or a login whose fetch failed; 0 = seen, no marker yet).
 -- These are per-ACCOUNT by nature: a revision baseline is meaningless against a different account's row,
 -- so it must never travel with the device across an account switch.
+--
+-- `base_payload` (added in 9.sqm) is the MERGE BASE that goes with `last_known_revision`: the serialized
+-- PersistedSnapshot this device last agreed on with the server. It is what lets a reconcile that finds BOTH
+-- sides changed do a three-way merge instead of picking a last-write-wins winner — without a common ancestor
+-- "absent here" cannot be told from "added there". Written by the same statement that advances the revision
+-- (seed / push / pull), so the two can never drift apart. NULL means "no ancestor known" (a v9 DB just
+-- upgraded, or an account never yet synced on this device), and the engine then falls back to the plain pull.
 CREATE TABLE account_sync (
     account_id TEXT NOT NULL PRIMARY KEY,
     last_known_revision INTEGER NOT NULL DEFAULT 0,
     dirty INTEGER NOT NULL DEFAULT 0,
-    acknowledged_logout_at INTEGER
+    acknowledged_logout_at INTEGER,
+    base_payload TEXT
 );
 
 -- Floating-window geometry (position/size) and visibility, persisted LOCALLY ONLY. This is deliberately
@@ -169,11 +177,12 @@ INSERT OR REPLACE INTO sync_meta(id, device_id, access_token, refresh_token, use
 VALUES (0, ?, ?, ?, ?, ?);
 
 selectAccountSync:
-SELECT last_known_revision, dirty, acknowledged_logout_at FROM account_sync WHERE account_id = ?;
+SELECT last_known_revision, dirty, acknowledged_logout_at, base_payload
+FROM account_sync WHERE account_id = ?;
 
 upsertAccountSync:
-INSERT OR REPLACE INTO account_sync(account_id, last_known_revision, dirty, acknowledged_logout_at)
-VALUES (?, ?, ?, ?);
+INSERT OR REPLACE INTO account_sync(account_id, last_known_revision, dirty, acknowledged_logout_at, base_payload)
+VALUES (?, ?, ?, ?, ?);
 
 selectAllPlacements:
 SELECT window_id, x, y, width, height, visible FROM window_placement;
