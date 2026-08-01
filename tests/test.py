@@ -12,6 +12,79 @@ class Task:
         self.min_time = min_time
 
 
+class TimelineResolver:
+    """Dynamically resolves repeating and static blocks for infinite timelines."""
+    def __init__(self, defs):
+        self.defs = defs or []
+
+    def get_blocks_in_range(self, t_start, t_end, filter_task=None):
+        blocks = []
+        for b in self.defs:
+            if filter_task and b.get('task') not in (filter_task, None):
+                continue
+            rep = b.get('repeat', 0)
+            s, e = b['start'], b['end']
+            duration = e - s
+            
+            if rep > 0:
+                start_k = math.floor((t_start - s) / rep) if t_start >= s else 0
+                k = start_k
+                while True:
+                    curr_s = s + k * rep
+                    curr_e = curr_s + duration
+                    if curr_s >= t_end:
+                        break
+                    if curr_e > t_start:
+                        out_b = b.copy()
+                        out_b.update({'start': curr_s, 'end': curr_e})
+                        blocks.append(out_b)
+                    k += 1
+            else:
+                if e > t_start and s < t_end:
+                    out_b = b.copy()
+                    out_b.update({'start': s, 'end': e})
+                    blocks.append(out_b)
+                    
+        if not blocks: return []
+        blocks.sort(key=lambda x: x['start'])
+        
+        # Merge overlapping blocks 
+        merged = [blocks[0].copy()]
+        for b in blocks[1:]:
+            if b['start'] <= merged[-1]['end']:
+                merged[-1]['end'] = max(merged[-1]['end'], b['end'])
+                # Union of accepted tasks for periods
+                if 'accepted_tasks' in b and 'accepted_tasks' in merged[-1]:
+                    merged[-1]['accepted_tasks'] = list(set(merged[-1]['accepted_tasks'] + b['accepted_tasks']))
+            else:
+                merged.append(b.copy())
+        return merged
+
+    def get_next_event_time(self, t):
+        ns = float('inf')
+        eps = 1e-6  # Margin to prevent returning the exact current time
+        for b in self.defs:
+            rep = b.get('repeat', 0)
+            s, e = b['start'], b['end']
+            if rep > 0:
+                if t + eps < s:
+                    ns = min(ns, s)
+                else:
+                    k = math.floor((t + eps - s) / rep)
+                    curr_s = s + k * rep
+                    curr_e = curr_s + (e - s)
+                    if t + eps < curr_e:
+                        ns = min(ns, curr_e) # We are inside, next event is end
+                    else:
+                        ns = min(ns, s + (k + 1) * rep) # Next event is next start
+            else:
+                if t + eps < s:
+                    ns = min(ns, s)
+                elif t + eps < e:
+                    ns = min(ns, e)
+        return ns
+
+
 class SchedulerFunction:
     """
     A callable scheduler that acts as a function f(time) -> Task | None.
@@ -19,292 +92,160 @@ class SchedulerFunction:
     """
     def __init__(self, tasks, starting_timeline=None, periods=None, half_life=30.0):
         self.tasks = tasks
-        self.starting_timeline = starting_timeline or []
-        self.periods = periods or []
         self.half_life = half_life
+        self.k = math.log(2) / self.half_life if self.half_life else 0.0
+        self.C = sum(t.min_time for t in self.tasks)
+        self.debts = {t.name: 0.0 for t in self.tasks}
+        
+        self.timeline_res = TimelineResolver(starting_timeline)
+        self.periods_res = TimelineResolver(periods)
         
         self.generator = self._run()
         self.history = []
 
     def __call__(self, t):
-        if t < 0:
-            return None
-            
-        # Advance the generator until our history covers time t
+        if t < 0: return None
         while not self.history or self.history[-1]['end'] <= t:
             try:
                 self.history.append(next(self.generator))
             except StopIteration:
                 break
-                
-        # Find the block that intersects t
         for b in self.history:
             if b['start'] <= t < b['end']:
-                if b['task'] is None: 
-                    return None
+                if b['task'] is None: return None
                 return next((task for task in self.tasks if task.name == b['task']), None)
-                
         return None
 
-    def _run(self):
-        k = math.log(2) / self.half_life if self.half_life else 0.0
-        
-        # C is the natural debt boundary. A task's natural cyclical debt in a clear 
-        # schedule is safely bounded by the sum of minimum times of all tasks.
-        # Only debt EXCESS beyond C decays.
-        C = sum(t.min_time for t in self.tasks)
-        debts = {t.name: 0.0 for t in self.tasks}
-        
-        past_blocks = []
-        future_pre = []
-        
-        for b in self.starting_timeline:
-            if b['end'] <= 0:
-                past_blocks.append(b)
-            elif b['start'] < 0:
-                past_blocks.append({'task': b['task'], 'start': b['start'], 'end': 0})
-                future_pre.append({'task': b['task'], 'start': 0, 'end': b['end']})
-            else:
-                future_pre.append(b)
-                
-        past_blocks.sort(key=lambda x: x['start'])
-        future_pre.sort(key=lambda x: x['start'])
-        
-        # O(1) Pre-process future blocks to resolve contiguous/overlapping chunks per task
-        merged_future = {t.name: [] for t in self.tasks}
-        for b in future_pre:
-            t_name = b['task']
-            if t_name not in merged_future: continue
+    def _simulate_interval(self, dt, task_running):
+        for t in self.tasks:
+            name = t.name
+            e_val = 1.0 if name == task_running else 0.0
+            R = t.priority - e_val
+            t_rem = dt
             
-            s, e = b['start'], b['end']
-            if merged_future[t_name] and abs(merged_future[t_name][-1]['end'] - s) < 1e-9:
-                merged_future[t_name][-1]['end'] = e
-            elif merged_future[t_name] and merged_future[t_name][-1]['end'] > s:
-                merged_future[t_name][-1]['end'] = max(merged_future[t_name][-1]['end'], e)
-            else:
-                merged_future[t_name].append({'start': s, 'end': e})
-        
-        # Sort periods strictly for sweep line
-        sorted_periods = sorted(self.periods, key=lambda x: x['start']) if self.periods else []
-        
-        def simulate_interval(dt, task_running):
-            """
-            Exact piecewise ODE solver for time advancing. Applies continuous exponential
-            decay to the EXCESS debt while naturally integrating ideal debt and actual execution.
-            """
-            for t in self.tasks:
-                name = t.name
-                e = 1.0 if name == task_running else 0.0
-                R = t.priority - e  # Rate of change of debt inside the bounds
+            while t_rem > 1e-9:
+                d = self.debts[name]
+                eps = 1e-7
                 
-                t_rem = dt
-                while t_rem > 0:
-                    d = debts[name]
-                    eps = 1e-9  # Epsilon for floating point safety
+                # Excess debt (above C)
+                if d > self.C + eps or (d >= self.C - eps and R > 0):
+                    y0 = max(0.0, d - self.C)
+                    denominator = R - self.k * y0
+                    ratio = R / denominator if abs(denominator) > 1e-12 else -1.0
+                    target_t = -math.log(ratio) / self.k if (self.k > 0 and 0 < ratio < (1.0 - eps)) else float('inf')
                     
-                    # 1. Excess debt (or sitting on the boundary wanting to grow)
-                    if d > C + eps or (d >= C - eps and R > 0):
-                        y0 = d - C
-                        denominator = R - k * y0
-                        ratio = R / denominator if abs(denominator) > 1e-12 else -1.0
-                        
-                        target_t = float('inf')
-                        # Check if it will hit the boundary 'C' (y=0) within finite time
-                        if k > 0 and 0 < ratio < 1:
-                            target_t = -math.log(ratio) / k
-                            
-                        step_t = min(t_rem, target_t)
-                        if k > 0:
-                            debts[name] = C + R/k + (y0 - R/k) * math.exp(-k * step_t)
-                        else:
-                            debts[name] = d + R * step_t
-                            
-                        t_rem -= step_t
-                        if abs(debts[name] - C) < eps:
-                            debts[name] = C
+                    step_t = min(t_rem, target_t)
+                    self.debts[name] = self.C + R/self.k + (y0 - R/self.k) * math.exp(-self.k * step_t) if self.k > 0 else d + R * step_t
+                    t_rem -= step_t
+                    if abs(self.debts[name] - self.C) < eps: self.debts[name] = self.C
 
-                    # 2. Deficit debt (or sitting on the bottom boundary wanting to shrink)
-                    elif d < -C - eps or (d <= -C + eps and R < 0):
-                        y0 = d + C
-                        denominator = R - k * y0
-                        ratio = R / denominator if abs(denominator) > 1e-12 else -1.0
-                        
-                        target_t = float('inf')
-                        if k > 0 and 0 < ratio < 1:
-                            target_t = -math.log(ratio) / k
-                            
-                        step_t = min(t_rem, target_t)
-                        if k > 0:
-                            debts[name] = -C + R/k + (y0 - R/k) * math.exp(-k * step_t)
-                        else:
-                            debts[name] = d + R * step_t
-                            
-                        t_rem -= step_t
-                        if abs(debts[name] - (-C)) < eps:
-                            debts[name] = -C
-                            
-                    # 3. Inside the safe boundaries [-C, C], integration is purely linear
-                    else:
-                        target_t = float('inf')
-                        if R > 0:
-                            target_t = (C - d) / R
-                        elif R < 0:
-                            target_t = (-C - d) / R
-                            
-                        step_t = min(t_rem, target_t)
-                        debts[name] += R * step_t
-                        t_rem -= step_t
-                        
-                        if abs(debts[name] - C) < eps:
-                            debts[name] = C
-                        elif abs(debts[name] - (-C)) < eps:
-                            debts[name] = -C
+                # Deficit debt (below -C)
+                elif d < -self.C - eps or (d <= -self.C + eps and R < 0):
+                    y0 = min(0.0, d + self.C)
+                    denominator = R - self.k * y0
+                    ratio = R / denominator if abs(denominator) > 1e-12 else -1.0
+                    target_t = -math.log(ratio) / self.k if (self.k > 0 and 0 < ratio < (1.0 - eps)) else float('inf')
+                    
+                    step_t = min(t_rem, target_t)
+                    self.debts[name] = -self.C + R/self.k + (y0 - R/self.k) * math.exp(-self.k * step_t) if self.k > 0 else d + R * step_t
+                    t_rem -= step_t
+                    if abs(self.debts[name] - (-self.C)) < eps: self.debts[name] = -self.C
 
-        # Process starting blocks that occurred entirely in the past (resolves overlaps)
-        if past_blocks:
-            current_sim_time = past_blocks[0]['start']
-            for b in past_blocks:
-                if b['start'] > current_sim_time:
-                    simulate_interval(b['start'] - current_sim_time, None)
-                    current_sim_time = b['start']
-                if b['end'] > current_sim_time:
-                    dur = b['end'] - current_sim_time
-                    simulate_interval(dur, b['task'])
-                    current_sim_time = b['end']
-            if current_sim_time < 0:
-                simulate_interval(0 - current_sim_time, None)
-                
-        current_time = 0.0
+                # Inside safe boundaries [-C, C]
+                else:
+                    target_t = (self.C - d) / R if R > eps else ((-self.C - d) / R if R < -eps else float('inf'))
+                    step_t = min(t_rem, target_t)
+                    self.debts[name] += R * step_t
+                    t_rem -= step_t
+                    if abs(self.debts[name] - self.C) < eps: self.debts[name] = self.C
+                    elif abs(self.debts[name] - (-self.C)) < eps: self.debts[name] = -self.C
+
+    def _run(self):
+        past_blocks = self.timeline_res.get_blocks_in_range(-10000, 0)
+        current_sim_time = past_blocks[0]['start'] if past_blocks else 0
         
-        # Pointers mapped to the exact position to eliminate continuous recalculations.
-        future_pre_idx = 0
-        period_idx = 0
-        future_task_idx = {t.name: 0 for t in self.tasks}
+        for b in past_blocks:
+            s_eff = min(0, b['start'])
+            e_eff = min(0, b['end'])
+            if s_eff > current_sim_time:
+                self._simulate_interval(s_eff - current_sim_time, None)
+                current_sim_time = s_eff
+            if e_eff > current_sim_time:
+                dur = e_eff - current_sim_time
+                self._simulate_interval(dur, b['task'])
+                current_sim_time = e_eff
+            
+        if current_sim_time < 0:
+            self._simulate_interval(0 - current_sim_time, None)
+            
+        current_time = 0.0
+        lookahead_horizon = 5 * self.half_life if self.half_life else 500
         
         while True:
-            # Shift fast-lookup pointers forward
-            while future_pre_idx < len(future_pre) and future_pre[future_pre_idx]['end'] <= current_time:
-                future_pre_idx += 1
-            while period_idx < len(sorted_periods) and sorted_periods[period_idx]['end'] <= current_time:
-                period_idx += 1
-
-            # 1. Check if we overlap a pre-scheduled block
-            overlapping_block = None
-            for i in range(future_pre_idx, len(future_pre)):
-                b = future_pre[i]
-                if b['start'] <= current_time < b['end']:
-                    overlapping_block = b
-                    break
-                elif b['start'] > current_time:
-                    break  # Early exit: list is sorted by start time
+            # 1. Overlapping pre-scheduled block
+            active_pre = self.timeline_res.get_blocks_in_range(current_time, current_time + 1e-5)
+            overlapping_block = next((b for b in active_pre if b['start'] <= current_time + 1e-7 and b['end'] > current_time + 1e-7), None)
             
             if overlapping_block:
-                dur = overlapping_block['end'] - current_time
-                yield {
-                    'task': overlapping_block['task'],
-                    'start': current_time,
-                    'duration': dur,
-                    'end': overlapping_block['end'],
-                    'type': 'pre-scheduled'
-                }
-                simulate_interval(dur, overlapping_block['task'])
-                current_time = overlapping_block['end']
+                b = overlapping_block
+                dur = b['end'] - current_time
+                yield {'task': b['task'], 'start': current_time, 'duration': dur, 'end': b['end'], 'type': 'pre-scheduled'}
+                self._simulate_interval(dur, b['task'])
+                current_time = b['end']
                 continue
                 
-            # 2. We are in a gap
-            next_start = float('inf')
-            for i in range(future_pre_idx, len(future_pre)):
-                if future_pre[i]['start'] > current_time:
-                    next_start = future_pre[i]['start']
-                    break
+            next_event_timeline = self.timeline_res.get_next_event_time(current_time)
+            next_event_period = self.periods_res.get_next_event_time(current_time)
+            next_interrupt = min(next_event_timeline, next_event_period)
             
+            # 2. Identify allowed tasks based on periods
             accepted_tasks = [t.name for t in self.tasks]
-            current_period_end = float('inf')
+            active_periods = self.periods_res.get_blocks_in_range(current_time, current_time + 1e-5)
+            overlapping_period = next((p for p in active_periods if p['start'] <= current_time + 1e-7 and p['end'] > current_time + 1e-7), None)
             
-            if self.periods:
-                current_p = None
-                next_p_start = float('inf')
-                
-                if period_idx < len(sorted_periods):
-                    p = sorted_periods[period_idx]
-                    if p['start'] <= current_time < p['end']:
-                        current_p = p
-                        if period_idx + 1 < len(sorted_periods):
-                            next_p_start = sorted_periods[period_idx + 1]['start']
-                    else:
-                        next_p_start = p['start']
-                        
-                if current_p:
-                    accepted_tasks = current_p['accepted_tasks']
-                    current_period_end = current_p['end']
-                else:
-                    advance_to = min(next_start, next_p_start)
-                    if advance_to == float('inf'):
-                        break
-                    
-                    dur = advance_to - current_time
-                    yield {
-                        'task': None,
-                        'start': current_time,
-                        'duration': dur,
-                        'end': advance_to,
-                        'type': 'gap (outside periods)'
-                    }
-                    simulate_interval(dur, None)
-                    current_time = advance_to
-                    continue
+            if overlapping_period:
+                accepted_tasks = overlapping_period['accepted_tasks']
+            elif self.periods_res.defs:
+                # Outside period bounds entirely
+                if next_interrupt == float('inf'): break
+                dur = next_interrupt - current_time
+                yield {'task': None, 'start': current_time, 'duration': dur, 'end': next_interrupt, 'type': 'gap (outside periods)'}
+                self._simulate_interval(dur, None)
+                current_time = next_interrupt
+                continue
 
-            gap = min(next_start, current_period_end) - current_time
-            valid_tasks = [t for t in self.tasks if t.min_time <= gap and t.name in accepted_tasks]
+            gap = next_interrupt - current_time
+            valid_tasks = [t for t in self.tasks if t.min_time <= gap + 1e-7 and t.name in accepted_tasks]
             
             if not valid_tasks:
-                advance_to = min(next_start, current_period_end)
-                if advance_to == float('inf'):
-                    break 
-                
-                dur = advance_to - current_time
-                yield {
-                    'task': None,
-                    'start': current_time,
-                    'duration': dur,
-                    'end': advance_to,
-                    'type': 'gap (no valid tasks)'
-                }
-                simulate_interval(dur, None)
-                current_time = advance_to
+                if next_interrupt == float('inf'): break
+                dur = next_interrupt - current_time
+                yield {'task': None, 'start': current_time, 'duration': dur, 'end': next_interrupt, 'type': 'gap (no valid tasks)'}
+                self._simulate_interval(dur, None)
+                current_time = next_interrupt
                 continue
 
-            # Calculate scores to pick the most starved task based on priority ratio
+            # 3. Calculate scores based on dynamic future horizon
             best_task = valid_tasks[0]  
             best_score = float('-inf')
             
             for t in valid_tasks:
-                idx = future_task_idx[t.name]
-                m_blocks = merged_future[t.name]
-                
-                while idx < len(m_blocks) and m_blocks[idx]['end'] <= current_time:
-                    idx += 1
-                future_task_idx[t.name] = idx
-                
                 f_eff = 0.0
-                for i in range(idx, len(m_blocks)):
-                    mb = m_blocks[i]
-                    s = max(current_time, mb['start'])
-                    e = mb['end']
-                    if e <= s: continue
-                    
-                    D = e - s
-                    dist = s - current_time
-                    
-                    # Only decay the EXCESS duration of future blocks
-                    if D > C:
-                        f_eff += C + (D - C) * (math.exp(-k * dist) if k > 0 else 1.0)
-                    else:
-                        f_eff += D
-                        
-                total_debt = debts[t.name] - f_eff
+                future_blocks = self.timeline_res.get_blocks_in_range(current_time, current_time + lookahead_horizon, filter_task=t.name)
                 
-                # Protect against ZeroDivisionError for 0 priority tasks
+                for mb in future_blocks:
+                    # Clip the block's influence strictly to the lookahead horizon
+                    mb_s = max(current_time, mb['start'])
+                    mb_e = min(current_time + lookahead_horizon, mb['end'])
+                    if mb_e > mb_s:
+                        D = mb_e - mb_s
+                        dist = mb_s - current_time
+                        if D > self.C:
+                            f_eff += self.C + (D - self.C) * (math.exp(-self.k * dist) if self.k > 0 else 1.0)
+                        else:
+                            f_eff += D
+                        
+                total_debt = self.debts[t.name] - f_eff
                 safe_priority = max(t.priority, 1e-9)
                 score = total_debt / safe_priority
                 
@@ -314,21 +255,44 @@ class SchedulerFunction:
             
             duration = best_task.min_time
             min_valid = min(t.min_time for t in valid_tasks)
-            
-            # Close minute fragmentation. If we fit 'min_time' but the remaining gap won't fit any valid task, take the full gap.
-            if gap - duration < min_valid and gap >= duration:
+            if gap - duration < min_valid and gap >= duration - 1e-7:
                 duration = gap
                 
-            yield {
-                'task': best_task.name,
-                'start': current_time,
-                'duration': duration,
-                'end': current_time + duration,
-                'type': 'scheduled'
-            }
-            
-            simulate_interval(duration, best_task.name)
+            yield {'task': best_task.name, 'start': current_time, 'duration': duration, 'end': current_time + duration, 'type': 'scheduled'}
+            self._simulate_interval(duration, best_task.name)
             current_time += duration
+
+
+def extract_pattern(tasks, starting_timeline, periods, half_life=30.0, max_sim_time=5000):
+    """
+    Finds the exact O(1) repeating rules by simulating the timeline until the internal state loops.
+    """
+    intervals = [x['repeat'] for x in (starting_timeline or []) + (periods or []) if x.get('repeat', 0) > 0]
+    period_lcm = intervals[0] if intervals else 1
+    for i in intervals[1:]:
+        period_lcm = abs(period_lcm * i) // math.gcd(int(period_lcm), int(i))
+        
+    scheduler = SchedulerFunction(tasks, starting_timeline, periods, half_life)
+    seen_states = {}
+    history = []
+    
+    for b in scheduler.generator:
+        if b['start'] > max_sim_time:
+            break
+            
+        # Snapshot state (rounding is mandatory due to float math on continuous exponential decay)
+        rounded_debts = tuple(round(scheduler.debts[t.name], 2) for t in tasks)
+        phase = round(b['start'] % period_lcm, 2) if period_lcm > 1 else 0
+        state_key = (rounded_debts, phase)
+        
+        if state_key in seen_states:
+            loop_idx = seen_states[state_key]
+            return history[:loop_idx], history[loop_idx:]
+            
+        seen_states[state_key] = len(history)
+        history.append(b)
+        
+    return history, []
 
 
 def get_schedule(tasks, time_limit, starting_timeline=None, periods=None):
@@ -398,7 +362,6 @@ def visualize_schedule(schedule, tasks, time_limit, ax, title):
 def show_scrollable(fig, window_title="Scheduler tests"):
     try:
         import tkinter as tk
-
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     except ImportError:
         plt.show()
@@ -442,7 +405,7 @@ def show_scrollable(fig, window_title="Scheduler tests"):
 
 if __name__ == "__main__":
     HALF_LIFE = 30.0
-    TEST_COUNT = 12
+    TEST_COUNT = 13  # Added Test 13
     SUBPLOT_HEIGHT_IN = 3.5
     fig, axes = plt.subplots(TEST_COUNT, 1, figsize=(14, SUBPLOT_HEIGHT_IN * TEST_COUNT))
 
@@ -463,18 +426,14 @@ if __name__ == "__main__":
     visualize_schedule(schedule_2, tasks_2, time_limit_2, axes[1], "Test 2: Massive Task A past debt decays")
 
     # ==========================================
-    # TEST 3: Infinite Pattern pre-scheduled (Bidirectional Check)
+    # TEST 3: Infinite Pattern pre-scheduled (Bidirectional Check) - FIXED WITH REPEAT
     # ==========================================
     tasks_3 = [Task(name="Task A", priority=50, min_time=10), Task(name="Task B", priority=50, min_time=10)]
-    time_limit_3 = 300
-    starting_timeline_3 = []
-    start_time = 0
-    for i in range(5):
-        starting_timeline_3.append({'task': 'Task A', 'start': start_time, 'end': start_time + 60})
-        start_time += 60 + 120
-        
+    time_limit_3 = 400
+    # True infinite timeline declaration using 'repeat'
+    starting_timeline_3 = [{'task': 'Task A', 'start': 0, 'end': 60, 'repeat': 180}]
     schedule_3 = get_schedule(tasks_3, time_limit_3, starting_timeline=starting_timeline_3)
-    visualize_schedule(schedule_3, tasks_3, time_limit_3, axes[2], "Test 3: Symmetrical valley between two massive A blocks")
+    visualize_schedule(schedule_3, tasks_3, time_limit_3, axes[2], "Test 3: Infinite repeating blocks using 'repeat' key")
 
     # ==========================================
     # TEST 4: Double massive debt
@@ -560,6 +519,25 @@ if __name__ == "__main__":
     schedule_12 = get_schedule(tasks_12, time_limit_12, periods=periods_12)
     visualize_schedule(schedule_12, tasks_12, time_limit_12, axes[11], "Test 12: Priority Zero (B only runs when forced by period)")
 
+    # ==========================================
+    # TEST 13: Infinite Periods Test (New)
+    # ==========================================
+    tasks_13 = [Task(name="Task A", priority=50, min_time=10), Task(name="Task B", priority=50, min_time=10)]
+    time_limit_13 = 300
+    # Demonstrating the 'repeat' keyword works for periods too
+    periods_13 = [{'start': 0, 'end': 30, 'accepted_tasks': ['Task A'], 'repeat': 100}]
+    schedule_13 = get_schedule(tasks_13, time_limit_13, periods=periods_13)
+    visualize_schedule(schedule_13, tasks_13, time_limit_13, axes[12], "Test 13: Infinite Periodic constraints using 'repeat'")
+
+    # ==========================================
+    # Prove the O(1) Rule Extraction for the infinite pattern (Test 3)
+    # ==========================================
+    print("\n--- O(1) Rule Extraction for Test 3 ---")
+    transient, loop = extract_pattern(tasks_3, starting_timeline_3, periods=None)
+    print(f"Detected Transient setup sequence: {len(transient)} blocks.")
+    print(f"Detected INFINITE Repeating sequence: {len(loop)} blocks.")
+    for b in loop:
+        print(f"  -> {b['task']} for {b['duration']:.1f} mins (Type: {b['type']})")
 
     print("\n--- Functional API Test ---")
     my_func = SchedulerFunction(tasks_1, half_life=30.0)
