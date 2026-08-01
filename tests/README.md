@@ -10,14 +10,16 @@ The timeline is formed of periods. Each period defines a set of tasks it accepts
 
 A debt or an excess that is higher that it could be in a scheduling on a clear and all task accepted timeline is ignored exponentially as we move away from it (in both direction). The decay speed is always the same.
 
-Since the timeline is infinite, the result of the scheduler is a function that takes time as a parameter and returns a task or null.
+Since the timeline to fill is infinite, the scheduler doesn't give an infinite list, but a finite list of rules to fill the timeline with a O(1) complexity. It is possible because to infinity the scheduling becomes an exact pattern that repeat infinitely.
+Example 1:
+In test 3, the result must include the instruction to fill every gap between long A tasks with only B tasks. Here it is a very simple repeating pattern.
+Example 2:
+Task A 50% 10min and task B 50% 10min, task A 1h at t=0 on the starting timeline.
+The result instructions are the placement of the tasks right after the long task A, followed by the simple instruction : task A 10min, then task B 10min and so on...
 
 For now, I am looking for the algorithm that does exactly that, even if it takes time with hundreds of tasks and hundreds of tasks and periods in the starting timeline.
 
-New requirement: The definitions of periods forming the starting timeline can be relative to real time. The scheduling must be updated continuously, instead of every x time.
-Example 1:
-The end edge of a period can go to the right at 1min per real minute and the starting edge of the period right after moves to the right at 1min per real minute.
-Example 2:
-30 seconds after the run, The whole period set is completely changed.
+Does the script strictly satisfies the requirements? If not fix it, or explain why the requirements are flawed.
+Keep the current example tests, and add more if needed.
 
-Change the script to satisfy the added requirement. Keep the current example tests and add new ones where the moving t_now changes the periods.
+Anomaly on current script: Test 3 must actually be an infinite pattern, not just repeated 5 times. Add a way to define infinite patterns in the starting timeline.
