@@ -105,7 +105,6 @@ import androidx.compose.ui.window.PopupProperties
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.roundToInt
-import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -121,7 +120,6 @@ import kotlinx.datetime.daysUntil
 import kotlinx.datetime.isoDayNumber
 import kotlinx.datetime.minus
 import kotlinx.datetime.plus
-import kotlinx.datetime.todayIn
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.OmniPage
@@ -159,9 +157,6 @@ private const val SLEEP_BAND_ALPHA = 0.16f
 
 private val WEEKDAY_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 private val WEEKDAY_INITIAL = listOf("M", "T", "W", "T", "F", "S", "S")
-
-/** Today in the user's local zone (PRD §7 calendar anchor). */
-fun systemToday(): LocalDate = Clock.System.todayIn(TimeZone.currentSystemDefault())
 
 /**
  * PRD §8 Task record / §9 scheduled task: one calendar period tagged with the task [title] (written

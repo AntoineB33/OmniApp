@@ -584,18 +584,6 @@ class SchedulerCalendarTest {
         assertEquals(range(60, 100), placed)
     }
 
-    @Test
-    fun move_intent_snaps_a_dragged_panel_before_an_occupied_block() {
-        val s = SchedulerState.empty().copy(
-            panels = listOf(userPanel("m1", 100 * MIN, 200 * MIN), userPanel("m2", 0, 40 * MIN)),
-            nextPanelCounter = 2,
-        )
-        val moved = SchedulerReducer.reduce(s, SchedulerIntent.MoveTaskPanel("m2", 90 * MIN))
-        val m2 = moved.panels.first { it.id == "m2" }
-        assertEquals(60 * MIN, m2.startEpochMillis)
-        assertEquals(100 * MIN, m2.endEpochMillis)
-    }
-
     // ----- §8 extend / shorten (clampResize) --------------------------------------------------
 
     @Test
@@ -604,16 +592,6 @@ class SchedulerCalendarTest {
         val clamped =
             SchedulerDomain.clampResize(listOf(range(200, 250)), entry, CalendarEdge.End, value = 300, minLength = 1)
         assertEquals(range(100, 200), clamped)
-    }
-
-    @Test
-    fun resize_intent_clamps_the_end_at_the_neighbour() {
-        val s = SchedulerState.empty().copy(
-            panels = listOf(userPanel("m1", 0, 30 * MIN), userPanel("m2", 60 * MIN, 90 * MIN)),
-            nextPanelCounter = 2,
-        )
-        val resized = SchedulerReducer.reduce(s, SchedulerIntent.ResizeTaskPanel("m1", CalendarEdge.End, 200 * MIN))
-        assertEquals(60 * MIN, resized.panels.first { it.id == "m1" }.endEpochMillis)
     }
 
     // ----- §5 calendar-focus-aware Undo/Redo --------------------------------------------------

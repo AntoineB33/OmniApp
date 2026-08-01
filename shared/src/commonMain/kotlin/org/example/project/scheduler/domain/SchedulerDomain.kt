@@ -391,12 +391,6 @@ object SchedulerDomain {
         return visibleOrder.subList(from, to + 1).toSet()
     }
 
-    fun neighborSelectableCell(
-        state: SchedulerState,
-        cellId: CellId,
-        direction: Int,
-    ): CellId? = neighborSelectableOccurrence(state, cellId, renderVia = null, direction)?.cellId
-
     /**
      * The displayed row immediately above/below the occurrence ([cellId] rendered under
      * [renderVia]). Resolving by occurrence — not just by [cellId] — is what makes "Down" land on

@@ -420,27 +420,6 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §8 manual drag (move): drop a panel so its start is near [desiredStartEpochMillis], keeping
-     * its duration. The reducer snaps it to avoid overlaps (sticking to a group's end, jumping before
-     * the group past its midpoint) and shrinks it to fit a too-narrow gap. Dispatched once, on release,
-     * so the whole drag is a single history unit.
-     */
-    data class MoveTaskPanel(
-        val id: String,
-        val desiredStartEpochMillis: Long,
-    ) : SchedulerIntent
-
-    /**
-     * PRD §8 extend/shorten: grab a panel's start or end edge and drag it to [valueEpochMillis]. The
-     * reducer clamps it so it cannot cross a neighbouring panel (or invert below a minimum length).
-     */
-    data class ResizeTaskPanel(
-        val id: String,
-        val edge: CalendarEdge,
-        val valueEpochMillis: Long,
-    ) : SchedulerIntent
-
-    /**
      * PRD §8 task contextual menu ("Remove"): delete a panel. Recorded as a calendar delta so it can
      * be undone while the calendar is focused.
      */

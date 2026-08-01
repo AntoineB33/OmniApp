@@ -33,3 +33,5 @@ scripts/kotlin-sync-20b71-firebase-adminsdk-fbsvc-cf9d810985.json
 # Supabase CLI transient state (linked project ref, temp files). The schema
 # lives in supabase/migrations/ and config in supabase/config.toml (both committed).
 supabase/.temp/
+
+desktopApp/bin/

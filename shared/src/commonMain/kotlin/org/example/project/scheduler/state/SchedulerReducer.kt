@@ -127,8 +127,6 @@ object SchedulerReducer {
             is SchedulerIntent.AddNoScreenPeriod -> reduceAddNoScreenPeriod(state, intent)
             is SchedulerIntent.AddInactivityPeriod -> reduceAddInactivityPeriod(state, intent)
             is SchedulerIntent.UpdateTaskPanel -> reduceUpdateTaskPanel(state, intent)
-            is SchedulerIntent.MoveTaskPanel -> reduceMoveTaskPanel(state, intent)
-            is SchedulerIntent.ResizeTaskPanel -> reduceResizeTaskPanel(state, intent)
             is SchedulerIntent.PinRecordAsPanel -> reducePinRecord(state, intent)
             is SchedulerIntent.RemoveTaskPanel -> reduceRemoveTaskPanel(state, intent.id)
             is SchedulerIntent.SetPanelWeights -> reduceSetPanelWeights(state, intent)
@@ -1002,28 +1000,6 @@ object SchedulerReducer {
     }
 
     /**
-     * PRD §8 "there must not be overlaps": every other period shown on the calendar — task records and
-     * the other panels — that a dragged/resized panel [id] must not overlap.
-     */
-    private fun otherRanges(state: SchedulerState, id: String): List<TaskTimeRange> {
-        val moving = state.panels.firstOrNull { it.id == id }
-        // PRD §8/§12: an inactivity period records a fact — it may overlap anything, so nothing repels it.
-        if (moving?.inactivity == true) return emptyList()
-        val records = state.tasks.values.flatMap { it.record }
-        val panels =
-            state.panels.filter { other ->
-                other.id != id &&
-                    // Inactivity periods repel no panel (overlap is allowed both ways).
-                    !other.inactivity &&
-                    // PRD §8 screen override: pairs the drop resolves by trimming don't repel each other —
-                    // an on-screen task panel may land on a no-screen period (and vice versa).
-                    !(other.noScreen && (moving == null || isOnScreenTaskPanel(state, moving))) &&
-                    !(moving?.noScreen == true && isOnScreenTaskPanel(state, other))
-            }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
-        return records + panels
-    }
-
-    /**
      * PRD §8 pin switches → the scheduler's single fixed flag ([TaskPanel.pinned]). In this pass only the
      * **existence** pin is enforced (a fixed panel survives + constrains a reschedule); the position /
      * spanning / distance pins are stored on the panel but their partial enforcement is a follow-up.
@@ -1184,34 +1160,6 @@ object SchedulerReducer {
         val (resolved, resolvedPanels) =
             resolveScreenOverrides(allocated, allocated.panels.toMutableList().also { it[index] = updated }, panelId)
         return commitPanels(resolved, resolvedPanels, label = "Edit panel")
-    }
-
-    private fun reduceMoveTaskPanel(
-        state: SchedulerState,
-        intent: SchedulerIntent.MoveTaskPanel,
-    ): SchedulerState {
-        val panels = state.panels
-        val index = panels.indexOfFirst { it.id == intent.id }
-        if (index < 0) return state
-        val current = panels[index]
-        val duration = current.endEpochMillis - current.startEpochMillis
-        // PRD §8: snap to avoid overlaps (stick to a group, jump before it past the midpoint) and
-        // shrink to fit a too-narrow gap. A dragged panel becomes user-authored (no longer auto).
-        val placed =
-            SchedulerDomain.placeDraggedEntry(
-                otherRanges(state, intent.id),
-                intent.desiredStartEpochMillis,
-                duration,
-            )
-        val moved =
-            current.copy(
-                startEpochMillis = placed.startEpochMillis,
-                endEpochMillis = placed.endEpochMillis,
-                auto = false,
-            )
-        val (resolved, resolvedPanels) =
-            resolveScreenOverrides(state, panels.toMutableList().also { it[index] = moved }, intent.id)
-        return commitPanels(resolved, resolvedPanels, label = "Move panel")
     }
 
     /** PRD §8 (uniform blocks): convert a task-record period into a user panel; drop it from the record. */
@@ -1420,33 +1368,6 @@ object SchedulerReducer {
                 horizonMillis = scheduleHorizonEndMillis(now),
             ),
         )
-    }
-
-    private fun reduceResizeTaskPanel(
-        state: SchedulerState,
-        intent: SchedulerIntent.ResizeTaskPanel,
-    ): SchedulerState {
-        val panels = state.panels
-        val index = panels.indexOfFirst { it.id == intent.id }
-        if (index < 0) return state
-        val current = panels[index]
-        // PRD §8 extend/shorten: clamp the grabbed edge so it cannot cross a neighbour.
-        val resized =
-            SchedulerDomain.clampResize(
-                otherRanges(state, intent.id),
-                TaskTimeRange(current.startEpochMillis, current.endEpochMillis),
-                intent.edge,
-                intent.valueEpochMillis,
-            )
-        val updated =
-            current.copy(
-                startEpochMillis = resized.startEpochMillis,
-                endEpochMillis = resized.endEpochMillis,
-                auto = false,
-            )
-        val (resolved, resolvedPanels) =
-            resolveScreenOverrides(state, panels.toMutableList().also { it[index] = updated }, intent.id)
-        return commitPanels(resolved, resolvedPanels, label = "Resize panel")
     }
 
     private fun undo(state: SchedulerState, category: HistoryCategory): SchedulerState {
