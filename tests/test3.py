@@ -10,6 +10,7 @@ class Task:
         self.priority = priority
         self.min_time = min_time
 
+
 def get_status(t, starting_timeline, periods, tasks):
     """
     Evaluates the state of the timeline at time t.
@@ -35,18 +36,15 @@ def get_status(t, starting_timeline, periods, tasks):
                     break
                 else:
                     nxt = s + (cycle + 1) * r
-                    if nxt < next_preplaced_start:
-                        next_preplaced_start = nxt
+                    next_preplaced_start = min(next_preplaced_start, nxt)
             else:
-                if s < next_preplaced_start:
-                    next_preplaced_start = s
+                next_preplaced_start = min(next_preplaced_start, s)
         else:
             if s <= t < e:
                 running_preplaced = (b['task'], e)
                 break
             elif t < s:
-                if s < next_preplaced_start:
-                    next_preplaced_start = s
+                next_preplaced_start = min(next_preplaced_start, s)
                     
     if running_preplaced:
         return {'status': 'blocked', 'task': running_preplaced[0], 'end': running_preplaced[1]}
@@ -59,7 +57,7 @@ def get_status(t, starting_timeline, periods, tasks):
     next_period_event = float('inf')
     
     if not periods:
-        active = set(t_obj.name for t_obj in tasks)
+        active = {t_obj.name for t_obj in tasks}
     else:
         for p in periods:
             s = p['start']
@@ -75,24 +73,19 @@ def get_status(t, starting_timeline, periods, tasks):
                     if t < cycle_end:
                         active.update(tasks_allowed)
                         any_period_active = True
-                        if cycle_end < next_period_event:
-                            next_period_event = cycle_end
+                        next_period_event = min(next_period_event, cycle_end)
                     else:
                         nxt = s + (cycle + 1) * r
-                        if nxt < next_period_event:
-                            next_period_event = nxt
+                        next_period_event = min(next_period_event, nxt)
                 else:
-                    if s < next_period_event:
-                        next_period_event = s
+                    next_period_event = min(next_period_event, s)
             else:
                 if s <= t < e:
                     active.update(tasks_allowed)
                     any_period_active = True
-                    if e < next_period_event:
-                        next_period_event = e
+                    next_period_event = min(next_period_event, e)
                 elif t < s:
-                    if s < next_period_event:
-                        next_period_event = s
+                    next_period_event = min(next_period_event, s)
                         
         if not any_period_active:
             active = set()
@@ -101,7 +94,76 @@ def get_status(t, starting_timeline, periods, tasks):
     
     return {'status': 'free', 'gap_end': gap_end, 'boundary': boundary, 'active': active}
 
-def run_scheduler(tasks, starting_timeline, periods, max_instructions=5000, time_limit=None):
+
+def get_future_debt(t, tasks, starting_timeline, periods, lambda_rate, half_life=30.0):
+    """
+    Anticipates future forced behaviors (blocks and restricted periods) and evaluates 
+    their exponential discount translated back to time t.
+    """
+    lookahead = 10.0 * half_life
+    end_t = t + lookahead
+    
+    events = {t, end_t}
+    for b in starting_timeline + periods:
+        s_base = b['start']
+        e_base = b.get('end', s_base)
+        r = b.get('repeat', None)
+        
+        if r:
+            if t >= e_base:
+                n_start = math.ceil(round((t - e_base) / r, 6))
+            else:
+                n_start = 0
+            
+            n = n_start
+            while True:
+                s = s_base + n * r
+                e = e_base + n * r
+                if s > end_t: break
+                if s > t: events.add(s)
+                if e > t and e < end_t: events.add(e)
+                n += 1
+        else:
+            if t < s_base < end_t: events.add(s_base)
+            if t < e_base < end_t: events.add(e_base)
+            
+    sorted_events = sorted(events)
+    future_debts = {tsk.name: 0.0 for tsk in tasks}
+    
+    for i in range(len(sorted_events) - 1):
+        s_int = sorted_events[i]
+        e_int = sorted_events[i+1]
+        if s_int >= e_int: continue
+        
+        # small epsilon offset ensures we evaluate strictly inside the interval
+        sample_t = s_int + 1e-5 
+        status = get_status(sample_t, starting_timeline, periods, tasks)
+        expected_rates = {}
+        
+        if status['status'] == 'blocked':
+            task_name = status['task']
+            expected_rates = {tsk.name: (1.0 if tsk.name == task_name else 0.0) for tsk in tasks}
+        else:
+            active = status['active']
+            if not active:
+                expected_rates = {tsk.name: 0.0 for tsk in tasks}
+            elif len(active) == len(tasks):
+                continue
+            else:
+                total_p = sum(tsk.priority for tsk in tasks if tsk.name in active)
+                for tsk in tasks:
+                    expected_rates[tsk.name] = (tsk.priority / total_p) if (tsk.name in active and total_p > 0) else 0.0
+                    
+        if expected_rates:
+            discount = (math.exp(-lambda_rate * (s_int - t)) - math.exp(-lambda_rate * (e_int - t))) / lambda_rate
+            for tsk in tasks:
+                rate = (tsk.priority / 100.0) - expected_rates[tsk.name]
+                future_debts[tsk.name] += rate * discount
+                
+    return future_debts
+
+
+def run_scheduler(tasks, starting_timeline, periods, max_instructions=5000, time_limit=None, half_life=30.0):
     """
     Core engine: simulates exact debts mathematically using an exponential decay integral.
     Can run until a time limit (for plotting) or until a cycle is detected (for O(1) rule generation).
@@ -117,26 +179,23 @@ def run_scheduler(tasks, starting_timeline, periods, max_instructions=5000, time
             lcm_val = compute_lcm(lcm_val, b['repeat'])
         else:
             end_val = b.get('end', b['start'])
-            if end_val > max_static:
-                max_static = end_val
+            max_static = max(max_static, end_val)
                 
     earliest_time = 0
     for b in starting_timeline + periods:
-        if b['start'] < earliest_time:
-            earliest_time = b['start']
+        earliest_time = min(earliest_time, b['start'])
             
     t = earliest_time
     debts = {t_obj.name: 0.0 for t_obj in tasks}
     
-    # Lambda for continuous exponential decay
-    lambda_rate = math.log(2) / HALF_LIFE
+    lambda_rate = math.log(2) / half_life
     
     schedule = []
     instructions = []
     state_to_idx = {}
     
-    transient = None
-    cycle = None
+    transient = [] 
+    cycle = []
     
     def advance_debts(dt, running_task):
         if dt <= 0: return
@@ -148,18 +207,15 @@ def run_scheduler(tasks, starting_timeline, periods, max_instructions=5000, time
             if running_task == name:
                 rate = P - 1.0
                 
-            # Exact integral for continuous leak/fill
             if lambda_rate > 1e-6:
                 debts[name] = debts[name] * decay + rate * (1 - decay) / lambda_rate
             else:
                 debts[name] = debts[name] + rate * dt
                 
-            # Epsilon rounding to forget ancient memory blocks
             if abs(debts[name]) < 1e-4:
                 debts[name] = 0.0
                 
     def get_state():
-        # Round to 3 decimal places to ensure robust mathematical cycle convergence
         d_tup = tuple(round(debts[tsk.name], 3) for tsk in tasks)
         if t <= max_static:
             return (d_tup, round(t, 2))
@@ -170,9 +226,18 @@ def run_scheduler(tasks, starting_timeline, periods, max_instructions=5000, time
         if time_limit is not None and t >= time_limit:
             break
             
-        if time_limit is None and transient is not None:
-            break
-            
+        st = get_state()
+        
+        # State cycle check BEFORE advancing time
+        if time_limit is None and t >= 0:
+            if st in state_to_idx:
+                cycle_start = state_to_idx[st]
+                transient = instructions[:cycle_start]
+                cycle = instructions[cycle_start:]
+                break
+            else:
+                state_to_idx[st] = len(instructions)
+                
         status = get_status(t, starting_timeline, periods, tasks)
         
         if status['status'] == 'blocked':
@@ -180,8 +245,11 @@ def run_scheduler(tasks, starting_timeline, periods, max_instructions=5000, time
             end_time = status['end']
             dt = end_time - t
             advance_debts(dt, task_name)
-            if end_time > 0 and (time_limit is None or t < time_limit):
-                schedule.append({'task': task_name, 'start': max(0, t), 'end': end_time})
+            
+            if dt > 0:
+                instructions.append((task_name, dt))
+                if time_limit is None or t < time_limit:
+                    schedule.append({'task': task_name, 'start': max(0, t), 'end': end_time})
             t = end_time
         else:
             active = status['active']
@@ -192,62 +260,94 @@ def run_scheduler(tasks, starting_timeline, periods, max_instructions=5000, time
             best_debt = -float('inf')
             
             for t_obj in tasks:
-                if t_obj.name in active:
-                    if t + t_obj.min_time <= gap_end:
-                        if debts[t_obj.name] > best_debt:
-                            best_debt = debts[t_obj.name]
-                            best_task = t_obj
-                            
+                if t_obj.name not in active or t + t_obj.min_time > gap_end:
+                    continue
+
+                # 1. Calculate the midpoint of this prospective block
+                dt_mid = t_obj.min_time / 2.0
+                mid_t = t + dt_mid
+                
+                # 2. Decay the current past debt to the midpoint 
+                # (Assuming fluid equilibrium where rate=0 during the dt_mid gap)
+                decay_mid = math.exp(-lambda_rate * dt_mid)
+                past_debt_at_mid = debts[t_obj.name] * decay_mid
+
+                # 3. Predict anticipatory debt dynamically from the midpoint's perspective
+                future_debts_mid = get_future_debt(mid_t, tasks, starting_timeline, periods, lambda_rate, half_life)
+                
+                # 4. Combine perfectly balanced past and future forces
+                eff_debt = past_debt_at_mid + future_debts_mid[t_obj.name]
+                
+                if eff_debt > best_debt:
+                    best_debt = eff_debt
+                    best_task = t_obj
+
             if best_task:
                 dt = best_task.min_time
-                
-                # O(1) Limit Cycle Detection
-                if t >= 0 and time_limit is None and transient is None:
-                    st = get_state()
-                    if st in state_to_idx:
-                        cycle_start = state_to_idx[st]
-                        transient = instructions[:cycle_start]
-                        cycle = instructions[cycle_start:]
-                        break
-                    else:
-                        state_to_idx[st] = len(instructions)
-                        instructions.append(best_task.name)
-                        if len(instructions) >= max_instructions:
-                            transient = instructions
-                            cycle = []
-                            break
-                            
+                instructions.append((best_task.name, dt))
                 advance_debts(dt, best_task.name)
-                if t + dt > 0 and (time_limit is None or t < time_limit):
+                
+                if time_limit is None or t < time_limit:
                     schedule.append({'task': best_task.name, 'start': max(0, t), 'end': t + dt})
                 t += dt
             else:
                 dt = boundary - t
                 if dt <= 0 or boundary == float('inf'):
+                    transient = instructions
+                    cycle = []
                     break
+                instructions.append(('Idle', dt))
                 advance_debts(dt, None)
                 t = boundary
                 
+        if time_limit is None and len(instructions) >= max_instructions:
+            transient = instructions
+            cycle = []
+            break
+            
     return schedule, transient, cycle
+
 
 def get_schedule(tasks, time_limit, starting_timeline, periods):
     schedule, _, _ = run_scheduler(tasks, starting_timeline, periods, time_limit=time_limit)
     return schedule
 
+
 def print_test_instructions(name, tasks, starting_timeline, periods):
     print(f"--- {name} ---")
     _, transient, cycle = run_scheduler(tasks, starting_timeline, periods, max_instructions=5000, time_limit=None)
     
-    if cycle is None or len(cycle) == 0:
-        print(f"Total instructions: Capped at {len(transient)}")
-        full_list = transient
+    if len(cycle) == 0:
+        raw_list = transient
     else:
-        print(f"Total instructions: {len(transient) + len(cycle)} distinct states (Transient: {len(transient)}, Loop: {len(cycle)})")
-        # Extend to easily grab the first 10, even if it loops quickly
-        full_list = transient + cycle * max(1, 10 // len(cycle) + 1)
+        raw_list = transient + cycle * 10
         
-    print("First 10 instructions:", full_list[:10])
+    merged_list = []
+    for task, dt in raw_list:
+        if merged_list and merged_list[-1][0] == task:
+            merged_list[-1] = (task, merged_list[-1][1] + dt)
+        else:
+            merged_list.append((task, dt))
+            
+    total_raw_rules = len(transient) + len(cycle)
+    
+    if len(cycle) == 0:
+        print(f"Total instructions (raw states evaluated): Capped or Finished at {len(transient)}")
+    else:
+        print(f"Total instructions (raw states evaluated): {total_raw_rules} (Transient: {len(transient)}, Loop: {len(cycle)})")
+        
+    print("Instructions preview (First 10 merged blocks):")
+    
+    for i, (task, dt) in enumerate(merged_list[:20], 1):
+        if task == 'Idle':
+            print(f"  {i}. Wait for {dt:.1f} mins")
+        else:
+            print(f"  {i}. Place {task} for {dt:.1f} mins")
+            
+    if not merged_list:
+        print("  (No tasks scheduled)")
     print()
+
 
 def visualize_schedule(schedule, tasks, time_limit, ax, title):
     colors = list(mcolors.TABLEAU_COLORS.values())
@@ -296,9 +396,11 @@ def visualize_schedule(schedule, tasks, time_limit, ax, title):
     props = {'boxstyle': 'round', 'facecolor': 'wheat', 'alpha': 0.5}
     ax.text(1.02, 0.95, stats_text, transform=ax.transAxes, fontsize=10, verticalalignment='top', bbox=props)
 
+
 def show_scrollable(fig, window_title="Scheduler tests"):
     try:
         import tkinter as tk
+
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     except ImportError:
         plt.show()
@@ -338,6 +440,7 @@ def show_scrollable(fig, window_title="Scheduler tests"):
     root.bind_all("<Button-5>", lambda e: scroll_canvas.yview_scroll(1, "units"))
 
     root.mainloop()
+
 
 if __name__ == "__main__":
     HALF_LIFE = 30.0
