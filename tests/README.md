@@ -8,7 +8,9 @@ The starting timeline has already placed tasks.
 
 The timeline is formed of periods. Each period defines a set of tasks it accepts.
 
-A debt or an excess that is higher that it could be in a scheduling on a clear and all task accepted timeline is ignored exponentially as we move away from it (in both direction), and completely ignored with an epsilon rounding. The decay speed is always the same.
+If a debt or an excess is higher that it could be in a scheduling on a clear and all accepting timeline, then the higher part is ignored exponentially in relation to the distance from the task creating this debt or excess, and completely ignored with an epsilon rounding. The decay speed is always the same.
+Example: task A 50% 10min and task B 50% 10min, between 100 and 1000 only task B is possible.
+result: Near 100 before it, task A becomes predominant.
 
 Since the timeline to fill is infinite, the scheduler doesn't give an infinite list, but a finite list of rules to fill the timeline with a O(1) complexity.
 Example 1:
@@ -22,6 +24,3 @@ If the starting timeline has aperiodic, infinite events, or if the number of nec
 For now, I am looking for the algorithm that does exactly that, even if it takes time with hundreds of tasks and hundreds of tasks and periods in the starting timeline.
 
 For each example test in the script, the list of instructions must be printed (the 10 first and the total number of instructions).
-
-Does the script strictly satisfies the requirements? If not fix it, or explain why the requirements are flawed.
-Keep the current example tests, and add more if needed.

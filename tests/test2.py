@@ -178,7 +178,7 @@ class SchedulerFunction:
             self._simulate_interval(0 - current_sim_time, None)
             
         current_time = 0.0
-        lookahead_horizon = 5 * self.half_life if self.half_life else 500
+        lookahead_horizon = 25 * self.half_life if self.half_life else 1000
         
         while True:
             # 1. Overlapping pre-scheduled block
@@ -233,9 +233,9 @@ class SchedulerFunction:
                 future_blocks = self.timeline_res.get_blocks_in_range(current_time, current_time + lookahead_horizon, filter_task=t.name)
                 
                 for mb in future_blocks:
-                    # Clip the block's influence strictly to the lookahead horizon
+                    # Do NOT clip the block's end influence. The excess calculation requires the true duration `D`.
                     mb_s = max(current_time, mb['start'])
-                    mb_e = min(current_time + lookahead_horizon, mb['end'])
+                    mb_e = mb['end']
                     if mb_e > mb_s:
                         D = mb_e - mb_s
                         dist = mb_s - current_time
@@ -282,8 +282,9 @@ def extract_pattern(tasks, starting_timeline, periods, half_life=30.0, max_sim_t
             # Cap reached: Either aperiodic, infinite without repeating, or simply too complex.
             return history, None
             
-        # Snapshot state (rounding is mandatory due to float math on continuous exponential decay)
-        rounded_debts = tuple(round(scheduler.debts[t.name], 2) for t in tasks)
+        # Snapshot state: Rounding to 1 decimal place stabilizes the asymptotic ODE convergence rapidly 
+        # so the loop detector can capture exact state alignment. 
+        rounded_debts = tuple(round(scheduler.debts[t.name], 1) for t in tasks)
         phase = round(b['start'] % period_lcm, 2) if period_lcm > 1 else 0
         state_key = (rounded_debts, phase)
         
