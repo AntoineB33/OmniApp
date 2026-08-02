@@ -52,64 +52,137 @@ class ToolTip:
             x, y = event.x_root + 15, event.y_root + 15
             self.tooltip_window.wm_geometry(f"+{x}+{y}")
 
-def generate_schedule(tasks, total_duration):
-    """Generates a schedule minimizing local error to priority targets."""
+
+def get_schedule_rules(tasks):
+    """
+    Simulates the schedule mathematically to find the periodic cycle.
+    Returns a finite list of rules (prefix blocks and repeating cycle blocks).
+    """
     time_now = 0
     actual_times = {t.name: 0 for t in tasks}
-    schedule = []
     total_priority = sum(t.priority for t in tasks)
     
-    while time_now < total_duration:
-        best_task = None
-        max_deficit = -float('inf')
-        
-        for t in tasks:
-            target_ratio = t.priority / total_priority
-            if time_now == 0:
-                deficit = target_ratio
-            else:
-                actual_ratio = actual_times[t.name] / time_now
-                deficit = target_ratio - actual_ratio
-                
-            if deficit > max_deficit:
-                max_deficit = deficit
-                best_task = t
-
-        if best_task is None:
-            break  # No task can be scheduled, exit loop
-                
-        # --- MERGE LOGIC ADDED HERE ---
-        # If the schedule isn't empty and the last task is the same as the new one, extend it
-        if schedule and schedule[-1]['name'] == best_task.name:
-            schedule[-1]['duration'] += best_task.min_time
+    raw_steps = []
+    state_seen = {}
+    
+    while True:
+        # Define the exact deterministic state of the scheduler
+        if time_now == 0:
+            state = "START"
         else:
-            # Otherwise, append a new block
-            schedule.append({
-                'name': best_task.name,
-                'start': time_now,
-                'duration': best_task.min_time,
-                'color': best_task.color
-            })
+            # We use exact integer arithmetic to define the state to avoid floating point inconsistencies
+            state = tuple(time_now * t.priority - actual_times[t.name] * total_priority for t in tasks)
+            
+        if state in state_seen:
+            cycle_start = state_seen[state]
+            break
+            
+        state_seen[state] = len(raw_steps)
         
+        best_task = None
+        if time_now == 0:
+            max_v = -float('inf')
+            for t in tasks:
+                if t.priority > max_v:
+                    max_v = t.priority
+                    best_task = t
+        else:
+            max_v = -float('inf')
+            for t in tasks:
+                # Integer equivalent of (target_ratio - actual_ratio) for exact tie-breaking logic
+                v = t.priority * time_now - actual_times[t.name] * total_priority
+                if v > max_v:
+                    max_v = v
+                    best_task = t
+                    
+        if best_task is None:
+            break
+            
+        raw_steps.append(best_task)
         time_now += best_task.min_time
         actual_times[best_task.name] += best_task.min_time
+
+    # Compress identical sequential tasks into combined duration blocks
+    def compress(steps):
+        blocks = []
+        for step in steps:
+            if blocks and blocks[-1]['name'] == step.name:
+                blocks[-1]['duration'] += step.min_time
+            else:
+                blocks.append({
+                    'name': step.name,
+                    'duration': step.min_time,
+                    'color': step.color
+                })
+        return blocks
+
+    prefix_blocks = compress(raw_steps[:cycle_start])
+    cycle_blocks = compress(raw_steps[cycle_start:])
+    
+    return prefix_blocks, cycle_blocks
+
+
+def generate_schedule(prefix_blocks, cycle_blocks, total_duration):
+    """Generates the timeline up to 'total_duration' by unrolling the finite rules."""
+    schedule = []
+    time_now = 0
+    
+    def append_block(block_template):
+        nonlocal time_now
+        # Merge logic to handle boundaries between loops cleanly
+        if schedule and schedule[-1]['name'] == block_template['name']:
+            schedule[-1]['duration'] += block_template['duration']
+        else:
+            schedule.append({
+                'name': block_template['name'],
+                'start': time_now,
+                'duration': block_template['duration'],
+                'color': block_template['color']
+            })
+        time_now += block_template['duration']
+
+    # 1. Add prefix
+    for block in prefix_blocks:
+        if time_now >= total_duration:
+            break
+        append_block(block)
         
+    # 2. Loop the cycle until the timeline total is reached
+    if not cycle_blocks:
+        return schedule 
+        
+    while time_now < total_duration:
+        for block in cycle_blocks:
+            if time_now >= total_duration:
+                break
+            append_block(block)
+            
     return schedule
 
-def copy_to_clipboard(root, title, schedule):
-    """Formats the schedule and copies it to the clipboard."""
-    lines = [title]
-    for block in schedule:
-        lines.append(f"Task {block['name']}: {block['start']} - {block['start'] + block['duration']}")
+def copy_to_clipboard(root, title, prefix_blocks, cycle_blocks):
+    """Formats the schedule rules and copies it to the clipboard as demonstrated in the README."""
+    lines = [title, "Rules:"]
+    
+    if prefix_blocks:
+        lines.append("Prefix:")
+        for block in prefix_blocks:
+            lines.append(f"- task {block['name']} {block['duration']}min")
+        lines.append("Cycle:")
+    
+    for block in cycle_blocks:
+        lines.append(f"- task {block['name']} {block['duration']}min")
+        
+    lines.append("- repeat")
     
     clipboard_text = "\n".join(lines)
     root.clipboard_clear()
     root.clipboard_append(clipboard_text)
 
+
 def draw_schedules(root, canvas, test_cases, window_width=900):
     y_offset = 20
     px_per_min = 4
-    margin_left = 90  # Increased margin to fit the copy button
+    margin_left = 90  
     margin_right = 30
     row_duration = (window_width - margin_left - margin_right) // px_per_min
     row_height = 40
@@ -118,17 +191,17 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
     tooltip = ToolTip(canvas)
     
     for title, tasks, total_duration in test_cases:
-        schedule = generate_schedule(tasks, total_duration)
+        prefix_blocks, cycle_blocks = get_schedule_rules(tasks)
+        schedule = generate_schedule(prefix_blocks, cycle_blocks, total_duration)
         
-        # 1. Create and place the Copy Button
-        btn = tk.Button(canvas, text="Copy\nData", cursor="hand2",
-                        command=lambda t=title, s=schedule: copy_to_clipboard(root, t, s))
+        # 1. Create and place the Copy Button (Now exports the Rules)
+        btn = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
+                        command=lambda t=title, p=prefix_blocks, c=cycle_blocks: copy_to_clipboard(root, t, p, c))
         canvas.create_window(15, y_offset, window=btn, anchor="nw")
         
         # 2. Draw Test Title
         txt_id = canvas.create_text(margin_left, y_offset, text=title, font=("Arial", 13, "bold"), anchor="nw")
         
-        # Fix overlapping from image_b99e81.png by calculating the actual text box height
         bbox = canvas.bbox(txt_id)
         y_offset = bbox[3] + 20 
         
@@ -138,7 +211,6 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
             block_start = block['start']
             remaining = block['duration']
             
-            # Text for the tooltip bubble
             original_start = block['start']
             original_end = original_start + block['duration']
             hover_info = f"Task {block['name']}\nStart: {original_start}\nEnd: {original_end}"
@@ -153,12 +225,10 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
                 y1 = y_offset + row_idx * (row_height + row_spacing)
                 y2 = y1 + row_height
                 
-                # Draw task panel with "task_panel" tag
                 rect_id = canvas.create_rectangle(x1, y1, x2, y2, fill=block['color'], 
                                                   outline="black", tags="task_panel")
                 tooltip.register(rect_id, hover_info)
                 
-                # Add text if panel is wide enough
                 if (x2 - x1) > 30:
                     text_id = canvas.create_text((x1 + x2) / 2, (y1 + y2) / 2, 
                                                  text=block['name'], font=("Arial", 10), tags="task_panel")
@@ -220,19 +290,15 @@ def main():
     vbar.pack(side=tk.RIGHT, fill=tk.Y)
     canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-    # --- ADD MOUSEWHEEL SUPPORT HERE ---
     def _on_mousewheel(event):
-        # Cross-platform check for scroll direction
         if getattr(event, 'num', 0) == 4 or event.delta > 0:
             canvas.yview_scroll(-1, "units")
         elif getattr(event, 'num', 0) == 5 or event.delta < 0:
             canvas.yview_scroll(1, "units")
 
-    # Bind to all elements so scrolling works anywhere in the window
-    canvas.bind_all("<MouseWheel>", _on_mousewheel) # Windows & macOS
-    canvas.bind_all("<Button-4>", _on_mousewheel)   # Linux scroll up
-    canvas.bind_all("<Button-5>", _on_mousewheel)   # Linux scroll down
-    # -----------------------------------
+    canvas.bind_all("<MouseWheel>", _on_mousewheel) 
+    canvas.bind_all("<Button-4>", _on_mousewheel)   
+    canvas.bind_all("<Button-5>", _on_mousewheel)   
 
     draw_schedules(root, canvas, test_cases, window_width=900)
 
