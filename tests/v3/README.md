@@ -10,3 +10,11 @@ result: list of three elements:
 - task A 10min
 - task B 10min
 - repeat
+
+The starting timeline has already placed tasks.
+
+The timeline is formed of periods. Each period defines a set of tasks it accepts.
+
+If a debt or an excess is higher that it could be in a scheduling on a clear and all accepting timeline, then the higher part is ignored exponentially in relation to the distance from the task creating this debt or excess, and completely ignored with an epsilon rounding. The decay speed is always the same.
+
+If the starting timeline has aperiodic, infinite events, or if the number of necessary instructions is too large, then the resulting set of rules should not cover up to +infinity, but as far as possible in the future. There must be at most 50 rules.

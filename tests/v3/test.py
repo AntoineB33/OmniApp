@@ -15,7 +15,6 @@ class ToolTip:
         self.tooltip_window = None
         self.data = {}
         
-        # Bind events to any canvas item tagged with "task_panel"
         self.canvas.tag_bind("task_panel", "<Enter>", self.show_tooltip)
         self.canvas.tag_bind("task_panel", "<Leave>", self.hide_tooltip)
         self.canvas.tag_bind("task_panel", "<Motion>", self.move_tooltip)
@@ -52,75 +51,156 @@ class ToolTip:
             x, y = event.x_root + 15, event.y_root + 15
             self.tooltip_window.wm_geometry(f"+{x}+{y}")
 
-
-def get_schedule_rules(tasks):
-    """
-    Simulates the schedule mathematically to find the periodic cycle.
-    Returns a finite list of rules (prefix blocks and repeating cycle blocks).
-    """
+def get_clear_timeline_bounds(tasks):
+    """Simulates a clear timeline to find the maximum theoretical debt/excess."""
     time_now = 0
     actual_times = {t.name: 0 for t in tasks}
     total_priority = sum(t.priority for t in tasks)
     
-    raw_steps = []
-    state_seen = {}
+    state_seen = set()
+    max_v = {t.name: -float('inf') for t in tasks}
     
     while True:
-        # Define the exact deterministic state of the scheduler
-        if time_now == 0:
-            state = "START"
-        else:
-            # We use exact integer arithmetic to define the state to avoid floating point inconsistencies
-            state = tuple(time_now * t.priority - actual_times[t.name] * total_priority for t in tasks)
-            
+        state = tuple(time_now * t.priority - actual_times[t.name] * total_priority for t in tasks)
         if state in state_seen:
-            cycle_start = state_seen[state]
             break
-            
-        state_seen[state] = len(raw_steps)
+        state_seen.add(state)
         
         best_task = None
-        if time_now == 0:
-            max_v = -float('inf')
-            for t in tasks:
-                if t.priority > max_v:
-                    max_v = t.priority
-                    best_task = t
-        else:
-            max_v = -float('inf')
-            for t in tasks:
-                # Integer equivalent of (target_ratio - actual_ratio) for exact tie-breaking logic
-                v = t.priority * time_now - actual_times[t.name] * total_priority
-                if v > max_v:
-                    max_v = v
-                    best_task = t
-                    
+        best_v = -float('inf')
+        
+        for t in tasks:
+            v = t.priority * time_now - actual_times[t.name] * total_priority
+            max_v[t.name] = max(max_v[t.name], v)
+                
+            if v > best_v:
+                best_v = v
+                best_task = t
+                
         if best_task is None:
             break
             
-        raw_steps.append(best_task)
         time_now += best_task.min_time
         actual_times[best_task.name] += best_task.min_time
+        
+    return max_v
 
-    # Compress identical sequential tasks into combined duration blocks
-    def compress(steps):
-        blocks = []
-        for step in steps:
-            if blocks and blocks[-1]['name'] == step.name:
-                blocks[-1]['duration'] += step.min_time
-            else:
-                blocks.append({
-                    'name': step.name,
-                    'duration': step.min_time,
-                    'color': step.color
-                })
-        return blocks
-
-    prefix_blocks = compress(raw_steps[:cycle_start])
-    cycle_blocks = compress(raw_steps[cycle_start:])
+def get_schedule_rules(tasks, pre_placed=None, periods=None):
+    """
+    Simulates the schedule with constraints (pre-placed tasks, periods, decay).
+    Returns a finite list of rules (prefix blocks and repeating cycle blocks).
+    Stops at 50 rules if aperiodic.
+    """
+    if pre_placed is None: pre_placed = []
+    if periods is None: periods = []
     
-    return prefix_blocks, cycle_blocks
+    total_priority = sum(t.priority for t in tasks)
+    clear_max_v = get_clear_timeline_bounds(tasks)
+    
+    time_now = 0
+    actual_times = {t.name: 0 for t in tasks}
+    last_run = {t.name: 0 for t in tasks}
+    
+    raw_steps = []
+    state_seen = {}
+    
+    pre_placed_sorted = sorted(pre_placed, key=lambda x: x['start'])
+    
+    epsilon = 1.0
+    decay_rate = 0.95
+    
+    while len(raw_steps) < 50:
+        # Check pre-placed tasks first
+        active_pre = None
+        for p in pre_placed_sorted:
+            if p['start'] <= time_now < p['start'] + p['duration']:
+                active_pre = p
+                break
+                
+        if active_pre:
+            jump = (active_pre['start'] + active_pre['duration']) - time_now
+            # Pre-placed tasks count towards time passing, but we don't increase their priority count
+            # unless they map directly to a scheduled task logic. Here they just block time.
+            raw_steps.append({
+                'name': active_pre['name'], 
+                'duration': jump, 
+                'color': active_pre.get('color', '#DDDDDD')
+            })
+            time_now += jump
+            continue
 
+        # Determine allowed tasks based on periods
+        allowed_tasks = tasks
+        if periods:
+            for p in periods:
+                if p['start'] <= time_now < p['end']:
+                    allowed_tasks = [t for t in tasks if t.name in p['allowed']]
+                    break
+        
+        if not allowed_tasks:
+            # If nothing is allowed, advance time slightly or break if infinite
+            break
+        
+        # We only cycle detect if there are no future pre_placed blocks to interrupt us
+        future_pre = any(p['start'] >= time_now for p in pre_placed_sorted)
+        if not future_pre and not periods:
+            cycle_state = tuple(time_now * t.priority - actual_times[t.name] * total_priority for t in tasks)
+            if cycle_state in state_seen:
+                cycle_start = state_seen[cycle_state]
+                return compress(raw_steps[:cycle_start]), compress(raw_steps[cycle_start:])
+            state_seen[cycle_state] = len(raw_steps)
+
+        # Select the next best task
+        best_task = None
+        best_v = -float('inf')
+        
+        for t in allowed_tasks:
+            v = t.priority * time_now - actual_times[t.name] * total_priority
+            
+            # Apply Exponential Decay for Wind-up Debt
+            if v > clear_max_v[t.name]:
+                excess = v - clear_max_v[t.name]
+                distance = time_now - last_run[t.name]
+                decayed_excess = excess * (decay_rate ** distance)
+                
+                # Epsilon rounding to ignore tiny trailing debts
+                if decayed_excess < epsilon:
+                    decayed_excess = 0
+                    
+                v = clear_max_v[t.name] + decayed_excess
+                
+            if v > best_v:
+                best_v = v
+                best_task = t
+                
+        if best_task is None:
+            break
+            
+        raw_steps.append({
+            'name': best_task.name,
+            'duration': best_task.min_time,
+            'color': best_task.color
+        })
+        actual_times[best_task.name] += best_task.min_time
+        time_now += best_task.min_time
+        last_run[best_task.name] = time_now
+
+    # If we hit 50 rules or broke early due to unfillable timeline
+    return compress(raw_steps), []
+
+def compress(steps):
+    """Compress identical sequential tasks into combined duration blocks."""
+    blocks = []
+    for step in steps:
+        if blocks and blocks[-1]['name'] == step['name']:
+            blocks[-1]['duration'] += step['duration']
+        else:
+            blocks.append({
+                'name': step['name'],
+                'duration': step['duration'],
+                'color': step['color']
+            })
+    return blocks
 
 def generate_schedule(prefix_blocks, cycle_blocks, total_duration):
     """Generates the timeline up to 'total_duration' by unrolling the finite rules."""
@@ -129,7 +209,6 @@ def generate_schedule(prefix_blocks, cycle_blocks, total_duration):
     
     def append_block(block_template):
         nonlocal time_now
-        # Merge logic to handle boundaries between loops cleanly
         if schedule and schedule[-1]['name'] == block_template['name']:
             schedule[-1]['duration'] += block_template['duration']
         else:
@@ -141,13 +220,11 @@ def generate_schedule(prefix_blocks, cycle_blocks, total_duration):
             })
         time_now += block_template['duration']
 
-    # 1. Add prefix
     for block in prefix_blocks:
         if time_now >= total_duration:
             break
         append_block(block)
         
-    # 2. Loop the cycle until the timeline total is reached
     if not cycle_blocks:
         return schedule 
         
@@ -160,24 +237,22 @@ def generate_schedule(prefix_blocks, cycle_blocks, total_duration):
     return schedule
 
 def copy_to_clipboard(root, title, prefix_blocks, cycle_blocks):
-    """Formats the schedule rules and copies it to the clipboard as demonstrated in the README."""
     lines = [title, "Rules:"]
-    
     if prefix_blocks:
         lines.append("Prefix:")
         for block in prefix_blocks:
             lines.append(f"- task {block['name']} {block['duration']}min")
+    if cycle_blocks:
         lines.append("Cycle:")
-    
-    for block in cycle_blocks:
-        lines.append(f"- task {block['name']} {block['duration']}min")
+        for block in cycle_blocks:
+            lines.append(f"- task {block['name']} {block['duration']}min")
+        lines.append("- repeat")
+    else:
+        lines.append("(No cycle found - capped by rule limit or bounded timeline)")
         
-    lines.append("- repeat")
-    
     clipboard_text = "\n".join(lines)
     root.clipboard_clear()
     root.clipboard_append(clipboard_text)
-
 
 def draw_schedules(root, canvas, test_cases, window_width=900):
     y_offset = 20
@@ -190,22 +265,18 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
     
     tooltip = ToolTip(canvas)
     
-    for title, tasks, total_duration in test_cases:
-        prefix_blocks, cycle_blocks = get_schedule_rules(tasks)
+    for title, tasks, total_duration, pre_placed, periods in test_cases:
+        prefix_blocks, cycle_blocks = get_schedule_rules(tasks, pre_placed, periods)
         schedule = generate_schedule(prefix_blocks, cycle_blocks, total_duration)
         
-        # 1. Create and place the Copy Button (Now exports the Rules)
         btn = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
                         command=lambda t=title, p=prefix_blocks, c=cycle_blocks: copy_to_clipboard(root, t, p, c))
         canvas.create_window(15, y_offset, window=btn, anchor="nw")
         
-        # 2. Draw Test Title
-        txt_id = canvas.create_text(margin_left, y_offset, text=title, font=("Arial", 13, "bold"), anchor="nw")
-        
+        txt_id = canvas.create_text(margin_left, y_offset, text=title, font=("Arial", 11, "bold"), anchor="nw")
         bbox = canvas.bbox(txt_id)
         y_offset = bbox[3] + 20 
         
-        # 3. Draw the timeline blocks
         max_row_idx = 0
         for block in schedule:
             block_start = block['start']
@@ -245,28 +316,33 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
 def main():
     test_cases = [
         (
-            "Test 1: 50/50 Split (10min each)\n-> Alternates perfectly A, B, A, B...",
+            "Test 1: Normal 50/50 Split (10min each)\n-> Pure Periodic Cycle",
             [
                 Task("A", priority=50, min_time=10, color="#FF9999"),
                 Task("B", priority=50, min_time=10, color="#99CCFF")
             ],
-            180 
+            180, [], []
         ),
         (
-            "Test 2: 75/25 Split (10min each)\n-> Schedules naturally A, B, A, A, A, B, A, A...",
+            "Test 2: Pre-placed event interrupts timeline\n-> A and B catch up, but debt decay prevents a massive monopoly block.",
             [
-                Task("A", priority=75, min_time=10, color="#FF9999"),
-                Task("B", priority=25, min_time=10, color="#99CCFF")
-            ],
-            180
-        ),
-        (
-            "Test 3: Equal Priority, Mismatched times (A: 30m, B: 10m)\n-> Schedules A(30m), then B(10m) x3 to catch up.",
-            [
-                Task("A", priority=50, min_time=30, color="#FF9999"),
+                Task("A", priority=50, min_time=10, color="#FF9999"),
                 Task("B", priority=50, min_time=10, color="#99CCFF")
             ],
-            240
+            240, 
+            [{'name': 'MAINTENANCE', 'start': 40, 'duration': 60, 'color': '#CCCCCC'}], 
+            []
+        ),
+        (
+            "Test 3: Periods constraint\n-> Task C is only allowed between t=0 and t=100. Caps at 50 rules.",
+            [
+                Task("A", priority=40, min_time=10, color="#FF9999"),
+                Task("B", priority=40, min_time=10, color="#99CCFF"),
+                Task("C", priority=20, min_time=10, color="#99FF99")
+            ],
+            300, 
+            [], 
+            [{'start': 0, 'end': 100, 'allowed': ['A', 'B', 'C']}, {'start': 100, 'end': 9999, 'allowed': ['A', 'B']}]
         ),
         (
             "Test 4: Three Tasks (A: 50% 20m, B: 30% 10m, C: 20% 15m)",
@@ -275,12 +351,14 @@ def main():
                 Task("B", priority=30, min_time=10, color="#99CCFF"),
                 Task("C", priority=20, min_time=15, color="#99FF99")
             ],
-            400
+            400,
+            [], 
+            []
         )
     ]
 
     root = tk.Tk()
-    root.title("Task Scheduler Timeline")
+    root.title("Task Scheduler Timeline with Constraints")
     root.geometry("950x700")
 
     canvas = tk.Canvas(root, bg="white")
@@ -301,7 +379,6 @@ def main():
     canvas.bind_all("<Button-5>", _on_mousewheel)   
 
     draw_schedules(root, canvas, test_cases, window_width=900)
-
     root.mainloop()
 
 if __name__ == "__main__":
