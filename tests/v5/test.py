@@ -488,6 +488,7 @@ class Scheduler:
             gap = None if limit is None else limit - t
             fitting = [n for n in allowed
                        if gap is None or self.minimum[n] <= gap]
+            
             if not fitting:                             # nothing fits in the gap
                 if gap is None:
                     break
@@ -499,7 +500,7 @@ class Scheduler:
                     slots.append(Slot("IDLE", gap, IDLE_COLOR))
                     last = None
                     free_tail = False
-                t = limit
+                t += gap                                # == limit, but keeps t a Fraction
                 continue
 
             name = self._pick(v, fitting, last)
@@ -823,8 +824,8 @@ def build_cases():
                 Task("C", priority=20, min_time=10, color="#99FF99")
             ],
             300, [],
-            [{'start': 0, 'end': 100, 'allowed': ['A', 'B', 'C']},
-             {'start': 100, 'end': inf, 'allowed': ['A', 'B']}]
+            [{'start': 0, 'end': 105, 'allowed': ['A', 'B', 'C']},
+             {'start': 105, 'end': inf, 'allowed': ['A', 'B']}]
         ),
         (
             (
