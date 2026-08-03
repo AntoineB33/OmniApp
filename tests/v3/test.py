@@ -118,26 +118,42 @@ def build_anomalies(tasks, pre_placed, periods):
     return {n: merge(v) for n, v in lock.items()}, {n: merge(v) for n, v in forced.items()}
 
 
-def past_kernel(intervals, time_now):
-    """Integral of decay**(distance) over the parts of the intervals that lie in
-    the past. One minute of anomaly at t' weighs decay**(t - t'), so a long
-    anomaly saturates at 1/LAMBDA instead of counting for ever."""
-    acc = 0.0
+def kernel(intervals, time_now):
+    """Integral of decay**|t - t'| over the intervals, split into the part of
+    them that lies in the past and the part that lies in the future.
+    One minute of anomaly at t' weighs decay**|now - t'|, so its influence is
+    the same at a given distance BEFORE it and AFTER it, and a long anomaly
+    saturates at 1/LAMBDA instead of counting for ever."""
+    past = future = 0.0
     for s, e in intervals:
         if time_now >= e:
-            acc += (DECAY_RATE ** (time_now - e) - DECAY_RATE ** (time_now - s)) / LAMBDA
-        elif time_now > s:
-            acc += (1.0 - DECAY_RATE ** (time_now - s)) / LAMBDA
-    return acc
+            past += (DECAY_RATE ** (time_now - e) - DECAY_RATE ** (time_now - s)) / LAMBDA
+        elif time_now <= s:
+            future += (DECAY_RATE ** (s - time_now) - DECAY_RATE ** (e - time_now)) / LAMBDA
+        else:
+            past += (1.0 - DECAY_RATE ** (time_now - s)) / LAMBDA
+            future += (1.0 - DECAY_RATE ** (e - time_now)) / LAMBDA
+    return past, future
 
 
 def bounds_now(t, time_now, lock, forced, cmax, cmin, P):
     """The imbalance the task is allowed to carry right now: the clear-timeline
-    bound, widened by the anomalies that already happened, with everything past
-    that ignored (exponentially with the distance, epsilon-rounded)."""
-    over = t.priority * past_kernel(lock, time_now)
-    under = (P - t.priority) * past_kernel(forced, time_now)
-    return cmax + (over if over >= EPSILON else 0.0), cmin - (under if under >= EPSILON else 0.0)
+    bound, widened by the anomalies around it, with everything past that ignored
+    (exponentially with the distance, epsilon-rounded).
+
+    Each anomaly widens the bound on the side it pushes, and it does so on both
+    sides in TIME, at the same distance:
+      lockout behind   -> debt tolerated   (catching up after it)
+      lockout ahead    -> credit tolerated (paying in advance for it)
+      forced run behind-> credit tolerated (resting after it)
+      forced run ahead -> debt tolerated   (making room for it)
+    """
+    l_past, l_future = kernel(lock, time_now)
+    f_past, f_future = kernel(forced, time_now)
+    over = t.priority * l_past + (P - t.priority) * f_future
+    under = t.priority * l_future + (P - t.priority) * f_past
+    return (cmax + (over if over >= EPSILON else 0.0),
+            cmin - (under if under >= EPSILON else 0.0))
 
 
 def allowed_at(tasks, periods, time_now):
@@ -172,8 +188,12 @@ def reverse_tail(tasks, boundary, lock, forced, cmax, cmin, P, periods, max_bloc
     if not affected:
         return []
 
-    # imbalance each task will have accumulated when the anomaly is over
-    v_off = {t.name: t.priority * lock_len[t.name] - (P - t.priority) * forced_len[t.name]
+    # The imbalance the anomaly creates is shared between its two sides: half of
+    # it is paid in advance here, the other half is left to the forward pass to
+    # catch up afterwards. Without the /2 the run-up would absorb the whole
+    # thing and there would be nothing left to see on the other side.
+    v_off = {t.name: (t.priority * lock_len[t.name]
+                      - (P - t.priority) * forced_len[t.name]) / 2.0
              for t in allowed}
     served = {t.name: 0 for t in allowed}
     forgiven = {t.name: 0.0 for t in allowed}
@@ -187,9 +207,9 @@ def reverse_tail(tasks, boundary, lock, forced, cmax, cmin, P, periods, max_bloc
         # the part of the imbalance that is beyond the (widened) bound is really
         # ignored, i.e. dropped from the state for good, not just hidden
         for t in allowed:
-            hi = cmax[t.name] + (t.priority * past_kernel([[-lock_len[t.name], 0]], tau)
+            hi = cmax[t.name] + (t.priority * kernel([[-lock_len[t.name], 0]], tau)[0]
                                  if lock_len[t.name] else 0.0)
-            lo = cmin[t.name] - ((P - t.priority) * past_kernel([[-forced_len[t.name], 0]], tau)
+            lo = cmin[t.name] - ((P - t.priority) * kernel([[-forced_len[t.name], 0]], tau)[0]
                                  if forced_len[t.name] else 0.0)
             v = state(t)
             if v > hi:
@@ -359,6 +379,65 @@ def generate_schedule(prefix_blocks, cycle_blocks, total_duration):
     return schedule
 
 
+def debt_curves(tasks, schedule, pre_placed, periods, total_duration, step=1):
+    """Replays the drawn timeline minute by minute and returns, per task, the
+    part of its imbalance that sits OUTSIDE the clear-timeline bounds, i.e. the
+    part that only exists because of an anomaly and that is being ignored
+    exponentially. It is positive on the debt side and on the credit side, and
+    it is exactly 0 once it has fallen under EPSILON.
+    Returns {task_name: [(time, excess), ...]} and the largest excess seen."""
+    P = sum(t.priority for t in tasks)
+    cmax, cmin = get_clear_timeline_bounds(tasks)
+    lock, forced = build_anomalies(tasks, pre_placed, periods)
+
+    # who is being served during each minute of the drawn timeline
+    owner = {}
+    for b in schedule:
+        for t in range(int(b['start']), int(b['start'] + b['duration'])):
+            owner[t] = b['name']
+
+    served = {t.name: 0.0 for t in tasks}
+    forgiven = {t.name: 0.0 for t in tasks}
+    curves = {t.name: [] for t in tasks}
+    envelopes = {t.name: [] for t in tasks}
+    peak = 0.0
+
+    for now in range(0, int(total_duration) + 1, step):
+        for t in tasks:
+            v = t.priority * now - served[t.name] * P - forgiven[t.name]
+            hi, lo = bounds_now(t, now, lock[t.name], forced[t.name],
+                                cmax[t.name], cmin[t.name], P)
+            if v > hi:
+                forgiven[t.name] += v - hi
+                v = hi
+            elif v < lo:
+                forgiven[t.name] += v - lo
+                v = lo
+            excess = max(0.0, v - cmax[t.name], cmin[t.name] - v)
+            if excess < EPSILON:
+                excess = 0.0          # epsilon rounding: nothing left to draw
+            curves[t.name].append((now, excess))
+            # the envelope: how much out-of-bounds imbalance the decay is still
+            # counting at this distance from the anomaly, whether the task has
+            # that much or not. This is the pure exponential.
+            env = (hi - cmax[t.name]) + (cmin[t.name] - lo)
+            if env < EPSILON:
+                env = 0.0
+            envelopes[t.name].append((now, env))
+            peak = max(peak, excess, env)
+
+        for _ in range(step):
+            name = owner.get(now)
+            if name in served:
+                served[name] += 1
+            elif name is not None:
+                for t in tasks:          # foreign block: shared by everyone
+                    served[t.name] += t.priority / P
+            now += 1
+
+    return curves, envelopes, peak
+
+
 def copy_to_clipboard(root, title, prefix_blocks, cycle_blocks):
     lines = [title, "Rules:"]
     if prefix_blocks:
@@ -385,13 +464,15 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
     margin_right = 30
     row_duration = (window_width - margin_left - margin_right) // px_per_min
     row_height = 40
-    row_spacing = 20
+    curve_height = 45          # room above each row for the decay curve
+    row_spacing = curve_height + 20
 
     tooltip = ToolTip(canvas)
 
     for title, tasks, total_duration, pre_placed, periods in test_cases:
         prefix_blocks, cycle_blocks = get_schedule_rules(tasks, pre_placed, periods)
         schedule = generate_schedule(prefix_blocks, cycle_blocks, total_duration)
+        curves, envelopes, peak_excess = debt_curves(tasks, schedule, pre_placed, periods, total_duration)
 
         btn = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
                         command=lambda t=title, p=prefix_blocks, c=cycle_blocks: copy_to_clipboard(root, t, p, c))
@@ -399,7 +480,7 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
 
         txt_id = canvas.create_text(margin_left, y_offset, text=title, font=("Arial", 11, "bold"), anchor="nw")
         bbox = canvas.bbox(txt_id)
-        y_offset = bbox[3] + 20
+        y_offset = bbox[3] + 20 + curve_height
 
         max_row_idx = 0
         for block in schedule:
@@ -432,6 +513,38 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
                 remaining -= time_in_row
                 block_start += time_in_row
                 max_row_idx = max(max_row_idx, row_idx)
+
+        # Drawn above the panels, touching their top edge exactly when the
+        # value falls under EPSILON:
+        #   thin dotted = the envelope, i.e. how much out-of-bound imbalance the
+        #                 decay still counts at this distance from an anomaly.
+        #                 This is the pure exponential.
+        #   solid       = how much the task actually carries out of bounds.
+        colors = {t.name: t.color for t in tasks}
+        dashes = {t.name: ((), (6, 3), (2, 3), (8, 3, 2, 3))[i % 4] for i, t in enumerate(tasks)}
+
+        def plot(points, color, width, dash, peak_excess=peak_excess, curve_height=curve_height, y_offset=y_offset):
+            segment, last_row = [], None
+            for now, value in points:
+                row_idx = now // row_duration
+                if value <= 0.0 or row_idx != last_row:
+                    if len(segment) > 3:
+                        canvas.create_line(*segment, fill=color, width=width,
+                                           smooth=True, dash=dash)
+                    segment = []
+                    last_row = row_idx
+                    if value <= 0.0:
+                        continue
+                x = margin_left + (now % row_duration) * px_per_min
+                top = y_offset + row_idx * (row_height + row_spacing)
+                segment.extend([x, top - curve_height * (value - EPSILON) / (peak_excess - EPSILON)])
+            if len(segment) > 3:
+                canvas.create_line(*segment, fill=color, width=width, smooth=True, dash=dash)
+
+        if peak_excess > EPSILON:
+            for name in curves:
+                plot(envelopes[name], colors[name], 1, (1, 4))
+                plot(curves[name], colors[name], 2, dashes[name])
 
         y_offset += (max_row_idx + 1) * (row_height + row_spacing) + 40
 
