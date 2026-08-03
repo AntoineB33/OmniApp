@@ -37,31 +37,46 @@ remaining imbalance is settled and the cycle is attached.
 
 The influence field (tau)
 -------------------------
-A fixed block owned by a *task* is not a neutral interruption: it hands that
-task a lump of timeline no one else gets. Around such a block the schedule is
-deliberately distorted in favour of the other tasks, and the distortion decays
-exponentially with the distance d to the block:
+A task can be deprived of the timeline in exactly two ways, and they are the
+same phenomenon:
 
-    a(L)      = L / tau                     amplitude of a block of length L
-    boost_n(t)= 1 + min(max_boost - 1,       how much longer n's slots may be
-                        sum a(L_b) e^-d/tau) at t, over the blocks b it does
-                                             not own
+  * a fixed block owned by *another* task hands that task a lump of timeline
+    nobody else gets -- i.e. it forbids everyone else for the length of the
+    block;
+  * a period window forbids every task it does not list.
+
+Both are therefore reduced to one object: an *exclusion*, an interval a given
+task is kept out of. Around an exclusion the schedule is deliberately distorted
+in favour of the deprived task, and the distortion decays exponentially with
+the distance d to the interval:
+
+    a(L)      = L / tau                     amplitude of an exclusion of length L
+    boost_n(t)= 1 + min(max_boost - 1,       how much longer n's slots may be at
+                        sum a(L_e) e^-d/tau) t, over the intervals e it is kept
+                                             out of
 
 Two things follow from that shape, and they are the whole point:
 
-  * the boost is *capped*, so near a block a task dominates its neighbourhood
-    but never owns it; the width of the saturated zone is tau*ln(a/max_boost),
-    hence the total compensation grows like tau*ln(L/tau) -- a 100x longer
-    block buys a few times more compensation, not 100x more;
+  * the boost is *capped*, so near an exclusion a task dominates its
+    neighbourhood but never owns it; the width of the saturated zone is
+    tau*ln(a/max_boost), hence the total compensation grows like tau*ln(L/tau)
+    -- an exclusion 100x longer buys a few times more compensation, not 100x
+    more;
   * the influence vanishes (below `field_floor`) at a finite distance, so the
     rule list stays finite and the steady cycle is reached again.
 
+An interval that excludes *everybody* (maintenance, a holiday, a window that
+allows nothing) takes the same amount from everyone: no relative distortion, no
+field. An exclusion that never re-opens has no "after", so it only ramps up
+before itself, and its amplitude is capped (`max_reach`): past a few tau, "very
+long" and "forever" are indistinguishable anyway, because the boost saturates.
+
 Because the boosted time is charged to the virtual clock at the boosted rate
 (v += c / (p*boost)), it is *not* considered a debt and is never clawed back
-later: the local share really is higher near the block. Symmetrically, an
+later: the local share really is higher near the exclusion. Symmetrically, an
 imbalance larger than one period is forgotten exponentially (`_relax`), so an
-enormous fixed block is not repaid in full -- it is repaid up to the same
-logarithmic bound, before and after itself.
+enormous block -- or a very long ban -- is not repaid in full; it is repaid up
+to the same logarithmic bound, before and after itself.
 
 Below one period nothing is forgotten and no slot is capped, so an unperturbed
 timeline behaves exactly as before and the cycle stays exact: everything that
@@ -200,7 +215,8 @@ class Scheduler:
     """Builds the finite rule list."""
 
     def __init__(self, tasks, resolution=None, max_lag=None,
-                 tau=None, max_boost=6, field_floor=Fraction(1, 10)):
+                 tau=None, max_boost=6, field_floor=Fraction(1, 10),
+                 max_reach=None):
         tasks = list(tasks)
         active = [t for t in tasks if t.priority > 0]
         if not active:
@@ -216,17 +232,27 @@ class Scheduler:
         self.min_period = max(self.minimum[n] / self.p[n] for n in self.p)
 
         # --- influence field -------------------------------------------- #
-        # tau        : how far (in time) a fixed block is felt, and how fast an
+        # tau        : how far (in time) an exclusion is felt, and how fast an
         #              abnormal imbalance is forgotten. One period by default.
         # max_boost  : how much longer than usual a slot may get at the very
-        #              edge of a block. Caps the local dominance, and turns the
-        #              linear amplitude L/tau into a logarithmic compensation.
+        #              edge of an exclusion. Caps the local dominance, and turns
+        #              the linear amplitude L/tau into a logarithmic
+        #              compensation.
         # field_floor: influence below this is dropped, so the field has a
         #              finite reach and the rule list stays finite.
+        # max_reach  : hard bound on that reach. An exclusion that never ends
+        #              would otherwise carry an infinite amplitude; since the
+        #              boost saturates at max_boost, only the width of the
+        #              saturated zone would grow, and it grows like tau*ln(a).
+        #              Capping it just states that past a few tau, "very long"
+        #              and "forever" are the same thing.
         self.tau = frac(tau) if tau is not None else self.min_period
         self.max_boost = frac(max_boost)
         self.field_floor = frac(field_floor)
-        self.field = []
+        self.max_reach = frac(max_reach) if max_reach is not None else 6 * self.tau
+        self.max_amp = float(self.field_floor) * (
+            exp(float(self.max_reach) / float(self.tau)) - 1.0)
+        self.field = {}
         self.field_end = None
 
         # optional hard bound on the virtual clock; `_relax` normally does the
@@ -245,40 +271,89 @@ class Scheduler:
 
     # ---------------- the influence field ---------------- #
 
-    def _set_field(self, timeline):
-        """Fixed blocks that belong to a real task distort the schedule around
-        themselves. Blocks owned by nobody (maintenance, holidays, ...) take
-        the same amount from everybody, so they create no relative distortion
-        and no field."""
-        self.field = [(p.task, p.start, p.end, p.end - p.start)
-                      for p in timeline if p.task in self.p and p.end > p.start]
+    def _sources(self, timeline, periods):
+        """Every interval during which a task cannot be scheduled.
+
+        A fixed block owned by A excludes every *other* task for its whole
+        length; a period window excludes every task it does not allow. These
+        are the same event and are treated as one, so a long ban distorts the
+        schedule around itself exactly like a long block does.
+
+        An interval that excludes *everybody* (maintenance, a holiday, a window
+        allowing nothing) takes the same amount from everyone, creates no
+        relative distortion, and is dropped."""
+        everyone = set(self.p)
+        raw = []
+        for p in timeline:
+            if p.end > p.start:
+                raw.append((p.start, p.end, everyone - {p.task}))
+        for w in periods:
+            end = inf if w['end'] is FOREVER else w['end']
+            if end > w['start']:
+                raw.append((w['start'], end, everyone - set(w['allowed'])))
+
+        spans = {n: [] for n in everyone}
+        for start, end, excluded in raw:
+            if len(excluded) == len(everyone):      # hits everybody equally
+                continue
+            for n in excluded:
+                spans[n].append((start, end))
+        return {n: self._merge_spans(s) for n, s in spans.items() if s}
+
+    @staticmethod
+    def _merge_spans(spans):
+        """Overlapping or touching exclusions are one exclusion: what matters
+        is how long a task is kept out, not how many separate rules keep it
+        out. A block of A followed by a window that bans B is, for B, a single
+        ban of the combined length."""
+        out = []
+        for start, end in sorted(spans):
+            if out and start <= out[-1][1]:
+                out[-1] = (out[-1][0], max(out[-1][1], end))
+            else:
+                out.append((start, end))
+        return out
+
+    def _set_field(self, timeline=(), periods=()):
+        """Turn the exclusions into the field: for each task, the intervals it
+        is kept out of and the amplitude a = L/tau of the compensation owed
+        around each of them."""
         tau = float(self.tau)
+        self.field = {}
         self.field_end = None
-        for _, _, end, length in self.field:
-            amp = float(length) / tau
-            reach = tau * log(1.0 + amp / float(self.field_floor))
-            stop = end + frac(reach)
-            if self.field_end is None or stop > self.field_end:
-                self.field_end = stop
+        for name, spans in self._sources(timeline, periods).items():
+            entries = []
+            for start, end in spans:
+                length = inf if end == inf else float(end - start)
+                amp = min(length / tau, self.max_amp)
+                entries.append((start, end, amp))
+                if end == inf:
+                    continue        # never re-opens: nothing to compensate after
+                reach = tau * log(1.0 + amp / float(self.field_floor))
+                stop = end + frac(reach)
+                if self.field_end is None or stop > self.field_end:
+                    self.field_end = stop
+            self.field[name] = entries
 
     def _boost(self, name, t):
         """How much longer than usual a slot of `name` may be at instant t.
 
-        1 + sum over the fixed blocks it does *not* own of (L/tau) e^(-d/tau),
-        clipped to max_boost. Symmetric in d: the same ramp before the block
-        and after it."""
-        if not self.field:
+        1 + sum over the intervals it is *excluded from* of (L/tau) e^(-d/tau),
+        clipped to max_boost. Symmetric in d: the same ramp before the
+        exclusion and after it."""
+        spans = self.field.get(name)
+        if not spans:
             return Fraction(1)
         tau = float(self.tau)
         acc = 0.0
-        for task, start, end, length in self.field:
-            if task == name:
-                continue
+        for start, end, amp in spans:
             if start <= t <= end:
                 d = 0.0
+            elif t < start:
+                d = float(start - t)
             else:
-                d = float(start - t if t < start else t - end)
-            acc += (float(length) / tau) * exp(-d / tau)
+                d = float(t - end)
+            acc += amp * exp(-d / tau)
         if acc <= 0.0:
             return Fraction(1)
         return frac(1.0 + min(acc, float(self.max_boost) - 1.0))
@@ -287,11 +362,11 @@ class Scheduler:
         """Exponential forgetting.
 
         Whatever sits inside one period is normal scheduling pressure and is
-        left untouched. Anything beyond -- the debt a big fixed block creates,
+        left untouched. Anything beyond -- the debt a big exclusion creates,
         which no bounded compensation could ever repay -- loses a factor
         e^(-dt/tau) of itself for every dt of freely scheduled time. That is
-        what makes the influence of a block decay instead of turning into an
-        equally long block of the others.
+        what makes the influence of an exclusion decay instead of turning into
+        an equally long block of the deprived task.
 
         Tasks that are currently not allowed keep at most one period of credit,
         otherwise they would come back from a long exclusion and monopolise the
@@ -338,6 +413,18 @@ class Scheduler:
         lo, hi = t - self.max_lag, t + self.max_lag
         for n in v:
             v[n] = min(max(v[n], lo), hi)
+
+    @staticmethod
+    def _push(slots, task, duration, color):
+        """Append a slot, merging it into the previous one when it belongs to
+        the same task. Two consecutive slots of one task are a single rule, so
+        they must not each cost one: inside a window where only one task is
+        allowed, the greedy still steps by `minimum`, and without this the rule
+        budget would be spent on invisible seams instead of real alternations."""
+        if slots and slots[-1].task == task:
+            slots[-1] = Slot(task, slots[-1].duration + duration, color)
+        else:
+            slots.append(Slot(task, duration, color))
 
     # ---------------- the repeating cycle ---------------- #
 
@@ -434,7 +521,7 @@ class Scheduler:
         t_now = frac(t_now)
         timeline = sorted(timeline, key=lambda p: p.start)
         periods = self._normalise_periods(periods)
-        self._set_field(timeline)
+        self._set_field(timeline, periods)
 
         past = [p for p in timeline if p.end <= t_now]
         pre = [p for p in timeline if p.end > t_now]     # committed / still ahead
@@ -462,16 +549,21 @@ class Scheduler:
         slots = []
         last = None
         free_tail = False
+        steps = 0
+        max_steps = 200 * max_rules                     # safety valve: slots are
+                                                        # merged, so their count
+                                                        # no longer bounds the walk
 
         # --- phase 1: disturbed part of the timeline --------------------- #
-        while len(slots) < max_rules:
+        while len(slots) < max_rules and steps < max_steps:
+            steps += 1
             allowed = self._allowed_at(periods, t)
             T = self._period(allowed) if allowed else self.min_period
 
             block = self._active_pre(pre, t)
             if block:                                   # cannot be moved
                 d = block.end - t
-                slots.append(Slot(block.task, d, block.color))
+                self._push(slots, block.task, d, block.color)
                 if block.task in v:
                     v[block.task] += d / self.p[block.task]
                 t = block.end
@@ -488,7 +580,7 @@ class Scheduler:
             gap = None if limit is None else limit - t
             fitting = [n for n in allowed
                        if gap is None or self.minimum[n] <= gap]
-            
+
             if not fitting:                             # nothing fits in the gap
                 if gap is None:
                     break
@@ -497,7 +589,7 @@ class Scheduler:
                     slots[-1] = Slot(tail.task, tail.duration + gap, tail.color)
                     v[tail.task] += gap / self.p[tail.task]
                 else:                                   # or leave a hole
-                    slots.append(Slot("IDLE", gap, IDLE_COLOR))
+                    self._push(slots, "IDLE", gap, IDLE_COLOR)
                     last = None
                     free_tail = False
                 t += gap                                # == limit, but keeps t a Fraction
@@ -508,7 +600,7 @@ class Scheduler:
             c = self._chunk(name, v, fitting, boost=boost, T=T)
             if gap is not None:
                 c = min(c, gap)
-            slots.append(Slot(name, c, self.color[name]))
+            self._push(slots, name, c, self.color[name])
             # charged at the boosted rate: the extra time is a genuinely higher
             # local share, not a debt to be taken back once the field is gone
             v[name] += c / (self.p[name] * boost)
@@ -532,7 +624,7 @@ class Scheduler:
                 name = self._pick(v, allowed, last)
                 boost = self._boost(name, t)
                 c = self._chunk(name, v, allowed, boost=boost, T=T)
-                slots.append(Slot(name, c, self.color[name]))
+                self._push(slots, name, c, self.color[name])
                 v[name] += c / (self.p[name] * boost)
                 t += c
                 last = name
@@ -805,7 +897,7 @@ def build_cases():
         (
             (
                 "Test 2: Pre-placed event owned by nobody\n"
-                "-> MAINTENANCE takes the same from both, so it creates no "
+                "-> MAINTENANCE excludes everybody equally, so it creates no "
                 "field: they simply resume alternating."
             ),
             AB(), 240,
@@ -815,8 +907,9 @@ def build_cases():
         (
             (
                 "Test 3: Periods constraint\n"
-                "-> C is only allowed before t=100; after that A and B share the "
-                "timeline forever."
+                "-> C is banned from t=105 on, forever: it is abundantly "
+                "present just before the door closes, then A and B share the "
+                "timeline."
             ),
             [
                 Task("A", priority=40, min_time=10, color="#FF9999"),
@@ -872,6 +965,31 @@ def build_cases():
             AB(), 1000,
             [{'name': 'A', 'start': 100, 'duration': 600, 'color': "#FF9999"}],
             [], {}, 2
+        ),
+        (
+            (
+                "Test 8: B banned from t=100 to t=400 - a window, not a block\n"
+                "-> same field, same ramps: B swells before the ban and right "
+                "after it re-opens, then decays back to the cycle."
+            ),
+            AB(), 700, [],
+            [{'start': 0, 'end': 100, 'allowed': ['A', 'B']},
+             {'start': 100, 'end': 400, 'allowed': ['A']},
+             {'start': 400, 'end': inf, 'allowed': ['A', 'B']}],
+            {}, 2
+        ),
+        (
+            (
+                "Test 9: same 300min ban, but split into ten consecutive "
+                "windows\n-> merged into one exclusion: ten short bans in a row "
+                "are one long ban, not ten small ones."
+            ),
+            AB(), 700, [],
+            [{'start': 0, 'end': 100, 'allowed': ['A', 'B']}]
+            + [{'start': 100 + 30 * i, 'end': 130 + 30 * i, 'allowed': ['A']}
+               for i in range(10)]
+            + [{'start': 400, 'end': inf, 'allowed': ['A', 'B']}],
+            {}, 2
         ),
     ]
 
