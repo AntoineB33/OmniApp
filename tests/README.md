@@ -4,23 +4,23 @@ Example: task A 50% 10min and task B 50% 10min
 wrong: task A 1h, then task B 1h and so on...
 right: task A 10min, then task B 10min and so on...
 
+Since the timeline to fill is infinite, the scheduler doesn't give an infinite list, but a finite list of rules to fill the timeline with a O(1) complexity. This list is used to construct the schedule when displaying it from t=0 to t=x.
+Example: task A 50% 10min and task B 50% 10min
+result: list of three elements:
+- task A 10min
+- task B 10min
+- repeat
+
 The starting timeline has already placed tasks.
 
 The timeline is formed of periods. Each period defines a set of tasks it accepts.
 
-If a debt or an excess is higher that it could be in a scheduling on a clear and all accepting timeline, then the higher part is ignored exponentially in relation to the distance from the task creating this debt or excess, and completely ignored with an epsilon rounding. The decay speed is always the same.
-Example: task A 50% 10min and task B 50% 10min, between 100 and 1000 only task B is possible.
-result: Near 100 before it, task A becomes predominant.
+For example, task A 50% 10min and task B 50% 10min. If there is task A 1h already placed, I want a greater presence of task B right before and right after this long task A.
+But if this task A is 100h, the presence of task B right before and right after would be even greater, but not proportionally greater. There should be some kind of exponential decay of its influence to the left and to the right. The same mechanism should also happen for a period that doesn't allow a task for a long time.
 
-Since the timeline to fill is infinite, the scheduler doesn't give an infinite list, but a finite list of rules to fill the timeline with a O(1) complexity.
-Example 1:
-In test 3, the result must include the instruction to fill every gap between long A tasks with only B tasks. Here it is a very simple repeating pattern.
-Example 2:
-Task A 50% 10min and task B 50% 10min, task A 1h at t=0 on the starting timeline.
-The result instructions are the placement of the tasks right after the long task A, followed by the simple instruction : task A 10min, then task B 10min and so on...
+Limits and Fallbacks:
+To ensure the rule list remains manageable, the scheduler enforces a strict maximum rule limit (e.g., 50 rules).
 
-If the starting timeline has aperiodic, infinite events, or if the number of necessary instructions is too large, then it is capped.
+    Coarse Cycle Fallback: If a fine-grained cycle requires too many rules, the scheduler may fall back to a coarse grouping (one large block per task), overriding the "scale as small as possible" requirement.
 
-For now, I am looking for the algorithm that does exactly that, even if it takes time with hundreds of tasks and hundreds of tasks and periods in the starting timeline.
-
-For each example test in the script, the list of instructions must be printed (the 10 first and the total number of instructions).
+    Truncated Timelines: If the rule limit is reached before a stable cycle can be calculated, the scheduler may drop the cycle entirely and return only the calculated prefix, leaving the remaining timeline unassigned.
