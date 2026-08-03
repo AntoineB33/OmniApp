@@ -50,6 +50,10 @@ from math import inf
 MAX_RULES = 50
 IDLE_COLOR = "#F0F0F0"
 
+# A window whose end is FOREVER never closes.  Using None rather than math.inf
+# keeps every arithmetic value in the scheduler an exact Fraction.
+FOREVER = None
+
 
 # --------------------------------------------------------------------------- #
 #  helpers
@@ -259,6 +263,17 @@ class Scheduler:
     # ---------------- context (pre-placed blocks / periods) ---------------- #
 
     @staticmethod
+    def _normalise_periods(periods):
+        """Windows with exact Fraction bounds; an infinite end becomes FOREVER."""
+        out = []
+        for w in periods:
+            end = w.get('end', FOREVER)
+            out.append({'start': frac(w['start']),
+                        'end': FOREVER if end is FOREVER or end == inf else frac(end),
+                        'allowed': set(w['allowed'])})
+        return out
+
+    @staticmethod
     def _active_pre(pre, t):
         for p in pre:
             if p.start <= t < p.end:
@@ -267,21 +282,21 @@ class Scheduler:
 
     def _allowed_at(self, periods, t):
         for w in periods:
-            if w['start'] <= t < w['end']:
+            if w['start'] <= t and (w['end'] is FOREVER or t < w['end']):
                 return [n for n in self.p if n in w['allowed']]
         return list(self.p)
 
     @staticmethod
     def _next_boundary(pre, periods, t):
-        """Next instant where the context changes (infinite ends never do)."""
-        best = inf
+        """Next instant where the context changes, or None if it never does."""
+        best = None
         for p in pre:
-            if p.start > t:
-                best = min(best, p.start)
+            if p.start > t and (best is None or p.start < best):
+                best = p.start
         for w in periods:
             for b in (w['start'], w['end']):
-                if b != inf and b > t:
-                    best = min(best, b)
+                if b is not FOREVER and b > t and (best is None or b < best):
+                    best = b
         return best
 
     # ---------------- the plan ---------------- #
@@ -296,9 +311,7 @@ class Scheduler:
         """
         t_now = frac(t_now)
         timeline = sorted(timeline, key=lambda p: p.start)
-        periods = [{'start': frac(w['start']),
-                    'end': w['end'] if w['end'] == inf else frac(w['end']),
-                    'allowed': set(w['allowed'])} for w in periods]
+        periods = self._normalise_periods(periods)
 
         past = [p for p in timeline if p.end <= t_now]
         pre = [p for p in timeline if p.end > t_now]     # committed / still ahead
@@ -337,7 +350,7 @@ class Scheduler:
                 continue
 
             limit = self._next_boundary(pre, periods, t)
-            if limit == inf:
+            if limit is None:
                 break                                   # context frozen: phase 2
 
             allowed = self._allowed_at(periods, t)
@@ -361,7 +374,7 @@ class Scheduler:
         if allowed and len(slots) < max_rules:
             horizon = t + self._period(allowed)         # catch-up is bounded
             while len(slots) < max_rules and t < horizon:
-                if len(set(v[n] for n in allowed)) == 1:
+                if len({v[n] for n in allowed}) == 1:
                     break                               # square again
                 name = self._pick(v, allowed)
                 c = self._chunk(name, v, allowed)
@@ -478,7 +491,8 @@ def get_schedule_rules(tasks, pre_placed=None, periods=None, t_now=0):
     return as_blocks(plan.prefix), as_blocks(plan.cycle), plan
 
 
-def generate_schedule(prefix_blocks, cycle_blocks, total_duration, start=0):
+def generate_schedule(prefix_blocks, cycle_blocks, total_duration,
+                      start=Fraction(0)):
     """Generates the timeline up to 'total_duration' by unrolling the rules."""
     schedule = []
     time_now = frac(start)
@@ -558,7 +572,7 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
             summary = (f"period {human(plan.period)}   |   " + ", ".join(
                 f"{n} {float(s) * 100:.4g}%" for n, s in sorted(plan.shares.items())))
         else:
-            summary = "no cycle found (capped at %d rules)" % MAX_RULES
+            summary = f"no cycle found (capped at {MAX_RULES} rules)"
 
         txt_id = canvas.create_text(margin_left, y_offset, text=title,
                                     font=("Arial", 11, "bold"), anchor="nw")
@@ -617,7 +631,10 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
 def main():
     test_cases = [
         (
-            "Test 1: Normal 50/50 Split (10min each)\n-> Pure periodic cycle, no prefix.",
+            (
+                "Test 1: Normal 50/50 Split (10min each)\n"
+                "-> Pure periodic cycle, no prefix."
+            ),
             [
                 Task("A", priority=50, min_time=10, color="#FF9999"),
                 Task("B", priority=50, min_time=10, color="#99CCFF")
@@ -625,8 +642,11 @@ def main():
             180, [], []
         ),
         (
-            "Test 2: Pre-placed event interrupts the timeline\n"
-            "-> Both tasks lose the same amount, so they resume alternating: no monopoly block.",
+            (
+                "Test 2: Pre-placed event interrupts the timeline\n"
+                "-> Both tasks lose the same amount, so they resume alternating: "
+                "no monopoly block."
+            ),
             [
                 Task("A", priority=50, min_time=10, color="#FF9999"),
                 Task("B", priority=50, min_time=10, color="#99CCFF")
@@ -636,8 +656,11 @@ def main():
             []
         ),
         (
-            "Test 3: Periods constraint\n"
-            "-> C is only allowed before t=100; after that A and B share the timeline forever.",
+            (
+                "Test 3: Periods constraint\n"
+                "-> C is only allowed before t=100; after that A and B share the "
+                "timeline forever."
+            ),
             [
                 Task("A", priority=40, min_time=10, color="#FF9999"),
                 Task("B", priority=40, min_time=10, color="#99CCFF"),
@@ -649,8 +672,10 @@ def main():
              {'start': 100, 'end': inf, 'allowed': ['A', 'B']}]
         ),
         (
-            "Test 4: Three tasks (A: 50% 20m, B: 30% 10m, C: 20% 15m)\n"
-            "-> Minimums force a 75min period; shares are exact.",
+            (
+                "Test 4: Three tasks (A: 50% 20m, B: 30% 10m, C: 20% 15m)\n"
+                "-> Minimums force a 75min period; shares are exact."
+            ),
             [
                 Task("A", priority=50, min_time=20, color="#FF9999"),
                 Task("B", priority=30, min_time=10, color="#99CCFF"),
@@ -661,8 +686,11 @@ def main():
             []
         ),
         (
-            "Test 5: Lopsided priorities + an already-placed past\n"
-            "-> B ran 0..40 while its share is 10%, so A gets a long catch-up prefix.",
+            (
+                "Test 5: Lopsided priorities + an already-placed past\n"
+                "-> B ran 0..40 while its share is 10%, so A gets a long catch-up "
+                "prefix."
+            ),
             [
                 Task("A", priority=90, min_time=10, color="#FF9999"),
                 Task("B", priority=10, min_time=10, color="#99CCFF")
