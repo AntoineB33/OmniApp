@@ -33,11 +33,39 @@ The prefix
 Pre-placed blocks cannot be moved, and period windows restrict which tasks are
 allowed, so while any of them is still ahead the same greedy runs freely and
 its output goes to the prefix. Once the context is frozen forever, the
-remaining debt is paid off (bounded by one period: max_lag stops an
-interrupted task from monopolising the timeline afterwards) and the cycle is
-attached.
+remaining imbalance is settled and the cycle is attached.
 
-Everything is fractions.Fraction, so the shares never drift.
+The influence field (tau)
+-------------------------
+A fixed block owned by a *task* is not a neutral interruption: it hands that
+task a lump of timeline no one else gets. Around such a block the schedule is
+deliberately distorted in favour of the other tasks, and the distortion decays
+exponentially with the distance d to the block:
+
+    a(L)      = L / tau                     amplitude of a block of length L
+    boost_n(t)= 1 + min(max_boost - 1,       how much longer n's slots may be
+                        sum a(L_b) e^-d/tau) at t, over the blocks b it does
+                                             not own
+
+Two things follow from that shape, and they are the whole point:
+
+  * the boost is *capped*, so near a block a task dominates its neighbourhood
+    but never owns it; the width of the saturated zone is tau*ln(a/max_boost),
+    hence the total compensation grows like tau*ln(L/tau) -- a 100x longer
+    block buys a few times more compensation, not 100x more;
+  * the influence vanishes (below `field_floor`) at a finite distance, so the
+    rule list stays finite and the steady cycle is reached again.
+
+Because the boosted time is charged to the virtual clock at the boosted rate
+(v += c / (p*boost)), it is *not* considered a debt and is never clawed back
+later: the local share really is higher near the block. Symmetrically, an
+imbalance larger than one period is forgotten exponentially (`_relax`), so an
+enormous fixed block is not repaid in full -- it is repaid up to the same
+logarithmic bound, before and after itself.
+
+Below one period nothing is forgotten and no slot is capped, so an unperturbed
+timeline behaves exactly as before and the cycle stays exact: everything that
+matters in the long run is still fractions.Fraction.
 """
 
 import tkinter as tk
@@ -45,7 +73,7 @@ from bisect import bisect_right
 from dataclasses import dataclass, field
 from fractions import Fraction
 from itertools import accumulate
-from math import inf
+from math import exp, inf, log
 
 MAX_RULES = 50
 IDLE_COLOR = "#F0F0F0"
@@ -171,7 +199,8 @@ class Plan:
 class Scheduler:
     """Builds the finite rule list."""
 
-    def __init__(self, tasks, resolution=None, max_lag=None):
+    def __init__(self, tasks, resolution=None, max_lag=None,
+                 tau=None, max_boost=6, field_floor=Fraction(1, 10)):
         tasks = list(tasks)
         active = [t for t in tasks if t.priority > 0]
         if not active:
@@ -185,9 +214,24 @@ class Scheduler:
         self.resolution = frac(resolution) if resolution else None
         # smallest period able to give every task one slot >= its minimum
         self.min_period = max(self.minimum[n] / self.p[n] for n in self.p)
-        # a task may never be more than one period's worth of virtual time
-        # ahead of / behind the clock: bounds the catch-up after an interruption
-        self.max_lag = frac(max_lag) if max_lag is not None else self.min_period
+
+        # --- influence field -------------------------------------------- #
+        # tau        : how far (in time) a fixed block is felt, and how fast an
+        #              abnormal imbalance is forgotten. One period by default.
+        # max_boost  : how much longer than usual a slot may get at the very
+        #              edge of a block. Caps the local dominance, and turns the
+        #              linear amplitude L/tau into a logarithmic compensation.
+        # field_floor: influence below this is dropped, so the field has a
+        #              finite reach and the rule list stays finite.
+        self.tau = frac(tau) if tau is not None else self.min_period
+        self.max_boost = frac(max_boost)
+        self.field_floor = frac(field_floor)
+        self.field = []
+        self.field_end = None
+
+        # optional hard bound on the virtual clock; `_relax` normally does the
+        # job on its own, so this stays off unless asked for
+        self.max_lag = frac(max_lag) if max_lag is not None else None
 
     # ---------------- shares, restricted to a set of tasks ---------------- #
 
@@ -199,23 +243,98 @@ class Scheduler:
         p = self._shares(allowed)
         return max(self.minimum[n] / p[n] for n in allowed)
 
+    # ---------------- the influence field ---------------- #
+
+    def _set_field(self, timeline):
+        """Fixed blocks that belong to a real task distort the schedule around
+        themselves. Blocks owned by nobody (maintenance, holidays, ...) take
+        the same amount from everybody, so they create no relative distortion
+        and no field."""
+        self.field = [(p.task, p.start, p.end, p.end - p.start)
+                      for p in timeline if p.task in self.p and p.end > p.start]
+        tau = float(self.tau)
+        self.field_end = None
+        for _, _, end, length in self.field:
+            amp = float(length) / tau
+            reach = tau * log(1.0 + amp / float(self.field_floor))
+            stop = end + frac(reach)
+            if self.field_end is None or stop > self.field_end:
+                self.field_end = stop
+
+    def _boost(self, name, t):
+        """How much longer than usual a slot of `name` may be at instant t.
+
+        1 + sum over the fixed blocks it does *not* own of (L/tau) e^(-d/tau),
+        clipped to max_boost. Symmetric in d: the same ramp before the block
+        and after it."""
+        if not self.field:
+            return Fraction(1)
+        tau = float(self.tau)
+        acc = 0.0
+        for task, start, end, length in self.field:
+            if task == name:
+                continue
+            if start <= t <= end:
+                d = 0.0
+            else:
+                d = float(start - t if t < start else t - end)
+            acc += (float(length) / tau) * exp(-d / tau)
+        if acc <= 0.0:
+            return Fraction(1)
+        return frac(1.0 + min(acc, float(self.max_boost) - 1.0))
+
+    def _relax(self, v, dt, T, active):
+        """Exponential forgetting.
+
+        Whatever sits inside one period is normal scheduling pressure and is
+        left untouched. Anything beyond -- the debt a big fixed block creates,
+        which no bounded compensation could ever repay -- loses a factor
+        e^(-dt/tau) of itself for every dt of freely scheduled time. That is
+        what makes the influence of a block decay instead of turning into an
+        equally long block of the others.
+
+        Tasks that are currently not allowed keep at most one period of credit,
+        otherwise they would come back from a long exclusion and monopolise the
+        timeline."""
+        if not active:
+            return
+        lo = min(v[n] for n in active)
+        if dt > 0:
+            f = frac(exp(-float(dt) / float(self.tau)))
+            for n in active:
+                over = v[n] - lo - T
+                if over > 0:
+                    v[n] -= over * (1 - f)
+        for n in v:
+            if n not in active:
+                v[n] = min(max(v[n], lo - T), lo + T)
+
     # ---------------- one greedy step ---------------- #
 
-    def _pick(self, v, candidates):
-        # most starved task; ties -> biggest share, then name (deterministic)
-        return min(candidates, key=lambda n: (v[n], -self.p[n], n))
+    def _pick(self, v, candidates, last=None):
+        # most starved task; ties -> biggest share, then name (deterministic).
+        # `last` is never picked twice in a row unless it is the only one left:
+        # a task that is owed a lot gets a *denser* presence, not one long
+        # block that would swallow the whole compensation at once.
+        pool = [n for n in candidates if n != last] or list(candidates)
+        return min(pool, key=lambda n: (v[n], -self.p[n], n))
 
-    def _chunk(self, name, v, candidates, p=None):
+    def _chunk(self, name, v, candidates, p=None, boost=None, T=None):
         p = p or self.p
         others = [v[n] for n in candidates if n != name]
         target = min(others) if others else v[name]
         need = p[name] * (target - v[name])     # time to catch the runner-up
         c = max(self.minimum[name], need)
+        if boost is not None:                   # local, field-aware sizing
+            unit = max(self.minimum[name], p[name] * T)
+            c = min(max(c, self.minimum[name] * boost), unit * boost)
         if self.resolution:
             c = ceil_to(c, self.resolution)
         return c
 
     def _clamp(self, v, t):
+        if self.max_lag is None:
+            return
         lo, hi = t - self.max_lag, t + self.max_lag
         for n in v:
             v[n] = min(max(v[n], lo), hi)
@@ -232,6 +351,8 @@ class Scheduler:
         Inside the period the same greedy runs, with two extra rules: a slot
         never exceeds the task's remaining budget, and it never leaves a
         remainder smaller than the minimum (that crumb could not be placed).
+
+        No field, no forgetting here: this is the undisturbed regime.
         """
         allowed = sorted(allowed)
         p = self._shares(allowed)
@@ -304,14 +425,16 @@ class Scheduler:
     def plan(self, timeline=(), periods=(), t_now=0, lookback=None,
              max_rules=MAX_RULES):
         """
-        Phase 1: walk the constrained part of the timeline (pre-placed blocks,
-                 period windows) with the free greedy  -> prefix.
-        Phase 2: once the context is frozen forever, pay off the remaining debt
-                 -> prefix, then attach the analytic cycle -> cycle.
+        Phase 1: walk the disturbed part of the timeline (pre-placed blocks,
+                 period windows, and the tail of the influence field) with the
+                 field-aware greedy  -> prefix.
+        Phase 2: once nothing is left to distort the schedule, settle what is
+                 still owed -> prefix, then attach the analytic cycle -> cycle.
         """
         t_now = frac(t_now)
         timeline = sorted(timeline, key=lambda p: p.start)
         periods = self._normalise_periods(periods)
+        self._set_field(timeline)
 
         past = [p for p in timeline if p.end <= t_now]
         pre = [p for p in timeline if p.end > t_now]     # committed / still ahead
@@ -337,50 +460,82 @@ class Scheduler:
         self._clamp(v, t)
 
         slots = []
+        last = None
+        free_tail = False
 
-        # --- phase 1: constrained part of the timeline ------------------- #
+        # --- phase 1: disturbed part of the timeline --------------------- #
         while len(slots) < max_rules:
+            allowed = self._allowed_at(periods, t)
+            T = self._period(allowed) if allowed else self.min_period
+
             block = self._active_pre(pre, t)
             if block:                                   # cannot be moved
-                slots.append(Slot(block.task, block.end - t, block.color))
+                d = block.end - t
+                slots.append(Slot(block.task, d, block.color))
                 if block.task in v:
-                    v[block.task] += (block.end - t) / self.p[block.task]
+                    v[block.task] += d / self.p[block.task]
                 t = block.end
-                self._clamp(v, t)
+                last = block.task
+                free_tail = False
+                self._relax(v, 0, T, allowed)           # no forgetting here:
+                self._clamp(v, t)                       # the block is not ours
                 continue
 
             limit = self._next_boundary(pre, periods, t)
-            if limit is None:
-                break                                   # context frozen: phase 2
+            if limit is None and (self.field_end is None or t >= self.field_end):
+                break                                   # nothing left to disturb
 
-            allowed = self._allowed_at(periods, t)
-            gap = limit - t
-            fitting = [n for n in allowed if self.minimum[n] <= gap]
-            if not fitting:                             # nothing fits: idle
-                slots.append(Slot("IDLE", gap, IDLE_COLOR))
+            gap = None if limit is None else limit - t
+            fitting = [n for n in allowed
+                       if gap is None or self.minimum[n] <= gap]
+            if not fitting:                             # nothing fits in the gap
+                if gap is None:
+                    break
+                if free_tail and slots:                 # stretch the last slot
+                    tail = slots[-1]
+                    slots[-1] = Slot(tail.task, tail.duration + gap, tail.color)
+                    v[tail.task] += gap / self.p[tail.task]
+                else:                                   # or leave a hole
+                    slots.append(Slot("IDLE", gap, IDLE_COLOR))
+                    last = None
+                    free_tail = False
                 t = limit
                 continue
 
-            name = self._pick(v, fitting)
-            c = min(self._chunk(name, v, fitting), gap)
+            name = self._pick(v, fitting, last)
+            boost = self._boost(name, t)
+            c = self._chunk(name, v, fitting, boost=boost, T=T)
+            if gap is not None:
+                c = min(c, gap)
             slots.append(Slot(name, c, self.color[name]))
-            v[name] += c / self.p[name]
+            # charged at the boosted rate: the extra time is a genuinely higher
+            # local share, not a debt to be taken back once the field is gone
+            v[name] += c / (self.p[name] * boost)
             t += c
+            last = name
+            free_tail = True
+            self._relax(v, c, T, allowed)
             self._clamp(v, t)
 
-        # --- phase 2: pay off the debt, then repeat forever -------------- #
+        # --- phase 2: settle what is still owed, then repeat forever ----- #
         cycle = []
         allowed = self._allowed_at(periods, t)
         if allowed and len(slots) < max_rules:
-            horizon = t + self._period(allowed)         # catch-up is bounded
+            T = self._period(allowed)
+            horizon = t + 4 * T                         # settling is bounded
             while len(slots) < max_rules and t < horizon:
-                if len({v[n] for n in allowed}) == 1:
+                spread = (max(v[n] for n in allowed)
+                          - min(v[n] for n in allowed))
+                if spread <= T:
                     break                               # square again
-                name = self._pick(v, allowed)
-                c = self._chunk(name, v, allowed)
+                name = self._pick(v, allowed, last)
+                boost = self._boost(name, t)
+                c = self._chunk(name, v, allowed, boost=boost, T=T)
                 slots.append(Slot(name, c, self.color[name]))
-                v[name] += c / self.p[name]
+                v[name] += c / (self.p[name] * boost)
                 t += c
+                last = name
+                self._relax(v, c, T, allowed)
                 self._clamp(v, t)
             cycle = self.steady_cycle(allowed)
             if len(cycle) > max_rules:
@@ -478,14 +633,14 @@ class ToolTip:
             self.tooltip_window.wm_geometry(f"+{x}+{y}")
 
 
-def get_schedule_rules(tasks, pre_placed=None, periods=None, t_now=0):
+def get_schedule_rules(tasks, pre_placed=None, periods=None, t_now=0, **kw):
     """Finite rule list: (prefix_blocks, cycle_blocks). Caps at MAX_RULES."""
     timeline = [Placement(p['name'], frac(p['start']),
                           frac(p['start']) + frac(p['duration']),
                           p.get('color', '#CCCCCC'))
                 for p in (pre_placed or [])]
-    plan = Scheduler(tasks).plan(timeline=timeline, periods=periods or [],
-                                 t_now=t_now, max_rules=MAX_RULES)
+    plan = Scheduler(tasks, **kw).plan(timeline=timeline, periods=periods or [],
+                                       t_now=t_now, max_rules=MAX_RULES)
     as_blocks = lambda slots: [{'name': s.task, 'duration': s.duration,
                                 'color': s.color} for s in slots]
     return as_blocks(plan.prefix), as_blocks(plan.cycle), plan
@@ -557,9 +712,14 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
 
     tooltip = ToolTip(canvas)
 
-    for title, tasks, total_duration, pre_placed, periods in test_cases:
-        prefix_blocks, cycle_blocks, plan = get_schedule_rules(tasks, pre_placed,
-                                                               periods)
+    for case in test_cases:
+        title, tasks, total_duration, pre_placed, periods = case[:5]
+        options = case[5] if len(case) > 5 else {}
+        px = case[6] if len(case) > 6 else px_per_min
+        row_duration = (window_width - margin_left - margin_right) // px
+
+        prefix_blocks, cycle_blocks, plan = get_schedule_rules(
+            tasks, pre_placed, periods, **options)
         schedule = generate_schedule(prefix_blocks, cycle_blocks, total_duration,
                                      start=plan.start)
 
@@ -598,8 +758,8 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
                 start_in_row = block_start % row_duration
                 time_in_row = min(remaining, row_duration - start_in_row)
 
-                x1 = margin_left + float(start_in_row) * px_per_min
-                x2 = margin_left + float(start_in_row + time_in_row) * px_per_min
+                x1 = margin_left + float(start_in_row) * px
+                x2 = margin_left + float(start_in_row + time_in_row) * px
                 y1 = y_offset + row_idx * (row_height + row_spacing)
                 y2 = y1 + row_height
 
@@ -628,30 +788,26 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
     canvas.config(scrollregion=(0, 0, window_width, y_offset))
 
 
-def main():
-    test_cases = [
+AB = lambda: [Task("A", priority=50, min_time=10, color="#FF9999"),
+              Task("B", priority=50, min_time=10, color="#99CCFF")]
+
+
+def build_cases():
+    return [
         (
             (
                 "Test 1: Normal 50/50 Split (10min each)\n"
                 "-> Pure periodic cycle, no prefix."
             ),
-            [
-                Task("A", priority=50, min_time=10, color="#FF9999"),
-                Task("B", priority=50, min_time=10, color="#99CCFF")
-            ],
-            180, [], []
+            AB(), 180, [], []
         ),
         (
             (
-                "Test 2: Pre-placed event interrupts the timeline\n"
-                "-> Both tasks lose the same amount, so they resume alternating: "
-                "no monopoly block."
+                "Test 2: Pre-placed event owned by nobody\n"
+                "-> MAINTENANCE takes the same from both, so it creates no "
+                "field: they simply resume alternating."
             ),
-            [
-                Task("A", priority=50, min_time=10, color="#FF9999"),
-                Task("B", priority=50, min_time=10, color="#99CCFF")
-            ],
-            240,
+            AB(), 240,
             [{'name': 'MAINTENANCE', 'start': 40, 'duration': 60, 'color': '#CCCCCC'}],
             []
         ),
@@ -666,8 +822,7 @@ def main():
                 Task("B", priority=40, min_time=10, color="#99CCFF"),
                 Task("C", priority=20, min_time=10, color="#99FF99")
             ],
-            300,
-            [],
+            300, [],
             [{'start': 0, 'end': 100, 'allowed': ['A', 'B', 'C']},
              {'start': 100, 'end': inf, 'allowed': ['A', 'B']}]
         ),
@@ -681,15 +836,13 @@ def main():
                 Task("B", priority=30, min_time=10, color="#99CCFF"),
                 Task("C", priority=20, min_time=15, color="#99FF99")
             ],
-            400,
-            [],
-            []
+            400, [], []
         ),
         (
             (
-                "Test 5: Lopsided priorities + an already-placed past\n"
-                "-> B ran 0..40 while its share is 10%, so A gets a long catch-up "
-                "prefix."
+                "Test 5: Lopsided priorities (A 90% / B 10%) + a B block at the "
+                "start\n-> A gets a denser, bounded catch-up around it, not the "
+                "full 396min it is owed."
             ),
             [
                 Task("A", priority=90, min_time=10, color="#FF9999"),
@@ -699,8 +852,30 @@ def main():
             [{'name': 'B', 'start': 0, 'duration': 40, 'color': "#99CCFF"}],
             []
         ),
+        (
+            (
+                "Test 6: 1h block of A at t=100 (tau = 20min)\n"
+                "-> B's slots swell as the block approaches and shrink back "
+                "after it: exponential decay of the influence, both sides."
+            ),
+            AB(), 400,
+            [{'name': 'A', 'start': 100, 'duration': 60, 'color': "#FF9999"}],
+            []
+        ),
+        (
+            (
+                "Test 7: 10h block of A at t=100 - 10x longer than test 6\n"
+                "-> B's presence around it is wider and denser, but only a few "
+                "times bigger: log, not proportional."
+            ),
+            AB(), 1000,
+            [{'name': 'A', 'start': 100, 'duration': 600, 'color': "#FF9999"}],
+            [], {}, 2
+        ),
     ]
 
+
+def main():
     root = tk.Tk()
     root.title("Task Scheduler Timeline with Constraints")
     root.geometry("950x700")
@@ -722,7 +897,7 @@ def main():
     canvas.bind_all("<Button-4>", _on_mousewheel)
     canvas.bind_all("<Button-5>", _on_mousewheel)
 
-    draw_schedules(root, canvas, test_cases, window_width=900)
+    draw_schedules(root, canvas, build_cases(), window_width=900)
     root.mainloop()
 
 
