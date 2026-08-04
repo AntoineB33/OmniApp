@@ -21,7 +21,9 @@ import org.example.project.scheduler.state.SchedulerState
  *    old payloads decode with the flags defaulted — persisted-DB compatibility rule);
  *  - the automatic override/trim between an added screen task and a no-screen period (both ways);
  *  - [SchedulerDomain.fillSchedule] placement: on-screen tasks only outside no-screen periods,
- *    off-screen tasks only inside them, break-doable tasks filling a rest break their minimum fits;
+ *    off-screen tasks only inside them, and the §15 screen breaks as periods — closed for their first
+ *    minute (a 20-second look-away end to end), then accepting the off-screen break-doable tasks whose
+ *    minimum still fits;
  *  - past no-screen ⇒ past inactivity: the schedule-advance banks NO record over a no-screen period.
  */
 class NoScreenInactivityPanelTest {
@@ -242,15 +244,9 @@ class NoScreenInactivityPanelTest {
         assertTrue(panels.none { it.taskId == solo && it.auto })
     }
 
-    @Test
-    fun break_doable_task_fills_a_rest_break_its_minimum_fits() {
-        // A 15-min rest pose due at NOW + 1h, and a 5-min-minimum break-doable task.
-        val (s0, solo) = stateWithOneTask(minMinutes = 5)
-        var s = SchedulerReducer.reduce(
-            s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = true, doableDuringBreak = true),
-        )
-        s = s.copy(
+    /** A state whose only screen break is a 15-min rest pose due at `NOW + 1h`. */
+    private fun withRestPose(s: SchedulerState): SchedulerState =
+        s.copy(
             screenBreaks = listOf(
                 ScreenBreak(
                     title = "Rest pose",
@@ -261,37 +257,41 @@ class NoScreenInactivityPanelTest {
                 ),
             ),
         )
+
+    @Test
+    fun break_doable_task_fills_a_rest_break_only_after_its_closed_first_minute() {
+        // PRD §15: the pose's first minute accepts nobody; what is left of it accepts the tasks that need
+        // no screen and are marked doable during a break. A 5-min minimum fits the remaining 14 min.
+        val (s0, solo) = stateWithOneTask(minMinutes = 5)
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = true),
+        )
+        s = withRestPose(s)
         val panels = SchedulerDomain.fillSchedule(s, NOW)
         val breakRange = panels.first { it.screenBreak }
-        // Same-task chunks merge, so the filled break shows as the block COVERING the break's interior
-        // (instead of splitting around it as a non-break-doable task would).
-        val coversBreak = panels.any {
+        val opens = breakRange.startEpochMillis + SchedulerDomain.SCREEN_BREAK_CLOSED_HEAD_MILLIS
+        val inBreak = panels.filter {
             it.taskId == solo && it.auto &&
                 it.startEpochMillis < breakRange.endEpochMillis &&
                 it.endEpochMillis > breakRange.startEpochMillis
         }
-        assertTrue(coversBreak, "the break-doable task must fill the 15-min rest pose")
+        assertTrue(inBreak.isNotEmpty(), "the break-doable off-screen task must fill the rest pose's tail")
+        assertTrue(
+            inBreak.all { it.startEpochMillis >= opens && it.endEpochMillis <= breakRange.endEpochMillis },
+            "nothing may be scheduled in the pose's closed first minute, nor past its end",
+        )
     }
 
     @Test
     fun break_doable_task_with_a_too_long_minimum_never_fills_the_break() {
-        // The rest pose is 15 min but the task needs 30 — it must never be scheduled inside the break.
+        // The pose leaves 14 min once its closed first minute is taken off, but the task needs 30.
         val (s0, solo) = stateWithOneTask(minMinutes = 30)
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = true, doableDuringBreak = true),
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = true),
         )
-        s = s.copy(
-            screenBreaks = listOf(
-                ScreenBreak(
-                    title = "Rest pose",
-                    intervalMillis = HOUR,
-                    durationMillis = 15 * MIN,
-                    restBreak = true,
-                    lastRestMillis = NOW,
-                ),
-            ),
-        )
+        s = withRestPose(s)
         val panels = SchedulerDomain.fillSchedule(s, NOW)
         val breakRange = panels.first { it.screenBreak }
         assertTrue(
@@ -301,6 +301,81 @@ class NoScreenInactivityPanelTest {
                     it.endEpochMillis > breakRange.startEpochMillis
             },
             "a 30-min minimum must never overlap the 15-min break interior",
+        )
+    }
+
+    @Test
+    fun a_break_doable_task_still_needs_a_no_screen_period_outside_the_break() {
+        // The break is the ONLY extra place the flag opens up: with no no-screen period, the off-screen
+        // break-doable task is scheduled inside the pose and nowhere else.
+        val (s0, solo) = stateWithOneTask(minMinutes = 5)
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = true),
+        )
+        s = withRestPose(s)
+        val panels = SchedulerDomain.fillSchedule(s, NOW)
+        val breaks = panels.filter { it.screenBreak }
+        val mine = panels.filter { it.taskId == solo && it.auto }
+        assertTrue(mine.isNotEmpty())
+        // The pose recurs across the horizon, so the task fills every occurrence — but nothing else.
+        assertTrue(
+            mine.all { p ->
+                breaks.any { p.startEpochMillis >= it.startEpochMillis && p.endEpochMillis <= it.endEpochMillis }
+            },
+            "an off-screen task may only run inside a no-screen period or a screen break",
+        )
+    }
+
+    @Test
+    fun the_20s_look_away_accepts_no_task_at_all() {
+        // PRD §15: a look-away is not a rest pose, so it is closed end to end — even a zero-minimum
+        // break-doable task may not be placed in it (and it therefore distorts no plan around itself).
+        val (s0, solo) = stateWithOneTask(minMinutes = 0)
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = true),
+        )
+        s = s.copy(
+            screenBreaks = listOf(
+                ScreenBreak(
+                    title = "look 20 feet away",
+                    intervalMillis = 20 * MIN,
+                    durationMillis = 20_000L,
+                    restBreak = false,
+                    lastRestMillis = NOW,
+                ),
+            ),
+        )
+        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 2 * HOUR)
+        val lookAways = panels.filter { it.screenBreak }
+        assertTrue(lookAways.isNotEmpty(), "the look-aways must still be materialized")
+        assertTrue(
+            panels.none { p ->
+                p.taskId == solo && p.auto &&
+                    lookAways.any { p.startEpochMillis < it.endEpochMillis && p.endEpochMillis > it.startEpochMillis }
+            },
+            "no task may ever overlap a 20-second look-away",
+        )
+    }
+
+    @Test
+    fun an_on_screen_task_is_never_placed_in_a_screen_break() {
+        // The invariant makes "on screen + doable during a break" unrepresentable; the fill must also
+        // refuse it outright, so a payload that predates the invariant cannot slip through.
+        val (s0, solo) = stateWithOneTask(minMinutes = 5)
+        val s = withRestPose(
+            s0.copy(tasks = s0.tasks + (solo to s0.tasks[solo]!!.copy(onScreen = true, doableDuringBreak = true))),
+        )
+        val panels = SchedulerDomain.fillSchedule(s, NOW)
+        val breakRange = panels.first { it.screenBreak }
+        assertTrue(
+            panels.none {
+                it.taskId == solo && it.auto &&
+                    it.startEpochMillis < breakRange.endEpochMillis &&
+                    it.endEpochMillis > breakRange.startEpochMillis
+            },
+            "an on-screen task may never be placed inside a screen break",
         )
     }
 

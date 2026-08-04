@@ -13,9 +13,11 @@ import org.example.project.scheduler.state.SchedulerState
 
 /**
  * PRD §8 screen switches (calendar edit window): a task's "On screen" / "Doable during a screen break"
- * flags. Covers the undoable [SchedulerIntent.SetTaskScreenFlags] mutation, codec round-tripping, and —
- * per the persisted-DB compatibility rule — that a payload written before the fields existed decodes to
- * the pre-switch behaviour (every task on-screen, none doable during a break).
+ * flags, and the §15 invariant that the second implies **not** the first. Covers the undoable
+ * [SchedulerIntent.SetTaskScreenFlags] mutation, codec round-tripping, and — per the persisted-DB
+ * compatibility rule — that a payload written before the fields existed decodes to the pre-switch
+ * behaviour (every task on-screen, none doable during a break) and that one written before the invariant
+ * has the impossible pair healed on load.
  */
 class SchedulerScreenFlagsTest {
 
@@ -70,6 +72,57 @@ class SchedulerScreenFlagsTest {
         assertNotNull(decoded)
         assertFalse(decoded.tasks[solo]!!.onScreen)
         assertTrue(decoded.tasks[solo]!!.doableDuringBreak)
+    }
+
+    @Test
+    fun marking_a_task_break_doable_while_on_screen_clears_the_break_flag() {
+        // PRD §8/§15 invariant: a screen break is time away from the screen, so a task doable during one
+        // must also need no screen. The impossible pair is never stored.
+        val (s0, solo) = stateWithOneTask()
+        val s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = true, doableDuringBreak = true),
+        )
+        assertTrue(s.tasks[solo]!!.onScreen)
+        assertFalse(s.tasks[solo]!!.doableDuringBreak)
+        // …and it is a no-op, so it records no empty "Screen flags" history unit either.
+        assertEquals(s0.histories, s.histories)
+    }
+
+    @Test
+    fun turning_on_screen_back_on_clears_a_previously_set_break_flag() {
+        val (s0, solo) = stateWithOneTask()
+        val s1 = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = true),
+        )
+        assertTrue(s1.tasks[solo]!!.doableDuringBreak)
+        val s2 = SchedulerReducer.reduce(
+            s1,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = true, doableDuringBreak = true),
+        )
+        assertTrue(s2.tasks[solo]!!.onScreen)
+        assertFalse(s2.tasks[solo]!!.doableDuringBreak)
+        // Undo restores the off-screen break-doable pair (the delta replays the coerced values).
+        val undone = SchedulerReducer.reduce(s2, SchedulerIntent.Undo)
+        assertFalse(undone.tasks[solo]!!.onScreen)
+        assertTrue(undone.tasks[solo]!!.doableDuringBreak)
+    }
+
+    @Test
+    fun codec_heals_an_old_payload_holding_the_impossible_flag_pair() {
+        // Written before the invariant existed: on-screen AND doable during a screen break. Loading it
+        // must not resurrect a task the §9 fill would place inside every screen break.
+        val json =
+            """
+            {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
+             "cells":[{"id":"c0","parentListId":"L","taskId":"t0"}],
+             "tasks":[{"id":"t0","title":"X","occurrences":["c0"],"onScreen":true,"doableDuringBreak":true}]}
+            """.trimIndent()
+        val decoded = SchedulerStateCodec.decode(json)
+        assertNotNull(decoded)
+        assertTrue(decoded.tasks[TaskId("t0")]!!.onScreen)
+        assertFalse(decoded.tasks[TaskId("t0")]!!.doableDuringBreak)
     }
 
     @Test

@@ -4096,8 +4096,13 @@ fun ManualEntryEditWindow(
                 }
                 if (effectiveTaskId != null) {
                     EditMenuSectionLabel("Screen")
-                    PinSwitchRow("On screen", screenFlags.first) { screenFlags = it to screenFlags.second }
-                    PinSwitchRow("Doable during a screen break", screenFlags.second) { screenFlags = screenFlags.first to it }
+                    // PRD §8/§15 invariant: doable-during-a-screen-break implies not-on-screen (a screen
+                    // break is time away from the screen), so turning "On screen" on clears the break
+                    // switch, and the break switch is offered only while "On screen" is off.
+                    PinSwitchRow("On screen", screenFlags.first) { on -> screenFlags = on to (screenFlags.second && !on) }
+                    if (!screenFlags.first) {
+                        PinSwitchRow("Doable during a screen break", screenFlags.second) { screenFlags = screenFlags.first to it }
+                    }
                 }
 
                 Row(

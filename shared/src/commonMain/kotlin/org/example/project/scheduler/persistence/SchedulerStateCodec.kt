@@ -389,7 +389,11 @@ object SchedulerStateCodec {
                         scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
                         text = p.text,
                         onScreen = p.onScreen,
-                        doableDuringBreak = p.doableDuringBreak,
+                        // PRD §8/§15 invariant: doable-during-a-screen-break implies not-on-screen. A
+                        // payload written before the invariant existed can hold the impossible pair, and a
+                        // stale on-screen break-doable task would be scheduled inside every screen break;
+                        // heal it on load rather than surfacing it (CLAUDE.md persisted-DB rule).
+                        doableDuringBreak = p.doableDuringBreak && !p.onScreen,
                     )
             }
         val cells =
@@ -595,7 +599,11 @@ object SchedulerStateCodec {
                         scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
                         text = p.text,
                         onScreen = p.onScreen,
-                        doableDuringBreak = p.doableDuringBreak,
+                        // PRD §8/§15 invariant: doable-during-a-screen-break implies not-on-screen. A
+                        // payload written before the invariant existed can hold the impossible pair, and a
+                        // stale on-screen break-doable task would be scheduled inside every screen break;
+                        // heal it on load rather than surfacing it (CLAUDE.md persisted-DB rule).
+                        doableDuringBreak = p.doableDuringBreak && !p.onScreen,
                     )
             }
         val cells =

@@ -113,8 +113,17 @@ REM ----  1) Doze / battery-optimization exemption - works on ALL ROMs.
 REM ----  2) MIUI/HyperOS AUTO_START appops - Xiaomi-specific; on some builds the
 REM ----     op string is unknown and this is a harmless no-op (then the OEM
 REM ----     autostart list must still be picked by hand once per reinstall).
+REM ----  3) POST_NOTIFICATIONS (API 33+) - MainActivity asks for this at launch, but
+REM ----     the dialog is only ANSWERED seconds later, and a fresh reinstall starts
+REM ----     ungranted by definition. Under the fast-break scripts the first break cue
+REM ----     fires ~14 s after install, i.e. inside that window, and
+REM ----     NotificationManagerCompat.notify then drops it SILENTLY while the History
+REM ----     window still lists it (notificationLog is written before the OS call) -
+REM ----     which reads as "the phone stayed silent through a break". Granting it here
+REM ----     closes the window. No-ops on pre-33 devices (unknown permission).
 "%ADB%" shell dumpsys deviceidle whitelist +%APP_ID% >nul 2>&1
 "%ADB%" shell cmd appops set %APP_ID% AUTO_START allow >nul 2>&1
+"%ADB%" shell pm grant %APP_ID% android.permission.POST_NOTIFICATIONS >nul 2>&1
 
 REM ---- [5/6] Force-stop so the next launch is a fresh process. The shared
 REM ---- scheduler VM is a process singleton; it must be (re)built with the

@@ -43,13 +43,19 @@ data class Task(
      * PRD §8 "On screen" switch (calendar edit window): whether this task is done at a screen. An
      * on-screen task may only be placed on screen periods; an off-screen task only on no-screen
      * periods. Defaults to on-screen (the pre-switch behaviour — everything scheduled was screen work).
-     * Placement enforcement in the §9 fill is a follow-up; the flag is authoritative task data now.
      */
     val onScreen: Boolean = true,
     /**
-     * PRD §8 "Doable during a screen break" switch: whether this (off-screen) task may be scheduled
-     * inside a 5/15-minute screen-break window (§15). Even when on, a task whose minimum time exceeds
-     * the break's length never fits there. Defaults off. Enforcement in the §9 fill is a follow-up.
+     * PRD §8 "Doable during a screen break" switch: whether this task may be scheduled inside a
+     * 5/15-minute screen break (§15), past its closed first minute
+     * ([org.example.project.scheduler.domain.SchedulerDomain.SCREEN_BREAK_CLOSED_HEAD_MILLIS]). Even when
+     * on, a task whose minimum time exceeds what is left of the break never fits there. Defaults off.
+     *
+     * **Invariant: this implies `!`[onScreen]** — a screen break is time away from the screen, so only a
+     * task that needs no screen can be done in one. It is enforced where the flag is written
+     * (`SchedulerReducer.applySetTaskScreenFlags`, and the edit window only offers the switch while "On
+     * screen" is off) and healed on decode, so a payload written before the invariant cannot resurrect an
+     * on-screen break-doable task.
      */
     val doableDuringBreak: Boolean = false,
 )

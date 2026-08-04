@@ -100,6 +100,17 @@ echo [4/6] Installing/updating the app ^(app data + DB preserved^)...
 "%ADB%" install -r "%APK%"
 if errorlevel 1 (echo [x] Install failed.& popd & exit /b 1)
 
+REM ---- Grant POST_NOTIFICATIONS (API 33+) over adb. MainActivity requests it at
+REM ---- launch anyway, but the dialog is only answered seconds later, and a cue
+REM ---- firing in that window is dropped SILENTLY by NotificationManagerCompat while
+REM ---- the History window still lists it. Best-effort: no-ops on pre-33 devices, and
+REM ---- harmlessly re-grants an already-granted permission (install -r keeps data).
+REM ---- Deliberately NOT joined by the debug script's Doze / OEM-AUTO_START grants:
+REM ---- on this RELEASE path the one-time keep-alive prompt
+REM ---- (MainActivity.maybePromptKeepAliveOnce) is meant to run as a real first-run
+REM ---- install would, and pre-granting Doze would silently skip half of it.
+"%ADB%" shell pm grant "%APP_ID%" android.permission.POST_NOTIFICATIONS >nul 2>&1
+
 REM ---- [5/6] Force-stop so the next launch is a fresh process. The shared
 REM ---- scheduler VM is a process singleton; it must be (re)built with the
 REM ---- credentials present, so kill any running instance before relaunching.

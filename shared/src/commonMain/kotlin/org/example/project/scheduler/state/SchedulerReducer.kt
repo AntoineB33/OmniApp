@@ -82,10 +82,13 @@ object SchedulerReducer {
             is SchedulerIntent.SetTaskMinimumTime ->
                 commitDelta(state, priorityTreeDelta(state, "Minimum time") { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
             is SchedulerIntent.SetTaskScreenFlags -> {
+                // PRD §8/§15 invariant: a task doable during a screen break must also need no screen, so
+                // turning "On screen" back on clears the break flag rather than storing the impossible pair.
+                val breakDoable = intent.doableDuringBreak && !intent.onScreen
                 // Unchanged flags are a no-op — no empty "Screen flags" history unit.
                 val task = state.tasks[intent.taskId]
-                if (task == null || (task.onScreen == intent.onScreen && task.doableDuringBreak == intent.doableDuringBreak)) state
-                else commitDelta(state, priorityTreeDelta(state, "Screen flags") { applySetTaskScreenFlags(it, intent.taskId, intent.onScreen, intent.doableDuringBreak) })
+                if (task == null || (task.onScreen == intent.onScreen && task.doableDuringBreak == breakDoable)) state
+                else commitDelta(state, priorityTreeDelta(state, "Screen flags") { applySetTaskScreenFlags(it, intent.taskId, intent.onScreen, breakDoable) })
             }
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state, "Schedule unit") { applySetScheduleUnit(it, intent.taskId, intent.entries) })
@@ -2168,8 +2171,11 @@ private fun applySetTaskScreenFlags(
     doableDuringBreak: Boolean,
 ): SchedulerState {
     val task = state.tasks[taskId] ?: return state
-    if (task.onScreen == onScreen && task.doableDuringBreak == doableDuringBreak) return state
-    return state.copy(tasks = state.tasks + (taskId to task.copy(onScreen = onScreen, doableDuringBreak = doableDuringBreak)))
+    // PRD §8/§15 invariant: doable-during-a-screen-break implies not-on-screen. Re-applied here (and not
+    // only at the intent) because this is what the Undo/Redo delta replays.
+    val breakDoable = doableDuringBreak && !onScreen
+    if (task.onScreen == onScreen && task.doableDuringBreak == breakDoable) return state
+    return state.copy(tasks = state.tasks + (taskId to task.copy(onScreen = onScreen, doableDuringBreak = breakDoable)))
 }
 
 private fun applySetScheduleUnit(
