@@ -25,6 +25,7 @@ import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.Delta
@@ -44,6 +45,9 @@ import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.SetSelectionDelta
 import org.example.project.scheduler.state.SleepDelta
+import org.example.project.scheduler.state.TaskTreeDelta
+import org.example.project.scheduler.state.TaskTreeEntry
+import org.example.project.scheduler.state.TaskTreeStateSnapshot
 import org.example.project.scheduler.state.ToggleExpandDelta
 import org.example.project.scheduler.state.TreeMutationDelta
 import org.example.project.scheduler.state.TreeSnapshot
@@ -197,6 +201,9 @@ object SchedulerStateCodec {
                     )
                 },
             expanded = expanded.map(CellId::value),
+            taskTrees = taskTrees.map { it.toPersisted() },
+            activeTaskTreeId = activeTaskTreeId?.value,
+            nextTaskTreeCounter = nextTaskTreeCounter,
             selectionMain = selection.main?.value,
             selectionSelected = selection.selected.map(CellId::value),
             selectionRangeAnchor = selection.rangeAnchor?.value,
@@ -296,6 +303,7 @@ object SchedulerStateCodec {
                     label,
                 )
             is ToggleExpandDelta -> PersistedDelta.ToggleExpand(cellId.value)
+            is TaskTreeDelta -> PersistedDelta.TaskTrees(before.toPersisted(), after.toPersisted(), label)
             is RecordDelta ->
                 PersistedDelta.Record(
                     before.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
@@ -337,6 +345,24 @@ object SchedulerStateCodec {
             newTaskDraftId = newTaskDraftId?.value,
             treeBefore = treeBefore.toPersisted(),
             renameTreeBefore = renameTreeBefore?.toPersisted(),
+        )
+
+    private fun TaskTreeEntry.toPersisted(): PersistedTaskTree =
+        PersistedTaskTree(
+            id = id.value,
+            title = title,
+            tree = tree.toPersisted(),
+            expanded = expanded.map(CellId::value),
+            date = dateMillis,
+        )
+
+    private fun TaskTreeStateSnapshot.toPersisted(): PersistedTaskTreeState =
+        PersistedTaskTreeState(
+            trees = trees.map { it.toPersisted() },
+            activeId = activeId?.value,
+            nextCounter = nextCounter,
+            tree = tree.toPersisted(),
+            expanded = expanded.map(CellId::value),
         )
 
     private fun TreeSnapshot.toPersisted(): PersistedTreeSnapshot =
@@ -423,6 +449,11 @@ object SchedulerStateCodec {
             tasks = tasks,
             titleToTaskIds = SchedulerDomain.buildTitleIndex(tasks),
             expanded = expanded.map(::CellId).toSet(),
+            // A payload written before the task-tree selector existed decodes to no trees and an unnamed
+            // live tree — exactly the state a fresh account starts in, so no migration is needed.
+            taskTrees = taskTrees.map { it.toEntry() },
+            activeTaskTreeId = activeTaskTreeId?.let(::TaskTreeId),
+            nextTaskTreeCounter = nextTaskTreeCounter,
             selection =
                 SchedulerSelection(
                     main = selectionMain?.let(::CellId),
@@ -551,6 +582,7 @@ object SchedulerStateCodec {
                 )
             is PersistedDelta.Panels -> PanelDelta(before.map { it.toPanel() }, after.map { it.toPanel() }, label)
             is PersistedDelta.ToggleExpand -> ToggleExpandDelta(CellId(cellId))
+            is PersistedDelta.TaskTrees -> TaskTreeDelta(before.toTaskTreeState(), after.toTaskTreeState(), label)
             is PersistedDelta.Record ->
                 RecordDelta(
                     before.mapKeys { TaskId(it.key) }.mapValues { e -> e.value.map { TaskTimeRange(it.start, it.end) } },
@@ -582,6 +614,24 @@ object SchedulerStateCodec {
             sleep = sleep,
             noScreen = noScreen,
             inactivity = inactivity,
+        )
+
+    private fun PersistedTaskTree.toEntry(): TaskTreeEntry =
+        TaskTreeEntry(
+            id = TaskTreeId(id),
+            title = title,
+            tree = tree.toSnapshot(),
+            expanded = expanded.map(::CellId).toSet(),
+            dateMillis = date,
+        )
+
+    private fun PersistedTaskTreeState.toTaskTreeState(): TaskTreeStateSnapshot =
+        TaskTreeStateSnapshot(
+            trees = trees.map { it.toEntry() },
+            activeId = activeId?.let(::TaskTreeId),
+            nextCounter = nextCounter,
+            tree = tree.toSnapshot(),
+            expanded = expanded.map(::CellId).toSet(),
         )
 
     private fun PersistedTreeSnapshot.toSnapshot(): TreeSnapshot {
@@ -659,6 +709,11 @@ private data class PersistedState(
     val cells: List<PersistedCell>,
     val tasks: List<PersistedTask>,
     val expanded: List<String> = emptyList(),
+    // The named alternative task trees and which one the live tree is; missing values decode to "no named
+    // trees / unnamed live tree" (payloads written before the task-tree selector existed).
+    val taskTrees: List<PersistedTaskTree> = emptyList(),
+    val activeTaskTreeId: String? = null,
+    val nextTaskTreeCounter: Int = 0,
     val selectionMain: String? = null,
     val selectionSelected: List<String> = emptyList(),
     val selectionRangeAnchor: String? = null,
@@ -835,6 +890,14 @@ private sealed interface PersistedDelta {
     data class Sleep(val before: PersistedSleep? = null, val after: PersistedSleep) : PersistedDelta
 
     @Serializable
+    @SerialName("taskTrees")
+    data class TaskTrees(
+        val before: PersistedTaskTreeState,
+        val after: PersistedTaskTreeState,
+        val label: String,
+    ) : PersistedDelta
+
+    @Serializable
     @SerialName("noOp")
     data object NoOp : PersistedDelta
 }
@@ -894,6 +957,28 @@ private data class PersistedEditSession(
     val newTaskDraftId: String? = null,
     val treeBefore: PersistedTreeSnapshot,
     val renameTreeBefore: PersistedTreeSnapshot? = null,
+)
+
+/** One named alternative task tree (see [org.example.project.scheduler.state.TaskTreeEntry]). */
+@Serializable
+private data class PersistedTaskTree(
+    val id: String,
+    val title: String,
+    val tree: PersistedTreeSnapshot,
+    val expanded: List<String> = emptyList(),
+    // The tree's position on the "All task trees" timeline. Absent (the default) = not on the timeline,
+    // which is what every payload written before the timeline existed decodes to.
+    val date: Long? = null,
+)
+
+/** The whole task-tree state on one side of a task-tree History Unit. */
+@Serializable
+private data class PersistedTaskTreeState(
+    val trees: List<PersistedTaskTree> = emptyList(),
+    val activeId: String? = null,
+    val nextCounter: Int = 0,
+    val tree: PersistedTreeSnapshot,
+    val expanded: List<String> = emptyList(),
 )
 
 @Serializable

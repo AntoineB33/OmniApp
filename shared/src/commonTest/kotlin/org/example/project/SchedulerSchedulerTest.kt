@@ -803,7 +803,7 @@ class SchedulerSchedulerTest {
     fun a_pinned_panel_by_contrast_leaves_the_gap_before_it_empty() {
         // Control for the test above: a *pinned* obstacle 20 min ahead is NOT a screen break, so nothing
         // resumes across it. The 20 minutes before it are shorter than any task's minimum, so — per
-        // `tests/test.py`'s `fitting` rule and PRD §10 ("a task panel can't be shorter than its minimum") —
+        // `side-dev/test.py`'s `fitting` rule and PRD §10 ("a task panel can't be shorter than its minimum") —
         // they are left empty rather than filled with a 20-minute sliver of A. The plan starts on the far
         // side of the obstacle. (Earlier revisions truncated A to 20 min here; that violated §10.)
         val (s0, a, b) = stateWithTwoTasks()

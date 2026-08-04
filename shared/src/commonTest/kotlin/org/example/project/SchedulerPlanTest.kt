@@ -20,11 +20,11 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `tests/README.md` + `tests/test.py`: the cyclic proportional-share scheduler.
+ * `side-dev/README.md` + `side-dev/test.py`: the cyclic proportional-share scheduler.
  *
  * The first block is a **port test**: it replays the reference implementation's own nine cases through
  * [SchedulerPlanner] and asserts the rule list Python produces, slot for slot. Those expectations were taken
- * from `tests/test.py` itself (run its `build_cases()` and print `get_schedule_rules`), so a drift in either
+ * from `side-dev/test.py` itself (run its `build_cases()` and print `get_schedule_rules`), so a drift in either
  * direction fails here rather than silently in the calendar.
  *
  * The second block checks the properties the README states through the real [SchedulerDomain.fillSchedule] —
@@ -40,14 +40,14 @@ class SchedulerPlanTest {
     private val HOUR = 3_600_000L
     private val NOW = 1_000_000_000_000L
 
-    // ----- the port of `tests/test.py` ----------------------------------------------------------
+    // ----- the port of `side-dev/test.py` ----------------------------------------------------------
 
     private fun id(name: String) = TaskId(name)
 
     private fun planTask(name: String, priority: Double, minMinutes: Double) =
         PlanTask(id(name), priority, (minMinutes * MIN).toLong())
 
-    /** `tests/test.py`'s `AB()`: two 50 % tasks with a 10-minute minimum. */
+    /** `side-dev/test.py`'s `AB()`: two 50 % tasks with a 10-minute minimum. */
     private fun ab() = listOf(planTask("A", 50.0, 10.0), planTask("B", 50.0, 10.0))
 
     private fun block(name: String?, startMinutes: Double, durationMinutes: Double) =
@@ -60,7 +60,7 @@ class SchedulerPlanTest {
     private fun window(startMinutes: Double, endMinutes: Double?, vararg allowed: String) =
         PlanWindow((startMinutes * MIN).toLong(), endMinutes?.let { (it * MIN).toLong() }, allowed.map(::id).toSet())
 
-    /** The plan as `(task name or "IDLE", minutes)` pairs, which is how `tests/test.py` prints its rules. */
+    /** The plan as `(task name or "IDLE", minutes)` pairs, which is how `side-dev/test.py` prints its rules. */
     private fun rules(slots: List<org.example.project.scheduler.domain.PlanSlot>) =
         slots.map { (it.taskId?.value ?: "IDLE") to it.durationMillis.toDouble() / MIN }
 
@@ -269,7 +269,7 @@ class SchedulerPlanTest {
 
     @Test
     fun the_rule_list_is_finite_and_answers_any_instant_in_log_time() {
-        // `tests/README.md`: the scheduler returns a finite list of rules, and drawing t = 0…x just unrolls
+        // `side-dev/README.md`: the scheduler returns a finite list of rules, and drawing t = 0…x just unrolls
         // it. Both readings of the plan must agree at every instant.
         val plan = SchedulerPlanner(ab()).plan(blocks = listOf(block("A", 100.0, 60.0)))
         assertTrue(plan.prefix.size + plan.cycle.size <= SchedulerPlanner.MAX_RULES, "the rule list grew")
@@ -302,7 +302,7 @@ class SchedulerPlanTest {
 
     @Test
     fun two_equal_tasks_alternate_at_the_smallest_scale_their_minimum_allows() {
-        // `tests/README.md`: "task A 50% 10min and task B 50% 10min → right: task A 10min, then task B
+        // `side-dev/README.md`: "task A 50% 10min and task B 50% 10min → right: task A 10min, then task B
         // 10min and so on", NOT an hour of each. This is reference test 1, through the real fill.
         val (s, ids) = stateWithTasks("A", "B", minMinutes = 10)
         val (a, b) = ids
@@ -360,7 +360,7 @@ class SchedulerPlanTest {
 
     @Test
     fun a_block_committed_ahead_swells_the_other_task_around_it() {
-        // `tests/README.md`: "if there is task A 1h already placed, I want a greater presence of task B right
+        // `side-dev/README.md`: "if there is task A 1h already placed, I want a greater presence of task B right
         // before and right after this long task A". The block is an exclusion for B, so B's slots grow as it
         // approaches and shrink back after it — symmetrically, and always bounded by the boost cap.
         val (s0, ids) = stateWithTasks("A", "B", minMinutes = 10)

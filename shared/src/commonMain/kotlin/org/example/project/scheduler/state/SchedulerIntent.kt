@@ -3,6 +3,7 @@ package org.example.project.scheduler.state
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskTreeId
 
 /** PRD §8 extend/shorten: which edge of a calendar block the user grabbed. */
 enum class CalendarEdge { Start, End }
@@ -66,6 +67,40 @@ sealed interface SchedulerIntent {
         val cellId: CellId,
         val taskId: TaskId,
     ) : SchedulerIntent
+
+    /**
+     * Task-tree selector (the field above the tree): make [id] the live task tree. The tree being left is
+     * flushed into its own entry first, so nothing done in it is lost (see [TaskTreeEntry]). Recorded as an
+     * undoable Main History Unit; a no-op when [id] is already active or names no tree.
+     */
+    data class SelectTaskTree(val id: TaskTreeId) : SchedulerIntent
+
+    /**
+     * Task-tree selector: create a task tree named [title] holding a **copy of the current tree** and make it
+     * the live one — so the user can diverge it from what is on screen. The tree being left is flushed first.
+     * Recorded as an undoable Main History Unit; a no-op for a blank title.
+     */
+    data class CreateTaskTree(val title: String) : SchedulerIntent
+
+    /**
+     * Task-tree selector, Rename mode: rename the task tree [id] (its content and identity are untouched —
+     * the same tree under a new name). Recorded as an undoable Main History Unit.
+     */
+    data class RenameTaskTree(val id: TaskTreeId, val title: String) : SchedulerIntent
+
+    /**
+     * "All task trees" window: put the task tree [id] on the timeline at [dateMillis] (or take it off with
+     * `null`). A dated tree is a keyframe of the account's priorities — see [TaskTreeEntry.dateMillis].
+     * Recorded as an undoable Main History Unit; a no-op when the date is already that.
+     */
+    data class SetTaskTreeDate(val id: TaskTreeId, val dateMillis: Long?) : SchedulerIntent
+
+    /**
+     * "All task trees" window (the bin button): delete the task tree [id] for good. Deleting the tree that
+     * is currently live keeps what is on screen — only the *name* goes away, leaving the live tree unnamed
+     * — so no work is ever lost by pressing the bin. Recorded as an undoable Main History Unit.
+     */
+    data class DeleteTaskTree(val id: TaskTreeId) : SchedulerIntent
 
     /** PRD §5: set a cell's value in a weight column (clamped to ≥ 0); recorded as a content delta. */
     data class SetPriorityWeight(
@@ -235,7 +270,8 @@ sealed interface SchedulerIntent {
      * Neither is a change to the scheduling *rules*, so the plan the user is already looking at must not be
      * rewritten: the auto panels ahead of the now-line are kept and only the tail past them is generated
      * ([SchedulerDomain.fillSchedule]'s `keepExistingUntilMillis`). Re-planning from `now` happens only on a
-     * [RefreshSchedule], which the engine fires only when [SchedulerDomain.schedulingSignature] moves.
+     * [RefreshSchedule], which the engine fires when [SchedulerDomain.schedulingSignature] moves — or, at
+     * most once an hour, when the plan has simply gone that long without being re-planned.
      *
      * Derived state only (like [AdvanceSchedule]): never a syncable change, never a History Unit.
      */

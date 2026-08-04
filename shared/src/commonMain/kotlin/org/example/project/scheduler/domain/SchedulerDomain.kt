@@ -21,10 +21,12 @@ import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.state.CalendarEdge
 import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.state.TaskTreeEntry
 
 object SchedulerDomain {
     fun isMainTask(taskId: TaskId?): Boolean = taskId == WellKnownIds.MAIN_TASK
@@ -523,6 +525,157 @@ object SchedulerDomain {
         }
 
         return cellsByTask.keys.associateWith { absolute(it) }
+    }
+
+    // ----- The task-tree timeline ("All task trees") -------------------------------------------
+
+    /**
+     * Where `now` sits on the task-tree timeline: between the keyframe [from] and the keyframe [to],
+     * [fraction] of the way across (0 at [from]'s date, 1 at [to]'s).
+     *
+     * Outside the dated range the nearest keyframe holds, which is expressed as `from === to` with a
+     * fraction of 0 — a *degenerate* blend, not a missing one. That distinction matters: it still means
+     * "the scheduler follows the dated trees", it just happens to be following exactly one of them.
+     */
+    data class TaskTreeBlend(
+        val from: TaskTreeEntry,
+        val to: TaskTreeEntry,
+        val fraction: Double,
+    ) {
+        /** True while `now` sits on a keyframe / outside the dated range, so nothing is being interpolated. */
+        val isSingle: Boolean get() = from.id == to.id
+    }
+
+    /**
+     * The trees on the timeline, in date order — the keyframes the scheduler blends between.
+     *
+     * The **active** tree's stored snapshot is stale by design (the live [SchedulerState] fields are the
+     * truth for it, see [TaskTreeEntry]), so the state is flushed first: a keyframe that happens to be the
+     * tree on screen must contribute what the user has actually got, not what it looked like when it was
+     * last selected. Ties on the same instant fall back to the id, so the order is total and stable.
+     */
+    fun datedTaskTrees(state: SchedulerState): List<TaskTreeEntry> =
+        state.withActiveTaskTreeFlushed().taskTrees
+            .filter { it.dateMillis != null }
+            .sortedWith(compareBy({ it.dateMillis }, { it.id.value }))
+
+    /**
+     * The blend in force at [nowMillis], or `null` when **no** tree is dated — in which case there is no
+     * timeline at all and every priority question falls back to the live tree, exactly as before this
+     * feature existed. That null is the "feature is off" signal every caller below keys on.
+     */
+    fun taskTreeBlendAt(state: SchedulerState, nowMillis: Long): TaskTreeBlend? {
+        val dated = datedTaskTrees(state)
+        if (dated.isEmpty()) return null
+        val first = dated.first()
+        if (nowMillis <= (first.dateMillis ?: 0L)) return TaskTreeBlend(first, first, 0.0)
+        val last = dated.last()
+        if (nowMillis >= (last.dateMillis ?: 0L)) return TaskTreeBlend(last, last, 0.0)
+        for (i in 0 until dated.size - 1) {
+            val a = dated[i]
+            val b = dated[i + 1]
+            val ta = a.dateMillis ?: continue
+            val tb = b.dateMillis ?: continue
+            if (nowMillis < ta || nowMillis > tb) continue
+            // Two keyframes on the same instant have no span to cross: the earlier one (by the id
+            // tie-break above) governs, rather than dividing by zero.
+            val span = tb - ta
+            return if (span <= 0L) TaskTreeBlend(a, a, 0.0)
+            else TaskTreeBlend(a, b, (nowMillis - ta).toDouble() / span.toDouble())
+        }
+        return TaskTreeBlend(last, last, 0.0)
+    }
+
+    /** The absolute priorities the task tree [entry] defines on its own, as if it were the live tree. */
+    fun taskTreePriorities(state: SchedulerState, entry: TaskTreeEntry): Map<TaskId, Double> =
+        absoluteTaskPriorities(state.applyTreeWithRecords(entry.tree))
+
+    /**
+     * **The priorities the scheduler actually follows at [nowMillis]** — the whole point of the timeline.
+     *
+     * Between two keyframes each task's absolute priority moves linearly from the share its tree gives it
+     * to the share the next tree gives it, so the plan transforms evenly and continuously from one
+     * arrangement into the other rather than snapping over on the date. A task that exists in only one of
+     * the two trees is treated as **0% in the other**, which is what makes a task fade out (or in) over the
+     * transition instead of appearing at full share the instant its tree becomes current.
+     *
+     * Note this is deliberately NOT the priority the tree on screen shows: the displayed tree keeps
+     * reporting its own [absoluteTaskPriorities], because that is the arrangement the user is editing. With
+     * no dated tree at all, the two are the same thing.
+     */
+    fun blendedTaskPriorities(state: SchedulerState, nowMillis: Long): Map<TaskId, Double> {
+        val blend = taskTreeBlendAt(state, nowMillis) ?: return absoluteTaskPriorities(state)
+        val from = taskTreePriorities(state, blend.from)
+        if (blend.isSingle) return from
+        val to = taskTreePriorities(state, blend.to)
+        val f = blend.fraction.coerceIn(0.0, 1.0)
+        return (from.keys + to.keys).associateWith { id ->
+            (1.0 - f) * (from[id] ?: 0.0) + f * (to[id] ?: 0.0)
+        }
+    }
+
+    /**
+     * The tasks the scheduler may place at [nowMillis]: the **union** of the two keyframes' schedulable
+     * leaves. A task living only in the tree being transitioned *to* is schedulable as soon as its blended
+     * share leaves zero — without that, a continuous priority transformation would still hand out a
+     * discontinuous plan, since the task could not be placed until its tree became the live one.
+     */
+    fun blendedSchedulableLeaves(state: SchedulerState, nowMillis: Long): List<TaskId> {
+        val blend = taskTreeBlendAt(state, nowMillis) ?: return schedulableLeaves(state)
+        val from = schedulableLeaves(state.applyTreeWithRecords(blend.from.tree))
+        if (blend.isSingle) return from
+        return (from + schedulableLeaves(state.applyTreeWithRecords(blend.to.tree))).distinct()
+    }
+
+    /**
+     * The task attributes the fill reads — title, minimum time, screen flags, records — widened to cover
+     * the union above, since a leaf drawn from the other keyframe has no entry in the live `tasks` map and
+     * would otherwise schedule as a nameless, zero-minimum task.
+     *
+     * The **live** map wins wherever a task exists in both: it is the freshest copy (a stored snapshot is
+     * only as current as the last flush) and its records are the ones the advance has been banking. With
+     * one exception — a **blank-titled tombstone**. Emptying a cell to delete a task leaves its id behind
+     * with a blank title (kept alive by its panels/records, PRD §4/§8), so a task deleted from the live
+     * tree but still alive in a keyframe would take its name from the tombstone and schedule as
+     * "(untitled)". A tombstone carries no title precisely because it is *not* a task any more here, so the
+     * keyframe's copy is the better answer.
+     */
+    fun blendedTaskAttributes(state: SchedulerState, nowMillis: Long): Map<TaskId, Task> {
+        val blend = taskTreeBlendAt(state, nowMillis) ?: return state.tasks
+        val merged = LinkedHashMap(state.tasks)
+        for (entry in listOf(blend.from, blend.to)) {
+            for ((id, task) in entry.tree.tasks) {
+                val live = merged[id]
+                if (live == null || (live.title.isBlank() && task.title.isNotBlank())) merged[id] = task
+            }
+        }
+        return merged
+    }
+
+    /**
+     * How finely the blend is quantized for re-planning purposes: the transition is cut into this many
+     * steps, and the schedule is re-planned when the cursor crosses one.
+     *
+     * The plan is a step function of a continuously moving quantity, and something has to choose the step.
+     * 100 bounds the priority error at 1% (a share moves by at most the whole gap between the two trees
+     * across the transition, so by at most 1/100th of it per step) — below anything the fill's minimum-time
+     * granularity can express — while keeping re-plans rare: a two-month transition re-plans about every
+     * 14 hours, a one-day transition about every 14 minutes.
+     */
+    const val TASK_TREE_BLEND_STEPS: Int = 100
+
+    /**
+     * The quantized blend cursor at [nowMillis] — the trigger the engine watches. It changes only when the
+     * bracketing pair changes or the interpolation crosses a step, so it is a *coarse* function of time
+     * rather than a continuous one, and 0 whenever no tree is dated (the feature-off case, which must never
+     * dispatch anything).
+     */
+    fun taskTreeBlendStep(state: SchedulerState, nowMillis: Long): Int {
+        val blend = taskTreeBlendAt(state, nowMillis) ?: return 0
+        var result = blend.from.id.value.hashCode()
+        result = 31 * result + blend.to.id.value.hashCode()
+        result = 31 * result + (blend.fraction.coerceIn(0.0, 1.0) * TASK_TREE_BLEND_STEPS).toInt()
+        return result
     }
 
     // ----- PRD §9 Scheduler -------------------------------------------------------------------
@@ -2043,7 +2196,7 @@ object SchedulerDomain {
 
     /**
      * PRD §9 Scheduling: regenerate the auto schedule with the **cyclic proportional-share** rules of
-     * `tests/README.md` — [SchedulerPlanner] / [PlanWalk], the Kotlin port of the reference `tests/test.py`.
+     * `side-dev/README.md` — [SchedulerPlanner] / [PlanWalk], the Kotlin port of the reference `side-dev/test.py`.
      * Every **non-pinned** panel in the window `[now, horizonMillis]` is cut and replaced; the only panels
      * kept are the **fixed** ones (pinned + chore, [isSchedulerFixed]), any panel entirely **outside** the
      * window — already past (`end ≤ now`) or starting beyond the horizon — and, when this call is an
@@ -2057,7 +2210,7 @@ object SchedulerDomain {
      * ### This function is a *driver*, not a second copy of the rules
      * Every scheduling decision — which task, for how long, how an exclusion distorts the neighbourhood, how
      * an abnormal imbalance is forgotten — lives in [PlanWalk], the single shared implementation that
-     * [SchedulerPlanner.plan] (the rule-list form of `tests/README.md`) also drives. What this function adds
+     * [SchedulerPlanner.plan] (the rule-list form of `side-dev/README.md`) also drives. What this function adds
      * is the mapping from OmniApp's world onto the reference's two inputs, and the materialization of concrete
      * [TaskPanel]s:
      * - **pre-placed blocks** = the user's pinned/manual panels still ahead of `now`, plus (on an extension)
@@ -2071,11 +2224,11 @@ object SchedulerDomain {
      *   break* (PRD §8: the second flag implies the first). The reference's rule that a task is a candidate
      *   only while its minimum fits the gap is what enforces "never when its minimum time exceeds what is
      *   left of the break", with no special case. A period accepting nobody excludes everyone equally, so
-     *   per `tests/README.md` it creates **no** influence field — which is exactly why a look-away, which
+     *   per `side-dev/README.md` it creates **no** influence field — which is exactly why a look-away, which
      *   recurs every 20 minutes forever, does not distort the plan around each of its occurrences.
      *
      * Because a fixed block owned by another task and a period that bans a task are the *same* deprivation
-     * (`tests/README.md`), both feed one influence field: a task kept out of the timeline gets a denser,
+     * (`side-dev/README.md`), both feed one influence field: a task kept out of the timeline gets a denser,
      * **bounded** presence on both sides of the exclusion, decaying exponentially with the distance. That is
      * what replaced the earlier debt-with-a-natural-bound model: a 17-hour block of A no longer buys B 17
      * hours of catch-up, it buys it a logarithmic amount of compensation spread around the block.
@@ -2091,7 +2244,8 @@ object SchedulerDomain {
      * ([mergeSameTaskPanels]), so a sole task shows as a single continuous panel. Auto panels get
      * deterministic `auto/{i}` ids (regenerated each run, skipping ids held by kept panels).
      *
-     * PRD §9 trigger: this runs only when [schedulingSignature] moves — never because time passed. The
+     * PRD §9 trigger: this runs when [schedulingSignature] moves, plus once an hour if nothing moved it —
+     * a staleness bound, not a tick (every re-plan re-arms it, so an edited account never reaches it). The
      * `SchedulerIntent.ExtendSchedule` path merely materializes more of the same plan (see
      * [keepExistingUntilMillis]).
      */
@@ -2144,7 +2298,11 @@ object SchedulerDomain {
         // projects straight through them (like the screen breaks) so a user working at night still sees the
         // priority-ordered plan; those panels render tinted, under the "Sleep" band (see CalendarUi).
         val sleepPanels = sleepPanels(state.sleep, nowMillis, horizon, timeZone)
-        val leaves = schedulableLeaves(state)
+        // The task-tree timeline: while `now` sits between two dated trees the scheduler follows the two
+        // trees' BLENDED priorities over the UNION of their leaves, not the live tree's own — so the plan
+        // transforms continuously from one arrangement into the next. With no dated tree these collapse to
+        // `schedulableLeaves(state)` / `state.tasks`, i.e. exactly the pre-timeline behaviour.
+        val leaves = blendedSchedulableLeaves(state, nowMillis)
         // PRD §15: screen breaks materialize regardless of whether there are leaf tasks to fill around them.
         // Each one places its next occurrence at its due time (or the now-line when overdue), with the
         // 5-min↔15-min merge applied. They project straight through the sleep windows too, so the eye-rest /
@@ -2162,9 +2320,12 @@ object SchedulerDomain {
         )
         if (leaves.isEmpty()) return (kept + sidePanels + sleepPanels).sortedBy { it.startEpochMillis }
 
-        val priorities = absoluteTaskPriorities(state)
+        val priorities = blendedTaskPriorities(state, nowMillis)
         val keptIds = kept.mapTo(HashSet()) { it.id }
-        val working = state.copy(panels = kept)
+        // Everything below reads task attributes through `working`, which carries the widened map: a leaf
+        // that lives only in the other keyframe still gets its title (so its panels are not nameless), its
+        // minimum time, its screen flags and its records.
+        val working = state.copy(panels = kept, tasks = blendedTaskAttributes(state, nowMillis))
         // PRD §9 screen switches: the no-screen periods *classify* the timeline rather than obstructing it
         // — an on-screen task may only run outside them, an off-screen task only inside. Inactivity
         // periods classify nothing (they stay screen periods). Neither is an occupancy obstacle.
@@ -2184,7 +2345,7 @@ object SchedulerDomain {
         // and a 20-second look-away is that opening minute all the way through, so it never accepts a task
         // at all. What is left of a 5-/15-minute pose accepts the tasks that need no screen and are marked
         // doable during a screen break. This split is what the reference model wants: a period accepting
-        // nobody excludes everyone equally, so it creates **no** influence field (`tests/README.md`) — a
+        // nobody excludes everyone equally, so it creates **no** influence field (`side-dev/README.md`) — a
         // look-away must not distort the plan around itself, whereas the open tail of a pose legitimately
         // does, because it hands the break-doable tasks time nobody else gets.
         val restPoseTitles = placementBreaks.filter { it.restBreak }.mapTo(HashSet()) { it.title }
@@ -2205,17 +2366,17 @@ object SchedulerDomain {
         fun covers(regions: List<TaskTimeRange>, t: Long): Boolean =
             regions.any { it.startEpochMillis <= t && t < it.endEpochMillis }
 
-        // `tests/test.py` resolves ties by (biggest share, then name); OmniApp's PRD §9 tie-break is (highest
+        // `side-dev/test.py` resolves ties by (biggest share, then name); OmniApp's PRD §9 tie-break is (highest
         // absolute priority, then title). [PlanWalk.pick] takes the first candidate on a tie, so handing it
         // this order IS the tie-break.
         val tieBreak =
-            compareByDescending<TaskId> { priorities[it] ?: 0.0 }.thenBy { state.tasks[it]?.title.orEmpty() }
+            compareByDescending<TaskId> { priorities[it] ?: 0.0 }.thenBy { working.tasks[it]?.title.orEmpty() }
         val ordered = leaves.sortedWith(tieBreak)
-        val minimumMillisOf = ordered.associateWith { (state.tasks[it]?.minimumMinutes ?: 0).toLong() * MILLIS_PER_MINUTE }
+        val minimumMillisOf = ordered.associateWith { (working.tasks[it]?.minimumMinutes ?: 0).toLong() * MILLIS_PER_MINUTE }
         val planner =
             SchedulerPlanner(ordered.map { PlanTask(it, priorities[it] ?: 0.0, minimumMillisOf[it] ?: 0L) })
 
-        // --- the periods (`tests/README.md`: "the timeline is formed of periods, each defining a set of
+        // --- the periods (`side-dev/README.md`: "the timeline is formed of periods, each defining a set of
         // tasks it accepts"). The screen zones and the screen breaks partition [now, ∞) into maximal spans
         // with a constant accepted set; the LAST one is left open-ended, so a task banned from it is banned
         // "forever" and the field gives it a ramp before the ban and no phantom ramp after the horizon.
@@ -2280,7 +2441,7 @@ object SchedulerDomain {
         var cursor = nowMillis
         var index = 0
         var idCounter = 0
-        // `tests/test.py` `free_tail`: whether the last thing placed was a freely-chosen slot, and so may be
+        // `side-dev/test.py` `free_tail`: whether the last thing placed was a freely-chosen slot, and so may be
         // stretched over a crumb too short for any minimum.
         var freeTail = false
         // PRD §15: the task whose chunk is mid-placement, split across a screen break, with the work it still
@@ -2319,7 +2480,7 @@ object SchedulerDomain {
         // false and the whole fill is phase 1.
         var frozen = false
 
-        // --- phase 1 (`tests/test.py`): the disturbed part of the timeline ---
+        // --- phase 1 (`side-dev/test.py`): the disturbed part of the timeline ---
         while (cursor < horizon && index < maxPanels) {
             val here = windowAt(cursor)
             val allowedHere = accepted[here]
@@ -2351,7 +2512,7 @@ object SchedulerDomain {
             val resume = if (insideBreak) null else pending
             // Inside a screen break the suspended task must not be the one that fills it (PRD §15).
             val candidates = if (insideBreak) allowedHere.filter { it != pending?.first } else allowedHere
-            // `tests/test.py`: a task is a candidate only while its minimum fits the gap ahead of it. The
+            // `side-dev/test.py`: a task is a candidate only while its minimum fits the gap ahead of it. The
             // boundary that decides is the next **cutting** one — a fixed block or a screen-zone edge, and
             // inside a break the break's own end. A screen break's START is deliberately NOT one (PRD §15: it
             // only suspends a chunk, which resumes on the far side with its minimum intact), which is exactly
@@ -2365,7 +2526,7 @@ object SchedulerDomain {
             val breakEnd = if (insideBreak) sideRegions.first { it.endEpochMillis > cursor }.endEpochMillis else null
             val fitGap = listOfNotNull(nextBlock, nextZoneEdge, breakEnd).minOrNull()?.minus(cursor)
             val fitting = candidates.filter { fitGap == null || (minimumMillisOf[it] ?: 0L) <= fitGap }
-            // `tests/test.py` steady_cycle's "no unplaceable crumb", applied to the walk: minimum times are
+            // `side-dev/test.py` steady_cycle's "no unplaceable crumb", applied to the walk: minimum times are
             // authored in whole minutes, so anything shorter than one is not a slot, it is a seam — e.g. the
             // 20-second look-away, or what is left of a chunk when a break lands a few seconds before it ends.
             val crumb = gap != null && gap < MILLIS_PER_MINUTE
@@ -2428,8 +2589,8 @@ object SchedulerDomain {
             index++
         }
 
-        // --- phase 2 (`tests/test.py`): the context is frozen forever, so settle what is still owed and then
-        // attach the analytic cycle — the "list of rules + repeat" of `tests/README.md` — unrolled out to the
+        // --- phase 2 (`side-dev/test.py`): the context is frozen forever, so settle what is still owed and then
+        // attach the analytic cycle — the "list of rules + repeat" of `side-dev/README.md` — unrolled out to the
         // horizon. Its shares are exact by construction, unlike the greedy's asymptotic ones. With screen
         // breaks enabled the context never freezes inside the horizon, so this simply never runs.
         if (frozen && cursor < horizon && index < maxPanels) {
@@ -2453,7 +2614,7 @@ object SchedulerDomain {
                     planner.steadyCycle(allowedHere)
                         .let { if (it.size > SchedulerPlanner.MAX_RULES) planner.coarseCycle(allowedHere) else it }
                         .filter { it.taskId != null && it.durationMillis > 0L }
-                // No same-task seam with what the prefix just placed (`tests/test.py` `_tidy`).
+                // No same-task seam with what the prefix just placed (`side-dev/test.py` `_tidy`).
                 var rotations = cycle.size
                 while (rotations-- > 0 && cycle.size > 1 && cycle.first().taskId == generated.lastOrNull()?.taskId) {
                     cycle = cycle.drop(1) + cycle.first()
@@ -2480,7 +2641,7 @@ object SchedulerDomain {
      * The scheduler is re-run only when this value changes — i.e. only when the user (or, through a pulled
      * remote snapshot, another device's user) changed something that can change the scheduling rules. Time
      * passing is deliberately NOT in it: the plan is a function from an instant to a task
-     * (`tests/README.md`), so advancing the now-line only *consumes* it, and materializing more of its tail
+     * (`side-dev/README.md`), so advancing the now-line only *consumes* it, and materializing more of its tail
      * is an extension ([fillSchedule]'s `keepExistingUntilMillis`), never a re-plan.
      *
      * What is in it: the tree that carries the priorities (lists, cells, weights), each schedulable leaf's
@@ -2494,27 +2655,22 @@ object SchedulerDomain {
      * - the **records**, which the schedule-advance banks continuously as auto panels elapse (CLAUDE.md's
      *   reconstructibility rule puts them on the derived side). A record edit that IS user-authored
      *   (`RemoveRecordPeriod`) therefore refills inside its own reducer instead of through this signature.
+     *
+     * The **dated** task trees are in it too, content and date alike — they are keyframes the fill reads
+     * directly ([blendedTaskPriorities]), so editing one that is not on screen changes the plan exactly as
+     * editing the live tree does. Undated trees are not: nothing reads them until they are selected, at
+     * which point they *are* the live tree. Note this still leaves the plan a function of `now` through the
+     * blend cursor, which is the one thing the signature cannot express — see [taskTreeBlendStep].
      */
     fun schedulingSignature(state: SchedulerState): Int {
         var result = if (state.automaticSchedule) 1 else 0
         result = 31 * result + state.sleep.hashCode()
         result = 31 * result + state.screenBreaks.hashCode()
-        for (list in state.lists.values.sortedBy { it.id.value }) {
-            result = 31 * result + list.id.value.hashCode()
-            result = 31 * result + list.cellIds.hashCode()
-            result = 31 * result + list.weightColumns.hashCode()
-        }
-        for (cell in state.cells.values.sortedBy { it.id.value }) {
-            result = 31 * result + cell.id.value.hashCode()
-            result = 31 * result + (cell.taskId?.value?.hashCode() ?: 0)
-            result = 31 * result + cell.priorityWeights.hashCode()
-        }
-        for (task in state.tasks.values.sortedBy { it.id.value }) {
-            result = 31 * result + task.id.value.hashCode()
-            result = 31 * result + task.title.hashCode()
-            result = 31 * result + task.minimumMinutes
-            result = 31 * result + (if (task.onScreen) 1 else 0)
-            result = 31 * result + (if (task.doableDuringBreak) 1 else 0)
+        result = treeSignature(result, state.lists, state.cells, state.tasks)
+        for (entry in datedTaskTrees(state)) {
+            result = 31 * result + entry.id.value.hashCode()
+            result = 31 * result + (entry.dateMillis?.hashCode() ?: 0)
+            result = treeSignature(result, entry.tree.lists, entry.tree.cells, entry.tree.tasks)
         }
         for (panel in state.panels.filterNot(::isRegeneratedPanel).sortedBy { it.id }) {
             result = 31 * result + panel.id.hashCode()
@@ -2524,6 +2680,38 @@ object SchedulerDomain {
             result = 31 * result + (if (panel.noScreen) 1 else 0)
             result = 31 * result + (if (panel.inactivity) 1 else 0)
             result = 31 * result + (if (panel.pinned) 1 else 0)
+        }
+        return result
+    }
+
+    /**
+     * The part of [schedulingSignature] that reads one tree — the priority-carrying structure (lists,
+     * cells, weights) plus each task's scheduling attributes. Shared by the live tree and by every dated
+     * task tree, so a keyframe is watched on exactly the same fields as the tree on screen.
+     */
+    private fun treeSignature(
+        seed: Int,
+        lists: Map<CellListId, org.example.project.scheduler.model.CellList>,
+        cells: Map<CellId, org.example.project.scheduler.model.Cell>,
+        tasks: Map<TaskId, Task>,
+    ): Int {
+        var result = seed
+        for (list in lists.values.sortedBy { it.id.value }) {
+            result = 31 * result + list.id.value.hashCode()
+            result = 31 * result + list.cellIds.hashCode()
+            result = 31 * result + list.weightColumns.hashCode()
+        }
+        for (cell in cells.values.sortedBy { it.id.value }) {
+            result = 31 * result + cell.id.value.hashCode()
+            result = 31 * result + (cell.taskId?.value?.hashCode() ?: 0)
+            result = 31 * result + cell.priorityWeights.hashCode()
+        }
+        for (task in tasks.values.sortedBy { it.id.value }) {
+            result = 31 * result + task.id.value.hashCode()
+            result = 31 * result + task.title.hashCode()
+            result = 31 * result + task.minimumMinutes
+            result = 31 * result + (if (task.onScreen) 1 else 0)
+            result = 31 * result + (if (task.doableDuringBreak) 1 else 0)
         }
         return result
     }
@@ -3180,6 +3368,49 @@ object SchedulerDomain {
     /** PRD §14: the title of the known reminder with this [id], if any. */
     fun reminderTitleForId(state: SchedulerState, id: String): String? =
         allReminderEntries(state).firstOrNull { it.id == id }?.title
+
+    /** One row of the task-tree selector's identity menu — its tree ([id] null = the "New task tree" row). */
+    data class TaskTreeMenuEntry(val id: TaskTreeId?, val label: String)
+
+    /**
+     * Rows of the task-tree selector's identity menu, mirroring the cell's Change Task menu
+     * ([changeTaskMenuEntries]): a leading "New task tree" row, then every existing tree whose title **is**
+     * the typed text (exact, case-insensitive). Partial matches belong to [taskTreeTitleSuggestions] — typing
+     * "w" must not offer to switch to "Work"; picking the suggestion fills the field, and *then* the tree row
+     * appears. Empty text matches nothing, so the menu is the single "New task tree" row.
+     */
+    fun taskTreeMenuEntries(state: SchedulerState, draftText: String): List<TaskTreeMenuEntry> {
+        val q = draftText.trim()
+        return buildList {
+            add(TaskTreeMenuEntry(id = null, label = "New task tree"))
+            if (q.isEmpty()) return@buildList
+            state.taskTrees
+                .filter { it.title.equals(q, ignoreCase = true) }
+                .forEach { add(TaskTreeMenuEntry(id = it.id, label = it.title)) }
+        }
+    }
+
+    /**
+     * Task-tree title suggestions (the selector's second menu), mirroring [titleSuggestions]: every tree
+     * title containing [input], most similar first. An **empty** input lists them all, which is how the user
+     * browses the existing trees.
+     */
+    fun taskTreeTitleSuggestions(state: SchedulerState, input: String): List<String> {
+        val q = input.trim()
+        return state.taskTrees
+            .map { it.title }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .filter { q.isEmpty() || it.contains(q, ignoreCase = true) }
+            .sortedWith(compareByDescending<String> { titleSimilarity(it, q) }.thenBy { it })
+    }
+
+    /** The first task tree whose title is exactly [title], if any (what Enter in the selector commits to). */
+    fun taskTreeIdForTitle(state: SchedulerState, title: String): TaskTreeId? {
+        val q = title.trim()
+        if (q.isEmpty()) return null
+        return state.taskTrees.firstOrNull { it.title.equals(q, ignoreCase = true) }?.id
+    }
 
     fun changeTaskMenuSelectedIndex(
         entries: List<ChangeTaskMenuEntry>,

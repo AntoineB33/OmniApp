@@ -6,10 +6,10 @@ import kotlin.math.roundToLong
 import org.example.project.scheduler.model.TaskId
 
 /**
- * PRD §9 / `tests/README.md`: the **cyclic proportional-share** scheduler — the Kotlin port of the reference
- * implementation in `tests/test.py`.
+ * PRD §9 / `side-dev/README.md`: the **cyclic proportional-share** scheduler — the Kotlin port of the reference
+ * implementation in `side-dev/test.py`.
  *
- * ### The rules, verbatim from `tests/README.md`
+ * ### The rules, verbatim from `side-dev/README.md`
  * - each task has a **minimum time** and a **priority percentage**; once a task is placed, nothing else may be
  *   placed until its minimum has elapsed;
  * - the priorities must be satisfied "as much as possible, **in a scale as small as possible**" — two 50 %
@@ -70,7 +70,7 @@ import org.example.project.scheduler.model.TaskId
  * Below one period nothing is forgotten and no slot is capped, so an unperturbed timeline behaves exactly as a
  * plain WFQ and the cycle stays exact.
  *
- * ### Deliberate deviations from `tests/test.py`
+ * ### Deliberate deviations from `side-dev/test.py`
  * - **`Fraction` → `Double` millis.** The reference keeps every value an exact rational so the cycle's shares
  *   are provably exact; Kotlin Multiplatform has no rational type, so the walk runs in `Double` milliseconds
  *   and slot durations are rounded to whole millis at the boundary. Over a 168-hour horizon that is ~10⁻⁷ of a
@@ -101,7 +101,7 @@ data class PlanWindow(val startMillis: Long, val endMillis: Long?, val allowed: 
 data class PlanSlot(val taskId: TaskId?, val durationMillis: Long)
 
 /**
- * `tests/README.md`: the finite rule list — [prefix] played once from [startMillis], then [cycle] forever.
+ * `side-dev/README.md`: the finite rule list — [prefix] played once from [startMillis], then [cycle] forever.
  * An empty [cycle] means the walk was capped before a stable cycle could be calculated ("truncated timelines").
  */
 class Plan(
@@ -178,7 +178,7 @@ class SchedulerPlanner(
     val tasks: List<PlanTask>,
     /**
      * How far, in time, an exclusion is felt — and how fast an abnormal imbalance is forgotten. One
-     * [minPeriodMillis] by default, exactly as in `tests/test.py`.
+     * [minPeriodMillis] by default, exactly as in `side-dev/test.py`.
      */
     tauMillis: Double? = null,
     /**
@@ -417,14 +417,14 @@ class SchedulerPlanner(
     // ----- the plan -----------------------------------------------------------------------------
 
     /**
-     * `tests/test.py` `Scheduler.plan`, verbatim:
+     * `side-dev/test.py` `Scheduler.plan`, verbatim:
      *
      * - **Phase 1** walks the disturbed part of the timeline (pre-placed blocks, period windows, and the tail
      *   of the influence field) with the field-aware greedy → `prefix`;
      * - **Phase 2**, once nothing is left to distort the schedule, settles what is still owed → `prefix`, then
      *   attaches the analytic cycle → `cycle`.
      *
-     * [maxRules] is the "strict maximum rule limit" of `tests/README.md`: a cycle needing more rules falls
+     * [maxRules] is the "strict maximum rule limit" of `side-dev/README.md`: a cycle needing more rules falls
      * back to [coarseCycle], and a prefix that fills the budget before the context ever freezes returns with
      * **no cycle at all** (a truncated timeline).
      */
@@ -699,10 +699,10 @@ class SchedulerPlanner(
     data class LongRangeSpan(val startMillis: Long, val endMillis: Long)
 
     companion object {
-        /** An end that never comes — the `FOREVER` of `tests/test.py`, kept in `Long` arithmetic. */
+        /** An end that never comes — the `FOREVER` of `side-dev/test.py`, kept in `Long` arithmetic. */
         const val FOREVER: Long = Long.MAX_VALUE
 
-        /** `tests/test.py` `MAX_RULES`: the strict rule limit of `tests/README.md`. */
+        /** `side-dev/test.py` `MAX_RULES`: the strict rule limit of `side-dev/README.md`. */
         const val MAX_RULES: Int = 50
 
         const val DEFAULT_MAX_BOOST: Double = 6.0
@@ -712,7 +712,7 @@ class SchedulerPlanner(
         /** `max_reach` defaults to six `tau` in the reference. */
         const val DEFAULT_REACH_TAUS: Double = 6.0
 
-        /** `tests/test.py`: the phase-2 settling is bounded to four periods. */
+        /** `side-dev/test.py`: the phase-2 settling is bounded to four periods. */
         const val SETTLE_PERIODS: Double = 4.0
 
         private const val MAX_STEPS_PER_RULE = 200
@@ -750,8 +750,8 @@ class SchedulerPlanner(
  * The running state of one walk: each task's **virtual clock** `vᵢ = servedᵢ / pᵢ` plus the task placed last.
  * Single-use and not thread-safe — [serve] mutates it as the caller's cursor sweeps the timeline.
  *
- * This is the whole of `tests/test.py`'s scheduling logic, and it is deliberately the **only** copy of it:
- * both [SchedulerPlanner.plan] (the rule-list form of `tests/README.md`) and
+ * This is the whole of `side-dev/test.py`'s scheduling logic, and it is deliberately the **only** copy of it:
+ * both [SchedulerPlanner.plan] (the rule-list form of `side-dev/README.md`) and
  * [SchedulerDomain.fillSchedule] (the app's calendar fill, which additionally has to weave in screen breaks,
  * screen zones and concrete panels) are thin drivers over it, so the two can never disagree on the rules.
  */

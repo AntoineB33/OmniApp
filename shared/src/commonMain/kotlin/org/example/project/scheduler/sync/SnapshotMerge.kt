@@ -11,6 +11,7 @@ import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.PersistedSnapshot
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.state.TaskTreeEntry
 
 /**
  * **Three-way merge of two concurrently edited snapshots** — what [SchedulerSyncEngine] does when a reconcile
@@ -80,6 +81,14 @@ object SnapshotMerge {
             mergeKeyedList(base.chores, local.chores, remote.chores, ChoreEntry::id) { b, l, r -> pick(b, l, r) }
         val alarms =
             mergeKeyedList(base.alarms, local.alarms, remote.alarms, AlarmEntry::id) { b, l, r -> pick(b, l, r) }
+        // Task trees resolve as WHOLE objects: an entry's title and its stored tree are not independent
+        // fields to interleave — a tree captured on one device is one consistent thing. Adding a tree on each
+        // device keeps both (they carry different ids); the live tree of whichever entry is active is merged
+        // by the ordinary cell/task rules above, since that is where it actually lives.
+        val taskTrees =
+            mergeKeyedList(base.taskTrees, local.taskTrees, remote.taskTrees, TaskTreeEntry::id) { b, l, r ->
+                pick(b, l, r)
+            }
 
         val merged =
             local.copy(
@@ -97,6 +106,12 @@ object SnapshotMerge {
                 nextTaskCounter = maxOf(local.nextTaskCounter, remote.nextTaskCounter),
                 nextCellCounter = maxOf(local.nextCellCounter, remote.nextCellCounter),
                 nextPanelCounter = maxOf(local.nextPanelCounter, remote.nextPanelCounter),
+                nextTaskTreeCounter = maxOf(local.nextTaskTreeCounter, remote.nextTaskTreeCounter),
+                taskTrees = taskTrees,
+                // Which tree is live goes with the live tree itself (which the remote wins on conflict), so
+                // the two can never end up naming different trees.
+                activeTaskTreeId =
+                    pickNullable(base.activeTaskTreeId, local.activeTaskTreeId, remote.activeTaskTreeId),
                 panels = panels,
                 chores = chores,
                 alarms = alarms,
@@ -321,6 +336,10 @@ object SnapshotMerge {
                 // back to a root that exists so the walk below has somewhere to start.
                 rootListId = state.rootListId.takeIf { it in lists } ?: lists.keys.firstOrNull() ?: state.rootListId,
                 expanded = state.expanded.filterTo(mutableSetOf()) { it in cells },
+                // A selection naming a task tree the merge did not keep would leave the live tree unable to
+                // flush itself; reading as "never named" is the state that loses nothing.
+                activeTaskTreeId =
+                    state.activeTaskTreeId?.takeIf { id -> state.taskTrees.any { it.id == id } },
             )
         return SchedulerDomain.pruneDetachedTree(rooted)
     }

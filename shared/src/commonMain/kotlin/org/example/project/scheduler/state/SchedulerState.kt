@@ -9,6 +9,7 @@ import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.scheduler.model.WellKnownIds
 
 data class SchedulerSelection(
@@ -168,6 +169,57 @@ data class TreeSnapshot(
     val nextCellCounter: Int,
 )
 
+/**
+ * One **task tree**: a named alternative version of the whole task tree, picked in the selector above the
+ * tree. The trees are *live*, not frozen backups — the selected one IS the tree the app shows and edits, and
+ * switching away flushes whatever the user did into [tree] before loading the next one (see
+ * [SchedulerState.withActiveTaskTreeFlushed]). So the account can hold, say, a "Work" and a "Studies"
+ * arrangement of its tasks and move between them without either losing anything.
+ *
+ * [tree] keeps the tasks' completed-work **records** (unlike [SchedulerState.captureTree], which strips them
+ * for the Undo/Redo history): a task that exists only in an inactive tree has nowhere else for its record to
+ * live, so stripping here would erase it at the next switch. [expanded] rides along so a tree comes back
+ * expanded the way it was left.
+ *
+ * While a tree is the active one its [tree] is **stale by design** — the live [SchedulerState] fields are the
+ * truth for it, and the flush on the way out is what makes the stored copy current again. Nothing ever reads
+ * the active entry's [tree] without flushing first.
+ */
+data class TaskTreeEntry(
+    val id: TaskTreeId,
+    val title: String,
+    val tree: TreeSnapshot,
+    val expanded: Set<CellId> = emptySet(),
+    /**
+     * The instant this tree's priorities are the account's *actual* ones — set in the "All task trees"
+     * window and drawn on its timeline. `null` (the default, and what every pre-existing payload decodes
+     * to) means the tree is not on the timeline at all and takes no part in the blend.
+     *
+     * A dated tree is a **keyframe**: between two consecutive dates the scheduler follows a continuous
+     * linear interpolation of the two trees' absolute priorities, with a task missing from one side
+     * counting as 0% there (see [org.example.project.scheduler.domain.SchedulerDomain.blendedTaskPriorities]).
+     * Before the first date and after the last one the nearest keyframe holds unchanged.
+     */
+    val dateMillis: Long? = null,
+)
+
+/**
+ * Everything a task-tree switch/creation/rename moves at once — the stored trees, which one is active, the
+ * id counter, and the live tree + expansion the selected one projects into [SchedulerState]. Captured
+ * before/after by the reducer's `TaskTreeDelta` so Ctrl+Z walks a switch back as one step.
+ *
+ * Undo can only reach a tree mutation *older* than a switch by undoing that switch first (history is walked
+ * in order), which is what keeps a [TreeMutationDelta] recorded under one tree from ever being replayed onto
+ * another.
+ */
+data class TaskTreeStateSnapshot(
+    val trees: List<TaskTreeEntry>,
+    val activeId: TaskTreeId?,
+    val nextCounter: Int,
+    val tree: TreeSnapshot,
+    val expanded: Set<CellId>,
+)
+
 data class SchedulerState(
     val rootListId: CellListId,
     val lists: Map<CellListId, CellList>,
@@ -183,6 +235,22 @@ data class SchedulerState(
     val nextCellCounter: Int = 1,
     /** In-memory clipboard for copy/paste (not persisted). */
     val clipboard: List<String> = emptyList(),
+    /**
+     * The named alternative **task trees** of this account, in creation order (see [TaskTreeEntry]) — the
+     * selector above the task tree lists these. Authoritative user data: persisted **and** synced, so every
+     * device of the account sees (and works in) the same set. Empty until the user creates the first one,
+     * which is why a payload written before the selector existed needs no migration: it simply decodes with
+     * no trees and an unnamed live tree.
+     */
+    val taskTrees: List<TaskTreeEntry> = emptyList(),
+    /**
+     * The [TaskTreeEntry] the live tree currently *is*, or `null` when the tree has never been named (the
+     * default for a fresh/legacy account). Authoritative and synced with [taskTrees]: the live tree fields
+     * and this id travel together, so switching tree on one device switches it everywhere.
+     */
+    val activeTaskTreeId: TaskTreeId? = null,
+    /** Monotonic suffix for `tree/{n}` ids; never reused, so a deleted/renamed tree can't collide. */
+    val nextTaskTreeCounter: Int = 0,
     /**
      * PRD §8/§9 task panels: the calendar blocks in the schedulable window — both scheduler-generated
      * (`auto`) panels and user-authored ones, with `pinned` panels surviving a reschedule (see
@@ -370,6 +438,104 @@ data class SchedulerState(
             nextTaskCounter = snapshot.nextTaskCounter,
             nextCellCounter = snapshot.nextCellCounter,
         )
+
+    /**
+     * The live tree **with the tasks' records kept** — what a [TaskTreeEntry] stores. [captureTree] strips
+     * records because Undo/Redo must never revert them (PRD §8); a stored task tree is the opposite case:
+     * it is the only home a record has while its tree is not the active one.
+     */
+    fun captureTreeWithRecords(): TreeSnapshot =
+        TreeSnapshot(
+            cells = cells,
+            lists = lists,
+            tasks = tasks,
+            titleToTaskIds = titleToTaskIds,
+            nextTaskCounter = nextTaskCounter,
+            nextCellCounter = nextCellCounter,
+        )
+
+    /**
+     * Projects a stored task tree onto the live state — the inverse of [captureTreeWithRecords]. The id
+     * counters take the **max** of both sides: ids are handed out from one counter but live in every tree, so
+     * adopting a tree whose counter is lower would re-mint ids another tree already uses.
+     */
+    fun applyTreeWithRecords(snapshot: TreeSnapshot): SchedulerState =
+        copy(
+            cells = snapshot.cells,
+            lists = snapshot.lists,
+            tasks = snapshot.tasks,
+            titleToTaskIds = snapshot.titleToTaskIds,
+            nextTaskCounter = maxOf(nextTaskCounter, snapshot.nextTaskCounter),
+            nextCellCounter = maxOf(nextCellCounter, snapshot.nextCellCounter),
+        )
+
+    /** The selected task tree's entry, or null when the live tree has never been named. */
+    val activeTaskTree: TaskTreeEntry?
+        get() = activeTaskTreeId?.let { id -> taskTrees.firstOrNull { it.id == id } }
+
+    /**
+     * Writes the live tree + expansion into the active [TaskTreeEntry], making the stored copy current. Run
+     * before anything replaces the live tree (a switch, a create) so the tree being left keeps every edit
+     * made in it. A no-op when no tree is selected.
+     */
+    fun withActiveTaskTreeFlushed(): SchedulerState {
+        val activeId = activeTaskTreeId ?: return this
+        if (taskTrees.none { it.id == activeId }) return this
+        val captured = captureTreeWithRecords()
+        return copy(
+            taskTrees =
+                taskTrees.map { entry ->
+                    if (entry.id == activeId) entry.copy(tree = captured, expanded = expanded) else entry
+                },
+        )
+    }
+
+    /**
+     * Makes [entry] the live tree: its cells/lists/tasks/records and expansion replace the current ones, and
+     * the per-tree UI state that cannot survive the swap (the selection, an in-flight edit session) is
+     * cleared — every id it names belongs to the tree being left. Callers must have flushed first.
+     */
+    fun withTaskTreeLoaded(entry: TaskTreeEntry): SchedulerState =
+        applyTreeWithRecords(entry.tree).copy(
+            activeTaskTreeId = entry.id,
+            expanded = entry.expanded.filter { it in entry.tree.cells }.toSet(),
+            selection = SchedulerSelection(),
+            editSession = null,
+        )
+
+    /** The task-tree fields as one value, for the reducer's undoable `TaskTreeDelta`. */
+    fun captureTaskTreeState(): TaskTreeStateSnapshot =
+        TaskTreeStateSnapshot(
+            trees = taskTrees,
+            activeId = activeTaskTreeId,
+            nextCounter = nextTaskTreeCounter,
+            tree = captureTreeWithRecords(),
+            expanded = expanded,
+        )
+
+    /**
+     * Restores a [captureTaskTreeState] value (a task-tree switch, creation or rename, and the undo/redo of
+     * each). The selection and any in-flight edit session are dropped **only when the live tree actually
+     * changes** — every id they name would then belong to the tree being left — so creating or renaming a
+     * tree, which touches no cell, leaves the user's selection exactly where it was.
+     */
+    fun applyTaskTreeState(snapshot: TaskTreeStateSnapshot): SchedulerState {
+        val treeChanged =
+            snapshot.tree.cells != cells || snapshot.tree.tasks != tasks || snapshot.tree.lists != lists
+        return applyTreeWithRecords(snapshot.tree).copy(
+            taskTrees = snapshot.trees,
+            activeTaskTreeId = snapshot.activeId,
+            nextTaskTreeCounter = maxOf(nextTaskTreeCounter, snapshot.nextCounter),
+            expanded = snapshot.expanded,
+            selection = if (treeChanged) SchedulerSelection() else selection,
+            editSession = if (treeChanged) null else editSession,
+        )
+    }
+
+    fun allocateTaskTreeId(): Pair<TaskTreeId, SchedulerState> {
+        val id = TaskTreeId("tree/$nextTaskTreeCounter")
+        return id to copy(nextTaskTreeCounter = nextTaskTreeCounter + 1)
+    }
 
     fun allocateTaskId(): Pair<TaskId, SchedulerState> {
         val id = TaskId("task/user/$nextTaskCounter")

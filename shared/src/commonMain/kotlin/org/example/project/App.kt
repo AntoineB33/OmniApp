@@ -88,6 +88,7 @@ import org.example.project.ui.PlacedRecord
 import org.example.project.ui.ReminderEditWindow
 import org.example.project.ui.SimPauseScope
 import org.example.project.ui.SleepWindow
+import org.example.project.ui.TaskTreesWindow
 import org.example.project.ui.TimeSimPanel
 import org.example.project.ui.startOfWeek
 
@@ -96,7 +97,7 @@ enum class OmniPage(val label: String) {
 }
 
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
-private enum class FloatingWindow { Calendar, Reminders, History, Sleep, Alarms, TimeSim }
+private enum class FloatingWindow { Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TimeSim }
 
 // Debug "simulate pause + leap": pressing a break chip INSTANTLY jumps the sim clock forward by the whole
 // break ([SimAppClock.leap]) — the now-line leaps to the break's end rather than gliding there over ~1 real
@@ -308,6 +309,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §18 Alarms: whether the floating alarms window is open (local UI state; the alarms themselves
         // are authoritative synced state).
         var alarmWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Alarms)) }
+        // All task trees: whether the floating task-tree timeline window is open (local UI state; the trees
+        // and their dates are authoritative synced state).
+        var taskTreesWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.TaskTrees)) }
 
         // The floating windows are siblings in one Box, so their paint order is their declaration order.
         // To put the *currently focused* window on top of the layers, we keep an explicit stacking order
@@ -322,6 +326,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     FloatingWindow.History,
                     FloatingWindow.Sleep,
                     FloatingWindow.Alarms,
+                    FloatingWindow.TaskTrees,
                     FloatingWindow.TimeSim,
                 ),
             )
@@ -336,6 +341,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.History -> historyManagerOpen
             FloatingWindow.Sleep -> sleepWindowOpen
             FloatingWindow.Alarms -> alarmWindowOpen
+            FloatingWindow.TaskTrees -> taskTreesWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
         }
         // The focused window is the topmost open one in the stack.
@@ -348,6 +354,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.History -> AppWindow.History
             FloatingWindow.Sleep -> null
             FloatingWindow.Alarms -> null
+            FloatingWindow.TaskTrees -> null
             FloatingWindow.TimeSim -> null
         }
         // PRD §7 window navigation: raise [id] to the top layer AND move scheduler focus onto it, which
@@ -376,12 +383,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var historyOffset by remember { mutableStateOf(savedOffset(FloatingWindow.History, Offset(200f, 150f))) }
         var sleepOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Sleep, Offset(120f, -120f))) }
         var alarmOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Alarms, Offset(-120f, 120f))) }
+        var taskTreesOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskTrees, Offset(-260f, -60f))) }
         // Persist each window's visibility whenever it opens/closes (its offset persists separately on drag-end).
         LaunchedEffect(calendarOpen) { persistPlacement(FloatingWindow.Calendar, calendarOffset, calendarOpen) }
         LaunchedEffect(choresManagerOpen) { persistPlacement(FloatingWindow.Reminders, remindersOffset, choresManagerOpen) }
         LaunchedEffect(historyManagerOpen) { persistPlacement(FloatingWindow.History, historyOffset, historyManagerOpen) }
         LaunchedEffect(sleepWindowOpen) { persistPlacement(FloatingWindow.Sleep, sleepOffset, sleepWindowOpen) }
         LaunchedEffect(alarmWindowOpen) { persistPlacement(FloatingWindow.Alarms, alarmOffset, alarmWindowOpen) }
+        LaunchedEffect(taskTreesWindowOpen) { persistPlacement(FloatingWindow.TaskTrees, taskTreesOffset, taskTreesWindowOpen) }
 
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
@@ -700,6 +709,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleSleep = { onMenuWindowClicked(FloatingWindow.Sleep) { sleepWindowOpen = it } },
                     alarmWindowOpen = alarmWindowOpen,
                     onToggleAlarms = { onMenuWindowClicked(FloatingWindow.Alarms) { alarmWindowOpen = it } },
+                    taskTreesWindowOpen = taskTreesWindowOpen,
+                    onToggleTaskTrees = {
+                        onMenuWindowClicked(FloatingWindow.TaskTrees) { taskTreesWindowOpen = it }
+                    },
                     sleeping = schedulerState.isSleeping(nowMillis),
                     onToggleSleepWork = {
                         if (schedulerState.isSleeping(clock.nowMillis())) {
@@ -713,13 +726,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     away = userAway,
                     onToggleAway = { engine.setUserAway(!userAway) },
                     anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen ||
-                        alarmWindowOpen,
+                        alarmWindowOpen || taskTreesWindowOpen,
                     onCloseAllWindows = {
                         calendarOpen = false
                         choresManagerOpen = false
                         historyManagerOpen = false
                         sleepWindowOpen = false
                         alarmWindowOpen = false
+                        taskTreesWindowOpen = false
                     },
                 )
 
@@ -1035,6 +1049,34 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             modifier = Modifier
                                 .align(Alignment.Center)
                                 .zIndex(windowZ(FloatingWindow.Alarms)),
+                        )
+                    }
+
+                    // All task trees: the account's named task trees over a timeline of the dated ones.
+                    // A date makes a tree a keyframe the scheduler blends its priorities between
+                    // (SchedulerDomain.blendedTaskPriorities), so both edits here are authoritative.
+                    if (taskTreesWindowOpen) {
+                        TaskTreesWindow(
+                            trees = schedulerState.taskTrees,
+                            activeId = schedulerState.activeTaskTreeId,
+                            // The quantized display now-line, like every other per-tick read here: the
+                            // marker only has to say which two trees `now` sits between.
+                            nowMillis = nowMillis,
+                            timeZone = tz,
+                            onSetDate = { id, date ->
+                                vm.dispatch(SchedulerIntent.SetTaskTreeDate(id, date))
+                            },
+                            onDelete = { vm.dispatch(SchedulerIntent.DeleteTaskTree(it)) },
+                            onDismiss = { taskTreesWindowOpen = false },
+                            initialOffset = taskTreesOffset,
+                            onOffsetChange = {
+                                taskTreesOffset = it
+                                persistPlacement(FloatingWindow.TaskTrees, it, true)
+                            },
+                            onRaise = { focusWindow(FloatingWindow.TaskTrees) },
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .zIndex(windowZ(FloatingWindow.TaskTrees)),
                         )
                     }
 

@@ -12,6 +12,7 @@ import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.time.AppClock
 import org.example.project.time.SystemAppClock
 import kotlin.time.Instant
@@ -67,6 +68,11 @@ object SchedulerReducer {
             is SchedulerIntent.ToggleExpand -> commitDelta(state, ToggleExpandDelta(intent.cellId))
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
             is SchedulerIntent.AssignTaskId -> commitDelta(state, assignTaskIdDelta(state, intent.cellId, intent.taskId))
+            is SchedulerIntent.SelectTaskTree -> reduceSelectTaskTree(state, intent.id)
+            is SchedulerIntent.CreateTaskTree -> reduceCreateTaskTree(state, intent.title)
+            is SchedulerIntent.RenameTaskTree -> reduceRenameTaskTree(state, intent.id, intent.title)
+            is SchedulerIntent.SetTaskTreeDate -> reduceSetTaskTreeDate(state, intent.id, intent.dateMillis)
+            is SchedulerIntent.DeleteTaskTree -> reduceDeleteTaskTree(state, intent.id)
             is SchedulerIntent.SetPriorityWeight ->
                 commitDelta(state, priorityTreeDelta(state, "Priority weight") { applySetPriorityWeight(it, intent.cellId, intent.column, intent.value) })
             is SchedulerIntent.SetPriorityColumnWeight ->
@@ -1413,6 +1419,128 @@ object SchedulerReducer {
         }
     }
 
+    /**
+     * Task-tree selector: make [id] the live tree. The tree being left is **flushed** into its own entry
+     * first ([SchedulerState.withActiveTaskTreeFlushed]) — the trees are live alternatives, not frozen
+     * backups, so everything done in one must be there when the user comes back to it.
+     *
+     * The whole swap is one [TaskTreeDelta], which is also what keeps the Main history coherent across
+     * trees: undo walks units in order, so a tree mutation recorded under the previous tree can only be
+     * reached after this unit has already put that tree back.
+     */
+    private fun reduceSelectTaskTree(state: SchedulerState, id: TaskTreeId): SchedulerState {
+        if (state.activeTaskTreeId == id) return state
+        val flushed = state.withActiveTaskTreeFlushed()
+        val target = flushed.taskTrees.firstOrNull { it.id == id } ?: return state
+        val after = flushed.withTaskTreeLoaded(target)
+        return commitDelta(
+            state,
+            TaskTreeDelta(
+                before = state.captureTaskTreeState(),
+                after = after.captureTaskTreeState(),
+                label = "Task tree \"${target.title.ifBlank { "(untitled)" }}\"",
+            ),
+        )
+    }
+
+    /**
+     * Task-tree selector: create a tree named [title] holding a copy of what is on screen and select it. The
+     * live tree itself does not change (the copy IS it) — only the identity does, so nothing reschedules;
+     * the two trees diverge from the user's next edit onward. The tree being left is flushed first, so its
+     * stored copy is current before it stops being the live one.
+     */
+    private fun reduceCreateTaskTree(state: SchedulerState, title: String): SchedulerState {
+        val name = title.trim()
+        if (name.isEmpty()) return state
+        val (id, allocated) = state.withActiveTaskTreeFlushed().allocateTaskTreeId()
+        val entry =
+            TaskTreeEntry(
+                id = id,
+                title = name,
+                tree = state.captureTreeWithRecords(),
+                expanded = state.expanded,
+            )
+        val after = allocated.copy(taskTrees = allocated.taskTrees + entry, activeTaskTreeId = id)
+        return commitDelta(
+            state,
+            TaskTreeDelta(
+                before = state.captureTaskTreeState(),
+                after = after.captureTaskTreeState(),
+                label = "New task tree \"$name\"",
+            ),
+        )
+    }
+
+    /** Task-tree selector (Rename mode): the same tree under a new name — content and id are untouched. */
+    private fun reduceRenameTaskTree(state: SchedulerState, id: TaskTreeId, title: String): SchedulerState {
+        val name = title.trim()
+        val entry = state.taskTrees.firstOrNull { it.id == id } ?: return state
+        if (name.isEmpty() || name == entry.title) return state
+        val after =
+            state.copy(taskTrees = state.taskTrees.map { if (it.id == id) it.copy(title = name) else it })
+        return commitDelta(
+            state,
+            TaskTreeDelta(
+                before = state.captureTaskTreeState(),
+                after = after.captureTaskTreeState(),
+                label = "Rename task tree \"${entry.title}\" → \"$name\"",
+            ),
+        )
+    }
+
+    /**
+     * "All task trees": put [id] on the timeline at [dateMillis], or take it off with `null`. Only the
+     * entry's own date moves — the tree's content and which tree is live are untouched — but the plan
+     * itself changes, since the dated trees are what the scheduler blends between
+     * ([SchedulerDomain.blendedTaskPriorities]); the debounced rule-change watcher picks that up because
+     * the dates are part of [SchedulerDomain.schedulingSignature].
+     */
+    private fun reduceSetTaskTreeDate(state: SchedulerState, id: TaskTreeId, dateMillis: Long?): SchedulerState {
+        val entry = state.taskTrees.firstOrNull { it.id == id } ?: return state
+        if (entry.dateMillis == dateMillis) return state
+        val after =
+            state.copy(
+                taskTrees = state.taskTrees.map { if (it.id == id) it.copy(dateMillis = dateMillis) else it },
+            )
+        return commitDelta(
+            state,
+            TaskTreeDelta(
+                before = state.captureTaskTreeState(),
+                after = after.captureTaskTreeState(),
+                label =
+                    if (dateMillis == null) "Task tree \"${entry.title}\" off the timeline"
+                    else "Date task tree \"${entry.title}\"",
+            ),
+        )
+    }
+
+    /**
+     * "All task trees" (the bin button): delete [id]. Deleting the **live** tree is deliberately not
+     * destructive — the live tree fields stay exactly as they are and simply stop being named
+     * (`activeTaskTreeId = null`, the state a never-named account is already in), so the bin can only ever
+     * cost the user a name, never a tree's worth of work. Deleting an inactive tree does discard its stored
+     * copy, which is what the button is for; Undo puts it back whole.
+     */
+    private fun reduceDeleteTaskTree(state: SchedulerState, id: TaskTreeId): SchedulerState {
+        val entry = state.taskTrees.firstOrNull { it.id == id } ?: return state
+        // Flush first: if another tree is live, its own stored copy must be current before this one's
+        // removal is captured as the "after" side, or the switch away would resurrect a stale snapshot.
+        val flushed = state.withActiveTaskTreeFlushed()
+        val after =
+            flushed.copy(
+                taskTrees = flushed.taskTrees.filterNot { it.id == id },
+                activeTaskTreeId = flushed.activeTaskTreeId?.takeIf { it != id },
+            )
+        return commitDelta(
+            state,
+            TaskTreeDelta(
+                before = state.captureTaskTreeState(),
+                after = after.captureTaskTreeState(),
+                label = "Delete task tree \"${entry.title.ifBlank { "(untitled)" }}\"",
+            ),
+        )
+    }
+
     private fun commitDelta(
         state: SchedulerState,
         forward: Delta,
@@ -2572,6 +2700,38 @@ internal data class TreeMutationDelta(
     override fun undo(state: SchedulerState): SchedulerState = state.applyTree(before)
 
     override fun redo(state: SchedulerState): SchedulerState = state.applyTree(after)
+}
+
+/**
+ * A change to the **task trees** (see [TaskTreeEntry]): selecting another tree, creating one, or renaming
+ * one. Captures the whole task-tree state on both sides — the stored trees, the active id, the counter, and
+ * the live tree + expansion the selection projects — because a switch moves all of them at once and undo
+ * must put every part back together.
+ */
+internal data class TaskTreeDelta(
+    val before: TaskTreeStateSnapshot,
+    val after: TaskTreeStateSnapshot,
+    override val label: String,
+) : Delta {
+    override val details: List<String>
+        get() = buildList {
+            val b = before.trees.associate { it.id to it.title }
+            val a = after.trees.associate { it.id to it.title }
+            (a.keys - b.keys).forEach { add("+ tree \"${a.getValue(it)}\"") }
+            (b.keys - a.keys).forEach { add("− tree \"${b.getValue(it)}\"") }
+            (b.keys intersect a.keys).forEach { id ->
+                if (b.getValue(id) != a.getValue(id)) add("\"${b.getValue(id)}\" → \"${a.getValue(id)}\"")
+            }
+            if (before.activeId != after.activeId) {
+                val from = before.activeId?.let { b[it] } ?: "—"
+                val to = after.activeId?.let { a[it] } ?: "—"
+                add("selected: \"$from\" → \"$to\"")
+            }
+        }
+
+    override fun undo(state: SchedulerState): SchedulerState = state.applyTaskTreeState(before)
+
+    override fun redo(state: SchedulerState): SchedulerState = state.applyTaskTreeState(after)
 }
 
 internal object NoOpDelta : Delta {

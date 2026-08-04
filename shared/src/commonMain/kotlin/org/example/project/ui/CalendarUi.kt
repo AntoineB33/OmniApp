@@ -626,6 +626,9 @@ fun LateralMenu(
     /** PRD §18 Alarms: whether the alarms window is open + toggle callback. */
     alarmWindowOpen: Boolean = false,
     onToggleAlarms: () -> Unit = {},
+    /** All task trees (the timeline of dated task trees): whether that window is open + toggle callback. */
+    taskTreesWindowOpen: Boolean = false,
+    onToggleTaskTrees: () -> Unit = {},
     /**
      * Sleep/Work toggle: whether the user is currently in "sleeping" mode (pressed **Sleep**). The button reads
      * **Work** while sleeping and **Sleep** while working; pressing it flips the mode ([onToggleSleepWork]) and
@@ -774,6 +777,14 @@ fun LateralMenu(
             label = "Alarms",
             active = alarmWindowOpen,
             onClick = onToggleAlarms,
+        )
+
+        // The task-tree timeline: every named task tree, and the dates that make them the keyframes the
+        // scheduler blends its priorities between.
+        MenuButton(
+            label = "All task trees",
+            active = taskTreesWindowOpen,
+            onClick = onToggleTaskTrees,
         )
     }
 }

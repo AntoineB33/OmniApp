@@ -1,3 +1,11 @@
+# side-dev — the scheduler model
+
+Side developments: ideas of logic worked out here in Python (`uv run test.py`) before being ported
+to the app. `test.py` is the reference implementation of the rules below; its Kotlin port is
+`SchedulerPlan.kt` (`SchedulerPlanner` + `PlanWalk`), checked against it by `SchedulerPlanTest`.
+
+---
+
 There are tasks. Each task has a minimum time and a priority percentage. The scheduler must place panels of tasks in a timeline from t_now to +infinity. When the scheduler places a task, it cannot then place another task until the placed one reaches its minimum time.
 The scheduler must satisfy as much as possible the priority percentages, in a scale as small as possible.
 Example: task A 50% 10min and task B 50% 10min

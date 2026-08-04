@@ -79,6 +79,22 @@ private const val LOOK_AWAY_START_FRESH_MILLIS: Long = 2_000
 // is meant to reach the next fill sooner, not to change how many fills a burst produces.
 private const val RESCHEDULE_DEBOUNCE_MILLIS: Long = 1_000
 
+// PRD §9: the STALENESS bound on the plan — the longest the schedule may go without being re-planned. The
+// rule-change watcher above answers "the inputs changed"; this answers "the plan has simply been standing
+// for too long", so a session where nobody edits anything still re-plans hourly instead of serving a plan
+// laid down against a now-line an arbitrary distance behind. It is not a tick: the timer is reset by EVERY
+// re-plan ([markRescheduled]), so an account being edited never reaches it, and a quiet one costs exactly
+// one fill per hour. Sim time like every other engine duration — an accelerated clock reaches the next
+// re-plan sooner rather than re-planning the same hour more often.
+internal const val SCHEDULE_STALENESS_MILLIS: Long = 60L * 60 * 1_000
+
+// How often the task-tree timeline's blend cursor is SAMPLED (see [launchTaskTreeBlendReschedule]). Not a
+// re-plan cadence: a fill happens only when the sample crosses a quantized step, so this only bounds how
+// late a step is noticed. One minute is far finer than the shortest transition anyone would draw on a
+// calendar of dates, and it is sim time like every other engine delay, so an accelerated clock reaches the
+// next step sooner rather than sampling the same instant more often.
+private const val TASK_TREE_BLEND_POLL_MILLIS: Long = 60_000
+
 // Real-time cap on each sleep while the manual "Look away now" rest counts down (see [restartLookAway]).
 private const val LOOK_AWAY_RESUME_POLL_MILLIS: Long = 200
 
@@ -343,6 +359,19 @@ class SchedulerEngine(
     // into a single reschedule fired when the switch is turned back on.
     private var pendingReschedule = false
 
+    // PRD §9: the clock instant of the last RE-PLAN this engine asked for — what [launchStaleReschedule]
+    // measures the [SCHEDULE_STALENESS_MILLIS] bound against, so any re-plan (a rule change, a blend step,
+    // the deferred one the §7 switch releases, the manual look-away re-anchor) postpones the next stale
+    // refill by a full hour. Stamped even when the §7 switch is OFF and the re-plan is only *deferred*:
+    // the deferred one is coalesced and fires on the switch, so re-arming the timer there is what keeps
+    // this loop from spinning on a request it cannot dispatch. Null until the first re-plan; deliberately
+    // NOT stamped by an ExtendSchedule, which materializes the tail without re-planning the head.
+    // `internal` so the rule's test can read the timer directly: a re-plan of an unchanged account is a
+    // deliberate no-op (the same inputs at a later `now` yield the same continuation, so `panels` is
+    // untouched and nothing is saved), which leaves this stamp as the only observable of the trigger.
+    internal var lastRescheduleMillis: Long? = null
+        private set
+
     // PRD §9: the end of the week the calendar window is DISPLAYING, published by the UI
     // ([setCalendarHorizon]); null when no calendar is open. It is what makes the fill horizon follow the
     // screen instead of unconditionally materializing 168h — see [scheduleHorizonEndMillis]. Local runtime
@@ -423,6 +452,8 @@ class SchedulerEngine(
         launchAdvanceTick()
         launchScreenBreakSeeding()
         launchRuleChangeReschedule()
+        launchStaleReschedule()
+        launchTaskTreeBlendReschedule()
         launchHorizonReschedule()
         launchCalendarHorizonReschedule()
         launchPendingRescheduleOnSwitch()
@@ -686,8 +717,9 @@ class SchedulerEngine(
     private fun dispatchScheduleAdvance(now: Long) {
         val current = vm.state.value
         // Time passing only ADVANCES the plan (banking the records of panels that elapsed) — it never
-        // re-plans. The scheduler itself runs only on a rule change ([launchRuleChangeReschedule]) and the
-        // rolling horizon only extends the plan's tail ([SchedulerIntent.ExtendSchedule]).
+        // re-plans. The scheduler itself runs on a rule change ([launchRuleChangeReschedule]) or, at most
+        // once an hour, on the staleness bound ([launchStaleReschedule]); the rolling horizon only extends
+        // the plan's tail ([SchedulerIntent.ExtendSchedule]).
         //
         // This used to fire a full RefreshSchedule on every tick where a rest pose was overdue or a live
         // pause moved the screen-break grid, i.e. continuously while the user was away — churning the whole
@@ -1110,9 +1142,10 @@ class SchedulerEngine(
     }
 
     /**
-     * PRD §9 calculation event #2 — **the only thing that re-plans the schedule.**
+     * PRD §9 calculation event #2 — **a CHANGE re-plans the schedule.** (The only other thing that does is
+     * the hourly staleness bound, [launchStaleReschedule]; time passing still re-plans nothing.)
      *
-     * The scheduler runs when, and only when, someone CHANGED a rule it depends on: this user editing the
+     * The scheduler runs when someone CHANGED a rule it depends on: this user editing the
      * task tree / priorities / minimum times, pinning or moving a calendar block, editing the sleep or
      * screen-break configuration, flipping the §7 switch — or a **remote** user doing any of that, which
      * reaches this device as a pulled snapshot written straight into `vm.state` (`applyRemoteSnapshot`) and
@@ -1127,8 +1160,72 @@ class SchedulerEngine(
     private fun launchRuleChangeReschedule() = scope.launch {
         vm.state.map { SchedulerDomain.schedulingSignature(it) }.distinctUntilChanged().collectLatest {
             delay(RESCHEDULE_DEBOUNCE_MILLIS)
-            if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
-            else pendingReschedule = true
+            requestReschedule()
+        }
+    }
+
+    /**
+     * The single way this engine asks for a **re-plan**: dispatch it, or (§7 switch off) defer it — and in
+     * either case re-arm the staleness timer [launchStaleReschedule] watches. Every re-plan path goes
+     * through here so "the last scheduling" means one thing, whichever event triggered it.
+     */
+    private fun requestReschedule(now: Long = clock.nowMillis()) {
+        lastRescheduleMillis = now
+        if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(now))
+        else pendingReschedule = true
+    }
+
+    /**
+     * PRD §9 calculation event #3 — the plan's **staleness bound**: re-plan when the last one was asked for
+     * [SCHEDULE_STALENESS_MILLIS] ago or more.
+     *
+     * This is not a re-plan tick, and it is not a second reading of "time passing re-plans": the timer is
+     * reset by every re-plan ([requestReschedule]), so a session where the user is actually editing never
+     * reaches it, and an untouched one costs exactly one fill per hour. What it buys is that a plan is never
+     * served indefinitely against a now-line that has since moved arbitrarily far — the inputs the signature
+     * cannot see (the banked records the advance has been writing all along, this device's live rest gap, a
+     * horizon that rolled) get folded in at a bounded cadence instead of waiting for the user's next edit.
+     *
+     * Polled rather than slept-to-the-instant, like [launchHorizonReschedule], so a clock leap or a speed
+     * change is noticed within one poll instead of after a full hour of real time.
+     */
+    private fun launchStaleReschedule() = scope.launch {
+        fun pollInterval(): Long = if (timeAccelerated()) ADVANCE_TICK_MILLIS_ACCEL else ADVANCE_TICK_MILLIS_PROD
+        // Nothing has re-planned yet at start-up; the rule-change watcher's first emission is about to, so
+        // start the hour from here rather than firing an immediate duplicate fill.
+        lastRescheduleMillis = clock.nowMillis()
+        while (true) {
+            val last = lastRescheduleMillis ?: clock.nowMillis()
+            if (clock.nowMillis() - last >= SCHEDULE_STALENESS_MILLIS) requestReschedule()
+            else tickDelay(pollInterval())
+        }
+    }
+
+    /**
+     * The task-tree timeline's re-plan: refill when the blend between two dated task trees has moved a
+     * whole step ([SchedulerDomain.taskTreeBlendStep]).
+     *
+     * With [launchStaleReschedule] this is one of the two deliberate exceptions to "time passing must never
+     * re-plan" — and the only one where the plan's CONTENT is a function of time. It exists because the
+     * user's timeline makes the plan genuinely a function of time: between two dated trees the absolute
+     * priorities transform continuously, so a plan computed once would simply be wrong from the next
+     * instant on. What the rule is really protecting against — a *continuous* input churning the whole plan
+     * on every tick — is handled by quantizing rather than by refusing to fire: the blend is cut into
+     * [SchedulerDomain.TASK_TREE_BLEND_STEPS] steps, so a transition costs that many fills in total however
+     * long it lasts (a two-month one re-plans roughly every 14 hours), and the poll below only *samples*
+     * that step — it dispatches nothing while the cursor stays inside one.
+     *
+     * With no dated tree the step is a constant, so an account that never opens the timeline window never
+     * reaches the dispatch at all. The first sample only primes `last`, so starting up mid-transition does
+     * not itself force a fill; the rule-change watcher has just run one anyway.
+     */
+    private fun launchTaskTreeBlendReschedule() = scope.launch {
+        var last: Int? = null
+        while (true) {
+            val step = SchedulerDomain.taskTreeBlendStep(vm.state.value, clock.nowMillis())
+            if (last != null && step != last) requestReschedule()
+            last = step
+            tickDelay(TASK_TREE_BLEND_POLL_MILLIS)
         }
     }
 
@@ -1199,7 +1296,9 @@ class SchedulerEngine(
         vm.state.map { it.automaticSchedule }.distinctUntilChanged().collectLatest { on ->
             if (on && pendingReschedule) {
                 pendingReschedule = false
-                vm.dispatch(SchedulerIntent.RefreshSchedule(clock.nowMillis()))
+                val now = clock.nowMillis()
+                lastRescheduleMillis = now
+                vm.dispatch(SchedulerIntent.RefreshSchedule(now))
             }
         }
     }
@@ -1409,7 +1508,7 @@ class SchedulerEngine(
                 st.screenBreaks.map { if (!it.restBreak) it.copy(lastRestMillis = now) else it },
             ),
         )
-        if (st.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(now))
+        requestReschedule(now)
         val voice = st.lookAwayVoiceEnabled
         manualLookAwayJob = scope.launch {
             notifyUser("Screen break", lookAway.title)
