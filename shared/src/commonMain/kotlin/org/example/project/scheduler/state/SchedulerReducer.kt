@@ -1290,8 +1290,8 @@ object SchedulerReducer {
 
     /**
      * PRD §9 rolling horizon ([SchedulerIntent.ExtendSchedule]): advance, then materialize the plan further
-     * WITHOUT re-planning it. Everything already laid down ahead of the now-line is kept and fed to the debt
-     * ledger as committed work, so the tail continues the same plan rather than replacing it — a horizon that
+     * WITHOUT re-planning it. Everything already laid down ahead of the now-line is kept and fed to the
+     * scheduling walk as committed service, so the tail continues the same plan rather than replacing it — a horizon that
      * grew (time passing, or the calendar navigating to a further week) is not a change to the scheduling
      * rules and must not rewrite what the user is looking at. A no-op tick returns the same instance.
      */
@@ -1346,8 +1346,8 @@ object SchedulerReducer {
      *
      * This is the one user-authored change the engine's [SchedulerDomain.schedulingSignature] watcher cannot
      * see (records are on the derived side of that signature — the schedule-advance banks them continuously,
-     * so watching them would re-plan on every tick), yet it genuinely changes the past service the debt
-     * ledger is seeded from. So it refills right here, like [reduceSetSleepSchedule] does.
+     * so watching them would re-plan on every tick), yet it genuinely changes the past service the virtual
+     * clocks are seeded from. So it refills right here, like [reduceSetSleepSchedule] does.
      */
     private fun reduceRemoveRecordPeriod(
         state: SchedulerState,

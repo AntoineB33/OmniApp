@@ -73,7 +73,7 @@ class SchedulerSchedulerTest {
     }
 
     // ----- §9 task choice: which tasks are schedulable at all ---------------------------------
-    // The pick rule itself (the debt model) is covered by SchedulerDebtTest.
+    // The pick rule itself (the cyclic proportional-share model) is covered by SchedulerPlanTest.
 
     @Test
     fun schedulable_leaves_exclude_root_main_and_removed_tasks() {
@@ -800,9 +800,12 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun a_pinned_panel_by_contrast_does_cut_the_minimum() {
-        // Control for the test above: a *pinned* obstacle 20 min into A's chunk truncates A (its minimum IS
-        // cut) — proving the no-cut behaviour is specific to screen breaks.
+    fun a_pinned_panel_by_contrast_leaves_the_gap_before_it_empty() {
+        // Control for the test above: a *pinned* obstacle 20 min ahead is NOT a screen break, so nothing
+        // resumes across it. The 20 minutes before it are shorter than any task's minimum, so — per
+        // `tests/test.py`'s `fitting` rule and PRD §10 ("a task panel can't be shorter than its minimum") —
+        // they are left empty rather than filled with a 20-minute sliver of A. The plan starts on the far
+        // side of the obstacle. (Earlier revisions truncated A to 20 min here; that violated §10.)
         val (s0, a, b) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val pin = pinned("panel/0", b, now + 20 * MIN, now + 25 * MIN)
@@ -810,9 +813,16 @@ class SchedulerSchedulerTest {
 
         val autos = SchedulerDomain.fillSchedule(s, now).filter { it.auto }.sortedBy { it.startEpochMillis }
 
-        // A is cut at the pinned panel (only 20 min), not resumed to 45 before the obstacle.
+        assertTrue(
+            autos.none { it.startEpochMillis < now + 20 * MIN },
+            "the sub-minimum gap before the pinned block must stay empty: $autos",
+        )
         assertEquals(a, autos[0].taskId)
-        assertEquals(now + 20 * MIN, autos[0].endEpochMillis) // truncated to 20 min, minimum cut
+        assertEquals(now + 25 * MIN, autos[0].startEpochMillis) // the plan resumes after the obstacle
+        assertTrue(
+            autos[0].endEpochMillis - autos[0].startEpochMillis >= 45 * MIN,
+            "and it gets at least its whole minimum: ${autos[0]}",
+        )
     }
 
     // ----- §9 RefreshSchedule (calculation event) --------------------------------------------

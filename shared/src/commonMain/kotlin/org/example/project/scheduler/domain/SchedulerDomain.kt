@@ -2,6 +2,7 @@ package org.example.project.scheduler.domain
 
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import kotlin.time.Instant
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.TimeZone
@@ -579,9 +580,9 @@ object SchedulerDomain {
                 state.tasks[it]?.title?.isNotBlank() == true
         }
 
-    // The §9 pick is the debt model ([fillSchedule] / [DebtLedger]); the §8 manual-add pick is
-    // [manualAddTaskId]. The EDF-era helpers `edfPeriodMillis` / `nextTask` were deleted with that fill —
-    // they scored a static period `T = m / p`, which no longer predicts anything the scheduler does.
+    // The §9 pick is the cyclic proportional-share model ([fillSchedule] / [PlanWalk]); the §8 manual-add
+    // pick is [manualAddTaskId]. The EDF-era helpers `edfPeriodMillis` / `nextTask` were deleted with that
+    // fill — they scored a static period `T = m / p`, which no longer predicts anything the scheduler does.
 
     private const val MILLIS_PER_MINUTE: Long = 60_000L
 
@@ -1000,22 +1001,14 @@ object SchedulerDomain {
     const val SCHEDULE_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1000
 
     /**
-     * `tests/README.md`: "the decay speed is **always the same**" — this is that one speed, the half-life of
-     * the part of a debt/excess that exceeds what a clear, all-accepting timeline could produce
-     * ([DebtLedger.boundary]). Four hours: long enough that the imbalance of a working morning still steers
-     * the afternoon, short enough that a week-old anomaly (a task pinned all of last Sunday) is forgotten
-     * rather than repaid. Debt *within* the natural bound never decays at all, so an ordinary one-rotation
-     * imbalance is always repaid in full whatever this is set to.
+     * The **ceiling** on how far back [fillSchedule] reads the already-placed past (one week — the same span
+     * as the horizon ceiling). The span it actually reads is derived from the plan's own scale: one period
+     * for the virtual-clock seed and one influence reach for the field ([SchedulerPlanner.maxReachMillis]),
+     * past which an exclusion is felt no more. This ceiling only stops a pathological tree (a leaf with a
+     * near-zero share has a huge period) from making the fill cost total history — CLAUDE.md: hot-path
+     * derivations scale with the screen, not with the whole record.
      */
-    const val DEBT_HALF_LIFE_MILLIS: Long = 4L * 60 * 60 * 1000
-
-    /**
-     * How far back [fillSchedule] replays committed work to seed the debt ledger (one week — the same span
-     * as the horizon ceiling). Beyond it any excess has decayed to the natural bound many times over, so
-     * reading further into the record would cost history-proportional work for no change in the plan
-     * (CLAUDE.md: hot-path derivations scale with the screen, not with total history).
-     */
-    const val DEBT_PAST_LOOKBACK_MILLIS: Long = 168L * 60 * 60 * 1000
+    const val SCHEDULE_PAST_LOOKBACK_MILLIS: Long = 168L * 60 * 60 * 1000
 
     /**
      * PRD §9 Scheduling: the **floor** of the schedule horizon (24 hours) — how far the plan is materialized
@@ -2041,7 +2034,8 @@ object SchedulerDomain {
         panel.screenBreak || panel.sleep || (panel.auto && !panel.pinned && !panel.chore)
 
     /**
-     * PRD §9 Scheduling: regenerate the auto schedule with the **debt** simulation of `tests/README.md`.
+     * PRD §9 Scheduling: regenerate the auto schedule with the **cyclic proportional-share** rules of
+     * `tests/README.md` — [SchedulerPlanner] / [PlanWalk], the Kotlin port of the reference `tests/test.py`.
      * Every **non-pinned** panel in the window `[now, horizonMillis]` is cut and replaced; the only panels
      * kept are the **fixed** ones (pinned + chore, [isSchedulerFixed]), any panel entirely **outside** the
      * window — already past (`end ≤ now`) or starting beyond the horizon — and, when this call is an
@@ -2052,37 +2046,37 @@ object SchedulerDomain {
      * panels (the §9 no-op short-circuit still fires) and re-picks the same current task (notification
      * continuity, §11).
      *
-     * The pick rule is the **debt model** of `tests/README.md` ([DebtLedger] — the Kotlin port of the
-     * reference `tests/test.py`), which replaced an Earliest-Deadline-First fill. Each leaf carries a signed
-     * debt in millis that integrates `pᵢ − eᵢ` as the timeline advances (`eᵢ` = 1 while it is the task being
-     * served); the cursor always places the task with the highest `debt / priority`, so the served shares
-     * converge on the priority percentages **at the smallest scale the minima allow** (two 50 % / 10-min
-     * tasks alternate every 10 min, not every hour). A chunk is shortened so it never overlaps the next
-     * fixed panel (PRD §10); the cursor skips over a fixed panel it lands inside — and while it does, the
-     * ledger integrates that panel's task as served, so committed work counts exactly like auto-placed work.
+     * ### This function is a *driver*, not a second copy of the rules
+     * Every scheduling decision — which task, for how long, how an exclusion distorts the neighbourhood, how
+     * an abnormal imbalance is forgotten — lives in [PlanWalk], the single shared implementation that
+     * [SchedulerPlanner.plan] (the rule-list form of `tests/README.md`) also drives. What this function adds
+     * is the mapping from OmniApp's world onto the reference's two inputs, and the materialization of concrete
+     * [TaskPanel]s:
+     * - **pre-placed blocks** = the user's pinned/manual panels still ahead of `now`, plus (on an extension)
+     *   the kept head of the plan, plus the already-served **past** (records and past panels), which is what
+     *   seeds the virtual clocks ([SchedulerPlanner.seedClocks]) and what the influence field ramps down from;
+     * - **periods that accept a set of tasks** = the §9 screen zones and the §15 screen breaks. Inside a
+     *   no-screen period only off-screen tasks are accepted, outside one only on-screen tasks, and inside a
+     *   5/15-min screen break only the tasks marked *doable during a screen break*. The reference's rule that
+     *   a task is a candidate only while its minimum fits the gap is what enforces "never when its minimum
+     *   time exceeds the break's length", with no special case.
      *
-     * PRD §9 "the deficits/excess from the already-placed panels before `now` … influence the chosen
-     * result" (example 1): the ledger is **seeded by replaying the past** over [DEBT_PAST_LOOKBACK_MILLIS]
-     * — each leaf's records and past/fixed panels ([pastPeriodsForTask], merged per task so a record and the
-     * panel that banked it are not counted twice). So A served heavily right before `now` plus a fresh B
-     * (both 50 %) yields B first, and B keeps the cursor until the imbalance is repaid — but only up to the
-     * natural bound `C = Σ mᵢ` ([DebtLedger.boundary]): an excess *larger* than one full rotation of the
-     * round-robin is forgotten exponentially instead of being repaid in full ("a debt or an excess higher
-     * than it could be in a scheduling on a clear and all-task-accepted timeline is ignored exponentially",
-     * `tests/README.md`). Work committed *ahead* of the cursor is the same rule in the other direction: a
-     * pinned block looming soon discharges its task's debt now ([DebtLedger.futureCommitmentMillis]), so its
-     * peers get the cursor instead of the task being served twice over.
+     * Because a fixed block owned by another task and a period that bans a task are the *same* deprivation
+     * (`tests/README.md`), both feed one influence field: a task kept out of the timeline gets a denser,
+     * **bounded** presence on both sides of the exclusion, decaying exponentially with the distance. That is
+     * what replaced the earlier debt-with-a-natural-bound model: a 17-hour block of A no longer buys B 17
+     * hours of catch-up, it buys it a logarithmic amount of compensation spread around the block.
+     *
+     * PRD §15 Screen breaks: [SchedulerState.screenBreaks] are materialized as obstacle panels
+     * ([screenBreakPanels]) and woven into the window as periods. They behave like a pinned obstacle with one
+     * difference: when a task chunk meets a screen break, the chunk is **split** around it and the task
+     * **resumes after** with its remaining work, so its minimum is never charged for the screen-break time (a
+     * 45-min task crossing a 5-min screen break occupies a 50-min wall-clock span). A pinned obstacle, by
+     * contrast, truncates the chunk (the minimum is cut). Screen-break panels regenerate every fill.
      *
      * PRD §9 merge: two consecutive auto panels of the same task are fused into one block
      * ([mergeSameTaskPanels]), so a sole task shows as a single continuous panel. Auto panels get
      * deterministic `auto/{i}` ids (regenerated each run, skipping ids held by kept panels).
-     *
-     * PRD §15 Screen breaks: [SchedulerState.screenBreaks] are materialized as fixed obstacle panels
-     * ([screenBreakPanels]) and woven into the window. They behave like a pinned obstacle (the fill flows
-     * around them) with one difference: when a task chunk meets a screen break, the chunk is **split** around
-     * it and the task **resumes after** with its remaining work, so its minimum is never charged for the
-     * screen-break time (a 45-min task crossing a 5-min screen break occupies a 50-min wall-clock span). A pinned
-     * obstacle, by contrast, truncates the chunk (the minimum is cut). Screen-break panels regenerate every fill.
      *
      * PRD §9 trigger: this runs only when [schedulingSignature] moves — never because time passed. The
      * `SchedulerIntent.ExtendSchedule` path merely materializes more of the same plan (see
@@ -2109,7 +2103,7 @@ object SchedulerDomain {
         horizonMillis: Long = nowMillis + SCHEDULE_HORIZON_MILLIS,
         // PRD §9 / CLAUDE.md trigger rule: when non-null, this is an **extension**, not a re-plan — the auto
         // panels already materialized before this instant are KEPT (the cursor walks over them, feeding the
-        // debt ledger exactly as if it had just placed them) and only the tail past them is generated. The
+        // virtual clocks exactly as if it had just placed them) and only the tail past them is generated. The
         // rolling-horizon / calendar-navigation refills use it so that merely *displaying* more days never
         // rewrites the plan the user is already looking at; only a change to the scheduling rules
         // ([schedulingSignature]) re-plans from `now` (null).
@@ -2156,231 +2150,279 @@ object SchedulerDomain {
 
         val priorities = absoluteTaskPriorities(state)
         val keptIds = kept.mapTo(HashSet()) { it.id }
-        var working = state.copy(panels = kept)
+        val working = state.copy(panels = kept)
         // PRD §9 screen switches: the no-screen periods *classify* the timeline rather than obstructing it
         // — an on-screen task may only run outside them, an off-screen task only inside. Inactivity
-        // periods classify nothing (they stay screen periods). Neither is an occupancy obstacle, so the
-        // fill's start walks only the real blocks.
+        // periods classify nothing (they stay screen periods). Neither is an occupancy obstacle.
         val noScreenRegions =
             mergeOccupied(
                 kept.filter { it.noScreen }
                     .map { TaskTimeRange(maxOf(it.startEpochMillis, nowMillis), it.endEpochMillis) }
                     .filter { it.endEpochMillis > it.startEpochMillis },
             )
-        fun noScreenCovering(t: Long): TaskTimeRange? =
-            noScreenRegions.firstOrNull { it.startEpochMillis <= t && t < it.endEpochMillis }
-        // The next instant the screen-zone classification flips (a region start or end) after [t].
-        fun nextNoScreenEdge(t: Long): Long? =
-            noScreenRegions.asSequence()
-                .flatMap { sequenceOf(it.startEpochMillis, it.endEpochMillis) }
-                .filter { it > t }
-                .minOrNull()
-
-        // PRD §15: only the screen-break occupied regions are obstacles the regular fill skips over (the
-        // regular task resumes after each region without its minimum being charged). Sleep windows are NOT
-        // in this set anymore — the plan is scheduled through the night (and the wind-down hour), so the
-        // user can see the best work plan for the priority parameters even during sleep.
+        // PRD §15: the screen-break occupied regions. They are periods (only break-doable tasks are accepted
+        // inside them), not occupancy obstacles: a regular chunk suspends across one and resumes after it.
         val sideRegions = mergeOccupied(sidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
-        fun sideRegionCovering(t: Long): TaskTimeRange? =
-            sideRegions.firstOrNull { it.startEpochMillis <= t && t < it.endEpochMillis }
-        fun nextSideRegionStart(t: Long): Long? =
-            sideRegions.asSequence().map { it.startEpochMillis }.filter { it > t }.minOrNull()
+        val breakStarts = sideRegions.mapTo(HashSet()) { it.startEpochMillis }
+        fun covers(regions: List<TaskTimeRange>, t: Long): Boolean =
+            regions.any { it.startEpochMillis <= t && t < it.endEpochMillis }
 
-        // `tests/README.md` debt model. The candidate order is the deterministic tie-break (higher priority,
-        // then alphabetical): the pick below takes a candidate only on a STRICTLY better score, so equal
-        // scores — every task at the very first placement, for one — resolve in this order.
+        // `tests/test.py` resolves ties by (biggest share, then name); OmniApp's PRD §9 tie-break is (highest
+        // absolute priority, then title). [PlanWalk.pick] takes the first candidate on a tie, so handing it
+        // this order IS the tie-break.
         val tieBreak =
             compareByDescending<TaskId> { priorities[it] ?: 0.0 }.thenBy { state.tasks[it]?.title.orEmpty() }
         val ordered = leaves.sortedWith(tieBreak)
         val minimumMillisOf = ordered.associateWith { (state.tasks[it]?.minimumMinutes ?: 0).toLong() * MILLIS_PER_MINUTE }
-        val ledger =
-            DebtLedger(ordered.map { DebtTask(it, priorities[it] ?: 0.0, minimumMillisOf[it] ?: 0L) })
+        val planner =
+            SchedulerPlanner(ordered.map { PlanTask(it, priorities[it] ?: 0.0, minimumMillisOf[it] ?: 0L) })
 
-        // PRD §9 example 1: seed the debts by replaying the committed past — every leaf's records and its
-        // past/fixed panels, merged per task so a record and the auto panel that banked it count once, then
-        // walked in chronological order (an idle stretch advances the ledger with nothing running). Bounded
-        // to [DEBT_PAST_LOOKBACK_MILLIS]: beyond that any excess has decayed to the natural bound anyway.
-        val pastAnchor = nowMillis - DEBT_PAST_LOOKBACK_MILLIS
-        val pastService =
-            ordered.flatMap { id ->
-                mergeOccupied(pastPeriodsForTask(working, id, nowMillis))
-                    .map { TaskTimeRange(maxOf(it.startEpochMillis, pastAnchor), it.endEpochMillis) }
-                    .filter { it.endEpochMillis > it.startEpochMillis }
-                    .map { it to id }
-            }.sortedBy { it.first.startEpochMillis }
-        var pastCursor = pastAnchor
-        for ((range, id) in pastService) {
-            if (range.startEpochMillis > pastCursor) {
-                ledger.advance(range.startEpochMillis - pastCursor, null)
-                pastCursor = range.startEpochMillis
+        // --- the periods (`tests/README.md`: "the timeline is formed of periods, each defining a set of
+        // tasks it accepts"). The screen zones and the screen breaks partition [now, ∞) into maximal spans
+        // with a constant accepted set; the LAST one is left open-ended, so a task banned from it is banned
+        // "forever" and the field gives it a ramp before the ban and no phantom ramp after the horizon.
+        val edges = buildList {
+            add(nowMillis)
+            for (region in noScreenRegions + sideRegions) {
+                if (region.startEpochMillis in (nowMillis + 1) until horizon) add(region.startEpochMillis)
+                if (region.endEpochMillis in (nowMillis + 1) until horizon) add(region.endEpochMillis)
             }
-            if (range.endEpochMillis > pastCursor) {
-                ledger.advance(range.endEpochMillis - pastCursor, id)
-                pastCursor = range.endEpochMillis
-            }
+        }.distinct().sorted()
+        val windows = edges.mapIndexed { i, start ->
+            val onScreenHere = ordered.filter { (working.tasks[it]?.onScreen ?: true) != covers(noScreenRegions, start) }
+            val accepted =
+                if (covers(sideRegions, start)) {
+                    onScreenHere.filter { working.tasks[it]?.doableDuringBreak == true }
+                } else {
+                    onScreenHere
+                }
+            PlanWindow(start, edges.getOrNull(i + 1), accepted.toSet())
         }
-        if (pastCursor < nowMillis) ledger.advance(nowMillis - pastCursor, null)
+        // The accepted lists, in the tie-break order, precomputed per window: the walk asks for them at every
+        // step and rebuilding them there would make the fill quadratic in the number of screen breaks.
+        val accepted = windows.map { w -> ordered.filter { it in w.allowed } }
 
-        // The panels the cursor must walk OVER rather than through: the user's fixed (pinned) blocks and —
-        // on an extension — the head of the plan that is being kept. Both are committed service, so the
-        // ledger integrates them as their task running.
-        val obstacles =
-            kept.filter { (isSchedulerFixed(it) || it.auto) && it.endEpochMillis > nowMillis && !it.chore }
-        // "In both directions": each task's committed future work, netted off its debt when scoring.
-        val futureService =
-            obstacles.asSequence()
-                .filter { it.taskId != null }
-                .groupBy({ it.taskId!! }, { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
+        // --- the pre-placed blocks. Ahead of the cursor: the user's fixed blocks and, on an extension, the
+        // kept head of the plan — both are committed service the cursor must walk OVER. Behind it: what has
+        // already been served, which seeds the virtual clocks and anchors the influence field.
+        val futureBlocks =
+            kept.asSequence()
+                .filter { (isSchedulerFixed(it) || it.auto) && it.endEpochMillis > nowMillis && !it.chore }
+                .map { PlanBlock(it.taskId, maxOf(it.startEpochMillis, nowMillis), it.endEpochMillis) }
+                .filter { it.endMillis > it.startMillis }
+                .sortedBy { it.startMillis }
+                .toList()
+        // How far back the already-placed past is read. One period is all the seed needs
+        // ([SchedulerPlanner.seedClocks]); the field needs its own reach, past which an exclusion is felt no
+        // more. Bounded by [SCHEDULE_PAST_LOOKBACK_MILLIS] so the fill never costs total history.
+        val pastLookback =
+            maxOf(planner.minPeriodMillis, planner.maxReachMillis)
+                .coerceIn(MILLIS_PER_MINUTE.toDouble(), SCHEDULE_PAST_LOOKBACK_MILLIS.toDouble())
+                .roundToLong()
+        val pastAnchor = nowMillis - pastLookback
+        val pastBlocks =
+            ordered.flatMap { id ->
+                // Merged per task so a record and the auto panel that banked it are not counted twice.
+                mergeOccupied(pastPeriodsForTask(working, id, nowMillis))
+                    .map { PlanBlock(id, maxOf(it.startEpochMillis, pastAnchor), minOf(it.endEpochMillis, nowMillis)) }
+                    .filter { it.endMillis > it.startMillis }
+            }.sortedBy { it.startMillis }
+
+        planner.setField(pastBlocks + futureBlocks, windows)
+        val walk = planner.walk(planner.seedClocks(pastBlocks, nowMillis))
 
         val generated = mutableListOf<TaskPanel>()
         var cursor = nowMillis
         var index = 0
         var idCounter = 0
+        // `tests/test.py` `free_tail`: whether the last thing placed was a freely-chosen slot, and so may be
+        // stretched over a crumb too short for any minimum.
+        var freeTail = false
+        // PRD §15: the task whose chunk is mid-placement, split across a screen break, with the work it still
+        // owes. Carried across iterations so it resumes after the break rather than being re-picked mid-chunk.
+        var pending: Pair<TaskId, Long>? = null
         fun nextAutoId(): String {
             while ("auto/$idCounter" in keptIds) idCounter++
             return "auto/${idCounter++}"
         }
-        // PRD §15: the task whose minimum chunk is mid-placement, split across a screen break, with the work
-        // it still owes. Carried across iterations so it resumes after the side region rather than the pick
-        // being re-run mid-chunk.
-        var pending: Pair<TaskId, Long>? = null
-        // `tests/README.md`: the most starved task, i.e. the highest `debt / priority` once its committed
-        // future work is netted off. [candidates] arrives in the deterministic tie order and a candidate is
-        // taken only on a strictly better score, so ties resolve by priority then title.
-        fun pick(candidates: List<TaskId>): TaskId? {
-            var best: TaskId? = null
-            var bestScore = Double.NEGATIVE_INFINITY
-            for (id in candidates) {
-                val score = ledger.score(id, ledger.futureCommitmentMillis(futureService[id].orEmpty(), cursor))
-                if (best == null || score > bestScore) {
-                    best = id
-                    bestScore = score
-                }
-            }
-            return best
+        fun emit(taskId: TaskId, start: Long, end: Long) {
+            generated += TaskPanel(
+                id = nextAutoId(),
+                taskId = taskId,
+                title = working.tasks[taskId]?.title.orEmpty(),
+                startEpochMillis = start,
+                endEpochMillis = end,
+                pinned = false,
+                auto = true,
+            )
+        }
+        // The windows partition the timeline and the cursor only advances, so one monotonic index answers
+        // "which period are we in?" in amortized O(1) — the equivalent of [SchedulerPlanner.allowedAt] for a
+        // partition, without its per-step scan.
+        var windowIndex = 0
+        fun windowAt(t: Long): Int {
+            while (windowIndex + 1 < windows.size && windows[windowIndex + 1].startMillis <= t) windowIndex++
+            return windowIndex
         }
         // Bound the loop defensively: with positive spans this can't run away, but a degenerate zero
         // span (only possible if minima are clamped to 0) would otherwise spin. The cap SCALES with the
         // horizon span (~one chunk per 30 s) so a DISPLAY fill out to a distant focused week isn't clipped
         // the way a fixed 168h-sized cap would be — bounded by the absolute [MAX_SCHEDULE_PANELS] ceiling.
         val maxPanels = ((horizon - nowMillis) / 30_000L).coerceIn(1L, MAX_SCHEDULE_PANELS.toLong()).toInt()
+        // Set when the walk runs out of anything that could distort the schedule — the reference's phase-2
+        // condition. With screen breaks enabled the context never freezes inside the horizon, so it stays
+        // false and the whole fill is phase 1.
+        var frozen = false
+
+        // --- phase 1 (`tests/test.py`): the disturbed part of the timeline ---
         while (cursor < horizon && index < maxPanels) {
-            val fixedCovering = obstacles.firstOrNull {
-                it.startEpochMillis <= cursor && cursor < it.endEpochMillis
-            }
-            if (fixedCovering != null) {
-                // A fixed obstacle cuts the minimum (PRD §9/§10): abandon any pending chunk's remainder.
-                // Its span is committed service, so the ledger runs its task across it.
-                ledger.advance(fixedCovering.endEpochMillis - cursor, fixedCovering.taskId)
-                cursor = fixedCovering.endEpochMillis
+            val here = windowAt(cursor)
+            val allowedHere = accepted[here]
+            val period = if (allowedHere.isNotEmpty()) planner.periodOf(allowedHere) else planner.minPeriodMillis
+
+            // A committed block cannot be moved: the cursor walks OVER it, and the walk charges the whole span
+            // to its task, so committed work counts exactly like auto-placed work.
+            val block = futureBlocks.firstOrNull { it.startMillis <= cursor && cursor < it.endMillis }
+            if (block != null) {
+                walk.serve(block.taskId, (block.endMillis - cursor).toDouble())
+                walk.relax(0.0, period, allowedHere) // no forgetting here: the block is not ours
+                cursor = block.endMillis
                 pending = null
-                continue
-            }
-            // PRD §15: a screen-break region never charges the surrounding task — the pending chunk resumes
-            // on the far side, its remaining work intact. PRD §9 "doable during a screen break": before
-            // skipping it, a break-doable task whose minimum time fits what remains of the break may fill
-            // it (a longer minimum never schedules there; the 20-s look-away fits no ≥1-min minimum, so
-            // only the 5/15-min rest poses ever host one).
-            val sideCovering = sideRegionCovering(cursor)
-            if (sideCovering != null) {
-                val remainingBreak = sideCovering.endEpochMillis - cursor
-                val breakTask =
-                    pick(
-                        ordered.filter {
-                            it != pending?.first && working.tasks[it]?.doableDuringBreak == true &&
-                                (minimumMillisOf[it] ?: 0L) in 1..remainingBreak
-                        },
-                    )
-                if (breakTask == null) {
-                    // Nobody can work through it: the break is idle time for every task's debt.
-                    ledger.advance(sideCovering.endEpochMillis - cursor, null)
-                    cursor = sideCovering.endEpochMillis
-                    continue
-                }
-                val breakNeed = scheduledSpanMinutes(working, breakTask, cursor) * MILLIS_PER_MINUTE
-                val breakEnd = minOf(cursor + maxOf(breakNeed, MILLIS_PER_MINUTE), sideCovering.endEpochMillis)
-                generated += TaskPanel(
-                    id = nextAutoId(),
-                    taskId = breakTask,
-                    title = working.tasks[breakTask]?.title.orEmpty(),
-                    startEpochMillis = cursor,
-                    endEpochMillis = breakEnd,
-                    pinned = false,
-                    auto = true,
-                )
-                working = working.copy(panels = kept + generated)
-                ledger.advance(breakEnd - cursor, breakTask)
-                cursor = breakEnd
-                index++
+                freeTail = false
                 continue
             }
 
-            // PRD §9 screen switches: inside a no-screen period only off-screen tasks are placeable;
-            // outside one, only on-screen tasks are. A chunk suspended across a screen break can only resume
-            // in a zone its task may occupy — crossing a screen-zone edge cuts it (minimum charged), like
-            // a pinned obstacle.
-            val inNoScreen = noScreenCovering(cursor) != null
-            fun placeableHere(id: TaskId): Boolean = (working.tasks[id]?.onScreen ?: true) != inNoScreen
-            pending?.first?.takeIf { !placeableHere(it) }?.let { pending = null }
-            // The instants a chunk may not cross. The screen break is deliberately NOT one of them for the
-            // "does its minimum fit?" test below: a break suspends the chunk and it resumes on the far side
-            // with its remaining work intact (PRD §15), so the minimum is never lost to it. A fixed panel or
-            // a screen-zone edge, by contrast, truncates it.
-            val nextSide = nextSideRegionStart(cursor) ?: Long.MAX_VALUE
-            val nextFixed = obstacles.asSequence()
-                .filter { it.startEpochMillis > cursor }.minOfOrNull { it.startEpochMillis } ?: Long.MAX_VALUE
-            val nextZoneEdge = nextNoScreenEdge(cursor) ?: Long.MAX_VALUE
-            val cuttingBoundary = minOf(nextFixed, nextZoneEdge, horizon)
-            val gap = cuttingBoundary - cursor
-            val placeable = ordered.filter { placeableHere(it) }
-            // `tests/README.md`: a task is a candidate here only if its minimum time fits the gap. When none
-            // does, PRD §9/§10 still wins over leaving the calendar hollow: the best-scoring task is placed
-            // and truncated by the obstacle (its minimum IS cut there).
-            val fitting = placeable.filter { (minimumMillisOf[it] ?: 0L) <= gap }
-            val taskId = pending?.first ?: pick(fitting.ifEmpty { placeable })
-            if (taskId == null) {
-                // Nothing may occupy this zone (e.g. a no-screen span and no off-screen task, or only
-                // off-screen tasks outside one): jump to the next screen-zone edge; none left → done.
-                val edge = nextNoScreenEdge(cursor) ?: break
-                ledger.advance(edge - cursor, null)
-                cursor = edge
+            // The next instant the context changes: the end of this period, or the next committed block.
+            val nextBlock = futureBlocks.asSequence().map { it.startMillis }.filter { it > cursor }.minOrNull()
+            val limit = listOfNotNull(windows[here].endMillis, nextBlock).minOrNull()?.takeIf { it < horizon }
+            val fieldEnd = planner.fieldEndMillis
+            if (limit == null && (fieldEnd == null || cursor >= fieldEnd)) {
+                frozen = true // nothing left to disturb → phase 2
+                break
+            }
+            val gap = limit?.minus(cursor)
+            val insideBreak = covers(sideRegions, cursor)
+            if (pending != null && !insideBreak && pending.first !in allowedHere) pending = null
+            val resume = if (insideBreak) null else pending
+            // Inside a screen break the suspended task must not be the one that fills it (PRD §15).
+            val candidates = if (insideBreak) allowedHere.filter { it != pending?.first } else allowedHere
+            // `tests/test.py`: a task is a candidate only while its minimum fits the gap ahead of it. The
+            // boundary that decides is the next **cutting** one — a fixed block or a screen-zone edge, and
+            // inside a break the break's own end. A screen break's START is deliberately NOT one (PRD §15: it
+            // only suspends a chunk, which resumes on the far side with its minimum intact), which is exactly
+            // where this parts company with the reference's uniform `next_boundary`. Inside a break the gap IS
+            // what remains of it, so PRD §9's "never when its minimum exceeds the break's length" needs no
+            // special case.
+            val nextZoneEdge =
+                noScreenRegions.asSequence()
+                    .flatMap { sequenceOf(it.startEpochMillis, it.endEpochMillis) }
+                    .filter { it > cursor }.minOrNull()
+            val breakEnd = if (insideBreak) sideRegions.first { it.endEpochMillis > cursor }.endEpochMillis else null
+            val fitGap = listOfNotNull(nextBlock, nextZoneEdge, breakEnd).minOrNull()?.minus(cursor)
+            val fitting = candidates.filter { fitGap == null || (minimumMillisOf[it] ?: 0L) <= fitGap }
+            // `tests/test.py` steady_cycle's "no unplaceable crumb", applied to the walk: minimum times are
+            // authored in whole minutes, so anything shorter than one is not a slot, it is a seam — e.g. the
+            // 20-second look-away, or what is left of a chunk when a break lands a few seconds before it ends.
+            val crumb = gap != null && gap < MILLIS_PER_MINUTE
+
+            if (crumb || (resume == null && fitting.isEmpty())) {
+                if (gap == null) break
+                val tail = generated.lastOrNull()
+                if (!insideBreak && allowedHere.isNotEmpty() && freeTail && tail?.endEpochMillis == cursor) {
+                    // A crumb too short for any minimum: the previous slot stretches over it (`free_tail`)
+                    // rather than leaving a sliver the calendar cannot use. A screen break is never such a
+                    // crumb — PRD §9/§15 already decided nobody whose minimum exceeds it may work there, so
+                    // the surrounding task must not creep into it either.
+                    generated[generated.size - 1] = tail.copy(endEpochMillis = limit)
+                    walk.serve(tail.taskId, gap.toDouble())
+                } else {
+                    // Nothing may occupy this stretch at all — a no-screen span with no off-screen task, or a
+                    // screen break nobody can work through. Leave it empty; it is idle time for every clock.
+                    walk.idle()
+                    freeTail = false
+                }
+                cursor = limit
+                if (!insideBreak) pending = null
                 continue
             }
-            val task = working.tasks[taskId] ?: break
-            var need = pending?.second ?: (scheduledSpanMinutes(working, taskId, cursor) * MILLIS_PER_MINUTE)
-            if (need <= 0) break
-            // `tests/test.py` anti-fragmentation: if taking just the minimum would leave a remainder too
-            // short for any candidate to use, take the whole gap instead of stranding it.
-            val shortestFitting = fitting.minOfOrNull { minimumMillisOf[it] ?: 0L }
-            if (shortestFitting != null && gap >= need && gap - need < shortestFitting) need = gap
-            // This piece runs until the chunk is satisfied, the next side region, the next fixed panel,
-            // the next screen-zone edge, or the horizon — whichever comes first.
-            val boundary = minOf(nextSide, cuttingBoundary)
-            val pieceEnd = minOf(cursor + need, boundary)
-            if (pieceEnd <= cursor) break
-            generated += TaskPanel(
-                id = nextAutoId(),
-                taskId = taskId,
-                title = task.title,
-                startEpochMillis = cursor,
-                endEpochMillis = pieceEnd,
-                pinned = false,
-                auto = true,
-            )
-            working = working.copy(panels = kept + generated)
-            val placed = pieceEnd - cursor
-            ledger.advance(placed, taskId)
-            cursor = pieceEnd
-            pending =
-                if (placed < need && nextSide < cuttingBoundary) {
-                    // Interrupted by a screen break → resume after it with the work still owed.
-                    taskId to (need - placed)
-                } else {
-                    // Chunk complete, or truncated by a fixed obstacle / screen-zone edge (PRD §9/§10:
-                    // the minimum IS cut there).
-                    null
-                }
+
+            val taskId = resume?.first ?: walk.pick(fitting) ?: break
+            val boost = planner.boostAt(taskId, cursor)
+            var need =
+                resume?.second
+                    ?: walk.chunkMillis(taskId, fitting, boost, period).roundToLong().coerceAtLeast(1L)
+            // PRD §10: a task whose continuous effort is still running at the now-line is scheduled for the
+            // REMAINDER of its minimum, not a fresh one, so the block it merges into is exactly one minimum
+            // long. Only the first chunk can have such an effort behind it, and only when the walk did not
+            // already decide to give the task MORE than its minimum (a catch-up must never be shortened).
+            if (resume == null && cursor == nowMillis && need <= (minimumMillisOf[taskId] ?: 0L)) {
+                need = (scheduledSpanMinutes(working, taskId, nowMillis) * MILLIS_PER_MINUTE).coerceAtLeast(1L)
+            }
+            val end = minOf(cursor + need, limit ?: Long.MAX_VALUE, horizon)
+            if (end <= cursor) break
+            emit(taskId, cursor, end)
+            val placed = end - cursor
+            // Charged at the boosted rate: time won near an exclusion is a genuinely higher local share, not
+            // a debt to be taken back once the field is gone.
+            walk.serve(taskId, placed.toDouble(), boost)
+            walk.relax(placed.toDouble(), period, allowedHere)
+            if (!insideBreak) {
+                // PRD §15: only a screen break suspends a chunk. A fixed panel or a screen-zone edge
+                // truncates it instead (PRD §9/§10: the minimum IS cut there).
+                pending =
+                    if (placed < need && need - placed >= MILLIS_PER_MINUTE &&
+                        limit != null && limit in breakStarts
+                    ) {
+                        taskId to (need - placed)
+                    } else {
+                        null // the chunk is satisfied, or what is left of it is an unplaceable crumb
+                    }
+            }
+            cursor = end
+            freeTail = true
             index++
+        }
+
+        // --- phase 2 (`tests/test.py`): the context is frozen forever, so settle what is still owed and then
+        // attach the analytic cycle — the "list of rules + repeat" of `tests/README.md` — unrolled out to the
+        // horizon. Its shares are exact by construction, unlike the greedy's asymptotic ones. With screen
+        // breaks enabled the context never freezes inside the horizon, so this simply never runs.
+        if (frozen && cursor < horizon && index < maxPanels) {
+            val allowedHere = accepted[windowAt(cursor)]
+            if (allowedHere.isNotEmpty()) {
+                val period = planner.periodOf(allowedHere)
+                val settleEnd = minOf(cursor + (SchedulerPlanner.SETTLE_PERIODS * period).roundToLong(), horizon)
+                while (cursor < settleEnd && index < maxPanels && walk.spread(allowedHere) > period) {
+                    val name = walk.pick(allowedHere) ?: break
+                    val boost = planner.boostAt(name, cursor)
+                    val need = walk.chunkMillis(name, allowedHere, boost, period).roundToLong().coerceAtLeast(1L)
+                    val end = minOf(cursor + need, horizon)
+                    if (end <= cursor) break
+                    emit(name, cursor, end)
+                    walk.serve(name, (end - cursor).toDouble(), boost)
+                    walk.relax((end - cursor).toDouble(), period, allowedHere)
+                    cursor = end
+                    index++
+                }
+                var cycle =
+                    planner.steadyCycle(allowedHere)
+                        .let { if (it.size > SchedulerPlanner.MAX_RULES) planner.coarseCycle(allowedHere) else it }
+                        .filter { it.taskId != null && it.durationMillis > 0L }
+                // No same-task seam with what the prefix just placed (`tests/test.py` `_tidy`).
+                var rotations = cycle.size
+                while (rotations-- > 0 && cycle.size > 1 && cycle.first().taskId == generated.lastOrNull()?.taskId) {
+                    cycle = cycle.drop(1) + cycle.first()
+                }
+                var slotIndex = 0
+                while (cursor < horizon && index < maxPanels && cycle.isNotEmpty()) {
+                    val slot = cycle[slotIndex++ % cycle.size]
+                    val end = minOf(cursor + slot.durationMillis, horizon)
+                    if (end <= cursor) break
+                    emit(slot.taskId!!, cursor, end)
+                    cursor = end
+                    index++
+                }
+            }
         }
         // PRD §9: two consecutive auto panels of the same task merge into one block. Screen-break and sleep
         // panels are added as-is (they split the run, so adjacent same-task pieces don't touch and stay apart).
