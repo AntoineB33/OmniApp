@@ -1258,12 +1258,35 @@ object SchedulerDomain {
     const val SCREEN_BREAK_CLOSED_HEAD_MILLIS: Long = MILLIS_PER_MINUTE
 
     /**
+     * PRD §15: how long a real no-screen pause must last to serve the 20-second look-away — its
+     * [ScreenBreak.pauseThresholdMillis]. Deliberately **15 minutes**, the 15-min pose's own length, so the
+     * longer pose serves the look-away through the ordinary "a pause at least this long anchors it" rule
+     * ([seedScreenBreaksFromGaps]) and needs no rule of its own. The two SHORTER rests that also serve it are
+     * not pauses at all and are handled where they happen: the look-away's own conducted occurrence
+     * ([serveElapsedScreenBreaks]) and a 5-min pose break ([pastScreenBreaksFromPauses] → [serveShorterBreaks]).
+     *
+     * Before this the threshold was 0 — i.e. "as long as the break itself", a mere 20 seconds — which made
+     * every brief away-from-the-desk moment restart the 20-minute clock.
+     */
+    const val LOOK_AWAY_QUALIFYING_PAUSE_MILLIS: Long = 15L * MILLIS_PER_MINUTE
+
+    /**
      * PRD §15: the hardcoded set of screen breaks — periodic activities placed on the calendar with a real
      * spanning time. The §9 fill weaves them in without letting them reduce the surrounding task's minimum.
      */
     val DEFAULT_SCREEN_BREAKS: List<ScreenBreak> = listOf(
-        // The 20-20-20 micro-break: after a ≥20-second pause, the next look-away is due 20 min later.
-        ScreenBreak("look 20 feet away", intervalMillis = 20L * 60_000, durationMillis = 20L * 1_000, key = LOOK_AWAY_KEY),
+        // The 20-20-20 micro-break: after a rest that SERVED it, the next look-away is due 20 min later. Three
+        // things serve it (see [serveElapsedScreenBreaks] / [pastScreenBreaksFromPauses]): a look-away break
+        // that happened, a 5-/15-min pose break that happened, or a real no-screen pause of at least
+        // [LOOK_AWAY_QUALIFYING_PAUSE_MILLIS]. That threshold is the 15-min pose's own length, so the longer
+        // pose serves the look-away through the plain pause rule and needs no special case.
+        ScreenBreak(
+            "look 20 feet away",
+            intervalMillis = 20L * 60_000,
+            durationMillis = 20L * 1_000,
+            pauseThresholdMillis = LOOK_AWAY_QUALIFYING_PAUSE_MILLIS,
+            key = LOOK_AWAY_KEY,
+        ),
         // The rest poses: after a pause of at least their length, the next one is due an interval later. The
         // 5-min pose merges up into the 15-min pose when their windows would overlap (PRD §15). Their [key]s are
         // the two break types the server configures (`break_config`) and the phone cue names.
@@ -1284,28 +1307,26 @@ object SchedulerDomain {
     )
 
     /**
-     * The screen breaks to actually seed into the running app — [DEFAULT_SCREEN_BREAKS] in production, or with the
-     * **5-min break** retimed to [org.example.project.DebugFlags.breakDurationMillisOverride] /
-     * [org.example.project.DebugFlags.breakIntervalMillisOverride] under the debug fast-break override (so the
-     * pause-cue voice message can be tested on real phones in seconds; see the flags). Only the shorter
-     * rest-break pose (the "5-min break") is retimed — the 15-min pose and the 20-20-20 look-away keep their
-     * production timings. Kept separate from [DEFAULT_SCREEN_BREAKS] so the scheduler tests keep asserting the
-     * exact production timings. A no-op when no override is set, so production callers get the unchanged list.
+     * The screen breaks to actually seed into the running app — [DEFAULT_SCREEN_BREAKS] in production, or with
+     * breaks retimed by the debug fast-break override (so the pause-cue voice message can be tested on real
+     * phones in seconds; see [org.example.project.DebugFlags.screenBreakOverrides]).
+     *
+     * **Any of the three breaks may be retimed, independently**, matched by [ScreenBreak.key] — the stable
+     * identifier, not the title or the duration, both of which move under these very knobs. A break with no
+     * override entry, and each `null` field of an entry, keeps its production rule. Kept separate from
+     * [DEFAULT_SCREEN_BREAKS] so the scheduler tests keep asserting the exact production timings; a no-op when
+     * nothing is overridden, so production callers get the unchanged list back.
      */
     fun effectiveDefaultScreenBreaks(): List<ScreenBreak> {
-        if (!org.example.project.DebugFlags.fastBreakOverrideActive) return DEFAULT_SCREEN_BREAKS
-        // The "5-min break" is the shorter-duration rest-break pose; leave every other screen break untouched.
-        val fiveMinPose = DEFAULT_SCREEN_BREAKS.filter { it.restBreak }.minByOrNull { it.durationMillis }
+        val overrides = org.example.project.DebugFlags.screenBreakOverrides
+        if (overrides.isEmpty()) return DEFAULT_SCREEN_BREAKS
         return DEFAULT_SCREEN_BREAKS.map { side ->
-            if (side === fiveMinPose) {
-                side.copy(
-                    intervalMillis = org.example.project.DebugFlags.breakIntervalMillisOverride ?: side.intervalMillis,
-                    durationMillis = org.example.project.DebugFlags.breakDurationMillisOverride ?: side.durationMillis,
-                    pauseThresholdMillis = org.example.project.DebugFlags.breakPauseThresholdMillisOverride ?: side.pauseThresholdMillis,
-                )
-            } else {
-                side
-            }
+            val override = overrides[side.key] ?: return@map side
+            side.copy(
+                intervalMillis = override.intervalMillis ?: side.intervalMillis,
+                durationMillis = override.durationMillis ?: side.durationMillis,
+                pauseThresholdMillis = override.pauseThresholdMillis ?: side.pauseThresholdMillis,
+            )
         }
     }
 
@@ -1527,6 +1548,123 @@ object SchedulerDomain {
                 .filter { it > side.lastRestMillis }
                 .maxOrNull()
             if (latestRest != null) side.copy(lastRestMillis = latestRest) else side
+        }
+    }
+
+    /**
+     * PRD §15: a screen break that **happened** — the object the "what serves a break" rules are written
+     * against. [range] is the span it occupied, so its `end` is the rest instant a shorter break anchors to.
+     */
+    data class PastScreenBreak(val title: String, val key: String, val range: TaskTimeRange)
+
+    /**
+     * PRD §15: advance every **non-rest** break (the 20-second look-away) whose own occurrence has fully
+     * elapsed at [nowMillis] — *a look-away break that happened serves the look-away.*
+     *
+     * This is what makes the look-away recur. Its anchor otherwise only ever moved on a detected pause, and
+     * nothing detects a look-away: the app announces it, waits [ScreenBreak.durationMillis] and says "resume
+     * your work", but no device locked, so `lastRestMillis` never advanced, the due stayed fixed, and the cue —
+     * which keys on that due and de-dupes on it ([reachedScreenBreakDueByTitle]) — fired **once per session and
+     * never again** (the reported "I got look away, then resume your work, then nothing afterward"). The break
+     * also stayed owed forever, pinning its no-task period to the now-line ([screenBreakNextStart]).
+     *
+     * This is NOT the old "assume a break the grid stepped past was taken". The distinction is that the app
+     * *conducted* this one: the occurrence is the app's own announced 20 seconds, and only its full length
+     * elapsing counts. The rest **poses** are deliberately excluded — a 5-/15-minute stop IS detectable, so a
+     * pose stays owed and keeps sliding until a real pause serves it ([pastScreenBreaksFromPauses]).
+     *
+     * Arithmetic, not iterative: occurrence `n` of a break anchored at `L` ends at `L + n·(duration +
+     * interval)`, so the latest elapsed one is a single division — a clock leap over a hundred cycles costs the
+     * same as one. Unanchored breaks (`lastRestMillis == 0`, the pre-seed transient) are left alone, exactly as
+     * the cue rule leaves their 1970 sentinel alone.
+     *
+     * **Stopped by the dragging-pose shadow**, which is what keeps this rule and the cue rule the same rule. An
+     * owed rest pose sits at the now-line and re-anchors every shorter break to a slot that recedes with `now`,
+     * so from that pose's due onward no look-away is drawn or announced ([reachedScreenBreakDueByTitle]) — and
+     * a look-away nobody announced was not conducted and must not count. The anchor therefore advances only
+     * through occurrences that came due before the earliest owed pose's due, and then freezes: the look-away
+     * stays owed until the pause that serves the pose serves it too ([serveShorterBreaks], the longer rest
+     * discharging the shorter). Without this the anchor would tick on through a long owed-pose stretch and the
+     * calendar would later draw a row of past look-aways that never happened.
+     */
+    fun serveElapsedScreenBreaks(screenBreaks: List<ScreenBreak>, nowMillis: Long): List<ScreenBreak> {
+        // The earliest pose the now-line has reached and nothing has served: from its due on, every shorter
+        // break is being dragged rather than taken.
+        val owedPoseDue = screenBreaks
+            .filter { it.restBreak && isValidScreenBreak(it) && it.lastRestMillis > 0L }
+            .map { it.lastRestMillis + it.intervalMillis }
+            .filter { it <= nowMillis }
+            .minOrNull()
+        return screenBreaks.map { side ->
+            if (side.restBreak || !isValidScreenBreak(side) || side.lastRestMillis <= 0L) return@map side
+            val cycle = side.durationMillis + side.intervalMillis
+            // An occurrence counts if it came due before the shadow fell, so the ceiling is the shadow's due
+            // plus this break's own length (the span of the last occurrence it could have announced).
+            val ceiling = if (owedPoseDue == null) nowMillis else minOf(nowMillis, owedPoseDue + side.durationMillis)
+            val cycles = (ceiling - side.lastRestMillis) / cycle
+            if (cycles < 1L) side else side.copy(lastRestMillis = side.lastRestMillis + cycles * cycle)
+        }
+    }
+
+    /**
+     * PRD §15: the **rest-pose breaks that happened** — a past no-screen [pauses] period long enough to be the
+     * pose the now-line was *dragging* when it began.
+     *
+     * A pose slides along the now-line while owed and unserved ([screenBreakNextStart]), so "the user took it"
+     * is not a projection but an observation: the account went off-screen for at least the dragged pose's own
+     * length. That period **is** that break — drawn as one, and (being a longer rest than a look-away) it
+     * serves the look-away too ([serveShorterBreaks]), which is why a 5-min pose discharges the 20-20-20 clock
+     * even though 5 minutes is under the look-away's own 15-minute pause threshold.
+     *
+     * **Which pose was being dragged** is [reachedScreenBreakDueByTitle] evaluated at the pause's start — the
+     * same level `now >= due` rule the cue uses, carrying the same **5↔15 merge**: when both poses were owed,
+     * what sat on the now-line was the 15-minute one, so the period has to reach *fifteen* minutes to be a
+     * break at all, and it is then a past 15-min break rather than a 5-min one. Evaluate against the anchors
+     * as they stood BEFORE this pause was folded in ([seedScreenBreaksFromGaps] moves them to its end), or the
+     * pose reads as already served and nothing is recognized.
+     */
+    fun pastScreenBreaksFromPauses(
+        screenBreaks: List<ScreenBreak>,
+        pauses: List<TaskTimeRange>,
+    ): List<PastScreenBreak> {
+        if (pauses.isEmpty()) return emptyList()
+        val byTitle = screenBreaks.associateBy { it.title }
+        return pauses.mapNotNull { pause ->
+            // The pose on the now-line when the pause began: the reached ones, longest-absorbs-shorter.
+            val dragged = reachedScreenBreakDueByTitle(screenBreaks, pause.startEpochMillis).keys
+                .mapNotNull { byTitle[it] }
+                .filter { it.restBreak }
+                .maxByOrNull { it.durationMillis }
+                ?: return@mapNotNull null
+            val length = pause.endEpochMillis - pause.startEpochMillis
+            if (length < dragged.durationMillis) return@mapNotNull null
+            PastScreenBreak(
+                dragged.title,
+                dragged.key,
+                TaskTimeRange(pause.startEpochMillis, pause.startEpochMillis + dragged.durationMillis),
+            )
+        }
+    }
+
+    /**
+     * PRD §15: fold the breaks that HAPPENED ([pastScreenBreaks]) into the anchors of every **shorter** break —
+     * the same "a pause re-anchors every shorter pause" rule the projection grid applies when it places one
+     * ([screenBreakPanels]), here applied to a break observed in the past. A 5-min pose break therefore serves
+     * the 20-second look-away; a look-away break serves nothing (nothing is shorter).
+     *
+     * Forward-only, like every other rest evidence: an anchor already past the break's end is left alone.
+     */
+    fun serveShorterBreaks(
+        screenBreaks: List<ScreenBreak>,
+        pastScreenBreaks: List<PastScreenBreak>,
+    ): List<ScreenBreak> {
+        if (pastScreenBreaks.isEmpty()) return screenBreaks
+        val byTitle = screenBreaks.associateBy { it.title }
+        return screenBreaks.map { side ->
+            val servedAt = pastScreenBreaks
+                .filter { (byTitle[it.title]?.durationMillis ?: 0L) > side.durationMillis }
+                .maxOfOrNull { it.range.endEpochMillis }
+            if (servedAt != null && servedAt > side.lastRestMillis) side.copy(lastRestMillis = servedAt) else side
         }
     }
 
@@ -1865,10 +2003,10 @@ object SchedulerDomain {
                 val maxDuration = coupled.maxOf { it.value.durationMillis }
                 val from = fromMillis - maxInterval - maxDuration
                 val seedDue = coupled.associate { (i, t) ->
-                    // A pose recurs over a (duration + interval) cycle; the look-away every interval. Seed at the
-                    // grid point at/just before the widened [from] so the loop reconstructs every occurrence up to
-                    // [toMillis] with the re-anchoring poses already placed.
-                    val step = if (t.restBreak) t.durationMillis + t.intervalMillis else t.intervalMillis
+                    // Every break recurs over a (duration + interval) cycle — an interval after it ends. Seed at
+                    // the grid point at/just before the widened [from] so the loop reconstructs every occurrence
+                    // up to [toMillis] with the re-anchoring poses already placed.
+                    val step = t.durationMillis + t.intervalMillis
                     val base = t.lastRestMillis + t.intervalMillis
                     i to (if (base >= from) base else base + ((from - base) / step) * step)
                 }
@@ -1879,6 +2017,60 @@ object SchedulerDomain {
             decoupledPoseOccurrences(i, t, fromMillis, toMillis, qualifyingPauseWindows, includeLiveNow = false, fromMillis)
         }
         return (gridPanels + decoupledPanels).sortedBy { it.startEpochMillis }
+    }
+
+    /**
+     * PRD §15: the screen breaks that were **taken** in `[fromMillis, toMillis]` — the calendar's past-side
+     * markers, so a break stays drawn where it happened instead of vanishing the instant the now-line passes it.
+     *
+     * Read off the ANCHORS, not off the projection grid, because only the anchor knows what happened. Each
+     * break's [ScreenBreak.lastRestMillis] is exactly the end of the last rest that served it — so `[anchor −
+     * duration, anchor]` is a break that was really taken, and everything after the anchor is the pending
+     * occurrence, which slides to the now-line while owed ([screenBreakNextStart]) and belongs to the FORWARD
+     * projection. (Drawn by both, an owed break would appear twice at once: at its fixed due and at the
+     * now-line.) The two kinds differ in how far back the evidence reaches, and it is the same asymmetry as
+     * everywhere else in §15:
+     * - a **look-away** serves itself every time the app conducts one ([serveElapsedScreenBreaks]), so its
+     *   anchor steps one whole `duration + interval` cycle per break and walking it back reproduces the
+     *   occurrences actually conducted since the last pause reset the phase;
+     * - a **rest pose** is only ever served by an observed pause, so exactly one occurrence is vouched for —
+     *   the one ending at its anchor. Chaining a pose backwards would invent a tidy cadence of 5-min breaks the
+     *   user never took, which is the opposite of what this is for.
+     *
+     * Deliberately NOT the [simulateScreenBreaks] grid: these are markers of what happened, so they need no
+     * merge/absorption/re-anchor interleaving (those rules place FUTURE occurrences that do not overlap), and
+     * seeding that walk in the past would reconstruct occurrences no anchor vouches for. Cost is bounded by the
+     * window, not by history (CLAUDE.md), and an unanchored break (`lastRestMillis == 0`) draws nothing.
+     */
+    fun takenScreenBreakPanels(
+        screenBreaks: List<ScreenBreak>,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<TaskPanel> {
+        if (toMillis < fromMillis) return emptyList()
+        val out = mutableListOf<TaskPanel>()
+        for ((index, side) in screenBreaks.withIndex()) {
+            if (!isValidScreenBreak(side) || side.lastRestMillis <= 0L) continue
+            // A pose has exactly one vouched-for occurrence, the one ending at its anchor (see the docstring).
+            if (side.restBreak) {
+                val start = side.lastRestMillis - side.durationMillis
+                if (start in fromMillis..toMillis) out += screenBreakPanel(index, side.title, start, side.lastRestMillis)
+                continue
+            }
+            // The look-away chains backward a cycle at a time. Skip straight to the first occurrence that can
+            // fall in the window, so the cost is the window's own span and not its distance from the anchor.
+            val cycle = side.durationMillis + side.intervalMillis
+            val overshoot = side.lastRestMillis - side.durationMillis - toMillis
+            val skip = if (overshoot > 0) (overshoot + cycle - 1) / cycle else 0L
+            var end = side.lastRestMillis - skip * cycle
+            var guard = 0
+            while (end >= fromMillis && guard++ < SCREEN_BREAK_PROJECTION_LIMIT) {
+                val start = end - side.durationMillis
+                if (start in fromMillis..toMillis) out += screenBreakPanel(index, side.title, start, end)
+                end -= cycle
+            }
+        }
+        return out.sortedBy { it.startEpochMillis }
     }
 
     /**
@@ -2164,9 +2356,12 @@ object SchedulerDomain {
                 result.add(screenBreakPanel(nextIndex, task.title, start, end))
                 openPauses.add(end to task.durationMillis)
             }
-            // Recurrence: poses resume an interval after they end; the cadence look-away an interval after it
-            // starts. Placing this pause also pushes every shorter pause to an interval after it ends.
-            // (Only COUPLED breaks reach this grid — a decoupled pose is projected separately by
+            // Recurrence: EVERY break resumes an interval after it ENDS — the same arithmetic the anchor uses
+            // (`lastRest` is the serving rest's end, the next due `lastRest + interval`), so the drawn grid and
+            // the cue's due can never drift apart. The look-away used to recur an interval after it *started*,
+            // which left its drawn cadence 20 s ahead of the anchor now that a look-away break serves itself
+            // ([serveElapsedScreenBreaks]). Placing this pause also pushes every shorter pause to an interval
+            // after it ends. (Only COUPLED breaks reach this grid — a decoupled pose is projected separately by
             // [decoupledPoseOccurrences] and never seeded here; see [screenBreakPanels].)
             val remaining = denseBudget[nextIndex]
             if (remaining != null && remaining <= 1) {
@@ -2175,7 +2370,7 @@ object SchedulerDomain {
                 due.remove(nextIndex)
             } else {
                 if (remaining != null) denseBudget[nextIndex] = remaining - 1
-                due[nextIndex] = (if (task.restBreak) end else start) + task.intervalMillis
+                due[nextIndex] = end + task.intervalMillis
             }
             reanchorSmaller(end, task.durationMillis)
         }

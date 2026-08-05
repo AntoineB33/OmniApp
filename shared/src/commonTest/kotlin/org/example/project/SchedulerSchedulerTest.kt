@@ -298,10 +298,10 @@ class SchedulerSchedulerTest {
             listOf(
                 p15 to 0L,
                 la to 35 * MIN, // 20 min after the 15-min pose ends (t0+15)
-                la to 55 * MIN,
+                la to 55 * MIN + 20_000L, // 20 min after the PREVIOUS look-away ends (t0+35:20)
                 p5 to 75 * MIN, // t0 + 1h15
                 la to 100 * MIN, // 20 min after the 5-min pose ends (t0+1h20)
-                la to 120 * MIN, // t0 + 2h
+                la to 120 * MIN + 20_000L,
                 p15 to 135 * MIN, // t0 + 2h15
                 la to 170 * MIN, // 20 min after the 15-min pose ends (t0+2h30)
             ),
@@ -448,6 +448,147 @@ class SchedulerSchedulerTest {
     }
 
     @Test
+    fun a_conducted_look_away_break_serves_itself_so_the_cue_recurs() {
+        // The reported anomaly: "I got look away 5 s after startup, then resume your work, but nothing
+        // afterward." Nothing detects a look-away, so its anchor never moved, its due stayed fixed, and the cue
+        // — level `now >= due`, de-duped on that due — could never fire again. A look-away the app CONDUCTED
+        // (announced, waited its full length, said resume) has happened and serves itself.
+        val now = 1_000_000_000_000L
+        val cycle = 20 * MIN + 20_000L // an interval after it ENDS
+        val la = ScreenBreak("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now)
+
+        // Mid-break (the cue has fired, the 20 s are not up): still owed, anchor untouched.
+        val midBreak = now + 20 * MIN + 10_000L
+        assertEquals(now, SchedulerDomain.serveElapsedScreenBreaks(listOf(la), midBreak)[0].lastRestMillis)
+
+        // The moment it ends it has happened: the anchor moves to its end and the next due is an interval on.
+        val served = SchedulerDomain.serveElapsedScreenBreaks(listOf(la), now + cycle)[0]
+        assertEquals(now + cycle, served.lastRestMillis)
+        assertEquals(now + cycle + 20 * MIN, SchedulerDomain.screenBreakNextStart(served, now + cycle))
+        // …and that new due is a boundary the cue offers afresh, which is what makes it recur.
+        val reached = SchedulerDomain.reachedScreenBreakDueByTitle(listOf(served), now + cycle + 20 * MIN)
+        assertEquals(mapOf("Eyes" to now + cycle + 20 * MIN), reached)
+
+        // A clock leap over a hundred cycles lands on the LAST occurrence that elapsed, not the first.
+        assertEquals(
+            now + 100 * cycle,
+            SchedulerDomain.serveElapsedScreenBreaks(listOf(la), now + 100 * cycle + 5_000L)[0].lastRestMillis,
+        )
+
+        // A rest POSE is never self-served — a 5-/15-minute stop is detectable, so it stays owed and keeps
+        // sliding until a real pause serves it. And an unanchored break keeps its 1970 sentinel.
+        val pose = ScreenBreak("Pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now)
+        assertEquals(now, SchedulerDomain.serveElapsedScreenBreaks(listOf(pose), now + 10 * HOUR_MS)[0].lastRestMillis)
+        val never = la.copy(lastRestMillis = 0L)
+        assertEquals(0L, SchedulerDomain.serveElapsedScreenBreaks(listOf(never), now)[0].lastRestMillis)
+    }
+
+    @Test
+    fun an_owed_pose_stops_the_look_away_counting_breaks_it_never_announced() {
+        // The serving rule and the cue rule must be the SAME rule. From an owed pose's due onward the look-away
+        // is dragged, not drawn or announced (the dragging-pose shadow in reachedScreenBreakDueByTitle), so
+        // those occurrences were never conducted and must not count as taken — otherwise the anchor ticks on
+        // through the whole owed stretch and the calendar later draws past look-aways that never happened.
+        val now = 1_000_000_000_000L
+        val cycle = 20 * MIN + 20_000L
+        val la = ScreenBreak("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now)
+        // The pose comes due an hour in; by then two look-aways have been conducted (due at :20 and :40:20).
+        val pose = ScreenBreak("Pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now)
+        val poseDue = now + 60 * MIN
+
+        val served = SchedulerDomain.serveElapsedScreenBreaks(listOf(la, pose), now + 5 * HOUR_MS)
+        assertEquals(now + 2 * cycle, served.first { it.title == "Eyes" }.lastRestMillis)
+        // The shadow is exactly where the cue goes quiet: no look-away is offered past the pose's due either.
+        assertTrue(
+            SchedulerDomain.reachedScreenBreakDueByTitle(served, now + 5 * HOUR_MS).keys.none { it == "Eyes" },
+        )
+        // The pose being taken is what releases both: a pause under the dragged pose serves it and, being the
+        // longer rest, the look-away with it.
+        val taken = SchedulerDomain.pastScreenBreaksFromPauses(served, listOf(TaskTimeRange(poseDue + MIN, poseDue + 7 * MIN)))
+        assertEquals(
+            poseDue + MIN + 5 * MIN,
+            SchedulerDomain.serveShorterBreaks(served, taken).first { it.title == "Eyes" }.lastRestMillis,
+        )
+    }
+
+    @Test
+    fun a_pause_under_a_dragging_pose_is_that_pose_s_break_and_serves_the_look_away() {
+        // PRD §15: "a ≥5-min no-screen period that happened while the now-line was dragging a 5-min break is a
+        // past 5-min break" — and, being a longer rest than a look-away, it serves the look-away too, though 5
+        // minutes is under the look-away's own 15-minute pause threshold.
+        val now = 1_000_000_000_000L
+        val la = ScreenBreak(
+            "Eyes",
+            intervalMillis = 20 * MIN,
+            durationMillis = 20_000L,
+            pauseThresholdMillis = SchedulerDomain.LOOK_AWAY_QUALIFYING_PAUSE_MILLIS,
+            lastRestMillis = now,
+        )
+        // The 5-min pose is owed from now+1h; the 15-min pose is not owed until now+2h.
+        val p5 = ScreenBreak("Pose5", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now)
+        val p15 = ScreenBreak("Pose15", intervalMillis = 2 * HOUR_MS, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = now)
+        val breaks = listOf(la, p5, p15)
+
+        // A 6-minute pause starting after the 5-min pose came due: that period IS the 5-min break.
+        val pauseStart = now + 70 * MIN
+        val taken = SchedulerDomain.pastScreenBreaksFromPauses(breaks, listOf(TaskTimeRange(pauseStart, pauseStart + 6 * MIN)))
+        assertEquals(1, taken.size)
+        assertEquals("Pose5", taken[0].title)
+        assertEquals(TaskTimeRange(pauseStart, pauseStart + 5 * MIN), taken[0].range)
+
+        // It serves every SHORTER break — the look-away's anchor moves to the break's end.
+        val servedLookAway = SchedulerDomain.serveShorterBreaks(breaks, taken).first { it.title == "Eyes" }
+        assertEquals(pauseStart + 5 * MIN, servedLookAway.lastRestMillis)
+        // …while the pose that was taken is not "served by itself" here (the pause rule anchors it, to the
+        // pause's own end), and nothing serves a break that is longer than the one taken.
+        assertEquals(now, SchedulerDomain.serveShorterBreaks(breaks, taken).first { it.title == "Pose15" }.lastRestMillis)
+
+        // Too short to be the dragged break: not a break at all, and it serves nothing.
+        val brief = SchedulerDomain.pastScreenBreaksFromPauses(breaks, listOf(TaskTimeRange(pauseStart, pauseStart + 4 * MIN)))
+        assertTrue(brief.isEmpty())
+        // No pose was owed when it began (before the 5-min pose's due): nothing is recognized either.
+        val early = SchedulerDomain.pastScreenBreaksFromPauses(breaks, listOf(TaskTimeRange(now + 10 * MIN, now + 40 * MIN)))
+        assertTrue(early.isEmpty())
+    }
+
+    @Test
+    fun when_both_poses_are_owed_the_dragged_break_is_the_15min_one_not_the_5min_one() {
+        // PRD §15: "if it was dragging a 5-min break, then this 5-min break merged with a 15-min break, then it
+        // wasn't dragging a 5-min break but a 15-min break" — the same longest-absorbs-shorter merge the cue
+        // applies. So the period has to reach FIFTEEN minutes to be a break at all, and it is a 15-min one.
+        val now = 1_000_000_000_000L
+        val p5 = ScreenBreak("Pose5", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now)
+        val p15 = ScreenBreak("Pose15", intervalMillis = 2 * HOUR_MS, durationMillis = 15 * MIN, restBreak = true, lastRestMillis = now)
+        val breaks = listOf(p5, p15)
+        // Both are owed from now+2h (5-min since now+1h, 15-min since now+2h), so they have merged.
+        val pauseStart = now + 3 * HOUR_MS
+
+        // Ten minutes would have been enough for the 5-min pose alone — but the merged break is 15 min.
+        assertTrue(
+            SchedulerDomain.pastScreenBreaksFromPauses(breaks, listOf(TaskTimeRange(pauseStart, pauseStart + 10 * MIN))).isEmpty(),
+        )
+        val taken = SchedulerDomain.pastScreenBreaksFromPauses(breaks, listOf(TaskTimeRange(pauseStart, pauseStart + 20 * MIN)))
+        assertEquals(listOf("Pose15"), taken.map { it.title })
+        assertEquals(TaskTimeRange(pauseStart, pauseStart + 15 * MIN), taken[0].range)
+    }
+
+    @Test
+    fun the_look_away_is_served_by_a_fifteen_minute_pause_but_not_by_a_brief_one() {
+        // PRD §15: the look-away's qualifying pause is 15 minutes — the 15-min pose's own length, so that pose
+        // serves it through the plain pause rule and needs no special case. It used to be "as long as the break
+        // itself", i.e. 20 seconds, so every brief step away restarted the 20-minute clock.
+        val now = 1_000_000_000_000L
+        val la = SchedulerDomain.DEFAULT_SCREEN_BREAKS.first { !it.restBreak }.copy(lastRestMillis = now)
+        assertEquals(SchedulerDomain.LOOK_AWAY_QUALIFYING_PAUSE_MILLIS, la.qualifyingPauseMillis)
+
+        val brief = listOf(TaskTimeRange(now + 30 * MIN, now + 35 * MIN))
+        assertEquals(now, SchedulerDomain.seedScreenBreaksFromGaps(listOf(la), brief)[0].lastRestMillis)
+
+        val long = listOf(TaskTimeRange(now + 30 * MIN, now + 50 * MIN))
+        assertEquals(now + 50 * MIN, SchedulerDomain.seedScreenBreaksFromGaps(listOf(la), long)[0].lastRestMillis)
+    }
+
+    @Test
     fun seed_screen_breaks_from_gaps_advances_rest_poses_so_a_peer_sleep_lines_up_across_devices() {
         val now = 1_000_000_000_000L
         // The phone's derived poses with no local rest (Android has no readable OS sleep log): both overdue,
@@ -511,14 +652,75 @@ class SchedulerSchedulerTest {
             assertEquals(5_000L, pose5.intervalMillis)
             assertEquals(2 * HOUR_MS, pose5.pauseThresholdMillis)
             assertEquals(2 * HOUR_MS, pose5.qualifyingPauseMillis)
-            // The 15-min pose and the 20-20-20 look-away keep production timings (never retimed).
+            // This trio names the 5-min pose only, so the 15-min pose and the 20-20-20 look-away keep
+            // production timings (they have their own knobs — see the per-break test below).
             assertTrue(sides.any { it.restBreak && it.durationMillis == 15L * 60_000 && it.pauseThresholdMillis == 0L })
-            assertTrue(sides.any { !it.restBreak && it.durationMillis == 20L * 1_000 && it.pauseThresholdMillis == 0L })
+            assertTrue(
+                sides.any {
+                    !it.restBreak && it.durationMillis == 20L * 1_000 &&
+                        it.pauseThresholdMillis == SchedulerDomain.LOOK_AWAY_QUALIFYING_PAUSE_MILLIS
+                },
+            )
         } finally {
             DebugFlags.breakDurationMillisOverride = null
             DebugFlags.breakIntervalMillisOverride = null
             DebugFlags.breakPauseThresholdMillisOverride = null
         }
+    }
+
+    @Test
+    fun the_debug_override_retimes_each_of_the_three_screen_breaks_independently() {
+        // account1-empty-open-fast-break.bat's nine knobs: every break, matched by its stable key, with each
+        // rule optional. Here the look-away and the 15-min pose are retimed and the 5-min pose is not.
+        DebugFlags.screenBreakOverrides = mapOf(
+            SchedulerDomain.LOOK_AWAY_KEY to ScreenBreakOverride(durationMillis = 3_000L, intervalMillis = 30_000L),
+            SchedulerDomain.FIFTEEN_MIN_BREAK_KEY to ScreenBreakOverride(
+                durationMillis = 9_000L, intervalMillis = 60_000L, pauseThresholdMillis = 3 * HOUR_MS,
+            ),
+        )
+        try {
+            val breaks = SchedulerDomain.effectiveDefaultScreenBreaks().associateBy { it.key }
+            val lookAway = breaks.getValue(SchedulerDomain.LOOK_AWAY_KEY)
+            assertEquals(3_000L, lookAway.durationMillis)
+            assertEquals(30_000L, lookAway.intervalMillis)
+            // A null field keeps that rule: the look-away's threshold stays its production 15 min (the pause
+            // length that serves it), untouched by the overridden duration.
+            assertEquals(SchedulerDomain.LOOK_AWAY_QUALIFYING_PAUSE_MILLIS, lookAway.pauseThresholdMillis)
+            assertEquals(SchedulerDomain.LOOK_AWAY_QUALIFYING_PAUSE_MILLIS, lookAway.qualifyingPauseMillis)
+
+            val pose15 = breaks.getValue(SchedulerDomain.FIFTEEN_MIN_BREAK_KEY)
+            assertEquals(9_000L, pose15.durationMillis)
+            assertEquals(60_000L, pose15.intervalMillis)
+            assertEquals(3 * HOUR_MS, pose15.qualifyingPauseMillis)
+
+            // A break with no entry at all is untouched.
+            val pose5 = breaks.getValue(SchedulerDomain.FIVE_MIN_BREAK_KEY)
+            assertEquals(5L * 60_000, pose5.durationMillis)
+            assertEquals(60L * 60_000, pose5.intervalMillis)
+            assertEquals(0L, pose5.pauseThresholdMillis)
+        } finally {
+            DebugFlags.screenBreakOverrides = emptyMap()
+        }
+    }
+
+    @Test
+    fun the_legacy_5min_break_properties_are_a_view_onto_the_per_break_override_map() {
+        // The desktop's older `-Pomniapp.breakDurationMs` trio and Android's remembered debug flags both write
+        // through these, so they must land on the 5-min pose's entry — and clearing the last one must drop the
+        // entry, keeping "nothing overridden" exactly equal to an empty map (what a release always runs).
+        DebugFlags.breakDurationMillisOverride = 5_000L
+        try {
+            assertEquals(
+                ScreenBreakOverride(durationMillis = 5_000L),
+                DebugFlags.screenBreakOverrides[SchedulerDomain.FIVE_MIN_BREAK_KEY],
+            )
+            assertTrue(DebugFlags.fastBreakOverrideActive)
+        } finally {
+            DebugFlags.breakDurationMillisOverride = null
+        }
+        assertEquals(emptyMap(), DebugFlags.screenBreakOverrides)
+        assertFalse(DebugFlags.fastBreakOverrideActive)
+        assertEquals(SchedulerDomain.DEFAULT_SCREEN_BREAKS, SchedulerDomain.effectiveDefaultScreenBreaks())
     }
 
     @Test
@@ -546,16 +748,20 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun a_cadence_screen_break_recurs_an_interval_after_it_starts() {
-        // PRD §15: the look-away (non-rest) recurs an interval after it STARTS (its length is negligible).
+    fun a_cadence_screen_break_recurs_an_interval_after_it_ends() {
+        // PRD §15: EVERY break — the look-away included — recurs an interval after it ENDS, which is the same
+        // arithmetic its anchor uses (`lastRest` is the serving rest's end, the next due `lastRest + interval`).
+        // The look-away used to recur an interval after it STARTED, on the grounds that its 20-s length is
+        // negligible; that left the drawn grid 20 s ahead of the anchor now that a conducted look-away serves
+        // itself ([SchedulerDomain.serveElapsedScreenBreaks]), so the cue's due and the marker would drift apart.
         val now = 1_000_000_000_000L
         val sides = listOf(ScreenBreak("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 5 * MIN))
         val panels = SchedulerDomain.screenBreakPanels(sides, now).sortedBy { it.startEpochMillis }
 
         assertEquals(now + 15 * MIN, panels[0].startEpochMillis) // lastRest + interval
         assertEquals(now + 15 * MIN + 20_000L, panels[0].endEpochMillis) // 20-s span
-        assertEquals(now + 35 * MIN, panels[1].startEpochMillis) // +20 min start-to-start (no drift)
-        assertEquals(now + 55 * MIN, panels[2].startEpochMillis)
+        assertEquals(now + 35 * MIN + 20_000L, panels[1].startEpochMillis) // end + interval
+        assertEquals(now + 55 * MIN + 40_000L, panels[2].startEpochMillis)
     }
 
     @Test
@@ -667,12 +873,12 @@ class SchedulerSchedulerTest {
         // PRD §15: screen breaks project straight through sleep windows now, so an occurrence whose start lands
         // in what would be a sleep window is still a real "last past screen break" (a user working overnight).
         val now = 1_000_000_000_000L
-        // Grid points (lastRest 45 min ago, 20-min interval): now-25min, now-5min, now+15min(future).
+        // Grid points (lastRest 45 min ago, a 20 min + 20 s cycle): now−25min, now−4:40, now+15:40 (future).
         val sides = listOf(ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 45 * MIN))
         val last = SchedulerDomain.lastScreenBreakBefore(sides, now)
         assertNotNull(last)
-        // The most recent grid point before now (now-5min) is returned, not the earlier one.
-        assertEquals(now - 5 * MIN, last.startEpochMillis)
+        // The most recent grid point before now is returned, not the earlier one.
+        assertEquals(now - 5 * MIN + 20_000L, last.startEpochMillis)
     }
 
     @Test

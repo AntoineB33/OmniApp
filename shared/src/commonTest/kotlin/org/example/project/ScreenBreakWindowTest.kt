@@ -24,10 +24,54 @@ class ScreenBreakWindowTest {
 
     @Test
     fun window_returns_only_occurrences_inside_it() {
-        val la = lookAway.copy(lastRestMillis = 0) // grid: 20, 40, 60, 80… min
+        // Every break recurs an interval after it ENDS, so the grid is 20:00, 40:20, 60:40, 81:00, 101:20…
+        val la = lookAway.copy(lastRestMillis = 0)
+        val cycle = 20 * MIN + 20 * SEC
         val starts = SchedulerDomain.screenBreakPanelsInWindow(listOf(la), 35 * MIN, 105 * MIN)
             .map { it.startEpochMillis }.sorted()
-        assertEquals(listOf(40 * MIN, 60 * MIN, 80 * MIN, 100 * MIN), starts)
+        assertEquals((1..4).map { 20 * MIN + it * cycle }, starts)
+    }
+
+    @Test
+    fun the_past_side_of_the_calendar_draws_the_breaks_that_were_taken_and_not_the_owed_one() {
+        // PRD §15: a break stays drawn where it happened instead of vanishing as the now-line passes it. What
+        // separates "happened" from "still owed" is the anchor — the end of the last rest that served the break
+        // — so the pending occurrence is left to the forward projection, which slides it to the now-line. Drawn
+        // by both, an owed break would appear twice at once: at its fixed due AND at the now-line.
+        val now = 10 * 60 * MIN
+        val cycle = 20 * MIN + 20 * SEC
+        // Anchored 25 min back: the look-away it conducted ended there, and the ones before it a cycle apart.
+        val la = lookAway.copy(lastRestMillis = now - 25 * MIN)
+        val taken = SchedulerDomain.takenScreenBreakPanels(listOf(la), now - 2 * 60 * MIN, now - 1)
+        assertTrue(taken.all { it.screenBreak && it.taskId == null })
+        // Each is the break's own 20-s span, the latest ending exactly at the anchor, one cycle apart.
+        assertEquals(20 * SEC, taken.last().endEpochMillis - taken.last().startEpochMillis)
+        assertEquals(la.lastRestMillis, taken.last().endEpochMillis)
+        assertEquals(listOf(cycle), taken.map { it.startEpochMillis }.zipWithNext { a, b -> b - a }.distinct())
+        // The OWED occurrence — due at lastRest + 20 min, already past — is not drawn here: it slides to the
+        // now-line and the forward projection draws it, so drawing it here too would show it twice at once.
+        assertTrue(taken.none { it.startEpochMillis == la.lastRestMillis + 20 * MIN })
+        assertTrue(
+            SchedulerDomain.screenBreakPanels(listOf(la), now).any { it.startEpochMillis == now },
+        )
+
+        // A POSE vouches for exactly one occurrence, the one ending at its anchor — the pause that served it.
+        // Chaining it backward would invent a cadence of 5-min breaks the user never took.
+        val pose = pose5.copy(lastRestMillis = now - 25 * MIN)
+        val poseTaken = SchedulerDomain.takenScreenBreakPanels(listOf(pose), now - 2 * 60 * MIN, now - 1)
+        assertEquals(1, poseTaken.size)
+        assertEquals(pose.lastRestMillis - 5 * MIN, poseTaken.single().startEpochMillis)
+
+        // An unanchored break has taken nothing.
+        assertTrue(SchedulerDomain.takenScreenBreakPanels(listOf(lookAway), 0, now).isEmpty())
+
+        // Cost follows the window, not its distance from the anchor: a week-long window a hundred weeks back
+        // holds the same number of markers as one a week back (it holds none of them at all, in fact — but the
+        // point is that neither call walks the cycles in between).
+        assertEquals(
+            SchedulerDomain.takenScreenBreakPanels(listOf(la), now - 2 * WEEK, now - WEEK).size,
+            SchedulerDomain.takenScreenBreakPanels(listOf(la), now - 101 * WEEK, now - 100 * WEEK).size,
+        )
     }
 
     @Test

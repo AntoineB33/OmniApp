@@ -496,21 +496,40 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // through the O(n²) placement scan, which froze the app when a distant day was opened. Reconstruct
         // just that week's window from the fixed grid instead (no walk from `now`, no live-rest overlay
         // needed — the present isn't in view).
+        // PRD §15: the breaks that ALREADY HAPPENED stay on the calendar — a look-away is drawn where it was
+        // taken, not erased the moment the now-line passes it. The forward projection below starts at `now`, so
+        // the elapsed part of the focused week is reconstructed from the same fixed grid, bounded to the
+        // VISIBLE window (CLAUDE.md: display derivations scale with the screen, not with history) and stopping
+        // one millisecond short of `now` so the two sources can never draw the same occurrence twice.
+        //
+        // It is a reconstruction rather than a record because the anchors make it exact where it matters: every
+        // break now recurs a fixed (duration + interval) cycle after the previous one ends, and each rest that
+        // served it — a conducted look-away, a pose break, a long pause — moves the anchor to its own end. So
+        // walking the grid back from the live anchor reproduces the occurrences actually taken since the last
+        // rest, and no state has to be persisted to show them. Only the TAKEN ones are drawn here: the break
+        // that is still owed slides to the now-line and is the forward projection's to draw.
+        val displayPastSidePanels =
+            SchedulerDomain.takenScreenBreakPanels(
+                schedulerState.screenBreaks,
+                focusedWeekStartMillis,
+                minOf(nowMillis - 1, focusedWeekEndMillis),
+            )
         val displaySidePanels =
             if (focusedWeekStartMillis <= nowMillis) {
-                SchedulerDomain.screenBreakPanels(
-                    SchedulerDomain.screenBreaksForPlacement(
-                        schedulerState.screenBreaks,
-                        SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
-                    ),
-                    nowMillis,
-                    focusedWeekEndMillis,
-                    // A decoupled 5-min pose (account1 fast-break) appears an interval after each qualifying
-                    // pause; the future ones are the scheduled sleep windows (PRD §15).
-                    qualifyingPauseWindows = SchedulerDomain.sleepRegions(
-                        schedulerState.sleep, nowMillis, focusedWeekEndMillis, tz,
-                    ),
-                )
+                displayPastSidePanels +
+                    SchedulerDomain.screenBreakPanels(
+                        SchedulerDomain.screenBreaksForPlacement(
+                            schedulerState.screenBreaks,
+                            SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
+                        ),
+                        nowMillis,
+                        focusedWeekEndMillis,
+                        // A decoupled 5-min pose (account1 fast-break) appears an interval after each qualifying
+                        // pause; the future ones are the scheduled sleep windows (PRD §15).
+                        qualifyingPauseWindows = SchedulerDomain.sleepRegions(
+                            schedulerState.sleep, nowMillis, focusedWeekEndMillis, tz,
+                        ),
+                    )
             } else {
                 SchedulerDomain.screenBreakPanelsInWindow(
                     schedulerState.screenBreaks,

@@ -1,5 +1,29 @@
 package org.example.project
 
+import org.example.project.scheduler.domain.SchedulerDomain
+
+/**
+ * Debug-only retiming of ONE screen break, by [org.example.project.scheduler.model.ScreenBreak.key]. Each
+ * field is `null` when that rule keeps its production value, so a partial override (say: only the interval)
+ * leaves the rest of the break alone. Applied in
+ * [org.example.project.scheduler.domain.SchedulerDomain.effectiveDefaultScreenBreaks].
+ */
+data class ScreenBreakOverride(
+    /** The break's drawn LENGTH, in millis. */
+    val durationMillis: Long? = null,
+    /** How long after the previous qualifying pause the break comes due, in millis. */
+    val intervalMillis: Long? = null,
+    /**
+     * The minimum real pause that ANCHORS the break, in millis — decoupling it from [durationMillis] (a short
+     * break placed only after a long pause). See [org.example.project.scheduler.model.ScreenBreak.pauseThresholdMillis].
+     */
+    val pauseThresholdMillis: Long? = null,
+) {
+    /** True when this override changes nothing — the break keeps every production timing. */
+    val isEmpty: Boolean
+        get() = durationMillis == null && intervalMillis == null && pauseThresholdMillis == null
+}
+
 /**
  * Switches for in-app debug tooling, set once at startup from the platform entry point (before [App]
  * composes) and never changed afterwards. **Off by default**, so a packaged/release build never shows the
@@ -12,8 +36,51 @@ object DebugFlags {
     var TIME_SIMULATION: Boolean = false
 
     /**
+     * Debug-only retiming of the screen breaks, keyed by [org.example.project.scheduler.model.ScreenBreak.key]
+     * — `"look_away"` / `"5min_break"` / `"15min_break"`. **All three breaks are tweakable**, independently and
+     * partially: a key absent from the map (or a `null` field in its [ScreenBreakOverride]) keeps that break's
+     * production rule. Empty = production everywhere, which is what a release always runs.
+     *
+     * Set at startup from the platform entry point and never changed afterwards: on desktop from the
+     * `omniapp.break.<lookAway|pose5|pose15>.<durationMs|intervalMs|pauseThresholdMs>` system properties (the
+     * `/scripts` fast-break launchers pass them as `-P` properties); on Android only the 5-min pose is wired,
+     * through the legacy [breakDurationMillisOverride] trio below.
+     */
+    var screenBreakOverrides: Map<String, ScreenBreakOverride> = emptyMap()
+
+    /** This break's override, or an all-`null` one when it is not retimed. */
+    fun screenBreakOverride(key: String): ScreenBreakOverride =
+        screenBreakOverrides[key] ?: ScreenBreakOverride()
+
+    /**
+     * Applies [override]'s NON-null fields on top of whatever [key] already carries, leaving the rest alone —
+     * so a caller reading several sources (e.g. the legacy 5-min properties and then the per-break ones) can
+     * layer them without a later, sparser source erasing an earlier value. An entry that ends up
+     * [ScreenBreakOverride.isEmpty] is dropped, keeping "no overrides" exactly equal to an empty map.
+     */
+    fun mergeScreenBreakOverride(key: String, override: ScreenBreakOverride) {
+        val current = screenBreakOverride(key)
+        val merged = ScreenBreakOverride(
+            durationMillis = override.durationMillis ?: current.durationMillis,
+            intervalMillis = override.intervalMillis ?: current.intervalMillis,
+            pauseThresholdMillis = override.pauseThresholdMillis ?: current.pauseThresholdMillis,
+        )
+        screenBreakOverrides =
+            if (merged.isEmpty) screenBreakOverrides - key else screenBreakOverrides + (key to merged)
+    }
+
+    /** Replaces one FIELD of one break's override ([value] `null` clears just that field). */
+    private fun setScreenBreakField(key: String, field: ScreenBreakOverride.(Long?) -> ScreenBreakOverride, value: Long?) {
+        val updated = screenBreakOverride(key).field(value)
+        screenBreakOverrides =
+            if (updated.isEmpty) screenBreakOverrides - key else screenBreakOverrides + (key to updated)
+    }
+
+    /**
      * Debug-only override of the **5-min screen break**'s DURATION, in milliseconds (for exercising the
-     * pause-cue voice message end-to-end on real phones). `null` = production 5 minutes.
+     * pause-cue voice message end-to-end on real phones). `null` = production 5 minutes. A named view onto
+     * [screenBreakOverrides]`["5min_break"]`, kept because the 5-min pose is the one break the *phone* can
+     * retime (`AndroidDebugFlagStore`) and the one the pause-cue scripts shrink.
      *
      * The "5-min break" is the shorter of the two rest-break poses in
      * [org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SCREEN_BREAKS] ("take a 5min pose and blink
@@ -36,7 +103,11 @@ object DebugFlags {
      * server cue. Test-only: it changes how a device seeds/records its rest poses, so point it at a scratch
      * account.
      */
-    var breakDurationMillisOverride: Long? = null
+    var breakDurationMillisOverride: Long?
+        get() = screenBreakOverride(SchedulerDomain.FIVE_MIN_BREAK_KEY).durationMillis
+        set(value) = setScreenBreakField(
+            SchedulerDomain.FIVE_MIN_BREAK_KEY, { copy(durationMillis = it) }, value,
+        )
 
     /**
      * Debug-only override of the **5-min screen break**'s INTERVAL, in milliseconds — how long after the
@@ -44,8 +115,8 @@ object DebugFlags {
      * [breakDurationMillisOverride]; set both to a few seconds so the now-line reaches a 5-min break almost
      * immediately (then put the machine to sleep and wait `duration` for the phone cue).
      *
-     * Only the 5-min pose is retimed — the 15-min pose and the 20-20-20 look-away keep their production
-     * timings. Whether short 5-min breaks recur depends on [breakPauseThresholdMillisOverride]: with no
+     * This trio retimes only the 5-min pose; the other two breaks are retimed through [screenBreakOverrides]
+     * (desktop only). Whether short 5-min breaks recur depends on [breakPauseThresholdMillisOverride]: with no
      * threshold (the real-time `account2-open-fast-break.bat` shape, qualifying pause == the 5 s drawn length)
      * the pose grid-recurs and the dense cap holds it to one at a time; with a threshold (the
      * `account1-…-fast-break.bat` shape, e.g. 2 h) the pose is *decoupled* and does NOT grid-recur — it appears
@@ -55,7 +126,11 @@ object DebugFlags {
      * stays linear rather than freezing. Startup-only (`omniapp.breakIntervalMs` / `omniapp_break_interval_ms`),
      * remembered per install on Android debug builds like [breakDurationMillisOverride], off in release.
      */
-    var breakIntervalMillisOverride: Long? = null
+    var breakIntervalMillisOverride: Long?
+        get() = screenBreakOverride(SchedulerDomain.FIVE_MIN_BREAK_KEY).intervalMillis
+        set(value) = setScreenBreakField(
+            SchedulerDomain.FIVE_MIN_BREAK_KEY, { copy(intervalMillis = it) }, value,
+        )
 
     /**
      * Debug-only override of the **5-min screen break**'s qualifying-PAUSE THRESHOLD, in milliseconds — the
@@ -66,11 +141,13 @@ object DebugFlags {
      * after a ≥2-h pause and lasts 5 s. Companion of the other two; startup-only (`omniapp.breakPauseThresholdMs`
      * / `omniapp_break_pause_threshold_ms`), remembered per install on Android debug builds, off in release.
      */
-    var breakPauseThresholdMillisOverride: Long? = null
+    var breakPauseThresholdMillisOverride: Long?
+        get() = screenBreakOverride(SchedulerDomain.FIVE_MIN_BREAK_KEY).pauseThresholdMillis
+        set(value) = setScreenBreakField(
+            SchedulerDomain.FIVE_MIN_BREAK_KEY, { copy(pauseThresholdMillis = it) }, value,
+        )
 
-    /** True when any 5-min-break override is set — the debug fast-break test mode is active. */
+    /** True when ANY screen break is retimed — the debug fast-break test mode is active. */
     val fastBreakOverrideActive: Boolean
-        get() = breakDurationMillisOverride != null ||
-            breakIntervalMillisOverride != null ||
-            breakPauseThresholdMillisOverride != null
+        get() = screenBreakOverrides.isNotEmpty()
 }

@@ -32,3 +32,48 @@ To ensure the rule list remains manageable, the scheduler enforces a strict maxi
     Coarse Cycle Fallback: If a fine-grained cycle requires too many rules, the scheduler may fall back to a coarse grouping (one large block per task), overriding the "scale as small as possible" requirement.
 
     Truncated Timelines: If the rule limit is reached before a stable cycle can be calculated, the scheduler may drop the cycle entirely and return only the calculated prefix, leaving the remaining timeline unassigned.
+
+
+Test 10 must have a 20 second period that allows only one task, and that continuously moves to the right. For only this specific moving period, the scheduler must add in its set of rules the rules for the dynamic schedule.
+Example: task A 50% 10min and task B 50% 10min, a 20s period at t=0 that only allows task A moves slowly to the right.
+idea of result: 
+if t < 9min40, such as t is the starting time of the 20s period, then:
+Cycle:
+- task A 10min
+- task B 10min
+- repeat
+if t is between 9min40 and 10min, then:
+Prefix:
+- task A 10min + t - 9min40
+- task B 10min + debt repayment depending on t and decay parameter
+[more rules in the prefix if the repayment still takes effect]
+Cycle:
+- task A 10min
+- task B 10min
+- repeat
+Period: 20min
+if t is between 10min and 19min40, then:
+Cycle:
+- task B 10min
+- task A 10min
+[or reverse]
+- repeat
+Period: 20min
+if t is between 19min40 and 20min, then:
+Prefix:
+- task B 10min + debt repayment depending on t and decay parameter
+- task A 10min + t - 19min40 - some space for the debt repayment of task B right before
+- task B 10min + debt repayment depending on t and decay parameter
+[more rules in the prefix if the repayment still takes effect]
+Cycle:
+- task A 10min
+- task B 10min
+[or reverse]
+- repeat
+Period: 20min
+if t is ...
+
+
+My idea of a result might not be exact, considering the debt repayment mechanism.
+
+The associated example test must have this 20s period moving continuously to the right and the displayed schedule must update in real-time following the set of rules (not by triggering new calculations). If the 20s period reaches the end of the displayed timeline make it start anew.

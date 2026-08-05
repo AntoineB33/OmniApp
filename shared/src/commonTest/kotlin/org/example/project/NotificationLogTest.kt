@@ -1,10 +1,16 @@
 package org.example.project
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.persistence.SchedulerStateCodec
+import org.example.project.scheduler.platform.VoiceCue
 import org.example.project.scheduler.state.NotificationLogEntry
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.ui.TaskSchedulerViewModel
+import org.example.project.time.AppClock
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -18,6 +24,35 @@ import kotlin.test.assertTrue
  * never affects the sync fingerprint and is carried across a remote pull.
  */
 class NotificationLogTest {
+    @Test
+    fun the_end_of_a_screen_break_is_logged_not_only_spoken() {
+        // The reported anomaly: "I don't see resume your work in the history notification." The look-away's
+        // START posted a notification (so the column listed it) while its END only played a voice cue, which
+        // writes the Diagnostics timeline and nothing else — so every break in the column began and none of
+        // them ever finished. The end now posts too; the SPOKEN half stays gated on the look-away voice switch.
+        val spoken = mutableListOf<VoiceCue>()
+        val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        val engine = SchedulerEngine(
+            vm = vm,
+            clock = object : AppClock { override fun nowMillis(): Long = 7_000L },
+            scope = CoroutineScope(Dispatchers.Unconfined),
+            screenActive = { true },
+            playCue = { spoken.add(it) },
+        )
+
+        engine.announceResumeWork(voice = true)
+        assertEquals(
+            NotificationLogEntry(7_000L, "Screen break over", "Resume your work"),
+            vm.state.value.notificationLog.single(),
+        )
+        assertEquals(listOf(VoiceCue.ResumeWork), spoken)
+
+        // Voice off: still logged (like the break's start, whose notification the switch doesn't gate).
+        engine.announceResumeWork(voice = false)
+        assertEquals(2, vm.state.value.notificationLog.size)
+        assertEquals(listOf(VoiceCue.ResumeWork), spoken)
+    }
+
     @Test
     fun record_notification_appends_an_entry() {
         val state = SchedulerState.empty()

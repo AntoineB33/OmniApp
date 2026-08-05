@@ -49,8 +49,18 @@ tasks.withType<JavaExec>().configureEach {
     systemProperty("omniapp.timeSim", (project.findProperty("omniapp.timeSim") as String?) ?: "true")
     // Debug fast-break override for testing the pause-cue voice message (`-Pomniapp.breakDurationMs`,
     // `-Pomniapp.breakIntervalMs`, `-Pomniapp.breakPauseThresholdMs`); forwarded only when set, so the app
-    // defaults to production break timings.
+    // defaults to production break timings. This unprefixed trio retimes the 5-min pose only — the older
+    // spelling, kept for account2-open-fast-break.bat and the Android deploy scripts.
     (project.findProperty("omniapp.breakDurationMs") as String?)?.let { systemProperty("omniapp.breakDurationMs", it) }
     (project.findProperty("omniapp.breakIntervalMs") as String?)?.let { systemProperty("omniapp.breakIntervalMs", it) }
     (project.findProperty("omniapp.breakPauseThresholdMs") as String?)?.let { systemProperty("omniapp.breakPauseThresholdMs", it) }
+    // Per-break form: `-Pomniapp.break.<lookAway|pose5|pose15>.<durationMs|intervalMs|pauseThresholdMs>`, so
+    // ALL THREE screen breaks can be retimed independently (account1-empty-open-fast-break.bat). Same rule:
+    // forwarded only when set, and `main()` leaves every unset rule at its production value.
+    listOf("lookAway", "pose5", "pose15").forEach { breakName ->
+        listOf("durationMs", "intervalMs", "pauseThresholdMs").forEach { rule ->
+            val property = "omniapp.break.$breakName.$rule"
+            (project.findProperty(property) as String?)?.let { systemProperty(property, it) }
+        }
+    }
 }

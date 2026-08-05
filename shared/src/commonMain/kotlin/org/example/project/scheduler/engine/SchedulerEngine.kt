@@ -98,6 +98,12 @@ private const val TASK_TREE_BLEND_POLL_MILLIS: Long = 60_000
 // Real-time cap on each sleep while the manual "Look away now" rest counts down (see [restartLookAway]).
 private const val LOOK_AWAY_RESUME_POLL_MILLIS: Long = 200
 
+// PRD §15: what the end of a look-away break announces (see [SchedulerEngine.announceResumeWork]). Posted as a
+// notification, not merely spoken, so the History window's Notifications column shows a break's end as well as
+// its start; the `resume_work` voice cue speaks the same thing.
+private const val RESUME_WORK_TITLE: String = "Screen break over"
+private const val RESUME_WORK_MESSAGE: String = "Resume your work"
+
 // PRD §12/§15 device-sleep detection: the *real*-time gap between two advance ticks that means the process was
 // suspended (the device slept). It is the production tick cadence × 3 — a fixed REAL duration that does NOT
 // scale with the (possibly accelerated) sim tick rate, so device inactivity is detected by the same ~90 s real
@@ -731,6 +737,11 @@ class SchedulerEngine(
         // the sleep session as a past "Sleep" panel (reduceSetSleepMode) and stop suppressing the pause cue.
         current.sleepingUntilMillis?.let { until -> if (now >= until) vm.setSleepMode(null) }
         maybeMaterializePastSleep(now)
+        // PRD §15: a look-away break the app CONDUCTED (announced, waited its length, said "resume your work")
+        // has happened, so it serves the look-away and the next one comes an interval later. Without this the
+        // anchor only ever moved on a detected pause — and nothing detects a look-away — so the cue fired once
+        // per session and the break stayed owed forever (see [SchedulerDomain.serveElapsedScreenBreaks]).
+        applySeededScreenBreaks(SchedulerDomain.serveElapsedScreenBreaks(current.screenBreaks, now))
     }
 
     // PRD §9/§17 past sleep: as `now` advances, record any scheduled sleep window that has fully elapsed and
@@ -810,6 +821,20 @@ class SchedulerEngine(
     private fun speakCue(cue: VoiceCue) {
         Diagnostics.log("voice cue ${cue.name} (sim now=${Diagnostics.formatInstant(clock.nowMillis())})")
         playCue(cue)
+    }
+
+    /**
+     * PRD §15: announce the END of a look-away break — "resume your work".
+     *
+     * Posted as a NOTIFICATION as well as spoken. The History window's Notifications column lists what the app
+     * posted, and this cue used to be voice-only ([speakCue] writes the Diagnostics timeline, not the log), so
+     * the column showed every break starting and none of them ever finishing. The spoken half stays gated on
+     * the look-away voice switch ([SchedulerState.lookAwayVoiceEnabled], captured by the caller); the
+     * notification does not, exactly as the break's own start doesn't.
+     */
+    internal fun announceResumeWork(voice: Boolean) {
+        notifyUser(RESUME_WORK_TITLE, RESUME_WORK_MESSAGE)
+        if (voice) speakCue(VoiceCue.ResumeWork)
     }
 
     /**
@@ -1095,7 +1120,15 @@ class SchedulerEngine(
         // keeps growing between derives.
         activeSessionMutex.withLock { if (currentSession != null) _inactiveSince.value = null }
         val before = vm.state.value.screenBreaks
-        applySeededScreenBreaks(SchedulerDomain.seedScreenBreaksFromGaps(before, pauses))
+        // PRD §15: a pause long enough to be the rest pose the now-line was DRAGGING when it began *is* that
+        // break (the 15-min one when both were owed and merged). Recognized against the anchors as they stand
+        // BEFORE the pause is folded in — [seedScreenBreaksFromGaps] moves them to its end — and it serves every
+        // shorter break, which is how a 5-min pose discharges the look-away's clock though 5 minutes is under
+        // the look-away's own 15-minute pause threshold.
+        val pastBreaks = SchedulerDomain.pastScreenBreaksFromPauses(before, pauses)
+        applySeededScreenBreaks(
+            SchedulerDomain.serveShorterBreaks(SchedulerDomain.seedScreenBreaksFromGaps(before, pauses), pastBreaks),
+        )
         // PRD §17: a fresh derive (startup, sync-pull) may reveal a scheduled sleep window was inactive — record
         // the observed part as a past "Sleep" panel now, not only on the next schedule advance.
         maybeMaterializePastSleep(until)
@@ -1408,11 +1441,10 @@ class SchedulerEngine(
                                 }
                                 if (startFires && end <= simNow) {
                                     firings += Firing(end, 2) {
-                                        if (voice &&
-                                            cueSweep.realLatenessMillis(end) <= LOOK_AWAY_START_FRESH_MILLIS &&
+                                        if (cueSweep.realLatenessMillis(end) <= LOOK_AWAY_START_FRESH_MILLIS &&
                                             effectiveScreenActive()
                                         ) {
-                                            speakCue(VoiceCue.ResumeWork)
+                                            announceResumeWork(voice)
                                         }
                                     }
                                 }
@@ -1455,7 +1487,7 @@ class SchedulerEngine(
                                     "look-away end ${Diagnostics.formatInstant(end)} resume cue suppressed: " +
                                         "screen inactive at crossing",
                                 )
-                                voice -> speakCue(VoiceCue.ResumeWork)
+                                else -> announceResumeWork(voice)
                             }
                         }
                     }
@@ -1518,7 +1550,7 @@ class SchedulerEngine(
                     if (speed > 0.0) ((resumeAt - clock.nowMillis()).toDouble() / speed).toLong() else Long.MAX_VALUE
                 delay(remainingReal.coerceIn(1L, LOOK_AWAY_RESUME_POLL_MILLIS))
             }
-            if (voice) speakCue(VoiceCue.ResumeWork)
+            announceResumeWork(voice)
         }
     }
 

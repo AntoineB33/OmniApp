@@ -28,16 +28,19 @@ class CueSweepOrderingTest {
 
     @Test
     fun reconstruction_recovers_look_aways_the_forward_projection_has_dropped() {
-        val la = lookAway.copy(lastRestMillis = 0) // grid: 20, 40, 60, 80… min
-        // A sweep window [35, 62] min — the now-line has already crossed the 40- and 60-min look-aways.
+        // Every break recurs an interval after it ENDS, so the look-away's cycle is 20 min + its own 20 s:
+        // the grid is 20:00, 40:20, 60:40, 81:00…
+        val la = lookAway.copy(lastRestMillis = 0)
+        val cycle = 20 * MIN + 20 * SEC
+        // A sweep window [35, 62] min — the now-line has already crossed the 40:20 and 60:40 look-aways.
         val recovered = SchedulerDomain.screenBreakOccurrencesBetween(listOf(la), 35 * MIN, 62 * MIN)
             .map { it.startEpochMillis }.sorted()
-        assertEquals(listOf(40 * MIN, 60 * MIN), recovered)
+        assertEquals(listOf(20 * MIN + cycle, 20 * MIN + 2 * cycle), recovered)
 
         // The forward projection at now = 62 min has stepped the grid clean past them (this is exactly why a
-        // panel-based cue lost them under a leap): its next occurrence is 80 min, not 40 or 60.
+        // panel-based cue lost them under a leap): its next occurrence is 81 min, not 40:20 or 60:40.
         val forward = SchedulerDomain.screenBreakPanels(listOf(la), nowMillis = 62 * MIN).map { it.startEpochMillis }
-        assertTrue(forward.none { it == 40 * MIN || it == 60 * MIN })
+        assertTrue(forward.none { it == 20 * MIN + cycle || it == 20 * MIN + 2 * cycle })
     }
 
     @Test
@@ -137,17 +140,18 @@ class CueSweepOrderingTest {
         // re-anchor the look-away to pose-end+20 — but that slot recedes with `now` (the pose slides), so the
         // now-line never crosses it: no look-away must fire after the pose's due.
         // Both anchored at 5 min (the startup derive seeds a fresh account's poses to ~startup): the look-away
-        // grid is 25/45/65/85 min and the pose is due at 5 + 60 = 65 min, coincident with the 65-min look-away.
+        // grid is 25:00/45:20/65:40… (a 20 min + 20 s cycle — every break recurs an interval after it ENDS) and
+        // the pose is due at 5 + 60 = 65 min, just before the 65:40 look-away.
         val anchor = 5 * MIN
-        val la = lookAway.copy(lastRestMillis = anchor) // grid: 25, 45, 65, 85… min
+        val la = lookAway.copy(lastRestMillis = anchor)
         val p5 = pose5.copy(lastRestMillis = anchor) // due = 65 min, overdue+unserved at now = 90 min
 
-        // The look-aways the now-line actually crossed by 90 min are 25 and 45 only — the 65 is absorbed by the
-        // coincident pose and the re-anchored 85+ are phantoms that recede with the dragging pose.
+        // The look-aways the now-line actually crossed by 90 min are 25:00 and 45:20 only — the 65:40 is
+        // absorbed by the pose it falls inside and everything after it recedes with the dragging pose.
         val lookAways = SchedulerDomain.screenBreakOccurrencesBetween(listOf(la, p5), 0, 90 * MIN)
             .filter { it.title == la.title }
             .map { it.startEpochMillis }
-        assertEquals(listOf(25 * MIN, 45 * MIN), lookAways)
+        assertEquals(listOf(25 * MIN, 45 * MIN + 20 * SEC), lookAways)
 
         // And through the full cue path: after the pose's 65-min due, no LookAwayStart crossing is emitted.
         val crossings = SchedulerDomain.cueCrossings(
