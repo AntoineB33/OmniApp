@@ -33,7 +33,26 @@ The prefix
 Pre-placed blocks cannot be moved, and period windows restrict which tasks are
 allowed, so while any of them is still ahead the same greedy runs freely and
 its output goes to the prefix. Once the context is frozen forever, the
-remaining imbalance is settled and the cycle is attached.
+remaining imbalance is settled and the cycle is attached -- in the phase the
+greedy would have gone on with (`_phase`), because a cycle built from a blank
+slate always opens with the same task, and opening there after a prefix that
+ends with it would hand that task two slots in a row: one block of twice the
+minimum, which is the coarse scale this model exists to avoid.
+
+A window bounds only the tasks it turns away
+--------------------------------------------
+A context change is not a wall. A window that bans B does not interrupt A, so a
+chunk of A runs straight through it; what bounds a chunk is the first instant
+its *own* task is turned away (`_blocked_from`), never merely the next instant
+something changes. Treating the two as one makes a short ban punch an
+unfillable hole into somebody else's slot -- no 10min minimum fits in a 20s gap
+-- and the timeline goes idle for want of anything that fits.
+
+For the same reason a chunk is only ever *cut short* by a rival becoming
+placeable again (`_next_placeable`), and never below what the slot still owes
+of its minimum. Consecutive slots of one task are one slot, so a task already
+running has paid that minimum and may be cut anywhere; only a slot that is
+starting owes the whole of it.
 
 The influence field (tau)
 -------------------------
@@ -71,6 +90,12 @@ field. An exclusion that never re-opens has no "after", so it only ramps up
 before itself, and its amplitude is capped (`max_reach`): past a few tau, "very
 long" and "forever" are indistinguishable anyway, because the boost saturates.
 
+Nor does an exclusion *shorter than the deprived task's own minimum* create a
+field. It cannot have cost that task a slot, only delayed it -- and a delay is
+already repaid exactly by the virtual clock, which hands back every minute lost
+the moment the ban lifts. Compensating it here as well would pay the same debt
+twice, and would leave a 20s ban swelling the slots around it forever after.
+
 Because the boosted time is charged to the virtual clock at the boosted rate
 (v += c / (p*boost)), it is *not* considered a debt and is never clawed back
 later: the local share really is higher near the exclusion. Symmetrically, an
@@ -81,8 +106,40 @@ to the same logarithmic bound, before and after itself.
 Below one period nothing is forgotten and no slot is capped, so an unperturbed
 timeline behaves exactly as before and the cycle stays exact: everything that
 matters in the long run is still fractions.Fraction.
+
+A moving period: the dynamic rule list
+--------------------------------------
+One period may *slide* along the timeline. Re-running the scheduler at every
+position would answer the question, but it would not *be* a rule list: the
+point of this model is that an infinite timeline is described by finitely many
+rules, so a timeline that depends on a moving parameter must be described by
+finitely many rules that depend on it too.
+
+It is. As the period slides, the plan changes shape only where it crosses a
+slot boundary, and between two such positions every duration is *affine* in the
+position t. So `MovingWindow` emits
+
+    [ (range of positions, prefix rules, cycle rules) ... ]
+
+with a rule's duration written `a + b*(t - lo)` instead of a constant. Drawing
+the timeline at a given position is then a binary search and some arithmetic --
+no scheduling happens, which is what lets the display follow the period
+continuously.
+
+The breakpoints are derived rather than guessed: the candidates are the slot
+boundaries the plans themselves reveal, and the positions at which the period's
+far edge reaches them. Each resulting regime is then *certified* against the
+scheduler at positions it was not fitted on, and split further if it does not
+hold (`_fit`); which side of a breakpoint the breakpoint itself falls on is
+settled the same way (`_settle_edges`). `uv run test.py --verify` re-checks the
+whole sweep, position by position.
+
+Nothing forbids the plan from changing abruptly as the period slides: the
+period is continuous, the plan is not, and at a few positions the whole
+timeline legitimately re-phases. Only the *rules* have to be finite.
 """
 
+import sys
 import tkinter as tk
 from bisect import bisect_right
 from dataclasses import dataclass, field
@@ -325,6 +382,15 @@ class Scheduler:
             entries = []
             for start, end in spans:
                 length = inf if end == inf else float(end - start)
+                if length < self.minimum[name]:
+                    # Shorter than one slot of its own: it cannot have cost the
+                    # task a slot, only delayed it -- and a delay is already
+                    # repaid exactly by the virtual clock, which hands the task
+                    # back every minute it lost the moment the ban lifts.
+                    # Compensating it here as well would pay the same debt
+                    # twice, and would make a 20s ban swell the neighbouring
+                    # slots forever after.
+                    continue
                 amp = min(length / tau, self.max_amp)
                 entries.append((start, end, amp))
                 if end == inf:
@@ -507,6 +573,50 @@ class Scheduler:
                     best = b
         return best
 
+    def _blocked_from(self, name, pre, periods, t):
+        """First instant after t at which `name` itself can no longer run.
+
+        Not every context change stops every task. A window that bans B does
+        not interrupt A, so a chunk of A must be allowed to run straight
+        through it: what bounds a chunk is where *its own* task is turned away,
+        not where the context happens to change. Treating the two as one is
+        what makes a 20s ban of B punch an unfillable hole into A's slot,
+        since no 10min minimum fits in 20s."""
+        best = None
+        for p in pre:                                   # any block stops everyone
+            if p.start > t and (best is None or p.start < best):
+                best = p.start
+        bounds = sorted({b for w in periods for b in (w['start'], w['end'])
+                         if b is not FOREVER and b > t})
+        for b in bounds:
+            if best is not None and b >= best:
+                break
+            if name not in self._allowed_at(periods, b):
+                return b
+        return best
+
+    def _next_placeable(self, missing, pre, periods, t):
+        """Earliest instant after t at which a task that cannot be placed now
+        could be -- because it is let back in, or because from there it has
+        room for its whole minimum.
+
+        This is the only reason to end a chunk early: a context change that
+        makes no new task placeable changes nothing about the decision, and
+        cutting there would just split a slot in two for nothing."""
+        if not missing:
+            return None
+        bounds = sorted({b for w in periods for b in (w['start'], w['end'])
+                         if b is not FOREVER and b > t}
+                        | {p.end for p in pre if p.end > t})
+        for b in bounds:
+            for n in missing:
+                if n not in self._allowed_at(periods, b):
+                    continue
+                room = self._blocked_from(n, pre, periods, b)
+                if room is None or room - b >= self.minimum[n]:
+                    return b
+        return None
+
     # ---------------- the plan ---------------- #
 
     def plan(self, timeline=(), periods=(), t_now=0, lookback=None,
@@ -554,6 +664,16 @@ class Scheduler:
                                                         # merged, so their count
                                                         # no longer bounds the walk
 
+        def owed(n):
+            """How much of its minimum the slot of `n` would still owe.
+
+            Consecutive slots of one task are one slot, so a task that is
+            already running has paid its minimum and may be cut anywhere; only
+            a slot that is *starting* owes the whole of it."""
+            if n == last and slots and slots[-1].task == n:
+                return max(Fraction(0), self.minimum[n] - slots[-1].duration)
+            return self.minimum[n]
+
         # --- phase 1: disturbed part of the timeline --------------------- #
         while len(slots) < max_rules and steps < max_steps:
             steps += 1
@@ -577,13 +697,16 @@ class Scheduler:
             if limit is None and (self.field_end is None or t >= self.field_end):
                 break                                   # nothing left to disturb
 
-            gap = None if limit is None else limit - t
+            # each task is bounded by where *it* is turned away, not by the
+            # next context change
+            room = {n: self._blocked_from(n, pre, periods, t) for n in allowed}
             fitting = [n for n in allowed
-                       if gap is None or self.minimum[n] <= gap]
+                       if room[n] is None or room[n] - t >= owed(n)]
 
-            if not fitting:                             # nothing fits in the gap
-                if gap is None:
+            if not fitting:                             # nothing can be placed here
+                if limit is None:
                     break
+                gap = limit - t
                 if free_tail and slots:                 # stretch the last slot
                     tail = slots[-1]
                     slots[-1] = Slot(tail.task, tail.duration + gap, tail.color)
@@ -598,8 +721,14 @@ class Scheduler:
             name = self._pick(v, fitting, last)
             boost = self._boost(name, t)
             c = self._chunk(name, v, fitting, boost=boost, T=T)
-            if gap is not None:
-                c = min(c, gap)
+            if room[name] is not None:                  # forced cut
+                c = min(c, room[name] - t)
+            back = self._next_placeable([n for n in self.p if n not in fitting],
+                                        pre, periods, t)
+            if back is not None:                        # optional cut: hand the
+                c = min(c, max(back, t + owed(name)) - t)   # timeline back as soon
+                                                        # as a rival can take it,
+                                                        # once the minimum is paid
             self._push(slots, name, c, self.color[name])
             # charged at the boosted rate: the extra time is a genuinely higher
             # local share, not a debt to be taken back once the field is gone
@@ -633,6 +762,7 @@ class Scheduler:
             cycle = self.steady_cycle(allowed)
             if len(cycle) > max_rules:
                 cycle = self.coarse_cycle(allowed)
+            cycle = self._phase(cycle, v, allowed, last)
 
         prefix, cycle = self._tidy(slots, cycle)
         period = sum((s.duration for s in cycle), Fraction(0))
@@ -643,6 +773,22 @@ class Scheduler:
         return Plan(start=t_now, prefix=prefix, cycle=cycle, shares=shares)
 
     # ---------------- internals ---------------- #
+
+    def _phase(self, cycle, v, allowed, last):
+        """Attach the cycle in the phase the walk would have gone on with.
+
+        `steady_cycle` starts from a blank slate, so it always opens with the
+        same task; if the prefix left another one starved, opening there hands
+        the first task its slot twice in a row. They merge into one block of
+        twice the minimum -- the coarse scale the model exists to avoid --
+        even though simply starting the cycle one slot later costs nothing."""
+        if not cycle:
+            return cycle
+        first = self._pick(v, allowed, last)
+        for i, s in enumerate(cycle):
+            if s.task == first:
+                return cycle[i:] + cycle[:i]
+        return cycle
 
     @staticmethod
     def _merge_run(slots):
@@ -675,6 +821,293 @@ class Scheduler:
             prefix[-1] = Slot(head.task,
                               prefix[-1].duration + head.duration, head.color)
         return prefix, cycle
+
+
+# --------------------------------------------------------------------------- #
+#  a moving period: the dynamic rule list
+# --------------------------------------------------------------------------- #
+#
+# One period slides along the timeline. Re-running the scheduler at every
+# position would answer the question, but it would not *be* a rule list: the
+# whole point is that the timeline is described by finitely many rules, so a
+# timeline that depends on a moving parameter must be described by finitely
+# many rules that depend on it too.
+#
+# It is: as the window slides, the plan changes shape only at the instants
+# where the window crosses a slot boundary of the undisturbed schedule, and
+# between two such instants every duration is *affine* in the window position
+# (the disturbed slot simply grows with it). So the dynamic rule list is
+#
+#     [ (window range, prefix rules, cycle rules) ... ]
+#
+# where a rule's duration is `a + b*(t - lo)` instead of a constant. Drawing at
+# a given window position is then pure arithmetic -- no scheduling is done.
+#
+# The breakpoints are derived, not guessed: the candidates are the slot
+# boundaries `b` of the undisturbed plan and the positions `b - width` at which
+# the window's far edge reaches them, and each resulting regime is *certified*
+# against the scheduler itself before it is accepted (see `_fit`).
+
+
+@dataclass(frozen=True)
+class Rule:
+    """A slot whose duration is affine in the window position t."""
+    task: str
+    a: Fraction                 # duration when the window sits at `lo`
+    b: Fraction                 # how much of t it absorbs (0 or 1 in practice)
+    color: str = "#DDDDDD"
+
+    def at(self, t, lo):
+        return self.a + self.b * (t - lo)
+
+    def text(self, lo):
+        if not self.b:
+            return f"{self.task} {human(self.a)}"
+        sign = "+" if self.b > 0 else "-"
+        factor = "" if abs(self.b) == 1 else f"{float(abs(self.b)):g}*"
+        return (f"{self.task} {human(self.a)} {sign} "
+                f"{factor}(t - {human(lo)})")
+
+
+@dataclass
+class Regime:
+    """The rule list while the window start lies in [lo, hi) -- or in
+    (lo, hi) when `lo_open`, i.e. when the breakpoint instant itself still
+    obeys the previous rules."""
+    lo: Fraction
+    hi: Fraction
+    prefix: list
+    cycle: list
+    lo_open: bool = False
+
+    @property
+    def label(self):
+        return f"{'(' if self.lo_open else '['}{stamp(self.lo)}, {stamp(self.hi)})"
+
+    @property
+    def prefix_text(self):
+        return " | ".join(r.text(self.lo) for r in self.prefix) or "(none)"
+
+    @property
+    def cycle_text(self):
+        return " | ".join(r.text(self.lo) for r in self.cycle) + " | repeat"
+
+    def holds_at(self, t):
+        return (self.lo < t or (self.lo == t and not self.lo_open)) and t < self.hi
+
+    def blocks(self, t):
+        """The rules evaluated at window position t -> (prefix, cycle)."""
+        as_blocks = lambda rules: [{'name': r.task, 'duration': r.at(t, self.lo),
+                                    'color': r.color} for r in rules]
+        return as_blocks(self.prefix), as_blocks(self.cycle)
+
+
+class MovingWindow:
+    """The dynamic rule list of a schedule disturbed by one sliding window.
+
+    `width`   how long the window lasts
+    `allowed` which tasks it accepts
+    `span`    the displayed timeline -- the range of positions the rules cover,
+              which the window sweeps and then starts over from
+    """
+
+    # a regime is accepted only if the affine fit reproduces the scheduler at
+    # these positions inside it (as fractions of the regime's width)
+    PROBES = (Fraction(1, 8), Fraction(1, 3), Fraction(1, 2), Fraction(7, 8))
+    SAMPLES = 12
+    MAX_ROUNDS = 6
+
+    def __init__(self, tasks, width, allowed, span, **kw):
+        self.tasks = list(tasks)
+        self.width = frac(width)
+        self.allowed = list(allowed)
+        self.span = frac(span)
+        self.kw = kw
+        self.regimes = self._build()
+
+    # ---------------- the scheduler, at one window position ---------------- #
+
+    def plan_at(self, t):
+        t = frac(t)
+        periods = [{'start': 0, 'end': t, 'allowed': [x.name for x in self.tasks]},
+                   {'start': t, 'end': t + self.width, 'allowed': self.allowed},
+                   {'start': t + self.width, 'end': inf,
+                    'allowed': [x.name for x in self.tasks]}]
+        return Scheduler(self.tasks, **self.kw).plan(periods=periods, t_now=0)
+
+    # ---------------- breakpoints ---------------- #
+
+    def _edges_of(self, t, lo=None, hi=None):
+        """The breakpoints the plan at window position t reveals: its own slot
+        boundaries, and the positions at which the window's far edge would
+        reach them."""
+        plan = self.plan_at(t)
+        lo = frac(0) if lo is None else lo
+        hi = self.span if hi is None else hi
+        out, acc = set(), plan.start
+        for s in list(plan.prefix) + list(plan.cycle):
+            acc += s.duration
+            for c in (acc, acc - self.width):
+                if lo < c < hi:
+                    out.add(frac(c))
+        return out
+
+    def _candidates(self, lo, hi, n):
+        """Sample the span and let the plans themselves say where they break."""
+        out = set()
+        for i in range(1, n):
+            out |= self._edges_of(lo + Fraction(i, n) * (hi - lo), lo, hi)
+        return out
+
+    # ---------------- fitting one regime ---------------- #
+
+    @staticmethod
+    def _shape(plan):
+        return ([s.task for s in plan.prefix], [s.task for s in plan.cycle])
+
+    def _fit(self, lo, hi):
+        """Affine rules valid on [lo, hi), or None if none are.
+
+        Two positions determine the affine form; the others check it. A regime
+        is never accepted on the strength of the samples that built it -- if
+        the plan does not in fact vary linearly with the window across the
+        whole range, the fit is rejected and the range is split further."""
+        t1, t2 = lo + (hi - lo) / 4, lo + 3 * (hi - lo) / 4
+        p1, p2 = self.plan_at(t1), self.plan_at(t2)
+        if self._shape(p1) != self._shape(p2):
+            return None
+
+        def rules(s1, s2):
+            out = []
+            for x, y in zip(s1, s2):
+                b = (y.duration - x.duration) / (t2 - t1)
+                out.append(Rule(x.task, x.duration + b * (lo - t1), b, x.color))
+            return out
+
+        regime = Regime(lo, hi, rules(p1.prefix, p2.prefix),
+                        rules(p1.cycle, p2.cycle))
+        for f in self.PROBES:
+            got = self.plan_at(lo + f * (hi - lo))
+            want_pre, want_cyc = regime.blocks(lo + f * (hi - lo))
+            if (self._shape(got) != self._shape(p1)
+                    or [s.duration for s in got.prefix] != [b['duration'] for b in want_pre]
+                    or [s.duration for s in got.cycle] != [b['duration'] for b in want_cyc]):
+                return None
+        return regime
+
+    def _build(self):
+        edges = sorted({frac(0), self.span}
+                       | self._candidates(frac(0), self.span, self.SAMPLES))
+        for _ in range(self.MAX_ROUNDS):
+            out, failed = [], []
+            for lo, hi in zip(edges, edges[1:]):
+                if hi <= lo:
+                    continue
+                fit = self._fit(lo, hi)
+                if fit is None:
+                    failed.append((lo, hi))
+                else:
+                    out.append(fit)
+            if not failed:
+                return self._settle_edges(self._merge(out))
+            # the plans *inside* a range that would not fit are the ones that
+            # know where it breaks
+            extra = set()
+            for lo, hi in failed:
+                extra |= self._candidates(lo, hi, self.SAMPLES)
+            if extra <= set(edges):
+                raise ValueError(
+                    "no affine rule describes the window on "
+                    + ", ".join(f"[{human(a)}, {human(b)})" for a, b in failed)
+                    + "; the plan does not vary linearly with the window there")
+            edges = sorted(set(edges) | extra)
+        raise ValueError("the dynamic rule list did not settle")
+
+    @staticmethod
+    def _merge(regimes):
+        """Adjacent ranges that turn out to obey the same rules are one rule.
+
+        A candidate breakpoint is only ever a *guess* that the plan might
+        change there; most of them turn out not to be breakpoints at all, and
+        keeping them would pad the rule list with copies of the same rule."""
+        out = []
+        for r in regimes:
+            prev = out[-1] if out else None
+            same = (prev is not None and prev.hi == r.lo
+                    and len(prev.prefix) == len(r.prefix)
+                    and len(prev.cycle) == len(r.cycle)
+                    and all(x.task == y.task and x.b == y.b
+                            and x.at(r.lo, prev.lo) == y.a
+                            for x, y in zip(prev.prefix + prev.cycle,
+                                            r.prefix + r.cycle)))
+            if same:
+                out[-1] = Regime(prev.lo, r.hi, prev.prefix, prev.cycle)
+            else:
+                out.append(r)
+        return out
+
+    def _timeline(self, prefix, cycle):
+        return [(b['name'], b['start'], b['duration'])
+                for b in generate_schedule(prefix, cycle, 2 * self.span)]
+
+    def _reproduces(self, regime, t):
+        plan = self.plan_at(t)
+        as_blocks = lambda slots: [{'name': s.task, 'duration': s.duration,
+                                    'color': s.color} for s in slots]
+        return (self._timeline(*regime.blocks(t))
+                == self._timeline(as_blocks(plan.prefix), as_blocks(plan.cycle)))
+
+    def _settle_edges(self, regimes):
+        """Decide which side of a breakpoint the breakpoint itself is on.
+
+        A regime is fitted from positions strictly inside it, so nothing yet
+        says whether the instant the plan changes at obeys the new rules or
+        the old ones. Where it does not obey the new ones, it belongs to the
+        previous regime and the range opens instead of closing."""
+        for r in regimes[1:]:
+            r.lo_open = not self._reproduces(r, r.lo)
+        return regimes
+
+    # ---------------- lookup ---------------- #
+
+    def regime_at(self, t):
+        t = frac(t) % self.span                     # the window starts anew
+        lo, hi = 0, len(self.regimes) - 1
+        while lo < hi:                              # O(log regimes), no scheduling
+            mid = (lo + hi + 1) // 2
+            r = self.regimes[mid]
+            if r.lo < t or (r.lo == t and not r.lo_open):
+                lo = mid
+            else:
+                hi = mid - 1
+        return self.regimes[lo]
+
+    def blocks_at(self, t):
+        r = self.regime_at(t)
+        return r.blocks(frac(t) % self.span)
+
+    def text_at(self, t):
+        r = self.regime_at(t)
+        lines = [f"while the period starts in {r.label}:"]
+        if r.prefix:
+            lines.append("Prefix:")
+            lines += [f"- task {x.text(r.lo)}" for x in r.prefix]
+        if r.cycle:
+            lines.append("Cycle:")
+            lines += [f"- task {x.text(r.lo)}" for x in r.cycle]
+            lines.append("- repeat")
+        return "\n".join(lines)
+
+    def rules_text(self):
+        """The whole dynamic rule list -- every regime, not just the one the
+        window currently sits in. This is what the case *is*: the timeline is
+        read off these without scheduling again."""
+        lines = []
+        for r in self.regimes:
+            lines.append(f"While the period starts in {r.label}:")
+            lines.append(f"  Prefix: {r.prefix_text}")
+            lines.append(f"  Cycle:  {r.cycle_text}")
+        return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #
@@ -878,7 +1311,132 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
 
         y_offset += (max_row_idx + 1) * (row_height + row_spacing) + 40
 
-    canvas.config(scrollregion=(0, 0, window_width, y_offset))
+    return y_offset
+
+
+class MovingWindowPanel:
+    """A timeline whose one period slides, redrawn from the dynamic rules.
+
+    Every frame evaluates the rule list at the new window position -- affine
+    arithmetic and a binary search over the regimes. The scheduler is not run
+    again; it ran once, when the rule list was built."""
+
+    ROW_H = 44
+    FPS = 25
+    BUTTON_H = 45          # the two-line button, so a one-line title still
+    TITLE_FONT = ("Arial", 10, "bold")   # leaves the gutter room for it
+
+    def __init__(self, parent, x, y, width, title, mw, sweep_seconds=25,
+                 start=0):
+        self.mw = mw
+        self.title = title
+        self.t = frac(start)
+        self.step_size = mw.span / (sweep_seconds * self.FPS)
+        self.margin = 12
+        # the same left button column the static cases use, so "Copy Rules" is
+        # in the one place the eye already looks for it
+        self.gutter = 75
+        self.px = float(width - self.gutter - self.margin) / float(mw.span)
+        self.width = width
+        self.canvas = tk.Canvas(parent, width=width, height=self.ROW_H + 108,
+                                bg="white", highlightthickness=0)
+        parent.create_window(x, y, window=self.canvas, anchor="nw")
+        self._measure_header()
+        self.canvas.configure(height=self.height)
+        # outside the redrawn frame: `_draw` deletes only what it tagged, so
+        # the button survives every tick instead of being rebuilt 25x a second
+        self.button = tk.Button(self.canvas, text="Copy\nRules", cursor="hand2",
+                                command=self._copy_rules)
+        self.canvas.create_window(0, 4, window=self.button, anchor="nw")
+        self._tick()
+
+    def _copy_rules(self):
+        c = self.canvas
+        c.clipboard_clear()
+        c.clipboard_append("\n".join([
+            self.title,
+            "",
+            f"Rules ({human(self.mw.width)} period accepting only "
+            f"{'/'.join(self.mw.allowed)}; each duration is affine in the "
+            f"period's position t):",
+            self.mw.rules_text(),
+            "",
+            f"Period now at {stamp(self.t)} -> "
+            f"{self.mw.regime_at(self.t).label}",
+        ]))
+
+    def _measure_header(self):
+        """Stack the header lines under the title, whatever height it comes to.
+
+        The title is as many lines as the case wrote it in, so the rule lines
+        below it cannot sit at fixed offsets without overlapping it."""
+        c = self.canvas
+        probe = c.create_text(self.gutter, 4, text=self.title, anchor="nw",
+                              font=self.TITLE_FONT)
+        title_bottom = c.bbox(probe)[3]
+        c.delete(probe)
+        self.y_rules = title_bottom + 6
+        self.y_prefix = self.y_rules + 18
+        self.y_cycle = self.y_prefix + 16
+        self.top = max(self.y_cycle + 24, self.BUTTON_H + 12)
+        self.height = self.top + self.ROW_H + 26
+
+    def _x(self, t):
+        return self.gutter + float(t) * self.px
+
+    def _tick(self):
+        self._draw()
+        self.t += self.step_size
+        if self.t + self.mw.width >= self.mw.span:  # the period itself -- not
+            self.t = frac(0)                        # merely its start -- reached
+                                                    # the end of the displayed
+                                                    # timeline: start anew
+        self.canvas.after(int(1000 / self.FPS), self._tick)
+
+    def _draw(self):
+        c = self.canvas
+        c.delete("frame")
+        regime = self.mw.regime_at(self.t)
+        prefix, cycle = self.mw.blocks_at(self.t)
+        schedule = generate_schedule(prefix, cycle, self.mw.span)
+
+        c.create_text(self.gutter, 4, text=self.title, anchor="nw",
+                      font=self.TITLE_FONT, tags="frame")
+        c.create_text(self.gutter, self.y_rules, anchor="nw", font=("Arial", 9),
+                      fill="#333333", tags="frame",
+                      text=f"period at {stamp(self.t)}   ->   rules for "
+                           f"[{stamp(regime.lo)}, {stamp(regime.hi)})")
+        c.create_text(self.gutter, self.y_prefix, anchor="nw",
+                      font=("Courier", 9), fill="#7A0000", tags="frame",
+                      text="Prefix: " + regime.prefix_text)
+        c.create_text(self.gutter, self.y_cycle, anchor="nw",
+                      font=("Courier", 9), fill="#00407A", tags="frame",
+                      text="Cycle:  " + regime.cycle_text)
+
+        top = self.top
+        for block in schedule:
+            x1, x2 = self._x(block['start']), self._x(block['start']
+                                                      + block['duration'])
+            x2 = min(x2, self._x(self.mw.span))
+            if x2 <= x1:
+                continue
+            c.create_rectangle(x1, top, x2, top + self.ROW_H,
+                               fill=block['color'], outline="black",
+                               tags="frame")
+            if x2 - x1 > 26:
+                c.create_text((x1 + x2) / 2, top + self.ROW_H / 2,
+                              text=block['name'], font=("Arial", 9),
+                              tags="frame")
+
+        # the sliding period itself, drawn over the timeline it is bending
+        wx1, wx2 = self._x(self.t), self._x(self.t + self.mw.width)
+        c.create_rectangle(wx1, top - 7, max(wx2, wx1 + 2), top + self.ROW_H + 7,
+                           fill="#222222", outline="#222222", tags="frame")
+        c.create_text(min(wx1 + 6, self.width - 90), top + self.ROW_H + 10,
+                      anchor="nw", font=("Arial", 8), fill="#222222",
+                      tags="frame",
+                      text=f"{human(self.mw.width)}, only "
+                           f"{'/'.join(self.mw.allowed)}")
 
 
 AB = lambda: [Task("A", priority=50, min_time=10, color="#FF9999"),
@@ -994,6 +1552,83 @@ def build_cases():
     ]
 
 
+def build_moving_cases():
+    """Example tests where one period slides and the timeline follows it.
+
+    These are the only cases whose rule list is *dynamic*: instead of constant
+    durations it carries durations affine in the period's position, plus the
+    range of positions each rule list is valid for."""
+    return [
+        (
+            ("Test 10: a 20s period accepting only A, sliding (A 50% 10min, "
+             "B 50% 10min)\n"
+             "-> while it fits inside a slot of A nothing moves; once it "
+             "reaches B's slot, A's slot stretches with it."),
+            MovingWindow(AB(), width=Fraction(1, 3), allowed=["A"], span=60),
+            25,
+        ),
+        (
+            ("Test 11: the same sliding 20s period, three tasks "
+             "(A 50%, B 30%, C 20%, 10min each)\n"
+             "-> the rule list is derived the same way, and certified against "
+             "the scheduler regime by regime."),
+            MovingWindow([Task("A", priority=50, min_time=10, color="#FF9999"),
+                          Task("B", priority=30, min_time=10, color="#99CCFF"),
+                          Task("C", priority=20, min_time=10, color="#99FF99")],
+                         width=Fraction(1, 3), allowed=["A"], span=100),
+            35,
+        ),
+    ]
+
+
+def draw_moving_windows(canvas, cases, y_offset, window_width=900):
+    panels = []
+    for title, mw, sweep in cases:
+        panel = MovingWindowPanel(canvas, 15, y_offset, window_width - 60,
+                                  title, mw, sweep_seconds=sweep)
+        panels.append(panel)
+        y_offset += panel.height + 26
+    return y_offset, panels
+
+
+def verify(samples=600):
+    """`uv run test.py --verify`
+
+    Unroll the dynamic rules at many window positions and compare the timeline
+    they produce with the one the scheduler produces at that same position.
+    The rules are only worth having if they agree everywhere, not just at the
+    positions they were fitted on."""
+    ok = True
+    for title, mw, _ in build_moving_cases():
+        print(title.splitlines()[0])
+        for r in mw.regimes:
+            print(f"  {r.label:>24}  prefix: {r.prefix_text}")
+            print(f"  {'':>26}cycle : {r.cycle_text}")
+
+        horizon = 2 * mw.span
+        bad = []
+        for i in range(samples):
+            t = mw.span * Fraction(i, samples)
+            prefix, cycle = mw.blocks_at(t)
+            plan = mw.plan_at(t)
+            got = generate_schedule(prefix, cycle, horizon)
+            want = generate_schedule(
+                [{'name': s.task, 'duration': s.duration, 'color': s.color}
+                 for s in plan.prefix],
+                [{'name': s.task, 'duration': s.duration, 'color': s.color}
+                 for s in plan.cycle], horizon)
+            if [(b['name'], b['start'], b['duration']) for b in got] != \
+               [(b['name'], b['start'], b['duration']) for b in want]:
+                bad.append(t)
+        ok &= not bad
+        print(f"  -> {samples - len(bad)}/{samples} positions reproduce the "
+              f"scheduler exactly"
+              + ("" if not bad else f"   MISMATCH at {[stamp(x) for x in bad[:5]]}")
+              + "\n")
+    print("OK" if ok else "FAILED")
+    return 0 if ok else 1
+
+
 def main():
     root = tk.Tk()
     root.title("Task Scheduler Timeline with Constraints")
@@ -1016,9 +1651,14 @@ def main():
     canvas.bind_all("<Button-4>", _on_mousewheel)
     canvas.bind_all("<Button-5>", _on_mousewheel)
 
-    draw_schedules(root, canvas, build_cases(), window_width=900)
+    y = draw_schedules(root, canvas, build_cases(), window_width=900)
+    y, _panels = draw_moving_windows(canvas, build_moving_cases(), y,
+                                     window_width=900)
+    canvas.config(scrollregion=(0, 0, 900, y))
     root.mainloop()
 
 
 if __name__ == "__main__":
+    if "--verify" in sys.argv:
+        raise SystemExit(verify())
     main()
