@@ -300,10 +300,16 @@ class SchedulerPlanner(
         val tau = tauMillis
         var end: Long? = null
         fieldSpans =
-            exclusionsOf(blocks, windows).mapValues { (_, spans) ->
-                spans.map { span ->
+            exclusionsOf(blocks, windows).mapValues { (id, spans) ->
+                val minimum = (minimumOf[id] ?: 0L).toDouble()
+                spans.mapNotNull { span ->
                     val length = if (span.endMillis >= FOREVER) Double.POSITIVE_INFINITY
                     else (span.endMillis - span.startMillis).toDouble()
+                    // Shorter than one slot of its own: it cannot have cost the task a slot, only delayed it —
+                    // and a delay is already repaid exactly by the virtual clock, which hands the task back
+                    // every minute it lost the moment the ban lifts. Compensating it here as well would pay the
+                    // same debt twice, and would leave a 20-second ban swelling the slots around it forever.
+                    if (length < minimum) return@mapNotNull null
                     val amp = minOf(length / tau, maxAmp)
                     if (span.endMillis < FOREVER) {
                         // Where the influence drops below the floor — past that the field is gone.
@@ -369,6 +375,60 @@ class SchedulerPlanner(
         }
         return best
     }
+
+    /**
+     * The first instant after [millis] at which **[id] itself** can no longer run, or null if it never stops.
+     *
+     * Not every context change stops every task. A window that bans B does not interrupt A, so a chunk of A
+     * must be allowed to run straight through it: what bounds a chunk is where *its own* task is turned away,
+     * never merely where the context happens to change. Treating the two as one is what makes a short ban punch
+     * an unfillable hole into somebody else's slot — no 45-minute minimum fits in the 4 minutes left of a
+     * 5-minute screen break, so the tail an off-screen task is entitled to would go idle instead.
+     *
+     * A pre-placed block stops everyone, so it always bounds; a window bounds only if [id] is absent from it.
+     */
+    fun blockedFrom(id: TaskId, blocks: List<PlanBlock>, windows: List<PlanWindow>, millis: Long): Long? {
+        var best: Long? = null
+        for (b in blocks) if (b.startMillis > millis && (best == null || b.startMillis < best!!)) best = b.startMillis
+        val bounds = sortedBounds(windows, millis)
+        for (bound in bounds) {
+            if (best != null && bound >= best!!) break
+            if (id !in allowedAt(windows, bound)) return bound
+        }
+        return best
+    }
+
+    /**
+     * The earliest instant after [millis] at which one of [missing] — the tasks that cannot be placed here —
+     * could be, either because it is let back in or because from there it has room for its whole minimum.
+     *
+     * This is the only reason to end a chunk early: a context change that makes no new task placeable changes
+     * nothing about the decision, and cutting there would just split a slot in two for nothing.
+     */
+    fun nextPlaceable(
+        missing: Collection<TaskId>,
+        blocks: List<PlanBlock>,
+        windows: List<PlanWindow>,
+        millis: Long,
+    ): Long? {
+        if (missing.isEmpty()) return null
+        val bounds = (sortedBounds(windows, millis) + blocks.map { it.endMillis }.filter { it > millis })
+            .distinct().sorted()
+        for (bound in bounds) {
+            for (id in missing) {
+                if (id !in allowedAt(windows, bound)) continue
+                val room = blockedFrom(id, blocks, windows, bound)
+                if (room == null || room - bound >= (minimumOf[id] ?: 0L)) return bound
+            }
+        }
+        return null
+    }
+
+    private fun sortedBounds(windows: List<PlanWindow>, millis: Long): List<Long> =
+        windows.flatMap { listOfNotNull(it.startMillis, it.endMillis) }
+            .filter { it > millis }
+            .distinct()
+            .sorted()
 
     // ----- the repeating cycle ------------------------------------------------------------------
 
@@ -449,6 +509,20 @@ class SchedulerPlanner(
         // Safety valve: slots are merged, so their count no longer bounds the walk.
         val maxSteps = MAX_STEPS_PER_RULE * maxRules
 
+        /**
+         * How much of its minimum a slot of [id] would still owe. Consecutive slots of one task are one slot,
+         * so a task that is already running has paid its minimum and may be cut anywhere; only a slot that is
+         * *starting* owes the whole of it.
+         */
+        fun owed(id: TaskId): Long {
+            val tail = slots.lastOrNull()
+            val minimum = minimumOf[id] ?: 0L
+            if (walk.last == id && tail != null && tail.taskId == id) {
+                return (minimum - tail.durationMillis).coerceAtLeast(0L)
+            }
+            return minimum
+        }
+
         // --- phase 1: the disturbed part of the timeline ---
         while (slots.size < maxRules && steps < maxSteps) {
             steps++
@@ -471,11 +545,13 @@ class SchedulerPlanner(
             val end = fieldEndMillis
             if (limit == null && (end == null || t >= end)) break // nothing left to disturb
 
-            val gap = limit?.minus(t)
-            val fitting = allowed.filter { gap == null || (minimumOf[it] ?: 0L) <= gap }
+            // Each task is bounded by where *it* is turned away, not by the next context change.
+            val room = allowed.associateWith { blockedFrom(it, ahead, windows, t) }
+            val fitting = allowed.filter { room[it] == null || room[it]!! - t >= owed(it) }
 
-            if (fitting.isEmpty()) { // nothing fits in the gap
-                if (gap == null) break
+            if (fitting.isEmpty()) { // nothing can be placed here
+                if (limit == null) break
+                val gap = limit - t
                 val tail = slots.lastOrNull()
                 if (freeTail && tail != null) { // stretch the last slot over it
                     slots[slots.size - 1] = PlanSlot(tail.taskId, tail.durationMillis + gap)
@@ -492,7 +568,11 @@ class SchedulerPlanner(
             val name = walk.pick(fitting, avoidLast = true) ?: break
             val boost = boostAt(name, t)
             var c = walk.chunkMillis(name, fitting, boost, period)
-            if (gap != null) c = minOf(c, gap.toDouble())
+            // Forced cut: where this task itself is turned away.
+            room[name]?.let { c = minOf(c, (it - t).toDouble()) }
+            // Optional cut: hand the timeline back as soon as a rival can take it, once the minimum is paid.
+            val back = nextPlaceable(tasks.map { it.id }.filter { it !in fitting }, ahead, windows, t)
+            if (back != null) c = minOf(c, (maxOf(back, t + owed(name)) - t).toDouble())
             val placed = c.roundToLong().coerceAtLeast(1L)
             pushSlot(slots, name, placed)
             // Charged at the boosted rate: the extra time is a genuinely higher local share, not a debt to be
@@ -523,6 +603,7 @@ class SchedulerPlanner(
             }
             cycle = steadyCycle(allowed)
             if (cycle.size > maxRules) cycle = coarseCycle(allowed)
+            cycle = phaseCycle(cycle, walk, allowed)
         }
 
         val (prefix, tidied) = tidy(slots, cycle)
@@ -576,6 +657,21 @@ class SchedulerPlanner(
         } else {
             slots += PlanSlot(id, durationMillis)
         }
+    }
+
+    /**
+     * Attach the cycle in the phase the walk would have gone on with.
+     *
+     * [steadyCycle] starts from a blank slate, so it always opens with the same task; if the prefix left
+     * another one starved, opening there hands the first task its slot twice in a row. They merge into one
+     * block of twice the minimum — the coarse scale this model exists to avoid — even though simply starting
+     * the cycle one slot later costs nothing.
+     */
+    internal fun phaseCycle(cycle: List<PlanSlot>, walk: PlanWalk, allowed: List<TaskId>): List<PlanSlot> {
+        if (cycle.isEmpty()) return cycle
+        val first = walk.pick(allowed, avoidLast = true) ?: return cycle
+        val i = cycle.indexOfFirst { it.taskId == first }
+        return if (i <= 0) cycle else cycle.drop(i) + cycle.take(i)
     }
 
     /** No two consecutive slots of the same task, wrap-around included. */

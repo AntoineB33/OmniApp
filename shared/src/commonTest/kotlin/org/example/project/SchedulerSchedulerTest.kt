@@ -409,36 +409,42 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun screen_break_next_start_clamps_rest_poses_to_now_but_advances_the_look_away_along_its_grid() {
+    fun screen_break_next_start_clamps_every_owed_break_to_the_now_line_and_slides_it_right() {
         val now = 1_000_000_000_000L
 
-        // A rest pose is detectable, so an overdue one clamps to the now-line and waits there.
+        // A rest pose overdue by 30 min clamps to the now-line and waits there.
         val pose = ScreenBreak("Pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = now - 90 * MIN)
         assertEquals(now, SchedulerDomain.screenBreakNextStart(pose, now))
         assertTrue(SchedulerDomain.isScreenBreakOverdue(pose, now))
 
-        // The look-away up to date (rested 5 min ago, 20-min interval): next is 15 min ahead.
+        // A break not yet due keeps its exact due — the anchor is `lastRest`, so advancing `now` inside the
+        // interval does not move it.
         val fresh = ScreenBreak("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 5 * MIN)
         assertEquals(now + 15 * MIN, SchedulerDomain.screenBreakNextStart(fresh, now))
+        assertEquals(now + 15 * MIN, SchedulerDomain.screenBreakNextStart(fresh, now + MIN))
         assertFalse(SchedulerDomain.isScreenBreakOverdue(fresh, now))
 
-        // The look-away overdue (rested 25 min ago): its grid is …, now-5min, now+15min, … . The now-5min slot
-        // has fully elapsed, so it is assumed done and the next start advances to now+15min — NOT to the
-        // now-line (clamping to `now` would make the un-trackable look-away slide and the voice cue repeat).
+        // The look-away OWED (its due, now−5min, passed with no qualifying pause): it does not step its grid to
+        // now+15min as if it had been taken — it sits at the now-line and MOVES RIGHT with it, exactly like the
+        // pose above. The reference's sliding period, accepted set = nobody.
         val late = fresh.copy(lastRestMillis = now - 25 * MIN)
-        assertEquals(now + 15 * MIN, SchedulerDomain.screenBreakNextStart(late, now))
+        assertEquals(now, SchedulerDomain.screenBreakNextStart(late, now))
+        assertEquals(now + 1, SchedulerDomain.screenBreakNextStart(late, now + 1))
+        assertEquals(now + 10 * MIN, SchedulerDomain.screenBreakNextStart(late, now + 10 * MIN))
 
-        // The grid is anchored at lastRest, not at `now`: advancing `now` within a slot does not move it.
-        assertEquals(
-            SchedulerDomain.screenBreakNextStart(late, now),
-            SchedulerDomain.screenBreakNextStart(late, now + 1),
+        // A real pause is what releases it: an ongoing one advances every anchor (placement-only), so the break
+        // leaves the now-line the moment the user actually stops.
+        val released = SchedulerDomain.screenBreaksForPlacement(
+            listOf(late),
+            SchedulerDomain.LiveRest(TaskTimeRange(now - MIN, now), ongoing = true),
         )
+        assertEquals(now + 20 * MIN, SchedulerDomain.screenBreakNextStart(released[0], now))
 
-        // Never rested: still anchored to a fixed grid (not slid to the now-line) and live around `now`.
+        // Never rested (the pre-seed transient): due immediately, so it too sits at the now-line. Its CUE is
+        // gated on `lastRestMillis > 0` (see reachedScreenBreakDueByTitle) so the 1970 sentinel stays silent.
         val never = fresh.copy(lastRestMillis = 0L)
-        val neverStart = SchedulerDomain.screenBreakNextStart(never, now)
-        assertEquals(neverStart, SchedulerDomain.screenBreakNextStart(never, now + 1))
-        assertTrue(neverStart + never.durationMillis > now && neverStart <= now + 20 * MIN)
+        assertEquals(now, SchedulerDomain.screenBreakNextStart(never, now))
+        assertTrue(SchedulerDomain.reachedScreenBreakDueByTitle(listOf(never), now).isEmpty())
     }
 
     @Test
@@ -553,16 +559,67 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun an_overdue_look_away_advances_along_its_grid_instead_of_sitting_at_the_now_line() {
+    fun an_overdue_look_away_sits_at_the_now_line_as_a_period_accepting_no_task() {
         val (s0, _) = stateWithOneTask(45)
         val now = 1_000_000_000_000L
-        // Look-away (non-rest), last looked away 25 min ago on a 20-min grid: the now-5min slot has elapsed and
-        // is assumed done (the app can't detect a look-away), so the next occurrence is placed at now+15min —
-        // NOT pinned at the now-line. (Contrast fill_schedule_places_an_overdue_rest_pause_at_now.)
+        // Look-away (non-rest), last looked away 25 min ago on a 20-min grid: its due (now−5min) passed with no
+        // qualifying pause, so the break is still OWED. It therefore sits at the now-line and slides right with
+        // it — the reference's sliding period (`side-dev/test.py` tests 10–11) with an accepted set of nobody —
+        // instead of stepping the grid to now+15min as if it had been taken.
         val s = s0.copy(screenBreaks = listOf(ScreenBreak("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 25 * MIN)))
-        val side = SchedulerDomain.fillSchedule(s, now).filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
-        assertEquals(now + 15 * MIN, side.startEpochMillis)
-        assertEquals(now + 15 * MIN + 20_000L, side.endEpochMillis)
+        val panels = SchedulerDomain.fillSchedule(s, now)
+        val side = panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
+        assertEquals(now, side.startEpochMillis)
+        assertEquals(now + 20_000L, side.endEpochMillis)
+        // "A period that accepts no task": nothing is placed inside it, and the plan resumes on its far side.
+        val work = panels.filter { it.auto && !it.screenBreak && !it.sleep }
+        assertTrue(work.none { it.startEpochMillis < side.endEpochMillis && it.endEpochMillis > side.startEpochMillis })
+        assertEquals(side.endEpochMillis, work.minOf { it.startEpochMillis })
+    }
+
+    @Test
+    fun the_displayed_plan_is_cut_out_of_a_break_that_slid_onto_it() {
+        // The fill that materialized the plan ran when the break was elsewhere (CLAUDE.md: time passing never
+        // re-plans). As the owed break slides right with the now-line it drifts over auto panels the fill
+        // placed past it, so the display has to cut them — "a period that accepts no task" has to stay true
+        // between fills, which is the sliding-period regime of `side-dev/test.py` tests 10–11.
+        val now = 1_000_000_000_000L
+        val auto = { id: String, start: Long, end: Long ->
+            TaskPanel(id = id, taskId = TaskId("t"), title = "T", startEpochMillis = start, endEpochMillis = end, auto = true)
+        }
+        val breakPanel = TaskPanel(
+            id = "side/0", taskId = null, title = "Eyes",
+            startEpochMillis = now, endEpochMillis = now + 20_000L, screenBreak = true,
+        )
+        // A panel straddling the now-line, one wholly inside the break, one already past it, and a PINNED
+        // block (a pre-placed block in the reference's sense, which a period may not move).
+        val pinned = auto("pin", now, now + 20_000L).copy(auto = false, pinned = true)
+        val panels = listOf(
+            auto("a", now - 10 * MIN, now + 30 * MIN),
+            auto("b", now + 5_000L, now + 15_000L),
+            auto("c", now + 30 * MIN, now + 60 * MIN),
+            pinned,
+        )
+        val out = SchedulerDomain.clipPlanForPinnedScreenBreak(panels, listOf(breakPanel), now)
+
+        // Nothing regenerable overlaps the break any more…
+        assertTrue(
+            out.filter { it.auto && !it.pinned }
+                .none { it.startEpochMillis < breakPanel.endEpochMillis && it.endEpochMillis > now },
+        )
+        // …the straddling panel keeps its elapsed head and resumes on the far side (two blocks, distinct ids)…
+        val a = out.filter { it.id.startsWith("a") }.sortedBy { it.startEpochMillis }
+        assertEquals(listOf(now - 10 * MIN to now, now + 20_000L to now + 30 * MIN), a.map { it.startEpochMillis to it.endEpochMillis })
+        assertEquals(2, a.map { it.id }.distinct().size)
+        // …the panel wholly inside the break is gone, the one past it untouched, the pinned block untouched.
+        assertTrue(out.none { it.id == "b" })
+        assertTrue(out.any { it.id == "c" && it.startEpochMillis == now + 30 * MIN })
+        assertTrue(out.any { it.id == "pin" && it.startEpochMillis == now && it.endEpochMillis == now + 20_000L })
+
+        // With no break on the now-line the plan is returned untouched.
+        assertEquals(panels, SchedulerDomain.clipPlanForPinnedScreenBreak(panels, emptyList(), now))
+        val future = listOf(breakPanel.copy(startEpochMillis = now + MIN, endEpochMillis = now + MIN + 20_000L))
+        assertEquals(panels, SchedulerDomain.clipPlanForPinnedScreenBreak(panels, future, now))
     }
 
     @Test

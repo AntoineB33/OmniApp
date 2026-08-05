@@ -237,10 +237,12 @@ class LiveRestPlacementTest {
         val side = SchedulerDomain.fillSchedule(s, now, liveRest = gap)
             .filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
         assertEquals(now + 20 * MIN, side.startEpochMillis)
-        // Default (no liveRest) keeps the stale grid slot — the pre-overlay behavior.
-        val stale = SchedulerDomain.fillSchedule(s, now)
+        // Without the overlay there is no evidence of a pause, so the look-away is still OWED: its due
+        // (now − 5 min) has passed unserved, and an owed break sits at the now-line and slides right with it
+        // (PRD §15 / `side-dev/test.py` tests 10–11) instead of stepping its grid to the next slot.
+        val owed = SchedulerDomain.fillSchedule(s, now)
             .filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
-        assertEquals(now + 15 * MIN, stale.startEpochMillis)
+        assertEquals(now, owed.startEpochMillis)
     }
 
     // ----- reducer wiring ----------------------------------------------------------------------

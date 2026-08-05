@@ -522,6 +522,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 )
             }
 
+        // PRD §15: a screen break the now-line has REACHED is a period accepting no task, and it slides right
+        // with the now-line for as long as it stays owed. The plan under it was materialized by a fill that ran
+        // at a rule change (CLAUDE.md: time passing never re-plans), so the auto panels have to be cut out of
+        // the break's span here, on the display side — the reference's sliding-period regime, pinned to the
+        // plan's own origin (`side-dev/test.py` tests 10–11).
+        val displayWorkPlanPanels =
+            SchedulerDomain.clipPlanForPinnedScreenBreak(workPlanPanels, displaySidePanels, nowMillis)
+
         // PRD §15 (20s look-away): show the manual "Look away now" button only when the most recent past
         // screen break before the now-line is a 20s look-away (a non-rest-break screen break), not a rest pose.
         val showLookAwayButton =
@@ -630,7 +638,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             schedulerState.tasks.values.flatMap { task ->
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
             } + mergePanelsForDisplay(
-                workPlanPanels, displayReminderPanels, displaySidePanels, displaySleepPanels,
+                displayWorkPlanPanels, displayReminderPanels, displaySidePanels, displaySleepPanels,
                 schedulerState.showScreenBreaks, schedulerState.showReminders, activeRegions,
                 displayInactivityGaps,
             )

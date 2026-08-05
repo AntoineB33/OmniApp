@@ -1468,24 +1468,22 @@ class SchedulerEngine(
                     sidePoseNotifiedDue = sidePoseNotifiedDue.filterKeys { it in restTitles }
 
                     // Self-delay to the next boundary across every cue kind, so a cue fires at its instant and
-                    // not up to a tick late (the outer collectLatest also re-keys each tick). The forward
-                    // look-away / wind-down come from the projection, which keeps FUTURE occurrences; the next
-                    // pose due is arithmetic.
-                    val nextStart = st.panels
-                        .filter { p -> p.screenBreak && st.screenBreaks.any { !it.restBreak && it.title == p.title } }
-                        .map { it.startEpochMillis }
-                        .filter { it > simNow && it !in announcedStarts }.minOrNull()
+                    // not up to a tick late (the outer collectLatest also re-keys each tick). EVERY screen
+                    // break's next boundary is now the same arithmetic — its fixed due `lastRest + interval` —
+                    // because the look-away slides to the now-line while owed exactly as a pose does, so its
+                    // drawn panel start is no longer a boundary anything can key on (see
+                    // SchedulerDomain.reachedScreenBreakDueByTitle). The pose dues are gated on the §7 switch;
+                    // the look-away's cue is not (it has never been).
                     val nextEnd = pendingEnds.filter { it > simNow }.minOrNull()
                     val nextWind = windDownInstants.filter { it > simNow && it !in announcedWindDowns }.minOrNull()
-                    val nextPose = if (st.automaticSchedule) {
-                        st.screenBreaks
-                            .filter { it.restBreak && it.intervalMillis > 0 && it.durationMillis > 0 && it.title.isNotBlank() }
-                            .map { it.lastRestMillis + it.intervalMillis }
-                            .filter { it > simNow }.minOrNull()
-                    } else {
-                        null
-                    }
-                    val next = listOfNotNull(nextStart, nextEnd, nextWind, nextPose).minOrNull() ?: break
+                    val nextBreak = st.screenBreaks
+                        .filter {
+                            it.intervalMillis > 0 && it.durationMillis > 0 && it.title.isNotBlank() &&
+                                (st.automaticSchedule || !it.restBreak)
+                        }
+                        .map { it.lastRestMillis + it.intervalMillis }
+                        .filter { it > simNow && it !in announcedStarts }.minOrNull()
+                    val next = listOfNotNull(nextBreak, nextEnd, nextWind).minOrNull() ?: break
                     if (speed <= 0.0) break
                     delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
                 }

@@ -128,7 +128,9 @@ class SchedulerPlanTest {
         )
         assertPlan(
             plan,
-            prefix = listOf("A" to 10.0, "B" to 10.0, "C" to 60.0, "A" to 10.0, "B" to 15.0),
+            prefix = listOf(
+                "A" to 10.0, "B" to 10.0, "C" to 60.0, "A" to 10.0, "B" to 10.0, "A" to 10.0, "B" to 10.0,
+            ),
             cycle = listOf("A" to 10.0, "B" to 10.0),
             label = "test 3",
         )
@@ -170,7 +172,7 @@ class SchedulerPlanTest {
                 "B" to 10.0,
                 "A" to 93.0991,
                 "B" to 10.0,
-                "A" to 101.1053,
+                "A" to 91.1053,
             ),
             cycle = listOf("B" to 10.0, "A" to 90.0),
             label = "test 5",
@@ -581,5 +583,63 @@ class SchedulerPlanTest {
         // tasks keep appearing in the appended tail.
         for (i in 1 until order.size) assertNotEquals(order[i - 1], order[i], "the rotation stalled at $i: $order")
         assertEquals(ids.toSet(), order.toSet())
+    }
+
+    // ----- the two screen breaks as the reference's PERIODS (`side-dev/test.py` tests 10–11) -------
+
+    /**
+     * PRD §15: a screen break the now-line has reached is a **sliding period** — it moves right with the
+     * now-line for as long as it is owed, and while it sits there it accepts a fixed set of tasks. These pin
+     * the shapes the reference produces for exactly that configuration, taken from `side-dev/test.py` run with
+     * the break expressed as its periods (the sliding window pinned at the plan's origin, which is where the
+     * now-line reaching it puts it).
+     */
+    @Test
+    fun a_20s_look_away_at_the_now_line_is_a_period_that_accepts_no_task() {
+        // Reference: periods [0, 20s]=∅, [20s, ∞)=all  ->  prefix "IDLE 0.3333" | cycle "A 10 | B 10".
+        val plan = SchedulerPlanner(ab()).plan(
+            windows = listOf(window(0.0, 1.0 / 3.0), window(1.0 / 3.0, null, "A", "B")),
+        )
+        assertPlan(
+            plan,
+            prefix = listOf("IDLE" to 1.0 / 3.0),
+            cycle = listOf("A" to 10.0, "B" to 10.0),
+            label = "look-away pinned at the now-line",
+        )
+    }
+
+    @Test
+    fun a_5min_pose_at_the_now_line_is_a_closed_first_minute_then_an_off_screen_only_tail() {
+        // Reference: periods [0, 1min]=∅, [1min, 5min]={B}, [5min, ∞)=all  ->  prefix "IDLE 1 | B 10",
+        // cycle "A 10 | B 10". B is the task needing no screen: it starts inside the tail and runs straight
+        // THROUGH the break's end, because the boundary at 5 min does not turn B away (`_blocked_from`) — the
+        // rule that keeps a short ban from punching an unfillable hole into somebody else's slot.
+        val plan = SchedulerPlanner(ab()).plan(
+            windows = listOf(window(0.0, 1.0), window(1.0, 5.0, "B"), window(5.0, null, "A", "B")),
+        )
+        assertPlan(
+            plan,
+            prefix = listOf("IDLE" to 1.0, "B" to 10.0),
+            cycle = listOf("A" to 10.0, "B" to 10.0),
+            label = "5-min pose pinned at the now-line",
+        )
+    }
+
+    @Test
+    fun a_ban_shorter_than_the_deprived_task_s_own_minimum_creates_no_field() {
+        // `side-dev/test.py` `_set_field`: a 20-second ban cannot have cost a 10-minute task a slot, only
+        // delayed it — and the virtual clock already repays a delay exactly. Compensating it as well would pay
+        // the same debt twice and leave the ban swelling its neighbours forever after. This is what stops the
+        // 20-min look-away cadence from distorting the plan around every one of its occurrences.
+        val planner = SchedulerPlanner(ab())
+        planner.setField(emptyList(), listOf(window(10.0, 10.0 + 1.0 / 3.0, "A"), window(10.0 + 1.0 / 3.0, null, "A", "B")))
+        assertEquals(null, planner.fieldEndMillis)
+        assertEquals(1.0, planner.boostAt(id("B"), (10.0 * MIN).toLong()), 1e-9)
+
+        // A ban that DOES exceed the minimum still creates its field, so the rule is a floor, not a mute.
+        val long = SchedulerPlanner(ab())
+        long.setField(emptyList(), listOf(window(10.0, 40.0, "A"), window(40.0, null, "A", "B")))
+        assertNotEquals(null, long.fieldEndMillis)
+        assertTrue(long.boostAt(id("B"), (10.0 * MIN).toLong()) > 1.0)
     }
 }

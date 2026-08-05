@@ -1408,28 +1408,27 @@ object SchedulerDomain {
 
     /**
      * PRD §15: the next-occurrence start for [side] at [nowMillis], beginning from its due time
-     * `lastRest + interval` (an interval after the last qualifying pause **ended**).
+     * `lastRest + interval` (an interval after the last qualifying pause **ended**), clamped forward to the
+     * now-line once that due has passed without the pause being taken.
      *
-     * How a *past* due time is handled depends on whether the app can tell the pause was taken:
-     * - A **rest pose** ([ScreenBreak.restBreak], the 5-/15-min poses) is detectable from device sleep, so an
-     *   un-taken one is clamped forward to `now` and waits at the now-line until the user actually rests
-     *   (which updates `lastRestMillis`). A never-rested pose (`lastRestMillis == 0`) is due immediately.
-     * - The **look-away cadence** (non-rest) is NOT detectable — the app can't know whether the user looked
-     *   away — so a fully-elapsed occurrence is *assumed done* and the cadence advances along its fixed grid
-     *   (anchored at `lastRest`, stepped by `interval`) to the next slot still live at `now`. It must NOT
-     *   slide to the now-line: `lastRestMillis` never updates for it, so clamping to `now` would re-place it
-     *   at `now` every tick and make the look-away voice cue repeat indefinitely.
+     * **Every** screen break — the 5-/15-min rest poses and the 20-second look-away alike — slides this way,
+     * because a break the now-line has reached and that nobody took is *still owed*: it is a period accepting
+     * no task that **moves to the right** while a device stays unlocked, exactly as the reference's sliding
+     * period does (`side-dev/test.py` tests 10–11, `MovingWindow`). What releases it is a real pause: a device
+     * going inactive advances the anchor through [screenBreaksForPlacement] (an ongoing pause is presumed to
+     * serve every break) and, once derived, through [advanceRestsForward] — so the break moves off the now-line
+     * the moment the user actually stops, and not before. A never-rested break (`lastRestMillis == 0`) is due
+     * immediately, which is the pre-seed transient every load starts in.
+     *
+     * The look-away used instead to *step its fixed grid* past an elapsed occurrence, on the grounds that the
+     * app cannot tell whether the user looked away and that a sliding start would re-fire its voice cue every
+     * tick. The first half was the wrong reading of "not detectable" — an untaken break is owed, not done — and
+     * the second is handled where it belongs: the cue keys on the **fixed due**, never on the drawn start
+     * ([reachedScreenBreakDueByTitle], the same level `now >= due` rule the poses use). See CLAUDE.md's
+     * "the boundary a trigger keys on must be a fixed instant".
      */
-    fun screenBreakNextStart(side: ScreenBreak, nowMillis: Long): Long {
-        val due = side.lastRestMillis + side.intervalMillis
-        if (side.restBreak) return maxOf(due, nowMillis)
-        // The current occurrence still covers `now` (or is future) → keep it; otherwise step the grid forward
-        // to the first slot whose window has not already elapsed before `now`.
-        if (due + side.durationMillis > nowMillis) return due
-        val elapsed = nowMillis - side.durationMillis - due
-        val steps = elapsed / side.intervalMillis + 1
-        return due + steps * side.intervalMillis
-    }
+    fun screenBreakNextStart(side: ScreenBreak, nowMillis: Long): Long =
+        maxOf(side.lastRestMillis + side.intervalMillis, nowMillis)
 
     /**
      * PRD §15: true when [side]'s due time `lastRest + interval` has passed at [nowMillis]. For a rest pose
@@ -1470,14 +1469,39 @@ object SchedulerDomain {
      * the cue normally, so the only effect is suppressing the un-anchored sentinel fire.
      */
     fun reachedRestPoseDueByTitle(screenBreaks: List<ScreenBreak>, nowMillis: Long): Map<String, Long> {
+        val poses = screenBreaks.filter { it.restBreak }.mapTo(HashSet()) { it.title }
+        return reachedScreenBreakDueByTitle(screenBreaks, nowMillis).filterKeys { it in poses }
+    }
+
+    /**
+     * PRD §15: [reachedRestPoseDueByTitle] widened to **every** screen break, the 20-second look-away included
+     * — each reached break mapped to its stable DUE instant `lastRest + interval`.
+     *
+     * The look-away belongs here now that it *slides* like a pose ([screenBreakNextStart]): CLAUDE.md's rule is
+     * that a sliding break's trigger must key on the fixed DUE and never on the drawn start, which rides the
+     * now-line and would re-fire the cue every frame. Everything else is the pose rule unchanged — a **level**
+     * `now >= due` so no clock leap can skip it, the `lastRestMillis > 0` gate that keeps a never-anchored
+     * break's 1970 sentinel from firing, and the **longest-reached-wins** shadow.
+     *
+     * Two shadows keep the reached set honest, and they are different rules:
+     * - among the **rest poses**, the longest reached one absorbs the shorter (the 5↔15 merge — resting 15
+     *   minutes discharges a 5-minute pose due at the same instant);
+     * - a **look-away** whose due is at or after the earliest reached pose's due is dropped (the *dragging-pose
+     *   shadow*). An owed pose sits at the now-line and, dragging there, re-anchors every shorter break to a
+     *   slot that recedes as fast as `now` — so no look-away after that pose's due is a boundary the now-line
+     *   can ever cross, and announcing one is the phantom "a 20s break fired right after the 5-min pose I
+     *   never took". A look-away due strictly *before* the pose's is a real earlier boundary and is kept, which
+     *   is what lets the sweep fire the two in their true order.
+     */
+    fun reachedScreenBreakDueByTitle(screenBreaks: List<ScreenBreak>, nowMillis: Long): Map<String, Long> {
+        fun due(side: ScreenBreak) = side.lastRestMillis + side.intervalMillis
         val reached = screenBreaks
-            .filter {
-                it.restBreak && isValidScreenBreak(it) &&
-                    it.lastRestMillis > 0 && it.lastRestMillis + it.intervalMillis <= nowMillis
-            }
-        return reached
-            .filter { task -> reached.none { it.durationMillis > task.durationMillis } }
-            .associate { it.title to it.lastRestMillis + it.intervalMillis }
+            .filter { isValidScreenBreak(it) && it.lastRestMillis > 0 && due(it) <= nowMillis }
+        val (poses, others) = reached.partition { it.restBreak }
+        val keptPoses = poses.filter { task -> poses.none { it.durationMillis > task.durationMillis } }
+        val earliestPoseDue = poses.minOfOrNull { due(it) }
+        val keptOthers = others.filter { earliestPoseDue == null || due(it) < earliestPoseDue }
+        return (keptPoses + keptOthers).associate { it.title to due(it) }
     }
 
     /**
@@ -1903,6 +1927,63 @@ object SchedulerDomain {
             }
     }
 
+    /**
+     * PRD §15 / `side-dev/test.py` tests 10–11: the work plan as it must be **displayed** while a screen break
+     * sits on the now-line — with the auto panels cut out of the break's span, so a break the now-line has
+     * reached really is "a period that accepts no task" for as long as it slides.
+     *
+     * A break that is owed slides right with the now-line ([screenBreakNextStart]) while the plan under it does
+     * not: the plan is materialized by [fillSchedule], which by CLAUDE.md's trigger rule runs on a **rule
+     * change**, not on time passing. So the fill correctly leaves the break's span empty at the instant it
+     * runs, and every tick after that the marker slides forward over auto panels the fill placed past it. That
+     * is the sliding-period case the reference answers with its dynamic rule list (`MovingWindow`): between
+     * breakpoints the plan is *affine* in the period's position, so a display can follow the period without
+     * re-scheduling. Here the period is pinned to the plan's own origin (the now-line), which is that rule's
+     * simplest regime — the disturbed slot is the one the cursor is in, and nothing else changes shape.
+     *
+     * Only [isRegeneratedPanel] panels are cut: a pinned/manual block and a chore are pre-placed blocks in the
+     * reference's sense and cannot be moved by a period. A panel straddling the now-line keeps its **elapsed**
+     * head (that time really was worked) and resumes past the break, so the cut is a hole, never a rewrite of
+     * the past. The resumed tail takes a distinct id so two display blocks never share one.
+     */
+    fun clipPlanForPinnedScreenBreak(
+        panels: List<TaskPanel>,
+        breakPanels: List<TaskPanel>,
+        nowMillis: Long,
+    ): List<TaskPanel> {
+        // How far the break covering the now-line reaches. Walked transitively, because the 5↔15 merge and a
+        // look-away re-anchored onto a pose's edge can leave two touching markers: the plan resumes past the
+        // last of them, not inside the seam.
+        var end = nowMillis
+        while (true) {
+            val next = breakPanels
+                .filter { it.startEpochMillis <= end && it.endEpochMillis > end }
+                .maxOfOrNull { it.endEpochMillis } ?: break
+            if (next <= end) break
+            end = next
+        }
+        if (end <= nowMillis) return panels
+        return panels.flatMap { panel ->
+            when {
+                // Fixed blocks and the bands are not the plan; a period cannot move them.
+                !isRegeneratedPanel(panel) || panel.screenBreak || panel.sleep -> listOf(panel)
+                // Wholly past, or already past the break: untouched.
+                panel.endEpochMillis <= nowMillis || panel.startEpochMillis >= end -> listOf(panel)
+                // Wholly inside the break: only its elapsed head survives.
+                panel.endEpochMillis <= end ->
+                    if (panel.startEpochMillis < nowMillis) {
+                        listOf(panel.copy(endEpochMillis = nowMillis))
+                    } else {
+                        emptyList()
+                    }
+                else -> buildList {
+                    if (panel.startEpochMillis < nowMillis) add(panel.copy(endEpochMillis = nowMillis))
+                    add(panel.copy(id = panel.id + "/resume", startEpochMillis = end))
+                }
+            }
+        }
+    }
+
     /** PRD §15: a cue boundary the now-line crossed — the atom of the engine's single ordered cue sweep. */
     enum class CueKind { LookAwayStart, RestPoseDue, WindDown }
 
@@ -1925,13 +2006,16 @@ object SchedulerDomain {
      * order (the reported "20s look-away announced after the 5-min pose, but its boundary was earlier").
      *
      * The three kinds are gathered by their own leap-safe rules and then merged/sorted:
-     * - **Look-away starts** — [screenBreakOccurrencesBetween] over `[fromMillis, toMillis]` (not the forward
-     *   projection, which drops an already-crossed occurrence). Each carries its resume instant as
-     *   [CueCrossing.endInstant].
-     * - **Rest-pose dues** — [reachedRestPoseDueByTitle] at [toMillis] (a **level** reach, so a jump can't
-     *   skip it), keyed on the stable due; a due already in [alreadyNotifiedPoseDues] is omitted, so a pose
-     *   sliding along the now-line announces once. The crossing's instant is the DUE, so it orders against a
-     *   look-away by which boundary was actually earlier — even an overdue due that predates [fromMillis].
+     * - **Screen-break dues** — [reachedScreenBreakDueByTitle] at [toMillis] (a **level** reach, so a jump
+     *   can't skip it), keyed on each break's stable due. This is now the source for BOTH the 5-/15-min poses
+     *   and the 20-second look-away: every break slides to the now-line while owed ([screenBreakNextStart]),
+     *   so none of them has a drawn start that is a fixed crossable boundary any more. A pose due already in
+     *   [alreadyNotifiedPoseDues] is omitted, so a break sliding along the now-line announces once; a
+     *   look-away carries its resume instant (`due + duration`) as [CueCrossing.endInstant]. The crossing's
+     *   instant is the DUE, so the kinds order against each other by which boundary was actually earlier —
+     *   even an overdue pose due that predates [fromMillis]. A **look-away** due is additionally required to
+     *   fall in the window: unlike a pose it has no de-dupe memory here, and its due is fixed while the break
+     *   is owed, so an unbounded reach would re-offer the same crossing on every later sweep.
      * - **Wind-downs** — the caller's precomputed bedtime−1h instants that fall in the window.
      *
      * Staleness (real age), the screen-active gate and the once-only de-dupe stay in the engine, which owns
@@ -1946,18 +2030,25 @@ object SchedulerDomain {
         toMillis: Long,
     ): List<CueCrossing> {
         val out = mutableListOf<CueCrossing>()
-        // 20s look-away starts (leap-safe reconstruction; a pose-merged/absorbed occurrence never surfaces).
-        for (occ in screenBreakOccurrencesBetween(screenBreaks, fromMillis, toMillis)) {
-            if (screenBreaks.any { !it.restBreak && it.title == occ.title }) {
-                out += CueCrossing(occ.startEpochMillis, CueKind.LookAwayStart, occ.title, occ.endEpochMillis)
-            }
-        }
-        // 5/15-min rest-pose dues reached at the now-line (level; the stable due is the ordering key).
-        if (automaticSchedule) {
-            for ((title, due) in reachedRestPoseDueByTitle(screenBreaks, toMillis)) {
-                if (alreadyNotifiedPoseDues[title] != due) {
+        val byTitle = screenBreaks.associateBy { it.title }
+        // Every screen break is now keyed on its fixed DUE (`lastRest + interval`), the look-away included:
+        // it slides to the now-line while owed ([screenBreakNextStart]), so the drawn start is no longer a
+        // crossable boundary and only the due is. The level reach is leap-proof, and the longest-reached-wins
+        // shadow inside [reachedScreenBreakDueByTitle] subsumes what the dragging-pose shadow used to do.
+        for ((title, due) in reachedScreenBreakDueByTitle(screenBreaks, toMillis)) {
+            val side = byTitle[title] ?: continue
+            if (side.restBreak) {
+                // 5/15-min rest-pose dues reached at the now-line (the stable due is the ordering key).
+                if (automaticSchedule && alreadyNotifiedPoseDues[title] != due) {
                     out += CueCrossing(due, CueKind.RestPoseDue, title, due)
                 }
+            } else if (due >= fromMillis) {
+                // The 20s look-away: announced at its due, with the resume cue an occurrence-length later.
+                // Bounded by the sweep window because the look-away has no de-dupe memory of its own (the
+                // engine keys on the instant, and a due stays FIXED while the break is owed, so it would be
+                // re-offered on every later sweep). Consecutive scans tile the timeline
+                // (`BoundarySweep.scanFloorMillis`), so bounding it here cannot drop a crossing.
+                out += CueCrossing(due, CueKind.LookAwayStart, title, due + side.durationMillis)
             }
         }
         // Wind-down (bedtime − 1h) instants that fall in the window.
@@ -2610,15 +2701,18 @@ object SchedulerDomain {
                     cursor = end
                     index++
                 }
-                var cycle =
-                    planner.steadyCycle(allowedHere)
-                        .let { if (it.size > SchedulerPlanner.MAX_RULES) planner.coarseCycle(allowedHere) else it }
-                        .filter { it.taskId != null && it.durationMillis > 0L }
-                // No same-task seam with what the prefix just placed (`side-dev/test.py` `_tidy`).
-                var rotations = cycle.size
-                while (rotations-- > 0 && cycle.size > 1 && cycle.first().taskId == generated.lastOrNull()?.taskId) {
-                    cycle = cycle.drop(1) + cycle.first()
-                }
+                // `side-dev/test.py` `_phase`: the cycle is attached in the phase the walk would have gone on
+                // with. A cycle built from a blank slate always opens with the same task, so opening there
+                // after a prefix that left another one starved hands the first task two slots in a row — one
+                // block of twice the minimum, the coarse scale the model exists to avoid.
+                val cycle =
+                    planner.phaseCycle(
+                        planner.steadyCycle(allowedHere)
+                            .let { if (it.size > SchedulerPlanner.MAX_RULES) planner.coarseCycle(allowedHere) else it }
+                            .filter { it.taskId != null && it.durationMillis > 0L },
+                        walk,
+                        allowedHere,
+                    )
                 var slotIndex = 0
                 while (cursor < horizon && index < maxPanels && cycle.isNotEmpty()) {
                     val slot = cycle[slotIndex++ % cycle.size]

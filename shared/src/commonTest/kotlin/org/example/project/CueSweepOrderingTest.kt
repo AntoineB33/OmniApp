@@ -15,10 +15,10 @@ import org.example.project.scheduler.model.ScreenBreak
  *     it — while the level-based rest pose still fired;
  *  2. the two cues ran as independent now-line collectors, so even when both fired they could race.
  *
- * [SchedulerDomain.screenBreakOccurrencesBetween] fixes (1) by reconstructing look-away occurrences over the
- * sweep window from the fixed grid (leap-safe, like the rest pose's level rule), and
- * [SchedulerDomain.cueCrossings] fixes (2) by merging every cue boundary into one list sorted by its true
- * instant.
+ * [SchedulerDomain.reachedScreenBreakDueByTitle] fixes (1): every break — the look-away included, now that it
+ * slides to the now-line while owed — is keyed on its FIXED due with a **level** `now >= due` reach, so no
+ * clock leap can skip one and no sliding start can re-fire one. [SchedulerDomain.cueCrossings] fixes (2) by
+ * merging every cue boundary into one list sorted by its true instant.
  */
 class CueSweepOrderingTest {
     private val MIN = 60_000L
@@ -42,10 +42,11 @@ class CueSweepOrderingTest {
 
     @Test
     fun a_look_away_boundary_before_a_rest_pose_due_is_ordered_first() {
-        // The reported scenario, reduced to the pure core. Look-away grid 20/40/60 min; the 5-min pose comes
-        // due at 62 min. A single leap sweeps the window [55, 63] min, crossing the 60-min look-away and the
-        // 62-min pose due together. They must come back ordered by boundary instant: look-away, THEN pose.
-        val la = lookAway.copy(lastRestMillis = 0)
+        // The reported scenario, reduced to the pure core. The look-away is due at 60 min (anchored 40 min, 20
+        // min interval); the 5-min pose comes due at 62 min. A single leap sweeps past both, and they must come
+        // back ordered by boundary instant: look-away, THEN pose. Both are keyed on their FIXED due, because
+        // both slide to the now-line while owed (PRD §15).
+        val la = lookAway.copy(lastRestMillis = 40 * MIN) // due = 60 min
         val p5 = pose5.copy(lastRestMillis = 2 * MIN) // due = 62 min
 
         val crossings = SchedulerDomain.cueCrossings(
@@ -87,7 +88,7 @@ class CueSweepOrderingTest {
 
     @Test
     fun a_wind_down_interleaves_by_its_instant() {
-        val la = lookAway.copy(lastRestMillis = 0)
+        val la = lookAway.copy(lastRestMillis = 40 * MIN) // due = 60 min
         val p5 = pose5.copy(lastRestMillis = 2 * MIN) // due = 62 min
 
         val crossings = SchedulerDomain.cueCrossings(
