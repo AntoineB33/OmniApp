@@ -41,14 +41,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
+import kotlinx.datetime.DayOfWeek
+import kotlinx.datetime.isoDayNumber
 import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.model.AlarmEntry
 
 /**
  * PRD §18 Alarms: a floating, draggable window listing the account's alarms — one row each, with the time of
- * day it rings, an optional label, **how long the alarm sound lasts**, whether it **vibrates the phone**,
- * whether it repeats daily, and an on/off switch. Rows are edited live: every change pushes the parsed list
- * up via [onChange], which persists and syncs it, so every phone on the account arms the new time.
+ * day it rings, an optional label, **the days it is triggered on** (every day by default), **how long the
+ * alarm sound lasts**, whether it **vibrates the phone**, whether it repeats, and an on/off switch. Rows are
+ * edited live: every change pushes the parsed list up via [onChange], which persists and syncs it, so every
+ * device on the account rings at the new time, on the new days.
  *
  * Mirrors the other floating windows' drag-title / dismiss / raise-on-press pattern.
  */
@@ -80,7 +83,8 @@ fun AlarmWindow(
                         label = it.label,
                         soundText = it.soundSeconds.toString(),
                         vibrate = it.vibrate,
-                        repeatDaily = it.repeatDaily,
+                        days = it.days,
+                        repeats = it.repeats,
                         enabled = it.enabled,
                     )
                 },
@@ -99,7 +103,8 @@ fun AlarmWindow(
                     timeOfDayMinutes = parseAlarmTime(row.timeText) ?: 0,
                     soundSeconds = parseSoundSeconds(row.soundText) ?: AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
                     vibrate = row.vibrate,
-                    repeatDaily = row.repeatDaily,
+                    days = row.days,
+                    repeats = row.repeats,
                     enabled = row.enabled,
                 )
             },
@@ -206,7 +211,10 @@ fun AlarmWindow(
     }
 }
 
-/** One editable alarm row: time + label on the first line, sound length / vibrate / repeat on the second. */
+/**
+ * One editable alarm row: time + label on the first line, the days it is triggered on on the second, and
+ * sound length / vibrate / repeat on the third.
+ */
 @Composable
 private fun AlarmRowEditor(
     row: AlarmRow,
@@ -240,6 +248,44 @@ private fun AlarmRowEditor(
                 Text("🗑", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
             }
         }
+        // PRD §18: the days this alarm is triggered on — every day by default. Tapping a letter toggles that
+        // weekday; the last selected one cannot be turned off, so an alarm always has a day to ring on (use
+        // the on/off switch to silence it instead of emptying the week).
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(text = "Days", style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.width(2.dp))
+            WEEK_DAYS.forEach { day ->
+                val selected = day in row.days
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.surfaceVariant,
+                        )
+                        .clickable {
+                            val next = if (selected) row.days - day else row.days + day
+                            if (next.isNotEmpty()) onRowChange(row.copy(days = next))
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = dayInitial(day),
+                        style = MaterialTheme.typography.labelSmall,
+                        color =
+                            if (selected) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = if (row.days.size == 7) "Every day" else "",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = "Rings for", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.width(6.dp))
@@ -256,8 +302,9 @@ private fun AlarmRowEditor(
             Text(text = "Vibrate", style = MaterialTheme.typography.bodySmall)
             Switch(checked = row.vibrate, onCheckedChange = { onRowChange(row.copy(vibrate = it)) })
             Spacer(Modifier.width(8.dp))
-            Text(text = "Daily", style = MaterialTheme.typography.bodySmall)
-            Switch(checked = row.repeatDaily, onCheckedChange = { onRowChange(row.copy(repeatDaily = it)) })
+            // Off = a one-off: it rings at the next of its days and then disarms itself.
+            Text(text = "Repeat", style = MaterialTheme.typography.bodySmall)
+            Switch(checked = row.repeats, onCheckedChange = { onRowChange(row.copy(repeats = it)) })
         }
     }
 }
@@ -269,9 +316,25 @@ private data class AlarmRow(
     val label: String = "",
     val soundText: String = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS.toString(),
     val vibrate: Boolean = true,
-    val repeatDaily: Boolean = true,
+    val days: Set<DayOfWeek> = AlarmEntry.EVERY_DAY,
+    val repeats: Boolean = true,
     val enabled: Boolean = true,
 )
+
+/** Monday-first, matching the calendar's week (PRD §8). */
+private val WEEK_DAYS: List<DayOfWeek> = DayOfWeek.entries.sortedBy { it.isoDayNumber }
+
+/** The one-letter chip label for [day] (English initials; Tuesday/Thursday and Saturday/Sunday collide). */
+private fun dayInitial(day: DayOfWeek): String =
+    when (day) {
+        DayOfWeek.MONDAY -> "M"
+        DayOfWeek.TUESDAY -> "T"
+        DayOfWeek.WEDNESDAY -> "W"
+        DayOfWeek.THURSDAY -> "T"
+        DayOfWeek.FRIDAY -> "F"
+        DayOfWeek.SATURDAY -> "S"
+        else -> "S"
+    }
 
 private fun formatAlarmTime(minutes: Int): String {
     val m = ((minutes % AlarmEntry.MINUTES_PER_DAY) + AlarmEntry.MINUTES_PER_DAY) % AlarmEntry.MINUTES_PER_DAY

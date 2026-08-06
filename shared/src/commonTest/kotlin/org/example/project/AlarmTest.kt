@@ -7,6 +7,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
+import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
@@ -46,14 +47,16 @@ class AlarmTest {
         minutes: Int = 7 * 60,
         soundSeconds: Int = 30,
         vibrate: Boolean = true,
-        repeatDaily: Boolean = true,
+        days: Set<DayOfWeek> = AlarmEntry.EVERY_DAY,
+        repeats: Boolean = true,
         enabled: Boolean = true,
     ) = AlarmEntry(
         id = id,
         timeOfDayMinutes = minutes,
         soundSeconds = soundSeconds,
         vibrate = vibrate,
-        repeatDaily = repeatDaily,
+        days = days,
+        repeats = repeats,
         enabled = enabled,
     )
 
@@ -151,6 +154,86 @@ class AlarmTest {
         }
     }
 
+    // ----- the days an alarm is triggered on (PRD §18) -------------------------------------------
+
+    @Test
+    fun an_alarm_rings_every_day_by_default() {
+        // "By default it is everyday": a freshly built entry carries the whole week, so a week-long sweep
+        // yields seven rings.
+        assertEquals(AlarmEntry.EVERY_DAY, AlarmEntry("alarm-0").days)
+        val from = at(today, 0, 0)
+        val crossings = AlarmDomain.crossingsBetween(listOf(alarm(minutes = 7 * 60)), from, from + 7 * day, tz)
+        assertEquals(7, crossings.size)
+    }
+
+    @Test
+    fun an_alarm_only_rings_on_the_days_it_is_triggered_on() {
+        // 2026-07-24 is a Friday. A Monday/Wednesday alarm crossed by a whole week yields exactly those two.
+        assertEquals(DayOfWeek.FRIDAY, today.dayOfWeek)
+        val a = alarm(minutes = 7 * 60, days = setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY))
+        val from = at(today, 0, 0)
+        val crossings = AlarmDomain.crossingsBetween(listOf(a), from, from + 7 * day, tz)
+        assertEquals(
+            listOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY),
+            crossings.map { Instant.fromEpochMilliseconds(it.instant).toLocalDateTime(tz).date.dayOfWeek },
+        )
+    }
+
+    @Test
+    fun the_next_occurrence_skips_forward_to_the_next_day_the_alarm_is_triggered_on() {
+        // From Friday morning, a Monday-only alarm is three days out — the scan must reach past tomorrow.
+        val monday = alarm(minutes = 7 * 60, days = setOf(DayOfWeek.MONDAY))
+        val next = AlarmDomain.nextOccurrenceMillis(monday, at(today, 6, 0), tz)
+        assertNotNull(next)
+        val date = Instant.fromEpochMilliseconds(next).toLocalDateTime(tz).date
+        assertEquals(DayOfWeek.MONDAY, date.dayOfWeek)
+        assertEquals(at(today, 7, 0) + 3 * day, next)
+        // And the ring after it is a full week later, not the next day.
+        assertEquals(next + 7 * day, AlarmDomain.nextOccurrenceMillis(monday, next, tz))
+    }
+
+    @Test
+    fun an_alarm_with_no_day_left_never_rings() {
+        // An empty set is not "every day" — it is a week with nothing selected, so there is no boundary at
+        // all (the UI keeps the last day, but a hand-edited/merged DB may still hold one).
+        val none = alarm(days = emptySet())
+        assertFalse(none.schedulable)
+        assertNull(AlarmDomain.nextOccurrenceMillis(none, at(today, 0, 0), tz))
+        val from = at(today, 0, 0)
+        assertTrue(AlarmDomain.crossingsBetween(listOf(none), from, from + 7 * day, tz).isEmpty())
+    }
+
+    // ----- what the calendar draws (PRD §18) -----------------------------------------------------
+
+    @Test
+    fun the_calendar_window_draws_one_marker_per_ring_including_the_start_instant() {
+        // The display form is [from, to) — closed at the start, so each occurrence belongs to exactly one
+        // displayed week and a ring exactly at midnight isn't drawn twice.
+        val midnight = alarm(minutes = 0)
+        val weekStart = at(today, 0, 0)
+        val weekEnd = weekStart + 7 * day
+        val drawn = AlarmDomain.occurrencesInWindow(listOf(midnight), weekStart, weekEnd, tz)
+        assertEquals(7, drawn.size)
+        assertEquals(weekStart, drawn.first().instant)
+        assertEquals(weekEnd - day, drawn.last().instant)
+        // The next window starts where this one ended and picks the ring up exactly once.
+        assertEquals(weekEnd, AlarmDomain.occurrencesInWindow(listOf(midnight), weekEnd, weekEnd + day, tz).single().instant)
+    }
+
+    @Test
+    fun the_calendar_draws_past_rings_too_and_none_for_a_disarmed_alarm() {
+        // An alarm is a fixed wall-clock boundary: a ring that already went off stays on the calendar where
+        // it happened (unlike a reminder, which follows the now-line until checked).
+        val a = alarm(minutes = 7 * 60)
+        val weekStart = at(today, 0, 0) - 7 * day
+        assertEquals(7, AlarmDomain.occurrencesInWindow(listOf(a), weekStart, weekStart + 7 * day, tz).size)
+        assertTrue(
+            AlarmDomain.occurrencesInWindow(
+                listOf(alarm(enabled = false)), weekStart, weekStart + 7 * day, tz,
+            ).isEmpty(),
+        )
+    }
+
     // ----- state / reducer ----------------------------------------------------------------------
 
     @Test
@@ -207,8 +290,14 @@ class AlarmTest {
     @Test
     fun codec_round_trip_preserves_every_alarm_field() {
         val entries = listOf(
-            AlarmEntry("alarm-0", "Wake up", 7 * 60, 45, vibrate = true, repeatDaily = true, enabled = true),
-            AlarmEntry("alarm-1", "One-off", 20 * 60 + 15, 5, vibrate = false, repeatDaily = false, enabled = false),
+            AlarmEntry(
+                "alarm-0", "Wake up", 7 * 60, 45, vibrate = true,
+                days = AlarmEntry.EVERY_DAY, repeats = true, enabled = true,
+            ),
+            AlarmEntry(
+                "alarm-1", "One-off", 20 * 60 + 15, 5, vibrate = false,
+                days = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY), repeats = false, enabled = false,
+            ),
         )
         val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetAlarms(entries))
         val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))
@@ -246,8 +335,53 @@ class AlarmTest {
         assertEquals(7 * 60, alarm.timeOfDayMinutes)
         assertEquals(AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS, alarm.soundSeconds)
         assertTrue(alarm.vibrate)
-        assertTrue(alarm.repeatDaily)
+        assertTrue(alarm.repeats)
         assertTrue(alarm.enabled)
+        // PRD §18 "by default it is everyday": a row written before the days existed rings every day, which
+        // is exactly what it did — the days must not decode as an empty (never-ringing) set.
+        assertEquals(AlarmEntry.EVERY_DAY, alarm.days)
+    }
+
+    @Test
+    fun codec_decodes_the_legacy_repeat_daily_flag_as_the_repeat_flag() {
+        // The flag was named `repeatDaily` before an alarm carried its own days; @JsonNames keeps those
+        // payloads loading (a one-off stays a one-off) while new writes use `repeats`.
+        val json =
+            """
+            {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
+             "cells":[{"id":"c0","parentListId":"L","taskId":null}],
+             "tasks":[{"id":"t0","title":"X"}],
+             "alarms":[{"id":"alarm-0","timeOfDayMinutes":420,"repeatDaily":false}]}
+            """.trimIndent()
+        val decoded = SchedulerStateCodec.decode(json)
+        assertNotNull(decoded)
+        assertFalse(decoded.alarms.single().repeats)
+        assertEquals(AlarmEntry.EVERY_DAY, decoded.alarms.single().days)
+    }
+
+    @Test
+    fun codec_round_trips_a_narrowed_set_of_days() {
+        val entry = alarm(days = setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY))
+        val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetAlarms(listOf(entry)))
+        val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))
+        assertNotNull(decoded)
+        assertEquals(entry.days, decoded.alarms.single().days)
+    }
+
+    @Test
+    fun the_days_an_alarm_rings_on_are_synced_to_the_other_devices() {
+        // CLAUDE.md reconstructibility rule: the days are user-authored and not re-derivable, so narrowing
+        // them must move the sync fingerprint — otherwise a peer would keep ringing on the old days.
+        val everyDay = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetAlarms(listOf(alarm())))
+        val weekdaysOnly =
+            SchedulerReducer.reduce(
+                everyDay,
+                SchedulerIntent.SetAlarms(listOf(alarm(days = AlarmEntry.EVERY_DAY - DayOfWeek.SUNDAY))),
+            )
+        assertTrue(
+            SchedulerStateCodec.syncFingerprint(everyDay) != SchedulerStateCodec.syncFingerprint(weekdaysOnly),
+            "changing the days an alarm rings on must change the sync fingerprint",
+        )
     }
 
     @Test

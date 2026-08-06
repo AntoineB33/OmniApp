@@ -37,9 +37,11 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
+import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.engine.AppSchedulerHost
 import org.example.project.scheduler.engine.SchedulerEngine
+import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.TaskId
@@ -569,6 +571,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 schedulerState.panels, schedulerState.chores, todayStartMillis, reminderHorizonDays, nowMillis,
             ).filter { SchedulerDomain.isReminder(it) }
 
+        // PRD §18: every ring of every alarm that falls in the WEEK ON SCREEN — past ones included, since an
+        // alarm is a fixed wall-clock boundary and a ring that already went off stays where it happened. The
+        // days each alarm is triggered on are its own synced [AlarmEntry.days], so every device draws the same
+        // markers. Bounded by the displayed window per the CLAUDE.md hot-path rule (cost follows the screen:
+        // days-on-screen × alarms), not by the account's history — and independent of `nowMillis`, so the
+        // per-tick recompute is a fixed, tiny amount of work.
+        val displayAlarmOccurrences =
+            AlarmDomain.occurrencesInWindow(
+                schedulerState.alarms, focusedWeekStartMillis, focusedWeekEndMillis, tz,
+            )
+
         // PRD §15/§17: where the account was demonstrably ACTIVE in the past window, the "Sleep" band is carved
         // to show a gap (the user kept working through the scheduled sleep). Account-wide past activity is the
         // complement of the account-wide pauses over the derive window `[now − 168h, now]`; where there is no
@@ -665,7 +678,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // Only real task blocks (records + auto/manual panels) carry the device-set segmentation; the
             // reminder/screen-break/sleep bands keep their own rendering. The helper itself clips to the
             // elapsed part, so a future panel simply gets no segments.
-            if (record.reminder || record.screenBreak || record.sleep || record.noScreen || record.inactivity) {
+            if (record.reminder || record.screenBreak || record.alarm || record.sleep || record.noScreen ||
+                record.inactivity
+            ) {
                 record
             } else {
                 record.copy(deviceSegments = deviceActivitySegments(record.range, activeSessions, nowMillis))
@@ -679,6 +694,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 range = gap,
                 noScreen = true,
                 openStart = openStartMillis != null && gap.startEpochMillis == openStartMillis,
+            )
+        } + displayAlarmOccurrences.map { occurrence ->
+            // PRD §18: a zero-duration marker at the ring instant. Named by the alarm's label, falling back
+            // to its time of day so a nameless alarm still reads as something on the calendar.
+            CalendarRecord(
+                title = occurrence.entry.label.ifBlank { formatAlarmClockTime(occurrence.entry.timeOfDayMinutes) },
+                range = TaskTimeRange(occurrence.instant, occurrence.instant),
+                entryId = occurrence.entry.id,
+                entryIds = listOf(occurrence.entry.id),
+                alarm = true,
             )
         }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
@@ -1285,6 +1310,12 @@ private fun diagnosticsBandSignature(
     val interior = if (edges.size > 2) edges.subList(1, edges.size - 1) else emptyList()
     return "${inactivityBands.size}/${carvedSleepHoles.size}:" +
         interior.joinToString(",") { (it / 60_000).toString() }
+}
+
+/** PRD §18: `HH:MM` for an alarm's time of day — the calendar marker's label when the alarm has none. */
+private fun formatAlarmClockTime(minutes: Int): String {
+    val m = ((minutes % AlarmEntry.MINUTES_PER_DAY) + AlarmEntry.MINUTES_PER_DAY) % AlarmEntry.MINUTES_PER_DAY
+    return "${(m / 60).toString().padStart(2, '0')}:${(m % 60).toString().padStart(2, '0')}"
 }
 
 private fun mergePanelsForDisplay(

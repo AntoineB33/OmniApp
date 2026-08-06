@@ -2,6 +2,8 @@
 
 package org.example.project.scheduler.persistence
 
+import kotlinx.datetime.DayOfWeek
+import kotlinx.datetime.isoDayNumber
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -235,7 +237,13 @@ object SchedulerStateCodec {
             chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit, it.id, it.constrainedToReminderId) },
             alarms =
                 alarms.map {
-                    PersistedAlarm(it.id, it.label, it.timeOfDayMinutes, it.soundSeconds, it.vibrate, it.repeatDaily, it.enabled)
+                    PersistedAlarm(
+                        it.id, it.label, it.timeOfDayMinutes, it.soundSeconds, it.vibrate,
+                        // Sorted ISO day numbers, so the encoded payload (and therefore the sync fingerprint)
+                        // is stable whatever order the set iterates in.
+                        it.days.map { day -> day.isoDayNumber }.sorted(),
+                        it.repeats, it.enabled,
+                    )
                 },
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
@@ -512,7 +520,9 @@ object SchedulerStateCodec {
                         timeOfDayMinutes = it.timeOfDayMinutes,
                         soundSeconds = it.soundSeconds,
                         vibrate = it.vibrate,
-                        repeatDaily = it.repeatDaily,
+                        // A payload written before the days existed (null) rings every day — what it did.
+                        days = it.days?.mapNotNullTo(mutableSetOf(), ::dayOfWeekOrNull) ?: AlarmEntry.EVERY_DAY,
+                        repeats = it.repeats,
                         enabled = it.enabled,
                     )
                 },
@@ -782,6 +792,14 @@ private data class PersistedSupabaseUsageEntry(
 )
 
 /**
+ * PRD §18 Alarms: an ISO day number (1 = Monday … 7 = Sunday) back to its [DayOfWeek], or null when the
+ * payload holds something that is not one — a corrupt/hand-edited DB drops that day rather than failing the
+ * whole decode.
+ */
+private fun dayOfWeekOrNull(isoDayNumber: Int): DayOfWeek? =
+    DayOfWeek.entries.firstOrNull { it.isoDayNumber == isoDayNumber }
+
+/**
  * PRD §18 Alarms: one persisted alarm. Every field carries a default so a payload written by an older shape
  * (or by a build before a field existed) decodes cleanly.
  */
@@ -792,7 +810,17 @@ private data class PersistedAlarm(
     val timeOfDayMinutes: Int = 0,
     val soundSeconds: Int = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
     val vibrate: Boolean = true,
-    val repeatDaily: Boolean = true,
+    /**
+     * PRD §18: the days the alarm is triggered on, as ISO day numbers (1 = Monday … 7 = Sunday). **null**
+     * means every day — which is both the default and what a payload written before the field existed says,
+     * so an old DB's alarms keep ringing daily exactly as they did. An explicit empty list is a set the user
+     * emptied and is not the same thing (it never rings).
+     */
+    val days: List<Int>? = null,
+    // Migration: DBs written before the days existed stored the repeat flag as `repeatDaily` (it then meant
+    // "every day"); [JsonNames] lets those still decode into this field while new writes use `repeats`.
+    @JsonNames("repeatDaily")
+    val repeats: Boolean = true,
     val enabled: Boolean = true,
 )
 

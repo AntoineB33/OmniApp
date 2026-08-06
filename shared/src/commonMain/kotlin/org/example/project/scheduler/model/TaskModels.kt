@@ -1,6 +1,7 @@
 package org.example.project.scheduler.model
 
 import kotlin.jvm.JvmInline
+import kotlinx.datetime.DayOfWeek
 
 /** PRD §10: a task's minimum time defaults to 45 minutes. */
 const val DEFAULT_MINIMUM_MINUTES: Int = 45
@@ -224,8 +225,12 @@ data class ScreenBreak(
  *
  * [timeOfDayMinutes] is minutes since local midnight (`0..1439`), so the alarm follows the device's wall
  * clock. [soundSeconds] is how long the alarm sound lasts, [vibrate] whether the phone also vibrates.
- * A [repeatDaily] alarm rings every day at that time; a one-off disables itself once it has rung
- * ([enabled] = false) so the row stays in the window and can be re-armed.
+ *
+ * [days] is **the days the alarm is triggered on** — the local weekdays it may ring on, defaulting to
+ * [EVERY_DAY]. It is a property of the alarm itself (not of the device), so it is synced with the rest of
+ * the entry and every device of the account rings on the same days. An empty set never rings (the row is
+ * kept, like a disarmed one). [repeats] then says whether it keeps coming round on those days or is a
+ * one-off that disables itself once it has rung ([enabled] = false, the row staying ready to be re-armed).
  */
 data class AlarmEntry(
     /** Stable identity (`alarm-{n}`), so a ring can name its alarm across devices and edits. */
@@ -234,15 +239,21 @@ data class AlarmEntry(
     val timeOfDayMinutes: Int = 0,
     val soundSeconds: Int = DEFAULT_ALARM_SOUND_SECONDS,
     val vibrate: Boolean = true,
-    val repeatDaily: Boolean = true,
+    /** The local weekdays this alarm rings on — every day unless the user narrowed it. */
+    val days: Set<DayOfWeek> = EVERY_DAY,
+    val repeats: Boolean = true,
     val enabled: Boolean = true,
 ) {
     /**
-     * Whether this alarm can ever ring: armed, at a real time of day, and lasting a positive time.
-     * [soundSeconds] is the length of the whole ring — the sound, and the vibration alongside it.
+     * Whether this alarm can ever ring: armed, at a real time of day, lasting a positive time, and with at
+     * least one day to ring on. [soundSeconds] is the length of the whole ring — the sound, and the
+     * vibration alongside it.
      */
     val schedulable: Boolean
-        get() = enabled && timeOfDayMinutes in 0..<MINUTES_PER_DAY && soundSeconds > 0
+        get() = enabled && timeOfDayMinutes in 0..<MINUTES_PER_DAY && soundSeconds > 0 && days.isNotEmpty()
+
+    /** Whether this alarm rings on [day] — i.e. whether [day] is one of the days the user selected. */
+    fun ringsOn(day: DayOfWeek): Boolean = day in days
 
     companion object {
         /** How long the alarm sound lasts by default. */
@@ -252,6 +263,9 @@ data class AlarmEntry(
         const val MAX_ALARM_SOUND_SECONDS: Int = 600
 
         const val MINUTES_PER_DAY: Int = 24 * 60
+
+        /** The default [days]: an alarm rings every day unless the user picks a narrower set. */
+        val EVERY_DAY: Set<DayOfWeek> = DayOfWeek.entries.toSet()
     }
 }
 

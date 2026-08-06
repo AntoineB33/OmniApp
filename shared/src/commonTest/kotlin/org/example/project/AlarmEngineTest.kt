@@ -63,14 +63,14 @@ class AlarmEngineTest {
         label: String = "",
         soundSeconds: Int = 30,
         vibrate: Boolean = true,
-        repeatDaily: Boolean = true,
+        repeats: Boolean = true,
     ) = AlarmEntry(
         id = id,
         label = label,
         timeOfDayMinutes = minutes,
         soundSeconds = soundSeconds,
         vibrate = vibrate,
-        repeatDaily = repeatDaily,
+        repeats = repeats,
     )
 
     @Test
@@ -100,7 +100,7 @@ class AlarmEngineTest {
     @Test
     fun a_one_off_alarm_disarms_itself_and_leaves_nothing_armed() = runTest {
         val h = Harness(nowMillis = at(7, 0))
-        h.vm.dispatch(SchedulerIntent.SetAlarms(listOf(alarm("alarm-0", 7 * 60, repeatDaily = false))))
+        h.vm.dispatch(SchedulerIntent.SetAlarms(listOf(alarm("alarm-0", 7 * 60, repeats = false))))
 
         h.engine.onAlarmFire(ArmedAlarm("alarm-0", at(7, 0), "", 30, vibrate = true))
 
@@ -118,7 +118,7 @@ class AlarmEngineTest {
         // made, so the ring carries its own parameters and does not re-read the list.
         val h = Harness(nowMillis = at(7, 0))
         h.vm.dispatch(
-            SchedulerIntent.SetAlarms(listOf(alarm("alarm-0", 7 * 60, repeatDaily = false))),
+            SchedulerIntent.SetAlarms(listOf(alarm("alarm-0", 7 * 60, repeats = false))),
         )
         h.vm.dispatch(SchedulerIntent.SetAlarmEnabled("alarm-0", false))
 

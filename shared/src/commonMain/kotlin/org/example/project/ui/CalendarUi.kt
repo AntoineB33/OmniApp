@@ -147,6 +147,8 @@ private object CalColors {
     val grid = Color(0xFFDADCE0)
     val menuBackground = Color(0xFFF8F9FA)
     val muted = Color(0xFF5F6368)
+    /** PRD §18 Alarms: a ring marker, deliberately unlike the blue task/reminder chips — it is not work. */
+    val alarm = Color(0xFFE8710A)
     // PRD §8 (uniform blocks): every calendar period — record, scheduled, or manual — is drawn in this
     // single colour, with no visual distinction between auto-calculated and manually-added tasks.
     val event = Color(0xFF1A73E8) // Google-blue calendar event
@@ -193,6 +195,12 @@ data class CalendarRecord(
     val checkedAtMillis: Long? = null,
     /** PRD §15 Screen breaks: a periodic screen break, drawn as a time-positioned band spanning its real duration. */
     val screenBreak: Boolean = false,
+    /**
+     * PRD §18 Alarms: one ring of an alarm, drawn as a zero-duration marker at its instant (like a reminder
+     * tag, but not checkable — an alarm is not a task, it just goes off). One record per occurrence, so an
+     * everyday alarm draws on each day of the week the calendar shows.
+     */
+    val alarm: Boolean = false,
     /** The user's sleep window, drawn as a labeled greyed band behind the task blocks. */
     val sleep: Boolean = false,
     /**
@@ -335,6 +343,8 @@ data class PlacedRecord(
     val checkedAtMillis: Long? = null,
     /** PRD §15 Screen breaks: a periodic screen break rendered as a time-positioned band over [startHour, endHour]. */
     val screenBreak: Boolean = false,
+    /** PRD §18 Alarms: one ring, rendered as a fixed-height marker at [startHour]. See [CalendarRecord.alarm]. */
+    val alarm: Boolean = false,
     /** The user's sleep window, rendered as a labeled greyed band over [startHour, endHour]. */
     val sleep: Boolean = false,
     /** PRD §15 device-sleep gaps: a past pause, rendered as a labeled greyed band reading "Inactivity". */
@@ -380,10 +390,12 @@ fun recordsForDay(
         // device-segment math below already carries seconds for the same reason.
         val startHour = if (start.date < day) 0f else start.hour + start.minute / 60f + start.second / 3600f
         val endHour = if (end.date > day) 24f else end.hour + end.minute / 60f + end.second / 3600f
-        // PRD §14/§15: reminders (zero-duration) render as fixed-height tags and screen breaks (down to sub-
-        // minute durations) as min-height bands, so keep them even though the block path would drop a
-        // ~zero-height period.
-        if (!record.reminder && !record.screenBreak && endHour <= startHour) return@mapNotNull null
+        // PRD §14/§15/§18: reminders and alarm rings (zero-duration) render as fixed-height markers and
+        // screen breaks (down to sub-minute durations) as min-height bands, so keep them even though the
+        // block path would drop a ~zero-height period.
+        if (!record.reminder && !record.screenBreak && !record.alarm && endHour <= startHour) {
+            return@mapNotNull null
+        }
         // Clip the device-set segments to this day too, in the same hour-of-day space as the block.
         val daySegments =
             record.deviceSegments.mapNotNull { seg ->
@@ -410,6 +422,7 @@ fun recordsForDay(
             checked = record.checked,
             checkedAtMillis = record.checkedAtMillis,
             screenBreak = record.screenBreak,
+            alarm = record.alarm,
             sleep = record.sleep,
             inactivity = record.inactivity,
             noScreen = record.noScreen,
@@ -2365,8 +2378,10 @@ private fun WeekView(
 
     // PRD §8 "there must not be overlaps" (default mode): every block on the calendar (records,
     // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live. Reminder tags
-    // (zero-duration, §14) and screen-break markers (§15) are not blocks and are excluded.
-    val allBlocks = records.filterNot { it.reminder || it.screenBreak || it.sleep || it.inactivity }.map { calendarBlockKey(it) to it.range }
+    // (zero-duration, §14), alarm rings (zero-duration, §18) and screen-break markers (§15) are not blocks
+    // and are excluded.
+    val allBlocks = records.filterNot { it.reminder || it.screenBreak || it.alarm || it.sleep || it.inactivity }
+        .map { calendarBlockKey(it) to it.range }
 
     // PRD §8 hover title: the block/screen-break under the cursor, reported up from each element so a single
     // non-interactive overlay (below) draws the bubble. [viewportCoords] anchors the bubble in viewport
@@ -2640,11 +2655,13 @@ private fun DayColumn(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    // PRD §14/§15: reminders (zero-duration) and screen breaks (sub-minute durations) render on their own
-    // fixed-height marker paths; everything else is a height-proportional, draggable block. Split them so
-    // the block pipeline only sees real blocks (drawing screen breaks to scale would make them invisible).
+    // PRD §14/§15/§18: reminders and alarm rings (zero-duration) and screen breaks (sub-minute durations)
+    // render on their own fixed-height marker paths; everything else is a height-proportional, draggable
+    // block. Split them so the block pipeline only sees real blocks (drawing screen breaks to scale would
+    // make them invisible).
     val reminderTags = records.filter { it.reminder }
     val screenBreakMarkers = records.filter { it.screenBreak }
+    val alarmMarkers = records.filter { it.alarm }
     val sleepBands = records.filter { it.sleep }
     // Derived bands (account-offline "No screen" windows, legacy Inactivity) carry no entryId; a
     // user-authored no-screen / inactivity PANEL (entryId set) is a real, removable block and stays in
@@ -2652,7 +2669,8 @@ private fun DayColumn(
     val inactivityBands = records.filter { (it.inactivity || it.noScreen) && it.entryId == null }
     val blockRecords =
         records.filterNot {
-            it.reminder || it.screenBreak || it.sleep || ((it.inactivity || it.noScreen) && it.entryId == null)
+            it.reminder || it.screenBreak || it.alarm || it.sleep ||
+                ((it.inactivity || it.noScreen) && it.entryId == null)
         }
     // PRD §17: the fill schedules the work plan straight through the nightly sleep windows, so a block may
     // land (partly) inside one. The overlapping sub-range is greyed "as if under the Sleep band" while the
@@ -3195,6 +3213,18 @@ private fun DayColumn(
             }
         }
 
+        // PRD §18 Alarms: each ring of each alarm is drawn at its own instant — a fixed-height marker, since
+        // an alarm has no duration. Unlike a reminder it is never checked off and never follows the now-line:
+        // it is a fixed wall-clock boundary, so a past ring stays where it went off. Alarms falling at (or
+        // within a marker's height of) the same time stack downward, exactly like the reminder tags.
+        var lastAlarmBottom: Dp? = null
+        alarmMarkers.sortedBy { it.startHour }.forEach { marker ->
+            val naturalY = hourHeight * marker.startHour
+            val y = lastAlarmBottom?.let { maxOf(naturalY, it) } ?: naturalY
+            lastAlarmBottom = y + ALARM_MARKER_HEIGHT
+            AlarmMarker(marker, Modifier.offset(y = y))
+        }
+
         // PRD §15 Screen breaks: drawn as real time-positioned bands spanning their true duration, so the §9
         // fill leaves an exact gap for each one (no overlap with the surrounding task, no stray white where
         // a multi-minute rest pause sits). A sub-minute look-away therefore renders as a hairline; the 5/15-
@@ -3245,6 +3275,9 @@ private fun DayColumn(
 
 /** PRD §14: a reminder rendered as a small checkable chip on the calendar (not a draggable block). */
 private val REMINDER_TAG_HEIGHT = 18.dp
+
+/** PRD §18: an alarm ring rendered as a small marker on the calendar (zero duration, so a fixed height). */
+private val ALARM_MARKER_HEIGHT = 18.dp
 
 /** PRD §15: smallest rendered height for a screen-break band, so a sub-minute look-away stays a visible hairline. */
 private val SCREEN_BREAK_MIN_HEIGHT = 3.dp
@@ -3504,6 +3537,36 @@ private fun ReminderTag(tag: PlacedRecord, modifier: Modifier = Modifier, onClic
         )
         Text(
             text = tag.title,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/**
+ * PRD §18 Alarms: one ring of an alarm on the calendar. Zero duration, so it draws as a fixed-height marker
+ * at its instant rather than a height-proportional block, and it is inert — an alarm is not a task, so there
+ * is nothing to check off, drag or edit here (the Alarms window owns it). The label falls back to the ring
+ * time so a nameless alarm still says what it is.
+ */
+@Composable
+private fun AlarmMarker(marker: PlacedRecord, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(ALARM_MARKER_HEIGHT)
+            .padding(horizontal = 2.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(CalColors.alarm)
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(text = "⏰", style = MaterialTheme.typography.labelSmall, color = Color.White)
+        Text(
+            text = marker.title,
             style = MaterialTheme.typography.labelSmall,
             color = Color.White,
             maxLines = 1,

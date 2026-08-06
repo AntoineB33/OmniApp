@@ -657,7 +657,7 @@ class SchedulerEngine(
         // A one-off has now rung: disarm it so it doesn't come round again tomorrow (the row stays in the
         // window, ready to be re-armed). Unknown id = deleted meanwhile; nothing to disarm.
         val entry = vm.state.value.alarms.firstOrNull { it.id == armed.alarmId }
-        if (entry != null && !entry.repeatDaily) {
+        if (entry != null && !entry.repeats) {
             vm.dispatch(SchedulerIntent.SetAlarmEnabled(entry.id, false))
         }
         // Re-arm from the state as it is AFTER that dispatch, so a one-off doesn't re-arm itself. Only a

@@ -17,10 +17,11 @@ import org.example.project.scheduler.model.AlarmEntry
  *
  * Per CLAUDE.md, a trigger must be a pure function of the boundary instants the clock crossed (each fires
  * exactly once, in order), never of how a sweep happens to align with the calendar: an alarm's boundary is
- * the **fixed** wall-clock instant `startOfDay(localDay) + timeOfDayMinutes`, so [crossingsBetween] returns
- * every such instant in a half-open interval and a jump over several days still yields each one, in order.
- * Everything here is derived from the local calendar, so an alarm keeps its wall-clock time across a DST
- * shift (the instant moves, the displayed time does not).
+ * the **fixed** wall-clock instant `startOfDay(localDay) + timeOfDayMinutes` **on a day the alarm rings on**
+ * ([AlarmEntry.days], every day by default), so [crossingsBetween] returns every such instant in a half-open
+ * interval and a jump over several days still yields each one, in order. Everything here is derived from the
+ * local calendar, so an alarm keeps its wall-clock time across a DST shift (the instant moves, the displayed
+ * time does not) and its days are the days the *user's* calendar shows.
  */
 object AlarmDomain {
     /** One alarm going off: the [entry] that rings and the exact boundary [instant] it was due at. */
@@ -28,16 +29,18 @@ object AlarmDomain {
 
     /**
      * The next instant [entry] rings, **strictly after** [afterMillis], or null when it can never ring
-     * ([AlarmEntry.schedulable]). Walks forward from the local day containing [afterMillis]; three days is
-     * always enough (today's occurrence may already have passed, and a DST-skipped local time lands on the
-     * following day's).
+     * ([AlarmEntry.schedulable]). Walks forward from the local day containing [afterMillis]; [SCAN_DAYS] days
+     * is always enough (today's occurrence may already have passed, then the next selected weekday is at most
+     * a week out, and a DST-skipped local time lands on the following day's).
      */
     fun nextOccurrenceMillis(entry: AlarmEntry, afterMillis: Long, timeZone: TimeZone): Long? {
         if (!entry.schedulable) return null
         var date = Instant.fromEpochMilliseconds(afterMillis).toLocalDateTime(timeZone).date
-        repeat(3) {
-            val instant = occurrenceMillis(entry, date, timeZone)
-            if (instant > afterMillis) return instant
+        repeat(SCAN_DAYS) {
+            if (entry.ringsOn(date.dayOfWeek)) {
+                val instant = occurrenceMillis(entry, date, timeZone)
+                if (instant > afterMillis) return instant
+            }
             date = date.plus(DatePeriod(days = 1))
         }
         return null
@@ -62,6 +65,31 @@ object AlarmDomain {
         fromMillis: Long,
         toMillis: Long,
         timeZone: TimeZone,
+    ): List<AlarmOccurrence> = occurrencesIn(alarms, fromMillis, toMillis, timeZone)
+
+    /**
+     * Every alarm instant in `[fromMillis, toMillis)` — what the calendar DRAWS over the window it is
+     * showing. Closed at the start and open at the end so each occurrence belongs to exactly one displayed
+     * window, and bounded by that window rather than by the account's history, per the CLAUDE.md hot-path
+     * rule (cost follows the screen: days-on-screen × alarms).
+     */
+    fun occurrencesInWindow(
+        alarms: List<AlarmEntry>,
+        fromMillis: Long,
+        toMillis: Long,
+        timeZone: TimeZone,
+    ): List<AlarmOccurrence> = occurrencesIn(alarms, fromMillis - 1, toMillis - 1, timeZone)
+
+    /**
+     * Every occurrence of every schedulable alarm in `(fromMillis, toMillis]` — the shared engine behind
+     * [crossingsBetween] and [occurrencesInWindow], which differ only in which end of their half-open window
+     * they keep (the display form shifts both bounds down by a millisecond to close the start instead).
+     */
+    private fun occurrencesIn(
+        alarms: List<AlarmEntry>,
+        fromMillis: Long,
+        toMillis: Long,
+        timeZone: TimeZone,
     ): List<AlarmOccurrence> {
         if (toMillis <= fromMillis) return emptyList()
         val schedulable = alarms.filter { it.schedulable }
@@ -76,8 +104,12 @@ object AlarmDomain {
         for (entry in schedulable) {
             var date = firstDate
             while (date <= lastDate) {
-                val instant = occurrenceMillis(entry, date, timeZone)
-                if (instant > fromMillis && instant <= toMillis) result.add(AlarmOccurrence(entry, instant))
+                // The days the alarm is triggered on: a weekday the user left out yields no boundary at all,
+                // so it neither rings nor draws.
+                if (entry.ringsOn(date.dayOfWeek)) {
+                    val instant = occurrenceMillis(entry, date, timeZone)
+                    if (instant > fromMillis && instant <= toMillis) result.add(AlarmOccurrence(entry, instant))
+                }
                 date = date.plus(DatePeriod(days = 1))
             }
         }
@@ -102,6 +134,13 @@ object AlarmDomain {
             .toInstant(timeZone)
             .toEpochMilliseconds()
     }
+
+    /**
+     * How many local days forward [nextOccurrenceMillis] looks: a full week (the longest gap between two of
+     * an alarm's selected days) plus today, whose occurrence may already have passed, plus one for a local
+     * time a DST shift skips entirely.
+     */
+    private const val SCAN_DAYS: Int = 9
 
     /** Mints an id no alarm in [existing] uses, mirroring the reminders' `reminder-{n}` scheme. */
     fun mintAlarmId(existing: Collection<String>): String {

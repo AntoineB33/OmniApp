@@ -2,7 +2,11 @@ package org.example.project
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.example.project.scheduler.engine.SchedulerEngine
+import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.platform.VoiceCue
 import org.example.project.scheduler.state.NotificationLogEntry
@@ -51,6 +55,57 @@ class NotificationLogTest {
         engine.announceResumeWork(voice = false)
         assertEquals(2, vm.state.value.notificationLog.size)
         assertEquals(listOf(VoiceCue.ResumeWork), spoken)
+    }
+
+    /**
+     * PRD §15, end to end through the engine's cue sweep: the 20 s look-away posts a notification when it
+     * BEGINS and another when it ENDS. The two halves are wired differently (the start comes off a
+     * [SchedulerDomain.CueKind.LookAwayStart] crossing, the end off the resume armed in `pendingEnds`), so
+     * the pure-function test above is not enough — this drives the real loop across both boundaries.
+     */
+    @Test
+    fun a_20s_look_away_notifies_at_its_start_and_at_its_end() = runTest {
+        val start = 5L * 24 * 60 * 60 * 1_000
+        val scheduler = testScheduler
+        val clock = object : AppClock {
+            override fun nowMillis(): Long = start + scheduler.currentTime
+        }
+        val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        val engine = SchedulerEngine(
+            vm = vm,
+            clock = clock,
+            scope = backgroundScope,
+            screenActive = { true },
+            playCue = {},
+        )
+        // Anchored a minute before its 20-min interval is up, so the due lands 60 s into the run — after the
+        // first sweep (which has no previous sweep and would swallow anything already crossed).
+        val lookAway = ScreenBreak(
+            title = "look 20 feet away",
+            intervalMillis = 20 * 60_000L,
+            durationMillis = 20_000L,
+            lastRestMillis = start - 19 * 60_000L,
+        )
+        vm.dispatch(SchedulerIntent.SetScreenBreaks(listOf(lookAway)))
+        engine.start()
+        runCurrent()
+        assertTrue(vm.state.value.notificationLog.isEmpty(), "nothing is announced before the break is due")
+
+        advanceTimeBy(60_001) // cross the due
+        runCurrent()
+        assertEquals(
+            listOf("look 20 feet away"),
+            vm.state.value.notificationLog.map { it.message },
+            "the break's start posts a notification",
+        )
+
+        advanceTimeBy(20_001) // cross the break's end
+        runCurrent()
+        assertEquals(
+            listOf("look 20 feet away", "Resume your work"),
+            vm.state.value.notificationLog.map { it.message },
+            "the break's end posts one too",
+        )
     }
 
     @Test
