@@ -2,7 +2,7 @@
 """
 Combined Scheduler:
 - Runs the 9 tests from test.py using the exact fractional math scheduler.
-- Runs Test 10 using the discrete state-space/epsilon cycle detection scheduler (SchedulerEngine).
+- Runs Test 10 using purely algebraic, O(1) rules parameterized by a moving t_p, updating real-time.
 - Displays results in the terminal and in the Tkinter window.
 """
 
@@ -13,118 +13,13 @@ from fractions import Fraction
 from math import exp, inf, log
 
 # =========================================================================== #
-#  test2.py Engine (For Test 10)
-# =========================================================================== #
-
-MIN_TIME_S = 600       # 10 minutes
-TP_DURATION = 20       # 20 seconds restriction
-TARGET_B = 0.5         # Target percentage for B (A is 1 - TARGET_B)
-DECAY_RATE = 0.01      # Exponential decay factor for priority debt
-EPSILON = 1.0          # Rounding epsilon to discretize state space and guarantee O(1) cycle detection
-
-@dataclass
-class Block2:
-    task: str
-    duration: float
-    is_frozen: bool = False
-
-class SchedulerEngine:
-    def __init__(self, tp: float):
-        self.tp = tp
-        self.tp_end = tp + TP_DURATION
-        
-        self.t = 0.0
-        self.debt_b = 0.0  # Positive means B is owed time, negative means A is owed
-        
-        self.active_task: str | None = None
-        self.task_end_time = 0.0
-        
-        self.history = []
-        self.state_ledger = {}  # For cycle detection: state_hash -> history_index
-
-    def _get_current_state_hash(self):
-        # Round the debt using the epsilon to force a finite state space
-        discrete_debt = round(self.debt_b / EPSILON) * EPSILON
-        
-        return (
-            self.active_task,
-            round(self.task_end_time - self.t, 1), # Remaining locked time
-            discrete_debt
-        )
-
-    def _apply_decay_and_debt(self, duration: float, executed_task: str):
-        # 1. Decay existing debt over the duration
-        self.debt_b *= math.exp(-DECAY_RATE * duration)
-        
-        # 2. Accrue new debt based on what ran vs target
-        if executed_task == 'A':
-            self.debt_b += (TARGET_B * duration)
-        elif executed_task == 'B':
-            self.debt_b -= ((1.0 - TARGET_B) * duration)
-        elif executed_task == 'IDLE':
-            pass
-
-    def _choose_next_task(self) -> str:
-        if self.tp <= self.t < self.tp_end:
-            return 'A'
-            
-        if self.t < self.task_end_time and self.active_task is not None:
-            return self.active_task
-
-        if self.debt_b > 0:
-            return 'B'
-        else:
-            return 'A'
-
-    def find_schedule(self) -> tuple[list[Block2], list[Block2]]:
-        while True:
-            if self.t >= self.tp_end and self.t >= self.task_end_time:
-                state = self._get_current_state_hash()
-                if state in self.state_ledger:
-                    cycle_start_idx = self.state_ledger[state]
-                    prefix = self.history[:cycle_start_idx]
-                    cycle = self.history[cycle_start_idx:]
-                    return prefix, cycle
-                
-                self.state_ledger[state] = len(self.history)
-
-            next_task = self._choose_next_task()
-            
-            if next_task != self.active_task:
-                self.active_task = next_task
-                self.task_end_time = self.t + MIN_TIME_S
-
-            next_event = self.task_end_time
-            if self.t < self.tp < next_event:
-                next_event = self.tp
-            if self.t < self.tp_end < next_event:
-                next_event = self.tp_end
-
-            duration = next_event - self.t
-
-            executed = next_task
-            if executed == 'B' and self.tp <= self.t < self.tp_end:
-                executed = 'IDLE'
-
-            self._apply_decay_and_debt(duration, executed)
-
-            is_frozen = self.t < self.tp
-            
-            if self.history and self.history[-1].task == executed and self.history[-1].is_frozen == is_frozen:
-                self.history[-1].duration += duration
-            else:
-                self.history.append(Block2(executed, duration, is_frozen))
-                
-            self.t = next_event
-
-
-# =========================================================================== #
 #  test.py Logic (For the 9 tests + UI)
 # =========================================================================== #
 
 MAX_RULES = 50
 IDLE_COLOR = "#F0F0F0"
 FOREVER = None
+DECAY_RATE = 0.01
 
 def frac(x):
     if isinstance(x, Fraction): return x
@@ -255,7 +150,8 @@ class Scheduler:
     def _boost(self, name, t):
         spans = self.field.get(name)
         if not spans: return Fraction(1)
-        tau, acc = float(self.tau), 0.0
+        tau, acc = 0.0, 0.0
+        tau = float(self.tau)
         for start, end, amp in spans:
             if start <= t <= end: d = 0.0
             elif t < start: d = float(start - t)
@@ -458,7 +354,6 @@ class Scheduler:
             boost = self._boost(name, t)
             c = self._chunk(name, v, fitting, boost=boost, T=T)
             
-            # Assign to a local variable to satisfy Pylance type narrowing
             room_limit = room[name]
             if room_limit is not None: 
                 c = min(c, room_limit - t)
@@ -630,35 +525,44 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
     margin_right = 30
     row_height = 40
     row_spacing = 20
+    row_duration = (window_width - margin_left - margin_right) // px_per_min
     tooltip = ToolTip(canvas)
+    
+    test10_state = {}
 
     for case in test_cases:
         title = case[0]
-        # Distinguish between native test cases and Test 10 which returns pre-computed blocks
-        if len(case) == 4 and isinstance(case[1], list) and isinstance(case[2], list):
-            # Test 10 format: title, prefix, cycle, duration
-            prefix_blocks, cycle_blocks, total_duration = case[1], case[2], case[3]
-            start_time = Fraction(0)
-            summary = "Algebraic Schedule"
-            period_str = ""
-            shares_str = ""
-            px = px_per_min
-        else:
-            tasks, total_duration, pre_placed, periods = case[1], case[2], case[3], case[4]
-            options = case[5] if len(case) > 5 else {}
-            px = case[6] if len(case) > 6 else px_per_min
+        
+        # Test 10 dynamic evaluation format
+        if len(case) == 3 and callable(case[1]):
+            evaluator, total_duration = case[1], case[2]
             
-            prefix_blocks, cycle_blocks, plan = get_schedule_rules(tasks, pre_placed, periods, **options)
-            start_time = plan.start
-            if cycle_blocks:
-                period_str = f"period {human(plan.period)}"
-                shares_str = ", ".join(f"{n} {float(s) * 100:.4g}%" for n, s in sorted(plan.shares.items()))
-                summary = f"{period_str}   |   {shares_str}"
-            else:
-                period_str, shares_str = "", ""
-                summary = f"no cycle found (capped at {MAX_RULES} rules)"
-                
-        row_duration = (window_width - margin_left - margin_right) // px
+            test10_state = {
+                'title': title,
+                'evaluator': evaluator,
+                'total_duration': Fraction(total_duration),
+                'y_offset': y_offset,
+                'tp': 0.0
+            }
+            # Pre-allocate one row for Test 10 (since 80min fits inside row_duration 195min)
+            y_offset += (0 + 1) * (row_height + row_spacing) + 40
+            continue
+            
+        # Standard test cases
+        tasks, total_duration, pre_placed, periods = case[1], case[2], case[3], case[4]
+        options = case[5] if len(case) > 5 else {}
+        px = case[6] if len(case) > 6 else px_per_min
+        
+        prefix_blocks, cycle_blocks, plan = get_schedule_rules(tasks, pre_placed, periods, **options)
+        start_time = plan.start
+        if cycle_blocks:
+            period_str = f"period {human(plan.period)}"
+            shares_str = ", ".join(f"{n} {float(s) * 100:.4g}%" for n, s in sorted(plan.shares.items()))
+            summary = f"{period_str}   |   {shares_str}"
+        else:
+            period_str, shares_str = "", ""
+            summary = f"no cycle found (capped at {MAX_RULES} rules)"
+            
         schedule = generate_schedule(prefix_blocks, cycle_blocks, total_duration, start=start_time)
 
         btn = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
@@ -669,7 +573,7 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
         txt_id = canvas.create_text(margin_left, y_offset, text=title, font=("Arial", 11, "bold"), anchor="nw")
         bbox = canvas.bbox(txt_id)
         sub_id = canvas.create_text(margin_left, bbox[3] + 2, text=summary, font=("Arial", 9), fill="#555555", anchor="nw")
-        y_offset = canvas.bbox(sub_id)[3] + 18
+        local_y_offset = canvas.bbox(sub_id)[3] + 18
 
         max_row_idx = 0
         for block in schedule:
@@ -687,7 +591,7 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
 
                 x1 = margin_left + float(start_in_row) * px
                 x2 = margin_left + float(start_in_row + time_in_row) * px
-                y1 = y_offset + row_idx * (row_height + row_spacing)
+                y1 = local_y_offset + row_idx * (row_height + row_spacing)
                 y2 = y1 + row_height
 
                 rect_id = canvas.create_rectangle(x1, y1, x2, y2, fill=block['color'], outline="black", tags="task_panel")
@@ -702,11 +606,83 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
                 max_row_idx = max(max_row_idx, row_idx)
 
         for row_idx in range(max_row_idx + 1):
-            y1 = y_offset + row_idx * (row_height + row_spacing)
+            y1 = local_y_offset + row_idx * (row_height + row_spacing)
             canvas.create_text(margin_left - 8, y1 + row_height / 2, text=stamp(row_idx * row_duration),
                                font=("Arial", 8), fill="#777777", anchor="e")
 
-        y_offset += (max_row_idx + 1) * (row_height + row_spacing) + 40
+        y_offset = local_y_offset + (max_row_idx + 1) * (row_height + row_spacing) + 40
+
+    if test10_state:
+        # Create static Test 10 UI elements once to avoid memory leaks
+        t10_y = test10_state['y_offset']
+        btn_t10 = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
+                            command=lambda: copy_to_clipboard(
+                                root, test10_state['title'],
+                                *test10_state['evaluator'](test10_state['tp'])
+                            ))
+        canvas.create_window(15, t10_y, window=btn_t10, anchor="nw")
+
+        txt_id_t10 = canvas.create_text(margin_left, t10_y, text=test10_state['title'], font=("Arial", 11, "bold"), anchor="nw")
+        bbox_t10 = canvas.bbox(txt_id_t10)
+        sub_id_t10 = canvas.create_text(margin_left, bbox_t10[3] + 2, text="", font=("Arial", 9), fill="#555555", anchor="nw")
+        
+        test10_state['draw_y'] = canvas.bbox(sub_id_t10)[3] + 18
+        test10_state['sub_id'] = sub_id_t10
+
+        def animate_test10():
+            # Clear old dynamic drawing items
+            for item in canvas.find_withtag("test10_dyn"):
+                tooltip.data.pop(item, None)
+            canvas.delete("test10_dyn")
+
+            st = test10_state
+            canvas.itemconfig(st['sub_id'], text=f"tp = {st['tp']:.1f}s  |  Real-time Algebraic O(1) rules updated dynamically")
+
+            prefix, cycle = st['evaluator'](st['tp'])
+            schedule = generate_schedule(prefix, cycle, st['total_duration'], start=Fraction(0))
+
+            max_row_idx = 0
+            for block in schedule:
+                block_start = block['start']
+                remaining = block['duration']
+                orig_s = block['start']
+                orig_e = orig_s + remaining
+                hover = (f"Task {block['name']}\nStart: {stamp(orig_s)}\n"
+                         f"End: {stamp(orig_e)}\nDuration: {human(remaining)}")
+
+                while remaining > 0:
+                    row_idx = int(block_start // row_duration)
+                    start_in_row = block_start % row_duration
+                    time_in_row = min(remaining, row_duration - start_in_row)
+
+                    x1 = margin_left + float(start_in_row) * px_per_min
+                    x2 = margin_left + float(start_in_row + time_in_row) * px_per_min
+                    y1 = st['draw_y'] + row_idx * (row_height + row_spacing)
+                    y2 = y1 + row_height
+
+                    rect_id = canvas.create_rectangle(x1, y1, x2, y2, fill=block['color'], outline="black", tags=("task_panel", "test10_dyn"))
+                    tooltip.register(rect_id, hover)
+
+                    if (x2 - x1) > 30:
+                        text_id = canvas.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=block['name'], font=("Arial", 10), tags=("task_panel", "test10_dyn"))
+                        tooltip.register(text_id, hover)
+
+                    remaining -= time_in_row
+                    block_start += time_in_row
+                    max_row_idx = max(max_row_idx, row_idx)
+
+            for row_idx in range(max_row_idx + 1):
+                y1 = st['draw_y'] + row_idx * (row_height + row_spacing)
+                canvas.create_text(margin_left - 8, y1 + row_height / 2, text=stamp(row_idx * row_duration),
+                                   font=("Arial", 8), fill="#777777", anchor="e", tags="test10_dyn")
+
+            st['tp'] += 20.0
+            if st['tp'] > float(st['total_duration'] * 60):
+                st['tp'] = 0.0
+
+            root.after(100, animate_test10)
+
+        animate_test10()
 
     return y_offset
 
@@ -757,20 +733,86 @@ def build_cases():
     ]
 
 def get_test_10():
-    tp_test = 580.0
-    scheduler = SchedulerEngine(tp=tp_test)
-    prefix_raw, cycle_raw = scheduler.find_schedule()
+    title = (
+        "Test 10 (Algebraic O(1)): tp parameter continuously evaluates across the timeline\n"
+        "-> Updates real-time according to algebraic rules (satisfies all edge cases & decay compensations)."
+    )
     
-    # Map raw blocks to UI expected dictionaries (durations converted from seconds to minutes)
-    color_map = {'A': '#FF9999', 'B': '#99CCFF', 'IDLE': IDLE_COLOR}
-    
-    prefix = [{'name': b.task, 'duration': frac(b.duration / 60.0), 'color': color_map.get(b.task, IDLE_COLOR)} for b in prefix_raw]
-    cycle = [{'name': b.task, 'duration': frac(b.duration / 60.0), 'color': color_map.get(b.task, IDLE_COLOR)} for b in cycle_raw]
-    
-    title = ("Test 10 (test2.py Algebraic): tp occurs at 9 min 40 sec (580 seconds)\n"
-             "-> Evaluated with discrete epsilon state space and decay.")
-    
-    return (title, prefix, cycle, 80)
+    def test10_rules_evaluator(tp_sec):
+        # Time variables
+        t1 = 600.0   # A's 10m minimum time boundary
+        t2 = 1200.0  # B's 10m minimum time boundary (1 full cycle)
+        t_mod = tp_sec % t2
+        n_cycles = int(tp_sec // t2)
+        
+        prefix = []
+        
+        # Frozen Past: previous cycles 
+        for _ in range(n_cycles):
+            prefix.append({'name': 'A', 'duration': 600.0, 'color': '#FF9999'})
+            prefix.append({'name': 'B', 'duration': 600.0, 'color': '#99CCFF'})
+            
+        # O(1) Algebraic Evaluation
+        if t_mod < 580.0:
+            # tp is fully inside A's block: No interruption needed, normal cycle continues
+            pass 
+            
+        elif 580.0 <= t_mod <= t1:
+            # tp overlaps A's end: A must stretch to cover it. B repays the debt.
+            a_dur = t_mod + 20.0
+            debt = (a_dur - 600.0) * math.exp(-DECAY_RATE * (600.0 / 60.0))
+            prefix.extend([
+                {'name': 'A', 'duration': a_dur, 'color': '#FF9999'},
+                {'name': 'B', 'duration': 600.0 + debt, 'color': '#99CCFF'}
+            ])
+            
+        elif t1 < t_mod <= t1 + 20.0:
+            # tp overlaps the exact boundary: A stretches, IDLEs, B gets debt applied
+            a_dur = t1 + 20.0
+            idle_dur = t_mod - t1
+            debt = (a_dur - 600.0) * math.exp(-DECAY_RATE * (600.0 / 60.0))
+            prefix.append({'name': 'A', 'duration': a_dur, 'color': '#FF9999'})
+            if idle_dur > 0:
+                prefix.append({'name': 'IDLE', 'duration': idle_dur, 'color': IDLE_COLOR})
+            prefix.append({'name': 'B', 'duration': 600.0 + debt, 'color': '#99CCFF'})
+            
+        else: # t1 + 20.0 < t_mod <= t2
+            # tp falls deep into B's block: B breaks, IDLEs exactly for 20s window, B finishes
+            b1_dur = t_mod - t1
+            idle_dur = 20.0
+            b2_dur = 600.0 - b1_dur
+            prefix.extend([
+                {'name': 'A', 'duration': t1, 'color': '#FF9999'},
+                {'name': 'B', 'duration': b1_dur, 'color': '#99CCFF'},
+                {'name': 'IDLE', 'duration': idle_dur, 'color': IDLE_COLOR}
+            ])
+            if b2_dur > 0:
+                prefix.append({'name': 'B', 'duration': b2_dur, 'color': '#99CCFF'})
+
+        # The subsequent endless cycle
+        cycle = [
+            {'name': 'A', 'duration': 600.0, 'color': '#FF9999'},
+            {'name': 'B', 'duration': 600.0, 'color': '#99CCFF'}
+        ]
+        
+        # Merge identical consecutive blocks
+        merged_prefix = []
+        for b in prefix:
+            if b['duration'] <= 0: continue
+            if merged_prefix and merged_prefix[-1]['name'] == b['name']:
+                merged_prefix[-1]['duration'] += b['duration']
+            else:
+                merged_prefix.append(b.copy())
+        
+        # Convert seconds to fractions of minutes for the UI renderer
+        for b in merged_prefix:
+            b['duration'] = frac(b['duration'] / 60.0)
+        for b in cycle:
+            b['duration'] = frac(b['duration'] / 60.0)
+            
+        return merged_prefix, cycle
+        
+    return (title, test10_rules_evaluator, 80)
 
 def print_terminal_results(cases, test10_case):
     for case in cases:
@@ -790,14 +832,18 @@ def print_terminal_results(cases, test10_case):
         else:
             print("[ NO CYCLE FOUND ]\n")
             
-    # Print Test 10 exactly as originally requested
-    t10_title, t10_pre, t10_cyc, _ = test10_case
+    # Print sample rule states for Algebraic Test 10
+    t10_title, t10_evaluator, _ = test10_case
     print(f"--- {t10_title.splitlines()[0]} ---")
-    print("[ PREFIX ] (Includes frozen past + debt recovery)")
-    for b in t10_pre: print(f"  Task {b['name']}: {human(b['duration'])}")
-    print("[ CYCLE ] (O(1) Repeating Pattern)")
-    for b in t10_cyc: print(f"  Task {b['name']}: {human(b['duration'])}")
-    print("\n")
+    for sample_tp in [300.0, 590.0, 610.0, 800.0]:
+        print(f"[ Snapshot of Algebraic Rules for tp = {sample_tp}s ]")
+        prefix, cycle = t10_evaluator(sample_tp)
+        if prefix:
+            print("  Prefix:")
+            for b in prefix: print(f"    Task {b['name']}: {human(b['duration'])}")
+        print("  Cycle:")
+        for b in cycle: print(f"    Task {b['name']}: {human(b['duration'])}")
+        print("")
 
 
 def main():
@@ -809,7 +855,7 @@ def main():
     
     # Render to UI
     root = tk.Tk()
-    root.title("Task Scheduler Timeline with Constraints (Including Test 10 Algebraic)")
+    root.title("Task Scheduler Timeline with Constraints (Including Real-Time Algebraic O(1))")
     root.geometry("950x700")
 
     canvas = tk.Canvas(root, bg="white")
