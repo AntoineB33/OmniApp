@@ -2,13 +2,21 @@
 """
 Combined Scheduler:
 - Runs the 9 tests from test.py using the exact fractional math scheduler.
-- Runs Test 10 using purely algebraic, O(1) rules parameterized by a moving t_p, updating real-time.
+- Runs Test 10 using purely algebraic, O(1) rules parameterized by a moving t_p,
+  updating in real time.
 - Displays results in the terminal and in the Tkinter window.
+
+Run with --verify to check Test 10's invariants without opening the UI.
 """
 
-import math
-import tkinter as tk
+import sys
 from dataclasses import dataclass, field
+
+try:
+    import tkinter as tk
+except ImportError:          # headless box: --verify and --no-ui still work
+    tk = None
+
 from fractions import Fraction
 from math import exp, inf, log
 
@@ -19,7 +27,6 @@ from math import exp, inf, log
 MAX_RULES = 50
 IDLE_COLOR = "#F0F0F0"
 FOREVER = None
-DECAY_RATE = 0.01
 
 def frac(x):
     if isinstance(x, Fraction): return x
@@ -30,16 +37,19 @@ def ceil_to(x, step):
     return Fraction(-((-x) // step)) * step
 
 def human(d, unit_seconds=60):
-    total = frac(d) * unit_seconds
-    if total.denominator != 1: return f"{float(d):.4g}min"
-    s = int(total)
-    sign, s = ("-", -s) if s < 0 else ("", s)
-    h, r = divmod(s, 3600)
-    m, sec = divmod(r, 60)
+    """Render a duration given in minutes. Sub-second parts survive as decimals,
+    so a debt-repayment block reads '10min 12.6s' instead of collapsing."""
+    total = float(frac(d) * unit_seconds)
+    sign, total = ("-", -total) if total < 0 else ("", total)
+    h = int(total // 3600)
+    rest = total - 3600 * h
+    m = int(rest // 60)
+    sec = rest - 60 * m
     out = []
     if h: out.append(f"{h}h")
     if m: out.append(f"{m}min")
-    if sec or not out: out.append(f"{sec}s")
+    if sec > 1e-9 or not out:
+        out.append(f"{int(round(sec))}s" if abs(sec - round(sec)) < 1e-9 else f"{sec:.4g}s")
     return sign + " ".join(out)
 
 def stamp(t):
@@ -73,7 +83,7 @@ class Plan:
     prefix: list
     cycle: list
     shares: dict = field(default_factory=dict)
-    
+
     def __post_init__(self):
         self.period = sum((s.duration for s in self.cycle), Fraction(0))
 
@@ -353,15 +363,15 @@ class Scheduler:
             name = self._pick(v, fitting, last)
             boost = self._boost(name, t)
             c = self._chunk(name, v, fitting, boost=boost, T=T)
-            
+
             room_limit = room[name]
-            if room_limit is not None: 
+            if room_limit is not None:
                 c = min(c, room_limit - t)
-                
+
             back = self._next_placeable([n for n in self.p if n not in fitting], pre, periods, t)
-            if back is not None: 
+            if back is not None:
                 c = min(c, max(back, t + owed(name)) - t)
-            
+
             self._push(slots, name, c, self.color[name])
             v[name] += c / (self.p[name] * boost)
             t += c
@@ -429,7 +439,40 @@ class Scheduler:
             prefix[-1] = Slot(head.task, prefix[-1].duration + head.duration, head.color)
         return prefix, cycle
 
-# --- UI & Harness ---
+# =========================================================================== #
+#  Rule segments
+# =========================================================================== #
+# A rule list is a list of segments. A segment is either a plain block
+#   {'name', 'duration', 'color'}
+# or a repeated group
+#   {'repeat': n, 'blocks': [block, ...]}
+# The repeated group is what keeps the rule list O(1): the frozen past of Test 10
+# is n identical cycles, and n must never be spelled out block by block.
+
+def flatten(segments):
+    out = []
+    for seg in segments:
+        if 'blocks' in seg:
+            for _ in range(int(seg.get('repeat', 1))):
+                out.extend(seg['blocks'])
+        else:
+            out.append(seg)
+    return out
+
+def rule_lines(segments, indent="- "):
+    lines = []
+    for seg in segments:
+        if 'blocks' in seg:
+            lines.append(f"{indent}repeat {int(seg['repeat'])}x:")
+            for b in seg['blocks']:
+                lines.append(f"{indent}    task {b['name']} {human(b['duration'])}")
+        else:
+            lines.append(f"{indent}task {seg['name']} {human(seg['duration'])}")
+    return lines
+
+# =========================================================================== #
+#  UI & Harness
+# =========================================================================== #
 
 class ToolTip:
     """Hover bubble driven by WHERE THE POINTER IS, not by item Enter/Leave events.
@@ -523,10 +566,11 @@ def generate_schedule(prefix_blocks, cycle_blocks, total_duration, start=Fractio
                              'duration': block_template['duration'], 'color': block_template['color']})
         time_now += block_template['duration']
 
-    for block in prefix_blocks:
+    for block in flatten(prefix_blocks):
         if time_now >= total_duration: break
         append_block(block)
 
+    cycle_blocks = flatten(cycle_blocks)
     if not cycle_blocks: return schedule
 
     while time_now < total_duration:
@@ -540,12 +584,10 @@ def copy_to_clipboard(root, title, prefix_blocks, cycle_blocks, period_text="", 
     lines = [title, "Rules:"]
     if prefix_blocks:
         lines.append("Prefix:")
-        for block in prefix_blocks:
-            lines.append(f"- task {block['name']} {human(block['duration'])}")
+        lines.extend(rule_lines(prefix_blocks))
     if cycle_blocks:
         lines.append("Cycle:")
-        for block in cycle_blocks:
-            lines.append(f"- task {block['name']} {human(block['duration'])}")
+        lines.extend(rule_lines(cycle_blocks))
         lines.append("- repeat")
         if period_text: lines.append(period_text)
         if shares_text: lines.append(shares_text)
@@ -573,33 +615,34 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
     row_spacing = 20
     row_duration = (window_width - margin_left - margin_right) // px_per_min
     tooltip = ToolTip(canvas)
-    
+
     test10_state = {}
 
     for case in test_cases:
         title = case[0]
-        
+
         # Test 10 dynamic evaluation format
-        if len(case) == 3 and callable(case[1]):
-            evaluator, total_duration = case[1], case[2]
-            
+        if len(case) == 4 and callable(case[1]):
+            evaluator, total_duration, window_sec = case[1], case[2], case[3]
+
             test10_state = {
                 'title': title,
                 'evaluator': evaluator,
+                'window': window_sec,
                 'total_duration': Fraction(total_duration),
                 'y_offset': y_offset,
                 'tp': 0.0,
                 'playing': False
             }
-            # Pre-allocate one row for Test 10 (since 80min fits inside row_duration 195min)
+            # Pre-allocate one row for Test 10 (80min fits inside row_duration 195min)
             y_offset += (0 + 1) * (row_height + row_spacing) + 40
             continue
-            
+
         # Standard test cases
         tasks, total_duration, pre_placed, periods = case[1], case[2], case[3], case[4]
         options = case[5] if len(case) > 5 else {}
         px = case[6] if len(case) > 6 else px_per_min
-        
+
         prefix_blocks, cycle_blocks, plan = get_schedule_rules(tasks, pre_placed, periods, **options)
         start_time = plan.start
         if cycle_blocks:
@@ -609,11 +652,11 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
         else:
             period_str, shares_str = "", ""
             summary = f"no cycle found (capped at {MAX_RULES} rules)"
-            
+
         schedule = generate_schedule(prefix_blocks, cycle_blocks, total_duration, start=start_time)
 
         btn = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
-                        command=lambda t=title, p=prefix_blocks, c=cycle_blocks, 
+                        command=lambda t=title, p=prefix_blocks, c=cycle_blocks,
                                        ps=period_str, ss=shares_str: copy_to_clipboard(root, t, p, c, ps, ss))
         canvas.create_window(15, y_offset, window=btn, anchor="nw")
 
@@ -682,9 +725,25 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
         txt_id_t10 = canvas.create_text(margin_left, t10_y, text=test10_state['title'], font=("Arial", 11, "bold"), anchor="nw")
         bbox_t10 = canvas.bbox(txt_id_t10)
         sub_id_t10 = canvas.create_text(margin_left, bbox_t10[3] + 2, text="", font=("Arial", 9), fill="#555555", anchor="nw")
-        
+
         test10_state['draw_y'] = canvas.bbox(sub_id_t10)[3] + 18
         test10_state['sub_id'] = sub_id_t10
+
+        def draw_window_marker(st, max_row_idx):
+            """The 20s period itself, drawn on the timeline. It is ~1px wide at this
+            zoom, so it gets a minimum width and a label to stay findable."""
+            tp_min = st['tp'] / 60.0
+            span_min = st['window'] / 60.0
+            row_idx = int(tp_min // row_duration)
+            if row_idx > max_row_idx: return
+            start_in_row = tp_min % row_duration
+            x1 = margin_left + start_in_row * px_per_min
+            x2 = max(x1 + 3, margin_left + min(start_in_row + span_min, row_duration) * px_per_min)
+            y1 = st['draw_y'] + row_idx * (row_height + row_spacing)
+            canvas.create_rectangle(x1, y1 - 7, x2, y1 + row_height + 7, outline="#D40000", width=2,
+                                    tags=("test10_dyn",))
+            canvas.create_text(x1, y1 - 9, text="t_p", fill="#D40000", font=("Arial", 8, "bold"),
+                               anchor="sw", tags=("test10_dyn",))
 
         def animate_test10():
             # Clear old dynamic drawing items
@@ -694,7 +753,9 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
 
             st = test10_state
             status = "playing" if st['playing'] else "paused"
-            canvas.itemconfig(st['sub_id'], text=f"tp = {st['tp']:.1f}s ({status})  |  Real-time Algebraic O(1) rules updated dynamically")
+            canvas.itemconfig(st['sub_id'],
+                              text=f"t_p = {st['tp']:.1f}s ({status})  |  {regime_name(st['tp'])}"
+                                   f"  |  algebraic O(1) rules, re-read every frame")
 
             prefix, cycle = st['evaluator'](st['tp'])
             schedule = generate_schedule(prefix, cycle, st['total_duration'], start=Fraction(0))
@@ -734,9 +795,13 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
                 canvas.create_text(margin_left - 8, y1 + row_height / 2, text=stamp(row_idx * row_duration),
                                    font=("Arial", 8), fill="#777777", anchor="e", tags="test10_dyn")
 
+            draw_window_marker(st, max_row_idx)
+
             if st['playing']:
-                st['tp'] += 20.0
-                if st['tp'] > float(st['total_duration'] * 60):
+                st['tp'] += 5.0
+                # The whole period, not just its leading edge, has to clear the
+                # displayed timeline before the sweep restarts.
+                if st['tp'] + st['window'] > float(st['total_duration'] * 60):
                     st['tp'] = 0.0
 
             # Test 10 redraws itself, so the content height is only known after a
@@ -747,7 +812,7 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
             # bubble must be re-judged against what is under the cursor NOW.
             tooltip.refresh()
 
-            root.after(100, animate_test10)
+            root.after(50, animate_test10)
 
         animate_test10()
 
@@ -800,87 +865,288 @@ def build_cases():
         )
     ]
 
+# =========================================================================== #
+#  Test 10: algebraic O(1) rules parameterized by the moving period start t_p
+# =========================================================================== #
+#
+# The window W = [t_p, t_p + WINDOW) admits only A, and t_p sweeps forward.
+# The freezing requirement is a consistency condition BETWEEN plans:
+#
+#     for every t_p < t_p', the two rule sets must describe the same
+#     timeline on [0, t_p).
+#
+# Everything below is derived from that. Three regimes, and only three:
+#
+#   (1) t_p + WINDOW <= T_A            the window sits inside A's block.
+#                                      Nothing to do: the plain cycle already
+#                                      satisfies it.
+#
+#   (2) T_A - WINDOW < t_p <= T_A      the window straddles the A->B boundary,
+#                                      so B may not begin at T_A. A is allowed
+#                                      inside the window, so A absorbs the
+#                                      overhang rather than the timeline idling.
+#                                      Overrun e = t_p + WINDOW - T_A, at most one
+#                                      window wide, repaid to B over the following
+#                                      B blocks with exponential decay.
+#
+#   (3) t_p > T_A                      the window lands inside B's block. B is
+#                                      already running (it started at T_A in every
+#                                      plan with a larger t_p), so B pauses for the
+#                                      window and resumes. B still receives its full
+#                                      minimum; the 20s of idle is unavoidable,
+#                                      because A cannot claim it without breaking
+#                                      B's atomic block.
+#
+# The deleted fourth regime is the bug: the previous version pinned A to T_A+WINDOW
+# and grew an idle for t_p in (T_A, T_A+WINDOW], which put A at t=605s when t_p=610s
+# while regime (3) put B there for t_p=621s. Both times are below both t_p values,
+# so the frozen past changed. There is no room for a regime between (2) and (3):
+# a plan whose window starts after T_A cannot forbid B at T_A, so B starts there.
+
+DEBT_EPS = 0.5  # rounding epsilon, seconds: below this the decay tail is folded in
+
+def repayment_terms(excess, ratio, eps=DEBT_EPS):
+    """Split `excess` into the decaying extras handed to successive B blocks.
+
+    Term k is excess*(1-ratio)*ratio^k, i.e. exponential decay with distance from
+    the disturbance, exactly like the field the other nine tests use. The tail is
+    cut once it drops under the epsilon and folded into the last term, so the
+    terms sum to `excess` EXACTLY: the decay shapes the repayment, it never
+    cancels part of the debt. The term count is bounded by log(excess/eps)/|ln
+    ratio|, a constant, so the rule list stays O(1).
+    """
+    terms = []
+    rest = float(excess)
+    while rest > eps:
+        pay = rest * (1.0 - ratio)
+        terms.append(pay)
+        rest -= pay
+    if terms:
+        terms[-1] += rest
+    elif rest > 0:
+        terms = [rest]
+    return terms
+
+def make_test10_evaluator(tasks, window_sec=20.0):
+    """Build the O(1) rule evaluator for a two-task timeline swept by an A-only
+    window. Every constant is derived from the same Scheduler that runs tests 1-9,
+    so the two halves of this file cannot drift apart."""
+    sched = Scheduler(tasks)
+    a, b = tasks[0].name, tasks[1].name
+    color = {a: tasks[0].color, b: tasks[1].color, "IDLE": IDLE_COLOR}
+
+    period = float(sched.min_period) * 60.0          # T   = 1200 s
+    block = {n: float(sched.p[n]) * period for n in (a, b)}   # 600 s each
+    tau = float(sched.tau) * 60.0                    # same tau as the field
+    ratio = exp(-period / tau)                       # debt carried to the next B block
+    stretch_from = block[a] - window_sec             # T_A - WINDOW = t_1 - WINDOW
+
+    # t_1: the last t_p for which A can still cover the whole window by extending
+    # its own block. Past it the window no longer touches A's block at all, so
+    # there is nothing for A to absorb. It is computed, not chosen, and it sits
+    # above 9min40 exactly as required.
+    t_1 = block[a]
+
+    def blk(name, seconds):
+        return {'name': name, 'duration': seconds, 'color': color[name]}
+
+    def evaluate(tp_sec, to_minutes=True):
+        tp = max(0.0, float(tp_sec))
+        n_cycles = int(tp // period)
+        t = tp - n_cycles * period
+
+        prefix = []
+        # The frozen past is n untouched cycles: one segment, not n of them.
+        if n_cycles:
+            prefix.append({'repeat': n_cycles,
+                           'blocks': [blk(a, block[a]), blk(b, block[b])]})
+
+        if t <= stretch_from:
+            pass                                        # regime (1)
+        elif t <= t_1:                                  # regime (2)
+            excess = t + window_sec - block[a]
+            if excess > 0:
+                prefix.append(blk(a, block[a] + excess))
+                terms = repayment_terms(excess, ratio)
+                for i, extra in enumerate(terms):
+                    prefix.append(blk(b, block[b] + extra))
+                    if i != len(terms) - 1:
+                        prefix.append(blk(a, block[a]))
+        else:                                           # regime (3)
+            served = t - block[a]
+            prefix.append(blk(a, block[a]))
+            prefix.append(blk(b, served))
+            prefix.append(blk("IDLE", window_sec))
+            rest = block[b] - served
+            if rest > 0:
+                prefix.append(blk(b, rest))
+
+        cycle = [blk(a, block[a]), blk(b, block[b])]
+
+        prefix = [seg for seg in prefix if 'blocks' in seg or seg['duration'] > 0]
+        # Never leave the prefix ending on the task the cycle opens with, or the
+        # two would be drawn as one over-long block.
+        if prefix and 'blocks' not in prefix[-1] and prefix[-1]['name'] == cycle[0]['name']:
+            cycle = cycle[1:] + cycle[:1]
+
+        if to_minutes:
+            conv = lambda blocks: [dict(x, duration=frac(x['duration'] / 60.0)) for x in blocks]
+            prefix = [{'repeat': s['repeat'], 'blocks': conv(s['blocks'])} if 'blocks' in s
+                      else conv([s])[0] for s in prefix]
+            cycle = conv(cycle)
+        return prefix, cycle
+
+    evaluate.period = period
+    evaluate.block = block
+    evaluate.window = window_sec
+    evaluate.t_1 = t_1
+    evaluate.stretch_from = stretch_from
+    evaluate.ratio = ratio
+    return evaluate
+
+TEST10_WINDOW = 20.0
+TEST10_TOTAL_MIN = 80
+_T10 = make_test10_evaluator(AB(), TEST10_WINDOW)
+
+def regime_name(tp):
+    t = float(tp) % _T10.period
+    if t <= _T10.stretch_from: return "window inside A -> untouched cycle"
+    if t <= _T10.t_1: return "window on the A/B seam -> A absorbs it, B repaid"
+    return "window inside B -> B pauses and resumes"
+
 def get_test_10():
     title = (
-        "Test 10 (Algebraic O(1)): tp parameter continuously evaluates across the timeline\n"
-        "-> Updates real-time according to algebraic rules (satisfies all edge cases & decay compensations)."
+        "Test 10 (Algebraic O(1)): the 20s A-only period starts at t_p and sweeps right\n"
+        "-> rules are a closed form in t_p; every plan agrees with every earlier plan on t < t_p."
     )
-    
-    def test10_rules_evaluator(tp_sec):
-        # Time variables
-        t1 = 600.0   # A's 10m minimum time boundary
-        t2 = 1200.0  # B's 10m minimum time boundary (1 full cycle)
-        t_mod = tp_sec % t2
-        n_cycles = int(tp_sec // t2)
-        
-        prefix = []
-        
-        # Frozen Past: previous cycles 
-        for _ in range(n_cycles):
-            prefix.append({'name': 'A', 'duration': 600.0, 'color': '#FF9999'})
-            prefix.append({'name': 'B', 'duration': 600.0, 'color': '#99CCFF'})
-            
-        # O(1) Algebraic Evaluation
-        if t_mod < 580.0:
-            # tp is fully inside A's block: No interruption needed, normal cycle continues
-            pass 
-            
-        elif 580.0 <= t_mod <= t1:
-            # tp overlaps A's end: A must stretch to cover it. B repays the debt.
-            a_dur = t_mod + 20.0
-            debt = (a_dur - 600.0) * math.exp(-DECAY_RATE * (600.0 / 60.0))
-            prefix.extend([
-                {'name': 'A', 'duration': a_dur, 'color': '#FF9999'},
-                {'name': 'B', 'duration': 600.0 + debt, 'color': '#99CCFF'}
-            ])
-            
-        elif t1 < t_mod <= t1 + 20.0:
-            # tp overlaps the exact boundary: A stretches, IDLEs, B gets debt applied
-            a_dur = t1 + 20.0
-            idle_dur = t_mod - t1
-            debt = (a_dur - 600.0) * math.exp(-DECAY_RATE * (600.0 / 60.0))
-            prefix.append({'name': 'A', 'duration': a_dur, 'color': '#FF9999'})
-            if idle_dur > 0:
-                prefix.append({'name': 'IDLE', 'duration': idle_dur, 'color': IDLE_COLOR})
-            prefix.append({'name': 'B', 'duration': 600.0 + debt, 'color': '#99CCFF'})
-            
-        else: # t1 + 20.0 < t_mod <= t2
-            # tp falls deep into B's block: B breaks, IDLEs exactly for 20s window, B finishes
-            b1_dur = t_mod - t1
-            idle_dur = 20.0
-            b2_dur = 600.0 - b1_dur
-            prefix.extend([
-                {'name': 'A', 'duration': t1, 'color': '#FF9999'},
-                {'name': 'B', 'duration': b1_dur, 'color': '#99CCFF'},
-                {'name': 'IDLE', 'duration': idle_dur, 'color': IDLE_COLOR}
-            ])
-            if b2_dur > 0:
-                prefix.append({'name': 'B', 'duration': b2_dur, 'color': '#99CCFF'})
+    return (title, _T10, TEST10_TOTAL_MIN, TEST10_WINDOW)
 
-        # The subsequent endless cycle
-        cycle = [
-            {'name': 'A', 'duration': 600.0, 'color': '#FF9999'},
-            {'name': 'B', 'duration': 600.0, 'color': '#99CCFF'}
-        ]
-        
-        # Merge identical consecutive blocks
-        merged_prefix = []
-        for b in prefix:
-            if b['duration'] <= 0: continue
-            if merged_prefix and merged_prefix[-1]['name'] == b['name']:
-                merged_prefix[-1]['duration'] += b['duration']
+# =========================================================================== #
+#  Verification of the Test 10 invariants
+# =========================================================================== #
+
+def timeline_of(prefix, cycle, horizon):
+    """[(start, end, name)] covering [0, horizon), in seconds."""
+    out, t = [], 0.0
+    for blk in flatten(prefix):
+        d = float(blk['duration'])
+        if d <= 0: continue
+        out.append((t, t + d, blk['name']))
+        t += d
+        if t >= horizon: return out
+    cycle = flatten(cycle)
+    if not cycle: return out
+    while t < horizon:
+        for blk in cycle:
+            d = float(blk['duration'])
+            out.append((t, t + d, blk['name']))
+            t += d
+            if t >= horizon: break
+    return out
+
+def occupant(tl, t):
+    for s, e, n in tl:
+        if s <= t < e: return n
+    return None
+
+def first_disagreement(t1, t2, cut, tol=1e-6):
+    pts = sorted({p for s, e, _ in t1 + t2 for p in (s, e) if -tol <= p <= cut} | {0.0, cut})
+    for lo, hi in zip(pts, pts[1:]):
+        if hi - lo <= tol: continue
+        mid = (lo + hi) / 2.0
+        if occupant(t1, mid) != occupant(t2, mid): return mid
+    return None
+
+def verify_test10(evaluate=_T10, horizon_sec=TEST10_TOTAL_MIN * 60, verbose=True):
+    T, W = evaluate.period, evaluate.window
+    a_block = evaluate.block['A']
+    failures = []
+
+    # A grid dense enough to catch the regime seams, plus the seams themselves
+    # approached from both sides.
+    grid = {round(x * 0.5, 6) for x in range(0, int(horizon_sec * 2) + 1)}
+    for k in range(int(horizon_sec // T) + 2):
+        for off in (evaluate.stretch_from, evaluate.t_1, T):
+            for d in (-1e-3, -1e-6, 0.0, 1e-6, 1e-3, 0.25, 1.0):
+                v = k * T + off + d
+                if 0 <= v <= horizon_sec: grid.add(round(v, 6))
+    grid = sorted(grid)
+
+    # 1. Frozen past. Consecutive pairs suffice: agreement on [0, t_prev) chains
+    #    backwards, so if every neighbouring pair agrees, every pair does.
+    prev_tp, prev_tl = None, None
+    for tp in grid:
+        tl = timeline_of(*evaluate(tp, to_minutes=False), horizon=horizon_sec + 2 * T)
+        if prev_tl is not None:
+            bad = first_disagreement(prev_tl, tl, prev_tp)
+            if bad is not None:
+                failures.append(f"frozen past broken at t={bad:.6f}s "
+                                f"between t_p={prev_tp}s and t_p={tp}s "
+                                f"({occupant(prev_tl, bad)} -> {occupant(tl, bad)})")
+        prev_tp, prev_tl = tp, tl
+
+    # 2. Minimum times, and B's fragments summing to its minimum across the idle.
+    for tp in grid[::7]:
+        tl = timeline_of(*evaluate(tp, to_minutes=False), horizon=horizon_sec + 2 * T)
+        runs = []                      # [name, served, end] with idle pauses folded in
+        for s, e, n in tl:
+            if runs and runs[-1][0] == n:
+                runs[-1][1] += e - s
+            elif (n != "IDLE" and len(runs) >= 2
+                  and runs[-1][0] == "IDLE" and runs[-2][0] == n):
+                runs.pop()             # an idle pause does not end a service
+                runs[-1][1] += e - s
             else:
-                merged_prefix.append(b.copy())
-        
-        # Convert seconds to fractions of minutes for the UI renderer
-        for b in merged_prefix:
-            b['duration'] = frac(b['duration'] / 60.0)
-        for b in cycle:
-            b['duration'] = frac(b['duration'] / 60.0)
-            
-        return merged_prefix, cycle
-        
-    return (title, test10_rules_evaluator, 80)
+                runs.append([n, e - s, e])
+                continue
+            runs[-1][2] = e
+        for name, served, end in runs:
+            if name == "IDLE" or end > horizon_sec:
+                continue               # never judge a run the horizon cut short
+            if served < float(evaluate.block[name]) - 1e-6:
+                failures.append(f"t_p={tp}s: {name} served {served:.3f}s < minimum "
+                                f"{evaluate.block[name]:.0f}s")
+                break
+
+    # 3. Shares. Over a long horizon the served time must converge to 50/50 and the
+    #    idle must stay bounded by one window per sweep position.
+    for tp in grid[::37]:
+        tl = timeline_of(*evaluate(tp, to_minutes=False), horizon=20 * T)
+        served = {}
+        for s, e, n in tl:
+            served[n] = served.get(n, 0.0) + min(e, 20 * T) - s
+        idle = served.pop("IDLE", 0.0)
+        total = sum(served.values())
+        for n, d in served.items():
+            if abs(d / total - 0.5) > 2e-3:
+                failures.append(f"t_p={tp}s: {n} share {d / total:.5f} off 50%")
+                break
+        if idle > W + 1e-6:
+            failures.append(f"t_p={tp}s: idle {idle:.3f}s exceeds one window")
+
+    # 4. Rule count stays finite and small for every t_p.
+    worst = 0
+    for tp in grid:
+        prefix, cycle = evaluate(tp)
+        worst = max(worst, len(prefix) + len(cycle))
+    if worst > MAX_RULES:
+        failures.append(f"rule list reaches {worst} entries, over the {MAX_RULES} cap")
+
+    if verbose:
+        print("--- Test 10 invariants ---")
+        print(f"  grid: {len(grid)} values of t_p over [0, {horizon_sec}]s")
+        print(f"  t_1 = {evaluate.t_1:.0f}s, stretch begins at {evaluate.stretch_from:.0f}s, "
+              f"decay ratio per period = {evaluate.ratio:.4f}")
+        print(f"  largest rule list: {worst} entries (cap {MAX_RULES})")
+        if failures:
+            print(f"  FAIL ({len(failures)}):")
+            for f in failures[:10]: print(f"    - {f}")
+        else:
+            print("  PASS: frozen past, minimum times, exact shares, bounded idle, O(1) rules")
+        print()
+    return failures
+
+# =========================================================================== #
 
 def print_terminal_results(cases, test10_case):
     for case in cases:
@@ -888,40 +1154,47 @@ def print_terminal_results(cases, test10_case):
         tasks, _total_duration, pre_placed, periods = case[1], case[2], case[3], case[4]
         options = case[5] if len(case) > 5 else {}
         prefix, cycle, plan = get_schedule_rules(tasks, pre_placed, periods, **options)
-        
+
         print(f"--- {title.splitlines()[0]} ---")
         if prefix:
             print("[ PREFIX ]")
-            for b in prefix: print(f"  Task {b['name']}: {human(b['duration'])}")
+            for line in rule_lines(prefix, "  "): print(line)
         if cycle:
             print("[ CYCLE ]")
-            for b in cycle: print(f"  Task {b['name']}: {human(b['duration'])}")
+            for line in rule_lines(cycle, "  "): print(line)
             print(f"  (Period: {human(plan.period)})\n")
         else:
             print("[ NO CYCLE FOUND ]\n")
-            
-    # Print sample rule states for Algebraic Test 10
-    t10_title, t10_evaluator, _ = test10_case
+
+    t10_title, t10_evaluator = test10_case[0], test10_case[1]
     print(f"--- {t10_title.splitlines()[0]} ---")
-    for sample_tp in [300.0, 590.0, 610.0, 800.0]:
-        print(f"[ Snapshot of Algebraic Rules for tp = {sample_tp}s ]")
+    for sample_tp in [300.0, 590.0, 600.0, 610.0, 800.0, 1400.0]:
+        print(f"[ rules at t_p = {sample_tp}s : {regime_name(sample_tp)} ]")
         prefix, cycle = t10_evaluator(sample_tp)
         if prefix:
             print("  Prefix:")
-            for b in prefix: print(f"    Task {b['name']}: {human(b['duration'])}")
+            for line in rule_lines(prefix, "    "): print(line)
         print("  Cycle:")
-        for b in cycle: print(f"    Task {b['name']}: {human(b['duration'])}")
+        for line in rule_lines(cycle, "    "): print(line)
         print()
 
-
 def main():
+    verify_only = "--verify" in sys.argv
+    no_ui = verify_only or "--no-ui" in sys.argv
+
     cases = build_cases()
     test10 = get_test_10()
-    
-    # Render to terminal
-    print_terminal_results(cases, test10)
-    
-    # Render to UI
+
+    if not verify_only:
+        print_terminal_results(cases, test10)
+    verify_test10()
+
+    if no_ui:
+        return
+    if tk is None:
+        print("tkinter is not available: skipping the UI (rules and checks above are unaffected).")
+        return
+
     root = tk.Tk()
     root.title("Task Scheduler Timeline with Constraints (Including Real-Time Algebraic O(1))")
     root.geometry("950x700")
