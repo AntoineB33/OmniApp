@@ -432,39 +432,76 @@ class Scheduler:
 # --- UI & Harness ---
 
 class ToolTip:
+    """Hover bubble driven by WHERE THE POINTER IS, not by item Enter/Leave events.
+
+    Test 10 deletes and recreates its blocks every frame. An item destroyed under
+    a motionless cursor delivers no reliable <Leave>, and its replacement delivers
+    a fresh <Enter>, so an Enter/Leave-bound tooltip both stranded windows on the
+    screen and leaked a new Toplevel per frame. Here a single reusable window is
+    shown/updated/hidden from the item actually under the pointer, and `refresh()`
+    re-evaluates that after any redraw or scroll.
+    """
+
     def __init__(self, canvas):
         self.canvas = canvas
         self.tooltip_window = None
+        self.label = None
         self.data = {}
-        self.canvas.tag_bind("task_panel", "<Enter>", self.show_tooltip)
-        self.canvas.tag_bind("task_panel", "<Leave>", self.hide_tooltip)
-        self.canvas.tag_bind("task_panel", "<Motion>", self.move_tooltip)
+        self.canvas.bind("<Motion>", self._on_motion, add="+")
+        self.canvas.bind("<Leave>", self._on_leave, add="+")
+        self.canvas.bind("<Button>", self._on_leave, add="+")
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.canvas.bind_all(seq, lambda e: self.canvas.after_idle(self.refresh), add="+")
 
     def register(self, item_id, text):
         self.data[item_id] = text
 
-    def show_tooltip(self, event):
-        current = self.canvas.find_withtag("current")
-        if not current: return
-        text = self.data.get(current[0])
-        if not text: return
-        x, y = event.x_root + 15, event.y_root + 15
-        self.tooltip_window = tk.Toplevel(self.canvas)
-        self.tooltip_window.wm_overrideredirect(True)
-        self.tooltip_window.wm_geometry(f"+{x}+{y}")
-        label = tk.Label(self.tooltip_window, text=text, background="#ffffe0",
-                         relief="solid", borderwidth=1, justify="left", font=("Arial", 9))
-        label.pack()
+    def unregister(self, item_id):
+        self.data.pop(item_id, None)
 
-    def hide_tooltip(self, event):
+    def refresh(self):
+        """Re-evaluate the bubble against the current pointer position."""
+        if not self.canvas.winfo_exists(): return
+        root_x, root_y = self.canvas.winfo_pointerxy()
+        x = root_x - self.canvas.winfo_rootx()
+        y = root_y - self.canvas.winfo_rooty()
+        inside = 0 <= x < self.canvas.winfo_width() and 0 <= y < self.canvas.winfo_height()
+        text = self._text_under(x, y) if inside else None
+        self._apply(text, root_x, root_y)
+
+    def hide(self):
         if self.tooltip_window:
             self.tooltip_window.destroy()
             self.tooltip_window = None
+            self.label = None
 
-    def move_tooltip(self, event):
-        if self.tooltip_window:
-            x, y = event.x_root + 15, event.y_root + 15
-            self.tooltip_window.wm_geometry(f"+{x}+{y}")
+    def _on_motion(self, event):
+        self._apply(self._text_under(event.x, event.y), event.x_root, event.y_root)
+
+    def _on_leave(self, _event):
+        self.hide()
+
+    def _text_under(self, x, y):
+        cx, cy = self.canvas.canvasx(x), self.canvas.canvasy(y)
+        for item in reversed(self.canvas.find_overlapping(cx, cy, cx, cy)):
+            text = self.data.get(item)
+            if text: return text
+        return None
+
+    def _apply(self, text, root_x, root_y):
+        if not text:
+            self.hide()
+            return
+        x, y = root_x + 15, root_y + 15
+        if self.tooltip_window is None:
+            self.tooltip_window = tk.Toplevel(self.canvas)
+            self.tooltip_window.wm_overrideredirect(True)
+            self.label = tk.Label(self.tooltip_window, text=text, background="#ffffe0",
+                                  relief="solid", borderwidth=1, justify="left", font=("Arial", 9))
+            self.label.pack()
+        else:
+            self.label.config(text=text)
+        self.tooltip_window.wm_geometry(f"+{x}+{y}")
 
 def get_schedule_rules(tasks, pre_placed=None, periods=None, t_now=0, **kw):
     timeline = [Placement(p['name'], frac(p['start']), frac(p['start']) + frac(p['duration']), p.get('color', '#CCCCCC'))
@@ -641,7 +678,7 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
         def animate_test10():
             # Clear old dynamic drawing items
             for item in canvas.find_withtag("test10_dyn"):
-                tooltip.data.pop(item, None)
+                tooltip.unregister(item)
             canvas.delete("test10_dyn")
 
             st = test10_state
@@ -692,6 +729,10 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
             # Test 10 redraws itself, so the content height is only known after a
             # frame: keep the scrollable area in step with what is on the canvas.
             refresh_scrollregion(canvas)
+
+            # The blocks the pointer was over were just destroyed and remade, so the
+            # bubble must be re-judged against what is under the cursor NOW.
+            tooltip.refresh()
 
             root.after(100, animate_test10)
 
