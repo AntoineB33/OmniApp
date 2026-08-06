@@ -1,7 +1,21 @@
-import math
-from dataclasses import dataclass
+#!/usr/bin/env python3
+"""
+Combined Scheduler:
+- Runs the 9 tests from test.py using the exact fractional math scheduler.
+- Runs Test 10 using the discrete state-space/epsilon cycle detection scheduler (SchedulerEngine).
+- Displays results in the terminal and in the Tkinter window.
+"""
 
-# --- Constants & Configuration ---
+import math
+import tkinter as tk
+from dataclasses import dataclass, field
+from fractions import Fraction
+from math import exp, inf, log
+
+# =========================================================================== #
+#  test2.py Engine (For Test 10)
+# =========================================================================== #
+
 MIN_TIME_S = 600       # 10 minutes
 TP_DURATION = 20       # 20 seconds restriction
 TARGET_B = 0.5         # Target percentage for B (A is 1 - TARGET_B)
@@ -9,7 +23,7 @@ DECAY_RATE = 0.01      # Exponential decay factor for priority debt
 EPSILON = 1.0          # Rounding epsilon to discretize state space and guarantee O(1) cycle detection
 
 @dataclass
-class Block:
+class Block2:
     task: str
     duration: float
     is_frozen: bool = False
@@ -29,10 +43,6 @@ class SchedulerEngine:
         self.state_ledger = {}  # For cycle detection: state_hash -> history_index
 
     def _get_current_state_hash(self):
-        """
-        Creates a discrete hash of the system state.
-        This is the core of the O(1) mathematical cycle detection.
-        """
         # Round the debt using the epsilon to force a finite state space
         discrete_debt = round(self.debt_b / EPSILON) * EPSILON
         
@@ -43,47 +53,31 @@ class SchedulerEngine:
         )
 
     def _apply_decay_and_debt(self, duration: float, executed_task: str):
-        """
-        Applies exponential decay to existing debt, then adds newly accrued debt.
-        """
         # 1. Decay existing debt over the duration
         self.debt_b *= math.exp(-DECAY_RATE * duration)
         
         # 2. Accrue new debt based on what ran vs target
         if executed_task == 'A':
-            # B was starved, B gains debt
             self.debt_b += (TARGET_B * duration)
         elif executed_task == 'B':
-            # B ran, B pays off debt
             self.debt_b -= ((1.0 - TARGET_B) * duration)
         elif executed_task == 'IDLE':
-            # Both starved, no relative shift
             pass
 
     def _choose_next_task(self) -> str:
-        """Determines the next task based on strict constraints and priority debt."""
-        # Constraint 1: Are we inside the tp restrictive window?
         if self.tp <= self.t < self.tp_end:
             return 'A'
             
-        # Constraint 2: Is a task currently locked by MIN_TIME?
         if self.t < self.task_end_time and self.active_task is not None:
             return self.active_task
 
-        # Constraint 3: Resolve based on priority ledger
-        # If debt_b is heavily positive, B has been deprived and must run.
         if self.debt_b > 0:
             return 'B'
         else:
             return 'A'
 
-    def find_schedule(self) -> tuple[list[Block], list[Block]]:
-        """
-        Simulates time forward until an exact state match is found, 
-        returning the Prefix and the Cycle.
-        """
+    def find_schedule(self) -> tuple[list[Block2], list[Block2]]:
         while True:
-            # 1. Check for Cycle (only possible once the tp disturbance is passed)
             if self.t >= self.tp_end and self.t >= self.task_end_time:
                 state = self._get_current_state_hash()
                 if state in self.state_ledger:
@@ -92,19 +86,14 @@ class SchedulerEngine:
                     cycle = self.history[cycle_start_idx:]
                     return prefix, cycle
                 
-                # Record state for future detection
                 self.state_ledger[state] = len(self.history)
 
-            # 2. Determine what to schedule
             next_task = self._choose_next_task()
             
-            # 3. Determine how long this block runs (Next Boundary Event)
             if next_task != self.active_task:
-                # Starting a new task, lock it for MIN_TIME
                 self.active_task = next_task
                 self.task_end_time = self.t + MIN_TIME_S
 
-            # Find the next time boundary where logic might change
             next_event = self.task_end_time
             if self.t < self.tp < next_event:
                 next_event = self.tp
@@ -113,41 +102,738 @@ class SchedulerEngine:
 
             duration = next_event - self.t
 
-            # 4. Apply scheduling and update debt
-            # (Idle if B is scheduled but we hit the tp block where B is forbidden)
             executed = next_task
             if executed == 'B' and self.tp <= self.t < self.tp_end:
                 executed = 'IDLE'
 
             self._apply_decay_and_debt(duration, executed)
 
-            # 5. Record block and advance time
             is_frozen = self.t < self.tp
             
-            # Merge contiguous blocks of the same task in history
             if self.history and self.history[-1].task == executed and self.history[-1].is_frozen == is_frozen:
                 self.history[-1].duration += duration
             else:
-                self.history.append(Block(executed, duration, is_frozen))
+                self.history.append(Block2(executed, duration, is_frozen))
                 
             self.t = next_event
 
 
-# --- Execution for a specific branch test ---
-if __name__ == "__main__":
-    # Test case: tp occurs at 9 min 40 sec (580 seconds)
-    # This falls right at the end of A's initial 10-minute block.
-    tp_test = 580.0
+# =========================================================================== #
+#  test.py Logic (For the 9 tests + UI)
+# =========================================================================== #
+
+MAX_RULES = 50
+IDLE_COLOR = "#F0F0F0"
+FOREVER = None
+
+def frac(x):
+    if isinstance(x, Fraction): return x
+    if isinstance(x, float): return Fraction(x).limit_denominator(10 ** 9)
+    return Fraction(x)
+
+def ceil_to(x, step):
+    return Fraction(-((-x) // step)) * step
+
+def human(d, unit_seconds=60):
+    total = frac(d) * unit_seconds
+    if total.denominator != 1: return f"{float(d):.4g}min"
+    s = int(total)
+    sign, s = ("-", -s) if s < 0 else ("", s)
+    h, r = divmod(s, 3600)
+    m, sec = divmod(r, 60)
+    out = []
+    if h: out.append(f"{h}h")
+    if m: out.append(f"{m}min")
+    if sec or not out: out.append(f"{sec}s")
+    return sign + " ".join(out)
+
+def stamp(t):
+    return human(t)
+
+class Task:
+    def __init__(self, name, priority, min_time, color):
+        self.name = str(name)
+        self.priority = frac(priority)
+        self.min_time = frac(min_time)
+        self.color = color
+
+@dataclass(frozen=True)
+class Slot:
+    task: str
+    duration: Fraction
+    color: str = "#DDDDDD"
+
+@dataclass(frozen=True)
+class Placement:
+    task: str
+    start: Fraction
+    end: Fraction
+    color: str = "#DDDDDD"
+    @property
+    def duration(self): return self.end - self.start
+
+@dataclass
+class Plan:
+    start: Fraction
+    prefix: list
+    cycle: list
+    shares: dict = field(default_factory=dict)
     
+    def __post_init__(self):
+        self.period = sum((s.duration for s in self.cycle), Fraction(0))
+
+class Scheduler:
+    def __init__(self, tasks, resolution=None, max_lag=None, tau=None, max_boost=6, field_floor=Fraction(1, 10), max_reach=None):
+        tasks = list(tasks)
+        active = [t for t in tasks if t.priority > 0]
+        total = sum(t.priority for t in active)
+        self.tasks = active
+        self.p = {t.name: t.priority / total for t in active}
+        self.minimum = {t.name: t.min_time for t in active}
+        self.color = {t.name: t.color for t in active}
+        self.resolution = frac(resolution) if resolution else None
+        self.min_period = max(self.minimum[n] / self.p[n] for n in self.p)
+
+        self.tau = frac(tau) if tau is not None else self.min_period
+        self.max_boost = frac(max_boost)
+        self.field_floor = frac(field_floor)
+        self.max_reach = frac(max_reach) if max_reach is not None else 6 * self.tau
+        self.max_amp = float(self.field_floor) * (exp(float(self.max_reach) / float(self.tau)) - 1.0)
+        self.field = {}
+        self.field_end = None
+        self.max_lag = frac(max_lag) if max_lag is not None else None
+
+    def _shares(self, allowed):
+        total = sum(self.p[n] for n in allowed)
+        return {n: self.p[n] / total for n in allowed}
+
+    def _period(self, allowed):
+        p = self._shares(allowed)
+        return max(self.minimum[n] / p[n] for n in allowed)
+
+    def _sources(self, timeline, periods):
+        everyone = set(self.p)
+        raw = []
+        for p in timeline:
+            if p.end > p.start: raw.append((p.start, p.end, everyone - {p.task}))
+        for w in periods:
+            end = inf if w['end'] is FOREVER else w['end']
+            if end > w['start']: raw.append((w['start'], end, everyone - set(w['allowed'])))
+
+        spans = {n: [] for n in everyone}
+        for start, end, excluded in raw:
+            if len(excluded) == len(everyone): continue
+            for n in excluded: spans[n].append((start, end))
+        return {n: self._merge_spans(s) for n, s in spans.items() if s}
+
+    @staticmethod
+    def _merge_spans(spans):
+        out = []
+        for start, end in sorted(spans):
+            if out and start <= out[-1][1]: out[-1] = (out[-1][0], max(out[-1][1], end))
+            else: out.append((start, end))
+        return out
+
+    def _set_field(self, timeline=(), periods=()):
+        tau = float(self.tau)
+        self.field = {}
+        self.field_end = None
+        for name, spans in self._sources(timeline, periods).items():
+            entries = []
+            for start, end in spans:
+                length = inf if end == inf else float(end - start)
+                if length < self.minimum[name]: continue
+                amp = min(length / tau, self.max_amp)
+                entries.append((start, end, amp))
+                if end == inf: continue
+                reach = tau * log(1.0 + amp / float(self.field_floor))
+                stop = end + frac(reach)
+                if self.field_end is None or stop > self.field_end:
+                    self.field_end = stop
+            self.field[name] = entries
+
+    def _boost(self, name, t):
+        spans = self.field.get(name)
+        if not spans: return Fraction(1)
+        tau, acc = float(self.tau), 0.0
+        for start, end, amp in spans:
+            if start <= t <= end: d = 0.0
+            elif t < start: d = float(start - t)
+            else: d = float(t - end)
+            acc += amp * exp(-d / tau)
+        if acc <= 0.0: return Fraction(1)
+        return frac(1.0 + min(acc, float(self.max_boost) - 1.0))
+
+    def _relax(self, v, dt, T, active):
+        if not active: return
+        lo = min(v[n] for n in active)
+        if dt > 0:
+            f = frac(exp(-float(dt) / float(self.tau)))
+            for n in active:
+                over = v[n] - lo - T
+                if over > 0: v[n] -= over * (1 - f)
+        for n in v:
+            if n not in active:
+                v[n] = min(max(v[n], lo - T), lo + T)
+
+    def _pick(self, v, candidates, last=None):
+        pool = [n for n in candidates if n != last] or list(candidates)
+        return min(pool, key=lambda n: (v[n], -self.p[n], n))
+
+    def _chunk(self, name, v, candidates, p=None, boost=None, T=None):
+        p = p or self.p
+        others = [v[n] for n in candidates if n != name]
+        target = min(others) if others else v[name]
+        need = p[name] * (target - v[name])
+        c = max(self.minimum[name], need)
+        if boost is not None:
+            unit = max(self.minimum[name], p[name] * T)
+            c = min(max(c, self.minimum[name] * boost), unit * boost)
+        if self.resolution: c = ceil_to(c, self.resolution)
+        return c
+
+    def _clamp(self, v, t):
+        if self.max_lag is None: return
+        lo, hi = t - self.max_lag, t + self.max_lag
+        for n in v: v[n] = min(max(v[n], lo), hi)
+
+    @staticmethod
+    def _push(slots, task, duration, color):
+        if slots and slots[-1].task == task:
+            slots[-1] = Slot(task, slots[-1].duration + duration, color)
+        else:
+            slots.append(Slot(task, duration, color))
+
+    def steady_cycle(self, allowed):
+        allowed = sorted(allowed)
+        p = self._shares(allowed)
+        T = self._period(allowed)
+        rem = {n: p[n] * T for n in allowed}
+        v = {n: Fraction(0) for n in allowed}
+        slots = []
+        while any(rem[n] > 0 for n in allowed):
+            live = [n for n in allowed if rem[n] > 0]
+            name = self._pick(v, live)
+            c = min(self._chunk(name, v, live, p), rem[name])
+            if rem[name] - c < self.minimum[name]: c = rem[name]
+            slots.append(Slot(name, c, self.color[name]))
+            v[name] += c / p[name]
+            rem[name] -= c
+        return slots
+
+    def coarse_cycle(self, allowed):
+        p = self._shares(allowed)
+        T = self._period(allowed)
+        order = sorted(allowed, key=lambda n: (-p[n], n))
+        return [Slot(n, p[n] * T, self.color[n]) for n in order]
+
+    @staticmethod
+    def _normalise_periods(periods):
+        out = []
+        for w in periods:
+            end = w.get('end', FOREVER)
+            out.append({'start': frac(w['start']),
+                        'end': FOREVER if end is FOREVER or end == inf else frac(end),
+                        'allowed': set(w['allowed'])})
+        return out
+
+    @staticmethod
+    def _active_pre(pre, t):
+        for p in pre:
+            if p.start <= t < p.end: return p
+        return None
+
+    def _allowed_at(self, periods, t):
+        for w in periods:
+            if w['start'] <= t and (w['end'] is FOREVER or t < w['end']):
+                return [n for n in self.p if n in w['allowed']]
+        return list(self.p)
+
+    @staticmethod
+    def _next_boundary(pre, periods, t):
+        best = None
+        for p in pre:
+            if p.start > t and (best is None or p.start < best): best = p.start
+        for w in periods:
+            for b in (w['start'], w['end']):
+                if b is not FOREVER and b > t and (best is None or b < best): best = b
+        return best
+
+    def _blocked_from(self, name, pre, periods, t):
+        best = None
+        for p in pre:
+            if p.start > t and (best is None or p.start < best): best = p.start
+        bounds = sorted({b for w in periods for b in (w['start'], w['end']) if b is not FOREVER and b > t})
+        for b in bounds:
+            if best is not None and b >= best: break
+            if name not in self._allowed_at(periods, b): return b
+        return best
+
+    def _next_placeable(self, missing, pre, periods, t):
+        if not missing: return None
+        bounds = sorted({b for w in periods for b in (w['start'], w['end']) if b is not FOREVER and b > t}
+                        | {p.end for p in pre if p.end > t})
+        for b in bounds:
+            for n in missing:
+                if n not in self._allowed_at(periods, b): continue
+                room = self._blocked_from(n, pre, periods, b)
+                if room is None or room - b >= self.minimum[n]: return b
+        return None
+
+    def plan(self, timeline=(), periods=(), t_now=0, lookback=None, max_rules=MAX_RULES):
+        t_now = frac(t_now)
+        timeline = sorted(timeline, key=lambda p: p.start)
+        periods = self._normalise_periods(periods)
+        self._set_field(timeline, periods)
+
+        past = [p for p in timeline if p.end <= t_now]
+        pre = [p for p in timeline if p.end > t_now]
+
+        window = frac(lookback) if lookback is not None else self.min_period
+        w_start = t_now - window
+        if past: w_start = max(w_start, min(p.start for p in past))
+        w_start = min(w_start, t_now)
+        elapsed = t_now - w_start
+
+        served = {n: Fraction(0) for n in self.p}
+        for p in past:
+            if p.task in served:
+                served[p.task] += max(Fraction(0), min(p.end, t_now) - max(p.start, w_start))
+
+        lag = {n: served[n] / self.p[n] - elapsed for n in self.p}
+        base = min(lag.values())
+        t = t_now
+        v = {n: t + lag[n] - base for n in self.p}
+        self._clamp(v, t)
+
+        slots = []
+        last = None
+        free_tail = False
+        steps, max_steps = 0, 200 * max_rules
+
+        def owed(n):
+            if n == last and slots and slots[-1].task == n:
+                return max(Fraction(0), self.minimum[n] - slots[-1].duration)
+            return self.minimum[n]
+
+        while len(slots) < max_rules and steps < max_steps:
+            steps += 1
+            allowed = self._allowed_at(periods, t)
+            T = self._period(allowed) if allowed else self.min_period
+
+            block = self._active_pre(pre, t)
+            if block:
+                d = block.end - t
+                self._push(slots, block.task, d, block.color)
+                if block.task in v: v[block.task] += d / self.p[block.task]
+                t = block.end
+                last = block.task
+                free_tail = False
+                self._relax(v, 0, T, allowed)
+                self._clamp(v, t)
+                continue
+
+            limit = self._next_boundary(pre, periods, t)
+            if limit is None and (self.field_end is None or t >= self.field_end):
+                break
+
+            room = {n: self._blocked_from(n, pre, periods, t) for n in allowed}
+            fitting = [n for n in allowed if room[n] is None or room[n] - t >= owed(n)]
+
+            if not fitting:
+                if limit is None: break
+                gap = limit - t
+                if free_tail and slots:
+                    tail = slots[-1]
+                    slots[-1] = Slot(tail.task, tail.duration + gap, tail.color)
+                    v[tail.task] += gap / self.p[tail.task]
+                else:
+                    self._push(slots, "IDLE", gap, IDLE_COLOR)
+                    last = None
+                    free_tail = False
+                t += gap
+                continue
+
+            name = self._pick(v, fitting, last)
+            boost = self._boost(name, t)
+            c = self._chunk(name, v, fitting, boost=boost, T=T)
+            
+            # Assign to a local variable to satisfy Pylance type narrowing
+            room_limit = room[name]
+            if room_limit is not None: 
+                c = min(c, room_limit - t)
+                
+            back = self._next_placeable([n for n in self.p if n not in fitting], pre, periods, t)
+            if back is not None: 
+                c = min(c, max(back, t + owed(name)) - t)
+            
+            self._push(slots, name, c, self.color[name])
+            v[name] += c / (self.p[name] * boost)
+            t += c
+            last = name
+            free_tail = True
+            self._relax(v, c, T, allowed)
+            self._clamp(v, t)
+
+        cycle = []
+        allowed = self._allowed_at(periods, t)
+        if allowed and len(slots) < max_rules:
+            T = self._period(allowed)
+            horizon = t + 4 * T
+            while len(slots) < max_rules and t < horizon:
+                spread = max(v[n] for n in allowed) - min(v[n] for n in allowed)
+                if spread <= T: break
+                name = self._pick(v, allowed, last)
+                boost = self._boost(name, t)
+                c = self._chunk(name, v, allowed, boost=boost, T=T)
+                self._push(slots, name, c, self.color[name])
+                v[name] += c / (self.p[name] * boost)
+                t += c
+                last = name
+                self._relax(v, c, T, allowed)
+                self._clamp(v, t)
+            cycle = self.steady_cycle(allowed)
+            if len(cycle) > max_rules: cycle = self.coarse_cycle(allowed)
+            cycle = self._phase(cycle, v, allowed, last)
+
+        prefix, cycle = self._tidy(slots, cycle)
+        period = sum((s.duration for s in cycle), Fraction(0))
+        shares = {}
+        if period:
+            for s in cycle:
+                shares[s.task] = shares.get(s.task, Fraction(0)) + s.duration / period
+        return Plan(start=t_now, prefix=prefix, cycle=cycle, shares=shares)
+
+    def _phase(self, cycle, v, allowed, last):
+        if not cycle: return cycle
+        first = self._pick(v, allowed, last)
+        for i, s in enumerate(cycle):
+            if s.task == first: return cycle[i:] + cycle[:i]
+        return cycle
+
+    @staticmethod
+    def _merge_run(slots):
+        out = []
+        for s in slots:
+            if out and out[-1].task == s.task:
+                out[-1] = Slot(s.task, out[-1].duration + s.duration, s.color)
+            else: out.append(s)
+        return out
+
+    def _tidy(self, prefix, cycle):
+        prefix, cycle = self._merge_run(list(prefix)), self._merge_run(list(cycle))
+        while len(cycle) > 1 and cycle[0].task == cycle[-1].task:
+            head = cycle.pop(0)
+            cycle[-1] = Slot(cycle[-1].task, cycle[-1].duration + head.duration, head.color)
+            prefix.append(head)
+        prefix = self._merge_run(prefix)
+        for _ in range(len(cycle)):
+            if not (prefix and len(cycle) > 1 and prefix[-1].task == cycle[0].task): break
+            head = cycle.pop(0)
+            cycle.append(head)
+            prefix[-1] = Slot(head.task, prefix[-1].duration + head.duration, head.color)
+        return prefix, cycle
+
+# --- UI & Harness ---
+
+class ToolTip:
+    def __init__(self, canvas):
+        self.canvas = canvas
+        self.tooltip_window = None
+        self.data = {}
+        self.canvas.tag_bind("task_panel", "<Enter>", self.show_tooltip)
+        self.canvas.tag_bind("task_panel", "<Leave>", self.hide_tooltip)
+        self.canvas.tag_bind("task_panel", "<Motion>", self.move_tooltip)
+
+    def register(self, item_id, text):
+        self.data[item_id] = text
+
+    def show_tooltip(self, event):
+        current = self.canvas.find_withtag("current")
+        if not current: return
+        text = self.data.get(current[0])
+        if not text: return
+        x, y = event.x_root + 15, event.y_root + 15
+        self.tooltip_window = tk.Toplevel(self.canvas)
+        self.tooltip_window.wm_overrideredirect(True)
+        self.tooltip_window.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(self.tooltip_window, text=text, background="#ffffe0",
+                         relief="solid", borderwidth=1, justify="left", font=("Arial", 9))
+        label.pack()
+
+    def hide_tooltip(self, event):
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
+
+    def move_tooltip(self, event):
+        if self.tooltip_window:
+            x, y = event.x_root + 15, event.y_root + 15
+            self.tooltip_window.wm_geometry(f"+{x}+{y}")
+
+def get_schedule_rules(tasks, pre_placed=None, periods=None, t_now=0, **kw):
+    timeline = [Placement(p['name'], frac(p['start']), frac(p['start']) + frac(p['duration']), p.get('color', '#CCCCCC'))
+                for p in (pre_placed or [])]
+    plan = Scheduler(tasks, **kw).plan(timeline=timeline, periods=periods or [], t_now=t_now, max_rules=MAX_RULES)
+    as_blocks = lambda slots: [{'name': s.task, 'duration': s.duration, 'color': s.color} for s in slots]
+    return as_blocks(plan.prefix), as_blocks(plan.cycle), plan
+
+def generate_schedule(prefix_blocks, cycle_blocks, total_duration, start=Fraction(0)):
+    schedule = []
+    time_now = frac(start)
+
+    def append_block(block_template):
+        nonlocal time_now
+        if schedule and schedule[-1]['name'] == block_template['name']:
+            schedule[-1]['duration'] += block_template['duration']
+        else:
+            schedule.append({'name': block_template['name'], 'start': time_now,
+                             'duration': block_template['duration'], 'color': block_template['color']})
+        time_now += block_template['duration']
+
+    for block in prefix_blocks:
+        if time_now >= total_duration: break
+        append_block(block)
+
+    if not cycle_blocks: return schedule
+
+    while time_now < total_duration:
+        for block in cycle_blocks:
+            if time_now >= total_duration: break
+            append_block(block)
+
+    return schedule
+
+def copy_to_clipboard(root, title, prefix_blocks, cycle_blocks, period_text="", shares_text=""):
+    lines = [title, "Rules:"]
+    if prefix_blocks:
+        lines.append("Prefix:")
+        for block in prefix_blocks:
+            lines.append(f"- task {block['name']} {human(block['duration'])}")
+    if cycle_blocks:
+        lines.append("Cycle:")
+        for block in cycle_blocks:
+            lines.append(f"- task {block['name']} {human(block['duration'])}")
+        lines.append("- repeat")
+        if period_text: lines.append(period_text)
+        if shares_text: lines.append(shares_text)
+    else:
+        lines.append("(No cycle found - capped by rule limit or bounded timeline)")
+
+    root.clipboard_clear()
+    root.clipboard_append("\n".join(lines))
+
+def draw_schedules(root, canvas, test_cases, window_width=900):
+    y_offset = 20
+    px_per_min = 4
+    margin_left = 90
+    margin_right = 30
+    row_height = 40
+    row_spacing = 20
+    tooltip = ToolTip(canvas)
+
+    for case in test_cases:
+        title = case[0]
+        # Distinguish between native test cases and Test 10 which returns pre-computed blocks
+        if len(case) == 4 and isinstance(case[1], list) and isinstance(case[2], list):
+            # Test 10 format: title, prefix, cycle, duration
+            prefix_blocks, cycle_blocks, total_duration = case[1], case[2], case[3]
+            start_time = Fraction(0)
+            summary = "Algebraic Schedule"
+            period_str = ""
+            shares_str = ""
+            px = px_per_min
+        else:
+            tasks, total_duration, pre_placed, periods = case[1], case[2], case[3], case[4]
+            options = case[5] if len(case) > 5 else {}
+            px = case[6] if len(case) > 6 else px_per_min
+            
+            prefix_blocks, cycle_blocks, plan = get_schedule_rules(tasks, pre_placed, periods, **options)
+            start_time = plan.start
+            if cycle_blocks:
+                period_str = f"period {human(plan.period)}"
+                shares_str = ", ".join(f"{n} {float(s) * 100:.4g}%" for n, s in sorted(plan.shares.items()))
+                summary = f"{period_str}   |   {shares_str}"
+            else:
+                period_str, shares_str = "", ""
+                summary = f"no cycle found (capped at {MAX_RULES} rules)"
+                
+        row_duration = (window_width - margin_left - margin_right) // px
+        schedule = generate_schedule(prefix_blocks, cycle_blocks, total_duration, start=start_time)
+
+        btn = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
+                        command=lambda t=title, p=prefix_blocks, c=cycle_blocks, 
+                                       ps=period_str, ss=shares_str: copy_to_clipboard(root, t, p, c, ps, ss))
+        canvas.create_window(15, y_offset, window=btn, anchor="nw")
+
+        txt_id = canvas.create_text(margin_left, y_offset, text=title, font=("Arial", 11, "bold"), anchor="nw")
+        bbox = canvas.bbox(txt_id)
+        sub_id = canvas.create_text(margin_left, bbox[3] + 2, text=summary, font=("Arial", 9), fill="#555555", anchor="nw")
+        y_offset = canvas.bbox(sub_id)[3] + 18
+
+        max_row_idx = 0
+        for block in schedule:
+            block_start = block['start']
+            remaining = block['duration']
+            original_start = block['start']
+            original_end = original_start + block['duration']
+            hover_info = (f"Task {block['name']}\nStart: {stamp(original_start)}\n"
+                          f"End: {stamp(original_end)}\nDuration: {human(block['duration'])}")
+
+            while remaining > 0:
+                row_idx = int(block_start // row_duration)
+                start_in_row = block_start % row_duration
+                time_in_row = min(remaining, row_duration - start_in_row)
+
+                x1 = margin_left + float(start_in_row) * px
+                x2 = margin_left + float(start_in_row + time_in_row) * px
+                y1 = y_offset + row_idx * (row_height + row_spacing)
+                y2 = y1 + row_height
+
+                rect_id = canvas.create_rectangle(x1, y1, x2, y2, fill=block['color'], outline="black", tags="task_panel")
+                tooltip.register(rect_id, hover_info)
+
+                if (x2 - x1) > 30:
+                    text_id = canvas.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=block['name'], font=("Arial", 10), tags="task_panel")
+                    tooltip.register(text_id, hover_info)
+
+                remaining -= time_in_row
+                block_start += time_in_row
+                max_row_idx = max(max_row_idx, row_idx)
+
+        for row_idx in range(max_row_idx + 1):
+            y1 = y_offset + row_idx * (row_height + row_spacing)
+            canvas.create_text(margin_left - 8, y1 + row_height / 2, text=stamp(row_idx * row_duration),
+                               font=("Arial", 8), fill="#777777", anchor="e")
+
+        y_offset += (max_row_idx + 1) * (row_height + row_spacing) + 40
+
+    return y_offset
+
+AB = lambda: [Task("A", priority=50, min_time=10, color="#FF9999"),
+              Task("B", priority=50, min_time=10, color="#99CCFF")]
+
+def build_cases():
+    return [
+        (
+            ("Test 1: Normal 50/50 Split (10min each)\n-> Pure periodic cycle, no prefix."),
+            AB(), 180, [], []
+        ),
+        (
+            ("Test 2: Pre-placed event owned by nobody\n-> MAINTENANCE excludes everybody equally, so it creates no field: they simply resume alternating."),
+            AB(), 240, [{'name': 'MAINTENANCE', 'start': 40, 'duration': 60, 'color': '#CCCCCC'}], []
+        ),
+        (
+            ("Test 3: Periods constraint\n-> C is banned from t=105 on, forever: it is abundantly present just before the door closes, then A and B share the timeline."),
+            [Task("A", priority=40, min_time=10, color="#FF9999"), Task("B", priority=40, min_time=10, color="#99CCFF"), Task("C", priority=20, min_time=10, color="#99FF99")],
+            300, [], [{'start': 0, 'end': 105, 'allowed': ['A', 'B', 'C']}, {'start': 105, 'end': inf, 'allowed': ['A', 'B']}]
+        ),
+        (
+            ("Test 4: Three tasks (A: 50% 20m, B: 30% 10m, C: 20% 15m)\n-> Minimums force a 75min period; shares are exact."),
+            [Task("A", priority=50, min_time=20, color="#FF9999"), Task("B", priority=30, min_time=10, color="#99CCFF"), Task("C", priority=20, min_time=15, color="#99FF99")],
+            400, [], []
+        ),
+        (
+            ("Test 5: Lopsided priorities (A 90% / B 10%) + a B block at the start\n-> A gets a denser, bounded catch-up around it, not the full 396min it is owed."),
+            [Task("A", priority=90, min_time=10, color="#FF9999"), Task("B", priority=10, min_time=10, color="#99CCFF")],
+            600, [{'name': 'B', 'start': 0, 'duration': 40, 'color': "#99CCFF"}], []
+        ),
+        (
+            ("Test 6: 1h block of A at t=100 (tau = 20min)\n-> B's slots swell as the block approaches and shrink back after it: exponential decay of the influence, both sides."),
+            AB(), 400, [{'name': 'A', 'start': 100, 'duration': 60, 'color': "#FF9999"}], []
+        ),
+        (
+            ("Test 7: 10h block of A at t=100 - 10x longer than test 6\n-> B's presence around it is wider and denser, but only a few times bigger: log, not proportional."),
+            AB(), 1000, [{'name': 'A', 'start': 100, 'duration': 600, 'color': "#FF9999"}], [], {}, 2
+        ),
+        (
+            ("Test 8: B banned from t=100 to t=400 - a window, not a block\n-> same field, same ramps: B swells before the ban and right after it re-opens, then decays back to the cycle."),
+            AB(), 700, [], [{'start': 0, 'end': 100, 'allowed': ['A', 'B']}, {'start': 100, 'end': 400, 'allowed': ['A']}, {'start': 400, 'end': inf, 'allowed': ['A', 'B']}], {}, 2
+        ),
+        (
+            ("Test 9: same 300min ban, but split into ten consecutive windows\n-> merged into one exclusion: ten short bans in a row are one long ban, not ten small ones."),
+            AB(), 700, [], [{'start': 0, 'end': 100, 'allowed': ['A', 'B']}] + [{'start': 100 + 30 * i, 'end': 130 + 30 * i, 'allowed': ['A']} for i in range(10)] + [{'start': 400, 'end': inf, 'allowed': ['A', 'B']}], {}, 2
+        )
+    ]
+
+def get_test_10():
+    tp_test = 580.0
     scheduler = SchedulerEngine(tp=tp_test)
-    prefix, cycle = scheduler.find_schedule()
+    prefix_raw, cycle_raw = scheduler.find_schedule()
+    
+    # Map raw blocks to UI expected dictionaries (durations converted from seconds to minutes)
+    color_map = {'A': '#FF9999', 'B': '#99CCFF', 'IDLE': IDLE_COLOR}
+    
+    prefix = [{'name': b.task, 'duration': frac(b.duration / 60.0), 'color': color_map.get(b.task, IDLE_COLOR)} for b in prefix_raw]
+    cycle = [{'name': b.task, 'duration': frac(b.duration / 60.0), 'color': color_map.get(b.task, IDLE_COLOR)} for b in cycle_raw]
+    
+    title = ("Test 10 (test2.py Algebraic): tp occurs at 9 min 40 sec (580 seconds)\n"
+             "-> Evaluated with discrete epsilon state space and decay.")
+    
+    return (title, prefix, cycle, 80)
 
-    print(f"--- Algebraic Schedule for tp = {tp_test}s ---")
-    print("\n[ PREFIX ] (Includes frozen past + debt recovery)")
-    for b in prefix:
-        status = "(Frozen)" if b.is_frozen else "(Dynamic)"
-        print(f"  Task {b.task}: {b.duration:.1f}s {status}")
+def print_terminal_results(cases, test10_case):
+    for case in cases:
+        title = case[0]
+        tasks, _total_duration, pre_placed, periods = case[1], case[2], case[3], case[4]
+        options = case[5] if len(case) > 5 else {}
+        prefix, cycle, plan = get_schedule_rules(tasks, pre_placed, periods, **options)
+        
+        print(f"--- {title.splitlines()[0]} ---")
+        if prefix:
+            print("[ PREFIX ]")
+            for b in prefix: print(f"  Task {b['name']}: {human(b['duration'])}")
+        if cycle:
+            print("[ CYCLE ]")
+            for b in cycle: print(f"  Task {b['name']}: {human(b['duration'])}")
+            print(f"  (Period: {human(plan.period)})\n")
+        else:
+            print("[ NO CYCLE FOUND ]\n")
+            
+    # Print Test 10 exactly as originally requested
+    t10_title, t10_pre, t10_cyc, _ = test10_case
+    print(f"--- {t10_title.splitlines()[0]} ---")
+    print("[ PREFIX ] (Includes frozen past + debt recovery)")
+    for b in t10_pre: print(f"  Task {b['name']}: {human(b['duration'])}")
+    print("[ CYCLE ] (O(1) Repeating Pattern)")
+    for b in t10_cyc: print(f"  Task {b['name']}: {human(b['duration'])}")
+    print("\n")
 
-    print("\n[ CYCLE ] (O(1) Repeating Pattern)")
-    for b in cycle:
-        print(f"  Task {b.task}: {b.duration:.1f}s")
+
+def main():
+    cases = build_cases()
+    test10 = get_test_10()
+    
+    # Render to terminal
+    print_terminal_results(cases, test10)
+    
+    # Render to UI
+    root = tk.Tk()
+    root.title("Task Scheduler Timeline with Constraints (Including Test 10 Algebraic)")
+    root.geometry("950x700")
+
+    canvas = tk.Canvas(root, bg="white")
+    vbar = tk.Scrollbar(root, orient=tk.VERTICAL, command=canvas.yview)
+    canvas.configure(yscrollcommand=vbar.set)
+
+    vbar.pack(side=tk.RIGHT, fill=tk.Y)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    def _on_mousewheel(event):
+        if getattr(event, 'num', 0) == 4 or event.delta > 0:
+            canvas.yview_scroll(-1, "units")
+        elif getattr(event, 'num', 0) == 5 or event.delta < 0:
+            canvas.yview_scroll(1, "units")
+
+    canvas.bind_all("<MouseWheel>", _on_mousewheel)
+    canvas.bind_all("<Button-4>", _on_mousewheel)
+    canvas.bind_all("<Button-5>", _on_mousewheel)
+
+    all_cases = cases + [test10]
+    y = draw_schedules(root, canvas, all_cases, window_width=900)
+    
+    canvas.config(scrollregion=(0, 0, 900, y))
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
