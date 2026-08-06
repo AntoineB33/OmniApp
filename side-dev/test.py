@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 Combined Scheduler:
-- Runs the 9 tests from test.py using the exact fractional math scheduler.
-- Runs Test 10 using purely algebraic, O(1) rules parameterized by a moving t_p,
-  updating in real time.
+- Runs the 9 tests using the exact fractional math scheduler.
+- Runs Test 10 as a SYMBOLIC rule set: a closed form in t_p that is built once
+  and then only substituted into, never re-derived.
 - Displays results in the terminal and in the Tkinter window.
 
 Run with --verify to check Test 10's invariants without opening the UI.
+Run with --rules to print Test 10's symbolic rule set.
 """
 
 import sys
@@ -19,10 +20,10 @@ except ImportError:          # headless box: --verify and --no-ui still work
 
 import itertools
 from fractions import Fraction
-from math import exp, inf, log
+from math import ceil, exp, inf, log
 
 # =========================================================================== #
-#  test.py Logic (For the 9 tests + UI)
+#  Scheduler (tests 1-9)
 # =========================================================================== #
 
 MAX_RULES = 50
@@ -52,6 +53,10 @@ def human(d, unit_seconds=60):
     if sec > 1e-9 or not out:
         out.append(f"{round(sec)}s" if abs(sec - round(sec)) < 1e-9 else f"{sec:.4g}s")
     return sign + " ".join(out)
+
+def human_s(seconds):
+    """Same renderer, for a duration already expressed in seconds."""
+    return human(Fraction(0) if seconds == 0 else frac(seconds) / 60)
 
 def stamp(t):
     return human(t)
@@ -464,12 +469,456 @@ def rule_lines(segments, indent="- "):
     lines = []
     for seg in segments:
         if 'blocks' in seg:
-            lines.append(f"{indent}repeat {int(seg['repeat'])}x:")
+            lines.append(f"{indent}repeat {seg['repeat']}x:")
             for b in seg['blocks']:
-                lines.append(f"{indent}    task {b['name']} {human(b['duration'])}")
+                lines.append(f"{indent}    task {b['name']} {duration_text(b['duration'])}")
         else:
-            lines.append(f"{indent}task {seg['name']} {human(seg['duration'])}")
+            lines.append(f"{indent}task {seg['name']} {duration_text(seg['duration'])}")
     return lines
+
+def duration_text(d):
+    """Durations are Fractions of a minute in tests 1-9 and Aff expressions in
+    seconds in Test 10's symbolic rules."""
+    return d.text() if isinstance(d, Aff) else human(d)
+
+# =========================================================================== #
+#  Test 10: a SYMBOLIC rule set, parameterized by the moving period start t_p
+# =========================================================================== #
+#
+# The window W = [t_p, t_p + WINDOW) admits only A, and t_p sweeps forward.
+#
+# WHAT "FROZEN" MEANS HERE.  The plan published at t_p commits the timeline on
+# [0, t_p) -- that stretch has already elapsed.  The requirement is therefore
+#
+#     for every t_p < t_p',  plan(t_p) and plan(t_p') describe the same
+#     timeline on [0, t_p)          <-- cut at the EARLIER t_p
+#
+# A later plan may revise what an earlier plan proposed for its own future; it
+# may not rewrite what the earlier plan already spent.  The cut has to be at the
+# earlier t_p: cutting at the later one is unsatisfiable, because plan(0) would
+# then bind every plan for all time and B could never pause for the window.
+# Since the committed intervals are nested and increasing, agreement on every
+# consecutive pair implies agreement on every pair, which is why verify_test10
+# only walks neighbours.
+#
+# Three regimes follow from that condition, and only three:
+#
+#   (1) t + WINDOW <= T_A          window inside A's block.  Nothing to do.
+#
+#   (2) T_A - WINDOW < t <= T_A    window straddles the A->B seam, so B may not
+#                                  begin at T_A.  A is allowed inside the window,
+#                                  so A absorbs the overhang rather than the
+#                                  timeline idling.  Overrun e = t + WINDOW - T_A,
+#                                  at most one window wide, repaid to B over the
+#                                  following B blocks with exponential decay.
+#
+#   (3) t > T_A                    window inside B's block.  B is already running
+#                                  (it started at T_A in every plan with a larger
+#                                  t_p), so B pauses for the window and resumes.
+#                                  B still receives its full minimum; the 20s of
+#                                  idle is unavoidable, because A cannot claim it
+#                                  without breaking its own minimum.
+#
+# There is no room for a regime between (2) and (3): a plan whose window starts
+# after T_A cannot forbid B at T_A, so B starts there.
+
+DEBT_EPS = 0.5  # rounding epsilon, seconds: below this the decay tail is folded in
+
+
+@dataclass(frozen=True)
+class Aff:
+    """An affine duration in seconds: const + coef * <var>.
+
+    This is what makes the rule set algebraic. A rule holds an Aff, not a number,
+    so the published rules are independent of the current t_p; the UI substitutes
+    a value for the free variable every frame instead of re-deriving anything.
+
+    Two free variables are used, both bounded, both O(1) to evaluate:
+        t = t_p - n*T   the phase of the window inside the current cycle
+        e = t + W - T_A the overrun the window forces on A's block (regime 2)
+    """
+    const: float = 0.0
+    coef: float = 0.0
+    var: str = ""
+
+    def value(self, env):
+        return self.const + (self.coef * env[self.var] if self.var else 0.0)
+
+    def text(self):
+        if not self.var or abs(self.coef) < 1e-12:
+            return human_s(self.const)
+        mag = self.var if abs(abs(self.coef) - 1) < 1e-12 else f"{abs(self.coef):.4g}*{self.var}"
+        if abs(self.const) < 1e-12:
+            return mag if self.coef > 0 else f"-{mag}"
+        if self.coef > 0:
+            return (f"{mag} + {human_s(self.const)}" if self.const > 0
+                    else f"{mag} - {human_s(-self.const)}")
+        return (f"{human_s(self.const)} - {mag}" if self.const > 0
+                else f"-{human_s(-self.const)} - {mag}")
+
+
+@dataclass
+class Regime:
+    name: str
+    lo: float           # phase interval, half-open on the left: (lo, hi]
+    hi: float
+    prefix: list        # segments carrying Aff durations
+    cycle: list
+
+
+def resolve(segments, env):
+    """Substitute the free variables. This is the whole of the per-frame work:
+    no search, no scheduling, no derivation -- just arithmetic on a fixed-size
+    rule list."""
+    out = []
+    for seg in segments:
+        if 'blocks' in seg:
+            n = int(env[seg['repeat']]) if isinstance(seg['repeat'], str) else int(seg['repeat'])
+            if n <= 0: continue
+            out.append({'repeat': n,
+                        'blocks': [{'name': b['name'], 'duration': b['duration'].value(env),
+                                    'color': b['color']} for b in seg['blocks']]})
+        else:
+            out.append({'name': seg['name'], 'duration': seg['duration'].value(env),
+                        'color': seg['color']})
+    return out
+
+
+class MovingWindowPlan:
+    """Builds Test 10's rule set once, from the same Scheduler that runs tests
+    1-9, and then only substitutes into it."""
+
+    def __init__(self, tasks, window_sec=20.0, eps=DEBT_EPS):
+        sched = Scheduler(tasks)
+        names = [t.name for t in tasks]
+        if len(names) != 2:
+            raise ValueError("the closed form covers exactly two tasks")
+        a, b = names
+        if sched.p[a] != sched.p[b]:
+            raise ValueError("the closed form covers equal shares only")
+
+        self.sched = sched
+        self.a, self.b = a, b
+        self.color = {a: tasks[0].color, b: tasks[1].color, "IDLE": IDLE_COLOR}
+
+        # Every constant below is READ from the Scheduler, never restated here.
+        self.period = float(sched.min_period) * 60.0                     # T   = 1200s
+        self.block = {n: float(sched.p[n]) * self.period for n in names}  # 600s each
+        self.minimum = {n: float(sched.minimum[n]) * 60.0 for n in names}  # 600s each
+        self.tau = float(sched.tau) * 60.0
+        self.window = float(window_sec)
+
+        if self.window >= min(self.minimum.values()):
+            raise ValueError("the closed form assumes the window is shorter than any minimum")
+
+        self.T_A = self.block[a]
+        self.stretch_from = self.T_A - self.window     # 580s, i.e. 9min40
+        # t_1: the last t_p for which A can still cover the whole window by
+        # extending its own block. Computed, not chosen, and above 9min40.
+        self.t_1 = self.T_A
+
+        self.weights = self._weights(eps)
+        self.regimes = self._build()
+
+    # ---- repayment kernel ---------------------------------------------- #
+
+    def _weights(self, eps):
+        """The repayment weights ARE the scheduler's field kernel, sampled where
+        the B blocks actually fall, then normalised.
+
+        The disturbance is the window, which excludes B. The field the other nine
+        tests use decays as exp(-d/tau) with distance d from the disturbance, with
+        tau taken from the Scheduler. The k-th B block after the window starts at
+        distance k*T, so the raw kernel samples are exp(-k*T/tau) -- the same law,
+        the same tau, no second mechanism.
+
+        Two deliberate departures from Scheduler._boost, both required by this
+        test rather than by the heuristic:
+          * the tail is cut once exp(-k*T/tau)*W drops under eps, which bounds the
+            term count by log(W/eps)/(T/tau) -- a constant, so the rules stay O(1);
+          * the surviving samples are normalised to sum to 1, so the debt settles
+            EXACTLY. _boost's cap only bounds the catch-up; it does not close it.
+            The decay shapes the repayment, it never cancels part of it.
+        """
+        decay = self.period / self.tau
+        if decay <= 0:
+            return [1.0]
+        k = ceil(log(max(self.window / eps, 1.0)) / decay)
+        k = max(1, min(k, MAX_RULES // 4))
+        raw = [exp(-i * decay) for i in range(k)]
+        total = sum(raw)
+        return [r / total for r in raw]
+
+    # ---- rule construction --------------------------------------------- #
+
+    def _blk(self, name, duration):
+        return {'name': name, 'duration': duration, 'color': self.color[name]}
+
+    def _cycle(self):
+        return [self._blk(self.a, Aff(self.block[self.a])),
+                self._blk(self.b, Aff(self.block[self.b]))]
+
+    def _frozen_past(self):
+        """n untouched cycles: ONE segment, whatever n is."""
+        return {'repeat': 'n', 'blocks': self._cycle()}
+
+    def _build(self):
+        a, b, W, T = self.a, self.b, self.window, self.period
+        T_A, T_B = self.block[a], self.block[b]
+
+        # (1) window inside A
+        r1 = Regime("window inside A -> untouched cycle", 0.0, self.stretch_from,
+                    [self._frozen_past()], self._cycle())
+
+        # (2) window on the A/B seam: A stretches by e, B is repaid over the
+        #     decaying weights, one term per following B block.
+        p2 = [self._frozen_past(), self._blk(a, Aff(T_A, 1.0, 'e'))]
+        for k, w in enumerate(self.weights):
+            p2.append(self._blk(b, Aff(T_B, w, 'e')))
+            if k != len(self.weights) - 1:
+                p2.append(self._blk(a, Aff(T_A)))
+        r2 = Regime("window on the A/B seam -> A absorbs it, B repaid",
+                    self.stretch_from, self.t_1, p2, self._cycle())
+
+        # (3) window inside B: B pauses and resumes, keeping its full minimum.
+        p3 = [self._frozen_past(),
+              self._blk(a, Aff(T_A)),
+              self._blk(b, Aff(-T_A, 1.0, 't')),      # t - T_A
+              self._blk("IDLE", Aff(W)),
+              self._blk(b, Aff(T_A + T_B, -1.0, 't'))]  # T - t
+        r3 = Regime("window inside B -> B pauses and resumes", self.t_1, T, p3, self._cycle())
+
+        return [r1, r2, r3]
+
+    # ---- substitution --------------------------------------------------- #
+
+    def phase(self, tp_sec):
+        tp = max(0.0, float(tp_sec))
+        n = int(tp // self.period)
+        return n, tp - n * self.period
+
+    def regime_at(self, t):
+        for r in self.regimes:
+            if t <= r.hi: return r
+        return self.regimes[-1]
+
+    def regime_at_tp(self, tp_sec):
+        return self.regime_at(self.phase(tp_sec)[1])
+
+    def instantiate(self, tp_sec, to_minutes=True):
+        n, t = self.phase(tp_sec)
+        env = {'n': n, 't': t, 'e': t + self.window - self.T_A}
+        r = self.regime_at(t)
+
+        prefix = resolve(r.prefix, env)
+        cycle = resolve(r.cycle, env)
+
+        prefix = [s for s in prefix if 'blocks' in s or s['duration'] > 1e-12]
+        # Never leave the prefix ending on the task the cycle opens with, or the
+        # two would be drawn as one over-long block.
+        if prefix and 'blocks' not in prefix[-1] and cycle and prefix[-1]['name'] == cycle[0]['name']:
+            cycle = cycle[1:] + cycle[:1]
+
+        if to_minutes:
+            conv = lambda blocks: [dict(x, duration=frac(x['duration'] / 60.0)) for x in blocks]
+            prefix = [{'repeat': s['repeat'], 'blocks': conv(s['blocks'])} if 'blocks' in s
+                      else conv([s])[0] for s in prefix]
+            cycle = conv(cycle)
+        return prefix, cycle
+
+    __call__ = instantiate
+
+    # ---- the published, t_p-free rule set -------------------------------- #
+
+    def lines(self):
+        out = ["Parameters (all read from the scheduler):",
+               (f"  T = {human_s(self.period)}   W = {human_s(self.window)}   "
+               f"tau = {human_s(self.tau)}   T_A = T_B = {human_s(self.T_A)}"),
+               "  n = floor(t_p / T)          number of frozen cycles before the window",
+               "  t = t_p - n*T               phase of the window inside its cycle",
+               "  e = t + W - T_A             overrun the window forces on A",
+               f"  decay weights w_k = exp(-k*T/tau) normalised, k < {len(self.weights)}: "
+               + ", ".join(f"{w:.4f}" for w in self.weights),
+               ""]
+        for i, r in enumerate(self.regimes, 1):
+            lo = "0" if r.lo == 0 else human_s(r.lo)
+            rel = "<=" if r.lo == 0 else "<"
+            out.append(f"Regime {i}  ({lo} {rel} t <= {human_s(r.hi)}): {r.name}")
+            out.append("  Prefix:")
+            out.extend(rule_lines(r.prefix, "    "))
+            out.append("  Cycle:")
+            out.extend(rule_lines(r.cycle, "    "))
+            out.append("    repeat")
+            out.append("")
+        return out
+
+    def rule_count(self):
+        return max(len(r.prefix) + len(r.cycle) for r in self.regimes)
+
+# =========================================================================== #
+#  Verification of the Test 10 invariants
+# =========================================================================== #
+
+def timeline_of(prefix, cycle, horizon):
+    """[(start, end, name)] covering [0, horizon), in seconds."""
+    out, t = [], 0.0
+    for blk in flatten(prefix):
+        d = float(blk['duration'])
+        if d <= 0: continue
+        out.append((t, t + d, blk['name']))
+        t += d
+        if t >= horizon: return out
+    cycle = flatten(cycle)
+    if not cycle: return out
+    while t < horizon:
+        for blk in cycle:
+            d = float(blk['duration'])
+            if d <= 0: continue
+            out.append((t, t + d, blk['name']))
+            t += d
+            if t >= horizon: break
+    return out
+
+def occupant(tl, t):
+    for s, e, n in tl:
+        if s <= t < e: return n
+    return None
+
+def first_disagreement(t1, t2, cut, tol=1e-6):
+    pts = sorted({p for s, e, _ in t1 + t2 for p in (s, e) if -tol <= p <= cut} | {0.0, cut})
+    for lo, hi in itertools.pairwise(pts):
+        if hi - lo <= tol: continue
+        mid = (lo + hi) / 2.0
+        if occupant(t1, mid) != occupant(t2, mid): return mid
+    return None
+
+def service_runs(tl):
+    """Collapse a timeline into services. An IDLE pause between two stretches of
+    the same task does not end that task's service: the README allows a task's
+    minimum to be split by an idling period."""
+    runs = []
+    for s, e, n in tl:
+        if runs and runs[-1][0] == n:
+            runs[-1][1] += e - s
+        elif (n != "IDLE" and len(runs) >= 2
+              and runs[-1][0] == "IDLE" and runs[-2][0] == n):
+            runs.pop()
+            runs[-1][1] += e - s
+        else:
+            runs.append([n, e - s, e])
+            continue
+        runs[-1][2] = e
+    return runs
+
+def verify_test10(plan=None, horizon_sec=None, verbose=True, max_report=10):
+    plan = plan or _T10
+    horizon_sec = horizon_sec or TEST10_TOTAL_MIN * 60
+    T, W = plan.period, plan.window
+    failures = []
+
+    def fail(msg):
+        if len(failures) < 500: failures.append(msg)
+
+    # A grid dense enough to catch the regime seams, plus the seams themselves
+    # approached from both sides.
+    grid = {round(x * 0.5, 6) for x in range(int(horizon_sec * 2) + 1)}
+    for k in range(int(horizon_sec // T) + 2):
+        for off in (plan.stretch_from, plan.t_1, T):
+            for d in (-1e-3, -1e-6, 0.0, 1e-6, 1e-3, 0.25, 1.0):
+                v = k * T + off + d
+                if 0 <= v <= horizon_sec: grid.add(round(v, 6))
+    grid = sorted(grid)
+
+    # 1. Frozen past, cut at the EARLIER t_p (see the note above the regimes).
+    #    Consecutive pairs suffice: the committed intervals are nested, so
+    #    agreement chains forward.
+    prev_tp, prev_tl = None, None
+    for tp in grid:
+        tl = timeline_of(*plan(tp, to_minutes=False), horizon=horizon_sec + 2 * T)
+        if prev_tl is not None:
+            bad = first_disagreement(prev_tl, tl, prev_tp)
+            if bad is not None:
+                fail(f"frozen past broken at t={bad:.6f}s between t_p={prev_tp}s and "
+                     f"t_p={tp}s ({occupant(prev_tl, bad)} -> {occupant(tl, bad)})")
+        prev_tp, prev_tl = tp, tl
+
+    # 2. Minimum execution times, against the tasks' declared minimums (NOT
+    #    against their per-period share, which only coincides here). Runs that
+    #    the horizon cut short are never judged.
+    for tp in grid:
+        tl = timeline_of(*plan(tp, to_minutes=False), horizon=horizon_sec + 2 * T)
+        for name, served, end in service_runs(tl):
+            if name == "IDLE" or end > horizon_sec: continue
+            if served < plan.minimum[name] - 1e-6:
+                fail(f"t_p={tp}s: {name} served {served:.3f}s < minimum "
+                     f"{plan.minimum[name]:.0f}s")
+
+    # 3. Contiguity: the rules must tile [0, horizon) with no gap or overlap.
+    for tp in grid[::13]:
+        tl = timeline_of(*plan(tp, to_minutes=False), horizon=horizon_sec)
+        for (s1, e1, _), (s2, _e2, _) in itertools.pairwise(tl):
+            if abs(e1 - s2) > 1e-9 or e1 < s1:
+                fail(f"t_p={tp}s: timeline is not contiguous at {e1:.6f}s")
+                break
+
+    # 4. Shares. Over a long horizon the served time must converge to 50/50 and
+    #    the idle must stay bounded by one window per sweep position.
+    H = 20 * T
+    for tp in grid[::7]:
+        tl = timeline_of(*plan(tp, to_minutes=False), horizon=H)
+        served = {}
+        for s, e, n in tl:
+            served[n] = served.get(n, 0.0) + max(0.0, min(e, H) - min(s, H))
+        idle = served.pop("IDLE", 0.0)
+        total = sum(served.values())
+        for n, d in served.items():
+            if abs(d / total - 0.5) > 2e-3:
+                fail(f"t_p={tp}s: {n} share {d / total:.5f} off 50%")
+                break
+        if idle > W + 1e-6:
+            fail(f"t_p={tp}s: idle {idle:.3f}s exceeds one window")
+
+    # 5. Exact settlement, measured on the prefix itself rather than on an
+    #    arbitrary cut through the cycle: whatever A takes from the window in
+    #    regime 2, the decaying repayment hands back in full before the cycle
+    #    resumes, so the prefix is perfectly balanced in EVERY regime. This is
+    #    what separates a decay that shapes the repayment from one that cancels
+    #    part of it.
+    for tp in grid:
+        prefix, _cycle = plan(tp, to_minutes=False)
+        served = {}
+        for blk in flatten(prefix):
+            served[blk['name']] = served.get(blk['name'], 0.0) + float(blk['duration'])
+        gap = served.get(plan.a, 0.0) - served.get(plan.b, 0.0)
+        if abs(gap) > 1e-6:
+            fail(f"t_p={tp}s: prefix leaves the debt open, A-B = {gap:.6f}s")
+
+    # 6. The rule list is O(1): the SYMBOLIC rule set is fixed, and every
+    #    instantiation of it stays under the cap.
+    worst_sym = plan.rule_count()
+    worst = 0
+    for tp in grid:
+        prefix, cycle = plan(tp)
+        worst = max(worst, len(prefix) + len(cycle))
+    if worst > MAX_RULES or worst_sym > MAX_RULES:
+        fail(f"rule list reaches {max(worst, worst_sym)} entries, over the {MAX_RULES} cap")
+
+    if verbose:
+        print("--- Test 10 invariants ---")
+        print(f"  grid: {len(grid)} values of t_p over [0, {horizon_sec}]s")
+        print(f"  t_1 = {plan.t_1:.0f}s, stretch begins at {plan.stretch_from:.0f}s, "
+              f"{len(plan.weights)} decay terms "
+              f"({', '.join(f'{w:.4f}' for w in plan.weights)})")
+        print(f"  symbolic rules: {worst_sym} entries; largest instantiation: "
+              f"{worst} (cap {MAX_RULES})")
+        if failures:
+            print(f"  FAIL ({len(failures)}):")
+            for f in failures[:max_report]: print(f"    - {f}")
+        else:
+            print("  PASS: frozen past, minimum times, contiguity, exact shares, "
+                  "exact settlement, bounded idle, O(1) rules")
+        print()
+    return failures
 
 # =========================================================================== #
 #  UI & Harness
@@ -534,7 +983,6 @@ class ToolTip:
 
     def _apply(self, text, root_x, root_y):
         if tk is None:
-            # No Tk available (headless); nothing to show
             return
         if not text:
             self.hide()
@@ -601,6 +1049,11 @@ def copy_to_clipboard(root, title, prefix_blocks, cycle_blocks, period_text="", 
     root.clipboard_clear()
     root.clipboard_append("\n".join(lines))
 
+def copy_symbolic_rules(root, title, plan):
+    """Test 10 publishes the whole t_p-free rule set, not a snapshot of it."""
+    root.clipboard_clear()
+    root.clipboard_append("\n".join([title, ""] + plan.lines()))
+
 SCROLL_PADDING = 20
 
 def refresh_scrollregion(canvas):
@@ -625,20 +1078,19 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
     for case in test_cases:
         title = case[0]
 
-        # Test 10 dynamic evaluation format
-        if len(case) == 4 and callable(case[1]):
-            evaluator, total_duration, window_sec = case[1], case[2], case[3]
+        # Test 10: a MovingWindowPlan, substituted into every frame
+        if len(case) == 4 and isinstance(case[1], MovingWindowPlan):
+            plan10, total_duration, window_sec = case[1], case[2], case[3]
 
             test10_state = {
                 'title': title,
-                'evaluator': evaluator,
+                'plan': plan10,
                 'window': window_sec,
                 'total_duration': Fraction(total_duration),
                 'y_offset': y_offset,
                 'tp': 0.0,
                 'playing': False
             }
-            # Pre-allocate one row for Test 10 (80min fits inside row_duration 195min)
             y_offset += (0 + 1) * (row_height + row_spacing) + 40
             continue
 
@@ -708,14 +1160,11 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
         y_offset = local_y_offset + (max_row_idx + 1) * (row_height + row_spacing) + 40
 
     if test10_state:
-        # Create static Test 10 UI elements once to avoid memory leaks
         t10_y = test10_state['y_offset']
         assert tk is not None
         btn_t10 = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
-                            command=lambda: copy_to_clipboard(
-                                root, test10_state['title'],
-                                *test10_state['evaluator'](test10_state['tp'])
-                            ))
+                            command=lambda: copy_symbolic_rules(
+                                root, test10_state['title'], test10_state['plan']))
         canvas.create_window(15, t10_y, window=btn_t10, anchor="nw")
 
         # tp only advances while playing; the test starts paused at tp = 0.
@@ -752,18 +1201,19 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
                                anchor="sw", tags=("test10_dyn",))
 
         def animate_test10():
-            # Clear old dynamic drawing items
             for item in canvas.find_withtag("test10_dyn"):
                 tooltip.unregister(item)
             canvas.delete("test10_dyn")
 
             st = test10_state
             status = "playing" if st['playing'] else "paused"
+            n, t = st['plan'].phase(st['tp'])
             canvas.itemconfig(st['sub_id'],
-                              text=f"t_p = {st['tp']:.1f}s ({status})  |  {regime_name(st['tp'])}"
-                                   f"  |  algebraic O(1) rules, re-read every frame")
+                              text=f"t_p = {st['tp']:.1f}s ({status})  |  n = {n}, t = {t:.1f}s  |  "
+                                   f"{st['plan'].regime_at(t).name}  |  symbolic rules, substituted not recomputed")
 
-            prefix, cycle = st['evaluator'](st['tp'])
+            # The only per-frame work: substitute t_p into the fixed rule set.
+            prefix, cycle = st['plan'].instantiate(st['tp'])
             schedule = generate_schedule(prefix, cycle, st['total_duration'], start=Fraction(0))
 
             max_row_idx = 0
@@ -810,14 +1260,8 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
                 if st['tp'] + st['window'] > float(st['total_duration'] * 60):
                     st['tp'] = 0.0
 
-            # Test 10 redraws itself, so the content height is only known after a
-            # frame: keep the scrollable area in step with what is on the canvas.
             refresh_scrollregion(canvas)
-
-            # The blocks the pointer was over were just destroyed and remade, so the
-            # bubble must be re-judged against what is under the cursor NOW.
             tooltip.refresh()
-
             root.after(50, animate_test10)
 
         animate_test10()
@@ -871,286 +1315,20 @@ def build_cases():
         )
     ]
 
-# =========================================================================== #
-#  Test 10: algebraic O(1) rules parameterized by the moving period start t_p
-# =========================================================================== #
-#
-# The window W = [t_p, t_p + WINDOW) admits only A, and t_p sweeps forward.
-# The freezing requirement is a consistency condition BETWEEN plans:
-#
-#     for every t_p < t_p', the two rule sets must describe the same
-#     timeline on [0, t_p).
-#
-# Everything below is derived from that. Three regimes, and only three:
-#
-#   (1) t_p + WINDOW <= T_A            the window sits inside A's block.
-#                                      Nothing to do: the plain cycle already
-#                                      satisfies it.
-#
-#   (2) T_A - WINDOW < t_p <= T_A      the window straddles the A->B boundary,
-#                                      so B may not begin at T_A. A is allowed
-#                                      inside the window, so A absorbs the
-#                                      overhang rather than the timeline idling.
-#                                      Overrun e = t_p + WINDOW - T_A, at most one
-#                                      window wide, repaid to B over the following
-#                                      B blocks with exponential decay.
-#
-#   (3) t_p > T_A                      the window lands inside B's block. B is
-#                                      already running (it started at T_A in every
-#                                      plan with a larger t_p), so B pauses for the
-#                                      window and resumes. B still receives its full
-#                                      minimum; the 20s of idle is unavoidable,
-#                                      because A cannot claim it without breaking
-#                                      B's atomic block.
-#
-# The deleted fourth regime is the bug: the previous version pinned A to T_A+WINDOW
-# and grew an idle for t_p in (T_A, T_A+WINDOW], which put A at t=605s when t_p=610s
-# while regime (3) put B there for t_p=621s. Both times are below both t_p values,
-# so the frozen past changed. There is no room for a regime between (2) and (3):
-# a plan whose window starts after T_A cannot forbid B at T_A, so B starts there.
-
-DEBT_EPS = 0.5  # rounding epsilon, seconds: below this the decay tail is folded in
-
-def repayment_terms(excess, ratio, eps=DEBT_EPS):
-    """Split `excess` into the decaying extras handed to successive B blocks.
-
-    Term k is excess*(1-ratio)*ratio^k, i.e. exponential decay with distance from
-    the disturbance, exactly like the field the other nine tests use. The tail is
-    cut once it drops under the epsilon and folded into the last term, so the
-    terms sum to `excess` EXACTLY: the decay shapes the repayment, it never
-    cancels part of the debt. The term count is bounded by log(excess/eps)/|ln
-    ratio|, a constant, so the rule list stays O(1).
-    """
-    terms = []
-    rest = float(excess)
-    while rest > eps:
-        pay = rest * (1.0 - ratio)
-        terms.append(pay)
-        rest -= pay
-    if terms:
-        terms[-1] += rest
-    elif rest > 0:
-        terms = [rest]
-    return terms
-
-def make_test10_evaluator(tasks, window_sec=20.0):
-    """Build the O(1) rule evaluator for a two-task timeline swept by an A-only
-    window. Every constant is derived from the same Scheduler that runs tests 1-9,
-    so the two halves of this file cannot drift apart."""
-    sched = Scheduler(tasks)
-    a, b = tasks[0].name, tasks[1].name
-    color = {a: tasks[0].color, b: tasks[1].color, "IDLE": IDLE_COLOR}
-
-    period = float(sched.min_period) * 60.0          # T   = 1200 s
-    block = {n: float(sched.p[n]) * period for n in (a, b)}   # 600 s each
-    tau = float(sched.tau) * 60.0                    # same tau as the field
-    ratio = exp(-period / tau)                       # debt carried to the next B block
-    stretch_from = block[a] - window_sec             # T_A - WINDOW = t_1 - WINDOW
-
-    # t_1: the last t_p for which A can still cover the whole window by extending
-    # its own block. Past it the window no longer touches A's block at all, so
-    # there is nothing for A to absorb. It is computed, not chosen, and it sits
-    # above 9min40 exactly as required.
-    t_1 = block[a]
-
-    def blk(name, seconds):
-        return {'name': name, 'duration': seconds, 'color': color[name]}
-
-    def evaluate(tp_sec, to_minutes=True):
-        tp = max(0.0, float(tp_sec))
-        n_cycles = int(tp // period)
-        t = tp - n_cycles * period
-
-        prefix = []
-        # The frozen past is n untouched cycles: one segment, not n of them.
-        if n_cycles:
-            prefix.append({'repeat': n_cycles,
-                           'blocks': [blk(a, block[a]), blk(b, block[b])]})
-
-        if t <= stretch_from:
-            pass                                        # regime (1)
-        elif t <= t_1:                                  # regime (2)
-            excess = t + window_sec - block[a]
-            if excess > 0:
-                prefix.append(blk(a, block[a] + excess))
-                terms = repayment_terms(excess, ratio)
-                for i, extra in enumerate(terms):
-                    prefix.append(blk(b, block[b] + extra))
-                    if i != len(terms) - 1:
-                        prefix.append(blk(a, block[a]))
-        else:                                           # regime (3)
-            served = t - block[a]
-            prefix.append(blk(a, block[a]))
-            prefix.append(blk(b, served))
-            prefix.append(blk("IDLE", window_sec))
-            rest = block[b] - served
-            if rest > 0:
-                prefix.append(blk(b, rest))
-
-        cycle = [blk(a, block[a]), blk(b, block[b])]
-
-        prefix = [seg for seg in prefix if 'blocks' in seg or seg['duration'] > 0]
-        # Never leave the prefix ending on the task the cycle opens with, or the
-        # two would be drawn as one over-long block.
-        if prefix and 'blocks' not in prefix[-1] and prefix[-1]['name'] == cycle[0]['name']:
-            cycle = cycle[1:] + cycle[:1]
-
-        if to_minutes:
-            conv = lambda blocks: [dict(x, duration=frac(x['duration'] / 60.0)) for x in blocks]
-            prefix = [{'repeat': s['repeat'], 'blocks': conv(s['blocks'])} if 'blocks' in s
-                      else conv([s])[0] for s in prefix]
-            cycle = conv(cycle)
-        return prefix, cycle
-
-    evaluate.period = period
-    evaluate.block = block
-    evaluate.window = window_sec
-    evaluate.t_1 = t_1
-    evaluate.stretch_from = stretch_from
-    evaluate.ratio = ratio
-    return evaluate
-
 TEST10_WINDOW = 20.0
 TEST10_TOTAL_MIN = 80
-_T10 = make_test10_evaluator(AB(), TEST10_WINDOW)
+_T10 = MovingWindowPlan(AB(), TEST10_WINDOW)
+
+TEST10_TITLE = (
+    "Test 10 (Algebraic O(1)): the 20s A-only period starts at t_p and sweeps right\n"
+    "-> rules are a closed form in t_p; every plan agrees with every earlier plan on t < t_p."
+)
 
 def regime_name(tp):
-    t = float(tp) % _T10.period
-    if t <= _T10.stretch_from: return "window inside A -> untouched cycle"
-    if t <= _T10.t_1: return "window on the A/B seam -> A absorbs it, B repaid"
-    return "window inside B -> B pauses and resumes"
+    return _T10.regime_at_tp(tp).name
 
 def get_test_10():
-    title = (
-        "Test 10 (Algebraic O(1)): the 20s A-only period starts at t_p and sweeps right\n"
-        "-> rules are a closed form in t_p; every plan agrees with every earlier plan on t < t_p."
-    )
-    return (title, _T10, TEST10_TOTAL_MIN, TEST10_WINDOW)
-
-# =========================================================================== #
-#  Verification of the Test 10 invariants
-# =========================================================================== #
-
-def timeline_of(prefix, cycle, horizon):
-    """[(start, end, name)] covering [0, horizon), in seconds."""
-    out, t = [], 0.0
-    for blk in flatten(prefix):
-        d = float(blk['duration'])
-        if d <= 0: continue
-        out.append((t, t + d, blk['name']))
-        t += d
-        if t >= horizon: return out
-    cycle = flatten(cycle)
-    if not cycle: return out
-    while t < horizon:
-        for blk in cycle:
-            d = float(blk['duration'])
-            out.append((t, t + d, blk['name']))
-            t += d
-            if t >= horizon: break
-    return out
-
-def occupant(tl, t):
-    for s, e, n in tl:
-        if s <= t < e: return n
-    return None
-
-def first_disagreement(t1, t2, cut, tol=1e-6):
-    pts = sorted({p for s, e, _ in t1 + t2 for p in (s, e) if -tol <= p <= cut} | {0.0, cut})
-    for lo, hi in itertools.pairwise(pts):
-        if hi - lo <= tol: continue
-        mid = (lo + hi) / 2.0
-        if occupant(t1, mid) != occupant(t2, mid): return mid
-    return None
-
-def verify_test10(evaluate=_T10, horizon_sec=TEST10_TOTAL_MIN * 60, verbose=True):
-    T, W = evaluate.period, evaluate.window
-    evaluate.block['A']
-    failures = []
-
-    # A grid dense enough to catch the regime seams, plus the seams themselves
-    # approached from both sides.
-    grid = {round(x * 0.5, 6) for x in range(int(horizon_sec * 2) + 1)}
-    for k in range(int(horizon_sec // T) + 2):
-        for off in (evaluate.stretch_from, evaluate.t_1, T):
-            for d in (-1e-3, -1e-6, 0.0, 1e-6, 1e-3, 0.25, 1.0):
-                v = k * T + off + d
-                if 0 <= v <= horizon_sec: grid.add(round(v, 6))
-    grid = sorted(grid)
-
-    # 1. Frozen past. Consecutive pairs suffice: agreement on [0, t_prev) chains
-    #    backwards, so if every neighbouring pair agrees, every pair does.
-    prev_tp, prev_tl = None, None
-    for tp in grid:
-        tl = timeline_of(*evaluate(tp, to_minutes=False), horizon=horizon_sec + 2 * T)
-        if prev_tl is not None:
-            bad = first_disagreement(prev_tl, tl, prev_tp)
-            if bad is not None:
-                failures.append(f"frozen past broken at t={bad:.6f}s "
-                                f"between t_p={prev_tp}s and t_p={tp}s "
-                                f"({occupant(prev_tl, bad)} -> {occupant(tl, bad)})")
-        prev_tp, prev_tl = tp, tl
-
-    # 2. Minimum times, and B's fragments summing to its minimum across the idle.
-    for tp in grid[::7]:
-        tl = timeline_of(*evaluate(tp, to_minutes=False), horizon=horizon_sec + 2 * T)
-        runs = []                      # [name, served, end] with idle pauses folded in
-        for s, e, n in tl:
-            if runs and runs[-1][0] == n:
-                runs[-1][1] += e - s
-            elif (n != "IDLE" and len(runs) >= 2
-                  and runs[-1][0] == "IDLE" and runs[-2][0] == n):
-                runs.pop()             # an idle pause does not end a service
-                runs[-1][1] += e - s
-            else:
-                runs.append([n, e - s, e])
-                continue
-            runs[-1][2] = e
-        for name, served, end in runs:
-            if name == "IDLE" or end > horizon_sec:
-                continue               # never judge a run the horizon cut short
-            if served < float(evaluate.block[name]) - 1e-6:
-                failures.append(f"t_p={tp}s: {name} served {served:.3f}s < minimum "
-                                f"{evaluate.block[name]:.0f}s")
-                break
-
-    # 3. Shares. Over a long horizon the served time must converge to 50/50 and the
-    #    idle must stay bounded by one window per sweep position.
-    for tp in grid[::37]:
-        tl = timeline_of(*evaluate(tp, to_minutes=False), horizon=20 * T)
-        served = {}
-        for s, e, n in tl:
-            served[n] = served.get(n, 0.0) + min(e, 20 * T) - s
-        idle = served.pop("IDLE", 0.0)
-        total = sum(served.values())
-        for n, d in served.items():
-            if abs(d / total - 0.5) > 2e-3:
-                failures.append(f"t_p={tp}s: {n} share {d / total:.5f} off 50%")
-                break
-        if idle > W + 1e-6:
-            failures.append(f"t_p={tp}s: idle {idle:.3f}s exceeds one window")
-
-    # 4. Rule count stays finite and small for every t_p.
-    worst = 0
-    for tp in grid:
-        prefix, cycle = evaluate(tp)
-        worst = max(worst, len(prefix) + len(cycle))
-    if worst > MAX_RULES:
-        failures.append(f"rule list reaches {worst} entries, over the {MAX_RULES} cap")
-
-    if verbose:
-        print("--- Test 10 invariants ---")
-        print(f"  grid: {len(grid)} values of t_p over [0, {horizon_sec}]s")
-        print(f"  t_1 = {evaluate.t_1:.0f}s, stretch begins at {evaluate.stretch_from:.0f}s, "
-              f"decay ratio per period = {evaluate.ratio:.4f}")
-        print(f"  largest rule list: {worst} entries (cap {MAX_RULES})")
-        if failures:
-            print(f"  FAIL ({len(failures)}):")
-            for f in failures[:10]: print(f"    - {f}")
-        else:
-            print("  PASS: frozen past, minimum times, exact shares, bounded idle, O(1) rules")
-        print()
-    return failures
+    return (TEST10_TITLE, _T10, TEST10_TOTAL_MIN, TEST10_WINDOW)
 
 # =========================================================================== #
 
@@ -1172,25 +1350,34 @@ def print_terminal_results(cases, test10_case):
         else:
             print("[ NO CYCLE FOUND ]\n")
 
-    t10_title, t10_evaluator = test10_case[0], test10_case[1]
-    print(f"--- {t10_title.splitlines()[0]} ---")
+    print_test10_rules(test10_case[0], test10_case[1])
+
+def print_test10_rules(title, plan):
+    print(f"--- {title.splitlines()[0]} ---")
+    print("[ SYMBOLIC RULE SET - this is the output; it does not depend on t_p ]")
+    for line in plan.lines(): print("  " + line)
+    print("[ a few instantiations, for reading only ]")
     for sample_tp in [300.0, 590.0, 600.0, 610.0, 800.0, 1400.0]:
-        print(f"[ rules at t_p = {sample_tp}s : {regime_name(sample_tp)} ]")
-        prefix, cycle = t10_evaluator(sample_tp)
+        prefix, cycle = plan(sample_tp)
+        print(f"  t_p = {sample_tp}s : {plan.regime_at_tp(sample_tp).name}")
         if prefix:
-            print("  Prefix:")
-            for line in rule_lines(prefix, "    "): print(line)
-        print("  Cycle:")
-        for line in rule_lines(cycle, "    "): print(line)
+            print("    Prefix:")
+            for line in rule_lines(prefix, "      "): print(line)
+        print("    Cycle:")
+        for line in rule_lines(cycle, "      "): print(line)
         print()
 
 def main():
     verify_only = "--verify" in sys.argv
-    no_ui = verify_only or "--no-ui" in sys.argv
+    rules_only = "--rules" in sys.argv
+    no_ui = verify_only or rules_only or "--no-ui" in sys.argv
 
     cases = build_cases()
     test10 = get_test_10()
 
+    if rules_only:
+        print_test10_rules(test10[0], test10[1])
+        return
     if not verify_only:
         print_terminal_results(cases, test10)
     verify_test10()
