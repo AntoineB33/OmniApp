@@ -35,7 +35,7 @@ Cycle:
 - task A 10min
 - task B 10min
 - repeat
-When $t_p$ ≤ $t_1$, such as $t_1$ is a calculated time with $t_1$ > 10min, then:
+When $t_p$ ≤ $t_1$, such as $t_1$ is a calculated time with $t_1$ > 9min40, then:
 Prefix:
 - task A $t_p$ + 20s
 - task B 10min + debt repayment (function of $t_p$ of complexity O(1))

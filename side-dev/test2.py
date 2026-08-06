@@ -1,226 +1,153 @@
-inf = float('inf')
+import math
+from dataclasses import dataclass
 
-class Task:
-    """
-    Represents a schedulable task.
-    Each task is defined by a target priority percentage and a minimum execution time.
-    """
-    def __init__(self, name: str, priority: float, min_time: float, color: str = "#FFFFFF"):
-        self.name = name
-        self.priority = priority
-        self.min_time = min_time
-        self.color = color
-        
-    def __repr__(self):
-        return f"Task({self.name}, {self.priority}%, min={self.min_time}m)"
+# --- Constants & Configuration ---
+MIN_TIME_S = 600       # 10 minutes
+TP_DURATION = 20       # 20 seconds restriction
+TARGET_B = 0.5         # Target percentage for B (A is 1 - TARGET_B)
+DECAY_RATE = 0.01      # Exponential decay factor for priority debt
+EPSILON = 1.0          # Rounding epsilon to discretize state space and guarantee O(1) cycle detection
 
-
-def AB() -> list[Task]:
-    """Helper for standard 50/50 test cases."""
-    return [
-        Task("A", priority=50, min_time=10, color="#FF9999"),
-        Task("B", priority=50, min_time=10, color="#99CCFF")
-    ]
-
-
-def build_cases() -> list[tuple]:
-    """Returns the defined test cases for the scheduler."""
-    return [
-        (
-            (
-                "Test 1: Normal 50/50 Split (10min each)\n"
-                "-> Pure periodic cycle, no prefix."
-            ),
-            AB(), 180, [], []
-        ),
-        (
-            (
-                "Test 2: Pre-placed event owned by nobody\n"
-                "-> MAINTENANCE excludes everybody equally, so it creates no "
-                "field: they simply resume alternating."
-            ),
-            AB(), 240,
-            [{'name': 'MAINTENANCE', 'start': 40, 'duration': 60, 'color': '#CCCCCC'}],
-            []
-        ),
-        (
-            (
-                "Test 3: Periods constraint\n"
-                "-> C is banned from t=105 on, forever: it is abundantly "
-                "present just before the door closes, then A and B share the "
-                "timeline."
-            ),
-            [
-                Task("A", priority=40, min_time=10, color="#FF9999"),
-                Task("B", priority=40, min_time=10, color="#99CCFF"),
-                Task("C", priority=20, min_time=10, color="#99FF99")
-            ],
-            300, [],
-            [{'start': 0, 'end': 105, 'allowed': ['A', 'B', 'C']},
-             {'start': 105, 'end': inf, 'allowed': ['A', 'B']}]
-        ),
-        (
-            (
-                "Test 4: Three tasks (A: 50% 20m, B: 30% 10m, C: 20% 15m)\n"
-                "-> Minimums force a 75min period; shares are exact."
-            ),
-            [
-                Task("A", priority=50, min_time=20, color="#FF9999"),
-                Task("B", priority=30, min_time=10, color="#99CCFF"),
-                Task("C", priority=20, min_time=15, color="#99FF99")
-            ],
-            400, [], []
-        ),
-        (
-            (
-                "Test 5: Lopsided priorities (A 90% / B 10%) + a B block at the "
-                "start\n-> A gets a denser, bounded catch-up around it, not the "
-                "full 396min it is owed."
-            ),
-            [
-                Task("A", priority=90, min_time=10, color="#FF9999"),
-                Task("B", priority=10, min_time=10, color="#99CCFF")
-            ],
-            600,
-            [{'name': 'B', 'start': 0, 'duration': 40, 'color': "#99CCFF"}],
-            []
-        ),
-        (
-            (
-                "Test 6: 1h block of A at t=100 (tau = 20min)\n"
-                "-> B's slots swell as the block approaches and shrink back "
-                "after it: exponential decay of the influence, both sides."
-            ),
-            AB(), 400,
-            [{'name': 'A', 'start': 100, 'duration': 60, 'color': "#FF9999"}],
-            []
-        ),
-        (
-            (
-                "Test 7: 10h block of A at t=100 - 10x longer than test 6\n"
-                "-> B's presence around it is wider and denser, but only a few "
-                "times bigger: log, not proportional."
-            ),
-            AB(), 1000,
-            [{'name': 'A', 'start': 100, 'duration': 600, 'color': "#FF9999"}],
-            [], {}, 2
-        ),
-        (
-            (
-                "Test 8: B banned from t=100 to t=400 - a window, not a block\n"
-                "-> same field, same ramps: B swells before the ban and right "
-                "after it re-opens, then decays back to the cycle."
-            ),
-            AB(), 700, [],
-            [{'start': 0, 'end': 100, 'allowed': ['A', 'B']},
-             {'start': 100, 'end': 400, 'allowed': ['A']},
-             {'start': 400, 'end': inf, 'allowed': ['A', 'B']}],
-            {}, 2
-        ),
-        (
-            (
-                "Test 9: same 300min ban, but split into ten consecutive "
-                "windows\n-> merged into one exclusion: ten short bans in a row "
-                "are one long ban, not ten small ones."
-            ),
-            AB(), 700, [],
-            [{'start': 0, 'end': 100, 'allowed': ['A', 'B']}]
-            + [{'start': 100 + 30 * i, 'end': 130 + 30 * i, 'allowed': ['A']}
-               for i in range(10)]
-            + [{'start': 400, 'end': inf, 'allowed': ['A', 'B']}],
-            {}, 2
-        ),
-    ]
-
-
-class RuleSet:
-    """Stores the O(1) evaluable rules for a specific timeline."""
-    def __init__(self):
-        self.prefixes = []
-        self.cycle = []
-
-    def evaluate_at(self, t: float) -> str:
-        """O(1) evaluation for the UI to display the schedule."""
-        # Check finite prefix bounds first
-        for prefix in self.prefixes:
-            if prefix['start'] <= t < prefix['end']:
-                return prefix['task']
-        
-        # If past prefixes, calculate modulo math for infinite cycle
-        if not self.cycle:
-            return "IDLE"
-            
-        cycle_start = self.prefixes[-1]['end'] if self.prefixes else 0
-        cycle_duration = sum(block['duration'] for block in self.cycle)
-        
-        t_in_cycle = (t - cycle_start) % cycle_duration
-        current = 0
-        for block in self.cycle:
-            current += block['duration']
-            if t_in_cycle < current:
-                return block['task']
-        return "IDLE"
-
+@dataclass
+class Block:
+    task: str
+    duration: float
+    is_frozen: bool = False
 
 class SchedulerEngine:
-    def __init__(self, epsilon: float = 1.0, max_block: float = 120.0, decay_rate: float = 0.5):
-        # User defined variables for bounded computation
-        self.epsilon = epsilon
-        self.max_block = max_block
-        self.decay_rate = decay_rate
+    def __init__(self, tp: float):
+        self.tp = tp
+        self.tp_end = tp + TP_DURATION
         
-    def generate_rules(self, tasks: list[Task], pre_placed: list[dict], periods: list[dict]) -> RuleSet:
-        """
-        Phase 1: Heavy-Lifting Generation
-        Runs the predictive simulation to solve exponential decays and min_time boundaries.
-        Returns a RuleSet (Phase 2 O(1) object).
-        """
-        rules = RuleSet()
+        self.t = 0.0
+        self.debt_b = 0.0  # Positive means B is owed time, negative means A is owed
         
-        # 1. Normalize periods (merge contiguous windows as per Test 9)
-        periods = self._merge_periods(periods)
+        self.active_task: str | None = None
+        self.task_end_time = 0.0
         
-        # 2. State Tracking Variables
-        current_time = 0.0
-        priority_debt = {task.name: 0.0 for task in tasks}
-        
-        # NOTE: A full implementation would apply numerical root-finding (Newton-Raphson) 
-        # or Lambert W functions here to step through time blocks, calculating the discrete 
-        # decay steps until max(priority_debt) < self.epsilon.
-        
-        # Simulated generator logic bounding:
-        # while max(abs(debt) for debt in priority_debt.values()) > self.epsilon:
-        #    ... Calculate next block ...
-        #    ... Enforce Atomic Min Times ...
-        #    ... Force IDLE if interrupted ...
-        #    ... Update t_now and debts ...
-        
-        # 3. Snap to Cycle
-        # Once debt < epsilon, discard remaining debt and append the perfect infinite cycle.
-        
-        return rules
+        self.history = []
+        self.state_ledger = {}  # For cycle detection: state_hash -> history_index
 
-    def _merge_periods(self, periods: list[dict]) -> list[dict]:
-        """Merges consecutive periods with identical allowances to form unified exclusionary blocks."""
-        if not periods:
-            return []
-        periods.sort(key=lambda x: x['start'])
-        merged = [periods[0]]
-        for p in periods[1:]:
-            last = merged[-1]
-            if p['start'] == last['end'] and set(p['allowed']) == set(last['allowed']):
-                last['end'] = p['end']
+    def _get_current_state_hash(self):
+        """
+        Creates a discrete hash of the system state.
+        This is the core of the O(1) mathematical cycle detection.
+        """
+        # Round the debt using the epsilon to force a finite state space
+        discrete_debt = round(self.debt_b / EPSILON) * EPSILON
+        
+        return (
+            self.active_task,
+            round(self.task_end_time - self.t, 1), # Remaining locked time
+            discrete_debt
+        )
+
+    def _apply_decay_and_debt(self, duration: float, executed_task: str):
+        """
+        Applies exponential decay to existing debt, then adds newly accrued debt.
+        """
+        # 1. Decay existing debt over the duration
+        self.debt_b *= math.exp(-DECAY_RATE * duration)
+        
+        # 2. Accrue new debt based on what ran vs target
+        if executed_task == 'A':
+            # B was starved, B gains debt
+            self.debt_b += (TARGET_B * duration)
+        elif executed_task == 'B':
+            # B ran, B pays off debt
+            self.debt_b -= ((1.0 - TARGET_B) * duration)
+        elif executed_task == 'IDLE':
+            # Both starved, no relative shift
+            pass
+
+    def _choose_next_task(self) -> str:
+        """Determines the next task based on strict constraints and priority debt."""
+        # Constraint 1: Are we inside the tp restrictive window?
+        if self.tp <= self.t < self.tp_end:
+            return 'A'
+            
+        # Constraint 2: Is a task currently locked by MIN_TIME?
+        if self.t < self.task_end_time and self.active_task is not None:
+            return self.active_task
+
+        # Constraint 3: Resolve based on priority ledger
+        # If debt_b is heavily positive, B has been deprived and must run.
+        if self.debt_b > 0:
+            return 'B'
+        else:
+            return 'A'
+
+    def find_schedule(self) -> tuple[list[Block], list[Block]]:
+        """
+        Simulates time forward until an exact state match is found, 
+        returning the Prefix and the Cycle.
+        """
+        while True:
+            # 1. Check for Cycle (only possible once the tp disturbance is passed)
+            if self.t >= self.tp_end and self.t >= self.task_end_time:
+                state = self._get_current_state_hash()
+                if state in self.state_ledger:
+                    cycle_start_idx = self.state_ledger[state]
+                    prefix = self.history[:cycle_start_idx]
+                    cycle = self.history[cycle_start_idx:]
+                    return prefix, cycle
+                
+                # Record state for future detection
+                self.state_ledger[state] = len(self.history)
+
+            # 2. Determine what to schedule
+            next_task = self._choose_next_task()
+            
+            # 3. Determine how long this block runs (Next Boundary Event)
+            if next_task != self.active_task:
+                # Starting a new task, lock it for MIN_TIME
+                self.active_task = next_task
+                self.task_end_time = self.t + MIN_TIME_S
+
+            # Find the next time boundary where logic might change
+            next_event = self.task_end_time
+            if self.t < self.tp < next_event:
+                next_event = self.tp
+            if self.t < self.tp_end < next_event:
+                next_event = self.tp_end
+
+            duration = next_event - self.t
+
+            # 4. Apply scheduling and update debt
+            # (Idle if B is scheduled but we hit the tp block where B is forbidden)
+            executed = next_task
+            if executed == 'B' and self.tp <= self.t < self.tp_end:
+                executed = 'IDLE'
+
+            self._apply_decay_and_debt(duration, executed)
+
+            # 5. Record block and advance time
+            is_frozen = self.t < self.tp
+            
+            # Merge contiguous blocks of the same task in history
+            if self.history and self.history[-1].task == executed and self.history[-1].is_frozen == is_frozen:
+                self.history[-1].duration += duration
             else:
-                merged.append(p)
-        return merged
+                self.history.append(Block(executed, duration, is_frozen))
+                
+            self.t = next_event
 
+
+# --- Execution for a specific branch test ---
 if __name__ == "__main__":
-    # Test suite bootstrap
-    cases = build_cases()
-    engine = SchedulerEngine(epsilon=1.0)
+    # Test case: tp occurs at 9 min 40 sec (580 seconds)
+    # This falls right at the end of A's initial 10-minute block.
+    tp_test = 580.0
     
-    print(f"Loaded {len(cases)} test cases.")
-    for i, case in enumerate(cases):
-        desc = case[0].split('\n')[0]
-        print(f"Running {desc}...")
-        # engine.generate_rules(tasks=case[1], pre_placed=case[3], periods=case[4])
+    scheduler = SchedulerEngine(tp=tp_test)
+    prefix, cycle = scheduler.find_schedule()
+
+    print(f"--- Algebraic Schedule for tp = {tp_test}s ---")
+    print("\n[ PREFIX ] (Includes frozen past + debt recovery)")
+    for b in prefix:
+        status = "(Frozen)" if b.is_frozen else "(Dynamic)"
+        print(f"  Task {b.task}: {b.duration:.1f}s {status}")
+
+    print("\n[ CYCLE ] (O(1) Repeating Pattern)")
+    for b in cycle:
+        print(f"  Task {b.task}: {b.duration:.1f}s")
