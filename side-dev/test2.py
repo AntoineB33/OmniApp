@@ -588,7 +588,8 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
                 'evaluator': evaluator,
                 'total_duration': Fraction(total_duration),
                 'y_offset': y_offset,
-                'tp': 0.0
+                'tp': 0.0,
+                'playing': False
             }
             # Pre-allocate one row for Test 10 (since 80min fits inside row_duration 195min)
             y_offset += (0 + 1) * (row_height + row_spacing) + 40
@@ -668,6 +669,16 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
                             ))
         canvas.create_window(15, t10_y, window=btn_t10, anchor="nw")
 
+        # tp only advances while playing; the test starts paused at tp = 0.
+        btn_play = tk.Button(canvas, text="Play", width=6, cursor="hand2")
+
+        def toggle_play():
+            test10_state['playing'] = not test10_state['playing']
+            btn_play.config(text="Pause" if test10_state['playing'] else "Play")
+
+        btn_play.config(command=toggle_play)
+        canvas.create_window(15, t10_y + 48, window=btn_play, anchor="nw")
+
         txt_id_t10 = canvas.create_text(margin_left, t10_y, text=test10_state['title'], font=("Arial", 11, "bold"), anchor="nw")
         bbox_t10 = canvas.bbox(txt_id_t10)
         sub_id_t10 = canvas.create_text(margin_left, bbox_t10[3] + 2, text="", font=("Arial", 9), fill="#555555", anchor="nw")
@@ -682,7 +693,8 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
             canvas.delete("test10_dyn")
 
             st = test10_state
-            canvas.itemconfig(st['sub_id'], text=f"tp = {st['tp']:.1f}s  |  Real-time Algebraic O(1) rules updated dynamically")
+            status = "playing" if st['playing'] else "paused"
+            canvas.itemconfig(st['sub_id'], text=f"tp = {st['tp']:.1f}s ({status})  |  Real-time Algebraic O(1) rules updated dynamically")
 
             prefix, cycle = st['evaluator'](st['tp'])
             schedule = generate_schedule(prefix, cycle, st['total_duration'], start=Fraction(0))
@@ -722,9 +734,10 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
                 canvas.create_text(margin_left - 8, y1 + row_height / 2, text=stamp(row_idx * row_duration),
                                    font=("Arial", 8), fill="#777777", anchor="e", tags="test10_dyn")
 
-            st['tp'] += 20.0
-            if st['tp'] > float(st['total_duration'] * 60):
-                st['tp'] = 0.0
+            if st['playing']:
+                st['tp'] += 20.0
+                if st['tp'] > float(st['total_duration'] * 60):
+                    st['tp'] = 0.0
 
             # Test 10 redraws itself, so the content height is only known after a
             # frame: keep the scrollable area in step with what is on the canvas.
