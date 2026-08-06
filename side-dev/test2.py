@@ -518,6 +518,15 @@ def copy_to_clipboard(root, title, prefix_blocks, cycle_blocks, period_text="", 
     root.clipboard_clear()
     root.clipboard_append("\n".join(lines))
 
+SCROLL_PADDING = 20
+
+def refresh_scrollregion(canvas):
+    """Size the scrollable area to whatever is actually drawn, plus a margin."""
+    bbox = canvas.bbox("all")
+    if not bbox: return
+    x1, y1, x2, y2 = bbox
+    canvas.config(scrollregion=(0, 0, x2 + SCROLL_PADDING, y2 + SCROLL_PADDING))
+
 def draw_schedules(root, canvas, test_cases, window_width=900):
     y_offset = 20
     px_per_min = 4
@@ -680,10 +689,15 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
             if st['tp'] > float(st['total_duration'] * 60):
                 st['tp'] = 0.0
 
+            # Test 10 redraws itself, so the content height is only known after a
+            # frame: keep the scrollable area in step with what is on the canvas.
+            refresh_scrollregion(canvas)
+
             root.after(100, animate_test10)
 
         animate_test10()
 
+    refresh_scrollregion(canvas)
     return y_offset
 
 AB = lambda: [Task("A", priority=50, min_time=10, color="#FF9999"),
@@ -867,18 +881,22 @@ def main():
 
     def _on_mousewheel(event):
         if getattr(event, 'num', 0) == 4 or event.delta > 0:
-            canvas.yview_scroll(-1, "units")
+            canvas.yview_scroll(-3, "units")
         elif getattr(event, 'num', 0) == 5 or event.delta < 0:
-            canvas.yview_scroll(1, "units")
+            canvas.yview_scroll(3, "units")
 
     canvas.bind_all("<MouseWheel>", _on_mousewheel)
     canvas.bind_all("<Button-4>", _on_mousewheel)
     canvas.bind_all("<Button-5>", _on_mousewheel)
+    canvas.bind_all("<Prior>", lambda e: canvas.yview_scroll(-1, "pages"))
+    canvas.bind_all("<Next>", lambda e: canvas.yview_scroll(1, "pages"))
+    canvas.bind_all("<Home>", lambda e: canvas.yview_moveto(0.0))
+    canvas.bind_all("<End>", lambda e: canvas.yview_moveto(1.0))
 
     all_cases = cases + [test10]
-    y = draw_schedules(root, canvas, all_cases, window_width=900)
-    
-    canvas.config(scrollregion=(0, 0, 900, y))
+    draw_schedules(root, canvas, all_cases, window_width=900)
+
+    refresh_scrollregion(canvas)
     root.mainloop()
 
 if __name__ == "__main__":
