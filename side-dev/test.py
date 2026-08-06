@@ -17,6 +17,7 @@ try:
 except ImportError:          # headless box: --verify and --no-ui still work
     tk = None
 
+import itertools
 from fractions import Fraction
 from math import exp, inf, log
 
@@ -49,7 +50,7 @@ def human(d, unit_seconds=60):
     if h: out.append(f"{h}h")
     if m: out.append(f"{m}min")
     if sec > 1e-9 or not out:
-        out.append(f"{int(round(sec))}s" if abs(sec - round(sec)) < 1e-9 else f"{sec:.4g}s")
+        out.append(f"{round(sec)}s" if abs(sec - round(sec)) < 1e-9 else f"{sec:.4g}s")
     return sign + " ".join(out)
 
 def stamp(t):
@@ -532,6 +533,9 @@ class ToolTip:
         return None
 
     def _apply(self, text, root_x, root_y):
+        if tk is None:
+            # No Tk available (headless); nothing to show
+            return
         if not text:
             self.hide()
             return
@@ -655,6 +659,7 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
 
         schedule = generate_schedule(prefix_blocks, cycle_blocks, total_duration, start=start_time)
 
+        assert tk is not None
         btn = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
                         command=lambda t=title, p=prefix_blocks, c=cycle_blocks,
                                        ps=period_str, ss=shares_str: copy_to_clipboard(root, t, p, c, ps, ss))
@@ -705,6 +710,7 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
     if test10_state:
         # Create static Test 10 UI elements once to avoid memory leaks
         t10_y = test10_state['y_offset']
+        assert tk is not None
         btn_t10 = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
                             command=lambda: copy_to_clipboard(
                                 root, test10_state['title'],
@@ -1051,7 +1057,7 @@ def occupant(tl, t):
 
 def first_disagreement(t1, t2, cut, tol=1e-6):
     pts = sorted({p for s, e, _ in t1 + t2 for p in (s, e) if -tol <= p <= cut} | {0.0, cut})
-    for lo, hi in zip(pts, pts[1:]):
+    for lo, hi in itertools.pairwise(pts):
         if hi - lo <= tol: continue
         mid = (lo + hi) / 2.0
         if occupant(t1, mid) != occupant(t2, mid): return mid
@@ -1059,12 +1065,12 @@ def first_disagreement(t1, t2, cut, tol=1e-6):
 
 def verify_test10(evaluate=_T10, horizon_sec=TEST10_TOTAL_MIN * 60, verbose=True):
     T, W = evaluate.period, evaluate.window
-    a_block = evaluate.block['A']
+    evaluate.block['A']
     failures = []
 
     # A grid dense enough to catch the regime seams, plus the seams themselves
     # approached from both sides.
-    grid = {round(x * 0.5, 6) for x in range(0, int(horizon_sec * 2) + 1)}
+    grid = {round(x * 0.5, 6) for x in range(int(horizon_sec * 2) + 1)}
     for k in range(int(horizon_sec // T) + 2):
         for off in (evaluate.stretch_from, evaluate.t_1, T):
             for d in (-1e-3, -1e-6, 0.0, 1e-6, 1e-3, 0.25, 1.0):
