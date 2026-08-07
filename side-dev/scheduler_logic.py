@@ -546,8 +546,10 @@ class MovingWindowPlan:
         a, b, W, T = self.a, self.b, self.window, self.period
         T_A, T_B = self.block[a], self.block[b]
 
+        # No prefix: the window sits inside A's own slot, so the frozen past is
+        # n copies of the untouched cycle and the cycle alone already states it.
         r1 = Regime("window inside A -> untouched cycle", 0.0, self.stretch_from,
-                    [self._frozen_past()], self._cycle())
+                    [], self._cycle())
 
         p2 = [self._frozen_past(), self._blk(a, Aff(T_A, 1.0, 'e'))]
         for k, w in enumerate(self.weights):
@@ -614,8 +616,9 @@ class MovingWindowPlan:
             lo = "0" if r.lo == 0 else human_s(r.lo)
             rel = "<=" if r.lo == 0 else "<"
             out.append(f"Regime {i}  ({lo} {rel} t <= {human_s(r.hi)}): {r.name}")
-            out.append("  Prefix:")
-            out.extend(rule_lines(r.prefix, "    "))
+            if r.prefix:
+                out.append("  Prefix:")
+                out.extend(rule_lines(r.prefix, "    "))
             out.append("  Cycle:")
             out.extend(rule_lines(r.cycle, "    "))
             out.append("    repeat")
