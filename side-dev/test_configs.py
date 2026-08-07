@@ -7,7 +7,7 @@ Defines the scheduler test configurations, bounds, and rule testing mechanisms.
 import itertools
 from math import inf
 
-from scheduler_logic import MAX_RULES, MovingWindowPlan, Task, flatten
+from scheduler_logic import MAX_RULES, MovingWindowPlan, Task, flatten, human_s
 
 
 def AB():
@@ -57,12 +57,16 @@ def build_cases():
         )
     ]
 
+# The one knob for test 10: how long the A-only period lasts, in seconds.
+# Everything else about the test follows from it (the title, the regimes, the
+# marker the GUI sweeps). The closed form assumes the period is shorter than any
+# task's minimum time, so with AB()'s 10min minimums anything under 600s works.
 TEST10_WINDOW = 20.0
 TEST10_TOTAL_MIN = 80
 _T10 = MovingWindowPlan(AB(), TEST10_WINDOW)
 
 TEST10_TITLE = (
-    "Test 10 (Algebraic O(1)): the 20s A-only period starts at t_p and sweeps right\n"
+    f"Test 10 (Algebraic O(1)): the {human_s(TEST10_WINDOW)} A-only period starts at t_p and sweeps right\n"
     "-> rules are a closed form in t_p; every plan agrees with every earlier plan on t < t_p."
 )
 
@@ -103,6 +107,20 @@ def first_disagreement(t1, t2, cut, tol=1e-6):
         mid = (lo + hi) / 2.0
         if occupant(t1, mid) != occupant(t2, mid): return mid
     return None
+
+def whole_cycles_cut(prefix, cycle, horizon):
+    """Largest instant <= horizon that ends a whole number of steady cycles.
+
+    The share check has to land on a cycle boundary: cutting mid-cycle credits
+    whichever task straddles the cut with up to a full slot, which reads as a
+    share error when it is only the truncation. That remainder is the prefix's
+    own overrun, so it grows with the window and a fixed tolerance would
+    silently bound how long the A-only period may be.
+    """
+    lead = sum(float(b['duration']) for b in flatten(prefix))
+    period = sum(float(b['duration']) for b in flatten(cycle))
+    if period <= 0 or lead >= horizon: return horizon
+    return lead + period * int((horizon - lead) // period)
 
 def service_runs(tl):
     runs = []
@@ -163,10 +181,12 @@ def verify_test10(plan=None, horizon_sec=None, verbose=True, max_report=10):
 
     H = 20 * T
     for tp in grid[::7]:
-        tl = timeline_of(*plan(tp, to_minutes=False), horizon=H)
+        prefix, cycle = plan(tp, to_minutes=False)
+        cut = whole_cycles_cut(prefix, cycle, H)
+        tl = timeline_of(prefix, cycle, horizon=cut)
         served = {}
         for s, e, n in tl:
-            served[n] = served.get(n, 0.0) + max(0.0, min(e, H) - min(s, H))
+            served[n] = served.get(n, 0.0) + max(0.0, min(e, cut) - min(s, cut))
         idle = served.pop("IDLE", 0.0)
         total = sum(served.values())
         for n, d in served.items():
