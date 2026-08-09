@@ -110,12 +110,12 @@ import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.SelectionNavigate
-import org.example.project.ui.EditMenuRow
-import org.example.project.ui.EditMenuSectionLabel
+import org.example.project.ui.EditMenuItem
+import org.example.project.ui.EditModeMenuBlock
 import org.example.project.ui.EditModeOption
-import org.example.project.ui.EditModeSelector
 import kotlinx.coroutines.withTimeoutOrNull
 
 private object SheetColors {
@@ -910,14 +910,16 @@ private enum class TaskTreeEditMode { Change, Rename }
  * to the whole tree:
  *  - a **Mode** selector (Change task tree / Rename), shown only once a tree is selected — there is nothing
  *    to rename before that, mirroring how a cell being *created* hides the selector;
- *  - a **Task trees** menu, led by a "New task tree" row and listing the existing trees whose title *is*
- *    what is typed (exact match, as in the cell's Tasks menu);
+ *  - a **Task trees** menu — the identity rows, shown in [TaskTreeEditMode.Change] only: `tree-<today>`
+ *    first and always, then "New task tree", then the trees whose titles are similar to what is typed (see
+ *    [SchedulerDomain.taskTreeMenuEntries]). A row here *acts*: it opens a tree, or creates one;
  *  - a **Title suggestions** menu of every tree title containing what is typed — empty text lists them all,
- *    which is how the trees are browsed. Picking one fills the field (as in a cell); Enter then commits it.
+ *    which is how the trees are browsed. Picking one only fills the field (as in a cell); Enter commits it.
  *
- * The menus are focus-gated like the reminders manager's editor: they appear only while the field holds
- * focus, so the tree below is not permanently pushed down. Every row is [EditMenuRow]/[EditMenuSectionLabel]
- * with `focusPreserving = true`, so clicking one cannot blur the field and collapse the block mid-pick.
+ * The three sections are the shared [EditModeMenuBlock], so they render in the one order PRD §4 fixes and
+ * look identical to every other naming field. The menus are focus-gated like the reminders manager's editor:
+ * they appear only while the field holds focus, so the tree below is not permanently pushed down — hence
+ * `focusPreserving = true`, so clicking a row cannot blur the field and collapse the block mid-pick.
  */
 @Composable
 private fun TaskTreeSelector(
@@ -932,7 +934,11 @@ private fun TaskTreeSelector(
     onIntent: (SchedulerIntent) -> Unit,
 ) {
     val activeId = state.activeTaskTreeId
-    val entries = SchedulerDomain.taskTreeMenuEntries(state, draft)
+    // `tree-YYYY-MM-DD` for today, read off the same clock the first-startup seed used so the row the menu
+    // leads with and the tree that seeding created carry the identical name. O(1), so recomputing it per
+    // recomposition rather than remembering it is what keeps the row correct across midnight.
+    val todayTitle = SchedulerDomain.defaultTaskTreeTitle(SchedulerReducer.clock.nowMillis())
+    val entries = SchedulerDomain.taskTreeMenuEntries(state, draft, todayTitle)
     val suggestions = SchedulerDomain.taskTreeTitleSuggestions(state, draft)
     // The tree the field currently designates: the one whose title IS the typed text. Highlighted in the
     // menu, so the user can see whether Enter would switch to an existing tree or create one.
@@ -955,57 +961,70 @@ private fun TaskTreeSelector(
 
         if (!focused) return@Column
 
-        // Mode — only once a tree is selected: with none there is nothing to rename, and the field can only
-        // mean "create or pick one" (the same reason a cell being created hides its selector).
-        if (activeId != null) {
-            EditModeSelector(
-                options = listOf(
-                    EditModeOption(
-                        label = "Change task tree",
-                        selected = mode == TaskTreeEditMode.Change,
-                        onSelect = { onModeChange(TaskTreeEditMode.Change) },
-                    ),
-                    EditModeOption(
-                        label = "Rename",
-                        selected = mode == TaskTreeEditMode.Rename,
-                        onSelect = { onModeChange(TaskTreeEditMode.Rename) },
-                    ),
-                ),
-                focusPreserving = true,
-            )
-        }
-
-        // Task trees — Change mode only. Hidden while the field is empty: "New task tree" needs a name, and
-        // no existing tree can match, so the menu would have nothing to act on.
-        if (mode == TaskTreeEditMode.Change && draft.isNotBlank()) {
-            EditMenuSectionLabel("Task trees")
-            entries.forEach { entry ->
-                EditMenuRow(
-                    label = entry.label,
-                    // "New task tree" is what Enter would do exactly when nothing matches the typed name.
-                    selected = if (entry.id == null) matchedId == null else entry.id == matchedId,
-                    focusPreserving = true,
-                    onClick = {
-                        if (entry.id == null) onIntent(SchedulerIntent.CreateTaskTree(draft))
-                        else onIntent(SchedulerIntent.SelectTaskTree(entry.id))
-                    },
-                )
-            }
-        }
-
-        // Title suggestions — in both modes, as in a cell: picking one fills the field (Rename then renames
-        // the selected tree to it, Change switches to it) and Enter commits.
-        if (suggestions.isNotEmpty()) {
-            EditMenuSectionLabel("Title suggestions")
-            suggestions.take(8).forEach { suggestion ->
-                EditMenuRow(
+        EditModeMenuBlock(
+            // Mode — only once a tree is selected: with none there is nothing to rename, and the field can
+            // only mean "create or pick one" (the same reason a cell being created hides its selector).
+            modeOptions =
+                if (activeId != null) {
+                    listOf(
+                        EditModeOption(
+                            label = "Change task tree",
+                            selected = mode == TaskTreeEditMode.Change,
+                            onSelect = { onModeChange(TaskTreeEditMode.Change) },
+                        ),
+                        EditModeOption(
+                            label = "Rename",
+                            selected = mode == TaskTreeEditMode.Rename,
+                            onSelect = { onModeChange(TaskTreeEditMode.Rename) },
+                        ),
+                    )
+                } else {
+                    emptyList()
+                },
+            identityLabel = "Task trees",
+            // Task trees (the identity menu) — Change mode only, by the user's rule: in Rename mode the field
+            // is naming the selected tree, so there is no other tree for a row to act on. Shown whatever is
+            // typed, empty field included, because its first row — today's tree — is offered unconditionally.
+            identityRows =
+                if (mode == TaskTreeEditMode.Change) {
+                    entries.map { entry ->
+                        EditMenuItem(
+                            label = entry.label,
+                            selected = when (entry.kind) {
+                                // "New task tree" is what Enter would do exactly when nothing matches the
+                                // typed name.
+                                SchedulerDomain.TaskTreeMenuEntry.Kind.New ->
+                                    draft.isNotBlank() && matchedId == null
+                                else -> entry.id != null && entry.id == matchedId
+                            },
+                        ) {
+                            // The field follows the row, so it can never sit on the half-typed text that
+                            // merely *matched* the tree now open ("Wor" left over from picking "Workshop").
+                            when (entry.kind) {
+                                SchedulerDomain.TaskTreeMenuEntry.Kind.New ->
+                                    onIntent(SchedulerIntent.CreateTaskTree(draft))
+                                else -> {
+                                    onDraftChange(entry.label)
+                                    if (entry.id != null) onIntent(SchedulerIntent.SelectTaskTree(entry.id))
+                                    // Today's tree, on a day that has none yet.
+                                    else onIntent(SchedulerIntent.CreateTaskTree(entry.label))
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    emptyList()
+                },
+            // Title suggestions — in both modes, as in a cell: picking one fills the field (Rename then
+            // renames the selected tree to it, Change switches to it) and Enter commits.
+            suggestions = suggestions.map { suggestion ->
+                EditMenuItem(
                     label = suggestion,
                     selected = suggestion.equals(draft.trim(), ignoreCase = true),
-                    focusPreserving = true,
-                    onClick = { onDraftChange(suggestion) },
-                )
-            }
-        }
+                ) { onDraftChange(suggestion) }
+            },
+            focusPreserving = true,
+        )
 
         // The field is not a form: nothing is applied until it is committed, so the commit needs a control of
         // its own for pointer-only use (Enter does the same thing from the keyboard).
@@ -1063,55 +1082,52 @@ private fun EditModeMenus(
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        if (showSelector) {
-            EditModeSelector(
-                options = listOf(
-                    EditModeOption(
-                        label = "Change Task",
-                        selected = session.mode == CellEditMode.ChangeTask,
-                        onSelect = { onIntent(SchedulerIntent.SetEditMode(CellEditMode.ChangeTask)) },
-                    ),
-                    EditModeOption(
-                        label = "Rename",
-                        selected = session.mode == CellEditMode.Rename,
-                        onSelect = { onIntent(SchedulerIntent.SetEditMode(CellEditMode.Rename)) },
-                    ),
-                ),
-            )
-        }
-
-        if (showTasks) {
-            val selectedIndex =
-                SchedulerDomain.changeTaskMenuSelectedIndex(
-                    taskEntries,
-                    session.selectedAssignTaskId,
-                )
-            EditMenuSectionLabel("Tasks")
-            taskEntries.forEachIndexed { index, entry ->
-                EditMenuRow(
-                    label = entry.label,
-                    selected = index == selectedIndex,
-                    enabled = entry.assignable,
-                    onClick = {
-                        if (entry.taskId == null) {
-                            onIntent(SchedulerIntent.SelectCreateAssignTask)
-                        } else {
-                            onIntent(SchedulerIntent.PickTaskFromMenu(entry.taskId))
+        EditModeMenuBlock(
+            modeOptions =
+                if (showSelector) {
+                    listOf(
+                        EditModeOption(
+                            label = "Change Task",
+                            selected = session.mode == CellEditMode.ChangeTask,
+                            onSelect = { onIntent(SchedulerIntent.SetEditMode(CellEditMode.ChangeTask)) },
+                        ),
+                        EditModeOption(
+                            label = "Rename",
+                            selected = session.mode == CellEditMode.Rename,
+                            onSelect = { onIntent(SchedulerIntent.SetEditMode(CellEditMode.Rename)) },
+                        ),
+                    )
+                } else {
+                    emptyList()
+                },
+            identityLabel = "Tasks",
+            identityRows =
+                if (showTasks) {
+                    val selectedIndex =
+                        SchedulerDomain.changeTaskMenuSelectedIndex(
+                            taskEntries,
+                            session.selectedAssignTaskId,
+                        )
+                    taskEntries.mapIndexed { index, entry ->
+                        EditMenuItem(
+                            label = entry.label,
+                            selected = index == selectedIndex,
+                            enabled = entry.assignable,
+                        ) {
+                            if (entry.taskId == null) {
+                                onIntent(SchedulerIntent.SelectCreateAssignTask)
+                            } else {
+                                onIntent(SchedulerIntent.PickTaskFromMenu(entry.taskId))
+                            }
                         }
-                    },
-                )
-            }
-        }
-
-        if (suggestions.isNotEmpty()) {
-            EditMenuSectionLabel("Title suggestions")
-            suggestions.take(8).forEach { suggestion ->
-                EditMenuRow(
-                    label = suggestion,
-                    onClick = { onIntent(SchedulerIntent.PickTitleSuggestion(suggestion)) },
-                )
-            }
-        }
+                    }
+                } else {
+                    emptyList()
+                },
+            suggestions = suggestions.map { suggestion ->
+                EditMenuItem(suggestion) { onIntent(SchedulerIntent.PickTitleSuggestion(suggestion)) }
+            },
+        )
     }
 }
 

@@ -1152,7 +1152,7 @@ fun ChoresManagerWindow(
                                 rows[index] = row.copy(id = entry.id, title = entry.title, explicitNew = false)
                                 push()
                             },
-                            titleSuggestions = titleSuggestions(row.title).filter { it != row.title }.take(8),
+                            titleSuggestions = titleSuggestions(row.title).filter { it != row.title },
                             onPickSuggestion = { suggestion -> rows[index] = row.copy(title = suggestion); push() },
                         )
                     }
@@ -4096,43 +4096,42 @@ fun ManualEntryEditWindow(
                         selectedTaskId != null && taskEntries.any { it.taskId == selectedTaskId } -> selectedTaskId
                         else -> SchedulerDomain.calendarDefaultMenuTaskId(taskEntries)
                     }
-                if (taskEntries.size > 1) {
-                    val selectedIndex =
-                        SchedulerDomain.changeTaskMenuSelectedIndex(taskEntries, effectiveTaskId)
-                    EditMenuSectionLabel("Tasks")
-                    taskEntries.forEachIndexed { index, entry ->
-                        EditMenuRow(
-                            label = entry.label,
-                            selected = index == selectedIndex,
-                            onClick = {
-                                if (entry.taskId == null) {
-                                    selectedTaskId = null // "New task" → calendar-only
-                                    newTaskChosen = true
-                                } else {
-                                    selectedTaskId = entry.taskId
-                                    newTaskChosen = false
-                                    titleForTaskId(entry.taskId)?.let { title = it }
+                // No Mode selector: this window is always in "Change Task" mode (PRD §8) — the identity
+                // and title menus are the shared block every other naming field uses.
+                EditModeMenuBlock(
+                    identityLabel = "Tasks",
+                    identityRows =
+                        if (taskEntries.size > 1) {
+                            val selectedIndex =
+                                SchedulerDomain.changeTaskMenuSelectedIndex(taskEntries, effectiveTaskId)
+                            taskEntries.mapIndexed { index, entry ->
+                                EditMenuItem(label = entry.label, selected = index == selectedIndex) {
+                                    if (entry.taskId == null) {
+                                        selectedTaskId = null // "New task" → calendar-only
+                                        newTaskChosen = true
+                                    } else {
+                                        selectedTaskId = entry.taskId
+                                        newTaskChosen = false
+                                        titleForTaskId(entry.taskId)?.let { title = it }
+                                    }
                                 }
-                            },
-                        )
-                    }
-                }
-
-                // --- Title suggestions menu ---
-                val suggestions = if (timesOnly) emptyList() else titleSuggestions(title).take(8)
-                if (suggestions.isNotEmpty()) {
-                    EditMenuSectionLabel("Title suggestions")
-                    suggestions.forEach { suggestion ->
-                        EditMenuRow(
-                            label = suggestion,
-                            onClick = {
-                                title = suggestion
-                                selectedTaskId = taskIdForTitle(suggestion)
-                                newTaskChosen = false
-                            },
-                        )
-                    }
-                }
+                            }
+                        } else {
+                            emptyList()
+                        },
+                    suggestions =
+                        if (timesOnly) {
+                            emptyList()
+                        } else {
+                            titleSuggestions(title).map { suggestion ->
+                                EditMenuItem(suggestion) {
+                                    title = suggestion
+                                    selectedTaskId = taskIdForTitle(suggestion)
+                                    newTaskChosen = false
+                                }
+                            }
+                        },
+                )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
@@ -4292,7 +4291,7 @@ fun ReminderEditWindow(
                         selectedReminderId = entry.id
                         titleForReminderId(entry.id)?.let { title = it }
                     },
-                    titleSuggestions = titleSuggestions(title).take(8),
+                    titleSuggestions = titleSuggestions(title),
                     onPickSuggestion = { suggestion ->
                         title = suggestion
                         selectedReminderId = reminderIdForTitle(suggestion)
@@ -4413,8 +4412,7 @@ fun ReminderConstraintEditWindow(
                             titleForReminderId(entry.id)?.let { title = it }
                         },
                         titleSuggestions = titleSuggestions(title)
-                            .filter { reminderIdForTitle(it) != excludeReminderId }
-                            .take(8),
+                            .filter { reminderIdForTitle(it) != excludeReminderId },
                         onPickSuggestion = { suggestion ->
                             title = suggestion
                             selectedReminderId = reminderIdForTitle(suggestion)
@@ -4554,6 +4552,71 @@ fun EditMenuRow(
     )
 }
 
+/** One row of an [EditModeMenuBlock] menu — an identity row or a title suggestion. */
+data class EditMenuItem(
+    val label: String,
+    val selected: Boolean = false,
+    val enabled: Boolean = true,
+    val onClick: () -> Unit,
+)
+
+/** How many title suggestions any edit-mode menu lists (PRD §4); the same cap everywhere. */
+private const val EDIT_MENU_SUGGESTION_LIMIT = 8
+
+/**
+ * **The** edit-mode menu block, in the one order PRD §4 fixes for every field that names an object:
+ * the **Mode** selector, then the **identity** menu (whose rows *act* — they pick/create the object the
+ * field refers to), then the **Title suggestions** menu (whose rows only fill the field). Every such field
+ * in the app renders through this: a task-tree cell's Edit Mode, the task-tree selector above the tree, the
+ * calendar's block editor (PRD §8) and the three reminder editors (PRD §14, via [ReminderEditModeMenus]).
+ *
+ * Each section is shown exactly when its content is non-empty, so a caller hides one by passing an empty
+ * list — that is where the per-site rules live (a cell shows its Tasks menu only beyond the lone "New task"
+ * row, a reminder editor only in Change mode, and so on). Suggestions are capped at
+ * [EDIT_MENU_SUGGESTION_LIMIT] here, so no caller has to remember to.
+ *
+ * [focusPreserving] is passed straight through to [EditModeSelector]/[EditMenuRow]: set it in a focus-gated
+ * editor (one whose menus live only while its field holds focus), where a pick must not blur that field.
+ *
+ * Emits into the caller's `Column`, so the surrounding spacing/padding stays the caller's own.
+ */
+@Composable
+fun EditModeMenuBlock(
+    modeOptions: List<EditModeOption> = emptyList(),
+    identityLabel: String = "",
+    identityRows: List<EditMenuItem> = emptyList(),
+    suggestions: List<EditMenuItem> = emptyList(),
+    focusPreserving: Boolean = false,
+) {
+    if (modeOptions.isNotEmpty()) {
+        EditModeSelector(options = modeOptions, focusPreserving = focusPreserving)
+    }
+    if (identityRows.isNotEmpty()) {
+        EditMenuSectionLabel(identityLabel)
+        identityRows.forEach { row ->
+            EditMenuRow(
+                label = row.label,
+                selected = row.selected,
+                enabled = row.enabled,
+                focusPreserving = focusPreserving,
+                onClick = row.onClick,
+            )
+        }
+    }
+    if (suggestions.isNotEmpty()) {
+        EditMenuSectionLabel("Title suggestions")
+        suggestions.take(EDIT_MENU_SUGGESTION_LIMIT).forEach { row ->
+            EditMenuRow(
+                label = row.label,
+                selected = row.selected,
+                enabled = row.enabled,
+                focusPreserving = focusPreserving,
+                onClick = row.onClick,
+            )
+        }
+    }
+}
+
 /**
  * PRD §14: the shared edit-mode menu block for a reminder title field — used by both the reminders manager
  * ([ChoresManagerWindow]) and the "add reminder" window ([ReminderEditWindow]), the reminder
@@ -4586,53 +4649,57 @@ private fun ReminderEditModeMenus(
     newReminderLabel: String = "New Reminder",
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (showModeSelector) {
+        EditModeMenuBlock(
+            modeOptions =
+                if (showModeSelector) {
+                    listOf(
+                        EditModeOption(
+                            label = "Change Reminder",
+                            selected = mode == ReminderEditMode.Change,
+                            onSelect = { onSelectMode(ReminderEditMode.Change) },
+                        ),
+                        EditModeOption(
+                            label = "Rename",
+                            selected = mode == ReminderEditMode.Rename,
+                            onSelect = { onSelectMode(ReminderEditMode.Rename) },
+                        ),
+                    )
+                } else {
+                    emptyList()
+                },
+            identityLabel = "Reminders",
+            // Identity (id) menu — Change mode only, and (mirroring the task cell, which shows its Tasks
+            // menu only beyond "New task") only when an existing reminder matches. Leads with a
+            // "New Reminder" row.
+            identityRows =
+                if (mode == ReminderEditMode.Change && idMenuEntries.isNotEmpty()) {
+                    buildList {
+                        add(
+                            EditMenuItem(
+                                label = newReminderLabel,
+                                selected = newReminderSelected,
+                                onClick = onPickNewReminder,
+                            ),
+                        )
+                        idMenuEntries.forEach { entry ->
+                            add(
+                                EditMenuItem(
+                                    label = entry.title,
+                                    selected = entry.id == selectedEntryId,
+                                    onClick = { onPickEntry(entry) },
+                                ),
+                            )
+                        }
+                    }
+                } else {
+                    emptyList()
+                },
+            // Title suggestions — shown in both modes (in Rename mode, picking one renames to that title).
+            suggestions = titleSuggestions.map { EditMenuItem(it) { onPickSuggestion(it) } },
             // focusPreserving = true: this is a focus-gated editor (the menus live only while the title field
-            // keeps focus), so the dropdown must open/select without pulling focus off the field.
-            EditModeSelector(
-                options = listOf(
-                    EditModeOption(
-                        label = "Change Reminder",
-                        selected = mode == ReminderEditMode.Change,
-                        onSelect = { onSelectMode(ReminderEditMode.Change) },
-                    ),
-                    EditModeOption(
-                        label = "Rename",
-                        selected = mode == ReminderEditMode.Rename,
-                        onSelect = { onSelectMode(ReminderEditMode.Rename) },
-                    ),
-                ),
-                focusPreserving = true,
-            )
-        }
-
-        // Identity (id) menu — Change mode only, and (mirroring the task cell, which shows its Tasks menu
-        // only beyond "New task") only when an existing reminder matches. Leads with a "New Reminder" row.
-        if (mode == ReminderEditMode.Change && idMenuEntries.isNotEmpty()) {
-            EditMenuSectionLabel("Reminders")
-            EditMenuRow(
-                label = newReminderLabel,
-                selected = newReminderSelected,
-                focusPreserving = true,
-                onClick = onPickNewReminder,
-            )
-            idMenuEntries.forEach { entry ->
-                EditMenuRow(
-                    label = entry.title,
-                    selected = entry.id == selectedEntryId,
-                    focusPreserving = true,
-                    onClick = { onPickEntry(entry) },
-                )
-            }
-        }
-
-        // Title suggestions — shown in both modes (in Rename mode, picking one renames to that title).
-        if (titleSuggestions.isNotEmpty()) {
-            EditMenuSectionLabel("Title suggestions")
-            titleSuggestions.forEach { suggestion ->
-                EditMenuRow(label = suggestion, focusPreserving = true, onClick = { onPickSuggestion(suggestion) })
-            }
-        }
+            // keeps focus), so no row or dropdown may pull focus off the field.
+            focusPreserving = true,
+        )
     }
 }
 

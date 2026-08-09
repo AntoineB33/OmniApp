@@ -3667,24 +3667,71 @@ object SchedulerDomain {
     fun reminderTitleForId(state: SchedulerState, id: String): String? =
         allReminderEntries(state).firstOrNull { it.id == id }?.title
 
-    /** One row of the task-tree selector's identity menu — its tree ([id] null = the "New task tree" row). */
-    data class TaskTreeMenuEntry(val id: TaskTreeId?, val label: String)
+    /**
+     * The name a task tree carries by default: `tree-YYYY-MM-DD` for the local day [nowMillis] falls in.
+     * It is both what a fresh account's first tree is titled (see
+     * [org.example.project.scheduler.ui.TaskSchedulerViewModel.prepareLoadedState]) and the row the selector's
+     * identity menu always leads with — one string for both, so on the day a tree was seeded that row *is*
+     * that tree instead of offering to create a second one under the same name.
+     */
+    fun defaultTaskTreeTitle(
+        nowMillis: Long,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    ): String = "tree-" + Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone).date
 
     /**
-     * Rows of the task-tree selector's identity menu, mirroring the cell's Change Task menu
-     * ([changeTaskMenuEntries]): a leading "New task tree" row, then every existing tree whose title **is**
-     * the typed text (exact, case-insensitive). Partial matches belong to [taskTreeTitleSuggestions] — typing
-     * "w" must not offer to switch to "Work"; picking the suggestion fills the field, and *then* the tree row
-     * appears. Empty text matches nothing, so the menu is the single "New task tree" row.
+     * One row of the task-tree selector's identity menu. [id] is the tree the row acts on, which is null both
+     * on the "New task tree" row and on a [Kind.Today] row for a day that has no tree yet — so what a row
+     * *means* is carried by [kind], never by `id == null`.
      */
-    fun taskTreeMenuEntries(state: SchedulerState, draftText: String): List<TaskTreeMenuEntry> {
+    data class TaskTreeMenuEntry(
+        val id: TaskTreeId?,
+        val label: String,
+        val kind: Kind = Kind.Existing,
+    ) {
+        enum class Kind {
+            /** `tree-<today>`: opens that tree, or creates it when the day has none yet. */
+            Today,
+
+            /** "New task tree": creates one named after whatever is typed. */
+            New,
+
+            /** An existing tree whose title is similar to what is typed: opens it. */
+            Existing,
+        }
+    }
+
+    /**
+     * Rows of the task-tree selector's identity menu — which the UI shows in *Change task tree* mode only, so
+     * every row here acts on a tree (the [taskTreeTitleSuggestions] menu below it only fills the field):
+     *  1. **`tree-<today>`** ([todayTitle], from [defaultTaskTreeTitle]) — always, whatever is typed and even
+     *     on an empty field. That is the point of the dated default name: today's tree is one click away,
+     *     opened when it exists and created only when it does not.
+     *  2. **"New task tree"** — creates one under the typed name.
+     *  3. Every *other* tree whose title is **similar** to the typed text (containment, most similar first),
+     *     an empty field listing them all. Unlike the cell's Change Task menu this is deliberately not
+     *     restricted to an exact match: it is how a tree gets opened, and requiring the full title first
+     *     would make the menu useless for browsing.
+     */
+    fun taskTreeMenuEntries(
+        state: SchedulerState,
+        draftText: String,
+        todayTitle: String,
+    ): List<TaskTreeMenuEntry> {
         val q = draftText.trim()
+        val today = state.taskTrees.firstOrNull { it.title.equals(todayTitle, ignoreCase = true) }
         return buildList {
-            add(TaskTreeMenuEntry(id = null, label = "New task tree"))
-            if (q.isEmpty()) return@buildList
+            add(TaskTreeMenuEntry(id = today?.id, label = todayTitle, kind = TaskTreeMenuEntry.Kind.Today))
+            add(TaskTreeMenuEntry(id = null, label = "New task tree", kind = TaskTreeMenuEntry.Kind.New))
             state.taskTrees
-                .filter { it.title.equals(q, ignoreCase = true) }
-                .forEach { add(TaskTreeMenuEntry(id = it.id, label = it.title)) }
+                .filter { it.id != today?.id && it.title.isNotBlank() }
+                .filter { q.isEmpty() || it.title.contains(q, ignoreCase = true) }
+                // Two stable sorts rather than one comparator: most similar first, ties alphabetical.
+                .sortedBy { it.title }
+                .sortedByDescending { titleSimilarity(it.title, q) }
+                .forEach {
+                    add(TaskTreeMenuEntry(id = it.id, label = it.title, kind = TaskTreeMenuEntry.Kind.Existing))
+                }
         }
     }
 

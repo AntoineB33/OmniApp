@@ -5,25 +5,35 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.datetime.TimeZone
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.ui.TaskSchedulerViewModel
+import org.example.project.time.AppClock
 
 /**
  * The **task tree selector** above the tree: the account's named alternative task trees
  * ([org.example.project.scheduler.state.TaskTreeEntry]), which are *live* — the selected one IS the tree the
  * app shows and edits, and switching away keeps everything done in it.
  *
- * Covers the two menus the field is built from (the exact-match tree menu and the contains-match title
- * suggestions, mirroring a cell's task selection), the flush-on-switch that makes the trees live rather than
- * frozen, that a task existing only in an inactive tree keeps its completed-work records, Undo/Redo of a
- * switch, and — per the persisted-DB compatibility rule — that a payload written before the selector existed
- * decodes to "no named trees, unnamed live tree" and that the trees round-trip.
+ * Covers the two menus the field is built from (the identity menu — today's tree, "New task tree", then the
+ * similarly-titled trees — and the contains-match title suggestions), the `tree-YYYY-MM-DD` name a first
+ * startup gives the tree, the flush-on-switch that makes the trees live rather than frozen, that a task
+ * existing only in an inactive tree keeps its completed-work records, Undo/Redo of a switch, and — per the
+ * persisted-DB compatibility rule — that a payload written before the selector existed decodes to "no named
+ * trees, unnamed live tree" and that the trees round-trip.
  */
 class TaskTreeSelectorTest {
+
+    /** 2026-08-09T00:00Z — a fixed day, so the dated default name is assertable. */
+    private val DAY_2026_08_09 = 1_786_233_600_000L
+
+    /** A `tree-<today>` title the menu tests can pass in without depending on the machine's date. */
+    private val TODAY = "tree-2026-08-09"
 
     /** A state whose root list's first cell holds a task named [title]. */
     private fun stateWithTask(title: String): SchedulerState {
@@ -219,21 +229,107 @@ class TaskTreeSelectorTest {
     // ---- the two menus -------------------------------------------------------------------------
 
     @Test
-    fun the_tree_menu_offers_new_tree_plus_only_exact_title_matches() {
+    fun the_tree_menu_leads_with_todays_tree_then_new_tree_then_similar_titles() {
         var s = stateWithTask("Alpha")
         s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Work"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Workshop"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Studies"))
 
-        // Empty text: the creation row alone.
-        assertEquals(listOf("New task tree"), SchedulerDomain.taskTreeMenuEntries(s, "").map { it.label })
-        // A partial draft must NOT surface the longer tree (same rule as the cell's Tasks menu).
-        assertEquals(listOf("New task tree"), SchedulerDomain.taskTreeMenuEntries(s, "Wor").map { it.label })
-        // The exact title does, case-insensitively.
+        // Empty field: today's tree and the creation row still lead, and every tree is listed under them —
+        // this menu is how a tree gets opened, so it must be browsable with nothing typed.
         assertEquals(
-            listOf("New task tree", "Work"),
-            SchedulerDomain.taskTreeMenuEntries(s, "work").map { it.label },
+            listOf(TODAY, "New task tree", "Studies", "Work", "Workshop"),
+            SchedulerDomain.taskTreeMenuEntries(s, "", TODAY).map { it.label },
         )
-        assertNull(SchedulerDomain.taskTreeMenuEntries(s, "work")[0].id)
+        // A partial draft narrows the tail to the similar titles — unlike the cell's Tasks menu, which needs
+        // the exact one — while the two leading rows stay put.
+        assertEquals(
+            listOf(TODAY, "New task tree", "Work", "Workshop"),
+            SchedulerDomain.taskTreeMenuEntries(s, "Wor", TODAY).map { it.label },
+        )
+        // Most similar first: the exact match outranks the containment one.
+        assertEquals(
+            listOf(TODAY, "New task tree", "Work", "Workshop"),
+            SchedulerDomain.taskTreeMenuEntries(s, "work", TODAY).map { it.label },
+        )
+
+        val rows = SchedulerDomain.taskTreeMenuEntries(s, "work", TODAY)
+        assertEquals(SchedulerDomain.TaskTreeMenuEntry.Kind.Today, rows[0].kind)
+        assertEquals(SchedulerDomain.TaskTreeMenuEntry.Kind.New, rows[1].kind)
+        assertEquals(SchedulerDomain.TaskTreeMenuEntry.Kind.Existing, rows[2].kind)
+        // No tree is named after today here, so that row creates rather than opens — which is why the rows
+        // are told apart by `kind` and never by a null id (the "New task tree" row has one too).
+        assertNull(rows[0].id)
+        assertNull(rows[1].id)
+        assertEquals(treeIdOf(s, "Work"), rows[2].id)
+    }
+
+    @Test
+    fun todays_tree_is_offered_once_and_as_itself_when_it_already_exists() {
+        // "Always show tree-<today>" must not become a second row for a tree that is already there, nor an
+        // offer to create a duplicate: the row carries that tree's own id and drops out of the tail.
+        var s = stateWithTask("Alpha")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree(TODAY))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Work"))
+
+        val rows = SchedulerDomain.taskTreeMenuEntries(s, "", TODAY)
+        assertEquals(listOf(TODAY, "New task tree", "Work"), rows.map { it.label })
+        assertEquals(treeIdOf(s, TODAY), rows[0].id)
+        assertEquals(SchedulerDomain.TaskTreeMenuEntry.Kind.Today, rows[0].kind)
+        // …and it still leads even when the typed text could not match it.
+        assertEquals(TODAY, SchedulerDomain.taskTreeMenuEntries(s, "zzz", TODAY).first().label)
+    }
+
+    @Test
+    fun the_default_tree_name_is_the_local_day() {
+        val utc = TimeZone.of("UTC")
+        assertEquals("tree-1970-01-01", SchedulerDomain.defaultTaskTreeTitle(0L, utc))
+        assertEquals("tree-2026-08-09", SchedulerDomain.defaultTaskTreeTitle(DAY_2026_08_09, utc))
+        // Local, not UTC: an instant just before midnight UTC is already the next day further east.
+        assertEquals(
+            "tree-2026-08-10",
+            SchedulerDomain.defaultTaskTreeTitle(DAY_2026_08_09 + 23 * 3_600_000L, TimeZone.of("Europe/Paris")),
+        )
+    }
+
+    // ---- first startup -------------------------------------------------------------------------
+
+    @Test
+    fun first_startup_names_the_tree_after_today() {
+        val controllable = object : AppClock {
+            override fun nowMillis(): Long = DAY_2026_08_09
+        }
+        val previous = SchedulerReducer.clock
+        SchedulerReducer.clock = controllable
+        try {
+            val s0 = stateWithTask("Alpha")
+            val loaded = TaskSchedulerViewModel.loadInitialState(store = null, initial = s0)
+            val expected = SchedulerDomain.defaultTaskTreeTitle(DAY_2026_08_09)
+            assertEquals(listOf(expected), loaded.taskTrees.map { it.title })
+            assertEquals(loaded.taskTrees[0].id, loaded.activeTaskTreeId)
+            // The entry holds the tree as loaded, so switching away and back is not a way to lose it…
+            assertEquals(listOf("Alpha"), titlesOf(loaded))
+            assertTrue(loaded.taskTrees[0].tree.tasks.values.any { it.title == "Alpha" })
+            // …and it is a default, not a user action: it records no History Unit, so Ctrl+Z cannot land on
+            // it. The menu's own first row is then this very tree rather than an offer to create it.
+            assertEquals(s0.histories.main.units.size, loaded.histories.main.units.size)
+            assertEquals(
+                loaded.activeTaskTreeId,
+                SchedulerDomain.taskTreeMenuEntries(loaded, "", expected).first().id,
+            )
+        } finally {
+            SchedulerReducer.clock = previous
+        }
+    }
+
+    @Test
+    fun an_account_that_already_names_its_tree_is_left_alone_at_startup() {
+        // The seed is for a first startup only — a reload must never mint a second, differently-dated tree
+        // (nor re-point the account at one) just because the day moved on.
+        val s = twoDivergedTrees()
+        val loaded = TaskSchedulerViewModel.loadInitialState(store = null, initial = s)
+        assertEquals(listOf("Work", "Studies"), loaded.taskTrees.map { it.title })
+        assertEquals(s.activeTaskTreeId, loaded.activeTaskTreeId)
     }
 
     @Test

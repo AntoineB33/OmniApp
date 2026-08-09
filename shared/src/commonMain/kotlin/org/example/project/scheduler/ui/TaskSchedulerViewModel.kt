@@ -23,6 +23,7 @@ import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.state.TaskTreeEntry
 import org.example.project.scheduler.sync.AccountInfo
 import org.example.project.scheduler.sync.PauseCueGateway
 import org.example.project.scheduler.sync.RealtimeSnapshotSubscriber
@@ -467,7 +468,7 @@ class TaskSchedulerViewModel(
         /**
          * Normalizes a just-loaded state (from local disk or a pulled remote snapshot) for the running app:
          * revert debug-tainted changes (§6), seed the hardcoded screen breaks and default sleep window (§15),
-         * and cancel any interrupted Edit Mode session.
+         * cancel any interrupted Edit Mode session, and name the tree when the account never has (§5).
          */
         fun prepareLoadedState(loaded: SchedulerState): SchedulerState {
             // PRD §6: revert any changes committed under the diverged debug clock before they reach the
@@ -482,11 +483,39 @@ class TaskSchedulerViewModel(
                     screenBreaks = SchedulerDomain.effectiveDefaultScreenBreaks(),
                     sleep = clean.sleep ?: SchedulerDomain.DEFAULT_SLEEP,
                 )
-            return if (seeded.editSession != null) {
-                SchedulerReducer.reduce(seeded, SchedulerIntent.CancelEdit)
-            } else {
-                seeded
-            }
+            val settled =
+                if (seeded.editSession != null) {
+                    SchedulerReducer.reduce(seeded, SchedulerIntent.CancelEdit)
+                } else {
+                    seeded
+                }
+            return withDefaultTaskTree(settled)
+        }
+
+        /**
+         * PRD §5 task-tree selector: an account that has never named its tree gets one, titled
+         * `tree-YYYY-MM-DD` for today ([SchedulerDomain.defaultTaskTreeTitle]) — so the field above the tree
+         * is never empty at first startup, and the row the identity menu always leads with *is* that tree
+         * rather than an offer to create it.
+         *
+         * Applied structurally rather than through [SchedulerIntent.CreateTaskTree]: a default is not
+         * something the user did, so it records no History Unit and Ctrl+Z cannot land on it — exactly like
+         * the sleep-window and screen-break seeding above. It captures the tree as loaded, so the entry is
+         * current from the start, and it does not mark the state dirty (every caller re-baselines
+         * `lastSyncedFingerprint` from the prepared state), so it reaches the account with the user's next
+         * real edit instead of provoking a push of its own.
+         */
+        private fun withDefaultTaskTree(state: SchedulerState): SchedulerState {
+            if (state.taskTrees.isNotEmpty() || state.activeTaskTreeId != null) return state
+            val (id, allocated) = state.allocateTaskTreeId()
+            val entry =
+                TaskTreeEntry(
+                    id = id,
+                    title = SchedulerDomain.defaultTaskTreeTitle(SchedulerReducer.clock.nowMillis()),
+                    tree = state.captureTreeWithRecords(),
+                    expanded = state.expanded,
+                )
+            return allocated.copy(taskTrees = listOf(entry), activeTaskTreeId = id)
         }
     }
 }
