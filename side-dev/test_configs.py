@@ -1,13 +1,34 @@
 #!/usr/bin/env python3
 """
 test_configs.py
-Defines the scheduler test configurations, bounds, and rule testing mechanisms.
+The scheduler test configurations, and the checks the moving-period cases owe.
+
+Tests 1-9 are static: one call to the scheduler, one rule list.
+Tests 10 and 11 have a period that *slides*, and the displayer moves it. The
+rules for them come from the same scheduler as every other test -- `MovingWindow`
+derives a rule list that is affine in the period's position t_p, so the display
+substitutes into it instead of scheduling again.
 """
 
 import itertools
+import time
+from fractions import Fraction
 from math import inf
 
-from scheduler_logic import MAX_RULES, MovingWindowPlan, Task, flatten, human_s
+from scheduler_logic import (
+    IDLE,
+    MAX_RULES,
+    MovingWindow,
+    Placement,
+    Scheduler,
+    Task,
+    frac,
+    human,
+    human_s,
+    stamp,
+)
+
+WINDOW = Fraction(1, 3)          # the 20 s period both moving cases carry
 
 
 def AB():
@@ -57,42 +78,111 @@ def build_cases():
         )
     ]
 
-# The one knob for test 10: how long the A-only period lasts, in seconds.
-# Everything else about the test follows from it (the title, the regimes, the
-# marker the GUI sweeps). The closed form assumes the period is shorter than any
-# task's minimum time, so with AB()'s 10min minimums anything under 600s works.
-TEST10_WINDOW = 20.0
-TEST10_TOTAL_MIN = 80
-_T10 = MovingWindowPlan(AB(), TEST10_WINDOW)
+
+# --------------------------------------------------------------------------- #
+#  Test 10: one 20 s period, accepting only A, sliding right
+# --------------------------------------------------------------------------- #
+
+TEST10_SPAN = 60
+
+def test10_moving(tp):
+    return [{'start': tp, 'end': tp + WINDOW, 'allowed': ['A'],
+             'label': f"{human_s(20)}: only A"}]
 
 TEST10_TITLE = (
-    f"Test 10 (Algebraic O(1)): the {human_s(TEST10_WINDOW)} A-only period starts at t_p and sweeps right\n"
-    "-> rules are a closed form in t_p; every plan agrees with every earlier plan on t < t_p."
+    f"Test 10 (dynamic rule list): a {human_s(20)} period accepting only A slides right from t_p\n"
+    "-> while it fits inside a slot of A nothing moves; once it reaches B, A stretches over it,\n"
+    "   and once it is inside B, B is suspended and resumes on the far side."
 )
 
-def regime_name(tp):
-    return _T10.regime_at_tp(tp).name
 
-def get_test_10():
-    return (TEST10_TITLE, _T10, TEST10_TOTAL_MIN, TEST10_WINDOW)
+# --------------------------------------------------------------------------- #
+#  Test 11: the same, in a crowded timeline -- and a second period the sliding
+#  one drags along with it
+# --------------------------------------------------------------------------- #
 
-def timeline_of(prefix, cycle, horizon):
-    out, t = [], 0.0
-    for blk in flatten(prefix):
-        d = float(blk['duration'])
-        if d <= 0: continue
-        out.append((t, t + d, blk['name']))
-        t += d
+TEST11_SPAN = 60
+STRETCH_HOME = frac(45)          # where the five-minute stretch waits
+STRETCH_HEAD = frac(1)           # its first minute accepts nobody
+STRETCH_LEN = frac(5)
+
+def tasks11():
+    return [Task("A", priority=40, min_time=4, color="#FF9999"),
+            Task("B", priority=20, min_time=5, color="#99CCFF"),
+            Task("C", priority=20, min_time=5, color="#99FF99"),
+            Task("D", priority=20, min_time=5, color="#FFCC66")]
+
+TEST11_PRE = [{'name': 'MAINTENANCE', 'start': 18, 'duration': 6, 'color': '#CCCCCC'},
+              {'name': 'A', 'start': 40, 'duration': 4, 'color': '#FF9999'}]
+
+TEST11_PERIODS = [{'start': 8, 'end': 12, 'allowed': ['A', 'B']},
+                  {'start': 30, 'end': 34, 'allowed': []},
+                  {'start': 52, 'end': 56, 'allowed': ['A', 'C']}]
+
+def stretch_start(tp):
+    """Where the five-minute stretch sits when the window starts at tp.
+
+    It waits at STRETCH_HOME until the sliding period reaches it, and from then
+    on it starts at t_p -- so at the instant of contact it teleports one window
+    width (20 s) to the left, and is dragged from there on."""
+    return STRETCH_HOME if frac(tp) + WINDOW <= STRETCH_HOME else frac(tp)
+
+def test11_moving(tp):
+    s = stretch_start(tp)
+    return [{'start': tp, 'end': tp + WINDOW, 'allowed': [],
+             'label': f"{human_s(20)}: nothing"},
+            {'start': s, 'end': s + STRETCH_HEAD, 'allowed': [],
+             'label': "1min: nothing"},
+            {'start': s + STRETCH_HEAD, 'end': s + STRETCH_LEN, 'allowed': ['A'],
+             'label': "4min: only A"}]
+
+TEST11_TITLE = (
+    "Test 11: the same sliding 20s period accepting NOTHING, in a crowded timeline\n"
+    "-> pre-placed blocks, three static periods, four tasks; plus a 1min-nothing + 4min-A-only\n"
+    f"   stretch waiting at {stamp(STRETCH_HOME)} that starts at t_p (a 20s teleport left) once the window reaches it."
+)
+
+
+def build_moving_cases():
+    """The cases whose rule list is *dynamic*: instead of constant durations it
+    carries durations affine in the sliding period's position, plus the range of
+    positions each rule list is valid for."""
+    return [
+        (TEST10_TITLE,
+         MovingWindow(AB(), span=TEST10_SPAN, moving=test10_moving),
+         25),
+        (TEST11_TITLE,
+         MovingWindow(tasks11(), span=TEST11_SPAN, moving=test11_moving,
+                      pre_placed=TEST11_PRE, periods=TEST11_PERIODS,
+                      breaks=[STRETCH_HOME - WINDOW]),
+         35),
+    ]
+
+
+# --------------------------------------------------------------------------- #
+#  drawing the timeline a rule list describes
+# --------------------------------------------------------------------------- #
+
+def timeline_of(mw, tp, horizon=None):
+    """What the display shows at position tp: the frozen past, then the rules.
+
+    Nothing here schedules -- `blocks_at` is a binary search over the regimes
+    and some arithmetic. This is the whole point of the dynamic rule list."""
+    horizon = mw.span if horizon is None else frac(horizon)
+    tp = frac(tp)
+    out = [(p.start, p.end, p.task) for p in mw.history_at(tp) if p.end > p.start]
+    prefix, cycle = mw.blocks_at(tp)
+    t = tp
+    for blk in prefix:
         if t >= horizon: return out
-    cycle = flatten(cycle)
+        out.append((t, t + blk['duration'], blk['name']))
+        t += blk['duration']
     if not cycle: return out
     while t < horizon:
         for blk in cycle:
-            d = float(blk['duration'])
-            if d <= 0: continue
-            out.append((t, t + d, blk['name']))
-            t += d
             if t >= horizon: break
+            out.append((t, t + blk['duration'], blk['name']))
+            t += blk['duration']
     return out
 
 def occupant(tl, t):
@@ -100,35 +190,35 @@ def occupant(tl, t):
         if s <= t < e: return n
     return None
 
-def first_disagreement(t1, t2, cut, tol=1e-6):
-    pts = sorted({p for s, e, _ in t1 + t2 for p in (s, e) if -tol <= p <= cut} | {0.0, cut})
+def first_disagreement(t1, t2, cut, tol):
+    pts = sorted({p for s, e, _ in t1 + t2 for p in (s, e) if 0 <= p <= cut} | {frac(0), cut})
     for lo, hi in itertools.pairwise(pts):
         if hi - lo <= tol: continue
-        mid = (lo + hi) / 2.0
+        mid = (lo + hi) / 2
         if occupant(t1, mid) != occupant(t2, mid): return mid
     return None
 
-def whole_cycles_cut(prefix, cycle, horizon):
-    """Largest instant <= horizon that ends a whole number of steady cycles.
+def blocked_at(mw, tp, name, t):
+    """Is `name` refused the instant t -- by a period, or by somebody's block?
 
-    The share check has to land on a cycle boundary: cutting mid-cycle credits
-    whichever task straddles the cut with up to a full slot, which reads as a
-    share error when it is only the truncation. That remainder is the prefix's
-    own overrun, so it grows with the window and a fixed tolerance would
-    silently bound how long the A-only period may be.
-    """
-    lead = sum(float(b['duration']) for b in flatten(prefix))
-    period = sum(float(b['duration']) for b in flatten(cycle))
-    if period <= 0 or lead >= horizon: return horizon
-    return lead + period * int((horizon - lead) // period)
+    A run may legitimately be shorter than its minimum only when something it
+    cannot pass ends it. Everything else that shortens one is a bug."""
+    for p in mw.pre:
+        if p.task != name and p.start <= t < p.end: return True
+    for w in list(mw.moving(frac(tp))) + list(mw.periods):
+        end = w.get('end')
+        if frac(w['start']) <= t and (end is None or end == inf or t < frac(end)):
+            return name not in w['allowed']
+    return False
 
 def service_runs(tl):
+    """Consecutive service of one task, an idling interruption not ending it."""
     runs = []
     for s, e, n in tl:
         if runs and runs[-1][0] == n:
             runs[-1][1] += e - s
-        elif (n != "IDLE" and len(runs) >= 2
-              and runs[-1][0] == "IDLE" and runs[-2][0] == n):
+        elif (n != IDLE and len(runs) >= 2
+              and runs[-1][0] == IDLE and runs[-2][0] == n):
             runs.pop()
             runs[-1][1] += e - s
         else:
@@ -137,95 +227,137 @@ def service_runs(tl):
         runs[-1][2] = e
     return runs
 
-def verify_test10(plan=None, horizon_sec=None, verbose=True, max_report=10):
-    plan = plan or _T10
-    horizon_sec = horizon_sec or TEST10_TOTAL_MIN * 60
-    T, W = plan.period, plan.window
-    failures = []
 
-    def fail(msg):
-        if len(failures) < 500: failures.append(msg)
+# --------------------------------------------------------------------------- #
+#  the checks
+# --------------------------------------------------------------------------- #
 
-    grid = {round(x * 0.5, 6) for x in range(int(horizon_sec * 2) + 1)}
-    for k in range(int(horizon_sec // T) + 2):
-        for off in (plan.stretch_from, plan.t_1, T):
-            for d in (-1e-3, -1e-6, 0.0, 1e-6, 1e-3, 0.25, 1.0):
-                v = k * T + off + d
-                if 0 <= v <= horizon_sec: grid.add(round(v, 6))
-    grid = sorted(grid)
+def check_atomic_block(verbose=True):
+    """The README's own example, verbatim.
 
-    prev_tp, prev_tl = None, None
-    for tp in grid:
-        tl = timeline_of(*plan(tp, to_minutes=False), horizon=horizon_sec + 2 * T)
-        if prev_tl is not None:
-            bad = first_disagreement(prev_tl, tl, prev_tp)
-            if bad is not None:
-                fail(f"frozen past broken at t={bad:.6f}s between t_p={prev_tp}s and "
-                     f"t_p={tp}s ({occupant(prev_tl, bad)} -> {occupant(tl, bad)})")
-        prev_tp, prev_tl = tp, tl
+    "if task B is scheduled at t=0 and a period p that only allows task A is at
+    t=1, and task B has a minimum time of 2, then the whole period p is
+    scheduled with nothing."
 
-    for tp in grid:
-        tl = timeline_of(*plan(tp, to_minutes=False), horizon=horizon_sec + 2 * T)
-        for name, served, end in service_runs(tl):
-            if name == "IDLE" or end > horizon_sec: continue
-            if served < plan.minimum[name] - 1e-6:
-                fail(f"t_p={tp}s: {name} served {served:.3f}s < minimum "
-                     f"{plan.minimum[name]:.0f}s")
-
-    for tp in grid[::13]:
-        tl = timeline_of(*plan(tp, to_minutes=False), horizon=horizon_sec)
-        for (s1, e1, _), (s2, _e2, _) in itertools.pairwise(tl):
-            if abs(e1 - s2) > 1e-9 or e1 < s1:
-                fail(f"t_p={tp}s: timeline is not contiguous at {e1:.6f}s")
-                break
-
-    H = 20 * T
-    for tp in grid[::7]:
-        prefix, cycle = plan(tp, to_minutes=False)
-        cut = whole_cycles_cut(prefix, cycle, H)
-        tl = timeline_of(prefix, cycle, horizon=cut)
-        served = {}
-        for s, e, n in tl:
-            served[n] = served.get(n, 0.0) + max(0.0, min(e, cut) - min(s, cut))
-        idle = served.pop("IDLE", 0.0)
-        total = sum(served.values())
-        for n, d in served.items():
-            if abs(d / total - 0.5) > 2e-3:
-                fail(f"t_p={tp}s: {n} share {d / total:.5f} off 50%")
-                break
-        if idle > W + 1e-6:
-            fail(f"t_p={tp}s: idle {idle:.3f}s exceeds one window")
-
-    for tp in grid:
-        prefix, _cycle = plan(tp, to_minutes=False)
-        served = {}
-        for blk in flatten(prefix):
-            served[blk['name']] = served.get(blk['name'], 0.0) + float(blk['duration'])
-        gap = served.get(plan.a, 0.0) - served.get(plan.b, 0.0)
-        if abs(gap) > 1e-6:
-            fail(f"t_p={tp}s: prefix leaves the debt open, A-B = {gap:.6f}s")
-
-    worst_sym = plan.rule_count()
-    worst = 0
-    for tp in grid:
-        prefix, cycle = plan(tp)
-        worst = max(worst, len(prefix) + len(cycle))
-    if worst > MAX_RULES or worst_sym > MAX_RULES:
-        fail(f"rule list reaches {max(worst, worst_sym)} entries, over the {MAX_RULES} cap")
-
+    It is the one rule a sliding period runs into constantly, so it is worth
+    stating on its own rather than only inside test 10's regimes."""
+    tasks = [Task("A", priority=50, min_time=2, color="#FF9999"),
+             Task("B", priority=50, min_time=2, color="#99CCFF")]
+    plan = Scheduler(tasks).plan(
+        periods=[{'start': 1, 'end': 3, 'allowed': ['A']}], t_now=1,
+        history=[Placement("B", frac(0), frac(1), "#99CCFF")])
+    got = [(s.task, s.duration) for s in plan.prefix]
+    # the whole period empty, and B resuming afterwards with at least the minute
+    # of its minimum it still owes (it may get more: the ban is as long as B's
+    # own minimum, so it also earns B some compensation around itself)
+    ok = (got[:1] == [(IDLE, frac(2))]
+          and len(got) > 1 and got[1][0] == "B" and got[1][1] >= frac(1))
     if verbose:
-        print("--- Test 10 invariants ---")
-        print(f"  grid: {len(grid)} values of t_p over [0, {horizon_sec}]s")
-        print(f"  t_1 = {plan.t_1:.0f}s, stretch begins at {plan.stretch_from:.0f}s, "
-              f"{len(plan.weights)} decay terms "
-              f"({', '.join(f'{w:.4f}' for w in plan.weights)})")
-        print(f"  symbolic rules: {worst_sym} entries; largest instantiation: "
-              f"{worst} (cap {MAX_RULES})")
-        if failures:
-            print(f"  FAIL ({len(failures)}):")
-            for f in failures[:max_report]: print(f"    - {f}")
-        else:
-            print("  PASS: frozen past, minimum times, contiguity, exact shares, "
-                  "exact settlement, bounded idle, O(1) rules")
+        print("--- the atomic block (the README's example) ---")
+        print("  B runs [0,1) of its 2min minimum, then a period accepts only A:")
+        print("  " + " | ".join(f"{n} {human(d)}" for n, d in got[:3]))
+        print("  PASS: the period is scheduled with nothing, and B resumes after it"
+              if ok else "  FAIL: expected the whole period empty, then B")
         print()
+    return [] if ok else ["the atomic block example: the period was not left empty"]
+
+def positions(mw, samples):
+    """Every regime edge, both sides of it, plus an even sweep."""
+    grid = {mw.span * Fraction(i, samples) for i in range(samples)}
+    for r in mw.regimes:
+        for d in (Fraction(0), Fraction(-1, 6000), Fraction(1, 6000)):
+            v = r.lo + d
+            if 0 <= v < mw.span: grid.add(v)
+    return sorted(grid)
+
+def verify_moving(cases=None, samples=240, verbose=True, max_report=6):
+    cases = cases if cases is not None else build_moving_cases()
+    failures = check_atomic_block(verbose)
+    for title, mw, _sweep in cases:
+        fail = lambda m: failures.append(f"{title.splitlines()[0]}: {m}")
+        grid = positions(mw, samples)
+        worst = Fraction(0)
+
+        # 1. the rules ARE the scheduler. Fitted on a few positions, checked here
+        #    on positions they were never fitted on: without this the rule list
+        #    is a guess.
+        for tp in grid:
+            pre, cyc = mw.rules_of(tp)
+            want_pre, want_cyc = mw.blocks_at(tp)
+            if ([s.task for s in pre], [s.task for s in cyc]) != \
+               ([b['name'] for b in want_pre], [b['name'] for b in want_cyc]):
+                fail(f"t_p={stamp(tp)}: the rules give a different sequence than the scheduler")
+                continue
+            for got, want in ((pre, want_pre), (cyc, want_cyc)):
+                for x, y in zip(got, want):
+                    worst = max(worst, abs(x.duration - y['duration']))
+        if worst > mw.tol:
+            fail(f"rules deviate from the scheduler by {human(worst)}, over the {human(mw.tol)} epsilon")
+
+        # 2. everything at t < t_p stays frozen
+        prev_tp, prev_tl = None, None
+        for tp in grid:
+            tl = timeline_of(mw, tp)
+            if prev_tl is not None:
+                bad = first_disagreement(prev_tl, tl, prev_tp, mw.sliver)
+                if bad is not None:
+                    fail(f"frozen past broken at t={stamp(bad)} between t_p={stamp(prev_tp)} "
+                         f"and t_p={stamp(tp)} ({occupant(prev_tl, bad)} -> {occupant(tl, bad)})")
+            prev_tp, prev_tl = tp, tl
+
+        # 3. contiguity, and 4. minimum execution times
+        for tp in grid:
+            tl = timeline_of(mw, tp)
+            for (s1, e1, _), (s2, _e2, _) in itertools.pairwise(tl):
+                if e1 != s2 or e1 < s1:
+                    fail(f"t_p={stamp(tp)}: the timeline is not contiguous at {stamp(e1)}")
+                    break
+            # drawn past the span, so that a run the display simply cuts off is
+            # not mistaken for one the scheduler cut short
+            for name, served, end in service_runs(timeline_of(mw, tp, mw.span * 2)):
+                if name not in mw.minimum or end > mw.span: continue
+                if served < mw.minimum[name] - mw.sliver and not blocked_at(mw, tp, name, end):
+                    fail(f"t_p={stamp(tp)}: {name} served {human(served)} < its minimum "
+                         f"{human(mw.minimum[name])} and nothing stopped it (ends {stamp(end)})")
+                    break
+
+        # 5. the cycle every regime settles into matches the target percentages
+        for r in mw.regimes:
+            total = sum((x.a for x in r.cycle), Fraction(0))
+            if not total: continue
+            got = {}
+            for x in r.cycle:
+                got[x.task] = got.get(x.task, Fraction(0)) + x.a / total
+            for n, p in mw.p.items():
+                if abs(got.get(n, Fraction(0)) - p) > Fraction(1, 1000):
+                    fail(f"regime {r.label}: {n} takes {float(got.get(n, 0)) * 100:.3f}% "
+                         f"of the cycle, target {float(p) * 100:.3f}%")
+                    break
+
+        # 6. the rule list is finite, and 7. reading it is arithmetic
+        if mw.rule_count() > MAX_RULES:
+            fail(f"a regime carries {mw.rule_count()} rules, over the {MAX_RULES} cap")
+        t0 = time.perf_counter()
+        for tp in grid:
+            timeline_of(mw, tp, horizon=frac(tp) + 10)
+        draw = (time.perf_counter() - t0) / len(grid)
+        if draw > 10.0:
+            fail(f"reading the next 10 minutes off the rules takes {draw:.3f}s, over 10s")
+
+        if verbose:
+            print(f"--- {title.splitlines()[0]} ---")
+            print(f"  {len(mw.regimes)} regimes over [0, {stamp(mw.span)}], "
+                  f"at most {mw.rule_count()} rules each (cap {MAX_RULES})")
+            print(f"  checked at {len(grid)} positions of t_p; worst deviation from the "
+                  f"scheduler {human(worst)} (epsilon {human(mw.tol)})")
+            print(f"  the next 10 minutes read off the rules in {draw * 1000:.3f} ms "
+                  f"(budget 10s)")
+            mine = [f for f in failures if f.startswith(title.splitlines()[0])]
+            if mine:
+                print(f"  FAIL ({len(mine)}):")
+                for f in mine[:max_report]: print(f"    - {f.split(': ', 1)[1]}")
+            else:
+                print("  PASS: rules reproduce the scheduler, frozen past, contiguity, "
+                      "minimum times, exact cycle shares, O(1) rules")
+            print()
     return failures

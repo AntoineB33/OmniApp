@@ -1,17 +1,50 @@
 #!/usr/bin/env python3
 """
 scheduler_logic.py
-Core scheduling algorithms, fractions-based math scheduler, and algebraic models.
+The scheduler -- one walk, used by every test -- and the derivation of the
+dynamic (moving-period) rule list on top of it.
+
+The static rule list
+--------------------
+`Scheduler.plan` walks the timeline once and returns a finite `Plan`: a prefix
+of placements followed by a cycle that repeats forever. Reading the schedule at
+any instant is then arithmetic, not scheduling.
+
+The dynamic rule list
+---------------------
+One period may *slide*. Re-running the scheduler at every position of it would
+answer the question but would not *be* a rule list, so `MovingWindow` derives
+one: the plan changes shape only where the sliding period crosses a boundary,
+and between two such positions every duration is affine in the position t_p.
+The output is therefore
+
+    [ (range of positions, prefix rules, cycle rules) ... ]
+
+with a duration written `a + b*(t_p - lo)`. Drawing the timeline at a given
+position is a binary search and some arithmetic -- no scheduling happens, which
+is what lets the display follow the period continuously.
+
+Two things make that derivation honest:
+
+* it calls the *same* `Scheduler.plan` every other test calls -- the moving
+  period is an ordinary period, and the rules are fitted to, then certified
+  against, the scheduler itself;
+* the past is frozen by construction. Everything at t < t_p is the timeline the
+  schedule already committed to (`MovingWindow.base`), and the scheduler is
+  asked only for the continuation from t_p on, with that past handed to it as
+  history. So no position of the period can rewrite an earlier one's past, and
+  the sliding period cannot drag the whole timeline along with it.
 """
 
+import itertools
 from dataclasses import dataclass, field
 from fractions import Fraction
-from math import ceil, exp, inf, log
+from math import exp, inf, log
 
 MAX_RULES = 50
+IDLE = "IDLE"
 IDLE_COLOR = "#F0F0F0"
 FOREVER = None
-DEBT_EPS = 0.5
 
 def frac(x):
     if isinstance(x, Fraction): return x
@@ -172,15 +205,16 @@ class Scheduler:
         pool = [n for n in candidates if n != last] or list(candidates)
         return min(pool, key=lambda n: (v[n], -self.p[n], n))
 
-    def _chunk(self, name, v, candidates, p=None, boost=None, T=None):
+    def _chunk(self, name, v, candidates, p=None, boost=None, T=None, floor=None):
         p = p or self.p
+        floor = self.minimum[name] if floor is None else floor
         others = [v[n] for n in candidates if n != name]
         target = min(others) if others else v[name]
         need = p[name] * (target - v[name])
-        c = max(self.minimum[name], need)
+        c = max(floor, need)
         if boost is not None:
             unit = max(self.minimum[name], p[name] * T)
-            c = min(max(c, self.minimum[name] * boost), unit * boost)
+            c = min(max(c, floor * boost), max(unit * boost, floor))
         if self.resolution: c = ceil_to(c, self.resolution)
         return c
 
@@ -272,14 +306,33 @@ class Scheduler:
                 if room is None or room - b >= self.minimum[n]: return b
         return None
 
-    def plan(self, timeline=(), periods=(), t_now=0, lookback=None, max_rules=MAX_RULES):
+    def _head(self, past, t_now):
+        """The run still in progress at t_now: (task, how long it has served).
+
+        A run survives an idling interruption -- the README's atomic block is
+        about a task's *service*, and a period that accepts nobody suspends it
+        rather than ending it -- so the scan skips IDLE and stops at the first
+        different task.
+        """
+        total, name = Fraction(0), None
+        for p in sorted(past, key=lambda p: p.start, reverse=True):
+            if p.task not in self.p: continue          # IDLE, or somebody else's block
+            if name is None: name = p.task
+            elif p.task != name: break
+            total += min(p.end, t_now) - p.start
+        return name, total
+
+    def plan(self, timeline=(), periods=(), t_now: Fraction | float = 0,
+             lookback=None, max_rules=MAX_RULES, history=()):
         t_now = frac(t_now)
         timeline = sorted(timeline, key=lambda p: p.start)
         periods = self._normalise_periods(periods)
-        self._set_field(timeline, periods)
 
-        past = [p for p in timeline if p.end <= t_now]
+        past = [p for p in timeline if p.end <= t_now] + [p for p in history if p.start < t_now]
         pre = [p for p in timeline if p.end > t_now]
+        # Only obstacles still ahead bend the plan: what already happened is
+        # history, not a blockage the timeline has to be compensated around.
+        self._set_field(pre, periods)
 
         window = frac(lookback) if lookback is not None else self.min_period
         w_start = t_now - window
@@ -298,15 +351,35 @@ class Scheduler:
         v = {n: t + lag[n] - base for n in self.p}
         self._clamp(v, t)
 
+        head_task, head_served = self._head(past, t_now)
+
         slots = []
-        last = None
+        last = head_task
         free_tail = False
         steps, max_steps = 0, 200 * max_rules
 
+        def run_served(n):
+            """How much of its minimum the current run of n has already paid."""
+            total = Fraction(0)
+            for s in reversed(slots):
+                if s.task == n: total += s.duration
+                elif s.task == IDLE: continue
+                else: return total
+            return total + (head_served if n == head_task else Fraction(0))
+
         def owed(n):
-            if n == last and slots and slots[-1].task == n:
-                return max(Fraction(0), self.minimum[n] - slots[-1].duration)
-            return self.minimum[n]
+            return max(Fraction(0), self.minimum[n] - run_served(n))
+
+        def pending():
+            """The task no other task may interrupt: the one running, short of
+            its minimum. This is the README's atomic block, and it is what the
+            sliding period runs into -- a period it is not allowed in suspends
+            it, it does not replace it."""
+            for s in reversed(slots):
+                if s.task == IDLE: continue
+                return s.task if s.task in self.p and owed(s.task) > 0 else None
+            if head_task is not None and owed(head_task) > 0: return head_task
+            return None
 
         while len(slots) < max_rules and steps < max_steps:
             steps += 1
@@ -326,21 +399,35 @@ class Scheduler:
                 continue
 
             limit = self._next_boundary(pre, periods, t)
-            if limit is None and (self.field_end is None or t >= self.field_end):
+            # a run suspended by a period it is banned from is not finished with
+            # the timeline, so the walk may not stop at the last boundary while
+            # it still owes its minimum
+            if (limit is None and (self.field_end is None or t >= self.field_end)
+                    and pending() is None):
                 break
 
-            room = {n: self._blocked_from(n, pre, periods, t) for n in allowed}
-            fitting = [n for n in allowed if room[n] is None or room[n] - t >= owed(n)]
+            held = pending()
+            candidates = ([held] if held in allowed else []) if held is not None else allowed
+
+            room = {n: self._blocked_from(n, pre, periods, t) for n in candidates}
+            # "does the minimum fit?" is a question for a task about to *start*.
+            # A task already running has started, and refusing it the room it has
+            # left would idle the timeline and still leave its run short: it may
+            # be cut anywhere, by whatever it cannot pass.
+            fitting = [n for n in candidates
+                       if room[n] is None or room[n] - t >= owed(n) or run_served(n) > 0]
 
             if not fitting:
                 if limit is None: break
                 gap = limit - t
-                if free_tail and slots:
+                # the tail may only absorb a gap it is itself allowed to run in:
+                # a period that bans it suspends the run, it does not extend it
+                if free_tail and slots and slots[-1].task in allowed:
                     tail = slots[-1]
                     slots[-1] = Slot(tail.task, tail.duration + gap, tail.color)
                     v[tail.task] += gap / self.p[tail.task]
                 else:
-                    self._push(slots, "IDLE", gap, IDLE_COLOR)
+                    self._push(slots, IDLE, gap, IDLE_COLOR)
                     last = None
                     free_tail = False
                 t += gap
@@ -348,7 +435,8 @@ class Scheduler:
 
             name = self._pick(v, fitting, last)
             boost = self._boost(name, t)
-            c = self._chunk(name, v, fitting, boost=boost, T=T)
+            c = self._chunk(name, v, fitting, boost=boost, T=T,
+                            floor=owed(name) or self.minimum[name])
 
             room_limit = room[name]
             if room_limit is not None:
@@ -368,7 +456,7 @@ class Scheduler:
 
         cycle = []
         allowed = self._allowed_at(periods, t)
-        if allowed and len(slots) < max_rules:
+        if allowed and len(slots) < max_rules and pending() is None:
             T = self._period(allowed)
             horizon = t + 4 * T
             while len(slots) < max_rules and t < horizon:
@@ -376,7 +464,8 @@ class Scheduler:
                 if spread <= T: break
                 name = self._pick(v, allowed, last)
                 boost = self._boost(name, t)
-                c = self._chunk(name, v, allowed, boost=boost, T=T)
+                c = self._chunk(name, v, allowed, boost=boost, T=T,
+                                floor=owed(name) or self.minimum[name])
                 self._push(slots, name, c, self.color[name])
                 v[name] += c / (self.p[name] * boost)
                 t += c
@@ -425,205 +514,426 @@ class Scheduler:
             prefix[-1] = Slot(head.task, prefix[-1].duration + head.duration, head.color)
         return prefix, cycle
 
-def flatten(segments):
-    out = []
-    for seg in segments:
-        if 'blocks' in seg:
-            for _ in range(int(seg.get('repeat', 1))):
-                out.extend(seg['blocks'])
+def rule_lines(blocks, indent="- "):
+    return [f"{indent}task {b['name']} {human(b['duration'])}" for b in blocks]
+
+def as_blocks(slots):
+    return [{'name': s.task, 'duration': s.duration, 'color': s.color} for s in slots]
+
+def materialise(plan, horizon):
+    """Unroll a plan into placements, prefix then cycle, up to `horizon`."""
+    out, t = [], plan.start
+    def add(task, d, color):
+        nonlocal t
+        if d <= 0: return
+        if out and out[-1].task == task:
+            out[-1] = Placement(task, out[-1].start, out[-1].end + d, color)
         else:
-            out.append(seg)
+            out.append(Placement(task, t, t + d, color))
+        t += d
+    for s in plan.prefix:
+        if t >= horizon: break
+        add(s.task, s.duration, s.color)
+    if plan.cycle and plan.period > 0:
+        while t < horizon:
+            for s in plan.cycle:
+                if t >= horizon: break
+                add(s.task, s.duration, s.color)
     return out
 
-def rule_lines(segments, indent="- "):
-    lines = []
-    for seg in segments:
-        if 'blocks' in seg:
-            lines.append(f"{indent}repeat {seg['repeat']}x:")
-            for b in seg['blocks']:
-                lines.append(f"{indent}    task {b['name']} {duration_text(b['duration'])}")
-        else:
-            lines.append(f"{indent}task {seg['name']} {duration_text(seg['duration'])}")
-    return lines
+def truncate(placements, t):
+    """The part of a timeline strictly before t -- i.e. the frozen past."""
+    out = []
+    for p in placements:
+        if p.end <= t: out.append(p)
+        elif p.start < t: out.append(Placement(p.task, p.start, t, p.color))
+        else: break
+    return out
 
-def duration_text(d):
-    return d.text() if isinstance(d, Aff) else human(d)
+
+# --------------------------------------------------------------------------- #
+#  the dynamic rule list: one period slides, the rules follow it
+# --------------------------------------------------------------------------- #
 
 @dataclass(frozen=True)
-class Aff:
-    const: float = 0.0
-    coef: float = 0.0
-    var: str = ""
+class Rule:
+    """A slot whose duration is affine in the sliding period's position."""
+    task: str
+    a: Fraction                 # the duration when the period starts at `lo`
+    b: Fraction                 # how much of the position it absorbs
+    color: str = "#DDDDDD"
 
-    def value(self, env):
-        return self.const + (self.coef * env[self.var] if self.var else 0.0)
+    def at(self, tp, lo):
+        return self.a + self.b * (tp - lo)
 
-    def text(self):
-        if not self.var or abs(self.coef) < 1e-12:
-            return human_s(self.const)
-        mag = self.var if abs(abs(self.coef) - 1) < 1e-12 else f"{abs(self.coef):.4g}*{self.var}"
-        if abs(self.const) < 1e-12:
-            return mag if self.coef > 0 else f"-{mag}"
-        if self.coef > 0:
-            return (f"{mag} + {human_s(self.const)}" if self.const > 0
-                    else f"{mag} - {human_s(-self.const)}")
-        return (f"{human_s(self.const)} - {mag}" if self.const > 0
-                else f"-{human_s(-self.const)} - {mag}")
+    def text(self, lo):
+        if not self.b: return f"{self.task} {human(self.a)}"
+        sign = "+" if self.b > 0 else "-"
+        factor = "" if abs(self.b) == 1 else f"{float(abs(self.b)):.4g}*"
+        return f"{self.task} {human(self.a)} {sign} {factor}(t_p - {stamp(lo)})"
 
 @dataclass
 class Regime:
-    name: str
-    lo: float
-    hi: float
+    """The rules while the sliding period starts in [lo, hi) -- or in (lo, hi)
+    when `lo_open`, i.e. when the breakpoint itself still obeys the previous
+    rules."""
+    lo: Fraction
+    hi: Fraction
     prefix: list
     cycle: list
+    lo_open: bool = False
+    eps: Fraction = Fraction(0)
 
-def resolve(segments, env):
-    out = []
-    for seg in segments:
-        if 'blocks' in seg:
-            n = int(env[seg['repeat']]) if isinstance(seg['repeat'], str) else int(seg['repeat'])
-            if n <= 0: continue
-            out.append({'repeat': n,
-                        'blocks': [{'name': b['name'], 'duration': b['duration'].value(env),
-                                    'color': b['color']} for b in seg['blocks']]})
-        else:
-            out.append({'name': seg['name'], 'duration': seg['duration'].value(env),
-                        'color': seg['color']})
-    return out
+    @property
+    def label(self):
+        if self.hi == self.lo: return f"exactly {stamp(self.lo)}"
+        return f"{'(' if self.lo_open else '['}{stamp(self.lo)}, {stamp(self.hi)})"
 
-class MovingWindowPlan:
-    def __init__(self, tasks, window_sec=20.0, eps=DEBT_EPS):
-        sched = Scheduler(tasks)
-        names = [t.name for t in tasks]
-        if len(names) != 2:
-            raise ValueError("the closed form covers exactly two tasks")
-        a, b = names
-        if sched.p[a] != sched.p[b]:
-            raise ValueError("the closed form covers equal shares only")
+    @property
+    def prefix_text(self):
+        return " | ".join(r.text(self.lo) for r in self.prefix) or "(none)"
 
-        self.sched = sched
-        self.a, self.b = a, b
-        self.color = {a: tasks[0].color, b: tasks[1].color, "IDLE": IDLE_COLOR}
+    @property
+    def cycle_text(self):
+        return " | ".join(r.text(self.lo) for r in self.cycle) + " | repeat"
 
-        self.period = float(sched.min_period) * 60.0                     
-        self.block = {n: float(sched.p[n]) * self.period for n in names}  
-        self.minimum = {n: float(sched.minimum[n]) * 60.0 for n in names}  
-        self.tau = float(sched.tau) * 60.0
-        self.window = float(window_sec)
+    def blocks(self, tp):
+        """The rules evaluated at position tp -> (prefix blocks, cycle blocks).
 
-        if self.window >= min(self.minimum.values()):
-            raise ValueError("the closed form assumes the window is shorter than any minimum")
+        A rule whose duration has shrunk to nothing at this position is dropped
+        on the same epsilon the fit used, so the rules and the scheduler agree
+        on when a slot has stopped existing rather than on a hair's width -- and
+        the neighbours it was separating then become one slot, exactly as the
+        scheduler's own run of the same task is one slot."""
+        def out(rules):
+            blocks = []
+            for r in rules:
+                d = max(Fraction(0), r.at(tp, self.lo))
+                if d <= self.eps: continue
+                if blocks and blocks[-1]['name'] == r.task: blocks[-1]['duration'] += d
+                else: blocks.append({'name': r.task, 'duration': d, 'color': r.color})
+            return blocks
+        return out(self.prefix), out(self.cycle)
 
-        self.T_A = self.block[a]
-        self.stretch_from = self.T_A - self.window
-        self.t_1 = self.T_A
+class MovingWindow:
+    """The rule list of a schedule disturbed by periods that slide with t_p.
 
-        self.weights = self._weights(eps)
+    `moving(tp)` returns the periods at position tp -- the sliding ones. They
+    are ordinary periods, handed to the ordinary scheduler; only their position
+    is a parameter. `periods` and `pre_placed` are the static environment, and
+    they are part of the committed timeline the past is read off.
+    """
+
+    # A regime is accepted only if the affine fit reproduces the scheduler at
+    # these positions inside it (as fractions of the regime's width). The ones
+    # crowding the two edges are the ones that matter: a breakpoint a hair
+    # inside a range is exactly what a comfortable spread of probes misses.
+    PROBES = (Fraction(1, 64), Fraction(1, 8), Fraction(1, 3), Fraction(1, 2),
+              Fraction(5, 8), Fraction(7, 8), Fraction(15, 16), Fraction(63, 64))
+    SAMPLES = 8
+    MAX_ROUNDS = 8
+
+    def __init__(self, tasks, span, moving, pre_placed=(), periods=(), breaks=(),
+                 tol=Fraction(1, 120), **kw):
+        self.tasks = list(tasks)
+        self.span = frac(span)
+        self.moving = moving
+        self.periods = list(periods)
+        self.pre = [Placement(p['name'], frac(p['start']), frac(p['start']) + frac(p['duration']),
+                              p.get('color', '#CCCCCC')) for p in pre_placed]
+        self.breaks = sorted(frac(b) for b in breaks)
+        self.tol = frac(tol)
+        # A slot this short is not a slot, it is rounding: the schedule may pass
+        # through one on its way from "A ends here" to "A is gone", and forcing
+        # a regime of its own on every one of them would describe the rounding
+        # rather than the schedule. This is the README's rounding epsilon.
+        self.sliver = self.tol / 4
+        self.kw = kw
+        self.horizon = 2 * self.span
+        self.sched = Scheduler(self.tasks, **kw)
+        self.minimum = dict(self.sched.minimum)
+        self.p = dict(self.sched.p)
+        self._cache = {}
+        # how far past t_p the sliding periods reach, anywhere in the sweep: the
+        # display starts the sweep over when the period itself -- not merely its
+        # start -- has reached the end of the timeline
+        self.reach = max(max(self._offsets(self.span * Fraction(i, 8)))
+                         for i in range(8))
+        self.base = self._base()
         self.regimes = self._build()
 
-    def _weights(self, eps):
-        decay = self.period / self.tau
-        if decay <= 0:
-            return [1.0]
-        k = ceil(log(max(self.window / eps, 1.0)) / decay)
-        k = max(1, min(k, MAX_RULES // 4))
-        raw = [exp(-i * decay) for i in range(k)]
-        total = sum(raw)
-        return [r / total for r in raw]
+    # ---------------- the committed timeline, and the plan from t_p ---------- #
 
-    def _blk(self, name, duration):
-        return {'name': name, 'duration': duration, 'color': self.color[name]}
+    def _base(self):
+        """The timeline the schedule committed to before the period reached it.
 
-    def _cycle(self):
-        return [self._blk(self.a, Aff(self.block[self.a])),
-                self._blk(self.b, Aff(self.block[self.b]))]
+        This is what "everything at t < t_p stays frozen" *is*: the past is read
+        off one fixed timeline, so no position of the sliding period can rewrite
+        an earlier one's past.
+        """
+        plan = Scheduler(self.tasks, **self.kw).plan(
+            timeline=self.pre, periods=self.periods, t_now=0)
+        return materialise(plan, self.horizon)
 
-    def _frozen_past(self):
-        return {'repeat': 'n', 'blocks': self._cycle()}
+    def history_at(self, tp):
+        return truncate(self.base, frac(tp))
+
+    def plan_at(self, tp):
+        tp = frac(tp)
+        if tp in self._cache: return self._cache[tp]
+        plan = Scheduler(self.tasks, **self.kw).plan(
+            timeline=[p for p in self.pre if p.end > tp],
+            periods=list(self.moving(tp)) + self.periods,
+            t_now=tp,
+            history=self.history_at(tp))
+        self._cache[tp] = plan
+        return plan
+
+    # ---------------- breakpoints ---------------- #
+
+    @staticmethod
+    def _edges(w):
+        end = w.get('end', FOREVER)
+        out = [frac(w['start'])]
+        if end is not FOREVER and end != inf: out.append(frac(end))
+        return out
+
+    def _offsets(self, tp):
+        """Where the *sliding* edges sit relative to t_p.
+
+        A period listed as moving may still be standing still at this position
+        (test 11's five-minute stretch waits at home until the window reaches
+        it), and its distance to t_p is then not an offset at all -- it is just
+        the distance to a fixed boundary. Sampling and keeping what every sample
+        agrees on is what tells the two apart; three odd spacings, because a
+        standing edge whose distance happens to shift by exactly the spacing
+        would pass a single one (a 1min spacing is fooled by a 1min period)."""
+        out = {e - tp for w in self.moving(tp) for e in self._edges(w)}
+        for d in (Fraction(1, 7), Fraction(3, 7), Fraction(5, 7)):
+            out &= {e - (tp + d) for w in self.moving(tp + d) for e in self._edges(w)}
+        return {Fraction(0)} | out
+
+    def _fixed_bounds(self, tp):
+        """Boundaries a sliding edge can reach: the committed timeline's own
+        slots, the static periods, and the plan the scheduler draws from t_p."""
+        out = {p.start for p in self.base} | {p.end for p in self.base}
+        out |= {p.start for p in self.pre} | {p.end for p in self.pre}
+        for w in self.periods: out |= set(self._edges(w))
+        for w in self.moving(tp): out |= set(self._edges(w))
+        plan = self.plan_at(tp)
+        acc = plan.start
+        for s in list(plan.prefix) + list(plan.cycle):
+            acc += s.duration
+            out.add(acc)
+        return out
+
+    def _edges_of(self, tp, lo, hi):
+        """The positions at which a sliding edge reaches a boundary of the
+        timeline -- the only places the plan can change shape."""
+        out = set()
+        for o in self._offsets(tp):
+            for b in self._fixed_bounds(tp):
+                c = b - o
+                if lo < c < hi: out.add(c)
+        return out
+
+    def _candidates(self, lo, hi, n):
+        out = {b for b in self.breaks if lo < b < hi}
+        for i in range(1, n):
+            out |= self._edges_of(lo + Fraction(i, n) * (hi - lo), lo, hi)
+        return out
+
+    # ---------------- fitting one regime ---------------- #
+
+    def _norm(self, slots):
+        out = []
+        for s in slots:
+            if s.duration <= self.sliver: continue
+            if out and out[-1].task == s.task:
+                out[-1] = Slot(s.task, out[-1].duration + s.duration, s.color)
+            else: out.append(s)
+        return out
+
+    def rules_of(self, tp):
+        """The scheduler's own answer at tp, as (prefix, cycle) slot lists."""
+        plan = self.plan_at(tp)
+        return self._norm(plan.prefix), self._norm(plan.cycle)
+
+    def _shape(self, tp):
+        pre, cyc = self.rules_of(tp)
+        return ([s.task for s in pre], [s.task for s in cyc])
+
+    def _close(self, got, want):
+        return len(got) == len(want) and all(abs(x - y) <= self.tol for x, y in zip(got, want))
+
+    def _fit(self, lo, hi):
+        """Affine rules valid on [lo, hi), or None if none are.
+
+        Two positions determine the affine form; the others check it. A regime
+        is never accepted on the strength of the samples that built it -- if the
+        plan does not in fact vary affinely with the period across the whole
+        range, the fit is rejected and the range is split further."""
+        if hi <= lo: return None
+        t1, t2 = lo + (hi - lo) / 4, lo + 3 * (hi - lo) / 4
+        pre1, cyc1 = self.rules_of(t1)
+        pre2, cyc2 = self.rules_of(t2)
+        if ([s.task for s in pre1], [s.task for s in cyc1]) != \
+           ([s.task for s in pre2], [s.task for s in cyc2]): return None
+
+        def rules(s1, s2):
+            out = []
+            for x, y in zip(s1, s2):
+                b = (y.duration - x.duration) / (t2 - t1)
+                out.append(Rule(x.task, x.duration + b * (lo - t1), b, x.color))
+            return out
+
+        regime = Regime(lo, hi, rules(pre1, pre2), rules(cyc1, cyc2), eps=self.sliver)
+        probes = [lo + f * (hi - lo) for f in self.PROBES]
+        # and the top edge itself: a breakpoint in the last hundredth of a range
+        # is invisible to any fixed spread of probes, and a range is claimed
+        # right up to its `hi`
+        if hi - lo > 2 * self.MIN_RANGE: probes.append(hi - self.MIN_RANGE)
+        for tp in probes:
+            if not self._reproduces(regime, tp): return None
+        return regime
+
+    def _reproduces(self, regime, tp):
+        pre, cyc = self.rules_of(tp)
+        want_pre, want_cyc = regime.blocks(tp)
+        return (([s.task for s in pre], [s.task for s in cyc])
+                == ([b['name'] for b in want_pre], [b['name'] for b in want_cyc])
+                and self._close([s.duration for s in pre], [b['duration'] for b in want_pre])
+                and self._close([s.duration for s in cyc], [b['duration'] for b in want_cyc]))
+
+    MIN_RANGE = Fraction(1, 6000)       # 0.01 s: below this a range is a point
+
+    def _split(self, lo, hi, n=6):
+        """The breakpoints inside a range that would not fit.
+
+        They are found, not guessed. Two kinds exist and both have to be looked
+        for: the plan may change *shape* (a task drops out of the prefix, two
+        swap), which sampling and bisecting on the shape locates exactly; or it
+        may keep its shape and change *slope*, when a cap or a boundary starts
+        binding a duration that was free before. The second kind is invisible to
+        a shape test, so it is bisected on the fit itself."""
+        if hi - lo <= self.MIN_RANGE: return set()
+        # strictly inside: hi belongs to the next regime, so sampling it would
+        # "find" a breakpoint at the range's own edge in every failing range
+        xs = [lo + Fraction(i, n) * (hi - lo) for i in range(n)]
+        shapes = [self._shape(x) for x in xs]
+        out = set()
+        for (a, sa), (b, sb) in zip(zip(xs, shapes), zip(xs[1:], shapes[1:])):
+            if sa != sb:
+                out.add(self._bisect(a, b, lambda x, s=sa: self._shape(x) == s)[1])
+        if out: return out
+        m, _ = self._bisect(lo, hi, lambda x: self._fit(lo, x) is not None, rounds=14)
+        return {m} if lo < m < hi else {lo + (hi - lo) / 2}
+
+    def _bisect(self, lo, hi, holds, rounds=32):
+        """(last position where `holds` is true, first where it is not)."""
+        for _ in range(rounds):
+            mid = (lo + hi) / 2
+            if holds(mid): lo = mid
+            else: hi = mid
+        return lo, hi
 
     def _build(self):
-        a, b, W, T = self.a, self.b, self.window, self.period
-        T_A, T_B = self.block[a], self.block[b]
+        edges = sorted({frac(0), self.span} | self._candidates(frac(0), self.span, self.SAMPLES))
+        for _ in range(self.MAX_ROUNDS):
+            out, failed = [], []
+            for lo, hi in itertools.pairwise(edges):
+                if hi <= lo: continue
+                fit = self._fit(lo, hi)
+                if fit is None: failed.append((lo, hi))
+                else: out.append(fit)
+            if not failed:
+                return self._settle_edges(self._merge(out))
+            extra = set()
+            for lo, hi in failed:
+                extra |= self._split(lo, hi)
+            if extra <= set(edges):
+                raise ValueError(
+                    "no affine rule describes the sliding period on "
+                    + ", ".join(f"[{stamp(a)}, {stamp(b)})" for a, b in failed[:4]))
+            edges = sorted(set(edges) | extra)
+        raise ValueError(
+            f"the dynamic rule list did not settle: {len(failed)} range(s) still "
+            f"unfitted, e.g. [{stamp(failed[0][0])}, {stamp(failed[0][1])})")
 
-        # No prefix: the window sits inside A's own slot, so the frozen past is
-        # n copies of the untouched cycle and the cycle alone already states it.
-        r1 = Regime("window inside A -> untouched cycle", 0.0, self.stretch_from,
-                    [], self._cycle())
+    def _merge(self, regimes):
+        """Adjacent ranges that turn out to obey the same rules are one rule.
 
-        p2 = [self._frozen_past(), self._blk(a, Aff(T_A, 1.0, 'e'))]
-        for k, w in enumerate(self.weights):
-            p2.append(self._blk(b, Aff(T_B, w, 'e')))
-            if k != len(self.weights) - 1:
-                p2.append(self._blk(a, Aff(T_A)))
-        r2 = Regime("window on the A/B seam -> A absorbs it, B repaid",
-                    self.stretch_from, self.t_1, p2, self._cycle())
-
-        p3 = [self._frozen_past(),
-              self._blk(a, Aff(T_A)),
-              self._blk(b, Aff(-T_A, 1.0, 't')),      
-              self._blk("IDLE", Aff(W)),
-              self._blk(b, Aff(T_A + T_B, -1.0, 't'))]  
-        r3 = Regime("window inside B -> B pauses and resumes", self.t_1, T, p3, self._cycle())
-
-        return [r1, r2, r3]
-
-    def phase(self, tp_sec):
-        tp = max(0.0, float(tp_sec))
-        n = int(tp // self.period)
-        return n, tp - n * self.period
-
-    def regime_at(self, t):
-        for r in self.regimes:
-            if t <= r.hi: return r
-        return self.regimes[-1]
-
-    def regime_at_tp(self, tp_sec):
-        return self.regime_at(self.phase(tp_sec)[1])
-
-    def instantiate(self, tp_sec, to_minutes=True):
-        n, t = self.phase(tp_sec)
-        env = {'n': n, 't': t, 'e': t + self.window - self.T_A}
-        r = self.regime_at(t)
-
-        prefix = resolve(r.prefix, env)
-        cycle = resolve(r.cycle, env)
-
-        prefix = [s for s in prefix if 'blocks' in s or s['duration'] > 1e-12]
-        if prefix and 'blocks' not in prefix[-1] and cycle and prefix[-1]['name'] == cycle[0]['name']:
-            cycle = cycle[1:] + cycle[:1]
-
-        if to_minutes:
-            conv = lambda blocks: [dict(x, duration=frac(x['duration'] / 60.0)) for x in blocks]
-            prefix = [{'repeat': s['repeat'], 'blocks': conv(s['blocks'])} if 'blocks' in s
-                      else conv([s])[0] for s in prefix]
-            cycle = conv(cycle)
-        return prefix, cycle
-
-    __call__ = instantiate
-
-    def lines(self):
-        out = ["Parameters (all read from the scheduler):",
-               (f"  T = {human_s(self.period)}   W = {human_s(self.window)}   "
-                f"tau = {human_s(self.tau)}   T_A = T_B = {human_s(self.T_A)}"),
-               "  n = floor(t_p / T)          number of frozen cycles before the window",
-               "  t = t_p - n*T               phase of the window inside its cycle",
-               "  e = t + W - T_A             overrun the window forces on A",
-               f"  decay weights w_k = exp(-k*T/tau) normalised, k < {len(self.weights)}: "
-               + ", ".join(f"{w:.4f}" for w in self.weights),
-               ""]
-        for i, r in enumerate(self.regimes, 1):
-            lo = "0" if r.lo == 0 else human_s(r.lo)
-            rel = "<=" if r.lo == 0 else "<"
-            out.append(f"Regime {i}  ({lo} {rel} t <= {human_s(r.hi)}): {r.name}")
-            if r.prefix:
-                out.append("  Prefix:")
-                out.extend(rule_lines(r.prefix, "    "))
-            out.append("  Cycle:")
-            out.extend(rule_lines(r.cycle, "    "))
-            out.append("    repeat")
-            out.append("")
+        A candidate breakpoint is only ever a *guess* that the plan might change
+        there; most turn out not to be breakpoints at all, and keeping them
+        would pad the rule list with copies of the same rule. The test is
+        analytic -- same tasks, same slopes, and the earlier rule already
+        evaluating to the later one's constant at the junction -- rather than
+        another round of probes, which would happily merge across a breakpoint
+        sitting in the last hundredth of a range."""
+        out = []
+        for r in regimes:
+            prev = out[-1] if out else None
+            same = (prev is not None and prev.hi == r.lo
+                    and len(prev.prefix) == len(r.prefix)
+                    and len(prev.cycle) == len(r.cycle)
+                    and all(x.task == y.task and x.b == y.b
+                            and abs(x.at(r.lo, prev.lo) - y.a) <= self.tol
+                            for x, y in zip(prev.prefix + prev.cycle, r.prefix + r.cycle)))
+            if same:
+                assert prev is not None
+                out[-1] = Regime(prev.lo, r.hi, prev.prefix, prev.cycle, eps=self.sliver)
+            else:
+                out.append(r)
         return out
+
+    def _settle_edges(self, regimes):
+        """Decide which side of a breakpoint the breakpoint itself is on.
+
+        A regime is fitted from positions strictly inside it, so nothing yet
+        says whether the instant the plan changes at obeys the new rules or the
+        old ones. Occasionally it obeys neither -- the period landing exactly on
+        a boundary is its own case -- and then that single position gets a rule
+        list of its own rather than being quietly rounded to a neighbour."""
+        out = [regimes[0]]
+        for prev, r in itertools.pairwise(regimes):
+            if self._reproduces(r, r.lo):
+                out.append(r)
+                continue
+            r.lo_open = True
+            if not self._reproduces(prev, r.lo):
+                pre, cyc = self.rules_of(r.lo)
+                const = lambda slots: [Rule(s.task, s.duration, Fraction(0), s.color)
+                                       for s in slots]
+                out.append(Regime(r.lo, r.lo, const(pre), const(cyc), eps=self.sliver))
+            out.append(r)
+        return out
+
+    # ---------------- lookup: no scheduling, ever ---------------- #
+
+    def regime_at(self, tp):
+        tp = frac(tp) % self.span
+        lo, hi = 0, len(self.regimes) - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            r = self.regimes[mid]
+            if r.lo < tp or (r.lo == tp and not r.lo_open): lo = mid
+            else: hi = mid - 1
+        return self.regimes[lo]
+
+    def blocks_at(self, tp):
+        return self.regime_at(tp).blocks(frac(tp) % self.span)
 
     def rule_count(self):
         return max(len(r.prefix) + len(r.cycle) for r in self.regimes)
+
+    def lines(self):
+        out = ["The sliding period's position is t_p; every duration below is affine in it.",
+               (f"Timeline span {stamp(self.span)}, {len(self.regimes)} regimes, "
+               f"at most {self.rule_count()} rules each (cap {MAX_RULES})."),
+               "Everything at t < t_p is frozen and is not restated here.",
+               ""]
+        for i, r in enumerate(self.regimes, 1):
+            out.append(f"Regime {i}  while t_p in {r.label}:")
+            out.append(f"  Prefix: {r.prefix_text}")
+            out.append(f"  Cycle:  {r.cycle_text}")
+        return out
