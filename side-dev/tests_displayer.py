@@ -250,7 +250,12 @@ class MovingCasePanel:
 
     Every frame advances t_p and evaluates the rule list at the new position:
     a binary search over the regimes and some arithmetic. The scheduler is not
-    run again -- it ran once, when the rule list was built."""
+    run again -- it ran once, when the rule list was built.
+
+    The user drives t_p directly too: a click on the timeline puts it under the
+    pointer (pausing the sweep, since a position the user chose is not one the
+    sweep may take back) and a drag keeps it there. Scrubbing is the same
+    substitution the sweep does, so it costs the same nothing."""
 
     ROW_H = 40
     ROW_SPACING = 20
@@ -263,7 +268,8 @@ class MovingCasePanel:
         self.title = title
         self.tag = f"moving{id(self)}"
         self.tp = frac(0)
-        self.playing = True
+        self.playing = False
+        self.scrubbing = False
         # the displayed timeline is the case's span, whatever the window is
         # sized to: only the scale changes with the screen, never the timeline
         self.row_duration = mw.span
@@ -275,9 +281,13 @@ class MovingCasePanel:
         self.btn_copy = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
                                   command=lambda: copy_dynamic_rules(root, title, mw))
         canvas.create_window(15, y, window=self.btn_copy, anchor="nw")
-        self.btn_play = tk.Button(canvas, text="Pause", width=6, cursor="hand2",
+        self.btn_play = tk.Button(canvas, text="Play", width=6, cursor="hand2",
                                   command=self._toggle)
         canvas.create_window(15, y + 48, window=self.btn_play, anchor="nw")
+
+        canvas.bind("<Button-1>", self._on_press, add="+")
+        canvas.bind("<B1-Motion>", self._on_drag, add="+")
+        canvas.bind("<ButtonRelease-1>", self._on_release, add="+")
 
         head = canvas.create_text(self.MARGIN_LEFT, y, text=title, font=("Arial", 11, "bold"), anchor="nw")
         self.y_status = canvas.bbox(head)[3] + 2
@@ -289,6 +299,49 @@ class MovingCasePanel:
     def _toggle(self):
         self.playing = not self.playing
         self.btn_play.config(text="Pause" if self.playing else "Play")
+
+    # ---------------- the user's own hand on t_p ----------------------------- #
+
+    # The pointer may stray a little above or below the bar and still mean it:
+    # the t_p marker and the period outline are drawn outside the row itself.
+    GRAB_PAD = 12
+
+    def _row_under(self, cy):
+        """Which of this panel's rows the pointer is on, or None for neither."""
+        for row in range(self.rows):
+            y1 = self._row_y(row)
+            if y1 - self.GRAB_PAD <= cy <= y1 + self.ROW_H + self.GRAB_PAD:
+                return row
+        return None
+
+    def _tp_at(self, cx, row):
+        minutes = row * self.row_duration + frac(cx - self.MARGIN_LEFT) / frac(self.px_per_min)
+        return min(max(minutes, frac(0)), self.mw.span)
+
+    def _canvas_xy(self, event):
+        return self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+
+    def _on_press(self, event):
+        cx, cy = self._canvas_xy(event)
+        row = self._row_under(cy)
+        if row is None: return
+        if not (self.MARGIN_LEFT <= cx <= self._x(self.row_duration)): return
+        self.scrubbing = True
+        if self.playing: self._toggle()   # a position the user chose is not one
+        self.tp = self._tp_at(cx, row)    # the sweep may take back
+        self._draw()
+
+    def _on_drag(self, event):
+        if not self.scrubbing: return
+        cx, cy = self._canvas_xy(event)
+        # once the drag has started it owns the pointer: leaving the row band
+        # sideways or vertically drags along the row it began on, clamped
+        row = self._row_under(cy)
+        self.tp = self._tp_at(cx, row if row is not None else int(self.tp // self.row_duration))
+        self._draw()
+
+    def _on_release(self, _event):
+        self.scrubbing = False
 
     def _x(self, minutes):
         return self.MARGIN_LEFT + float(minutes) * self.px_per_min
