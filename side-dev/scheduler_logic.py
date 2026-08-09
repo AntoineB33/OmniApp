@@ -388,11 +388,24 @@ class Scheduler:
 
             block = self._active_pre(pre, t)
             if block:
-                d = block.end - t
-                self._push(slots, block.task, d, block.color)
-                if block.task in v: v[block.task] += d / self.p[block.task]
-                t = block.end
-                last = block.task
+                # A pre-placed block is locked to its own coordinates, but a
+                # period still dictates what may RUN there: where the block's
+                # own task is refused, the block is suspended and resumes on the
+                # far side -- exactly as a scheduled run is -- instead of
+                # running through the period or being moved off its slot. So the
+                # block is walked edge by edge, not swallowed whole. A block
+                # owned by nobody (MAINTENANCE) is not one of the tasks the
+                # allow-lists speak about, and no period suspends it.
+                nxt = self._next_boundary((), periods, t)
+                stop = block.end if nxt is None else min(block.end, nxt)
+                d = stop - t
+                if block.task not in self.p or block.task in allowed:
+                    self._push(slots, block.task, d, block.color)
+                    if block.task in v: v[block.task] += d / self.p[block.task]
+                    last = block.task
+                else:
+                    self._push(slots, IDLE, d, IDLE_COLOR)
+                t = stop
                 free_tail = False
                 self._relax(v, 0, T, allowed)
                 self._clamp(v, t)

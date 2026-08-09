@@ -274,7 +274,7 @@ def verify_moving(cases=None, samples=240, verbose=True, max_report=6):
     cases = cases if cases is not None else build_moving_cases()
     failures = check_atomic_block(verbose)
     for title, mw, _sweep in cases:
-        fail = lambda m: failures.append(f"{title.splitlines()[0]}: {m}")
+        fail = lambda m, title=title: failures.append(f"{title.splitlines()[0]}: {m}")
         grid = positions(mw, samples)
         worst = Fraction(0)
 

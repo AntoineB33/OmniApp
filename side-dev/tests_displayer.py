@@ -271,6 +271,7 @@ class MovingCasePanel:
         self.rows = 1
         self.step = mw.span / (sweep_seconds * self.FPS)
 
+        assert tk is not None
         self.btn_copy = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
                                   command=lambda: copy_dynamic_rules(root, title, mw))
         canvas.create_window(15, y, window=self.btn_copy, anchor="nw")
