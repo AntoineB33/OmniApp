@@ -509,18 +509,50 @@ class SchedulerPlanner(
         // Safety valve: slots are merged, so their count no longer bounds the walk.
         val maxSteps = MAX_STEPS_PER_RULE * maxRules
 
+        // `side-dev/scheduler_logic.py` `_head`: the run still in progress at `nowMillis`, and how much of its
+        // minimum it has already served. The walk continues that run rather than starting a fresh one.
+        val head = headRun(past)
+        walk.serve(head?.first, 0.0) // `last = head_task`: the head is not picked twice in a row
+
         /**
-         * How much of its minimum a slot of [id] would still owe. Consecutive slots of one task are one slot,
-         * so a task that is already running has paid its minimum and may be cut anywhere; only a slot that is
-         * *starting* owes the whole of it.
+         * `run_served`: how much of its minimum the *current run* of [id] has already paid. Consecutive slots
+         * of one task are one slot, and an idle hole **suspends** a run rather than ending it — the README's
+         * atomic block is about a task's service, and a period that accepts nobody does not serve anyone.
+         *
+         * (One conflation with the reference: a block owned by **nobody** is a `null` slot here, exactly like
+         * an idle hole, so it suspends a run where the reference would end it. Both are "nothing of ours was
+         * served", and the case only differs when such a block lands mid-minimum.)
          */
-        fun owed(id: TaskId): Long {
-            val tail = slots.lastOrNull()
-            val minimum = minimumOf[id] ?: 0L
-            if (walk.last == id && tail != null && tail.taskId == id) {
-                return (minimum - tail.durationMillis).coerceAtLeast(0L)
+        fun runServed(id: TaskId): Long {
+            var total = 0L
+            for (i in slots.indices.reversed()) {
+                val slot = slots[i]
+                when (slot.taskId) {
+                    id -> total += slot.durationMillis
+                    null -> Unit // idle: skip it and keep scanning back
+                    else -> return total
+                }
             }
-            return minimum
+            return total + if (head != null && head.first == id) head.second else 0L
+        }
+
+        /** What a slot of [id] starting here would still owe of its minimum. */
+        fun owed(id: TaskId): Long = ((minimumOf[id] ?: 0L) - runServed(id)).coerceAtLeast(0L)
+
+        /**
+         * `side-dev/scheduler_logic.py` `pending`: the task **no other task may interrupt** — the one running,
+         * still short of its minimum — or null when nothing is owed. This is the README's atomic block,
+         * verbatim ("if task B is scheduled at t=0 and a period p that only allows task A is at t=1, and task B
+         * has a minimum time of 2, then the whole period p is scheduled with nothing"), and it is the rule a
+         * *sliding* period runs into constantly: a period the held task is not allowed in **suspends** it, it
+         * does not hand the timeline to somebody else.
+         */
+        fun pending(): TaskId? {
+            for (i in slots.indices.reversed()) {
+                val id = slots[i].taskId ?: continue
+                return if (owed(id) > 0L) id else null
+            }
+            return head?.first?.takeIf { owed(it) > 0L }
         }
 
         // --- phase 1: the disturbed part of the timeline ---
@@ -531,10 +563,21 @@ class SchedulerPlanner(
 
             val block = blockAt(ahead, t)
             if (block != null) { // cannot be moved
-                val d = block.endMillis - t
-                pushSlot(slots, block.taskId, d)
-                walk.serve(block.taskId, d.toDouble(), boost = 1.0)
-                t = block.endMillis
+                // A pre-placed block is locked to its own coordinates, but a period still dictates what may RUN
+                // there: where the block's own task is refused, the block is **suspended** and resumes on the
+                // far side, exactly as a scheduled run is. So it is walked edge by edge, not swallowed whole.
+                // A block owned by nobody is not one of the tasks the allow-lists speak about, and no period
+                // suspends it.
+                val stop = minOf(block.endMillis, nextBoundary(emptyList(), windows, t) ?: block.endMillis)
+                val d = stop - t
+                if (block.taskId == null || block.taskId in allowed) {
+                    pushSlot(slots, block.taskId, d)
+                    walk.serve(block.taskId, d.toDouble(), boost = 1.0)
+                } else {
+                    // Suspended: an idle hole that does NOT break the run (see [runServed]), so `last` stands.
+                    pushSlot(slots, null, d)
+                }
+                t = stop
                 freeTail = false
                 walk.relax(0.0, period, allowed) // no forgetting here: the block is not ours
                 walk.clamp(t - nowMillis)
@@ -543,17 +586,30 @@ class SchedulerPlanner(
 
             val limit = nextBoundary(ahead, windows, t)
             val end = fieldEndMillis
-            if (limit == null && (end == null || t >= end)) break // nothing left to disturb
+            // A run suspended by a period it is banned from is not finished with the timeline, so the walk may
+            // not stop at the last boundary while it still owes its minimum.
+            if (limit == null && (end == null || t >= end) && pending() == null) break // nothing left to disturb
+
+            // The atomic block: while a task is owed its minimum it is the only candidate, and where it is not
+            // allowed there is no candidate at all — the period is scheduled with nothing.
+            val held = pending()
+            val candidates = if (held == null) allowed else if (held in allowed) listOf(held) else emptyList()
 
             // Each task is bounded by where *it* is turned away, not by the next context change.
-            val room = allowed.associateWith { blockedFrom(it, ahead, windows, t) }
-            val fitting = allowed.filter { room[it] == null || room[it]!! - t >= owed(it) }
+            val room = candidates.associateWith { blockedFrom(it, ahead, windows, t) }
+            // "does the minimum fit?" is a question for a task about to *start*. A task already running has
+            // started, and refusing it the room it has left would idle the timeline and still leave its run
+            // short: it may be cut anywhere, by whatever it cannot pass.
+            val fitting =
+                candidates.filter { room[it] == null || room[it]!! - t >= owed(it) || runServed(it) > 0L }
 
             if (fitting.isEmpty()) { // nothing can be placed here
                 if (limit == null) break
                 val gap = limit - t
                 val tail = slots.lastOrNull()
-                if (freeTail && tail != null) { // stretch the last slot over it
+                // The tail may only absorb a gap it is itself allowed to run in: a period that bans it
+                // suspends the run, it does not extend it.
+                if (freeTail && tail?.taskId != null && tail.taskId in allowed) { // stretch the last slot over it
                     slots[slots.size - 1] = PlanSlot(tail.taskId, tail.durationMillis + gap)
                     walk.serve(tail.taskId, gap.toDouble(), boost = 1.0)
                 } else { // or leave a hole
@@ -567,7 +623,7 @@ class SchedulerPlanner(
 
             val name = walk.pick(fitting, avoidLast = true) ?: break
             val boost = boostAt(name, t)
-            var c = walk.chunkMillis(name, fitting, boost, period)
+            var c = walk.chunkMillis(name, fitting, boost, period, floorOf(name, owed(name)))
             // Forced cut: where this task itself is turned away.
             room[name]?.let { c = minOf(c, (it - t).toDouble()) }
             // Optional cut: hand the timeline back as soon as a rival can take it, once the minimum is paid.
@@ -587,14 +643,17 @@ class SchedulerPlanner(
         // --- phase 2: settle what is still owed, then repeat forever ---
         var cycle = emptyList<PlanSlot>()
         val allowed = allowedAt(windows, t)
-        if (allowed.isNotEmpty() && slots.size < maxRules) {
+        // A cycle may only be attached once nothing is owed: an atomic block still running is not a steady state.
+        if (allowed.isNotEmpty() && slots.size < maxRules && pending() == null) {
             val period = periodOf(allowed)
             val horizon = t + (SETTLE_PERIODS * period).roundToLong() // settling is bounded
             while (slots.size < maxRules && t < horizon) {
                 if (walk.spread(allowed) <= period) break // square again
                 val name = walk.pick(allowed, avoidLast = true) ?: break
                 val boost = boostAt(name, t)
-                val placed = walk.chunkMillis(name, allowed, boost, period).roundToLong().coerceAtLeast(1L)
+                val placed =
+                    walk.chunkMillis(name, allowed, boost, period, floorOf(name, owed(name)))
+                        .roundToLong().coerceAtLeast(1L)
                 pushSlot(slots, name, placed)
                 walk.serve(name, placed.toDouble(), boost)
                 t += placed
@@ -640,6 +699,30 @@ class SchedulerPlanner(
 
     /** A new walk over this planner's rules, seeded with [clocks] (defaults to a level playing field). */
     fun walk(clocks: Map<TaskId, Double> = share.mapValues { 0.0 }): PlanWalk = PlanWalk(this, clocks)
+
+    /**
+     * `side-dev/scheduler_logic.py` `_head`: the run still in progress at the end of [past] — the task, and how
+     * long it has been served — or null when the past ends on nothing of ours.
+     *
+     * A run survives an interruption by something that is not a task (an idle stretch, a block owned by
+     * nobody): the README's atomic block is about a task's *service*, and a period that accepts nobody
+     * suspends a run rather than ending it. So the scan skips those and stops at the first different task.
+     */
+    private fun headRun(past: List<PlanBlock>): Pair<TaskId, Long>? {
+        var name: TaskId? = null
+        var total = 0L
+        for (block in past.sortedByDescending { it.startMillis }) {
+            val id = block.taskId
+            if (id == null || id !in minimumOf) continue // not one of ours: it does not end the run
+            if (name == null) name = id else if (id != name) break
+            total += block.durationMillis
+        }
+        return name?.let { it to total }
+    }
+
+    /** The reference's `floor=owed(name) or minimum[name]`, as a nullable [chunkMillis] floor. */
+    private fun floorOf(id: TaskId, owedMillis: Long): Double? =
+        if (owedMillis > 0L) owedMillis.toDouble() else null
 
     // ----- internals ----------------------------------------------------------------------------
 
@@ -767,9 +850,13 @@ class SchedulerPlanner(
         shares: Map<TaskId, Double>,
         boost: Double?,
         periodMillis: Double?,
+        // `side-dev/scheduler_logic.py` `floor=owed(name) or minimum[name]`: a task RESUMING a run only owes
+        // what is left of its minimum, so flooring it at the whole minimum again would over-serve it. Null
+        // (the default) is the reference's own fallback — the full minimum, for a slot that is starting.
+        floorMillis: Double? = null,
     ): Double {
         val p = shares[name] ?: 0.0
-        val minimum = (minimumOf[name] ?: 0L).toDouble()
+        val minimum = floorMillis ?: (minimumOf[name] ?: 0L).toDouble()
         if (p <= 0.0) return minimum // a zero-priority task has no catch-up to compute
         val mine = clocks[name] ?: 0.0
         // Only tasks that carry a share have a virtual clock, so only they can be the runner-up to catch.
@@ -880,7 +967,8 @@ class PlanWalk internal constructor(
         candidates: List<TaskId>,
         boost: Double? = null,
         periodMillis: Double? = null,
-    ): Double = planner.chunkMillis(id, v, candidates, planner.share, boost, periodMillis)
+        floorMillis: Double? = null,
+    ): Double = planner.chunkMillis(id, v, candidates, planner.share, boost, periodMillis, floorMillis)
 
     /**
      * Charge [durationMillis] of timeline to [id] at the boosted rate. Boosted time is a genuinely higher

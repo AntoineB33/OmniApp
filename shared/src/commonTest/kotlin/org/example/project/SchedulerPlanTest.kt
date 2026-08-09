@@ -626,6 +626,68 @@ class SchedulerPlanTest {
     }
 
     @Test
+    fun a_15min_pose_at_the_now_line_is_one_open_period_accepting_the_off_screen_tasks() {
+        // PRD §15: the 15-minute pose is NOT the 5-minute one with a longer tail — no closed head, and its
+        // period accepts every task that needs no screen. Reference: periods [0, 15min]={B}, [15min, ∞)=all
+        // -> prefix "B 15 | A 17.5 | B 10 | A 11.896 | B 10", cycle "A 10 | B 10". Unlike the look-away, this
+        // ban of A (15 min, longer than A's own 10-min minimum) DOES create a field, which is the 17.5-min
+        // catch-up A takes the moment the pose ends.
+        val plan = SchedulerPlanner(ab()).plan(
+            windows = listOf(window(0.0, 15.0, "B"), window(15.0, null, "A", "B")),
+        )
+        assertPlan(
+            plan,
+            prefix = listOf("B" to 15.0, "A" to 17.5, "B" to 10.0, "A" to 11.896, "B" to 10.0),
+            cycle = listOf("A" to 10.0, "B" to 10.0),
+            label = "15-min pose pinned at the now-line",
+        )
+    }
+
+    // ----- the atomic block: a period the running task is banned from SUSPENDS it -------------------
+
+    @Test
+    fun the_readme_s_atomic_block_example_schedules_the_whole_period_with_nothing() {
+        // `side-dev/README.md`, verbatim: "if task B is scheduled at t=0 and a period p that only allows task
+        // A is at t=1, and task B has a minimum time of 2, then the whole period p is scheduled with nothing."
+        // It is the one rule a *sliding* period runs into constantly, which is why it is stated on its own
+        // rather than only inside tests 10-11. Reference `check_atomic_block` + `Scheduler.plan`.
+        val tasks = listOf(planTask("A", 50.0, 2.0), planTask("B", 50.0, 2.0))
+        val plan = SchedulerPlanner(tasks).plan(
+            blocks = listOf(block("B", 0.0, 1.0)), // B ran [0, 1) — half of its 2-minute minimum
+            windows = listOf(window(1.0, 3.0, "A")),
+            nowMillis = (1.0 * MIN).toLong(),
+        )
+        assertPlan(
+            plan,
+            prefix = listOf("IDLE" to 2.0, "B" to 1.5, "A" to 2.0, "B" to 2.417, "A" to 2.0),
+            cycle = listOf("B" to 2.0, "A" to 2.0),
+            label = "the atomic block",
+        )
+    }
+
+    @Test
+    fun a_pre_placed_block_is_suspended_where_a_period_refuses_its_own_task() {
+        // `side-dev/scheduler_logic.py`: a pre-placed block is locked to its coordinates, but a period still
+        // dictates what may RUN there. Where the block's own task is refused the block is suspended and
+        // resumes on the far side — it is walked edge by edge, not swallowed whole. Reference: a block of A on
+        // [20, 30) crossed by a ban of A on [25, 35) -> "A 25 | IDLE 5 | B 10 | A 13.894 | B 11.514 | A 11.093".
+        val plan = SchedulerPlanner(ab()).plan(
+            blocks = listOf(block("A", 20.0, 10.0)),
+            windows = listOf(
+                window(0.0, 25.0, "A", "B"),
+                window(25.0, 35.0, "B"),
+                window(35.0, null, "A", "B"),
+            ),
+        )
+        assertPlan(
+            plan,
+            prefix = listOf("A" to 25.0, "IDLE" to 5.0, "B" to 10.0, "A" to 13.894, "B" to 11.514, "A" to 11.093),
+            cycle = listOf("B" to 10.0, "A" to 10.0),
+            label = "a block suspended by a period",
+        )
+    }
+
+    @Test
     fun a_ban_shorter_than_the_deprived_task_s_own_minimum_creates_no_field() {
         // `side-dev/test.py` `_set_field`: a 20-second ban cannot have cost a 10-minute task a slot, only
         // delayed it — and the virtual clock already repays a delay exactly. Compensating it as well would pay

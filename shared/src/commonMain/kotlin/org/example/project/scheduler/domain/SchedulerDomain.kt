@@ -16,6 +16,7 @@ import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.ScreenBreak
+import org.example.project.scheduler.model.ScreenBreakPeriod
 import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
@@ -1250,10 +1251,14 @@ object SchedulerDomain {
     const val FIFTEEN_MIN_BREAK_KEY: String = "15min_break"
 
     /**
-     * PRD §15: the head of a 5-/15-minute pose during which the period accepts **no task at all** — the
-     * minute the user needs to actually get off the screen before anything else may be scheduled. Clamped
-     * to the break's own length by the caller, so a debug-shortened pose is closed end to end; the 20-second
-     * look-away is closed end to end by definition (it is not a rest pose). See [fillSchedule].
+     * PRD §15: the head of a [ScreenBreakPeriod.ClosedMinuteThenBreakDoable] break during which the period
+     * accepts **no task at all** — the minute the user needs to actually get off the screen before anything
+     * else may be scheduled. Clamped to the break's own length by the caller, so a debug-shortened pose is
+     * closed end to end.
+     *
+     * Only the **5-minute** pose has one. The 20-second look-away is [ScreenBreakPeriod.Closed] (closed end to
+     * end, so the head is moot) and the 15-minute pose is [ScreenBreakPeriod.OffScreenOnly] — fifteen minutes
+     * is long enough that getting off the screen is not a step worth reserving a period for. See [fillSchedule].
      */
     const val SCREEN_BREAK_CLOSED_HEAD_MILLIS: Long = MILLIS_PER_MINUTE
 
@@ -1286,6 +1291,8 @@ object SchedulerDomain {
             durationMillis = 20L * 1_000,
             pauseThresholdMillis = LOOK_AWAY_QUALIFYING_PAUSE_MILLIS,
             key = LOOK_AWAY_KEY,
+            // `side-dev` test 11's sliding 20 s window: a period that accepts nothing.
+            shape = ScreenBreakPeriod.Closed,
         ),
         // The rest poses: after a pause of at least their length, the next one is due an interval later. The
         // 5-min pose merges up into the 15-min pose when their windows would overlap (PRD §15). Their [key]s are
@@ -1296,6 +1303,8 @@ object SchedulerDomain {
             durationMillis = 5L * 60_000,
             restBreak = true,
             key = FIVE_MIN_BREAK_KEY,
+            // `side-dev` test 11's five-minute stretch, verbatim: "1min: nothing" then "4min: only A".
+            shape = ScreenBreakPeriod.ClosedMinuteThenBreakDoable,
         ),
         ScreenBreak(
             "take a 15min pose",
@@ -1303,6 +1312,10 @@ object SchedulerDomain {
             durationMillis = 15L * 60_000,
             restBreak = true,
             key = FIFTEEN_MIN_BREAK_KEY,
+            // NOT a longer copy of the 5-minute pose: a plain fifteen-minute period accepting every task that
+            // needs no screen. No closed head (a quarter of an hour is not a stretch one has to be eased into)
+            // and no *doable during a break* gate (it is real off-screen working time, not a pose to fill).
+            shape = ScreenBreakPeriod.OffScreenOnly,
         ),
     )
 
@@ -2482,14 +2495,16 @@ object SchedulerDomain {
      *   seeds the virtual clocks ([SchedulerPlanner.seedClocks]) and what the influence field ramps down from;
      * - **periods that accept a set of tasks** = the §9 screen zones and the §15 screen breaks. Inside a
      *   no-screen period only off-screen tasks are accepted, outside one only on-screen tasks. A screen
-     *   break is a period too, and it is split in two: its **first minute** ([SCREEN_BREAK_CLOSED_HEAD_MILLIS])
-     *   accepts **nobody**, and so does a 20-second look-away over its whole length; what is left of a
-     *   5-/15-minute pose accepts the tasks that need **no screen** and are marked *doable during a screen
-     *   break* (PRD §8: the second flag implies the first). The reference's rule that a task is a candidate
-     *   only while its minimum fits the gap is what enforces "never when its minimum time exceeds what is
-     *   left of the break", with no special case. A period accepting nobody excludes everyone equally, so
-     *   per `side-dev/README.md` it creates **no** influence field — which is exactly why a look-away, which
-     *   recurs every 20 minutes forever, does not distort the plan around each of its occurrences.
+     *   break is a period too — which one is the break's own [ScreenBreak.shape], and the three are exactly
+     *   the periods of `side-dev`'s **test 11**: the 20-second look-away accepts **nobody** over its whole
+     *   length; the 5-minute pose is a closed **first minute** ([SCREEN_BREAK_CLOSED_HEAD_MILLIS]) then a tail
+     *   accepting the tasks that need **no screen** and are marked *doable during a screen break* (PRD §8: the
+     *   second flag implies the first); the 15-minute pose is one open period accepting every task that needs
+     *   no screen. The reference's rule that a task is a candidate only while its minimum fits the gap is what
+     *   enforces "never when its minimum time exceeds what is left of the break", with no special case. A
+     *   period accepting nobody excludes everyone equally, so per `side-dev/README.md` it creates **no**
+     *   influence field — which is exactly why a look-away, which recurs every 20 minutes forever, does not
+     *   distort the plan around each of its occurrences (a pose's open period does, and should).
      *
      * Because a fixed block owned by another task and a period that bans a task are the *same* deprivation
      * (`side-dev/README.md`), both feed one influence field: a task kept out of the timeline gets a denser,
@@ -2600,33 +2615,46 @@ object SchedulerDomain {
                     .filter { it.endEpochMillis > it.startEpochMillis },
             )
         // PRD §15: the screen-break occupied regions. They are periods (the accepted set is decided by
-        // [breakClosedRegions]/[breakOpenRegions] below), not occupancy obstacles: a regular chunk suspends
-        // across one and resumes after it.
+        // [breakClosedRegions] / [breakDoableRegions] / [breakOffScreenRegions] below), not occupancy
+        // obstacles: a regular chunk suspends across one and resumes after it.
         val sideRegions = mergeOccupied(sidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
         val breakStarts = sideRegions.mapTo(HashSet()) { it.startEpochMillis }
-        // PRD §15: a screen break is a period, and *which* tasks it accepts depends on where inside it the
-        // cursor sits. Its opening minute accepts **nobody** — the eyes have to actually leave the screen —
-        // and a 20-second look-away is that opening minute all the way through, so it never accepts a task
-        // at all. What is left of a 5-/15-minute pose accepts the tasks that need no screen and are marked
-        // doable during a screen break. This split is what the reference model wants: a period accepting
-        // nobody excludes everyone equally, so it creates **no** influence field (`side-dev/README.md`) — a
-        // look-away must not distort the plan around itself, whereas the open tail of a pose legitimately
-        // does, because it hands the break-doable tasks time nobody else gets.
-        val restPoseTitles = placementBreaks.filter { it.restBreak }.mapTo(HashSet()) { it.title }
+        // PRD §15: a screen break is a period, and *which* tasks it accepts is the break's own declared shape
+        // ([ScreenBreakPeriod]) — the periods of `side-dev`'s test 11:
+        //   - the 20-second look-away accepts **nobody**, end to end;
+        //   - the 5-minute pose is a closed opening minute (the eyes have to actually leave the screen) then a
+        //     tail accepting the tasks that need no screen and are marked doable during a break;
+        //   - the 15-minute pose is one open period accepting every task that needs no screen.
+        // The split is what the reference model wants: a period accepting nobody excludes everyone equally, so
+        // it creates **no** influence field (`side-dev/README.md`) — a look-away must not distort the plan
+        // around itself, whereas an open pose tail legitimately does, because it hands the tasks it accepts
+        // time nobody else gets.
+        val shapeByTitle = placementBreaks.associate { it.title to it.shape }
         val breakClosed = mutableListOf<TaskTimeRange>()
-        val breakOpen = mutableListOf<TaskTimeRange>()
+        val breakDoableOpen = mutableListOf<TaskTimeRange>()
+        val offScreenOpen = mutableListOf<TaskTimeRange>()
         for (panel in sidePanels) {
             val start = panel.startEpochMillis
             val end = panel.endEpochMillis
             if (end <= start) continue
-            // A look-away (or a debug-shortened pose no longer than the closed head) is closed end to end.
+            // A debug-shortened break no longer than the closed head is closed end to end, whatever its shape.
+            val shape = shapeByTitle[panel.title] ?: ScreenBreakPeriod.Closed
             val opens =
-                if (panel.title in restPoseTitles) minOf(start + SCREEN_BREAK_CLOSED_HEAD_MILLIS, end) else end
-            breakClosed += TaskTimeRange(start, opens)
-            if (end > opens) breakOpen += TaskTimeRange(opens, end)
+                when (shape) {
+                    ScreenBreakPeriod.Closed -> end
+                    ScreenBreakPeriod.ClosedMinuteThenBreakDoable ->
+                        minOf(start + SCREEN_BREAK_CLOSED_HEAD_MILLIS, end)
+                    ScreenBreakPeriod.OffScreenOnly -> start
+                }
+            if (opens > start) breakClosed += TaskTimeRange(start, opens)
+            if (end > opens) {
+                val tail = TaskTimeRange(opens, end)
+                if (shape == ScreenBreakPeriod.OffScreenOnly) offScreenOpen += tail else breakDoableOpen += tail
+            }
         }
         val breakClosedRegions = mergeOccupied(breakClosed)
-        val breakOpenRegions = mergeOccupied(breakOpen)
+        val breakDoableRegions = mergeOccupied(breakDoableOpen)
+        val breakOffScreenRegions = mergeOccupied(offScreenOpen)
         fun covers(regions: List<TaskTimeRange>, t: Long): Boolean =
             regions.any { it.startEpochMillis <= t && t < it.endEpochMillis }
 
@@ -2646,7 +2674,7 @@ object SchedulerDomain {
         // "forever" and the field gives it a ramp before the ban and no phantom ramp after the horizon.
         val edges = buildList {
             add(nowMillis)
-            for (region in noScreenRegions + breakClosedRegions + breakOpenRegions) {
+            for (region in noScreenRegions + breakClosedRegions + breakDoableRegions + breakOffScreenRegions) {
                 if (region.startEpochMillis in (nowMillis + 1) until horizon) add(region.startEpochMillis)
                 if (region.endEpochMillis in (nowMillis + 1) until horizon) add(region.endEpochMillis)
             }
@@ -2657,11 +2685,14 @@ object SchedulerDomain {
         // cannot smuggle an on-screen task into a break.
         val breakDoable =
             ordered.filter { working.tasks[it]?.onScreen == false && working.tasks[it]?.doableDuringBreak == true }
+        // PRD §15: the 15-minute pose's accepted set — every task that needs no screen, break-doable or not.
+        val offScreenTasks = ordered.filter { working.tasks[it]?.onScreen == false }
         val windows = edges.mapIndexed { i, start ->
             val accepted =
                 when {
                     covers(breakClosedRegions, start) -> emptyList()
-                    covers(breakOpenRegions, start) -> breakDoable
+                    covers(breakDoableRegions, start) -> breakDoable
+                    covers(breakOffScreenRegions, start) -> offScreenTasks
                     // Outside every break the §9 screen switch classifies: an on-screen task only outside a
                     // no-screen period, an off-screen task only inside one.
                     else -> ordered.filter { (working.tasks[it]?.onScreen ?: true) != covers(noScreenRegions, start) }

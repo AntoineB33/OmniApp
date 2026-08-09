@@ -47,10 +47,13 @@ data class Task(
      */
     val onScreen: Boolean = true,
     /**
-     * PRD §8 "Doable during a screen break" switch: whether this task may be scheduled inside a
-     * 5/15-minute screen break (§15), past its closed first minute
+     * PRD §8 "Doable during a screen break" switch: whether this task may be scheduled inside the
+     * **5-minute** pose (§15), past its closed first minute
      * ([org.example.project.scheduler.domain.SchedulerDomain.SCREEN_BREAK_CLOSED_HEAD_MILLIS]). Even when
      * on, a task whose minimum time exceeds what is left of the break never fits there. Defaults off.
+     *
+     * It is **not** what opens the 15-minute pose: that one is [ScreenBreakPeriod.OffScreenOnly] and accepts
+     * every task with [onScreen] off, this flag or not. So the switch is exactly "short-break work".
      *
      * **Invariant: this implies `!`[onScreen]** — a screen break is time away from the screen, so only a
      * task that needs no screen can be done in one. It is enforced where the flag is written
@@ -163,6 +166,39 @@ enum class ChoreRecurrenceUnit(val label: String) {
 }
 
 /**
+ * PRD §15: **which periods a screen break is**, in the sense of `side-dev/README.md` — a period is a window of
+ * the timeline together with the set of tasks it accepts, and that is the whole of what a break is to the §9
+ * scheduler. The three shapes are the three breaks, and they are exactly the periods of `side-dev`'s **test
+ * 11**: a window accepting nothing, and a "1 minute accepting nothing, then a tail accepting one restricted
+ * set" stretch.
+ */
+enum class ScreenBreakPeriod {
+    /**
+     * One period accepting **nobody**, end to end — the 20-second look-away (test 11's sliding 20 s window).
+     * Because it excludes everyone equally it creates no influence field, which is why a look-away recurring
+     * every 20 minutes forever does not distort the plan around each of its occurrences.
+     */
+    Closed,
+
+    /**
+     * Two periods: a closed **first minute**
+     * ([org.example.project.scheduler.domain.SchedulerDomain.SCREEN_BREAK_CLOSED_HEAD_MILLIS], clamped to the
+     * break's own length) accepting nobody, then a tail accepting the tasks that need no screen **and** are
+     * marked *doable during a screen break* (PRD §8). The 5-minute pose — test 11's "1min: nothing" +
+     * "4min: only A" stretch, verbatim.
+     */
+    ClosedMinuteThenBreakDoable,
+
+    /**
+     * One period, open end to end, accepting **every task that needs no screen** (`onScreen == false`,
+     * whatever its *doable during a break* flag) — the 15-minute pose. Long enough that getting off the
+     * screen is not a separate step and broad enough to be genuine off-screen work time, so unlike the
+     * 5-minute pose it has no closed head and does not restrict itself to the break-doable subset.
+     */
+    OffScreenOnly,
+}
+
+/**
  * PRD §15 Screen break: a task to do periodically, placed on the calendar with a **real spanning time** (a
  * [TaskPanel] with `screenBreak = true`). It recurs every [intervalMillis] for [durationMillis]. The
  * distinguishing rule (vs a simple task): when the §9 auto scheduler splits a task panel around a side
@@ -205,6 +241,18 @@ data class ScreenBreak(
      * migration 20260724000000). Blank on an ad-hoc break, which simply has no server-side configuration.
      */
     val key: String = "",
+    /**
+     * PRD §15: the **period(s) this break is** to the §9 scheduler — see [ScreenBreakPeriod].
+     *
+     * The default reproduces the pre-1.6.0 rule from [restBreak] alone (a rest pose is a closed minute then a
+     * break-doable tail, anything else is closed end to end), so an ad-hoc break that does not state a shape
+     * keeps behaving exactly as it did. The three production breaks state theirs explicitly
+     * ([org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SCREEN_BREAKS]) — in particular the
+     * 15-minute pose is [ScreenBreakPeriod.OffScreenOnly], not a second copy of the 5-minute one. Note `copy()`
+     * does not re-evaluate this default, so the debug fast-break knobs (which only retime) never move a shape.
+     */
+    val shape: ScreenBreakPeriod =
+        if (restBreak) ScreenBreakPeriod.ClosedMinuteThenBreakDoable else ScreenBreakPeriod.Closed,
 ) {
     /**
      * The minimum pause length that anchors this pose (sets [lastRestMillis]). It is [pauseThresholdMillis]

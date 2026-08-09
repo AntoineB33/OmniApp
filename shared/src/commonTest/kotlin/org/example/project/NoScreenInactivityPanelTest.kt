@@ -8,6 +8,7 @@ import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.ScreenBreak
+import org.example.project.scheduler.model.ScreenBreakPeriod
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.persistence.SchedulerStateCodec
@@ -357,6 +358,75 @@ class NoScreenInactivityPanelTest {
             },
             "no task may ever overlap a 20-second look-away",
         )
+    }
+
+    /** The production 15-minute pose: one open period accepting every off-screen task (PRD §15). */
+    private fun with15MinPose(s: SchedulerState): SchedulerState =
+        s.copy(
+            screenBreaks = listOf(
+                ScreenBreak(
+                    title = "take a 15min pose",
+                    intervalMillis = HOUR,
+                    durationMillis = 15 * MIN,
+                    restBreak = true,
+                    lastRestMillis = NOW,
+                    shape = ScreenBreakPeriod.OffScreenOnly,
+                ),
+            ),
+        )
+
+    @Test
+    fun the_15min_pose_accepts_every_off_screen_task_from_its_very_first_second() {
+        // PRD §15: the 15-minute pose is NOT a longer copy of the 5-minute one. It is a plain 15-minute
+        // period accepting the tasks that need no screen — no closed first minute, and no *doable during a
+        // break* gate, so this task (off-screen, break-doable OFF) fills it, starting at its very first second.
+        val (s0, solo) = stateWithOneTask(minMinutes = 5)
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+        )
+        s = with15MinPose(s)
+        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 2 * HOUR)
+        val pose = panels.first { it.screenBreak }
+        val inPose = panels.filter {
+            it.taskId == solo && it.auto &&
+                it.startEpochMillis < pose.endEpochMillis && it.endEpochMillis > pose.startEpochMillis
+        }
+        assertTrue(inPose.isNotEmpty(), "an off-screen task must fill the 15-min pose")
+        assertEquals(
+            pose.startEpochMillis,
+            inPose.minOf { it.startEpochMillis },
+            "the 15-min pose has no closed first minute",
+        )
+        assertTrue(
+            inPose.all { it.endEpochMillis <= pose.endEpochMillis },
+            "nothing may run past the pose's end: outside it this task has no screen zone to run in",
+        )
+    }
+
+    @Test
+    fun the_5min_pose_still_refuses_an_off_screen_task_that_is_not_break_doable() {
+        // The counterpart of the test above, and what keeps the two shapes distinct: the 5-minute pose is
+        // `side-dev` test 11's "1min: nothing" + "4min: only A" stretch, and "only A" is the break-doable set.
+        val (s0, solo) = stateWithOneTask(minMinutes = 1)
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+        )
+        s = s.copy(
+            screenBreaks = listOf(
+                ScreenBreak(
+                    title = "take a 5min pose and blink hard",
+                    intervalMillis = HOUR,
+                    durationMillis = 5 * MIN,
+                    restBreak = true,
+                    lastRestMillis = NOW,
+                    shape = ScreenBreakPeriod.ClosedMinuteThenBreakDoable,
+                ),
+            ),
+        )
+        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 2 * HOUR)
+        assertTrue(panels.none { it.taskId == solo && it.auto }, "only a break-doable task may fill a 5-min pose")
     }
 
     @Test
