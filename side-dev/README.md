@@ -72,6 +72,9 @@ The movement of the period in test 10 is done by the displayer in response to th
 
 test 11 must be test 10 with already placed tasks and lots of periods and tasks definitions. The 20s period allows nothing, and there is a 1 minute period that allow nothing followed right after by a 4 minute period that only allow task A. The 1-minute and 4-minute periods form a 5-minute stretch that start at $t_p$ as soon as the 20s period reaches it (which makes the 5-minute stretch teleport 20 seconds to the left and the 20s period disappears forever).
 
+The user can simply click any where on a schedule block and $t_p$ becomes this point. If it was playing, it sets to pause. If the user clicks then drags, $t_p$ follows the mouse.
+It is set to pause by default.
+
 Reminders:
 - Everything at t < $t_p$ stays frozen.
 - As the idea of result shows, the whole timeline won't be filled just with task A and idling. The parameterization of $t_p$ prevents that fragmentation entirely

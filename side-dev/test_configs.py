@@ -119,27 +119,41 @@ TEST11_PERIODS = [{'start': 8, 'end': 12, 'allowed': ['A', 'B']},
                   {'start': 30, 'end': 34, 'allowed': []},
                   {'start': 52, 'end': 56, 'allowed': ['A', 'C']}]
 
+def reached_stretch(tp):
+    """Has the sliding window reached the waiting five-minute stretch?
+
+    Contact is the instant the window's right edge touches STRETCH_HOME, so the
+    window is still whole at that position and gone from the next one on."""
+    return frac(tp) + WINDOW > STRETCH_HOME
+
 def stretch_start(tp):
     """Where the five-minute stretch sits when the window starts at tp.
 
     It waits at STRETCH_HOME until the sliding period reaches it, and from then
     on it starts at t_p -- so at the instant of contact it teleports one window
     width (20 s) to the left, and is dragged from there on."""
-    return STRETCH_HOME if frac(tp) + WINDOW <= STRETCH_HOME else frac(tp)
+    return frac(tp) if reached_stretch(tp) else STRETCH_HOME
 
 def test11_moving(tp):
+    """The sliding periods at position tp.
+
+    The 20s window exists only until it reaches the stretch: from contact on it
+    is gone forever, and what slides is the stretch it dragged off its home."""
     s = stretch_start(tp)
-    return [{'start': tp, 'end': tp + WINDOW, 'allowed': [],
-             'label': f"{human_s(20)}: nothing"},
-            {'start': s, 'end': s + STRETCH_HEAD, 'allowed': [],
-             'label': "1min: nothing"},
-            {'start': s + STRETCH_HEAD, 'end': s + STRETCH_LEN, 'allowed': ['A'],
-             'label': "4min: only A"}]
+    window = [] if reached_stretch(tp) else [
+        {'start': frac(tp), 'end': frac(tp) + WINDOW, 'allowed': [],
+         'label': f"{human_s(20)}: nothing"}]
+    return window + [
+        {'start': s, 'end': s + STRETCH_HEAD, 'allowed': [],
+         'label': "1min: nothing"},
+        {'start': s + STRETCH_HEAD, 'end': s + STRETCH_LEN, 'allowed': ['A'],
+         'label': "4min: only A"}]
 
 TEST11_TITLE = (
     "Test 11: the same sliding 20s period accepting NOTHING, in a crowded timeline\n"
     "-> pre-placed blocks, three static periods, four tasks; plus a 1min-nothing + 4min-A-only\n"
-    f"   stretch waiting at {stamp(STRETCH_HOME)} that starts at t_p (a 20s teleport left) once the window reaches it."
+    f"   stretch waiting at {stamp(STRETCH_HOME)}: once the window reaches it the stretch starts at t_p (a 20s\n"
+    "   teleport left) and the 20s window is gone forever -- from then on the stretch is what slides."
 )
 
 
