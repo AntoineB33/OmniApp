@@ -660,10 +660,10 @@ fun LateralMenu(
     lookAwayVoiceEnabled: Boolean = true,
     onToggleLookAwayVoice: (Boolean) -> Unit = {},
     /**
-     * PRD §15 (20s look-away): shown only when the last past screen break before the now-line is a 20s
-     * look-away — re-runs the 20s pause now (superseding any look-away still sounding/pending).
+     * PRD §15 (20s look-away): re-runs the 20s pause now (superseding any look-away still sounding/pending).
+     * The button is **always** in the menu — a look-away is something the user may decide to take at any
+     * moment, so its availability must not depend on what the last past screen break happened to be.
      */
-    showLookAwayButton: Boolean = false,
     onLookAwayNow: () -> Unit = {},
     /** Whether any floating window is open — gates the "close all windows" button + the callback to do so. */
     anyWindowOpen: Boolean = false,
@@ -743,10 +743,9 @@ fun LateralMenu(
             )
         }
 
-        // PRD §15 (20s look-away): only while the most recent past screen break is a 20s look-away — redo it now.
-        if (showLookAwayButton) {
-            MenuButton(label = "Look away now", active = false, onClick = onLookAwayNow)
-        }
+        // PRD §15 (20s look-away): take the 20s pause now. ALWAYS present — the user may choose to look away
+        // at any moment, so this is never gated on the cadence's current state.
+        MenuButton(label = "Look away now", active = false, onClick = onLookAwayNow)
 
         // PRD §7 Reminders: toggles the floating reminders window over the tree.
         MenuButton(

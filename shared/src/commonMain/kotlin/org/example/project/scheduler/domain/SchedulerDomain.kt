@@ -1936,29 +1936,6 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §15: the most recent screen-break occurrence whose start is strictly before [nowMillis] (the
-     * "last past screen break before the now-line"), or null when none. Reuses the same interleaving /
-     * merge / re-anchor engine the forward [screenBreakPanels] uses, but seeds each task's grid at a
-     * point a full longest-interval (+ longest duration) before `now` and runs only up to `now`. That
-     * lookback is wide enough that any pose able to re-anchor a look-away inside the window is itself
-     * placed first, so the reconstructed recent cadence matches what the forward projection would have
-     * drawn. Callers test `restBreak` of the returned panel's source task to tell a 20s look-away apart
-     * from a rest pose.
-     */
-    fun lastScreenBreakBefore(
-        screenBreaks: List<ScreenBreak>,
-        nowMillis: Long,
-    ): TaskPanel? {
-        val valid = screenBreaks.withIndex().filter { isValidScreenBreak(it.value) }
-        if (valid.isEmpty()) return null
-        val maxInterval = valid.maxOf { it.value.intervalMillis }
-        val maxDuration = valid.maxOf { it.value.durationMillis }
-        return screenBreakOccurrencesBetween(screenBreaks, nowMillis - maxInterval - maxDuration, nowMillis)
-            .filter { it.startEpochMillis < nowMillis }
-            .maxByOrNull { it.startEpochMillis }
-    }
-
-    /**
      * PRD §15: every screen-break occurrence whose **start** lies in `[fromMillis, toMillis]`, reconstructed
      * from the fixed grid via the same interleave / merge / re-anchor engine [screenBreakPanels] uses — but
      * seeded from the PAST (one full recurrence step at/before [fromMillis]) so it reproduces the cadence
@@ -1975,8 +1952,8 @@ object SchedulerDomain {
      * screen, not with total history).
      *
      * Each participating task is seeded a full recurrence step at/before [fromMillis] so any pose able to
-     * re-anchor a look-away inside the window is itself placed first (the same widening [lastScreenBreakBefore]
-     * and [screenBreakOccurrencesBetween] rely on). Unlike [screenBreakOccurrencesBetween] this applies **no**
+     * re-anchor a look-away inside the window is itself placed first (the same widening
+     * [screenBreakOccurrencesBetween] relies on). Unlike [screenBreakOccurrencesBetween] this applies **no**
      * dragging-pose shadow — a display window shows every occurrence the periodic grid places; the shadow is
      * a cue-ordering concern of the now-line sweep only.
      *
@@ -2251,8 +2228,9 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §15 projection engine shared by [screenBreakPanels] (forward from `now`) and [lastScreenBreakBefore]
-     * (recent past). Walks the [seedDue] occurrences in time order up to [horizon], resolving overlaps via
+     * PRD §15 projection engine shared by [screenBreakPanels] (forward from `now`) and
+     * [screenBreakOccurrencesBetween] / [screenBreakPanelsInWindow] (an arbitrary window, past included).
+     * Walks the [seedDue] occurrences in time order up to [horizon], resolving overlaps via
      * the merge / absorption / re-anchor rules documented on [screenBreakPanels]. [seedDue] maps each
      * participating screen-break index to the start of its first occurrence to consider.
      */

@@ -551,13 +551,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val displayWorkPlanPanels =
             SchedulerDomain.clipPlanForPinnedScreenBreak(workPlanPanels, displaySidePanels, nowMillis)
 
-        // PRD §15 (20s look-away): show the manual "Look away now" button only when the most recent past
-        // screen break before the now-line is a 20s look-away (a non-rest-break screen break), not a rest pose.
-        val showLookAwayButton =
-            SchedulerDomain.lastScreenBreakBefore(schedulerState.screenBreaks, nowMillis)
-                ?.let { panel -> schedulerState.screenBreaks.any { !it.restBreak && it.title == panel.title } }
-                ?: false
-
         // PRD §14: reminder flags are calculated for the WHOLE focused week — from now to the end of the
         // week the calendar is showing — so navigating to a week shows its reminders. Like the screen-break
         // projection they are regenerated for display (anchored at today's midnight, out to the focused
@@ -755,7 +748,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleHistoryManager = { onMenuWindowClicked(FloatingWindow.History) { historyManagerOpen = it } },
                     lookAwayVoiceEnabled = schedulerState.lookAwayVoiceEnabled,
                     onToggleLookAwayVoice = { vm.dispatch(SchedulerIntent.SetLookAwayVoice(it)) },
-                    showLookAwayButton = showLookAwayButton,
                     onLookAwayNow = { engine.restartLookAway() },
                     sleepWindowOpen = sleepWindowOpen,
                     onToggleSleep = { onMenuWindowClicked(FloatingWindow.Sleep) { sleepWindowOpen = it } },

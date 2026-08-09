@@ -829,59 +829,6 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun last_screen_break_before_returns_the_look_away_when_it_is_the_most_recent_past_occurrence() {
-        // PRD §15 manual redo: occurrences are at lastRest + k·interval (k≥1). With lastRest 25 min ago on a
-        // 20-min grid, the most recent occurrence before now is at now-5min (k=1); now+15min (k=2) is future.
-        val now = 1_000_000_000_000L
-        val sides = listOf(ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 25 * MIN))
-        val last = SchedulerDomain.lastScreenBreakBefore(sides, now)
-        assertNotNull(last)
-        assertEquals("look 20 feet away", last.title)
-        assertEquals(now - 5 * MIN, last.startEpochMillis)
-        assertTrue(last.startEpochMillis < now)
-    }
-
-    @Test
-    fun last_screen_break_before_returns_the_pose_right_after_a_pose_was_taken() {
-        // PRD §15 manual redo: a pose taken 3 min ago (lastRest), with the look-away re-anchored to that
-        // pose's end — so within the first 20 min after the pose, the most recent past screen break is the pose,
-        // not a look-away. The button must therefore be hidden in that window.
-        val now = 1_000_000_000_000L
-        val poseStart = now - 3 * MIN
-        val sides = listOf(
-            // Look-away last rested at the pose's end (device-sleep semantics), so its next start is pose+20min (future).
-            ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = poseStart + 5 * MIN),
-            // 5-min pose whose last occurrence STARTED 3 min ago (interval before that puts the grid point in-window).
-            ScreenBreak("pose", intervalMillis = 60 * MIN, durationMillis = 5 * MIN, restBreak = true, lastRestMillis = poseStart - 60 * MIN),
-        )
-        val last = SchedulerDomain.lastScreenBreakBefore(sides, now)
-        assertNotNull(last)
-        assertEquals("pose", last.title)
-    }
-
-    @Test
-    fun last_screen_break_before_is_null_when_there_are_no_screen_breaks_or_none_before_now() {
-        val now = 1_000_000_000_000L
-        assertNull(SchedulerDomain.lastScreenBreakBefore(emptyList(), now))
-        // A look-away that has never occurred before now: its first occurrence is in the future.
-        val future = listOf(ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now))
-        assertNull(SchedulerDomain.lastScreenBreakBefore(future, now))
-    }
-
-    @Test
-    fun last_screen_break_before_returns_an_occurrence_even_inside_a_sleep_window() {
-        // PRD §15: screen breaks project straight through sleep windows now, so an occurrence whose start lands
-        // in what would be a sleep window is still a real "last past screen break" (a user working overnight).
-        val now = 1_000_000_000_000L
-        // Grid points (lastRest 45 min ago, a 20 min + 20 s cycle): now−25min, now−4:40, now+15:40 (future).
-        val sides = listOf(ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 45 * MIN))
-        val last = SchedulerDomain.lastScreenBreakBefore(sides, now)
-        assertNotNull(last)
-        // The most recent grid point before now is returned, not the earlier one.
-        assertEquals(now - 5 * MIN + 20_000L, last.startEpochMillis)
-    }
-
-    @Test
     fun taking_a_look_away_now_re_anchors_the_cadence_so_the_next_look_away_is_one_interval_out() {
         // PRD §15 manual redo "updates the calendar": setting the look-away's lastRest to now (what the
         // SetScreenBreaks dispatch does) moves its next projected occurrence to now + interval.
