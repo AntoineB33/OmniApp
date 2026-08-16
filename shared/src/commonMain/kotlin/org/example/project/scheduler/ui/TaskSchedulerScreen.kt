@@ -1053,7 +1053,6 @@ private fun EditModeMenus(
     // A cell that had no task before this edit began is being *created* — it is always in Change Task mode
     // (there is no existing title to Rename), so the Mode selector is hidden, mirroring the reminders manager.
     val isBeingCreated = session.treeBefore.cells[cellId]?.taskId == null
-    val showSelector = !isBeingCreated
 
     // Only the in-progress "New task" draft is hidden (it's already the "New task" row itself). A picked
     // existing task must stay listed so it can render as selected (purple) — excluding it here would drop it
@@ -1069,12 +1068,49 @@ private fun EditModeMenus(
         } else {
             emptyList()
         }
-    val showTasks = taskEntries.size > 1
-    val suggestions = SchedulerDomain.titleSuggestions(state, draftText)
+
+    val modeOptions =
+        if (isBeingCreated) {
+            emptyList()
+        } else {
+            listOf(
+                EditModeOption(
+                    label = "Change Task",
+                    selected = session.mode == CellEditMode.ChangeTask,
+                    onSelect = { onIntent(SchedulerIntent.SetEditMode(CellEditMode.ChangeTask)) },
+                ),
+                EditModeOption(
+                    label = "Rename",
+                    selected = session.mode == CellEditMode.Rename,
+                    onSelect = { onIntent(SchedulerIntent.SetEditMode(CellEditMode.Rename)) },
+                ),
+            )
+        }
+    // The Tasks menu is worth showing only beyond the lone "New task" row (the reminders manager applies the
+    // same rule to its "New Reminder" row).
+    val identityRows =
+        if (taskEntries.size > 1) {
+            val selectedIndex =
+                SchedulerDomain.changeTaskMenuSelectedIndex(taskEntries, session.selectedAssignTaskId)
+            taskEntries.mapIndexed { index, entry ->
+                EditMenuItem(label = entry.label, selected = index == selectedIndex) {
+                    if (entry.taskId == null) {
+                        onIntent(SchedulerIntent.SelectCreateAssignTask)
+                    } else {
+                        onIntent(SchedulerIntent.PickTaskFromMenu(entry.taskId))
+                    }
+                }
+            }
+        } else {
+            emptyList()
+        }
+    val suggestions = SchedulerDomain.titleSuggestions(state, draftText).map { suggestion ->
+        EditMenuItem(suggestion) { onIntent(SchedulerIntent.PickTitleSuggestion(suggestion)) }
+    }
 
     // Render nothing when there is no menu to show, so the empty container takes no vertical space and the
     // row below is not pushed down by a blank gap. The row only lowers while a menu is actually visible.
-    if (!showSelector && !showTasks && suggestions.isEmpty()) return
+    if (modeOptions.isEmpty() && identityRows.isEmpty() && suggestions.isEmpty()) return
 
     Column(
         modifier = Modifier
@@ -1083,50 +1119,10 @@ private fun EditModeMenus(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         EditModeMenuBlock(
-            modeOptions =
-                if (showSelector) {
-                    listOf(
-                        EditModeOption(
-                            label = "Change Task",
-                            selected = session.mode == CellEditMode.ChangeTask,
-                            onSelect = { onIntent(SchedulerIntent.SetEditMode(CellEditMode.ChangeTask)) },
-                        ),
-                        EditModeOption(
-                            label = "Rename",
-                            selected = session.mode == CellEditMode.Rename,
-                            onSelect = { onIntent(SchedulerIntent.SetEditMode(CellEditMode.Rename)) },
-                        ),
-                    )
-                } else {
-                    emptyList()
-                },
+            modeOptions = modeOptions,
             identityLabel = "Tasks",
-            identityRows =
-                if (showTasks) {
-                    val selectedIndex =
-                        SchedulerDomain.changeTaskMenuSelectedIndex(
-                            taskEntries,
-                            session.selectedAssignTaskId,
-                        )
-                    taskEntries.mapIndexed { index, entry ->
-                        EditMenuItem(
-                            label = entry.label,
-                            selected = index == selectedIndex,
-                            enabled = entry.assignable,
-                        ) {
-                            if (entry.taskId == null) {
-                                onIntent(SchedulerIntent.SelectCreateAssignTask)
-                            } else {
-                                onIntent(SchedulerIntent.PickTaskFromMenu(entry.taskId))
-                            }
-                        }
-                    }
-                } else {
-                    emptyList()
-                },
-            suggestions = suggestions.map { suggestion ->
-                EditMenuItem(suggestion) { onIntent(SchedulerIntent.PickTitleSuggestion(suggestion)) }
-            },
+            identityRows = identityRows,
+            suggestions = suggestions,
         )
     }
 }

@@ -3406,8 +3406,6 @@ object SchedulerDomain {
         /** `null` = "New task" row (creates a new [TaskId] when selected or while typing). */
         val taskId: TaskId?,
         val label: String,
-        /** Always `true`: impossible IDs are now hidden from the menu (PRD §4 Filtering). */
-        val assignable: Boolean = true,
     )
 
     private fun matchingUserTaskIds(
@@ -3652,10 +3650,15 @@ object SchedulerDomain {
         return allReminderEntries(state).filter { it.title.equals(q, ignoreCase = true) }
     }
 
-    /** PRD §14 reminder title-suggestion menu: distinct reminder titles matching [input]. */
+    /**
+     * PRD §14 reminder title-suggestion menu: distinct reminder titles matching [input]. The title that IS
+     * [input] is left out, exactly as the task menu's [titleSuggestions] does — picking it would only retype
+     * what is already there. (The task-tree selector deliberately keeps it, see [taskTreeTitleSuggestions].)
+     */
     fun reminderTitleSuggestions(state: SchedulerState, input: String): List<String> {
         val q = input.trim()
         return allReminderEntries(state).map { it.title }.distinct()
+            .filter { it != input }
             .filter { q.isBlank() || it.contains(q, ignoreCase = true) }
     }
 
@@ -3739,6 +3742,11 @@ object SchedulerDomain {
      * Task-tree title suggestions (the selector's second menu), mirroring [titleSuggestions]: every tree
      * title containing [input], most similar first. An **empty** input lists them all, which is how the user
      * browses the existing trees.
+     *
+     * One deliberate difference from [titleSuggestions] / [reminderTitleSuggestions], which drop the title
+     * that IS the typed text: here it is **kept** (and the UI highlights it). This menu is the browse list of
+     * every tree, so hiding one because its name happens to be typed in full would take a tree off the list;
+     * the highlighted row is also what Enter commits to, which is worth showing.
      */
     fun taskTreeTitleSuggestions(state: SchedulerState, input: String): List<String> {
         val q = input.trim()
