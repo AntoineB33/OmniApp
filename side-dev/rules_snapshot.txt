@@ -1,0 +1,324 @@
+# The set of rules every test resolves to -- the scheduler's actual output.
+#
+# Checked by:    uv run tests_displayer.py --verify
+# Regenerate by: uv run rules_snapshot.py --update
+#
+# A diff here means the scheduler now answers a test differently. That is not
+# automatically a bug -- but it is never nothing, so read the diff before
+# blessing it. The checks in test_configs.py say the rules are consistent;
+# this file says they are still the same rules.
+
+=== Test 1: Normal 50/50 Split (10min each) ===
+Start: 0s
+Cycle:
+- task A 10min
+- task B 10min
+- repeat
+Period: 20min
+Shares: A 50%, B 50%
+
+=== Test 2: Pre-placed event owned by nobody ===
+Start: 0s
+Prefix:
+- task A 10min
+- task B 10min
+- task A 10min
+- task B 10min
+- task MAINTENANCE 1h
+Cycle:
+- task A 10min
+- task B 10min
+- repeat
+Period: 20min
+Shares: A 50%, B 50%
+
+=== Test 3: Periods constraint ===
+Start: 0s
+Prefix:
+- task A 10min
+- task B 10min
+- task C 1h
+- task A 10min
+- task B 10min
+- task A 10min
+- task B 10min
+Cycle:
+- task A 10min
+- task B 10min
+- repeat
+Period: 20min
+Shares: A 50%, B 50%
+
+=== Test 4: Three tasks (A: 50% 20m, B: 30% 10m, C: 20% 15m) ===
+Start: 0s
+Cycle:
+- task A 37min 30s
+- task B 10min
+- task C 15min
+- task B 12min 30s
+- repeat
+Period: 1h 15min
+Shares: A 50%, B 30%, C 20%
+
+=== Test 5: Lopsided priorities (A 90% / B 10%) + a B block at the start ===
+Start: 0s
+Prefix:
+- task B 40min
+- task A 2h 6min
+- task B 10min
+- task A 1h 39min 14.39s
+- task B 10min
+- task A 1h 33min 5.948s
+- task B 10min
+- task A 1h 31min 6.319s
+Cycle:
+- task B 10min
+- task A 1h 30min
+- repeat
+Period: 1h 40min
+Shares: A 90%, B 10%
+
+=== Test 6: 1h block of A at t=100 (tau = 20min) ===
+Start: 0s
+Prefix:
+- task A 10min
+- task B 10min 20s
+- task A 10min
+- task B 10min 55.27s
+- task A 10min
+- task B 12min 37.32s
+- task A 10min
+- task B 26min 7.418s
+- task A 1h
+- task B 40min
+- task A 10min
+- task B 12min 27.75s
+- task A 10min
+- task B 10min 48.06s
+Cycle:
+- task A 10min
+- task B 10min
+- repeat
+Period: 20min
+Shares: A 50%, B 50%
+
+=== Test 7: 10h block of A at t=100 - 10x longer than test 6 ===
+Start: 0s
+Prefix:
+- task A 10min
+- task B 13min 19.96s
+- task A 10min
+- task B 20min 42.11s
+- task A 10min
+- task B 35min 57.93s
+- task A 10h
+- task B 1h
+- task A 10min
+- task B 19min 3.553s
+- task A 10min
+- task B 12min 7.124s
+- task A 10min
+- task B 10min 42.07s
+Cycle:
+- task A 10min
+- task B 10min
+- repeat
+Period: 20min
+Shares: A 50%, B 50%
+
+=== Test 8: B banned from t=100 to t=400 - a window, not a block ===
+Start: 0s
+Prefix:
+- task A 10min
+- task B 11min 39.98s
+- task A 10min
+- task B 14min 55.39s
+- task A 10min
+- task B 27min 7.06s
+- task A 5h 16min 17.57s
+- task B 1h
+- task A 10min
+- task B 14min 31.78s
+- task A 10min
+- task B 11min 19.72s
+Cycle:
+- task A 10min
+- task B 10min
+- repeat
+Period: 20min
+Shares: A 50%, B 50%
+
+=== Test 9: same 300min ban, but split into ten consecutive windows ===
+Start: 0s
+Prefix:
+- task A 10min
+- task B 11min 39.98s
+- task A 10min
+- task B 14min 55.39s
+- task A 10min
+- task B 27min 7.06s
+- task A 5h 16min 17.57s
+- task B 1h
+- task A 10min
+- task B 14min 31.78s
+- task A 10min
+- task B 11min 19.72s
+Cycle:
+- task A 10min
+- task B 10min
+- repeat
+Period: 20min
+Shares: A 50%, B 50%
+
+=== Test 10 (dynamic rule list): a 20s period accepting only A slides right from t_p ===
+The sliding period's position is t_p; every duration below is affine in it.
+Timeline span 1h, 9 regimes, at most 4 rules each (cap 50).
+Everything at t < t_p is frozen and is not restated here.
+
+Regime 1  while t_p in [0s, 9min 40s):
+  Prefix: A 10min - (t_p - 0s)
+  Cycle:  B 10min | A 10min | repeat
+Regime 2  while t_p in [9min 40s, 10min):
+  Prefix: A 20s
+  Cycle:  B 10min | A 10min | repeat
+Regime 3  while t_p in (10min, 20min):
+  Prefix: IDLE 20s | B 10min - (t_p - 10min)
+  Cycle:  A 10min | B 10min | repeat
+Regime 4  while t_p in [20min, 29min 40s):
+  Prefix: A 10min - (t_p - 20min)
+  Cycle:  B 10min | A 10min | repeat
+Regime 5  while t_p in [29min 40s, 30min):
+  Prefix: A 20s
+  Cycle:  B 10min | A 10min | repeat
+Regime 6  while t_p in (30min, 40min):
+  Prefix: IDLE 20s | B 10min - (t_p - 30min)
+  Cycle:  A 10min | B 10min | repeat
+Regime 7  while t_p in [40min, 49min 40s):
+  Prefix: A 10min - (t_p - 40min)
+  Cycle:  B 10min | A 10min | repeat
+Regime 8  while t_p in [49min 40s, 50min):
+  Prefix: A 20s
+  Cycle:  B 10min | A 10min | repeat
+Regime 9  while t_p in (50min, 1h):
+  Prefix: IDLE 20s | B 10min - (t_p - 50min)
+  Cycle:  A 10min | B 10min | repeat
+
+=== Test 11: the same sliding 20s period accepting NOTHING, in a crowded timeline ===
+The sliding period's position is t_p; every duration below is affine in it.
+Timeline span 1h, 38 regimes, at most 17 rules each (cap 50).
+Everything at t < t_p is frozen and is not restated here.
+
+Regime 1  while t_p in [0s, 4min):
+  Prefix: IDLE 20s | A 4min - (t_p - 0s) | B 5min | A 8min 40s | MAINTENANCE 6min | C 6min | IDLE 4min | D 6min | A 5min | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 2  while t_p in [4min, 9min):
+  Prefix: IDLE 20s | B 5min - (t_p - 4min) | A 8min 40s | MAINTENANCE 6min | C 6min | IDLE 4min | D 6min | A 5min | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 3  while t_p in [9min, 13min):
+  Prefix: IDLE 20s | A 8min 40s - (t_p - 9min) | MAINTENANCE 6min | C 6min | IDLE 4min | D 6min | A 5min | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 4  while t_p in (13min, 17min 40s):
+  Prefix: IDLE 20s | C 4min 40s - (t_p - 13min) | MAINTENANCE 6min | D 6min | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 5  while t_p in [17min 40s, 18min):
+  Prefix: IDLE 20s - (t_p - 17min 40s) | MAINTENANCE 6min | D 6min | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 6  while t_p in [18min, 23min 40s):
+  Prefix: MAINTENANCE 6min - (t_p - 18min) | D 6min | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 7  while t_p in [23min 40s, 24min):
+  Prefix: MAINTENANCE 20s - (t_p - 23min 40s) | IDLE 0s + (t_p - 23min 40s) | D 6min - (t_p - 23min 40s) | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 8  while t_p in [24min, 29min 40s):
+  Prefix: IDLE 20s | D 5min 40s - (t_p - 24min) | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 9  while t_p in [29min 40s, 32min 6.209e-09s):
+  Prefix: IDLE 4min 20s - (t_p - 29min 40s) | A 11min | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 10  while t_p in [32min 6.209e-09s, 33min 40s):
+  Prefix: IDLE 1min 60s - (t_p - 32min 6.209e-09s) | B 6min | A 5min | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+Regime 11  while t_p in [33min 40s, 33min 50s):
+  Prefix: IDLE 20s | B 6min - (t_p - 33min 40s) | A 5min | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+Regime 12  while t_p in [33min 50s, 34min):
+  Prefix: IDLE 20s | B 5min 50s - (t_p - 33min 50s) | A 5min | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 13  while t_p in (34min, 44min):
+  Prefix: IDLE 20s | A 10min 40s - (t_p - 34min) | IDLE 1min | A 4min | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 14  while t_p in (44min, 44min 40s):
+  Prefix: IDLE 20s | B 40s - (t_p - 44min) | IDLE 5min | B 2min | IDLE 4min | B 2min 20s | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 15  while t_p in (44min 40s, 47min):
+  Prefix: IDLE 5min | B 2min 20s - (t_p - 44min 40s) | IDLE 4min | B 2min | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 16  while t_p in [47min, 47min 30s):
+  Prefix: IDLE 9min - (t_p - 47min) | B 2min 38.29s - 1.38*(t_p - 47min) | C 5min | A 4min | B 6min 0.2847s - 0.07285*(t_p - 47min) | C 5min | D 5min 38.82s - 0.04509*(t_p - 47min) | A 6min | B 5min 24.36s - 0.02759*(t_p - 47min) | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 17  while t_p in [47min 30s, 48min):
+  Prefix: IDLE 8min 30s - (t_p - 47min 30s) | B 1min 56.89s - 1.34*(t_p - 47min 30s) | C 5min | A 4min | B 5min 58.1s - 0.07998*(t_p - 47min 30s) | C 5min | D 5min 37.47s - 0.04966*(t_p - 47min 30s) | A 6min | B 5min 23.53s - 0.03045*(t_p - 47min 30s) | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 18  while t_p in [48min, 48min 27.18s):
+  Prefix: IDLE 8min - (t_p - 48min) | B 1min 16.71s - 1.302*(t_p - 48min) | C 5min | A 4min | B 5min 55.7s - 0.08683*(t_p - 48min) | C 5min | D 5min 35.97s - 0.05409*(t_p - 48min) | A 6min | B 5min 22.62s - 0.03323*(t_p - 48min) | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 19  while t_p in [48min 27.18s, 48min 30s):
+  Prefix: IDLE 7min 32.82s - (t_p - 48min 27.18s) | B 41.42s - 1.282*(t_p - 48min 27.18s) | C 5min | A 4min | B 5min 53.32s - 0.09044*(t_p - 48min 27.18s) | C 5min | D 5min 34.49s - 0.05644*(t_p - 48min 27.18s) | A 6min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 20  while t_p in [48min 30s, 48min 40s):
+  Prefix: IDLE 7min 30s - (t_p - 48min 30s) | B 37.79s - 1.273*(t_p - 48min 30s) | C 5min | A 4min | B 5min 53.07s - 0.09199*(t_p - 48min 30s) | C 5min | D 5min 34.34s - 0.05745*(t_p - 48min 30s) | A 6min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 21  while t_p in [48min 40s, 49min):
+  Prefix: IDLE 7min 20s - (t_p - 48min 40s) | B 25.02s - 1.253*(t_p - 48min 40s) | C 5min | A 4min | B 5min 52.15s - 0.0956*(t_p - 48min 40s) | C 5min | D 5min 33.77s - 0.05982*(t_p - 48min 40s) | A 6min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 22  while t_p in exactly 49min:
+  Prefix: IDLE 1min | A 4min | C 5min | B 6min 3.858s | D 5min 50.1s | A 7min 57.9s | C 5min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 23  while t_p in (49min, 49min 1.552e-09s):
+  Prefix: IDLE 5min | C 5min - (t_p - 49min) | A 4min | B 5min 54.42s - 0.1511*(t_p - 49min) | C 5min | D 5min 35.18s - 0.09416*(t_p - 49min) | A 6min | B 5min 22.13s - 0.05785*(t_p - 49min) | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 24  while t_p in [49min 1.552e-09s, 49min 23.88s):
+  Prefix: IDLE 5min | C 4min 60s - (t_p - 49min 1.552e-09s) | A 4min | B 5min 54.42s - 0.1512*(t_p - 49min 1.552e-09s) | C 5min | D 5min 35.18s - 0.0944*(t_p - 49min 1.552e-09s) | A 6min | B 5min 22.13s - 0.05808*(t_p - 49min 1.552e-09s) | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 25  while t_p in [49min 23.88s, 49min 40s):
+  Prefix: IDLE 5min | C 4min 36.12s - (t_p - 49min 23.88s) | A 4min | B 5min 50.81s - 0.1512*(t_p - 49min 23.88s) | C 5min | D 5min 32.92s - 0.09479*(t_p - 49min 23.88s) | A 6min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 26  while t_p in [49min 40s, 50min):
+  Prefix: IDLE 5min | C 4min 20s - (t_p - 49min 40s) | A 4min | B 5min 48.37s - 0.1512*(t_p - 49min 40s) | C 5min | D 5min 31.4s - 0.09514*(t_p - 49min 40s) | A 6min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 27  while t_p in (50min, 52min):
+  Prefix: IDLE 5min | C 4min - (t_p - 50min)
+  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+Regime 28  while t_p in [52min, 52min 30s):
+  Prefix: IDLE 5min | C 2min - (t_p - 52min) | D 5min 55.36s + 0.2256*(t_p - 52min) | A 4min | B 5min 37.23s + 0.1454*(t_p - 52min) | C 5min | A 4min | D 5min 20.75s + 0.0788*(t_p - 52min) | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 29  while t_p in [52min 30s, 53min):
+  Prefix: IDLE 5min | C 1min 30s - (t_p - 52min 30s) | D 6min 2.133s + 0.234*(t_p - 52min 30s) | A 4min | B 5min 41.59s + 0.1494*(t_p - 52min 30s) | C 5min | A 4min | D 5min 23.11s + 0.08048*(t_p - 52min 30s) | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 30  while t_p in (53min, 53min 30s):
+  Prefix: IDLE 5min | C 1min - (t_p - 53min) | D 6min 9.152s + 0.2426*(t_p - 53min) | A 4min | B 5min 46.08s + 0.1534*(t_p - 53min) | C 5min | D 5min 29.95s + 0.09637*(t_p - 53min) | A 6min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 31  while t_p in [53min 30s, 53min 40s):
+  Prefix: IDLE 5min | C 30s - (t_p - 53min 30s) | D 6min 16.45s + 0.2485*(t_p - 53min 30s) | A 4min | B 5min 50.69s + 0.1561*(t_p - 53min 30s) | C 5min | D 5min 32.85s + 0.09763*(t_p - 53min 30s) | A 6min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 32  while t_p in [53min 40s, 53min 51.31s):
+  Prefix: IDLE 5min | C 20s - (t_p - 53min 40s) | D 6min 18.94s + 0.2517*(t_p - 53min 40s) | A 4min | B 5min 52.25s + 0.1575*(t_p - 53min 40s) | C 5min | D 5min 33.83s + 0.0983*(t_p - 53min 40s) | A 6min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 33  while t_p in [53min 51.31s, 54min):
+  Prefix: IDLE 5min | C 8.693s - (t_p - 53min 51.31s) | D 6min 21.78s + 0.2547*(t_p - 53min 51.31s) | A 4min | B 5min 54.03s + 0.1588*(t_p - 53min 51.31s) | C 5min | D 5min 34.94s + 0.09892*(t_p - 53min 51.31s) | A 6min | B 5min 21.98s + 0.06075*(t_p - 53min 51.31s) | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 34  while t_p in [54min, 54min 40s):
+  Prefix: IDLE 1min | A 4min | B 6min 24s + 0.2*(t_p - 54min) | C 5min | D 5min 53.25s + 0.119*(t_p - 54min) | A 8min 24s | B 5min 30.07s + 0.06461*(t_p - 54min) | A 4min
+  Cycle:  C 5min | D 5min | A 10min | B 5min | repeat
+Regime 35  while t_p in [54min 40s, 54min 50.91s):
+  Prefix: IDLE 1min | A 4min | B 6min 32s + 0.2*(t_p - 54min 40s) | C 5min | D 5min 58s + 0.1182*(t_p - 54min 40s) | A 8min 24s | B 5min 32.65s + 0.06389*(t_p - 54min 40s) | A 4min
+  Cycle:  C 5min | D 5min | A 10min | B 5min | repeat
+Regime 36  while t_p in [54min 50.91s, 55min):
+  Prefix: IDLE 1min | A 4min | B 6min 34.18s + 0.2*(t_p - 54min 50.91s) | C 5min | D 5min 59.29s + 0.1179*(t_p - 54min 50.91s) | A 8min 24s | B 5min 33.35s + 0.06361*(t_p - 54min 50.91s) | A 4min | C 5min
+  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+Regime 37  while t_p in (55min, 58min):
+  Prefix: IDLE 1min | A 4min
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+Regime 38  while t_p in (58min, 1h):
+  Prefix: IDLE 5min | D 5min - (t_p - 58min)
+  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat

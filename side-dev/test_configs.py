@@ -22,6 +22,7 @@ from scheduler_logic import (
     Placement,
     Scheduler,
     Task,
+    as_blocks,
     frac,
     human,
     human_s,
@@ -77,6 +78,21 @@ def build_cases():
             AB(), 700, [], [{'start': 0, 'end': 100, 'allowed': ['A', 'B']}] + [{'start': 100 + 30 * i, 'end': 130 + 30 * i, 'allowed': ['A']} for i in range(10)] + [{'start': 400, 'end': inf, 'allowed': ['A', 'B']}], {}, 2
         )
     ]
+
+
+def get_schedule_rules(tasks, pre_placed=None, periods=None, t_now=0, **kw):
+    """One static case -> its rule list: (prefix blocks, cycle blocks, plan)."""
+    timeline = [Placement(p['name'], frac(p['start']), frac(p['start']) + frac(p['duration']),
+                          p.get('color', '#CCCCCC'))
+                for p in (pre_placed or [])]
+    plan = Scheduler(tasks, **kw).plan(timeline=timeline, periods=periods or [],
+                                       t_now=t_now, max_rules=MAX_RULES)
+    return as_blocks(plan.prefix), as_blocks(plan.cycle), plan
+
+def case_parts(case):
+    """A case tuple -> (title, tasks, total duration, pre-placed, periods, options)."""
+    options = case[5] if len(case) > 5 else {}
+    return case[0], case[1], case[2], case[3], case[4], options
 
 
 # --------------------------------------------------------------------------- #

@@ -16,13 +16,11 @@ try:
 except ImportError:
     tk = None
 
+from rules_snapshot import check_rules_snapshot, write_rules_snapshot
 from scheduler_logic import (
     IDLE,
     IDLE_COLOR,
     MAX_RULES,
-    Placement,
-    Scheduler,
-    as_blocks,
     frac,
     human,
     rule_lines,
@@ -31,6 +29,8 @@ from scheduler_logic import (
 from test_configs import (
     build_cases,
     build_moving_cases,
+    case_parts,
+    get_schedule_rules,
     timeline_of,
     verify_moving,
 )
@@ -98,12 +98,6 @@ class ToolTip:
         elif self.label is not None:
             self.label.config(text=text)
         self.tooltip_window.wm_geometry(f"+{x}+{y}")
-
-def get_schedule_rules(tasks, pre_placed=None, periods=None, t_now=0, **kw):
-    timeline = [Placement(p['name'], frac(p['start']), frac(p['start']) + frac(p['duration']), p.get('color', '#CCCCCC'))
-                for p in (pre_placed or [])]
-    plan = Scheduler(tasks, **kw).plan(timeline=timeline, periods=periods or [], t_now=t_now, max_rules=MAX_RULES)
-    return as_blocks(plan.prefix), as_blocks(plan.cycle), plan
 
 def generate_schedule(prefix_blocks, cycle_blocks, total_duration, start=Fraction(0)):
     schedule = []
@@ -176,9 +170,7 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
     tooltip = ToolTip(canvas)
 
     for case in test_cases:
-        title = case[0]
-        tasks, total_duration, pre_placed, periods = case[1], case[2], case[3], case[4]
-        options = case[5] if len(case) > 5 else {}
+        title, tasks, total_duration, pre_placed, periods, options = case_parts(case)
         px = case[6] if len(case) > 6 else px_per_min
 
         prefix_blocks, cycle_blocks, plan = get_schedule_rules(tasks, pre_placed, periods, **options)
@@ -442,9 +434,7 @@ def draw_moving_cases(root, canvas, tooltip, cases, y_offset, window_width=900):
 
 def print_terminal_results(cases, moving_cases):
     for case in cases:
-        title = case[0]
-        tasks, _total_duration, pre_placed, periods = case[1], case[2], case[3], case[4]
-        options = case[5] if len(case) > 5 else {}
+        title, tasks, _total_duration, pre_placed, periods, options = case_parts(case)
         prefix, cycle, plan = get_schedule_rules(tasks, pre_placed, periods, **options)
 
         print(f"--- {title.splitlines()[0]} ---")
@@ -474,7 +464,8 @@ def print_moving_rules(title, mw, max_regimes=12):
 def main():
     verify_only = "--verify" in sys.argv
     rules_only = "--rules" in sys.argv
-    no_ui = verify_only or rules_only or "--no-ui" in sys.argv
+    update_rules = "--update-rules" in sys.argv
+    no_ui = verify_only or rules_only or update_rules or "--no-ui" in sys.argv
 
     cases = build_cases()
     moving = build_moving_cases()
@@ -483,6 +474,10 @@ def main():
         TASK_COLORS.setdefault(IDLE, IDLE_COLOR)
         TASK_COLORS.setdefault("MAINTENANCE", "#CCCCCC")
 
+    if update_rules:
+        text = write_rules_snapshot(cases, moving)
+        print(f"wrote the rule sets on record ({len(text.splitlines())} lines)")
+        return
     if rules_only:
         for title, mw, _sweep in moving:
             print_moving_rules(title, mw, max_regimes=len(mw.regimes))
@@ -490,7 +485,10 @@ def main():
     if not verify_only:
         print_terminal_results(cases, moving)
 
+    # what the rules MEAN (self-consistency), then whether they are still the
+    # same rules the project agreed on
     failures = verify_moving(moving)
+    failures += check_rules_snapshot(cases, moving)
 
     if no_ui:
         raise SystemExit(1 if failures else 0)
