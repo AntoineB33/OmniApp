@@ -20,7 +20,7 @@ Because the timeline is infinite, the scheduler does not generate an endless seq
 
 The timeline is not a blank slate. It is influenced by two main factors:
 
-1. **Periods:** Time windows that dictate exactly which sets of tasks are allowed to run.
+1. **Periods:** Time windows that each forbid a set of tasks. Periods **may overlap**, and what an instant forbids is the **sum** of the lists of every period covering it — a task one of them forbids is forbidden there whatever the others say. The timeline is **not** necessarily covered: an instant no period covers forbids nothing, so everybody may run. An instant that forbids *everybody* deprives nobody relative to anybody, so it creates no compensation of its own and does not join the exclusions on either side of it into one.
 2. **Pre-placed Tasks:** Tasks that have already been locked into the timeline.
 
 **Exponential Decay Compensation:**

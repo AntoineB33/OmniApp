@@ -49,7 +49,7 @@ def build_cases():
         (
             ("Test 3: Periods constraint\n-> C is banned from t=105 on, forever: it is abundantly present just before the door closes, then A and B share the timeline."),
             [Task("A", priority=40, min_time=10, color="#FF9999"), Task("B", priority=40, min_time=10, color="#99CCFF"), Task("C", priority=20, min_time=10, color="#99FF99")],
-            300, [], [{'start': 0, 'end': 105, 'allowed': ['A', 'B', 'C']}, {'start': 105, 'end': inf, 'allowed': ['A', 'B']}]
+            300, [], [{'start': 105, 'end': inf, 'forbidden': ['C']}]
         ),
         (
             ("Test 4: Three tasks (A: 50% 20m, B: 30% 10m, C: 20% 15m)\n-> Minimums force a 75min period; shares are exact."),
@@ -71,11 +71,17 @@ def build_cases():
         ),
         (
             ("Test 8: B banned from t=100 to t=400 - a window, not a block\n-> same field, same ramps: B swells before the ban and right after it re-opens, then decays back to the cycle."),
-            AB(), 700, [], [{'start': 0, 'end': 100, 'allowed': ['A', 'B']}, {'start': 100, 'end': 400, 'allowed': ['A']}, {'start': 400, 'end': inf, 'allowed': ['A', 'B']}], {}, 2
+            AB(), 700, [], [{'start': 100, 'end': 400, 'forbidden': ['B']}], {}, 2
         ),
         (
             ("Test 9: same 300min ban, but split into ten consecutive windows\n-> merged into one exclusion: ten short bans in a row are one long ban, not ten small ones."),
-            AB(), 700, [], [{'start': 0, 'end': 100, 'allowed': ['A', 'B']}] + [{'start': 100 + 30 * i, 'end': 130 + 30 * i, 'allowed': ['A']} for i in range(10)] + [{'start': 400, 'end': inf, 'allowed': ['A', 'B']}], {}, 2
+            AB(), 700, [], [{'start': 100 + 30 * i, 'end': 130 + 30 * i, 'forbidden': ['B']} for i in range(10)], {}, 2
+        ),
+        (
+            ("Test 9b: two OVERLAPPING periods, on a timeline they do not cover\n-> what an instant refuses is the SUM of the periods over it: C is out from 100, B joins it at 200, and where the two overlap A holds the timeline alone."),
+            [Task("A", priority=40, min_time=10, color="#FF9999"), Task("B", priority=30, min_time=10, color="#99CCFF"), Task("C", priority=30, min_time=10, color="#99FF99")],
+            700, [], [{'start': 100, 'end': 300, 'forbidden': ['C']},
+                      {'start': 200, 'end': 400, 'forbidden': ['B']}], {}, 2
         )
     ]
 
@@ -102,7 +108,7 @@ def case_parts(case):
 TEST10_SPAN = 60
 
 def test10_moving(tp):
-    return [{'start': tp, 'end': tp + WINDOW, 'allowed': ['A'],
+    return [{'start': tp, 'end': tp + WINDOW, 'forbidden': ['B'],
              'label': f"{human_s(20)}: only A"}]
 
 TEST10_TITLE = (
@@ -131,9 +137,9 @@ def tasks11():
 TEST11_PRE = [{'name': 'MAINTENANCE', 'start': 18, 'duration': 6, 'color': '#CCCCCC'},
               {'name': 'A', 'start': 40, 'duration': 4, 'color': '#FF9999'}]
 
-TEST11_PERIODS = [{'start': 8, 'end': 12, 'allowed': ['A', 'B']},
-                  {'start': 30, 'end': 34, 'allowed': []},
-                  {'start': 52, 'end': 56, 'allowed': ['A', 'C']}]
+TEST11_PERIODS = [{'start': 8, 'end': 12, 'forbidden': ['C', 'D']},
+                  {'start': 30, 'end': 34, 'forbidden': ['A', 'B', 'C', 'D']},
+                  {'start': 52, 'end': 56, 'forbidden': ['B', 'D']}]
 
 def reached_stretch(tp):
     """Has the sliding window reached the waiting five-minute stretch?
@@ -156,13 +162,14 @@ def test11_moving(tp):
     The 20s window exists only until it reaches the stretch: from contact on it
     is gone forever, and what slides is the stretch it dragged off its home."""
     s = stretch_start(tp)
+    everyone = ['A', 'B', 'C', 'D']
     window = [] if reached_stretch(tp) else [
-        {'start': frac(tp), 'end': frac(tp) + WINDOW, 'allowed': [],
+        {'start': frac(tp), 'end': frac(tp) + WINDOW, 'forbidden': everyone,
          'label': f"{human_s(20)}: nothing"}]
     return window + [
-        {'start': s, 'end': s + STRETCH_HEAD, 'allowed': [],
+        {'start': s, 'end': s + STRETCH_HEAD, 'forbidden': everyone,
          'label': "1min: nothing"},
-        {'start': s + STRETCH_HEAD, 'end': s + STRETCH_LEN, 'allowed': ['A'],
+        {'start': s + STRETCH_HEAD, 'end': s + STRETCH_LEN, 'forbidden': ['B', 'C', 'D'],
          'label': "4min: only A"}]
 
 TEST11_TITLE = (
@@ -232,13 +239,16 @@ def blocked_at(mw, tp, name, t):
     """Is `name` refused the instant t -- by a period, or by somebody's block?
 
     A run may legitimately be shorter than its minimum only when something it
-    cannot pass ends it. Everything else that shortens one is a bug."""
+    cannot pass ends it. Everything else that shortens one is a bug.
+
+    Periods overlap, so every one covering t has a say: the first one found
+    saying nothing about `name` does not mean `name` is welcome there."""
     for p in mw.pre:
         if p.task != name and p.start <= t < p.end: return True
     for w in list(mw.moving(frac(tp))) + list(mw.periods):
         end = w.get('end')
         if frac(w['start']) <= t and (end is None or end == inf or t < frac(end)):
-            return name not in w['allowed']
+            if name in w['forbidden']: return True
     return False
 
 def service_runs(tl):
@@ -274,7 +284,7 @@ def check_atomic_block(verbose=True):
     tasks = [Task("A", priority=50, min_time=2, color="#FF9999"),
              Task("B", priority=50, min_time=2, color="#99CCFF")]
     plan = Scheduler(tasks).plan(
-        periods=[{'start': 1, 'end': 3, 'allowed': ['A']}], t_now=1,
+        periods=[{'start': 1, 'end': 3, 'forbidden': ['B']}], t_now=1,
         history=[Placement("B", frac(0), frac(1), "#99CCFF")])
     got = [(s.task, s.duration) for s in plan.prefix]
     # the whole period empty, and B resuming afterwards with at least the minute

@@ -135,17 +135,49 @@ class Scheduler:
         p = self._shares(allowed)
         return max(self.minimum[n] / p[n] for n in allowed)
 
-    def _sources(self, timeline, periods):
+    def _exclusions(self, timeline, periods):
+        """Every source of exclusion, as (start, end, who it refuses).
+
+        A pre-placed block owned by somebody else and a period are the same
+        event here -- an interval where a task may not run. A period says so
+        directly (its `forbidden` list); a block says so by occupying the slot.
+        """
         everyone = set(self.p)
-        raw = []
+        out = []
         for p in timeline:
-            if p.end > p.start: raw.append((p.start, p.end, everyone - {p.task}))
+            if p.end > p.start: out.append((p.start, p.end, everyone - {p.task}))
         for w in periods:
             end = inf if w['end'] is FOREVER else w['end']
-            if end > w['start']: raw.append((w['start'], end, everyone - set(w['allowed'])))
+            if end > w['start']: out.append((w['start'], end, w['forbidden'] & everyone))
+        return out
+
+    def _sources(self, timeline, periods):
+        """Per task, the intervals it is refused in while somebody else is not.
+
+        Exclusions overlap freely -- periods with each other and with the
+        pre-placed blocks -- and the timeline need not be covered by them at
+        all, so what an instant refuses is the UNION of everything covering it
+        and an instant nothing covers refuses nobody. Cutting at every edge
+        first is what makes that union a property of the INSTANT rather than of
+        one period, which is the only reading under which overlap means
+        anything.
+
+        An instant that refuses EVERYBODY is dropped, and it does not bridge
+        the two exclusions it separates either: nobody is served there, so
+        nobody is deprived relative to anybody, and the field is about relative
+        deprivation. A wait no rival profits from is a pure delay, and the
+        virtual clock already repays a delay exactly.
+        """
+        everyone = set(self.p)
+        raw = self._exclusions(timeline, periods)
+        edges = sorted({b for s, e, _ in raw for b in (s, e)})
 
         spans = {n: [] for n in everyone}
-        for start, end, excluded in raw:
+        for start, end in itertools.pairwise(edges):
+            if end <= start: continue
+            excluded = set()
+            for s, e, x in raw:
+                if s <= start and end <= e: excluded |= x
             if len(excluded) == len(everyone): continue
             for n in excluded: spans[n].append((start, end))
         return {n: self._merge_spans(s) for n, s in spans.items() if s}
@@ -260,7 +292,7 @@ class Scheduler:
             end = w.get('end', FOREVER)
             out.append({'start': frac(w['start']),
                         'end': FOREVER if end is FOREVER or end == inf else frac(end),
-                        'allowed': set(w['allowed'])})
+                        'forbidden': set(w['forbidden'])})
         return out
 
     @staticmethod
@@ -270,10 +302,17 @@ class Scheduler:
         return None
 
     def _allowed_at(self, periods, t):
+        """Who may run at t: everyone, less what EVERY period over t refuses.
+
+        Overlapping periods add up (a task one of them forbids is forbidden,
+        whatever the others say) and an instant no period covers refuses
+        nobody -- the timeline is not required to be covered.
+        """
+        banned = set()
         for w in periods:
             if w['start'] <= t and (w['end'] is FOREVER or t < w['end']):
-                return [n for n in self.p if n in w['allowed']]
-        return list(self.p)
+                banned |= w['forbidden']
+        return [n for n in self.p if n not in banned]
 
     @staticmethod
     def _next_boundary(pre, periods, t):
@@ -395,7 +434,7 @@ class Scheduler:
                 # running through the period or being moved off its slot. So the
                 # block is walked edge by edge, not swallowed whole. A block
                 # owned by nobody (MAINTENANCE) is not one of the tasks the
-                # allow-lists speak about, and no period suspends it.
+                # forbidden lists speak about, and no period suspends it.
                 nxt = self._next_boundary((), periods, t)
                 stop = block.end if nxt is None else min(block.end, nxt)
                 d = stop - t
