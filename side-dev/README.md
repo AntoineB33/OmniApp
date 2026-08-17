@@ -82,7 +82,7 @@ Reminders:
 
 
 
-# new requirement
+# test 12 requirements
 Add test 12 :
 Task A 50% 45 minutes
 20 other tasks that share the remaining 50%, all 45 minutes
@@ -102,7 +102,8 @@ Direct consequence: If the scheduling takes some time, when the user runs tests_
 
 If the exact schedule can’t be found at this pace, then there must be using approximations, where t and $t_1$ are positions in the displayed timeline. If so, give me the list of those approximations, so that I can validate them. Update the code.
 
-## How test 12 answers
+
+## Answer
 
 **The dragged break goes through the scheduler.** A break the line has reached and nothing has served is owed, so — as in test 11 — it sits at the line and slides with it, and it is handed to `Scheduler.plan` as an ordinary period. So the deficit it creates is compensated by the same exponential-decay field as any other blockage, and no task is interrupted inside its minimum by anything but idling: the atomic block is the scheduler's own, not something a display transform could break. `ProgressiveWindow.regime_at` then fits that plan into rules **affine in $t_p$**, exactly as test 10 does, so following the line is arithmetic and not scheduling. They are certified the way tests 10–11 certify theirs: at positions they were never fitted on, against the scheduler itself (worst deviation over the sweep: ~10 µs, epsilon 0.5 s).
 
