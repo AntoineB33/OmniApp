@@ -7,6 +7,13 @@ The moving period of tests 10 and 11 is moved *here*: the displayer advances
 t_p every frame and reads the timeline off the rule list the scheduler derived
 once. No scheduling happens while the period slides.
 
+Under each test's rules and above its timeline is what the case IS: every task
+with its minimum, its priority and the share those two actually BUY, and every
+static period with the set of tasks it turns away. The first two are the case's
+own statement and never move; the resulting share is a property of the schedule,
+so on a sliding case it is read off the rule list at t_p and moves with it --
+substituted into, like everything else here, never rescheduled.
+
 A bar at the top of the window owns tau -- the constant the compensation field
 decays over, on both sides of a blockage -- as a multiple of each case's own
 default. Changing it rebuilds every rule list, since they are a function of it.
@@ -177,6 +184,173 @@ TASK_COLORS = {}
 def block_color(name, fallback="#DDDDDD"):
     return TASK_COLORS.get(name, fallback)
 
+
+# --------------------------------------------------------------------------- #
+#  what a case IS, under its timeline: the tasks it declares (minimum, priority,
+#  and the share those two actually BUY) and the static periods (each with the
+#  set of tasks it turns away)
+#
+#  The minimum, the priority and the periods are the case's own statement and
+#  never move. The resulting share is a property of the schedule, so on a
+#  sliding case it is recomputed at every t_p -- from the rule list evaluated
+#  there, not from a fresh scheduling -- and it moves as the period slides.
+#
+#  Two of them are shown, because they answer two different questions: the
+#  CYCLE share is the steady state the rules settle into (the plan's own
+#  `shares`), and the TIMELINE share is what the drawn span really gives, prefix
+#  and frozen past and idle time included. They differ exactly where the
+#  disturbance is -- which is the interesting part.
+# --------------------------------------------------------------------------- #
+
+INFO_FONT = ("Courier", 8)
+INFO_CHAR_W = 7                  # what ("Courier", 8) measures to, so the block
+INFO_LINE_H = 14                 # can be laid out without asking the toolkit
+TASK_CELL_W = 37                 # characters of one task's row
+TASK_COL_W = INFO_CHAR_W * TASK_CELL_W
+TASK_COL_ROWS = 6
+PERIOD_LINES = 6
+PERIOD_SPANS = 5
+
+def _pct(x):
+    return f"{float(x) * 100:.4g}%"
+
+def _natural(name):
+    """A name split into its text head and its trailing number, so N2 sorts
+    before N10 and a run of them can be recognised."""
+    head = name.rstrip("0123456789")
+    tail = name[len(head):]
+    return head, int(tail) if tail else -1
+
+def compact_names(names):
+    """"A, N1, N2, ... N10" -> "A, N1-N10".
+
+    Test 12 refuses twenty-one tasks by name, fifty-five times over. A run is a
+    thing to read; the same twenty names spelled out is a thing to scroll past.
+    """
+    out, run = [], []
+
+    def flush():
+        if not run: return
+        out.append(f"{run[0]}-{run[-1]}" if len(run) >= 3 else ", ".join(run))
+        run.clear()
+
+    for n in sorted(names, key=_natural):
+        if run:
+            (ph, pn), (h, num) = _natural(run[-1]), _natural(n)
+            if h == ph and pn >= 0 and num == pn + 1:
+                run.append(n)
+                continue
+            flush()
+        run.append(n)
+    flush()
+    return ", ".join(out) or "(nobody)"
+
+def _duration_of(item):
+    return item['duration'] if isinstance(item, dict) else item.duration
+
+def _name_of(item):
+    return item['name'] if isinstance(item, dict) else item.task
+
+def cycle_shares(blocks):
+    """The share of the cycle each task holds -- blocks or Slots alike."""
+    total = sum((_duration_of(b) for b in blocks), frac(0))
+    if not total: return {}
+    out = {}
+    for b in blocks:
+        out[_name_of(b)] = out.get(_name_of(b), frac(0)) + _duration_of(b)
+    return {n: d / total for n, d in out.items()}
+
+def span_shares(spans):
+    """The share of the drawn timeline each task holds, from (start, end, name)."""
+    out, total = {}, frac(0)
+    for start, end, name in spans:
+        if end <= start: continue
+        out[name] = out.get(name, frac(0)) + (end - start)
+        total += end - start
+    return {n: d / total for n, d in out.items()} if total else {}
+
+def _edge(t):
+    return "forever" if t is None or t == float('inf') else stamp(t)
+
+def _clip(text, chars):
+    return text if chars is None or len(text) <= chars else text[:chars - 3] + "..."
+
+def period_lines(periods, max_lines=PERIOD_LINES, max_spans=PERIOD_SPANS, chars=None):
+    """The static periods, grouped by the set of tasks they refuse.
+
+    Ten consecutive bans of the same set is one sentence said ten times (test
+    9), and test 12 says its two sets fifty-five times, so the group is the
+    line and the spans are where it applies. The full list is on the tooltip:
+    nothing is hidden, only folded."""
+    groups = {}
+    for w in periods:
+        groups.setdefault(frozenset(w.get('forbidden') or ()), []).append(w)
+    ordered = sorted(groups.items(), key=lambda kv: min(frac(w['start']) for w in kv[1]))
+
+    out = []
+    for who, ws in ordered[:max_lines]:
+        ws = sorted(ws, key=lambda w: frac(w['start']))
+        spans = [f"[{_edge(w['start'])}, {_edge(w.get('end'))})" for w in ws]
+        text = (f"refuses {compact_names(who)}  x{len(ws)}:  "
+                + ", ".join(spans[:max_spans]) + (" ..." if len(spans) > max_spans else ""))
+        tip = "\n".join([f"refuses {compact_names(who)}  ({len(ws)} period(s))"]
+                        + [f"  {s}  {w.get('label', '')}".rstrip()
+                           for s, w in list(zip(spans, ws))[:40]]
+                        + ([f"  ... {len(ws) - 40} more"] if len(ws) > 40 else []))
+        out.append((_clip(text, chars), tip))
+    if len(ordered) > max_lines:
+        out.append((f"... {len(ordered) - max_lines} more sets of refused tasks", None))
+    return out or [("(none: every task may run everywhere)", None)]
+
+def info_layout(tasks, periods, width=780):
+    """The fixed shape of the block: how many task rows per column, the period
+    lines, and the height the two of them need."""
+    cols_max = max(1, int(width // TASK_COL_W))
+    rows = min(TASK_COL_ROWS, len(tasks)) or 1
+    cols = -(-len(tasks) // rows)
+    if cols > cols_max:
+        rows = -(-len(tasks) // cols_max)
+    # the canvas scrolls vertically only, so a line wider than the block is a
+    # line the window cannot show: it is cut here and kept whole on the tooltip
+    plines = period_lines(periods, chars=max(20, int(width // INFO_CHAR_W)))
+    return rows, plines, INFO_LINE_H * (3 + rows + len(plines))
+
+def draw_info(canvas, x, y, tasks, periods, cyc, tl, rows, plines, tag=None, tooltip=None):
+    """Draw the block and return its height. `cyc` and `tl` are the resulting
+    shares of the cycle and of the drawn timeline."""
+    tags = (tag,) if tag else ()
+
+    def text(ty, s, fill, tx=None):
+        return canvas.create_text(x if tx is None else tx, ty, anchor="nw",
+                                  font=INFO_FONT, fill=fill, tags=tags, text=s)
+
+    text(y, f"tasks ({len(tasks)}):  name, minimum, priority  ->  resulting share "
+            f"of the cycle (and of the whole drawn timeline)", "#333333")
+    total = sum((t.priority for t in tasks), frac(0)) or frac(1)
+    for i, t in enumerate(tasks):
+        col, row = divmod(i, rows)
+        cell = (f"{t.name:<4}{human(t.min_time):>7}{_pct(t.priority / total):>7}"
+                f" ->{_pct(cyc.get(t.name, 0)):>7}{'(' + _pct(tl.get(t.name, 0)) + ')':>9}")
+        text(y + INFO_LINE_H * (1 + row), cell, "#000000", tx=x + col * TASK_COL_W)
+
+    # the drawn timeline is not made of tasks alone -- a pre-placed block owned
+    # by nobody and the idling a minimum could not fit into hold their share of
+    # it too, and a table of tasks that did not sum to the timeline would look
+    # like an error rather than like the answer
+    rest = {n: s for n, s in tl.items() if n not in {t.name for t in tasks}}
+    if rest:
+        text(y + INFO_LINE_H * (1 + rows),
+             "not a task, of the drawn timeline:  "
+             + ", ".join(f"{n} {_pct(s)}" for n, s in sorted(rest.items())), "#777777")
+
+    y2 = y + INFO_LINE_H * (2 + rows)
+    text(y2, f"static periods ({len(periods)}), by the set of tasks they do NOT allow:", "#333333")
+    for i, (line, tip) in enumerate(plines):
+        item = text(y2 + INFO_LINE_H * (1 + i), line, "#7030A0")
+        if tip and tooltip is not None: tooltip.register(item, tip)
+    return INFO_LINE_H * (3 + rows + len(plines))
+
+
 def draw_schedules(root, canvas, test_cases, window_width=900):
     y_offset = 20
     px_per_min = 4
@@ -212,7 +386,16 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
         txt_id = canvas.create_text(margin_left, y_offset, text=title, font=("Arial", 11, "bold"), anchor="nw")
         bbox = canvas.bbox(txt_id)
         sub_id = canvas.create_text(margin_left, bbox[3] + 2, text=summary, font=("Arial", 9), fill="#555555", anchor="nw")
-        local_y_offset = canvas.bbox(sub_id)[3] + 18
+
+        # what the case declares, and what the schedule made of it. Nothing here
+        # moves on a static case -- it is one plan -- so it is drawn once.
+        rows, plines, _h = info_layout(tasks, periods,
+                                       width=window_width - margin_left - margin_right)
+        info_y = canvas.bbox(sub_id)[3] + 6
+        drawn = [(b['start'], b['start'] + b['duration'], b['name']) for b in schedule]
+        height = draw_info(canvas, margin_left, info_y, tasks, periods,
+                           plan.shares, span_shares(drawn), rows, plines, tooltip=tooltip)
+        local_y_offset = info_y + height + 14
 
         max_row_idx = 0
         for block in schedule:
@@ -297,7 +480,13 @@ class MovingCasePanel:
         head = canvas.create_text(self.MARGIN_LEFT, y, text=title, font=("Arial", 11, "bold"), anchor="nw")
         self.y_status = canvas.bbox(head)[3] + 2
         self.y_rules = self.y_status + 30
-        self.top = self.y_rules + 30
+        # the tasks and the static periods, between the rules and the timeline.
+        # Its SHAPE is fixed -- only the resulting shares in it move with t_p --
+        # so the space it needs is measured once, here.
+        self.y_info = self.y_rules + 16
+        self.info_rows, self.info_periods, info_h = info_layout(
+            mw.tasks, mw.periods, width=width - self.MARGIN_LEFT - self.MARGIN_RIGHT)
+        self.top = self.y_info + info_h + 12
         self.height = (self.top + self.rows * (self.ROW_H + self.ROW_SPACING) + 30) - y
         self._tick()
 
@@ -419,7 +608,13 @@ class MovingCasePanel:
                       fill="#00407A", tags=self.tag,
                       text="Cycle:  " + self._ellipsis(regime.cycle_text))
 
-        for start, end, name in timeline_of(mw, tp):
+        drawn = timeline_of(mw, tp)
+        prefix, cycle = mw.blocks_at(tp)
+        draw_info(c, self.MARGIN_LEFT, self.y_info, mw.tasks, mw.periods,
+                  cycle_shares(cycle or prefix), span_shares(drawn),
+                  self.info_rows, self.info_periods, tag=self.tag, tooltip=self.tooltip)
+
+        for start, end, name in drawn:
             if end <= start: continue
             frozen = end <= tp
             hover = (f"Task {name}\nStart: {stamp(start)}\nEnd: {stamp(end)}\n"
@@ -558,7 +753,19 @@ class ProgressiveCasePanel(MovingCasePanel):
                       fill="#00407A", tags=self.tag,
                       text="Cycle:  " + self._ellipsis(seg.cycle_text if seg else ""))
 
-        for start, end, name in pw.timeline(tp, fit=False):
+        # the cycle share comes from the rules AT THE LINE when they have been
+        # derived, and from the link otherwise: never from `regime_at`, which
+        # would derive one, and drawing a frame may not do that.
+        local = pw.blocks_at(tp, fit=False)
+        if local is not None: cycle = local[1] or local[0]
+        elif seg is not None: cycle = seg.cycle or seg.prefix
+        else: cycle = []
+        drawn = pw.timeline(tp, fit=False)
+        draw_info(c, self.MARGIN_LEFT, self.y_info, pw.tasks, pw.periods,
+                  cycle_shares(cycle), span_shares(drawn),
+                  self.info_rows, self.info_periods, tag=self.tag, tooltip=self.tooltip)
+
+        for start, end, name in drawn:
             if end <= start: continue
             frozen = end <= tp
             known = start < pw.settled
@@ -615,12 +822,25 @@ def draw_progressive_cases(root, canvas, tooltip, cases, y_offset, window_width=
         y_offset += panel.height + 30
     return y_offset
 
+def print_statement(tasks, periods, shares=None):
+    """The case's own statement -- the same table the window draws, in text."""
+    total = sum((t.priority for t in tasks), frac(0)) or frac(1)
+    print(f"[ TASKS ] name, minimum, priority"
+          + (" -> resulting share of the cycle" if shares is not None else ""))
+    for t in tasks:
+        got = f" -> {_pct(shares.get(t.name, 0)):>8}" if shares is not None else ""
+        print(f"  {t.name:<4}{human(t.min_time):>8}{_pct(t.priority / total):>8}{got}")
+    print(f"[ STATIC PERIODS ] {len(periods)}, by the set of tasks they do NOT allow")
+    for line, _tip in period_lines(periods):
+        print("  " + line)
+
 def print_terminal_results(cases, moving_cases, progressive_cases=()):
     for case in cases:
         title, tasks, _total_duration, pre_placed, periods, options = case_parts(case)
         prefix, cycle, plan = get_schedule_rules(tasks, pre_placed, periods, **options)
 
         print(f"--- {title.splitlines()[0]} ---")
+        print_statement(tasks, periods, plan.shares)
         if prefix:
             print("[ PREFIX ]")
             for line in rule_lines(prefix, "  "): print(line)
@@ -638,6 +858,9 @@ def print_terminal_results(cases, moving_cases, progressive_cases=()):
 
 def print_moving_rules(title, mw, max_regimes=12):
     print(f"--- {title.splitlines()[0]} ---")
+    # no resulting share here: it is a function of t_p, and the rule list below
+    # is what it is read off at each position
+    print_statement(mw.tasks, mw.periods)
     print("[ DYNAMIC RULE SET - this is the output; the display substitutes t_p into it ]")
     for line in mw.lines()[:4 + 3 * max_regimes]: print("  " + line)
     if len(mw.regimes) > max_regimes:
@@ -647,6 +870,7 @@ def print_moving_rules(title, mw, max_regimes=12):
 
 def print_progressive_rules(title, pw, max_links=8):
     print(f"--- {title.splitlines()[0]} ---")
+    print_statement(pw.tasks, pw.periods)
     print("[ PROGRESSIVE RULE SET - a chain of links, settled from t=0 outward ]")
     pw.settle()
     for line in pw.lines(max_segments=max_links): print("  " + line)
