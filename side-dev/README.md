@@ -79,3 +79,25 @@ Reminders:
 - Everything at t < $t_p$ stays frozen.
 - As the idea of result shows, the whole timeline won't be filled just with task A and idling. The parameterization of $t_p$ prevents that fragmentation entirely
 - The decay requirement doesn't contradict with the minimum time requirement, which must always be satisfied.
+
+
+
+# new requirement
+Add test 12 :
+Task A 50% 45 minutes
+20 other tasks that share the remaining 50%, all 45 minutes
+Half of the tasks are in the set “privileges” 
+De 0h à 8h: no task allowed
+De 23h à 8h: only tasks from “privileges”
+There are the same 20s and 5min periods from test 11, in addition to the 15min period. The 4 last minutes of the 5min period and the whole 15 minutes of the 15min period only allow tasks that are in the set “privileges”.
+The following rules must always be satisfied by the timeline:
+ - after a ≥15-minutes stretch of only privileged allowed, or after one of the three periods aforementioned, the next 20s period is **20 minutes** later;
+ - after a ≥5-minute stretch of only privileged allowed, the next 5min period is **1 hour** later;
+ - after a ≥15-minute stretch of only privileged allowed, the next 15min period is **2 hours** later.
+The timeline of test 12 spans over 3 days. The first 24 hours of the timeline have the three periods aforementioned. At t<0, is it a period where no task is allowed. $t_p$ starts at 24h and moves to the right.
+It means that  when $t_p$ reaches the end, the three aforementioned periods are only found in the first 24 hours, because the $t_p$ line swiped them all like in test 11.
+Like for all tests, finding the right schedule for the next 10 minutes must not take more than 10 seconds. That means that if the scheduling is taking time for the whole timeline of the test, the user will see the schedule change each time the scheduler finds a better set of rules to satisfy the following requirement : if the right schedule is found for t < $t_1$, then 10 seconds later the right schedule must be found for t < $t_1$ + 10 minutes.
+
+Direct consequence: If the scheduling takes some time, when the user runs tests_displayer and immediately scrolls down to test 12 without clicking on play, the user can see the schedule still changing, while the definitive schedule grows from t=0.
+
+If the exact schedule can’t be found at this pace, then there must be using approximations, where t and $t_1$ are positions in the displayed timeline. If so, give me the list of those approximations, so that I can validate them. Update the code.
