@@ -6,6 +6,12 @@ GUI tools, CLI runner, and visual logic for displaying scheduler tests.
 The moving period of tests 10 and 11 is moved *here*: the displayer advances
 t_p every frame and reads the timeline off the rule list the scheduler derived
 once. No scheduling happens while the period slides.
+
+Test 12's rule list is too long to derive before anything can be shown, so its
+panel settles one link of the chain between frames and draws whatever is known
+now: definitive up to the front, provisional past it. Scrolling to it straight
+away shows the far end of the schedule still changing while the definitive part
+grows from t=0.
 """
 
 import sys
@@ -29,10 +35,12 @@ from scheduler_logic import (
 from test_configs import (
     build_cases,
     build_moving_cases,
+    build_progressive_cases,
     case_parts,
     get_schedule_rules,
     timeline_of,
     verify_moving,
+    verify_progressive,
 )
 
 
@@ -259,15 +267,9 @@ class MovingCasePanel:
         self.root, self.canvas, self.tooltip, self.mw = root, canvas, tooltip, mw
         self.title = title
         self.tag = f"moving{id(self)}"
-        self.tp = frac(0)
         self.playing = False
         self.scrubbing = False
-        # the displayed timeline is the case's span, whatever the window is
-        # sized to: only the scale changes with the screen, never the timeline
-        self.row_duration = mw.span
-        self.px_per_min = (width - self.MARGIN_LEFT - self.MARGIN_RIGHT) / float(mw.span)
-        self.rows = 1
-        self.step = mw.span / (sweep_seconds * self.FPS)
+        self._setup(width, sweep_seconds)
 
         assert tk is not None
         self.btn_copy = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
@@ -287,6 +289,18 @@ class MovingCasePanel:
         self.top = self.y_rules + 30
         self.height = (self.top + self.rows * (self.ROW_H + self.ROW_SPACING) + 30) - y
         self._tick()
+
+    def _setup(self, width, sweep_seconds):
+        """How much timeline one row shows, and how fast t_p crosses it.
+
+        The displayed timeline is the case's span, whatever the window is sized
+        to: only the scale changes with the screen, never the timeline."""
+        mw = self.mw
+        self.tp = frac(0)
+        self.rows = 1
+        self.row_duration = mw.span
+        self.px_per_min = (width - self.MARGIN_LEFT - self.MARGIN_RIGHT) / float(mw.span)
+        self.step = mw.span / (sweep_seconds * self.FPS)
 
     def _toggle(self):
         self.playing = not self.playing
@@ -432,7 +446,151 @@ def draw_moving_cases(root, canvas, tooltip, cases, y_offset, window_width=900):
     return y_offset
 
 
-def print_terminal_results(cases, moving_cases):
+
+class ProgressiveCasePanel(MovingCasePanel):
+    """A timeline whose rules are still being derived while it is shown.
+
+    The chain is settled a link at a time, between frames, so the window stays
+    live and what is drawn is whatever is known at this frame. Left of the
+    front the rules are DEFINITIVE and will not move again; right of it the
+    display carries the last link's cycle on as a provisional answer, which is
+    why -- with the sweep paused and nothing touched -- the far end of the
+    timeline goes on changing while the definitive part grows from t=0.
+
+    One link per frame rather than a worker thread: a link is a tenth of a
+    second, the frame that draws it is a sixtieth, and interleaving them keeps
+    the window answering while it fills. A thread would only add the GIL.
+
+    t_p behaves as it does everywhere else: everything left of it is frozen,
+    and here it also consumes the breaks it goes past.
+    """
+
+    ROWS = 6
+    FPS = 12
+
+    def __init__(self, root, canvas, tooltip, y, title, pw, sweep_seconds, width=900):
+        self.pw = pw
+        super().__init__(root, canvas, tooltip, y, title, pw, sweep_seconds, width=width)
+
+    def _setup(self, width, sweep_seconds):
+        pw = self.pw
+        self.tp = pw.tp_start
+        self.rows = self.ROWS
+        self.row_duration = pw.span / self.rows
+        self.px_per_min = (width - self.MARGIN_LEFT - self.MARGIN_RIGHT) / float(self.row_duration)
+        self.step = (pw.span - pw.tp_start) / (sweep_seconds * self.FPS)
+
+    def _tp_at(self, cx, row):
+        t = super()._tp_at(cx, row)
+        return min(max(t, self.pw.tp_start), self.pw.span)
+
+    WORK_BUDGET = 0.02          # seconds of deriving per frame: one link
+
+    def _tick(self):
+        # The two chains first -- they are the timeline itself. Then the rules
+        # AT THE LINE, but ONLY while the line is standing still: deriving one
+        # takes a second or two and the sweep crosses a regime every frame, so
+        # doing it while playing would stall the line instead of moving it. A
+        # position the user stops at (or clicks on) becomes exact within a frame
+        # or two, and stays so -- a regime is derived once and kept.
+        if not self.pw.done:
+            self.pw.advance(budget=self.WORK_BUDGET)
+        elif not self.playing and not self.pw.has_rules_at(self.tp):
+            self.pw.regime_at(self.tp)
+        self._draw()
+        if self.playing:
+            self.tp += self.step
+            if self.tp >= self.mw.span: self.tp = self.pw.tp_start
+        refresh_scrollregion(self.canvas)
+        self.tooltip.refresh()
+        self.canvas.after(int(1000 / self.FPS), self._tick)
+
+    def _status(self):
+        pw = self.pw
+        settled, worked = pw.pace()
+        rate = float(settled) / worked if worked else 0.0
+        state = "settled" if pw.done else "still deriving"
+        r = pw.rules_at(self.tp)
+        rules = (f"rules at the line: exact, for t_p in {r.label}" if r is not None else
+                 "rules at the line: provisional (stop the sweep to derive them)")
+        return (f"t_p = {stamp(self.tp)}   ->   definitive up to t = {stamp(pw.settled)}"
+                f"   ({len(pw.segments)} links, {len(pw.regimes)} regimes, {state}, "
+                f"{rate:.0f} min of timeline per second of work; {rules}, substituted "
+                f"into, not recomputed)")
+
+    def _draw(self):
+        c, pw, tp = self.canvas, self.pw, self.tp
+        for item in c.find_withtag(self.tag): self.tooltip.unregister(item)
+        c.delete(self.tag)
+
+        c.create_text(self.MARGIN_LEFT, self.y_status, anchor="nw", font=("Arial", 9),
+                      fill="#333333", tags=self.tag, text=self._status())
+        seg = pw.segment_at(tp)
+        c.create_text(self.MARGIN_LEFT, self.y_rules - 14, anchor="nw", font=("Courier", 8),
+                      fill="#7A0000", tags=self.tag,
+                      text=("Link at t_p " + (seg.label if seg else "(not settled yet)")
+                            + ":  " + self._ellipsis(seg.prefix_text if seg else "")))
+        c.create_text(self.MARGIN_LEFT, self.y_rules, anchor="nw", font=("Courier", 8),
+                      fill="#00407A", tags=self.tag,
+                      text="Cycle:  " + self._ellipsis(seg.cycle_text if seg else ""))
+
+        for start, end, name in pw.timeline(tp, fit=False):
+            if end <= start: continue
+            frozen = end <= tp
+            known = start < pw.settled
+            hover = (f"Task {name}\nStart: {stamp(start)}\nEnd: {stamp(end)}\n"
+                     f"Duration: {human(end - start)}\n"
+                     f"{'frozen past' if frozen else 'from the rules' if known else 'provisional: not settled yet'}")
+            for x1, y1, x2, y2 in self._bar(start, end):
+                rect = c.create_rectangle(
+                    x1, y1, x2, y2, fill=block_color(name),
+                    outline="#999999" if frozen else "black",
+                    stipple="" if known else "gray50",
+                    tags=(self.tag, "task_panel"))
+                self.tooltip.register(rect, hover)
+                if x2 - x1 > 26:
+                    txt = c.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=name,
+                                        font=("Arial", 8), tags=(self.tag, "task_panel"))
+                    self.tooltip.register(txt, hover)
+
+        for w in pw.sliding(tp):
+            for x1, y1, x2, y2 in self._bar(w['start'], w['end']):
+                rect = c.create_rectangle(x1, y1 - 4, max(x2, x1 + 2), y2 + 4,
+                                          outline="#D40000",
+                                          width=2 if w.get('pinned') else 1, tags=self.tag)
+                self.tooltip.register(rect, w.get('label', 'period'))
+        for w in pw.periods:
+            if w['start'] >= pw.span or w['end'] <= 0: continue
+            for x1, y1, x2, y2 in self._bar(max(w['start'], frac(0)), w['end']):
+                rect = c.create_rectangle(x1, y1 - 2, max(x2, x1 + 2), y2 + 2,
+                                          outline="#7030A0", width=1, tags=self.tag)
+                self.tooltip.register(rect, w.get('label', 'period'))
+
+        for row in range(self.rows):
+            y1 = self._row_y(row)
+            c.create_text(self.MARGIN_LEFT - 8, y1 + self.ROW_H / 2,
+                          text=stamp(row * self.row_duration), font=("Arial", 8),
+                          fill="#777777", anchor="e", tags=self.tag)
+        for x1, y1, _x2, _y2 in self._bar(pw.settled, pw.settled + Fraction(1, 600)):
+            c.create_line(x1, y1 - 6, x1, y1 + self.ROW_H + 6, fill="#008000",
+                          width=2, tags=self.tag)
+            c.create_text(x1 + 2, y1 - 6, text="definitive", fill="#008000",
+                          font=("Arial", 7), anchor="sw", tags=self.tag)
+        for x1, y1, _x2, _y2 in self._bar(tp, tp + Fraction(1, 600)):
+            c.create_line(x1, y1 - 12, x1, y1 + self.ROW_H + 12, fill="#D40000",
+                          width=2, tags=self.tag)
+            c.create_text(x1 + 2, y1 + self.ROW_H + 12, text="t_p", fill="#D40000",
+                          font=("Arial", 8, "bold"), anchor="nw", tags=self.tag)
+
+
+def draw_progressive_cases(root, canvas, tooltip, cases, y_offset, window_width=900):
+    for title, pw, sweep in cases:
+        panel = ProgressiveCasePanel(root, canvas, tooltip, y_offset, title, pw, sweep,
+                                     width=window_width)
+        y_offset += panel.height + 30
+    return y_offset
+
+def print_terminal_results(cases, moving_cases, progressive_cases=()):
     for case in cases:
         title, tasks, _total_duration, pre_placed, periods, options = case_parts(case)
         prefix, cycle, plan = get_schedule_rules(tasks, pre_placed, periods, **options)
@@ -450,6 +608,8 @@ def print_terminal_results(cases, moving_cases):
 
     for title, mw, _sweep in moving_cases:
         print_moving_rules(title, mw)
+    for title, pw, _sweep in progressive_cases:
+        print_progressive_rules(title, pw)
 
 def print_moving_rules(title, mw, max_regimes=12):
     print(f"--- {title.splitlines()[0]} ---")
@@ -458,6 +618,13 @@ def print_moving_rules(title, mw, max_regimes=12):
     if len(mw.regimes) > max_regimes:
         print(f"  ... {len(mw.regimes) - max_regimes} more regimes "
               f"(the Copy Rules button gives all of them)")
+    print()
+
+def print_progressive_rules(title, pw, max_links=8):
+    print(f"--- {title.splitlines()[0]} ---")
+    print("[ PROGRESSIVE RULE SET - a chain of links, settled from t=0 outward ]")
+    pw.settle()
+    for line in pw.lines(max_segments=max_links): print("  " + line)
     print()
 
 
@@ -469,26 +636,30 @@ def main():
 
     cases = build_cases()
     moving = build_moving_cases()
-    for _t, mw, _s in moving:
+    progressive = build_progressive_cases()
+    for _t, mw, _s in moving + progressive:
         TASK_COLORS.update(mw.sched.color)
         TASK_COLORS.setdefault(IDLE, IDLE_COLOR)
         TASK_COLORS.setdefault("MAINTENANCE", "#CCCCCC")
 
     if update_rules:
-        text = write_rules_snapshot(cases, moving)
+        text = write_rules_snapshot(cases, moving, progressive)
         print(f"wrote the rule sets on record ({len(text.splitlines())} lines)")
         return
     if rules_only:
         for title, mw, _sweep in moving:
             print_moving_rules(title, mw, max_regimes=len(mw.regimes))
+        for title, pw, _sweep in progressive:
+            print_progressive_rules(title, pw, max_links=None)
         return
     if not verify_only:
-        print_terminal_results(cases, moving)
+        print_terminal_results(cases, moving, progressive)
 
     # what the rules MEAN (self-consistency), then whether they are still the
     # same rules the project agreed on
     failures = verify_moving(moving)
-    failures += check_rules_snapshot(cases, moving)
+    failures += verify_progressive(progressive)
+    failures += check_rules_snapshot(cases, moving, progressive)
 
     if no_ui:
         raise SystemExit(1 if failures else 0)
@@ -523,7 +694,8 @@ def main():
 
     y = draw_schedules(root, canvas, cases, window_width=900)
     tooltip = ToolTip(canvas)
-    draw_moving_cases(root, canvas, tooltip, moving, y, window_width=900)
+    y = draw_moving_cases(root, canvas, tooltip, moving, y, window_width=900)
+    draw_progressive_cases(root, canvas, tooltip, progressive, y, window_width=900)
 
     refresh_scrollregion(canvas)
     root.mainloop()

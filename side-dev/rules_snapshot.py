@@ -31,6 +31,7 @@ from scheduler_logic import MAX_RULES, human, rule_lines, stamp
 from test_configs import (
     build_cases,
     build_moving_cases,
+    build_progressive_cases,
     case_parts,
     get_schedule_rules,
 )
@@ -83,16 +84,63 @@ def moving_rules_lines(title, mw):
     """The dynamic rule list of one moving case: every regime, prefix and cycle."""
     return [_heading(title)] + mw.lines() + [""]
 
-def rules_document(cases=None, moving_cases=None):
+PROGRESSIVE_LINKS = 6
+
+def progressive_regime_lines(pw, at=()):
+    """The affine rules at a few positions of the line -- the dynamic half of
+    the answer, in the same form tests 10-11 record theirs."""
+    out = [""]
+    for tp in (at or (pw.tp_start, pw.tp_start + (pw.span - pw.tp_start) / 3)):
+        r = pw.regime_at(tp)
+        out.append(f"Rules at the line while t_p in {r.label}:")
+        out.append(f"  Prefix: {r.prefix_text}")
+        out.append(f"  Cycle:  {r.cycle_text}")
+    return out
+
+def progressive_rules_lines(title, pw):
+    """The progressive rule list of one chained case.
+
+    Its chain runs to hundreds of links, and printing all of them would bury
+    every other test in the file, so what is recorded is the shape of the whole
+    -- how many links, how many rules each, where they were cut -- the first few
+    in full, and what the three days actually gave each task. Any change to the
+    scheduler moves the digest.
+
+    The rules AT THE LINE are recorded too, at the position the sweep starts
+    from and at the first one where a break is being dragged: they are what the
+    display substitutes t_p into, and a slope changing there is exactly the kind
+    of change this file exists to catch.
+
+    `settle` is deterministic (the front is advanced link by link until it is
+    done), so nothing about the machine's speed leaks in here."""
+    pw.settle()
+    out = [_heading(title)] + pw.lines(max_segments=PROGRESSIVE_LINKS)
+    out += progressive_regime_lines(pw)
+    served, busy = {}, 0
+    for s, e, n in pw.timeline(pw.span):
+        if n not in pw.minimum: continue
+        served[n] = served.get(n, 0) + (e - s)
+        busy += e - s
+    out.append(f"Cuts: " + ", ".join(stamp(s.start) for s in pw.segments[:8]) + ", ...")
+    out.append(f"Scheduled: {human(busy)} of {stamp(pw.span)}")
+    out.append("Served: " + ", ".join(f"{n} {human(d)}" for n, d in sorted(served.items())))
+    out.append("")
+    return out
+
+def rules_document(cases=None, moving_cases=None, progressive_cases=None):
     """The whole snapshot as text. Deterministic: same configs -> same bytes."""
     cases = build_cases() if cases is None else cases
     moving_cases = build_moving_cases() if moving_cases is None else moving_cases
+    progressive_cases = (build_progressive_cases() if progressive_cases is None
+                         else progressive_cases)
 
     lines = list(HEADER)
     for case in cases:
         lines += static_rules_lines(case)
     for title, mw, _sweep in moving_cases:
         lines += moving_rules_lines(title, mw)
+    for title, pw, _sweep in progressive_cases:
+        lines += progressive_rules_lines(title, pw)
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
@@ -100,15 +148,16 @@ def rules_document(cases=None, moving_cases=None):
 #  the check
 # --------------------------------------------------------------------------- #
 
-def write_rules_snapshot(cases=None, moving_cases=None, path=SNAPSHOT):
-    text = rules_document(cases, moving_cases)
+def write_rules_snapshot(cases=None, moving_cases=None, progressive_cases=None,
+                         path=SNAPSHOT):
+    text = rules_document(cases, moving_cases, progressive_cases)
     path.write_text(text, encoding="utf-8", newline="\n")
     return text
 
-def check_rules_snapshot(cases=None, moving_cases=None, path=SNAPSHOT,
-                         verbose=True, max_report=40):
+def check_rules_snapshot(cases=None, moving_cases=None, progressive_cases=None,
+                         path=SNAPSHOT, verbose=True, max_report=40):
     """Do the tests still give the rules recorded in `path`? -> list of failures."""
-    got = rules_document(cases, moving_cases)
+    got = rules_document(cases, moving_cases, progressive_cases)
 
     if not path.exists():
         if verbose:

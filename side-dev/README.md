@@ -29,7 +29,7 @@ Pre-placed tasks and restrictive periods inevitably create priority deficits or 
 Test 10 (task A 50% 10min and task B 50% 10min) must have a 20 second period that allows only task task A, and that continuously moves to the right. Of course the scheduling can change violently, but everything at t < $t_p$ stays frozen, such as $t_p$ is the starting time of the 20s period. The scheduler must add in its set of rules the rules for the dynamic schedule. This result in algebraic rules parameterized by $t_p$.
 Note: As explained in the Atomic Blocks paragraph, task B can be interrupted during its 10 first minutes by idling periods.
 
-idea of result: 
+idea of result: 
 When $t_p$ < 9min40, then:
 Cycle:
 - task A 10min
@@ -47,7 +47,7 @@ Cycle:
 When $t_p$ is between $t_1$ and $t_1$ + 20s, then:
 Prefix:
 - task A $t_1$ + 20s
-- nothing  $t_p$ - $t_1$
+- nothing  $t_p$ - $t_1$
 - task B 10min + debt repayment (function of $t_p$ of complexity O(1))
 [more tasks depending on debt repayment...]
 Cycle:
@@ -86,18 +86,36 @@ Reminders:
 Add test 12 :
 Task A 50% 45 minutes
 20 other tasks that share the remaining 50%, all 45 minutes
-Half of the tasks are in the set “privileges” 
+Half of the tasks are in the set “privileges” 
 De 0h à 8h: no task allowed
 De 23h à 8h: only tasks from “privileges”
 There are the same 20s and 5min periods from test 11, in addition to the 15min period. The 4 last minutes of the 5min period and the whole 15 minutes of the 15min period only allow tasks that are in the set “privileges”.
 The following rules must always be satisfied by the timeline:
- - after a ≥15-minutes stretch of only privileged allowed, or after one of the three periods aforementioned, the next 20s period is **20 minutes** later;
- - after a ≥5-minute stretch of only privileged allowed, the next 5min period is **1 hour** later;
- - after a ≥15-minute stretch of only privileged allowed, the next 15min period is **2 hours** later.
+ - after a ≥15-minutes stretch of only privileged allowed, or after one of the three periods aforementioned, the next 20s period is **20 minutes** later;
+ - after a ≥5-minute stretch of only privileged allowed, the next 5min period is **1 hour** later;
+ - after a ≥15-minute stretch of only privileged allowed, the next 15min period is **2 hours** later.
 The timeline of test 12 spans over 3 days. The first 24 hours of the timeline have the three periods aforementioned. At t<0, is it a period where no task is allowed. $t_p$ starts at 24h and moves to the right.
-It means that  when $t_p$ reaches the end, the three aforementioned periods are only found in the first 24 hours, because the $t_p$ line swiped them all like in test 11.
+It means that  when $t_p$ reaches the end, the three aforementioned periods are only found in the first 24 hours, because the $t_p$ line swiped them all like in test 11.
 Like for all tests, finding the right schedule for the next 10 minutes must not take more than 10 seconds. That means that if the scheduling is taking time for the whole timeline of the test, the user will see the schedule change each time the scheduler finds a better set of rules to satisfy the following requirement : if the right schedule is found for t < $t_1$, then 10 seconds later the right schedule must be found for t < $t_1$ + 10 minutes.
 
 Direct consequence: If the scheduling takes some time, when the user runs tests_displayer and immediately scrolls down to test 12 without clicking on play, the user can see the schedule still changing, while the definitive schedule grows from t=0.
 
 If the exact schedule can’t be found at this pace, then there must be using approximations, where t and $t_1$ are positions in the displayed timeline. If so, give me the list of those approximations, so that I can validate them. Update the code.
+
+## How test 12 answers
+
+**The dragged break goes through the scheduler.** A break the line has reached and nothing has served is owed, so — as in test 11 — it sits at the line and slides with it, and it is handed to `Scheduler.plan` as an ordinary period. So the deficit it creates is compensated by the same exponential-decay field as any other blockage, and no task is interrupted inside its minimum by anything but idling: the atomic block is the scheduler's own, not something a display transform could break. `ProgressiveWindow.regime_at` then fits that plan into rules **affine in $t_p$**, exactly as test 10 does, so following the line is arithmetic and not scheduling. They are certified the way tests 10–11 certify theirs: at positions they were never fitted on, against the scheduler itself (worst deviation over the sweep: ~10 µs, epsilon 0.5 s).
+
+**A break exists once.** Reaching one removes it from the grid; the timeline the past is read off (`ProgressiveWindow.past`, the chain over the environment the line has swept) holds no break after the first day at all, so nothing is ever both a hole at its due position and a period at the line. Dragging one past its grid slot cannot make the user take two.
+
+**Absorption adds, it does not replace.** Every owed break is anchored at the line and their exclusion lists **sum**, per the overlapping-periods rule. A 15-minute privileged-only break that has taken in a 5-minute one still carries that one's opening minute of silence and the 20 s window's own — measured over the sweep the shape at the line goes `20s: nothing` → `20s + 1min: nothing, 4min: privileged only` → `… + 15min: privileged only`. "The longest governs" is the shape that comes out of the sum, not a choice between them.
+
+**Each kind's timer starts at its own threshold.** A stretch of privileged-only time discharges a break of a given kind when it lasts at least what that kind asks for, and `test12_discharges(kind)` returns exactly the instants the grid measures that kind's next occurrence from — so the drag and the recurrence rules can never disagree about when a timer started, and no kind is late.
+
+### The three approximations left (to validate)
+
+They are all of the same kind — the schedule is exact near the line and provisional far from it, which is the shape the pace requirement above describes.
+
+1. **Past `local_end`, the display draws the standing chain.** The rules at the line are sound as far as the plan's own prefix reaches, capped by the 6-hour lookahead it was shown the environment over — in practice one to six hours ahead of the line, where the requirement asks for ten minutes. Beyond that the display continues with the chain derived for the environment standing (no break reached), which was not seeded with the local rules' output: the far end is therefore the provisional part that "goes on changing", not a wrong answer claimed as final.
+2. **The rules at a position are derived when the line STOPS there.** A regime costs a second or two (worst measured 3.6 s, against the 10 s budget) and is then kept, so a position visited once is free forever after. Playing the sweep crosses a regime every frame, far faster than they can be derived, so while the line is moving none are: the display carries the standing chain on as the provisional answer and the line runs smoothly, and the position the sweep is paused at (or clicked on, or dragged to) becomes exact within a frame or two. This is the "cache at anchors, recompute the local window" shape: a derivation is bounded by the bracket around $t_p$ — and by a 3-second budget past which the rules are answered for that one position exactly rather than for a range — never by the three days.
+3. **The rounding epsilon.** A slot that has shrunk below it is dropped from the rules (the epsilon this document already asks for), so the drawn local part can end a sliver short of the plan's own reach; the chain takes over exactly there rather than leaving a sliver of nothing.
