@@ -7,6 +7,10 @@ The moving period of tests 10 and 11 is moved *here*: the displayer advances
 t_p every frame and reads the timeline off the rule list the scheduler derived
 once. No scheduling happens while the period slides.
 
+A bar at the top of the window owns tau -- the constant the compensation field
+decays over, on both sides of a blockage -- as a multiple of each case's own
+default. Changing it rebuilds every rule list, since they are a function of it.
+
 Test 12's rule list is too long to derive before anything can be shown, so its
 panel settles one link of the chain between frames and draws whatever is known
 now: definitive up to the front, provisional past it. Scrolling to it straight
@@ -15,6 +19,7 @@ grows from t=0.
 """
 
 import sys
+import time
 from fractions import Fraction
 
 try:
@@ -54,7 +59,12 @@ class ToolTip:
         self.canvas.bind("<Leave>", self._on_leave, add="+")
         self.canvas.bind("<Button>", self._on_leave, add="+")
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-            self.canvas.bind_all(seq, lambda e: self.canvas.after_idle(self.refresh), add="+")
+            self.canvas.bind_all(seq, self._on_wheel, add="+")
+
+    def _on_wheel(self, _event):
+        # bound at the application level, so a rebuild leaves this binding
+        # pointing at a canvas that is gone: ask before touching it
+        if self.canvas.winfo_exists(): self.canvas.after_idle(self.refresh)
 
     def register(self, item_id, text):
         self.data[item_id] = text
@@ -269,6 +279,7 @@ class MovingCasePanel:
         self.tag = f"moving{id(self)}"
         self.playing = False
         self.scrubbing = False
+        self.stopped = False
         self._setup(width, sweep_seconds)
 
         assert tk is not None
@@ -305,6 +316,16 @@ class MovingCasePanel:
     def _toggle(self):
         self.playing = not self.playing
         self.btn_play.config(text="Pause" if self.playing else "Play")
+
+    def stop(self):
+        """End this panel's after() loop: its canvas is about to go.
+
+        A panel drives itself, so a rebuild that only destroyed the canvas would
+        leave the loop drawing into a widget that no longer exists."""
+        self.stopped = True
+
+    def _running(self):
+        return not self.stopped and self.canvas.winfo_exists()
 
     # ---------------- the user's own hand on t_p ----------------------------- #
 
@@ -356,6 +377,7 @@ class MovingCasePanel:
         return self.top + row_idx * (self.ROW_H + self.ROW_SPACING)
 
     def _tick(self):
+        if not self._running(): return
         self._draw()
         if self.playing:
             self.tp += self.step
@@ -438,10 +460,11 @@ class MovingCasePanel:
         return text if len(text) <= width else text[:width - 3] + "..."
 
 
-def draw_moving_cases(root, canvas, tooltip, cases, y_offset, window_width=900):
+def draw_moving_cases(root, canvas, tooltip, cases, y_offset, window_width=900, panels=None):
     for title, mw, sweep in cases:
         panel = MovingCasePanel(root, canvas, tooltip, y_offset, title, mw, sweep,
                                 width=window_width)
+        if panels is not None: panels.append(panel)
         y_offset += panel.height + 30
     return y_offset
 
@@ -487,6 +510,7 @@ class ProgressiveCasePanel(MovingCasePanel):
     WORK_BUDGET = 0.02          # seconds of deriving per frame: one link
 
     def _tick(self):
+        if not self._running(): return
         # The two chains first -- they are the timeline itself. Then the rules
         # AT THE LINE, but ONLY while the line is standing still: deriving one
         # takes a second or two and the sweep crosses a regime every frame, so
@@ -583,10 +607,11 @@ class ProgressiveCasePanel(MovingCasePanel):
                           font=("Arial", 8, "bold"), anchor="nw", tags=self.tag)
 
 
-def draw_progressive_cases(root, canvas, tooltip, cases, y_offset, window_width=900):
+def draw_progressive_cases(root, canvas, tooltip, cases, y_offset, window_width=900, panels=None):
     for title, pw, sweep in cases:
         panel = ProgressiveCasePanel(root, canvas, tooltip, y_offset, title, pw, sweep,
                                      width=window_width)
+        if panels is not None: panels.append(panel)
         y_offset += panel.height + 30
     return y_offset
 
@@ -628,6 +653,165 @@ def print_progressive_rules(title, pw, max_links=8):
     print()
 
 
+# --------------------------------------------------------------------------- #
+#  the window: a bar at the top that owns tau, and the display it rebuilds
+# --------------------------------------------------------------------------- #
+
+TAU_MIN, TAU_MAX, TAU_STEP = 0.05, 8.0, 0.05
+
+def load_colors(cases):
+    for _t, mw, _s in cases:
+        TASK_COLORS.update(mw.sched.color)
+        TASK_COLORS.setdefault(IDLE, IDLE_COLOR)
+        TASK_COLORS.setdefault("MAINTENANCE", "#CCCCCC")
+
+
+class Workbench:
+    """The whole window: the tau bar, and the canvas of tests under it.
+
+    tau is the decay constant of the compensation field -- how far, on either
+    side of an exclusion, the deprivation it caused still swells the deprived
+    task's slots, and how fast an imbalance older than a period is forgotten.
+    Its default is each case's own minimal period `max(mi/pi)`, so the knob is
+    a MULTIPLE of that rather than an absolute span: one number that means the
+    same thing to test 6's 60 minutes and to test 12's three days.
+
+    Changing it REBUILDS everything. The rule lists are a function of tau --
+    every regime was fitted with it, by the scheduler -- so there is nothing to
+    patch in place, which is why the bar says what it is doing while it works.
+    The panels drive their own after() loops, so they are stopped before the
+    canvas they draw into is destroyed.
+    """
+
+    def __init__(self, root, width=900, initial=None):
+        self.root, self.width = root, width
+        self.scale = 1.0
+        self.panels, self.tooltip = [], None
+        self.body = self.canvas = None
+        self.initial = initial          # the default-tau cases the checks built
+        self._bar()
+        self.rebuild()
+
+    # ---------------- the bar ---------------- #
+
+    def _bar(self):
+        assert tk is not None
+        bar = tk.Frame(self.root, bd=1, relief="raised", padx=8, pady=5)
+        bar.pack(side=tk.TOP, fill=tk.X)
+        tk.Label(bar, text="tau  (exponential decay of the influence, both directions)",
+                 font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+        tk.Label(bar, text="x").pack(side=tk.LEFT, padx=(10, 1))
+
+        self.text = tk.StringVar(value="1")
+        entry = tk.Entry(bar, textvariable=self.text, width=6, justify="right")
+        entry.pack(side=tk.LEFT)
+        entry.bind("<Return>", lambda _e: self.apply(self.text.get()))
+
+        self.slider = tk.Scale(bar, from_=TAU_MIN, to=TAU_MAX, resolution=TAU_STEP,
+                               orient=tk.HORIZONTAL, showvalue=False, length=200,
+                               command=lambda v: self.text.set(f"{float(v):g}"))
+        self.slider.set(1.0)
+        self.slider.pack(side=tk.LEFT, padx=8)
+        self.slider.bind("<ButtonRelease-1>", lambda _e: self.apply(self.slider.get()))
+
+        tk.Button(bar, text="Apply", cursor="hand2",
+                  command=lambda: self.apply(self.text.get())).pack(side=tk.LEFT)
+        tk.Button(bar, text="Default", cursor="hand2",
+                  command=lambda: self.apply(1.0)).pack(side=tk.LEFT, padx=4)
+
+        self.status = tk.Label(bar, text="", fg="#555555", font=("Arial", 9))
+        self.status.pack(side=tk.LEFT, padx=10)
+
+    @staticmethod
+    def _parse(value):
+        """A positive multiple, inside the range the slider offers, or None.
+
+        Zero is not a small tau, it is a different model -- the field has no
+        width to decay over at all -- so it is refused rather than clamped."""
+        try:
+            scale = float(str(value).strip().lstrip("x").strip())
+        except ValueError:
+            return None
+        if scale <= 0: return None
+        return min(max(scale, TAU_MIN), TAU_MAX)
+
+    def apply(self, value):
+        scale = self._parse(value)
+        if scale is None:
+            self.status.config(text=f"a positive multiple, {TAU_MIN:g} to {TAU_MAX:g}",
+                               fg="#B00000")
+            return
+        self.text.set(f"{scale:g}")
+        self.slider.set(scale)
+        if scale == self.scale: return
+        self.scale = scale
+        self.rebuild()
+
+    def _say(self, tail, color="#555555"):
+        self.status.config(text=f"tau = x{self.scale:g} of each case's minimal "
+                                f"period   |   {tail}", fg=color)
+
+    # ---------------- the display under it ---------------- #
+
+    def rebuild(self):
+        self._say("rebuilding the rule lists (the scheduler is run again)...")
+        self.root.update_idletasks()
+        self._teardown()
+
+        t0 = time.perf_counter()
+        if self.initial is not None and self.scale == 1.0:
+            cases, moving, progressive = self.initial   # already built for the checks
+            self.initial = None
+        else:
+            cases = build_cases(self.scale)
+            moving = build_moving_cases(self.scale)
+            progressive = build_progressive_cases(self.scale)
+        load_colors(moving + progressive)
+
+        self._make_body()
+        y = draw_schedules(self.root, self.canvas, cases, window_width=self.width)
+        self.tooltip = ToolTip(self.canvas)
+        y = draw_moving_cases(self.root, self.canvas, self.tooltip, moving, y,
+                              window_width=self.width, panels=self.panels)
+        draw_progressive_cases(self.root, self.canvas, self.tooltip, progressive, y,
+                               window_width=self.width, panels=self.panels)
+        refresh_scrollregion(self.canvas)
+        self._say(f"{len(cases) + len(moving) + len(progressive)} cases rebuilt "
+                  f"in {time.perf_counter() - t0:.1f}s")
+
+    def _teardown(self):
+        for panel in self.panels: panel.stop()
+        self.panels = []
+        if self.tooltip is not None: self.tooltip.hide()
+        self.tooltip = None
+        if self.body is not None: self.body.destroy()
+        self.body = self.canvas = None
+
+    def _make_body(self):
+        assert tk is not None
+        self.body = tk.Frame(self.root)
+        self.body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(self.body, bg="white")
+        vbar = tk.Scrollbar(self.body, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+        vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.canvas = canvas
+
+        def wheel(event):
+            if getattr(event, 'num', 0) == 4 or event.delta > 0:
+                canvas.yview_scroll(-3, "units")
+            elif getattr(event, 'num', 0) == 5 or event.delta < 0:
+                canvas.yview_scroll(3, "units")
+
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            canvas.bind_all(seq, wheel)
+        canvas.bind_all("<Prior>", lambda e: canvas.yview_scroll(-1, "pages"))
+        canvas.bind_all("<Next>", lambda e: canvas.yview_scroll(1, "pages"))
+        canvas.bind_all("<Home>", lambda e: canvas.yview_moveto(0.0))
+        canvas.bind_all("<End>", lambda e: canvas.yview_moveto(1.0))
+
+
 def main():
     verify_only = "--verify" in sys.argv
     rules_only = "--rules" in sys.argv
@@ -637,10 +821,7 @@ def main():
     cases = build_cases()
     moving = build_moving_cases()
     progressive = build_progressive_cases()
-    for _t, mw, _s in moving + progressive:
-        TASK_COLORS.update(mw.sched.color)
-        TASK_COLORS.setdefault(IDLE, IDLE_COLOR)
-        TASK_COLORS.setdefault("MAINTENANCE", "#CCCCCC")
+    load_colors(moving + progressive)
 
     if update_rules:
         text = write_rules_snapshot(cases, moving, progressive)
@@ -671,33 +852,9 @@ def main():
     root.title("Task Scheduler Timeline with Constraints (including the dynamic rule list)")
     root.geometry("950x700")
 
-    canvas = tk.Canvas(root, bg="white")
-    vbar = tk.Scrollbar(root, orient=tk.VERTICAL, command=canvas.yview)
-    canvas.configure(yscrollcommand=vbar.set)
-
-    vbar.pack(side=tk.RIGHT, fill=tk.Y)
-    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-    def _on_mousewheel(event):
-        if getattr(event, 'num', 0) == 4 or event.delta > 0:
-            canvas.yview_scroll(-3, "units")
-        elif getattr(event, 'num', 0) == 5 or event.delta < 0:
-            canvas.yview_scroll(3, "units")
-
-    canvas.bind_all("<MouseWheel>", _on_mousewheel)
-    canvas.bind_all("<Button-4>", _on_mousewheel)
-    canvas.bind_all("<Button-5>", _on_mousewheel)
-    canvas.bind_all("<Prior>", lambda e: canvas.yview_scroll(-1, "pages"))
-    canvas.bind_all("<Next>", lambda e: canvas.yview_scroll(1, "pages"))
-    canvas.bind_all("<Home>", lambda e: canvas.yview_moveto(0.0))
-    canvas.bind_all("<End>", lambda e: canvas.yview_moveto(1.0))
-
-    y = draw_schedules(root, canvas, cases, window_width=900)
-    tooltip = ToolTip(canvas)
-    y = draw_moving_cases(root, canvas, tooltip, moving, y, window_width=900)
-    draw_progressive_cases(root, canvas, tooltip, progressive, y, window_width=900)
-
-    refresh_scrollregion(canvas)
+    # the cases the checks above already built are the tau = x1 ones, so the
+    # window opens on them instead of scheduling everything a second time
+    Workbench(root, width=900, initial=(cases, moving, progressive))
     root.mainloop()
 
 if __name__ == "__main__":

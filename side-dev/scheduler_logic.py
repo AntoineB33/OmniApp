@@ -125,7 +125,15 @@ class Plan:
         self.period = sum((s.duration for s in self.cycle), Fraction(0))
 
 class Scheduler:
-    def __init__(self, tasks, resolution=None, max_lag=None, tau=None, max_boost=6, field_floor=Fraction(1, 10), max_reach=None):
+    """`tau` is the field's decay constant: how far, on either side of an
+    exclusion, the compensation it earns still reaches, and how fast an
+    imbalance older than a period is forgotten. Its default is the minimal
+    period `max(mi/pi)`, which is a property of the tasks, so `tau_scale`
+    multiplies whatever it resolves to -- one number that means the same thing
+    to a 60-minute case and to a three-day one, which is what the displayer's
+    knob adjusts."""
+
+    def __init__(self, tasks, resolution=None, max_lag=None, tau=None, tau_scale=1, max_boost=6, field_floor=Fraction(1, 10), max_reach=None):
         tasks = list(tasks)
         active = [t for t in tasks if t.priority > 0]
         total = sum(t.priority for t in active)
@@ -136,7 +144,7 @@ class Scheduler:
         self.resolution = frac(resolution) if resolution else None
         self.min_period = max(self.minimum[n] / self.p[n] for n in self.p)
 
-        self.tau = frac(tau) if tau is not None else self.min_period
+        self.tau = (frac(tau) if tau is not None else self.min_period) * frac(tau_scale)
         self.max_boost = frac(max_boost)
         self.field_floor = frac(field_floor)
         self.max_reach = frac(max_reach) if max_reach is not None else 6 * self.tau

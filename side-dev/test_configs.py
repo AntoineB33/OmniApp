@@ -46,8 +46,23 @@ def AB():
     return [Task("A", priority=50, min_time=10, color="#FF9999"),
             Task("B", priority=50, min_time=10, color="#99CCFF")]
 
-def build_cases():
-    return [
+
+# Every builder takes the field's decay constant as a MULTIPLE of the case's own
+# default tau (its minimal period), so one knob means the same thing to a
+# 60-minute case and to a three-day one. A scale of 1 is the default in every
+# sense: the options are left exactly as they were, so nothing on record moves.
+
+def _tau_kw(tau_scale):
+    return {} if frac(tau_scale) == 1 else {'tau_scale': tau_scale}
+
+def _scaled(case, tau_scale):
+    """One static case, with the scale folded into its scheduler options."""
+    case = list(case) + [{}] * max(0, 6 - len(case))
+    case[5] = dict(case[5] or {}, **_tau_kw(tau_scale))
+    return tuple(case)
+
+def build_cases(tau_scale=1):
+    cases = [
         (
             ("Test 1: Normal 50/50 Split (10min each)\n-> Pure periodic cycle, no prefix."),
             AB(), 180, [], []
@@ -94,6 +109,8 @@ def build_cases():
                       {'start': 200, 'end': 400, 'forbidden': ['B']}], {}, 2
         )
     ]
+    if frac(tau_scale) == 1: return cases
+    return [_scaled(c, tau_scale) for c in cases]
 
 
 def get_schedule_rules(tasks, pre_placed=None, periods=None, t_now=0, **kw):
@@ -190,18 +207,19 @@ TEST11_TITLE = (
 )
 
 
-def build_moving_cases():
+def build_moving_cases(tau_scale=1):
     """The cases whose rule list is *dynamic*: instead of constant durations it
     carries durations affine in the sliding period's position, plus the range of
     positions each rule list is valid for."""
+    kw = _tau_kw(tau_scale)
     return [
         (TEST10_TITLE,
-         MovingWindow(AB(), span=TEST10_SPAN, moving=test10_moving),
+         MovingWindow(AB(), span=TEST10_SPAN, moving=test10_moving, **kw),
          25),
         (TEST11_TITLE,
          MovingWindow(tasks11(), span=TEST11_SPAN, moving=test11_moving,
                       pre_placed=TEST11_PRE, periods=TEST11_PERIODS,
-                      breaks=[STRETCH_HOME - WINDOW]),
+                      breaks=[STRETCH_HOME - WINDOW], **kw),
          35),
     ]
 
@@ -445,7 +463,7 @@ TEST12_TITLE = (
     "   definitive part grows while the rest still changes."
 )
 
-def build_progressive_cases():
+def build_progressive_cases(tau_scale=1):
     """The case whose rule list is derived a link at a time, while it is shown."""
     return [
         (TEST12_TITLE,
@@ -453,7 +471,7 @@ def build_progressive_cases():
                            sliding=test12_at_line, swept=test12_swept,
                            tp_start=TEST12_TP_START, periods=test12_static(),
                            marks=[g[1] for g in TEST12_SWEPT],
-                           max_rules=29, local_rules=12),
+                           max_rules=29, local_rules=12, **_tau_kw(tau_scale)),
          45),
     ]
 
