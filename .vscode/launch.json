@@ -14,7 +14,7 @@
         }
         ,
         {
-            "name": "Python Debugger: side-dev/tests_displayer.py",
+            "name": "tests_displayer debugger",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/side-dev/tests_displayer.py",

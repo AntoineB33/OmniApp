@@ -1004,10 +1004,15 @@ def shares_line(tl, pw, tp=None):
     and left empty -- with 21 tasks of 45 minutes each, a gap too short for any
     minimum has no taker.
 
-    A cannot reach its 50% here and that is part of the case: it is not
-    privileged, so a 45min slot of it only fits between two privileged-only
-    periods, and inside a 30-hour period the twenty other tasks must each be
-    given a 45-minute minimum first."""
+    A lands a little under its 50% here, and what is missing is accounted for
+    rather than lost. Two things take it, both structural. The empty time: a
+    privileged-only period is scheduled with NOTHING wherever starting a
+    privileged task in it would run past the instant A comes back and leave A
+    a gap too short for its 45 minutes -- the run would not use the period, it
+    would lengthen A's ban (`Scheduler._clears`). And the privileged surplus:
+    where a privileged task is ALREADY running when such a period arrives, its
+    run carries straight through, so the ten of them collect those nineteen
+    minutes out of every hundred and thirty-five that A is barred from."""
     periods = list(pw.periods) + list(pw.sliding(pw.span if tp is None else tp))
     got, open_total = resulting_shares(tl, periods, list(pw.minimum),
                                        lo=frac(0), hi=pw.span)

@@ -441,6 +441,100 @@ class Scheduler:
                        if b is not FOREVER and b > t}
                       | {b for p in pre for b in (p.start, p.end) if b > t})
 
+    def _walls(self, pre, periods):
+        """Every instant a task comes BACK from an exclusion, with who returns.
+
+        This is the other half of the atomic block, and the README states one
+        half of it: a run in progress is not replaced by a period it may not
+        run in -- the period is scheduled with nothing and the run resumes on
+        the far side. The half that follows from it is about STARTING: a run
+        begun at t is owed its whole minimum, so if a rival comes back at e
+        with t < e < t + minimum, that rival's exclusion does not really end at
+        e -- it ends when the run does. Starting there does not merely use the
+        period, it LENGTHENS somebody else's ban, and it is the one thing the
+        virtual clock cannot repay, because the rival is not a candidate at the
+        instant the decision is made.
+
+        Only a RELATIVE deprivation counts, exactly as the field's `_sources`
+        counts it: an interval that refuses everybody is nobody's exclusion (it
+        suspends every run and creates no distortion), so the instant it ends
+        is not a return. And a rival that could not have used the time anyway
+        -- its own minimum does not fit from e either -- is not being deprived
+        of anything, which is also what keeps a densely broken timeline from
+        idling forever for want of a legal start.
+
+        The instants are a property of the environment alone, so they are found
+        once per plan and read off by the walk.
+        """
+        edges = sorted({b for w in periods for b in (w['start'], w['end'])
+                        if b is not FOREVER}
+                       | {b for p in pre for b in (p.start, p.end)})
+        if len(edges) < 2: return []
+        everyone = set(self.p)
+        opens, closes = {}, {}
+        for w in periods:
+            f = w['forbidden'] & everyone
+            if not f: continue
+            opens.setdefault(w['start'], []).append(f)
+            if w['end'] is not FOREVER: closes.setdefault(w['end'], []).append(f)
+        # one sweep for the allowed set of every interval: asking each period
+        # about each edge instead is quadratic, and on three days of breaks
+        # both lists run into the hundreds
+        sets, ban = [], {n: 0 for n in everyone}
+        for a in edges:
+            for f in closes.get(a, ()):
+                for n in f: ban[n] -= 1
+            for f in opens.get(a, ()):
+                for n in f: ban[n] += 1
+            allowed = {n for n in everyone if not ban[n]}
+            block = self._active_pre(pre, a)
+            if block is not None: allowed &= {block.task}
+            sets.append(allowed)
+
+        def fits(i, n):
+            """`_fits_from` read off the sweep: the room a task has from the
+            i-th edge, stepping over the intervals that belong to nobody and
+            stopping at the first that belongs to somebody else."""
+            got, need = Fraction(0), self.minimum[n]
+            for j in range(i, len(edges) - 1):
+                if not sets[j]: continue                 # suspended, not stopped
+                if n not in sets[j]: return False
+                got += edges[j + 1] - edges[j]
+                if got >= need: return True
+            return bool(sets[-1]) and n in sets[-1]
+
+        out = []
+        for i in range(1, len(edges)):
+            before, here = sets[i - 1], sets[i]
+            if not before: continue            # nobody's exclusion, so no return
+            back = frozenset(n for n in here if n not in before and fits(i, n))
+            if back: out.append((edges[i], back))
+        return out
+
+    def _clears(self, walls, name, pre, periods, t, need, bounds):
+        """May `name` START a run of `need` at t?
+
+        Only where finishing it costs no rival a SLOT. Running past a rival's
+        return delays that rival, and the scheduler already answers a delay
+        exactly -- the virtual clock repays it the moment the rival is a
+        candidate again, which is the same reason `_set_field` builds no field
+        around an exclusion shorter than the deprived task's own minimum. What
+        it cannot answer is a rival that could have run at its return and can
+        no longer run at all by the time the run releases it: there the ban did
+        not end where the period says it did, it ended where this run does, and
+        the rival loses the whole slot rather than waiting for it.
+        """
+        end = t + need
+        after = [b for b in bounds if b > end]
+        for b, back in walls:
+            if b <= t: continue
+            if b >= end: return True
+            for r in back:
+                if r == name: continue
+                if not self._fits_from(r, pre, periods, end, self.minimum[r], after):
+                    return False
+        return True
+
     def _next_placeable(self, missing, pre, periods, t, bounds=None):
         if not missing: return None
         after = [b for b in (bounds if bounds is not None
@@ -466,6 +560,34 @@ class Scheduler:
             elif p.task != name: break
             total += min(p.end, t_now) - p.start
         return name, total
+
+    def _last_run(self, past, t_now):
+        """The task the walk carries as `last`: the one running at the instant
+        before t_now, and NOTHING where the past ends in idling.
+
+        This is deliberately not `_head`. A run SURVIVES an idling
+        interruption, which is what `_head` reads and what the atomic block is
+        about; `last` is the other rule -- a task is not picked twice in a row
+        so that what is owed a lot gets a denser presence rather than one long
+        block -- and the walk clears it at every gap it pushes. A task that
+        stopped and was not replaced never took a second turn, so nothing is
+        owed on its account.
+
+        Reading `last` off `_head` instead makes a RESUMED plan refuse the very
+        task the timeline left off with, however far behind that task is. On a
+        timeline that re-plans at every boundary that is not a nicety: a break
+        the task is banned from ends its slot, the re-plan on the far side
+        refuses it, and the rightful pick loses a slot at every break. It is
+        what made a chain of re-plans and one long plan of the same environment
+        disagree -- in test 12 the 50%-priority task was handed 21% of the
+        schedulable timeline where the same walk carried out in one piece gives
+        it 39%.
+        """
+        best = None
+        for p in past:
+            if p.start >= t_now or min(p.end, t_now) < t_now: continue
+            if best is None or p.start > best.start: best = p
+        return None if best is None or best.task not in self.p else best.task
 
     def _lookback_start(self, periods, t_now, want):
         """How far back the clocks are replayed: `want` of SCHEDULABLE time.
@@ -508,7 +630,19 @@ class Scheduler:
         # history, not a blockage the timeline has to be compensated around.
         self._set_field(pre, periods)
 
-        window = frac(lookback) if lookback is not None else self.min_period
+        # The clocks are replayed over TWO periods, not one. A period is
+        # exactly the spacing of one task's slots, so a window one period wide
+        # samples the past at the rate the schedule repeats at: whatever the
+        # phase, a task whose slot has just left the window and whose next one
+        # has not yet entered it reads as NEVER SERVED, and a task that reads
+        # as never served claims the maximum however small its priority. With
+        # twenty of them rotating that is not a rounding error -- one is always
+        # freshly expired, so they take every slot in turn and the 50%-priority
+        # task collects what is left (measured in test 12: 12% against the 39%
+        # the same walk gives when it is carried out in one piece). Two periods
+        # cannot alias: a task's slot count in the window is one or two, never
+        # none.
+        window = frac(lookback) if lookback is not None else 2 * self.min_period
         w_start = self._lookback_start(periods, t_now, window)
         if past: w_start = max(w_start, min(p.start for p in past))
         w_start = min(w_start, t_now)
@@ -529,9 +663,12 @@ class Scheduler:
         # every instant the environment can change at, sorted once: the walk asks
         # about them constantly, and with a three-day timeline there are many
         all_bounds = self._bounds_after(pre, periods, t_now)
+        # the instants a rival comes back from an exclusion: a run may not be
+        # in progress across one of them unless it was already running
+        walls = self._walls(pre, periods)
 
         slots = []
-        last = head_task
+        last = self._last_run(past, t_now)
         free_tail = False
         steps, max_steps = 0, 200 * max_rules
 
@@ -609,9 +746,16 @@ class Scheduler:
             # A task already running has started, and refusing it the room it has
             # left would idle the timeline and still leave its run short: it may
             # be cut anywhere, by whatever it cannot pass.
+            # A task about to START must also be able to FINISH before it
+            # would extend somebody else's ban (`_walls`): a run is owed its
+            # whole minimum, so beginning one with less than that left before a
+            # rival comes back does not use the period, it lengthens the
+            # exclusion the rival is already serving. A task already running
+            # has no such choice to make -- it is the atomic block itself.
             fitting = [n for n in candidates
                        if run_served(n) > 0
-                       or self._fits_from(n, pre, periods, t, owed(n), ahead)]
+                       or (self._fits_from(n, pre, periods, t, owed(n), ahead)
+                           and self._clears(walls, n, pre, periods, t, owed(n), ahead))]
 
             if not fitting:
                 if limit is None: break
