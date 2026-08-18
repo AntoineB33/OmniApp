@@ -957,7 +957,10 @@ class Workbench:
                                command=lambda v: self.text.set(f"{float(v):g}"))
         self.slider.set(1.0)
         self.slider.pack(side=tk.LEFT, padx=8)
-        self.slider.bind("<ButtonRelease-1>", lambda _e: self.apply(self.slider.get()))
+        # the slider only ever moves the NUMBER (its command writes the entry).
+        # Dragging it rebuilds nothing: a rebuild runs the scheduler over every
+        # case, so it happens when the user says so -- Apply, Default, or Return
+        # in the entry -- and never as a side effect of looking for a value.
 
         tk.Button(bar, text="Apply", cursor="hand2",
                   command=lambda: self.apply(self.text.get())).pack(side=tk.LEFT)
@@ -1001,6 +1004,7 @@ class Workbench:
     def rebuild(self):
         self._say("rebuilding the rule lists (the scheduler is run again)...")
         self.root.update_idletasks()
+        offset = self._scroll_offset()
         self._teardown()
 
         t0 = time.perf_counter()
@@ -1018,8 +1022,26 @@ class Workbench:
         draw_progressive_cases(self.root, self.canvas, self.tooltip, progressive, y,
                                window_width=self.width, panels=self.panels)
         refresh_scrollregion(self.canvas)
+        self._restore_scroll(offset)
         self._say(f"{len(cases) + len(moving) + len(progressive)} cases rebuilt "
                   f"in {time.perf_counter() - t0:.1f}s")
+
+    def _scroll_offset(self):
+        """Where the viewport's top edge sits, in canvas pixels.
+
+        Kept in PIXELS rather than as the scrollbar's fraction: a rebuild can
+        change the total height a little (a regime more or fewer), and a
+        fraction of a different total lands somewhere else. The case the user
+        was reading stays under the cursor."""
+        if self.canvas is None: return 0.0
+        return self.canvas.canvasy(0)
+
+    def _restore_scroll(self, offset):
+        if not offset: return
+        self.canvas.update_idletasks()          # the new scrollregion is in force
+        _x1, _y1, _x2, y2 = self.canvas.bbox("all") or (0, 0, 0, 0)
+        total = y2 + SCROLL_PADDING
+        if total > 0: self.canvas.yview_moveto(offset / total)
 
     def _teardown(self):
         for panel in self.panels: panel.stop()
