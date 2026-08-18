@@ -2,6 +2,146 @@
 
 **Version:** 1.6.0
 
+| | |
+| --- | --- |
+| **Status** | Approved and implemented. §1–§18 describe shipped behaviour; anything not yet true of the code is called out in *Risks and mitigations* below. |
+| **Ownership** | Single maintainer — Antoine Barbault ([GitHub Issues](https://github.com/AntoineB33/OmniApp/issues)). There is no separate product / design / engineering split; this document is both the specification and the acceptance criteria. |
+| **Target release** | 1.6.0 (branch `1.6.0`). The Windows desktop build is the reference target; Android is functional; iOS and web build but lag (see *Risks*). |
+| **Scope of this document** | The Task Scheduler **page**. The application shell around it — page navigation, accounts, platform strategy, roadmap — is [`PRD.md`](../PRD.md). *How* any of it is built is [`ARCHITECTURE.md`](../ARCHITECTURE.md). |
+| **Section numbering** | §1–§18 are **stable identifiers**, referenced from `CLAUDE.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md` and commit messages. Do not renumber them; append new sections at the end. |
+
+---
+
+## Problem statement
+
+Keeping a long list of competing commitments in proportion is arithmetic nobody does by hand. Deciding "50% of my time on job hunting, 20% on Spanish" is easy; *dividing actual weeks that way* is not. Three failures compound:
+
+* **Drift.** Without a plan in front of you, attention goes to whatever is loudest rather than to what you decided mattered. The shares you intended and the shares you get diverge silently, and nothing tells you by how much.
+* **Re-planning cost.** Every fixed commitment, missed block or changed priority invalidates the plan. Redoing that arithmetic by hand after each disturbance is more work than the plan is worth, so it stops being done.
+* **Uninterrupted screen time.** The same person who loses track of proportions also sits at a screen for hours. Generic break timers fail because they cannot tell a break that was *taken* from one that merely *elapsed* — so they either nag through breaks already taken or silently forgive breaks that were not.
+
+## Objective and value proposition
+
+Turn a declared set of priorities into a calendar that is continuously correct, and keep the user's eyes out of it.
+
+* **A plan the user does not maintain.** The user states weights and minimum block lengths; the app produces a schedule in which every task converges on its intended share of time at the smallest scale the minima allow, compensates a bounded amount for time lost to fixed commitments, and re-plans **only when something it depends on actually changes** — never merely because time passed (§9; `ARCHITECTURE.md` §3).
+* **Breaks that are owed, not merely scheduled.** A break the user did not take stays owed and slides at the now-line until a real pause discharges it, judged from the account's *observed* device activity across every device — not from an assumption that a timer expiring means a break happened (§15).
+* **Correct off the device.** If the user walks away from every device with a break due, the phone announces when the break is over, with the app closed (§15; [`docs/PAUSE_CUE_DELIVERY.md`](PAUSE_CUE_DELIVERY.md)).
+* **No dependence on connectivity.** The local database is the source of truth; the network is an optimisation ([`PRD.md`](../PRD.md) §5).
+
+**Why now:** the shell — accounts, offline-first persistence, undo/redo, floating windows, cross-device sync — reached the point where a scheduling page can rely on it instead of reimplementing it. Every one of those capabilities is shared with the pages planned for v2.0.0+.
+
+## Success metrics
+
+This is a personal-scale tool that **collects no telemetry**, so there are no adoption, retention or revenue metrics, and inventing them would be dishonest. What is measured instead is whether the product's own promises hold — observable from the user's own data (`scripts/collect-diagnostics.bat`, the History window, the calendar's records) and pinned by tests.
+
+| Promise | Metric | Target |
+| --- | --- | --- |
+| Shares converge | Realized share of time per task over a rolling window vs. its declared absolute priority (§5, §9) | Within a few percent for tasks schedulable throughout; a task must never sit an order of magnitude below its target |
+| The model stays faithful | `side-dev/rules_snapshot.txt` diff under `uv run tests_displayer.py --verify`; `SchedulerPlanTest` replaying the reference cases slot for slot | Zero unexplained diffs — a deliberate change is a *blessed* snapshot, never a silent one |
+| Breaks are honoured | Share of due screen breaks actually served (a look-away conducted, a pose discharged by an observed pause), readable from the taken-break panels on the calendar (§15) | Every due break is either served or still visibly owed; none silently expires |
+| Cues are exact | Boundary crossings fire **exactly once, in order**; count of crossings logged as *swallowed as stale* in `diagnostics.log` | Zero stale-swallows on a device that stayed awake; any swallow must correspond to a real process suspension |
+| Time passing is not a rule change | Schedule fills per hour on an idle account; server writes per day caused by time alone | ≤1 fill/hour (the staleness bound); **0** snapshot pushes |
+| Concurrent edits survive | Lost-edit incidents when two devices edit inside one debounce window (`ARCHITECTURE.md` §8.1) | Zero — both edits present after the merge |
+| The UI stays responsive on real data | First frame presented on a large, valid database; per-tick recompute cost | Cost follows the **visible window**, never total account history |
+| It fits the free tier | Supabase egress and Edge invocations for one phone plus one desktop | Comfortably inside the free plan's limits |
+
+## Scope boundaries
+
+### In scope for 1.6.0
+
+* No-screen and inactivity calendar periods as first-class user-authored entities, with automatic override/trim against on-screen task panels (§8).
+* Screen-switch enforcement in the scheduler: on-screen tasks placed only outside no-screen periods, off-screen tasks only inside them; each screen break declares which kind of period it is (§9, §15).
+* Past no-screen spans banking **no** record and materializing as real "Inactivity" panels; past sleep persisted as recorded fact rather than projected from the schedule (§9, §12, §17).
+* Screen breaks renamed from "side tasks" throughout — UI, documentation, code identifiers and persisted keys — with existing databases still loading (§15).
+* Every screen break **slides while owed**, with each cue keyed on the fixed due instant, and three explicit ways a break can be served (§15).
+* Phone activity as an unlock/foreground-gated presence heartbeat, and server-side pause-cue delivery over pg_cron plus two Edge Functions (§15).
+* Phone calendar gestures: double-tap-and-drag zoom, double-tap contextual menu with panel info, and a menu-driven move (§8).
+* Alarms — wall-clock, per-day, synced to every device, rung locally on both phone and desktop (§18).
+* Named alternative task trees, and **dated** trees as priority keyframes the scheduler blends between (`ARCHITECTURE.md` §3.1).
+* Bidirectional automatic snapshot sync with a **three-way merge** of concurrent edits, last-write-wins surviving only as a fallback (`ARCHITECTURE.md` §8.1).
+
+### Explicitly out of scope
+
+* **Multi-user anything.** No sharing, no collaboration, no permissions. An account is one person's data across their own devices. (Real-time collaboration is [`PRD.md`](../PRD.md) §6's v3.0.0.)
+* **iOS ringing and push.** The iOS activity signal and push path are unimplemented and stay so until a Mac build exists.
+* **Telemetry and analytics.** Nothing is collected or transmitted beyond the user's own synced state.
+* **Accessibility and localization.** Screen-reader semantics, keyboard-only parity beyond the documented shortcuts, high-contrast themes and translation are not addressed in this release. See *Risks*.
+* **Additional pages.** Anything reached from the top-left navigation other than the Task Scheduler is v2.0.0+ ([`PRD.md`](../PRD.md) §6).
+* **Web persistence parity.** The web target falls back to browser local storage; it is not a supported primary device.
+* **User-editable scheduling rules.** The scheduling model (§9) and the screen-break configuration (§15) are fixed; the knobs in §16 are development tooling, not a product surface.
+
+## Target audience
+
+* **Primary — the self-directed knowledge worker with too many parallel commitments** (the maintainer is the reference user). Comfortable with spreadsheets, willing to state priorities numerically, working long unstructured stretches at a computer, using at least one desktop plus one phone. Wants a plan produced *for* them, not a planner to operate.
+* **Secondary — the same user away from the desk.** On the phone the app is consulted, checked off, and above all *heard*: the pause cue must work with the app closed.
+* **Non-audience.** Teams, managers assigning work, and anyone wanting a to-do list rather than a time allocator. Someone unwilling to attach numbers to their commitments gets nothing from the core model.
+
+## Primary user flows
+
+1. **Declare what matters.** Build the tree (§1–§4), give each cell a weight, read the resulting absolute percentage beside it (§5). *Outcome:* a priority distribution summing to 100%.
+2. **Constrain how it may be spent.** Set each task's minimum block length (§10) and its on-screen / off-screen / doable-during-a-break flags (§8, §9); set the nightly sleep window (§17).
+3. **Read the plan.** Open the calendar week (§8). The scheduler has already filled it so shares converge; screen breaks and sleep are drawn; nothing is asked of the user. *Outcome:* the next thing to work on is on screen.
+4. **Steer it.** Pin a block, drag or resize a panel, add a manual entry, mark a period no-screen or inactive (§8, §11). Each is a rule change: the plan re-derives around it, and `Ctrl+Z` walks it back (§6).
+5. **Live in it.** Notifications say when to switch task (§11); voice cues and notifications announce each screen break's start and end (§15); alarms ring (§18); reminders stack on the now-line when overdue (§14).
+6. **Take a break — or be told one is still owed.** A break actually taken (observed as a pause across the account's devices) discharges it; one that merely elapsed stays owed and slides at the now-line (§15).
+7. **Walk away entirely.** With every device idle and a break due, the phone announces the break's end from the server (§15).
+8. **Continue on another device.** Any device signed in to the account shows the same tree, calendar and history; concurrent edits merge rather than overwrite ([`PRD.md`](../PRD.md) §5).
+9. **Look back.** The calendar shows what was actually done (§12, §13); the History window shows every change and every notification posted (§6, §11).
+
+## Non-functional requirements
+
+* **Correctness of time-based triggers.** Every notification, voice cue and alarm must be a pure function of which boundary instants the clock crossed — each firing exactly once, in order — never of how a sweep happens to align with the calendar. Staleness is judged only by a crossing's **real** age (a 2 s budget for cues, 60 s for alarms), and consecutive scans must tile the timeline so a clock jump cannot silently clip a crossing.
+* **Determinism.** Given the same authoritative inputs and the same `now`, every device must produce the same schedule, the same records and the same break anchors. Nothing derived may depend on device-local ordering or on when a device happened to be running.
+* **Performance — cost follows the screen.** Anything recomputed on the display tick must be bounded by the **visible window**, never by total account history. The schedule horizon follows the displayed week (24 h floor, 168 h ceiling); a distant week fills off the UI thread behind a "Calculating…" hint and is not retained.
+* **Offline-first.** Every feature except cross-device sync and the server-side pause cue must work with no network, indefinitely — including on a first launch that cannot yet reach the server.
+* **Data durability and backward compatibility.** No release may make an existing on-disk database unreadable. Payloads written by earlier shapes decode with defaults, and states an older build wrote that current invariants forbid are **healed on load** rather than surfaced as anomalies. Schema upgrades preserve every row.
+* **Persist and sync only what cannot be recomputed.** Derived state — the automatic schedule, banked records, every projection — is recomputed rather than stored or pushed; an always-running device must make **zero** snapshot writes from time passing alone.
+* **Privacy.** No telemetry and no third-party analytics. The only data leaving the device is the user's own state, to their own account, plus the device-presence rows the cue needs. The server half is self-hostable.
+* **Security.** All server access is authenticated per user and enforced by row-level security; a device belongs to exactly one account at a time, enforced server-side. Service-role paths are reachable only by the cron, never by a client.
+* **Cost.** Steady-state traffic must keep one phone plus one desktop inside Supabase's free plan. Egress is the metered axis, not request count.
+* **Battery.** No polling while the device is locked: presence ticks only while signed in and unlocked, and the phone arms OS-level alarms rather than staying awake for them.
+* **Platform fit.** Desktop interaction (mouse modifiers, complex selection, keyboard navigation) is the reference model; touch gestures are adapted rather than ported ([`PRD.md`](../PRD.md) §2, §3).
+* **Verifiability.** Behaviour is asserted against the state holders before any UI exists for it; `./gradlew :shared:jvmTest` is the gate. A field problem must be diagnosable from `scripts/collect-diagnostics.bat` alone.
+* **Declared gap:** accessibility (screen-reader semantics, high-contrast themes) and localization are neither specified nor tested in this release. This is a deliberate omission, not an oversight — see *Risks*.
+
+## Dependencies
+
+**Runtime and build dependencies** are enumerated in [`ARCHITECTURE.md`](../ARCHITECTURE.md) §10 — Compose Multiplatform, SQLDelight, kotlinx, Ktor, JNA, FCM/APNs, Supabase — together with every `expect`/`actual` platform seam. They are not duplicated here.
+
+What this page depends on **operationally**:
+
+| Dependency | Needed for | Consequence if absent |
+| --- | --- | --- |
+| A Supabase project with the migrations in `supabase/migrations/` applied | All sync, presence and cue delivery | A client newer than the project fails every fetch; the two surfaces must be deployed together |
+| Both Edge Functions deployed (`pause-cue` and `pause-cue-cron`) | The clean-lock and the dirty-kill halves of the cue | Deploying one silently disables half the delivery while the other half keeps working |
+| `pg_cron` + `pg_net` and the scheduled tick (`supabase/pause-cue-setup.sql`) | Detecting a device that died without reporting | The dirty-kill path never fires |
+| FCM (and eventually APNs) credentials as project secrets | The server → phone push | The cue is computed correctly and never heard |
+| Anonymous sign-ins **enabled** and email confirmation **disabled** on the project | Guest accounts, and claiming a guest account in place | No guest account can be created (the app stays local-only); "create account" cannot claim the guest |
+| The application shell — accounts, persistence, undo/redo, floating windows, sync | Everything on this page | Specified in [`PRD.md`](../PRD.md) §5; this page assumes rather than defines it |
+| The reference implementation in `side-dev/` | Conformance of the scheduling model | The Kotlin port has nothing to be verified against |
+| JDK 17+, plus the Android SDK and a signing keystore for phone builds | Building | Documented in [`README.md`](../README.md#requirements) |
+
+## Risks and mitigations
+
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+| **Two independent deployment surfaces** (Supabase and the client apps) drift apart — a migration that changes an RPC signature breaks un-rebuilt clients, and vice versa | Sync or cue silently broken while every test is green | Every change states which surface it needs; `deploy-supabase.bat` applies migrations, both Edge Functions and the cron in one run; a passing test suite is never treated as evidence that a change is live |
+| **The live cue path is not fully verified on device** — the heartbeat ↔ cron ↔ Edge ↔ phone chain has unit-tested halves but end-to-end confirmation is outstanding | The away-from-desk promise could fail in the field | The runbook in [`docs/PAUSE_CUE_DELIVERY.md`](PAUSE_CUE_DELIVERY.md); the `scripts/*fast-break*` entry points compress a break to seconds for on-device testing; `collect-diagnostics.bat` merges the phone and desktop timelines |
+| **The iOS activity signal is unimplemented** (hardcoded inactive) | iOS devices never contribute presence and never ring; an iOS-only user gets no cue | iOS is explicitly out of scope for 1.6.0; the seam exists and is the only thing to fill once a Mac build is possible |
+| **Realtime streaming replays nothing** — a change landing while a device is disconnected is lost to it permanently | The device sits stale, and its next edit is then overwritten by a pull | Every (re)subscribe and every launch performs a catch-up reconcile, bounding staleness by the reconnect instead of by the next user action |
+| **A merge cannot always be attempted** — with no common ancestor on record, sync falls back to last-write-wins | One side's work can still be lost in that narrow case | The fallback is confined to a first sync or an upgraded database, logged to diagnostics, and self-healing (the pull it performs records an ancestor for next time) |
+| **Aggressive OEM background management on Android** kills the app or defers its work | Presence stops; breaks and alarms are missed | Foreground service, boot receiver, and a one-time Doze-exemption plus autostart prompt; a force-stopped app is a documented limitation, since the OS suppresses delivery until relaunch |
+| **Display cost growing with account history** rather than with the visible window | On a large but valid database the window is created and never shown — indistinguishable from a crash | The horizon follows the displayed week; the observed now-line is quantized; distant weeks fill off the UI thread and are discarded; stated as a non-functional requirement and enforced in review |
+| **Model complexity** — the scheduling rules are subtle enough that a plausible change can be quietly wrong | Shares silently stop converging, with no user-visible error | One reference implementation; a frozen answer snapshot that fails with a diff on any change; a Kotlin port replaying every reference case; a single copy of the rules with thin drivers over it |
+| **Free-tier limits** exceeded by a change that introduces periodic traffic | Sync and cue delivery stop | Event-driven writes only — no timer-driven server traffic — and egress treated as the metered axis |
+| **Single maintainer**: no review partner, no bus factor | Undocumented decisions become unrecoverable | Decision records kept inline beside the rule they justify and indexed in [`ARCHITECTURE.md`](../ARCHITECTURE.md) §11; every regression pinned by a named test |
+| **Accessibility and localization unaddressed** | The app is unusable with a screen reader, and English-only | Accepted for this release and declared out of scope; not blocked architecturally, since the UI is stateless and replaceable per platform |
+
+---
+
+*Sections 1–18 below are the **functional requirements** for the Task Scheduler page.*
+
 ## 1. Overview
 
 The Task Scheduler is a heavily interactive, infinitely nestable list of cells. It borrows interaction paradigms from spreadsheet applications (like Google Sheets) while applying them to a hierarchical tree structure. This version targets Windows desktop, but stays cross-platform as much as possible.

@@ -1,5 +1,93 @@
 # OmniApp Global Architecture
 
+> **What this file is.** How OmniApp is *built*: its components, how they talk to each other, and the reasoning behind the decisions that were expensive to reverse. It is not the product spec (`PRD.md` and `docs/PRD_TaskScheduler.md` own *what* the app should do) and not the day-to-day working rules (`CLAUDE.md` owns those). **Section numbers §1–§8 are cited from source comments and from other docs — extend them, but do not renumber them.**
+
+## 0. System overview
+
+OmniApp is a **Kotlin Multiplatform, offline-first personal scheduling app** (desktop-first, with Android, iOS and web targets). Its one implemented page, the **Task Scheduler**, holds a tree of tasks carrying priorities and minimum block sizes, and continuously answers one question — *what should I be doing now, and for how long* — by materialising a calendar of task blocks around the user's fixed commitments, on-screen / no-screen periods, eye-care **screen breaks**, alarms and sleep. Devices signed in to the same account converge on one document and cover for each other: when the whole account goes idle with a break due, the server asks whichever device is still reachable to speak the cue.
+
+Four properties drive most of what follows:
+
+| Property | Consequence throughout the codebase |
+| --- | --- |
+| **The plan is a pure function** of the rules and an instant | Scheduling runs on a **rule change**, never on the clock (§3). Time passing may only *consume* the plan. |
+| **Offline-first** | The local SQLite database is the source of truth; the server holds a mirror (§4, §8). Every feature must work with no network. |
+| **Only irreducible data is persisted or synced** | Anything recomputable is recomputed instead (§4, §8.1). This is what stops an always-running device from writing to the server all day just from time passing. |
+| **Headless correctness** | Notifications, voice cues and alarms must be right on a phone whose UI is not running (§9), so they live in the engine, never in Compose. |
+
+### 0.1 The shape of a running app
+
+```mermaid
+flowchart TB
+    subgraph view["View — Compose Multiplatform (commonMain)"]
+        UI["App.kt shell · TaskSchedulerScreen · CalendarUi<br/>floating windows · display-only projections"]
+    end
+    subgraph core["Core — pure Kotlin, no I/O"]
+        R["SchedulerReducer<br/>(State, Intent) -> State"]
+        D["SchedulerDomain<br/>fill · projections · signature"]
+        P["SchedulerPlan<br/>SchedulerPlanner + PlanWalk"]
+        A["AlarmDomain · BoundarySweep"]
+    end
+    VM["TaskSchedulerViewModel<br/>owns the State, debounces save + push"]
+    ENG["SchedulerEngine<br/>headless loops: tick · sweeps · reschedule triggers"]
+    ST[("SQLDelight / SQLite<br/>local source of truth")]
+    SY["SchedulerSyncEngine<br/>reconcile · SnapshotMerge"]
+    SB[("Supabase<br/>Postgres · Auth · Realtime · Edge · pg_cron")]
+    PLAT["platform seams (expect/actual)<br/>notifier · voice · alarm · session · sleep log"]
+
+    UI -- Intent --> VM
+    VM -- reduce --> R
+    R --> D --> P
+    R -.-> A
+    VM -- State --> UI
+    VM -- "400 ms debounce" --> ST
+    VM -- "500 ms debounce, authoritative only" --> SY
+    ENG -- Intents --> VM
+    ENG --> PLAT
+    ENG --> SY
+    SY <-- "reconcile: push / pull / merge" --> SB
+    SB -- "Realtime poke · pause-cue push" --> SY
+```
+
+### 0.2 Components and what each one owns
+
+| Component | Lives in | Owns | Must not |
+| --- | --- | --- | --- |
+| `SchedulerState` | `scheduler/state/SchedulerState.kt` | The entire immutable truth: task tree + named alternative trees, calendar panels, completed-work records, chores/reminders, alarms, sleep schedule, settings, Undo/Redo history units, and local-only view state. | Hold anything derivable (§4). |
+| `SchedulerIntent` | `scheduler/state/SchedulerIntent.kt` | Every user action *and* every engine event, as data. Its `syncsToServer()` draws the authoritative/derived line the whole sync model rests on (§8.1). | — |
+| `SchedulerReducer` | `scheduler/state/SchedulerReducer.kt` | The single place state changes: `(State, Intent) → State`, pure and synchronous. Returns the *same instance* for a no-op, so a tick cannot churn storage. | Perform I/O, read the clock on its own, or touch Compose. |
+| `SchedulerDomain` | `scheduler/domain/SchedulerDomain.kt` | Pure planning and projection: `fillSchedule` (the driver), screen-break and sleep projection, inactivity derivation, `schedulingSignature`, the cue due instants, display transforms such as sleep carving. | Depend on the ViewModel, the store or the network. |
+| `SchedulerPlan` | `scheduler/domain/SchedulerPlan.kt` | The scheduling **model** itself — `SchedulerPlanner` + `PlanWalk`, a port of the Python reference in `side-dev/`. The **only** copy of the pick / chunk / influence-field rules (§3). | Be duplicated: `fillSchedule` is a driver over it, never a second implementation. |
+| `AlarmDomain`, `BoundarySweep` | `scheduler/domain/`, `scheduler/engine/` | Pure boundary mathematics: which fixed instants the clock crossed, in order, and whether a crossing is still fresh enough to act on (§9). | Sample "where is the now-line now" as a substitute for crossing detection. |
+| `TaskSchedulerViewModel` | `scheduler/ui/` | The seam between purity and the world: holds `_state`, dispatches intents, debounces the local save (400 ms) and the sync push (500 ms), watches account changes. | Contain scheduling logic. |
+| `SchedulerEngine` | `scheduler/engine/` | Everything time- or platform-driven, headlessly: the advance tick, the cue and alarm sweeps, the reschedule triggers, presence, diagnostics (§9). Runs with no UI at all (Android foreground service). | Re-plan continuously (§3). |
+| `SchedulerStore` / `SqlDelightSchedulerStore` / `SchedulerStateCodec` | `scheduler/persistence/` | Local persistence, schema migrations, JSON encode/decode, the `syncFingerprint` (the authoritative projection), and **healing** of states that older builds wrote (§4). | Surface a legacy shape as a live anomaly instead of repairing it. |
+| `SchedulerSyncEngine`, `RemoteSnapshotClient`, `RealtimeSnapshotSubscriber`, `SnapshotMerge` | `scheduler/sync/` | Accounts, the mutex-guarded `reconcile()`, the three-way merge, the Realtime subscription (§8). | Push anything derived. |
+| `DeviceHeartbeatPublisher`, `PauseCueGateway` | `scheduler/sync/` | The presence tick and the two pause-cue Edge Function calls (§8). | Carry schedule-dependent data on the tick (§8.1). |
+| UI | `App.kt`, `scheduler/ui/TaskSchedulerScreen.kt`, `ui/CalendarUi.kt`, `ui/{Alarm,Sleep,TaskTrees}Window.kt`, `ui/TimeSimPanel.kt` | Rendering, gestures, floating windows, and the **display-only** projections bounded by the visible week (§3). | Decide anything, or store anything. |
+| Platform seams | `scheduler/platform/*`, `time/AppClock.kt`, `scheduler/debug/TimeLink.kt` | `expect`/`actual` access to notifications, speech, alarms, clipboard, OS session state, the OS sleep log, and the injectable clock (§10). | Grow logic — the `actual`s are adapters. |
+
+### 0.3 The primary flows
+
+1. **A user edit.** UI → `viewModel.dispatch(Intent)` → `SchedulerReducer.reduce` → a new `State` → recomposition. Two debounced tails follow: **400 ms** to SQLite, and — only if the intent is authoritative *and* the `syncFingerprint` actually moved — **500 ms** to `reconcile()` (§8.1).
+2. **Time passing.** The engine's advance tick banks elapsed work as records (`AdvanceSchedule`) and materialises past sleep/inactivity. It does **not** re-plan (§3).
+3. **A rule change.** Any edit that moves `SchedulerDomain.schedulingSignature` → 1 s debounce → `RefreshSchedule` → `fillSchedule` → new panels. Panels are derived, so they are stripped from the wire and every device regenerates its own.
+4. **A remote edit.** Supabase Realtime pokes `reconcile()` → pull or three-way merge → the result is written straight into `_state` (never through `dispatch`), which moves the signature and re-plans locally.
+5. **A boundary crossing** — a screen break falling due, an alarm, the end of a break: an engine sweep detects the crossing and calls a platform seam (§9).
+6. **Display derivations** — Inactivity bands, carved sleep, break markers, alarm markers, far-week schedules — are recomputed per render in `App.kt`, bounded by the focused week, and never stored or synced (§3).
+
+### 0.4 Where the rest of the system lives
+
+| Path | Role |
+| --- | --- |
+| `shared/src/commonMain` | Nearly all of the app: domain, state, persistence, sync, engine and Compose UI. |
+| `shared/src/{jvm,android,ios,wasmJs,js}Main` | The `actual` halves of the platform seams (§10), plus Android's service/receiver shell. |
+| `desktopApp`, `androidApp`, `iosApp`, `webApp` | Thin entry points: set `DebugFlags`, build the ViewModel, host the shared UI. |
+| `supabase/` | The server half: SQL migrations, the two pause-cue Edge Functions, the pg_cron setup (§8). |
+| `side-dev/` | The Python **reference implementation** of the scheduling model and its test corpus — the authority `SchedulerPlan.kt` is verified against (§3). |
+| `scripts/` | Windows dev/deploy entry points (per-account launches, Supabase deploy, diagnostics collection) — documented in `README.md`. |
+
+
 ## 1. Architectural Pattern: MVI (Model-View-Intent)
 OmniApp utilizes a strict unidirectional MVI architecture. This ensures predictable state management across complex, highly interactive UIs like the Task Scheduler.
 
@@ -22,8 +110,18 @@ The codebase follows a "Shared UI, Native Shell" philosophy.
 OmniApp prioritizes Desktop interactions first. 
 * Mouse events (hover, drag, right-click) and keyboard modifiers (`Ctrl`, `Shift`, `Tab`) are handled via Compose Multi-platform's `PointerEvent` and `KeyEvent` APIs in `commonMain`.
 * When porting to touch interfaces (Android/iOS), adapter logic maps touch gestures (long-press, swipe) to the underlying MVI intents originally designed for mouse/keyboard.
-* **The scheduler runs on a rule change, never on the clock (PRD §9).** The plan is a function from an instant to a task, so time passing must only *consume* it. `SchedulerDomain.schedulingSignature(state)` is everything the plan depends on except `now` — the tree and its priorities, minimum times, screen switches, the panels the fill treats as input (pinned/manual blocks, no-screen and inactivity periods), the sleep schedule, the screen-break configuration, and the §7 switch. `SchedulerEngine.launchRuleChangeReschedule` watches it on a 1-second debounce and is what re-plans (`RefreshSchedule`); a remote user's edit lands in the same flow, since a pulled snapshot is written straight into `vm.state`. On top of that sits one **staleness bound**, `SchedulerEngine.launchStaleReschedule`: a plan that has stood for `SCHEDULE_STALENESS_MILLIS` (1 h) without being re-planned is re-planned anyway. It is a bound, not a tick — every re-plan re-arms it (`requestReschedule`), so an account being edited never reaches it and a quiet one costs one fill per hour. Everything else time-driven is strictly weaker: the advance tick only banks records (`AdvanceSchedule`), and both the rolling horizon and calendar navigation **extend** the plan's tail (`ExtendSchedule` → `fillSchedule(keepExistingUntilMillis = …)`), keeping the materialized head and feeding it to the walk as committed service. The pick rule itself is the cyclic proportional-share model of `side-dev/README.md` (`SchedulerPlan.kt` — `SchedulerPlanner` + `PlanWalk`, a port of the reference `side-dev/test.py`): a Weighted-Fair-Queuing virtual clock picks the most starved task, and one influence field compensates a task for every way it can be deprived of the timeline — a block owned by someone else and a period that bans it are the same event, and the compensation decays exponentially with the distance to it. `fillSchedule` is only a driver over that walk, mapping OmniApp's pinned panels onto its pre-placed blocks and its screen zones / screen breaks onto its periods — a no-screen period accepts only the tasks needing no screen, the 20-s look-away accepts nobody, and a 5-/15-min pose accepts, past its closed first minute, the tasks that need no screen and are marked doable during a break (PRD §8/§9/§15). It replaced a debt-with-a-natural-bound model and, before that, an Earliest-Deadline-First fill.
+* **The scheduler runs on a rule change, never on the clock (PRD §9).** The plan is a function from an instant to a task, so time passing must only *consume* it. `SchedulerDomain.schedulingSignature(state)` is everything the plan depends on except `now` — the tree and its priorities, minimum times, screen switches, the panels the fill treats as input (pinned/manual blocks, no-screen and inactivity periods), the sleep schedule, the screen-break configuration, and the §7 switch. `SchedulerEngine.launchRuleChangeReschedule` watches it on a 1-second debounce and is what re-plans (`RefreshSchedule`); a remote user's edit lands in the same flow, since a pulled snapshot is written straight into `vm.state`. On top of that sits one **staleness bound**, `SchedulerEngine.launchStaleReschedule`: a plan that has stood for `SCHEDULE_STALENESS_MILLIS` (1 h) without being re-planned is re-planned anyway. It is a bound, not a tick — every re-plan re-arms it (`requestReschedule`), so an account being edited never reaches it and a quiet one costs one fill per hour. Everything else time-driven is strictly weaker: the advance tick only banks records (`AdvanceSchedule`), and both the rolling horizon and calendar navigation **extend** the plan's tail (`ExtendSchedule` → `fillSchedule(keepExistingUntilMillis = …)`), keeping the materialized head and feeding it to the walk as committed service. The pick rule itself is the cyclic proportional-share model of `side-dev/README.md` (`SchedulerPlan.kt` — `SchedulerPlanner` + `PlanWalk`, a port of the reference implementation in `side-dev/`: `scheduler_logic.py` holds the model, `test_configs.py` the cases, `tests_displayer.py` the runner and GUI, and `rules_snapshot.txt` freezes every case’s answer so a change in the scheduler’s output shows up as a diff): a Weighted-Fair-Queuing virtual clock picks the most starved task, and one influence field compensates a task for every way it can be deprived of the timeline — a block owned by someone else and a period that bans it are the same event, and the compensation decays exponentially with the distance to it. `fillSchedule` is only a driver over that walk, mapping OmniApp's pinned panels onto its pre-placed blocks and its screen zones / screen breaks onto its periods — a no-screen period accepts only the tasks needing no screen, the 20-s look-away accepts nobody, and the two rest poses are deliberately different shapes — the 5-minute one is a closed first minute followed by a tail accepting the tasks that need no screen *and* are marked doable during a break, while the 15-minute one is a single open period accepting every off-screen task from its first second, with no closed head and no break-doable gate (PRD §8/§9/§15). It replaced a debt-with-a-natural-bound model and, before that, an Earliest-Deadline-First fill.
 * **Schedule computation is bounded by the screen and never blocks it (PRD §9).** The §9 fill is O(horizon), so the horizon is not a constant: `App.kt` publishes the calendar's focused week to the engine (`SchedulerEngine.setCalendarHorizon`), which drives `SchedulerReducer.scheduleHorizonEndMillis`, so every refill materializes the plan out to **the displayed week** — clamped into `[24 h, 168 h]` (a floor for the headless notification/cue paths with the calendar closed; a ceiling so a far week never enters stored state). Sitting on the current week computes no later day. A week past the ceiling is filled **for display only**, on `Dispatchers.Default` behind a "Calculating…" hint, and discarded on navigation — the UI thread never runs a multi-week fill, and no multi-week schedule is retained.
+
+### 3.1 The two sanctioned exceptions to "time never re-plans"
+
+Only two things are allowed to make the plan a function of the clock, and both are **quantised** so that what the rule really forbids — a continuously-changing input churning the plan every tick — still cannot happen.
+
+* **The staleness bound** (above): a plan that has stood an hour is re-planned once. A bound, not a tick.
+* **The task-tree timeline.** Alternative task trees can be given dates, at which point they become **priority keyframes**: between two of them the scheduler interpolates each task's priority linearly, so the plan transforms evenly from one arrangement into the next instead of snapping over on the date. By the user's specification the plan here genuinely *is* a function of time, so a plan computed once would be wrong from the next instant. `SchedulerEngine.launchTaskTreeBlendReschedule` samples the blend cursor every 60 s but dispatches only when a **quantised** step is crossed — 100 steps per transition, which bounds the priority error at 1 % and caps a whole transition at about a hundred fills however long it lasts. When no tree is dated the step is a constant, so an account that never uses the feature dispatches nothing at all. Task identity across keyframes is the `TaskId`, a task absent from one keyframe is 0 % there (which is how a task fades in or out), and the placeable set is the **union** of both keyframes — otherwise a continuously-changing priority would still produce a discontinuous plan.
+
+A third case looks like an exception and is not: a **screen break that slides** along the now-line. The occurrence moves because the break is still owed, but the underlying rule has not changed, so nothing is re-planned — `App.kt` re-projects the markers for display and `SchedulerDomain.clipPlanForPinnedScreenBreak` cuts the regenerable panels out of the break's span as a **display** transform. In the reference model (`side-dev/`) this is the simplest case of a sliding period, and the app answers it with a clip rather than a per-tick fill.
+
 
 ## 4. Local Persistence & Offline-First
 OmniApp is entirely offline-capable.
@@ -53,6 +151,7 @@ Behavior-Driven Development (BDD) and Test-Driven Development (TDD) are strictly
 Debug tooling exists to *exercise the real app under controlled conditions*, never to replace its logic. **Mandate:** any debug control that simulates an event (time passing, a device sleep, etc.) must drive the **same Intents and code paths** the production app uses for that event — it may differ only in the *source* of the trigger; downstream handling must be the production logic, shared, not copied. Controls are gated by `DebugFlags`, set once at startup from the platform entry point and **off by default**, so a packaged/release build never shows the debug tooling. The desktop dev `run` task enables it via the `omniapp.timeSim` system property; `createDistributable` (release) does not, so it ships off.
 
 This is currently realized only by the Task Scheduler's time-simulation panel; its behaviour is specified in `docs/PRD_TaskScheduler.md` (§16).
+
 ## 8. Cross-Device Sync, Live Activity & Push Delivery (pg_cron heartbeat model)
 
 ### 8.0 Accounts: the app is always connected to one (PRD §5)
@@ -101,3 +200,76 @@ Cross-device sync is **offline-first**: the local SQLite database (§4) stays th
 * **Sleep/Work toggle → `account_state`.** The left-menu toggle (`SchedulerState.sleepingUntilMillis`, `SetSleepMode`) writes the account's mode to `account_state` immediately (`publishAccountState`) so `tick_pause_cues()` suppresses the cue while the user is deliberately away; it persists across restart until the scheduled wake passes (`SchedulerEngine.resolveSleepModeOnStartup`).
 * **Event-driven + tick traffic**: event-driven REST is the reconcile (startup, account change, the auto-push after an edit, a Realtime poke or (re)subscribe catch-up, and the manual button — never a timer), the Sleep/Work `account_state` write, the phone's push-token registration (startup/foreground), the `publish_next_break` write when the two break dues change, the clean screen-off Edge-Function call, and the login force-logout check (`account_logout`) inside a reconcile. The one steady-state timer traffic is the `t_a` `publish_presence` RPC **while the device is actively unlocked** (a DB write; nothing at all while locked). The Edge-Function push (server→phone) is the only server→device channel besides the snapshot WebSocket. What the free plan meters is **egress** (bytes sent back) and Edge invocations, not the number of RPC calls — so the split above is a *correctness* fix, not a bandwidth one.
 * **Verification status:** the client and the Supabase schema compile and the pure pieces are unit-tested (`RealtimePhoenixTest`, `SleepModeTest`, `PresenceTickTest`, `PauseCueGatewayTest`, `RestPosePresenceWindowTest`); the **live** paths (clean lock ↔ `evaluate_pause_cue()` ↔ e1 ↔ phone, and client `t_a` tick ↔ `tick_pause_cues()` ↔ `claim_pause_cue()` ↔ e2 ↔ phone) still need on-device confirmation against a real project — see `docs/PAUSE_CUE_DELIVERY.md` (the runbook for that verification).
+
+## 9. The engine: time, boundaries, cues and alarms
+
+`SchedulerEngine` (`shared/.../scheduler/engine/`) is where *time* and *platform events* become Intents. It is deliberately outside the UI: on Android it runs inside a foreground service started at boot, so every guarantee below holds with no window on screen and the app never opened.
+
+**One rule governs everything in this section: a trigger is a function of which fixed boundary instants the clock crossed — never of where a sample happened to land.** Sampling "is the now-line inside the block right now?" is wrong twice over: a suspended process skips the sample entirely (the cue is silently lost), and a fast display tick re-answers `true` on every frame (the cue spams). `BoundarySweep` is the shared answer: it enumerates the crossings between the previous scan and this one, tiles consecutive scans so no interval is ever skipped, orders the crossings, and judges staleness only by a crossing's **real** age — so a clock jump or a resume from sleep fires each missed boundary once, in order, and swallows only what is genuinely too old to be worth saying.
+
+| Loop | Cadence | What it does |
+| --- | --- | --- |
+| `launchAdvanceTick` | 30 s (1 s under time simulation) | Banks elapsed auto panels as completed-work records, materialises past sleep/inactivity. **Never re-plans.** |
+| `launchRuleChangeReschedule` | 1 s debounce on `schedulingSignature` | The *only* rule-watching re-plan trigger (§3); a remote pull lands in it too, since a pull writes `vm.state`. |
+| `launchStaleReschedule` | polled, bound of 1 h | A plan that has stood an hour without re-planning is re-planned. A **bound**, not a tick: every re-plan re-arms it, so an account being edited never reaches it. |
+| `launchTaskTreeBlendReschedule` | 60 s poll, **quantised** to 100 steps per transition | The one sanctioned time-driven re-plan (§3.1). |
+| `launchHorizonReschedule`, `launchCalendarHorizonReschedule` | polled / on navigation | Extend the materialised tail when the displayed week grows (`ExtendSchedule`, which keeps the head — extending is not re-planning). |
+| `launchCueSweep` | tick cadence, `BoundarySweep` | Screen-break boundaries: a break falling **due**, and a conducted break **ending**. Both are posted as notifications; the spoken half additionally honours the voice switch. All break cues come out of this one sweep so they are spoken in boundary order. |
+| `launchAlarmSweep` (non-phone) / `launchAlarmArming` (phone) | crossing-driven / OS-armed | §18 alarms — see below. |
+| `launchActiveSessionTracking`, `launchScreenBreakSeeding` | 30 s | Records this device's activity windows and re-derives the account-wide pauses that anchor the breaks (§8). |
+
+**Screen breaks (PRD §15).** A break is **owed** until something actually serves it, so its drawn occurrence slides along the now-line — which means the drawn start is *not* a fixed instant and nothing may key on it. Every cue therefore keys on the stable **due** instant `lastRest + interval` as a level test, de-duplicated on that due. Three events serve a break, and each is an event rather than an assumption: a look-away the app itself conducted end to end, a real pause at least as long as the pose that was owed when it began, and a pause past the look-away's qualifying threshold. `CLAUDE.md` carries the full rule set and the tests that pin it.
+
+**Alarms (PRD §18) — the platform split is about what each platform can promise, not about who may ring.** The alarm list is ordinary authoritative state, so it syncs to every device; what differs is delivery. A **phone** must ring with the app killed, which only the OS can guarantee, so it arms the soonest ring as an exact OS alarm (`AlarmManager`) and the receiver arms the next. A **desktop** app that is not running cannot ring at all, so there is nothing to arm and the crossing itself is the trigger — an ordinary `BoundarySweep` (60 s freshness, looser than the 2 s cue budget, because an alarm is worth hearing slightly late) that self-delays to the next ring so the 30 s tick cannot make every alarm 30 s late. Both platforms then share one fire path, so they ring, disarm and log identically. Deliberately **not** an Edge-Function push like the pause cue: an alarm's instant is known in advance, so local arming works offline and costs no server traffic — the pause cue needs the server only because its *timing* depends on cross-device presence (§8).
+
+**The alarm sound is synthesised, not bundled** (`AlarmTone.loopPcm()`): one loopable Karplus–Strong arpeggio cycle rendered in `commonMain` and written repeatedly by both ringing platforms. It is deterministic, so tests can assert it; there is no packaged resource that could fail to load. The §15 voice cues take the opposite decision — pre-rendered WAVs in `composeResources/files`, played through the `playVoiceCue` seam — because they carry *spoken words*, which must not depend on a system TTS voice being installed.
+
+**Diagnostics.** `scheduler/platform/Diagnostics.kt` appends a local-only, rotating timeline (engine start, every reconcile outcome, every derived-pause refresh, every notification posted and cue played — *including crossings swallowed as stale*, which is the evidence that the process was suspended when one happened). `scripts/collect-diagnostics.bat` merges the desktop and Android logs into one timeline. **It is the first tool to reach for on a calendar or sync anomaly** — faster and more reliable than asking what the calendar looked like. Note it records what the app *attempted*: a logged notification is not proof the OS displayed it.
+
+## 10. External context: dependencies, seams and entry points
+
+**Third-party runtime dependencies are few and deliberately boring** — the app is offline-first, so every one of them must be optional at runtime or replaceable per platform.
+
+| Dependency | Used for | Notes |
+| --- | --- | --- |
+| Compose Multiplatform + Material 3 | All UI, on every target | The UI is stateless (§1), so it can be replaced per platform without touching logic. |
+| SQLDelight (+ SQLite JDBC / Android / Native drivers) | Local persistence (§4) | Web falls back to browser local-storage. Schema and migrations live in `shared/src/commonMain/sqldelight`. |
+| kotlinx-serialization / kotlinx-datetime / kotlinx-coroutines | State encoding, calendar arithmetic, all the engine loops | — |
+| Ktor client (+ WebSockets, content negotiation) | Every server call: PostgREST, GoTrue, Realtime (§8) | Chosen over the official Supabase Kotlin SDK to keep one small, auditable HTTP surface across five targets. |
+| JNA (desktop only) | Windows session lock/unlock notifications, OS sleep log | Feeds the activity signal (§8). |
+| Firebase Cloud Messaging / APNs (server → phone) | The pause-cue data push (§8) | The only server→device channel besides the snapshot WebSocket. |
+| Supabase (Postgres, Auth, Realtime, Edge Functions, pg_cron, pg_net) | The whole server half (§8) | Self-hostable; the client speaks plain HTTP + Phoenix WebSocket to it. |
+| Piper TTS (optional, desktop, dev-time) | Regenerating the bundled voice-cue WAVs | Not a runtime dependency — the WAVs ship in the app. |
+
+**Everything platform-specific goes through one `expect`/`actual` seam**, all of them small adapters:
+
+| Seam | Provides |
+| --- | --- |
+| `platform/SystemNotifier.kt`, `platform/Voice.kt`, `platform/AlarmSound.kt` | OS notifications, spoken cues, alarm ringing (§9). |
+| `platform/DeviceInfo.kt` | Device kind, whether the screen is active/unlocked, and the listener that reports a change — the activity signal behind presence (§8). *(Gap: the iOS implementation is still a hardcoded `false`.)* |
+| `platform/SleepHistory.kt` | Reading the OS sleep/wake log, so a device that was suspended can reconstruct what it missed. |
+| `platform/Diagnostics.kt`, `platform/SystemClipboard.kt`, `platform/DeadKey.kt`, `ui/PlatformCursor.kt` | Logging, clipboard, keyboard and cursor details. |
+| `persistence/DefaultSchedulerStore.kt` | The per-platform SQLDelight driver (and the web fallback). |
+| `sync/StartupLogin.kt` | The non-interactive credentials the `scripts/account*` entry points inject. |
+| `platform/PauseCueLocal.kt` | Receiving the server's data push and arming the local cue on the phone (§8). |
+| `debug/TimeLink.kt`, `time/AppClock.kt` | The injectable clock — real, or the simulated one the debug panel drives (§7). **All engine durations are read through it**, so time simulation exercises the production paths rather than bypassing them. |
+
+**Human-facing entry points.** `./gradlew :desktopApp:run` (primary), `:shared:check` / `:shared:jvmTest` (the verification gates), and the `scripts/` batch files for per-account launches, Android deploys, Supabase deploys and diagnostics — all listed in `README.md`. There are two independent deployment surfaces and a change to one does **not** take effect in the other: **Supabase** (`deploy-supabase.bat`) and **the client apps** (a rebuild). A green test run means the code is correct, never that it is live on a device.
+
+## 11. Design rationale index — where the "why" is written down
+
+This project keeps its decision records inline rather than as a separate ADR directory; the reasoning for the load-bearing choices lives next to the rule it justifies:
+
+| Decision | Rationale is in |
+| --- | --- |
+| MVI with one immutable state object; delta-based multi-pointer history | §1, §5, and `docs/PRD_TaskScheduler.md` §6 |
+| Scheduling on a rule change rather than on the clock, and its two sanctioned exceptions | §3, §3.1 |
+| The cyclic proportional-share model (virtual clocks + influence field) and its rejected predecessors (debt-with-a-bound, EDF) | §3, `side-dev/README.md`, and the rule block in `CLAUDE.md` |
+| Persist/sync only what cannot be recomputed | §4, §8.1, and `CLAUDE.md` ("What is authoritative vs. derived") |
+| Whole-document sync with a three-way merge, and why LWW survives only as a fallback | §8.1 |
+| A pg_cron heartbeat instead of Realtime presence or an external worker; two Edge Functions instead of one | §8 (with the history of what was removed and why) |
+| Local OS alarms vs. a server push for the pause cue | §9 |
+| Debug tooling that drives production code paths only | §7 |
+| Old on-disk shapes must be healed on load, not surfaced as anomalies | §4 and `CLAUDE.md` ("Persisted-DB compatibility") |
+
+**Keeping this file honest.** `CLAUDE.md` is the fast-moving record — invariants, regressions and the tests that pin them — and it is normal for it to be ahead. This file is the stable one: it should change when a *component boundary, a data flow, an external dependency or a rationale* changes, and a change that makes any statement here wrong is not finished until the statement is fixed. The details that belong in `CLAUDE.md` (exact constants, individual test names, migration numbers) are cited here only where they identify the mechanism, so that this document can stay readable end to end by someone who has not read the source.
