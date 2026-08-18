@@ -255,9 +255,25 @@ class Scheduler:
             for n in active:
                 over = v[n] - lo - T
                 if over > 0: v[n] -= over * (1 - f)
-        for n in v:
-            if n not in active:
-                v[n] = min(max(v[n], lo - T), lo + T)
+        # An excluded task's clock is held within one period of the served pool
+        # -- an imbalance older than that is forgotten, which is what stops a
+        # long exclusion from buying an equally long catch-up. It is held by
+        # TRANSLATING the whole excluded set, never by clamping each of them
+        # separately: clamping sets every task past the bound to the same value,
+        # so a period that refuses eleven tasks used to erase what distinguishes
+        # them and their priorities stopped deciding which one went first. The
+        # bound is a property of the group's distance from the pool; the gaps
+        # inside the group are the claims themselves.
+        idle = [n for n in v if n not in active]
+        if not idle: return
+        low = (lo - T) - min(v[n] for n in idle)     # the shift the credit cap asks for
+        high = (lo + T) - max(v[n] for n in idle)    # the one the debt cap allows
+        shift = max(low, min(high, Fraction(0)))     # nothing to do where 0 satisfies both
+        # A group spread wider than 2T cannot sit inside the band at all; the
+        # credit cap is the load-bearing half, so it wins.
+        if low > high: shift = low
+        if shift:
+            for n in idle: v[n] += shift
 
     def _pick(self, v, candidates, last=None):
         pool = [n for n in candidates if n != last] or list(candidates)
@@ -393,6 +409,14 @@ class Scheduler:
         This is what keeps a short all-refusing period from making a long
         minimum unschedulable: a 20s look-away every 20min would otherwise
         forbid every 45min task from ever starting.
+
+        The asymmetry is deliberate, and the README's atomic block does not
+        argue against it: there B is ALREADY running when the period that only
+        allows A arrives, and that is why the period is scheduled with nothing.
+        Letting a task CHOOSE to start into somebody else's window is a
+        different thing entirely -- test 8's 300-minute window, which A is free
+        to run in the whole of, would be spent idle because B began six minutes
+        before it.
         """
         if need <= 0: return True
         got = Fraction(0)
@@ -443,6 +467,35 @@ class Scheduler:
             total += min(p.end, t_now) - p.start
         return name, total
 
+    def _lookback_start(self, periods, t_now, want):
+        """How far back the clocks are replayed: `want` of SCHEDULABLE time.
+
+        The window is what the past is read off, and it is measured in the only
+        currency the shares are about -- time somebody could actually have been
+        served. Measuring it in wall time instead lets an instant nobody may run
+        in push real service out of the window, and then a task that was served
+        just before the last long exclusion reads as never served at all and
+        leapfrogs the one that has been waiting. Over a timeline whose nights
+        take nine hours out of every twenty-four that is not a rounding error:
+        each of twenty low-priority tasks came back due once per wall-clock
+        window, spending most of the usable time on their minimums, and the
+        50%-priority task collected what little was left.
+        """
+        if want <= 0: return t_now
+        edges = sorted({b for w in periods for b in (w['start'], w['end'])
+                        if b is not FOREVER and b < t_now}, reverse=True)
+        got, cur = Fraction(0), t_now
+        for b in edges:
+            span = cur - b
+            if self._allowed_at(periods, b):
+                if got + span >= want: return cur - (want - got)
+                got += span
+            cur = b
+        # before the earliest edge nothing changes any more
+        if self._allowed_at(periods, cur - 1) or not edges:
+            return cur - (want - got)
+        return cur
+
     def plan(self, timeline=(), periods=(), t_now: Fraction | float = 0,
              lookback=None, max_rules=MAX_RULES, history=()):
         t_now = frac(t_now)
@@ -456,7 +509,7 @@ class Scheduler:
         self._set_field(pre, periods)
 
         window = frac(lookback) if lookback is not None else self.min_period
-        w_start = t_now - window
+        w_start = self._lookback_start(periods, t_now, window)
         if past: w_start = max(w_start, min(p.start for p in past))
         w_start = min(w_start, t_now)
         elapsed = t_now - w_start
@@ -694,6 +747,58 @@ def truncate(placements, t):
     return out
 
 
+def open_regions(periods, lo, hi, names):
+    """The parts of [lo, hi) at least one of `names` is allowed in.
+
+    Overlapping periods sum, as everywhere else, and an instant no period covers
+    refuses nobody. An instant that refuses EVERYBODY is not time a schedule
+    failed to use -- it is time the schedule was never offered -- which is why
+    it belongs in neither half of a resulting share.
+    """
+    names, live, edges = set(names), [], {frac(lo), frac(hi)}
+    lo, hi = frac(lo), frac(hi)
+    for w in periods:
+        for b in (w['start'], w.get('end', FOREVER)):
+            if b is FOREVER or b == inf: continue
+            b = frac(b)
+            if lo < b < hi: edges.add(b)
+    for a, b in itertools.pairwise(sorted(edges)):
+        if b <= a: continue
+        banned = set()
+        for w in periods:
+            end = w.get('end', FOREVER)
+            if frac(w['start']) <= a and (end is FOREVER or end == inf or a < frac(end)):
+                banned |= set(w['forbidden'] or ())
+        if not names - banned: continue
+        if live and live[-1][1] == a: live[-1] = (live[-1][0], b)
+        else: live.append((a, b))
+    return live
+
+
+def resulting_shares(spans, periods, names, lo=None, hi=None):
+    """What a drawn timeline GAVE each task, over the time some task was allowed.
+
+    Returns (shares, total). The parts no period allows anybody in are cut out
+    of both the numerator and the denominator -- a night that refuses everyone
+    is not a share anyone lost -- so a share says what fraction of the
+    SCHEDULABLE timeline a task actually holds, and what is missing from the sum
+    is time that was offered and left empty.
+    """
+    spans = [(frac(s), frac(e), n) for s, e, n in spans if frac(e) > frac(s)]
+    if not spans: return {}, Fraction(0)
+    if lo is None: lo = min(s for s, _e, _n in spans)
+    if hi is None: hi = max(e for _s, e, _n in spans)
+    live = open_regions(periods, lo, hi, names)
+    total = sum((b - a for a, b in live), Fraction(0))
+    if not total: return {}, total
+    out = {}
+    for s, e, n in spans:
+        held = sum((min(e, b) - max(s, a) for a, b in live if min(e, b) > max(s, a)),
+                   Fraction(0))
+        if held: out[n] = out.get(n, Fraction(0)) + held
+    return {n: d / total for n, d in out.items()}, total
+
+
 # --------------------------------------------------------------------------- #
 #  the dynamic rule list: one period slides, the rules follow it
 # --------------------------------------------------------------------------- #
@@ -779,6 +884,18 @@ class SlidingRules:
     # these positions inside it (as fractions of the regime's width). The ones
     # crowding the two edges are the ones that matter: a breakpoint a hair
     # inside a range is exactly what a comfortable spread of probes misses.
+    #
+    # KNOWN HOLE (2026-08-18): `lo` itself is NOT probed, so a regime is never
+    # checked at the position it is claimed from -- and the bisection that found
+    # that position only ever BRACKETS the true breakpoint, so a regime owns the
+    # sliver between the two, where the rules come from the wrong side. Probing
+    # `lo` exposes it (test 11 at t_p=38min, a 1.5e-9s sliver) but does not close
+    # it: the range that then fails is narrower than MIN_RANGE, so `_split`
+    # cannot cut it and `_build` gives up, because MovingWindow has no
+    # representation for a single-POINT regime the way ProgressiveWindow does.
+    # Closing it means giving it one. Until then the fitted rules are wrong on
+    # slivers of t_p around each breakpoint, and any new rule with a threshold in
+    # it (see the yield rule this note came from) makes those slivers reachable.
     PROBES = (Fraction(1, 64), Fraction(1, 8), Fraction(1, 3), Fraction(1, 2),
               Fraction(5, 8), Fraction(7, 8), Fraction(15, 16), Fraction(63, 64))
     SAMPLES = 8
@@ -906,11 +1023,36 @@ class SlidingRules:
         out = set()
         for (a, sa), (b, sb) in zip(zip(xs, shapes), zip(xs[1:], shapes[1:])):
             if sa != sb:
-                out.add(self._bisect(a, b, lambda x, s=sa: self._shape(x) == s,
-                                     rounds=self.SPLIT_ROUNDS)[1])
+                out.add(self._simplest(*self._bisect(
+                    a, b, lambda x, s=sa: self._shape(x) == s,
+                    rounds=self.SPLIT_ROUNDS)))
         if out: return out
         m, _ = self._bisect(lo, hi, lambda x: self._fit(lo, x) is not None, rounds=14)
         return {m} if lo < m < hi else {lo + (hi - lo) / 2}
+
+    # denominators of a minute the breakpoints are actually made of: the
+    # environment's edges (minutes, the 20s window's thirds) and what the
+    # minimum times cut out of them
+    SIMPLE_DENOMINATORS = (1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, 60, 120, 300, 600)
+
+    @classmethod
+    def _simplest(cls, lo, hi):
+        """The simplest rational in (lo, hi] -- i.e. the breakpoint itself.
+
+        A bisection only ever BRACKETS a breakpoint, and a regime cut at the
+        bracket's far edge owns the sliver of positions between the two: at
+        those the rules are the ones from the wrong side of the breakpoint, and
+        no affine rule describes them because two regimes meet inside. The
+        breakpoints are not arbitrary reals -- they come out of the
+        environment's own edges and the minimum times -- so the simplest
+        rational the bracket holds is the breakpoint exactly, and the sliver
+        stops existing rather than having to be fitted.
+        """
+        if hi <= lo: return hi
+        for d in cls.SIMPLE_DENOMINATORS:
+            cand = Fraction(int(lo * d) + 1, d)     # the smallest k/d above lo
+            if cand <= hi: return cand
+        return hi
 
     def _bisect(self, lo, hi, holds, rounds=32):
         """(last position where `holds` is true, first where it is not)."""

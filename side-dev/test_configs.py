@@ -36,6 +36,7 @@ from scheduler_logic import (
     frac,
     human,
     human_s,
+    resulting_shares,
     stamp,
 )
 
@@ -994,19 +995,27 @@ def verify_progressive(cases=None, verbose=True, samples=24, max_report=6):
             print()
     return failures
 
-def shares_line(tl, pw):
+def shares_line(tl, pw, tp=None):
     """What the three days actually gave each group -- reported, not asserted.
 
-    The target percentages are not reachable here and that is the point of the
-    case: A is not privileged, so a 45min slot of it only fits between two
-    privileged-only periods, and the night refuses everybody for nine hours."""
-    got, busy = {}, Fraction(0)
-    for s, e, n in tl:
-        if n not in pw.minimum: continue
-        got[n] = got.get(n, Fraction(0)) + (e - s)
-        busy += e - s
-    if not busy: return "nothing was scheduled"
+    The same measure the window draws: a share of the time some task was allowed
+    to run in, so the nine-hour nights that refuse everybody are not counted as
+    a share anyone lost. What is missing from the sum is time that WAS offered
+    and left empty -- with 21 tasks of 45 minutes each, a gap too short for any
+    minimum has no taker.
+
+    A cannot reach its 50% here and that is part of the case: it is not
+    privileged, so a 45min slot of it only fits between two privileged-only
+    periods, and inside a 30-hour period the twenty other tasks must each be
+    given a 45-minute minimum first."""
+    periods = list(pw.periods) + list(pw.sliding(pw.span if tp is None else tp))
+    got, open_total = resulting_shares(tl, periods, list(pw.minimum),
+                                       lo=frac(0), hi=pw.span)
+    if not open_total: return "nothing was schedulable"
     priv = sum(v for n, v in got.items() if n in PRIVILEGED)
-    return (f"of {human(busy)} of scheduled time: A {float(got.get('A', 0) / busy) * 100:.1f}% "
-            f"(target 50%), the ten privileged {float(priv / busy) * 100:.1f}%, "
-            f"the ten others {float((busy - priv - got.get('A', 0)) / busy) * 100:.1f}%")
+    mine = sum(v for n, v in got.items() if n in pw.minimum)
+    return (f"of the {human(open_total)} some task is allowed in: A "
+            f"{float(got.get('A', 0)) * 100:.1f}% (target 50%), the ten privileged "
+            f"{float(priv) * 100:.1f}%, the ten others "
+            f"{float(mine - priv - got.get('A', 0)) * 100:.1f}%, "
+            f"offered and left empty {float(1 - mine) * 100:.1f}%")

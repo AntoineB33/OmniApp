@@ -41,6 +41,7 @@ from scheduler_logic import (
     MAX_RULES,
     frac,
     human,
+    resulting_shares,
     rule_lines,
     stamp,
 )
@@ -251,23 +252,10 @@ def _duration_of(item):
 def _name_of(item):
     return item['name'] if isinstance(item, dict) else item.task
 
-def cycle_shares(blocks):
-    """The share of the cycle each task holds -- blocks or Slots alike."""
-    total = sum((_duration_of(b) for b in blocks), frac(0))
-    if not total: return {}
-    out = {}
-    for b in blocks:
-        out[_name_of(b)] = out.get(_name_of(b), frac(0)) + _duration_of(b)
-    return {n: d / total for n, d in out.items()}
-
-def span_shares(spans):
-    """The share of the drawn timeline each task holds, from (start, end, name)."""
-    out, total = {}, frac(0)
-    for start, end, name in spans:
-        if end <= start: continue
-        out[name] = out.get(name, frac(0)) + (end - start)
-        total += end - start
-    return {n: d / total for n, d in out.items()} if total else {}
+# The resulting share is ONE number, not two: what the drawn timeline gave a
+# task, over the time some task was allowed to run in. It lives in
+# scheduler_logic (`resulting_shares`) because the check in test_configs reports
+# the same measure, and the two must not be able to disagree.
 
 def _edge(t):
     return "forever" if t is None or t == float('inf') else stamp(t)
@@ -315,33 +303,34 @@ def info_layout(tasks, periods, width=780):
     plines = period_lines(periods, chars=max(20, int(width // INFO_CHAR_W)))
     return rows, plines, INFO_LINE_H * (3 + rows + len(plines))
 
-def draw_info(canvas, x, y, tasks, periods, cyc, tl, rows, plines, tag=None, tooltip=None):
-    """Draw the block and return its height. `cyc` and `tl` are the resulting
-    shares of the cycle and of the drawn timeline."""
+def draw_info(canvas, x, y, tasks, periods, got, open_total, rows, plines,
+              tag=None, tooltip=None):
+    """Draw the block and return its height. `got` is `resulting_shares`, and
+    `open_total` how much timeline it was measured over."""
     tags = (tag,) if tag else ()
 
     def text(ty, s, fill, tx=None):
         return canvas.create_text(x if tx is None else tx, ty, anchor="nw",
                                   font=INFO_FONT, fill=fill, tags=tags, text=s)
 
-    text(y, f"tasks ({len(tasks)}):  name, minimum, priority  ->  resulting share "
-            f"of the cycle (and of the whole drawn timeline)", "#333333")
+    text(y, f"tasks ({len(tasks)}):  name, minimum, priority  ->  resulting share of "
+            f"the {human(open_total)} some task is allowed in", "#333333")
     total = sum((t.priority for t in tasks), frac(0)) or frac(1)
     for i, t in enumerate(tasks):
         col, row = divmod(i, rows)
         cell = (f"{t.name:<4}{human(t.min_time):>7}{_pct(t.priority / total):>7}"
-                f" ->{_pct(cyc.get(t.name, 0)):>7}{'(' + _pct(tl.get(t.name, 0)) + ')':>9}")
+                f" ->{_pct(got.get(t.name, 0)):>8}")
         text(y + INFO_LINE_H * (1 + row), cell, "#000000", tx=x + col * TASK_COL_W)
 
-    # the drawn timeline is not made of tasks alone -- a pre-placed block owned
-    # by nobody and the idling a minimum could not fit into hold their share of
-    # it too, and a table of tasks that did not sum to the timeline would look
-    # like an error rather than like the answer
-    rest = {n: s for n, s in tl.items() if n not in {t.name for t in tasks}}
+    # the timeline is not made of tasks alone -- a pre-placed block owned by
+    # nobody, and the time a minimum could not fit into, hold their share of it
+    # too, and a table of tasks that did not sum to the timeline would look like
+    # an error rather than like the answer
+    rest = {n: s for n, s in got.items() if n not in {t.name for t in tasks}}
     if rest:
         text(y + INFO_LINE_H * (1 + rows),
-             "not a task, of the drawn timeline:  "
-             + ", ".join(f"{n} {_pct(s)}" for n, s in sorted(rest.items())), "#777777")
+             "not a task:  " + ", ".join(f"{n} {_pct(s)}" for n, s in sorted(rest.items())),
+             "#777777")
 
     y2 = y + INFO_LINE_H * (2 + rows)
     text(y2, f"static periods ({len(periods)}), by the set of tasks they do NOT allow:", "#333333")
@@ -393,8 +382,10 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
                                        width=window_width - margin_left - margin_right)
         info_y = canvas.bbox(sub_id)[3] + 6
         drawn = [(b['start'], b['start'] + b['duration'], b['name']) for b in schedule]
+        got, open_total = resulting_shares(drawn, periods, [t.name for t in tasks],
+                                           lo=start_time, hi=start_time + total_duration)
         height = draw_info(canvas, margin_left, info_y, tasks, periods,
-                           plan.shares, span_shares(drawn), rows, plines, tooltip=tooltip)
+                           got, open_total, rows, plines, tooltip=tooltip)
         local_y_offset = info_y + height + 14
 
         max_row_idx = 0
@@ -609,9 +600,14 @@ class MovingCasePanel:
                       text="Cycle:  " + self._ellipsis(regime.cycle_text))
 
         drawn = timeline_of(mw, tp)
-        prefix, cycle = mw.blocks_at(tp)
+        # measured against the environment AS IT STANDS at this t_p: the sliding
+        # period is a period like any other, so where it allows nobody it is cut
+        # out of the share exactly as a night is
+        got, open_total = resulting_shares(drawn, list(mw.periods) + list(mw.sliding(tp)),
+                                           [t.name for t in mw.tasks],
+                                           lo=frac(0), hi=mw.span)
         draw_info(c, self.MARGIN_LEFT, self.y_info, mw.tasks, mw.periods,
-                  cycle_shares(cycle or prefix), span_shares(drawn),
+                  got, open_total,
                   self.info_rows, self.info_periods, tag=self.tag, tooltip=self.tooltip)
 
         for start, end, name in drawn:
@@ -753,16 +749,19 @@ class ProgressiveCasePanel(MovingCasePanel):
                       fill="#00407A", tags=self.tag,
                       text="Cycle:  " + self._ellipsis(seg.cycle_text if seg else ""))
 
-        # the cycle share comes from the rules AT THE LINE when they have been
-        # derived, and from the link otherwise: never from `regime_at`, which
-        # would derive one, and drawing a frame may not do that.
-        local = pw.blocks_at(tp, fit=False)
-        if local is not None: cycle = local[1] or local[0]
-        elif seg is not None: cycle = seg.cycle or seg.prefix
-        else: cycle = []
+        # The share is read off the timeline this frame is DRAWING -- never from
+        # `plan_at`/`regime_at`, which would schedule, and drawing a frame may
+        # not do that. It used to be read off the rules at the line instead, and
+        # fell back to their PREFIX where they had no cycle: on this case that is
+        # always, so the number quoted was a one-off catch-up burst measured over
+        # an environment truncated at the 6h lookahead -- 33.79% for a task the
+        # timeline underneath it was giving 2%.
         drawn = pw.timeline(tp, fit=False)
+        got, open_total = resulting_shares(drawn, list(pw.periods) + list(pw.sliding(tp)),
+                                           [t.name for t in pw.tasks],
+                                           lo=frac(0), hi=pw.span)
         draw_info(c, self.MARGIN_LEFT, self.y_info, pw.tasks, pw.periods,
-                  cycle_shares(cycle), span_shares(drawn),
+                  got, open_total,
                   self.info_rows, self.info_periods, tag=self.tag, tooltip=self.tooltip)
 
         for start, end, name in drawn:
@@ -822,11 +821,12 @@ def draw_progressive_cases(root, canvas, tooltip, cases, y_offset, window_width=
         y_offset += panel.height + 30
     return y_offset
 
-def print_statement(tasks, periods, shares=None):
+def print_statement(tasks, periods, shares=None, open_total=None):
     """The case's own statement -- the same table the window draws, in text."""
     total = sum((t.priority for t in tasks), frac(0)) or frac(1)
     print(f"[ TASKS ] name, minimum, priority"
-          + (" -> resulting share of the cycle" if shares is not None else ""))
+          + (f" -> resulting share of the {human(open_total)} some task is allowed in"
+             if shares is not None else ""))
     for t in tasks:
         got = f" -> {_pct(shares.get(t.name, 0)):>8}" if shares is not None else ""
         print(f"  {t.name:<4}{human(t.min_time):>8}{_pct(t.priority / total):>8}{got}")
@@ -836,11 +836,15 @@ def print_statement(tasks, periods, shares=None):
 
 def print_terminal_results(cases, moving_cases, progressive_cases=()):
     for case in cases:
-        title, tasks, _total_duration, pre_placed, periods, options = case_parts(case)
+        title, tasks, total_duration, pre_placed, periods, options = case_parts(case)
         prefix, cycle, plan = get_schedule_rules(tasks, pre_placed, periods, **options)
+        drawn = [(b['start'], b['start'] + b['duration'], b['name'])
+                 for b in generate_schedule(prefix, cycle, total_duration, start=plan.start)]
+        got, open_total = resulting_shares(drawn, periods, [t.name for t in tasks],
+                                           lo=plan.start, hi=plan.start + total_duration)
 
         print(f"--- {title.splitlines()[0]} ---")
-        print_statement(tasks, periods, plan.shares)
+        print_statement(tasks, periods, got, open_total)
         if prefix:
             print("[ PREFIX ]")
             for line in rule_lines(prefix, "  "): print(line)
