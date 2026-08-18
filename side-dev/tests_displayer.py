@@ -834,7 +834,7 @@ def print_statement(tasks, periods, shares=None, open_total=None):
     for line, _tip in period_lines(periods):
         print("  " + line)
 
-def print_terminal_results(cases, moving_cases, progressive_cases=()):
+def print_terminal_results(cases, moving_cases, progressive_cases=(), settle_progressive=True):
     for case in cases:
         title, tasks, total_duration, pre_placed, periods, options = case_parts(case)
         prefix, cycle, plan = get_schedule_rules(tasks, pre_placed, periods, **options)
@@ -858,7 +858,7 @@ def print_terminal_results(cases, moving_cases, progressive_cases=()):
     for title, mw, _sweep in moving_cases:
         print_moving_rules(title, mw)
     for title, pw, _sweep in progressive_cases:
-        print_progressive_rules(title, pw)
+        print_progressive_rules(title, pw, settle=settle_progressive)
 
 def print_moving_rules(title, mw, max_regimes=12):
     print(f"--- {title.splitlines()[0]} ---")
@@ -872,10 +872,24 @@ def print_moving_rules(title, mw, max_regimes=12):
               f"(the Copy Rules button gives all of them)")
     print()
 
-def print_progressive_rules(title, pw, max_links=8):
+def print_progressive_rules(title, pw, max_links=8, settle=True):
+    """The chain, printed.
+
+    `settle` is what tells the terminal from the window. Settling the three
+    days takes a couple of minutes, and the window is the one place that must
+    NOT wait for it: its panel derives the chain a link at a time between
+    frames, which is what lets the definitive part grow from t=0 while the
+    schedule is on screen. Printing the finished chain here first would settle
+    the very object the panel is about to show, and the user would open the
+    window on an answer that never moves again."""
     print(f"--- {title.splitlines()[0]} ---")
     print_statement(pw.tasks, pw.periods)
     print("[ PROGRESSIVE RULE SET - a chain of links, settled from t=0 outward ]")
+    if not settle:
+        print("  derived in the window, a link at a time: the definitive part grows")
+        print("  from t=0 while the schedule is shown. `--rules` prints it instead.")
+        print()
+        return
     pw.settle()
     for line in pw.lines(max_segments=max_links): print("  " + line)
     print()
@@ -911,13 +925,16 @@ class Workbench:
     canvas they draw into is destroyed.
     """
 
-    def __init__(self, root, width=900, initial=None):
+    def __init__(self, root, width=900):
         self.root, self.width = root, width
         self.scale = 1.0
         self.panels, self.tooltip = [], None
         self.body = self.canvas = None
-        self.initial = initial          # the default-tau cases the checks built
+        self.cases = self.moving = self.progressive = None
         self._bar()
+        # the bar is on screen before the first build runs, so the window shows
+        # itself saying what it is doing rather than after it has finished
+        self.root.update_idletasks()
         self.rebuild()
 
     # ---------------- the bar ---------------- #
@@ -987,14 +1004,11 @@ class Workbench:
         self._teardown()
 
         t0 = time.perf_counter()
-        if self.initial is not None and self.scale == 1.0:
-            cases, moving, progressive = self.initial   # already built for the checks
-            self.initial = None
-        else:
-            cases = build_cases(self.scale)
-            moving = build_moving_cases(self.scale)
-            progressive = build_progressive_cases(self.scale)
+        cases = build_cases(self.scale)
+        moving = build_moving_cases(self.scale)
+        progressive = build_progressive_cases(self.scale)
         load_colors(moving + progressive)
+        self.cases, self.moving, self.progressive = cases, moving, progressive
 
         self._make_body()
         y = draw_schedules(self.root, self.canvas, cases, window_width=self.width)
@@ -1046,6 +1060,28 @@ def main():
     update_rules = "--update-rules" in sys.argv
     no_ui = verify_only or rules_only or update_rules or "--no-ui" in sys.argv
 
+    ui = not no_ui and tk is not None
+    if ui:
+        # Nothing is built before the window exists: tests 10-11 fit their
+        # regimes in their constructor, and that alone is seconds the user
+        # would spend looking at no window at all.
+        print("--- the window ---")
+        print("  it opens now. Test 12's chain is derived inside it, a link at a time")
+        print("  between frames, so scrolling down to it without pressing play shows")
+        print("  the far end still changing while the definitive part grows from t=0.")
+        print("  The checks are `uv run tests_displayer.py --verify`.\n", flush=True)
+
+        root = tk.Tk()
+        root.title("Task Scheduler Timeline with Constraints (including the dynamic rule list)")
+        root.geometry("950x700")
+        bench = Workbench(root, width=900)
+        # the statement and the rules, off the objects the window is showing --
+        # printed WITHOUT settling test 12, which is the panel's job to do live
+        print_terminal_results(bench.cases, bench.moving, bench.progressive,
+                               settle_progressive=False)
+        root.mainloop()
+        return
+
     cases = build_cases()
     moving = build_moving_cases()
     progressive = build_progressive_cases()
@@ -1064,6 +1100,12 @@ def main():
     if not verify_only:
         print_terminal_results(cases, moving, progressive)
 
+    # The checks SETTLE test 12 -- `verify_progressive` calls `pw.settle()`, two
+    # minutes of work -- so they belong to the verification run, not the display
+    # run: doing them first would both delay the window by those two minutes and
+    # hand it a chain with nothing left to derive, when the whole point of the
+    # case is that the definitive schedule grows from t=0 while it is shown.
+    #
     # what the rules MEAN (self-consistency), then whether they are still the
     # same rules the project agreed on
     failures = verify_moving(moving)
@@ -1072,18 +1114,7 @@ def main():
 
     if no_ui:
         raise SystemExit(1 if failures else 0)
-    if tk is None:
-        print("tkinter is not available: skipping the UI (rules and checks above are unaffected).")
-        return
-
-    root = tk.Tk()
-    root.title("Task Scheduler Timeline with Constraints (including the dynamic rule list)")
-    root.geometry("950x700")
-
-    # the cases the checks above already built are the tau = x1 ones, so the
-    # window opens on them instead of scheduling everything a second time
-    Workbench(root, width=900, initial=(cases, moving, progressive))
-    root.mainloop()
+    print("tkinter is not available: skipping the UI (rules and checks above are unaffected).")
 
 if __name__ == "__main__":
     main()

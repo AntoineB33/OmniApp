@@ -53,6 +53,7 @@ and derived one regime at a time as the line reaches it -- three days hold far
 too many to derive up front.
 """
 
+import bisect
 import itertools
 import time
 from dataclasses import dataclass, field
@@ -618,6 +619,65 @@ class Scheduler:
             return cur - (want - got)
         return cur
 
+    def _replay_clocks(self, past, periods, w_start, t_now):
+        """The clocks at t_now, REPLAYED the way the walk writes them.
+
+        A plan resumed at t must continue the plan that walked through t: a
+        chain of re-plans and one long plan of the same environment are the
+        same schedule, and the only thing that can make them differ is state
+        the walk carries but the seeding does not reconstruct. `_last_run` was
+        one such carrier and the lookback's currency was another; the third is
+        the FORGETTING itself. The walk relaxes after every slot -- an
+        imbalance older than a period decays exponentially, and an excluded
+        group is translated back toward the pool -- so reading the past as a
+        flat sum of `served/p` over a window rebuilds a state the walk never
+        held: a task idle for an hour reads as owed the whole hour, where the
+        walk had already forgotten most of it.
+
+        The remedy is not a different window but the same law: walk the past
+        and apply `_relax` exactly where the walk applies it -- over served
+        time, with that stretch's own duration, against who was allowed to run
+        in it. Idling relaxes nothing, as in the walk: nobody is served there,
+        so there is nothing to forget.
+
+        The walk is EDGE BY EDGE, not block by block. A block in the
+        history is a run the walk merged, and a period may well begin inside
+        one: the fifteen privileged-only minutes a privileged task works
+        straight through leave no mark on the timeline at all, and reading the
+        allowed set once at the block's start would miss them entirely -- with
+        them the whole excluded group's credit, which is the largest single
+        term relax contributes (a 450-minute translation, in test 12, against
+        clocks that differ by five).
+
+        Note what this replaces is the WEIGHTING, not the window: with `_relax`
+        removed this is `served/p` normalised, the arithmetic the seeding did
+        before, so the window still bounds how far back it reads and a case
+        with no history still starts every clock level.
+        """
+        v = {n: w_start for n in self.p}
+        blocks = sorted(
+            (b for b in ((max(p.start, w_start), min(p.end, t_now), p.task) for p in past)
+             if b[2] in self.p and b[1] > b[0]),
+            key=lambda b: b[0])
+        edges = sorted({b for w in periods for b in (w['start'], w['end'])
+                        if b is not FOREVER and w_start < b < t_now})
+        for s, e, name in blocks:
+            t = s
+            while t < e:
+                i = bisect.bisect_right(edges, t)
+                stop = min(e, edges[i]) if i < len(edges) else e
+                allowed = self._allowed_at(periods, t)
+                T = self._period(allowed) if allowed else self.min_period
+                c = stop - t
+                v[name] += c / self.p[name]
+                self._relax(v, c, T, allowed)
+                t = stop
+        # the clocks are read for their DIFFERENCES; anchoring the earliest at
+        # t_now is what the seeding has always done, and it is what keeps
+        # `_clamp`'s band meaningful
+        base = min(v.values())
+        return {n: t_now + v[n] - base for n in self.p}
+
     def plan(self, timeline=(), periods=(), t_now: Fraction | float = 0,
              lookback=None, max_rules=MAX_RULES, history=()):
         t_now = frac(t_now)
@@ -646,17 +706,9 @@ class Scheduler:
         w_start = self._lookback_start(periods, t_now, window)
         if past: w_start = max(w_start, min(p.start for p in past))
         w_start = min(w_start, t_now)
-        elapsed = t_now - w_start
 
-        served = {n: Fraction(0) for n in self.p}
-        for p in past:
-            if p.task in served:
-                served[p.task] += max(Fraction(0), min(p.end, t_now) - max(p.start, w_start))
-
-        lag = {n: served[n] / self.p[n] - elapsed for n in self.p}
-        base = min(lag.values())
         t = t_now
-        v = {n: t + lag[n] - base for n in self.p}
+        v = self._replay_clocks(past, periods, w_start, t_now)
         self._clamp(v, t)
 
         head_task, head_served = self._head(past, t_now)

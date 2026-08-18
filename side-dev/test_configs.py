@@ -38,6 +38,7 @@ from scheduler_logic import (
     human_s,
     resulting_shares,
     stamp,
+    truncate,
 )
 
 WINDOW = Fraction(1, 3)          # the 20 s period both moving cases carry
@@ -882,12 +883,68 @@ def pace_failures(pw, seconds=PACE_SECONDS, minutes=PACE_MINUTES):
             break
     return out
 
+def check_resume_contract(pw, samples=24, verbose=True, max_report=6):
+    """A chain of re-plans is the SAME schedule as one long plan.
+
+    The chain settles a link at a time, and every link is a fresh call to the
+    scheduler -- so the rules at the line, which walk straight through those
+    instants from wherever t_p stands, can only agree with what is drawn if
+    resuming at t reproduces the walk that passed through t. Everything the
+    walk carries and the seeding has to rebuild from the history is a way for
+    that to fail, and each one has failed in turn: `last` read off `_head`, the
+    lookback measured in wall time, and the forgetting itself (`_replay_clocks`
+    -- the anomaly this check was written for: the panel an hour to the right
+    of the line changed the moment the rules there were derived, at a position
+    where the line was dragging nothing at all).
+
+    So it is asserted directly, and with the ENVIRONMENT HELD FIXED: both plans
+    are shown the same periods and the same lookahead, because the drag is
+    supposed to change the answer and would hide what this is looking for. What
+    is left over is the resumption, and nothing else.
+
+    The pairs are CONSECUTIVE links, and that is not a detail. Over one link the
+    committed timeline is the long plan's own output, so the two really are the
+    same walk cut in two; over several the chain has re-planned in between, and
+    the plan resumed at the far end is seeded from a past the long plan never
+    drew. Sampling therefore thins the PAIRS, never the marks between them."""
+    pw.settle()
+    starts = [s.start for s in pw.segments if pw.tp_start < s.start < pw.span - 2 * 60]
+    pairs = list(itertools.pairwise(starts))
+    step = max(1, len(pairs) // samples)
+    fails, checked = [], 0
+    for g0, g1 in pairs[::step]:
+        periods = list(pw.periods) + [w for w in pw.moving(g0)
+                                      if frac(w['start']) <= g0 + pw.lookahead]
+        long = pw.sched.plan(timeline=[p for p in pw.pre if p.end > g0], periods=periods,
+                             t_now=g0, history=truncate(pw.base, g0), max_rules=MAX_RULES)
+        acc, walked = g0, None
+        for s in long.prefix:
+            if acc <= g1 < acc + s.duration: walked = s.task; break
+            acc += s.duration
+        if walked is None: continue        # the long plan does not reach g1: nothing to hold
+        again = pw.sched.plan(timeline=[p for p in pw.pre if p.end > g1], periods=periods,
+                              t_now=g1, history=truncate(pw.base, g1), max_rules=MAX_RULES)
+        got = again.prefix[0].task if again.prefix else None
+        checked += 1
+        if got != walked:
+            fails.append(f"walking from {stamp(g0)} gives {walked} at {stamp(g1)}, "
+                         f"but a plan resumed there gives {got}")
+    if verbose:
+        print("--- a chain of re-plans is the same schedule as one long plan ---")
+        print(f"  {checked} resumptions checked, the environment held fixed across each")
+        print("  PASS: resuming at an instant reproduces the walk that passed through it"
+              if not fails else f"  FAIL ({len(fails)}):")
+        for f in fails[:max_report]: print("    - " + f)
+        print()
+    return fails
+
 def verify_progressive(cases=None, verbose=True, samples=24, max_report=6):
     cases = cases if cases is not None else build_progressive_cases()
     failures = check_break_rules(verbose=verbose) + check_drag_and_merge(verbose=verbose)
     for title, pw, _sweep in cases:
         fail = lambda m, title=title: failures.append(f"{title.splitlines()[0]}: {m}")
         pw.settle()
+        failures += check_resume_contract(pw, verbose=verbose)
         settled, worked = pw.pace()
 
         # 1. the pace it owes: 10 minutes of timeline per 10 seconds of work
