@@ -1,7 +1,7 @@
 # Product Requirements Document (Core)
 
 **Product:** OmniApp  
-**Version:** 1.5.0  
+**Version:** 1.6.0  
 **Phase:** Core Framework & Initial Module (Task Scheduler)
 
 ## 1. Executive Summary
@@ -27,10 +27,10 @@ OmniApp is a unified, multi-platform workspace application. The initial release 
 * **The launch scripts skip guest creation.** The per-account entry points in `scripts/` start the app already signed in to the account they name, so no guest account is created for them.
 * **Offline-first:** the local database stays the source of truth and remains fully usable while the server is unreachable, including on a first launch that cannot yet create the guest account (that work is attached to the guest account as soon as one can be created).
 
-## 6. Future Roadmap
-* **v1.5.0:** Priority assignment (absolute percentage, relative percentage, hours per day).
-* **v1.6.0+:** Automatically notifies the user when he/she need to switch to which task to satisfy the task priorities.
+## 6. Roadmap
+* **v1.5.0 — delivered:** Priority assignment (absolute percentage, relative percentage, hours per day).
+* **v1.6.0 — current release:** Automatically notifies the user when he/she needs to switch to which task to satisfy the task priorities. Cross-device cloud synchronization of the account's data, as specified in §5.
 * **v2.0.0+:** Additional specialized pages accessible via the top-left navigation dropdown.
-* **v3.0.0:** Cloud synchronization and real-time collaboration.
+* **v3.0.0:** Real-time collaboration — several users working on shared data (multi-user; §5's accounts stay one person's data across their own devices until then).
 
 *See `docs/PRD_TaskScheduler.md` for specific requirements regarding the Task Scheduler page.*
