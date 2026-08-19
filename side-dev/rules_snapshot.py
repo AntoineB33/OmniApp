@@ -89,8 +89,10 @@ PROGRESSIVE_LINKS = 6
 def line_positions(pw):
     """The positions the rules at the line are recorded at: where the line
     WAITS while the chain settles the first day, where it teleports to and
-    begins sweeping from, and a third of the way along that sweep -- the first
-    of the three at which a break is being dragged."""
+    begins sweeping from, and a third of the way along that sweep -- in test 12
+    the first of the three at which a break is being dragged. A case that neither
+    waits nor teleports (test 14) has the first two fall together, and records
+    the two that are left."""
     sweep = pw.sweep_start
     return sorted({pw.tp_start, sweep, sweep + (pw.span - sweep) / 3})
 

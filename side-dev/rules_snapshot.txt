@@ -403,3 +403,38 @@ Rules at the line while t_p in [40h, 40h 20s):
 Cuts: 0s, 4h, 8h, 12h, 16h, 20h, 24h, 28h, ...
 Scheduled: 46h 5min of 72h
 Served: A 11h 30min 45.45s, N1 1h 41min 50.98s, N10 1h 45min 4.039s, N2 1h 40min 18.31s, N3 1h 46min 47.76s, N4 1h 41min 48.99s, N5 1h 46min 47.74s, N6 1h 41min 48.53s, N7 1h 46min 47.89s, N8 1h 41min 48.17s, N9 1h 46min 48.48s, P1 1h 54min 20s, P10 2h 15min, P2 2h 15min, P3 1h 50min 3.659s, P4 1h 30min, P5 1h 30min, P6 1h 30min, P7 1h 30min, P8 1h 30min, P9 1h 30min
+
+=== Test 14 (progressive rule list): three days, two tasks of 45min at 50% each, and ===
+The rule list is a CHAIN: link i holds from its own start until the next one, and the display reads it by binary search.
+Timeline span 72h, 18 links from 0s on, at most 29 rules each (cap 50).
+Everything at t < 72h is definitive.
+
+Link 1  from [0s, 4h):
+  Prefix: IDLE 8h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min
+  Cycle:  (none)
+Link 2  from [4h, 8h):
+  Prefix: IDLE 4h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min
+  Cycle:  (none)
+Link 3  from [8h, 12h):
+  Prefix: A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min
+  Cycle:  (none)
+Link 4  from [12h, 16h):
+  Prefix: B 30min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min
+  Cycle:  (none)
+Link 5  from [16h, 20h):
+  Prefix: A 15min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min
+  Cycle:  (none)
+Link 6  from [20h, 24h):
+  Prefix: A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min
+  Cycle:  (none)
+... 12 more links
+
+Rules at the line while t_p in [0s, 8h):
+  Prefix: IDLE 8h - (t_p - 0s) | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min
+  Cycle:  (none)
+Rules at the line while t_p in [24h, 32h):
+  Prefix: IDLE 8h - (t_p - 24h) | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min
+  Cycle:  (none)
+Cuts: 0s, 4h, 8h, 12h, 16h, 20h, 24h, 28h, ...
+Scheduled: 45h of 72h
+Served: A 22h 30min, B 22h 30min

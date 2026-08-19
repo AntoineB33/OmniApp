@@ -18,13 +18,14 @@ A bar at the top of the window owns tau -- the constant the compensation field
 decays over, on both sides of a blockage -- as a multiple of each case's own
 default. Changing it rebuilds every rule list, since they are a function of it.
 
-Tests 12 and 13's rule lists are too long to derive before anything can be
-shown, so their panel settles the chain on a BACKGROUND THREAD and draws
-whatever is known now: definitive up to the front, provisional past it.
+Tests 12 to 14's rule lists are chains, derived a link at a time rather than
+before anything can be shown: their panel settles the chain on a BACKGROUND
+THREAD and draws whatever is known now -- definitive up to the front,
+provisional past it.
 Scrolling to it straight away shows the far end of the schedule still changing
 while the definitive part grows from t=0.
 
-Those two are the cases that are DERIVED WHILE THEY ARE SHOWN, and one of them
+Those three are the cases that are DERIVED WHILE THEY ARE SHOWN, and one of them
 is on screen at a time: a second bar at the top chooses which (the last of them
 by default) and it is drawn at the bottom of the window. Only the case on
 screen derives. Choosing another does not restart anything -- the case being
@@ -1443,8 +1444,8 @@ class Workbench:
     def _slow_bar(self):
         """The selector for the cases that are DERIVED WHILE THEY ARE SHOWN.
 
-        Tests 12 and 13 are not built and then displayed: each settles a chain
-        of links on a worker for minutes, and the point of the case is watching
+        Tests 12 to 14 are not built and then displayed: each settles a chain
+        of links on a worker (minutes for the crowded ones), and the point of the case is watching
         the definitive part grow. Two of them growing at once is two workers
         competing for one interpreter and for the thread that draws, so each
         front crawls at half its pace and the window pays for both.
@@ -1725,7 +1726,7 @@ def main():
         print("--- the window ---")
         print("  it opens now, empty, and fills itself in from the top: the scheduling")
         print("  runs on worker threads, so the window answers throughout. The cases")
-        print("  that DERIVE while they are shown (tests 12 and 13) are chosen one at a")
+        print("  that DERIVE while they are shown (tests 12 to 14) are chosen one at a")
         print("  time from the bar at the top and drawn at the bottom -- the last of")
         print("  them by default. Scrolling down to it without pressing play shows the")
         print("  far end still changing while the definitive part grows from t=0.")

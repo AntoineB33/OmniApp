@@ -24,6 +24,11 @@ at t_p=24h to another at t_p=48h -- the two states the window draws under its
 task table, and outside which the nearer one is held: the same environment, the
 same kind of answer, each link (and the rules at the line) made to satisfy the
 percentages of exactly the position it is made from.
+Test 14 is the same three days stripped to the bone: two tasks of 45 minutes
+at 50% each, and nothing in the way but the nights. Nothing slides, so the chain
+is all that is left of test 12's machinery -- and the answer is the plainest one
+there is, which is the point: an even alternation resumed each morning where the
+night interrupted it, and 50/50 over three days.
 """
 
 import functools
@@ -557,6 +562,64 @@ def progressive_window(tasks, blend=None, tau_scale=1, blend_ends=None):
                              max_rules=29, local_rules=12, blend=blend,
                              blend_ends=blend_ends, **_tau_kw(tau_scale))
 
+# --------------------------------------------------------------------------- #
+#  Test 14: three days, two tasks, and nothing in the way but the nights
+# --------------------------------------------------------------------------- #
+
+TEST14_SPAN = 3 * DAY
+TEST14_NIGHT_FROM = 23 * HOUR    # each night closes the timeline at 23h...
+TEST14_NIGHT_TO = 8 * HOUR       # ...and opens it again at 8h the next morning
+TEST14_TASKS = ["A", "B"]
+
+def tasks14():
+    """Two tasks, indistinguishable but for their names: half the timeline each,
+    45 minutes at a time. The answer they owe is the plainest one there is."""
+    return [Task("A", priority=50, min_time=45, color="#FF9999"),
+            Task("B", priority=50, min_time=45, color="#99CCFF")]
+
+def test14_nights(span=TEST14_SPAN):
+    """23h to 8h, every day: no task at all.
+
+    One period per night, crossing midnight -- so the timeline opens INSIDE one
+    (the night that began the day before t=0: the timeline does not begin with a
+    blank slate) and the working day is the 15 hours between them.
+
+    A night refuses everybody. By the README that deprives nobody relative to
+    anybody, so it builds no compensation field of its own: what it does to the
+    schedule is not a boost around it but simply an interruption -- the evening's
+    run is suspended and the morning resumes it."""
+    out = []
+    for d in range(-1, span // DAY + 1):
+        s = d * DAY + TEST14_NIGHT_FROM
+        if s >= span: break
+        out.append({'start': s, 'end': (d + 1) * DAY + TEST14_NIGHT_TO,
+                    'forbidden': set(TEST14_TASKS), 'label': "23h-8h: nothing"})
+    return out
+
+TEST14_TITLE = (
+    "Test 14 (progressive rule list): three days, two tasks of 45min at 50% each, and\n"
+    "-> nothing in the way but the nights -- no task at all from 23h to 8h. Three days is\n"
+    "   still too long for one prefix+cycle (the environment changes twice a day), so the\n"
+    "   answer is test 12's chain over test 1's arrangement: the plain alternation, each\n"
+    "   morning resuming the run the night suspended, and the three days coming out exactly\n"
+    "   50/50. Minimal on purpose -- a chain that fails to resume shows here as a doubled\n"
+    "   slot, not as a percentage nobody can trace."
+)
+
+def progressive_window14(tau_scale=1):
+    """Test 14's window: the same chain machinery as test 12, over an environment
+    with nothing sliding in it.
+
+    `moving` is what STANDS ahead of the line, and here the whole environment
+    stands still -- the nights are static periods and there is no break for the
+    line to reach, drag or sweep. So the standing grid is empty, `sliding`
+    defaults to it, and `swept` is left out: with nothing ever dragged, the past
+    the line leaves behind it is the chain's own timeline."""
+    return ProgressiveWindow(tasks14(), span=TEST14_SPAN, moving=lambda _tp: [],
+                             periods=test14_nights(), tp_start=frac(0),
+                             max_rules=29, local_rules=12, **_tau_kw(tau_scale))
+
+
 def build_progressive_cases(tau_scale=1):
     """The cases whose rule list is derived a link at a time, while it is shown."""
     return [
@@ -564,6 +627,7 @@ def build_progressive_cases(tau_scale=1):
         (TEST13_TITLE, progressive_window(tasks13(TEST13_BLEND_START), blend=tasks13,
                                           tau_scale=tau_scale,
                                           blend_ends=TEST13_BLEND_ENDS), 45),
+        (TEST14_TITLE, progressive_window14(tau_scale=tau_scale), 45),
     ]
 
 
@@ -1253,7 +1317,11 @@ def verify_progressive(cases=None, verbose=True, samples=24, max_report=6):
         if verbose:
             tl = pw.timeline(pw.span)      # what the line leaves behind it
             print(f"--- {title.splitlines()[0]} ---")
-            print(f"  {len(pw.segments)} links + {len(pw.past.segments)} swept links over "
+            # the swept chain only where there is one: a case with nothing to
+            # drag (test 14) leaves the same timeline behind the line as ahead
+            # of it, and reads its past off the one chain it has
+            swept = (f" + {len(pw.past.segments)} swept" if pw.past is not None else "")
+            print(f"  {len(pw.segments)}{swept} links over "
                   f"[0, {stamp(pw.span)}], at most {pw.rule_count()} rules each "
                   f"(cap {MAX_RULES})")
             print(f"  settled in {worked:.1f}s of work: "
@@ -1277,7 +1345,10 @@ def verify_progressive(cases=None, verbose=True, samples=24, max_report=6):
     return failures
 
 def shares_line(tl, pw, tp=None):
-    """What the three days actually gave each group -- reported, not asserted.
+    """What the three days actually gave each task -- reported, not asserted.
+
+    By GROUP where the case has groups (test 12's A, its ten privileged tasks
+    and its ten others), and task by task where it has none (test 14's two).
 
     The same measure the window draws: a share of the time some task was allowed
     to run in, so the nine-hour nights that refuse everybody are not counted as
@@ -1300,6 +1371,15 @@ def shares_line(tl, pw, tp=None):
     if not open_total: return "nothing was schedulable"
     priv = sum(v for n, v in got.items() if n in PRIVILEGED)
     mine = sum(v for n, v in got.items() if n in pw.minimum)
+    # ...and a case with no groups to speak of (test 14: two tasks and the
+    # nights) is reported task by task. Naming test 12's ten privileged where
+    # there are none would report a 0% nobody was aiming at, and hide the two
+    # numbers the case is actually about.
+    if not all(n in pw.minimum for n in PRIVILEGED):
+        each = ", ".join(f"{n} {float(got.get(n, 0)) * 100:.1f}% "
+                         f"(target {target_text(pw, [n])})" for n in sorted(pw.minimum))
+        return (f"of the {human(open_total)} some task is allowed in: {each}, "
+                f"offered and left empty {float(1 - mine) * 100:.1f}%")
     return (f"of the {human(open_total)} some task is allowed in: A "
             f"{float(got.get('A', 0)) * 100:.1f}% (target {target_text(pw, ['A'])}), "
             f"the ten privileged {float(priv) * 100:.1f}% "

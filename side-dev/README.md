@@ -109,3 +109,9 @@ Answer proposed by claude code in claude_code_proposed_answer.md.
 
 Same as test 12, but the priority percentages are sliding continuously from one state at t=24h to another at t=48h. At t<24h, the priority percentages are the same as t=24h. The result is of the same type, a single list of rules, simply at $t_p$ the scheduler is done to satisfy the priorities that are at exactly $t_p$.
 
+
+# test 14 requirements
+
+task A 45min 50%
+task B 45min 50%
+3 days of timeline, no task allowed from 23h to 8h.
