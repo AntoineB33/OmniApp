@@ -547,7 +547,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // with the now-line for as long as it stays owed. The plan under it was materialized by a fill that ran
         // at a rule change (CLAUDE.md: time passing never re-plans), so the auto panels have to be cut out of
         // the break's span here, on the display side — the reference's sliding-period regime, pinned to the
-        // plan's own origin (`side-dev/test.py` tests 10–11).
+        // plan's own origin (`side-dev/scheduler_logic.py` tests 10–11).
         val displayWorkPlanPanels =
             SchedulerDomain.clipPlanForPinnedScreenBreak(workPlanPanels, displaySidePanels, nowMillis)
 

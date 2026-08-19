@@ -1448,7 +1448,7 @@ object SchedulerDomain {
      * **Every** screen break — the 5-/15-min rest poses and the 20-second look-away alike — slides this way,
      * because a break the now-line has reached and that nobody took is *still owed*: it is a period accepting
      * no task that **moves to the right** while a device stays unlocked, exactly as the reference's sliding
-     * period does (`side-dev/test.py` tests 10–11, `MovingWindow`). What releases it is a real pause: a device
+     * period does (`side-dev/scheduler_logic.py` tests 10–11, `MovingWindow`). What releases it is a real pause: a device
      * going inactive advances the anchor through [screenBreaksForPlacement] (an ongoing pause is presumed to
      * serve every break) and, once derived, through [advanceRestsForward] — so the break moves off the now-line
      * the moment the user actually stops, and not before. A never-rested break (`lastRestMillis == 0`) is due
@@ -2110,7 +2110,7 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §15 / `side-dev/test.py` tests 10–11: the work plan as it must be **displayed** while a screen break
+     * PRD §15 / `side-dev/scheduler_logic.py` tests 10–11: the work plan as it must be **displayed** while a screen break
      * sits on the now-line — with the auto panels cut out of the break's span, so a break the now-line has
      * reached really is "a period that accepts no task" for as long as it slides.
      *
@@ -2473,7 +2473,7 @@ object SchedulerDomain {
 
     /**
      * PRD §9 Scheduling: regenerate the auto schedule with the **cyclic proportional-share** rules of
-     * `side-dev/README.md` — [SchedulerPlanner] / [PlanWalk], the Kotlin port of the reference `side-dev/test.py`.
+     * `side-dev/README.md` — [SchedulerPlanner] / [PlanWalk], the Kotlin port of the reference `side-dev/scheduler_logic.py`.
      * Every **non-pinned** panel in the window `[now, horizonMillis]` is cut and replaced; the only panels
      * kept are the **fixed** ones (pinned + chore, [isSchedulerFixed]), any panel entirely **outside** the
      * window — already past (`end ≤ now`) or starting beyond the horizon — and, when this call is an
@@ -2492,7 +2492,7 @@ object SchedulerDomain {
      * [TaskPanel]s:
      * - **pre-placed blocks** = the user's pinned/manual panels still ahead of `now`, plus (on an extension)
      *   the kept head of the plan, plus the already-served **past** (records and past panels), which is what
-     *   seeds the virtual clocks ([SchedulerPlanner.seedClocks]) and what the influence field ramps down from;
+     *   seeds the virtual clocks ([SchedulerPlanner.replayClocks]). Only the blocks still AHEAD feed the influence field — the past is history, not a blockage to compensate around;
      * - **periods that accept a set of tasks** = the §9 screen zones and the §15 screen breaks. Inside a
      *   no-screen period only off-screen tasks are accepted, outside one only on-screen tasks. A screen
      *   break is a period too — which one is the break's own [ScreenBreak.shape], and the three are exactly
@@ -2658,7 +2658,7 @@ object SchedulerDomain {
         fun covers(regions: List<TaskTimeRange>, t: Long): Boolean =
             regions.any { it.startEpochMillis <= t && t < it.endEpochMillis }
 
-        // `side-dev/test.py` resolves ties by (biggest share, then name); OmniApp's PRD §9 tie-break is (highest
+        // `side-dev/scheduler_logic.py` resolves ties by (biggest share, then name); OmniApp's PRD §9 tie-break is (highest
         // absolute priority, then title). [PlanWalk.pick] takes the first candidate on a tie, so handing it
         // this order IS the tie-break.
         val tieBreak =
@@ -2714,7 +2714,7 @@ object SchedulerDomain {
                 .sortedBy { it.startMillis }
                 .toList()
         // How far back the already-placed past is read. One period is all the seed needs
-        // ([SchedulerPlanner.seedClocks]); the field needs its own reach, past which an exclusion is felt no
+        // ([SchedulerPlanner.replayClocks]); the field needs its own reach, past which an exclusion is felt no
         // more. Bounded by [SCHEDULE_PAST_LOOKBACK_MILLIS] so the fill never costs total history.
         val pastLookback =
             maxOf(planner.minPeriodMillis, planner.maxReachMillis)
@@ -2729,14 +2729,25 @@ object SchedulerDomain {
                     .filter { it.endMillis > it.startMillis }
             }.sortedBy { it.startMillis }
 
-        planner.setField(pastBlocks + futureBlocks, windows)
-        val walk = planner.walk(planner.seedClocks(pastBlocks, nowMillis))
+        // `side-dev/scheduler_logic.py` `plan`: only obstacles still AHEAD bend the plan — what already
+        // happened is history, not a blockage the timeline has to be compensated around. The past reaches the
+        // walk through the CLOCKS, replayed the way the walk writes them (the forgetting included), which is
+        // what makes an extension continue the plan it is extending instead of re-deriving a different one.
+        planner.setField(futureBlocks, windows)
+        val lookbackWant = 2.0 * planner.minPeriodMillis
+        val replayStart =
+            maxOf(planner.lookbackStart(windows, nowMillis, lookbackWant), pastAnchor)
+                .coerceAtMost(nowMillis)
+        val walk = planner.walk(planner.replayClocks(pastBlocks, windows, nowMillis, replayStart))
+        // `_last_run`, NOT `_head`: a task that stopped and was not replaced never took a second turn, so the
+        // walk must not refuse the very task the timeline left off with (see [SchedulerPlanner.lastRun]).
+        walk.setLast(planner.lastRun(pastBlocks, nowMillis))
 
         val generated = mutableListOf<TaskPanel>()
         var cursor = nowMillis
         var index = 0
         var idCounter = 0
-        // `side-dev/test.py` `free_tail`: whether the last thing placed was a freely-chosen slot, and so may be
+        // `side-dev/scheduler_logic.py` `free_tail`: whether the last thing placed was a freely-chosen slot, and so may be
         // stretched over a crumb too short for any minimum.
         var freeTail = false
         // PRD §15: the task whose chunk is mid-placement, split across a screen break, with the work it still
@@ -2775,7 +2786,7 @@ object SchedulerDomain {
         // false and the whole fill is phase 1.
         var frozen = false
 
-        // --- phase 1 (`side-dev/test.py`): the disturbed part of the timeline ---
+        // --- phase 1 (`side-dev/scheduler_logic.py`): the disturbed part of the timeline ---
         while (cursor < horizon && index < maxPanels) {
             val here = windowAt(cursor)
             val allowedHere = accepted[here]
@@ -2807,13 +2818,16 @@ object SchedulerDomain {
             val resume = if (insideBreak) null else pending
             // Inside a screen break the suspended task must not be the one that fills it (PRD §15).
             val candidates = if (insideBreak) allowedHere.filter { it != pending?.first } else allowedHere
-            // `side-dev/test.py`: a task is a candidate only while its minimum fits the gap ahead of it. The
-            // boundary that decides is the next **cutting** one — a fixed block or a screen-zone edge, and
-            // inside a break the break's own end. A screen break's START is deliberately NOT one (PRD §15: it
-            // only suspends a chunk, which resumes on the far side with its minimum intact), which is exactly
-            // where this parts company with the reference's uniform `next_boundary`. Inside a break the gap IS
-            // what remains of it, so PRD §9's "never when its minimum exceeds the break's length" needs no
-            // special case.
+            // `side-dev/scheduler_logic.py` `_fits_from`: a task is a candidate only while its minimum fits
+            // the room ahead of it, and that room COUNTS THE INSTANTS IT MAY ACTUALLY RUN — an interval nobody
+            // may run in only suspends a run, so it is stepped over. The boundary that decides is therefore the
+            // next **cutting** one — a fixed block or a screen-zone edge, and inside a break the break's own
+            // end. A screen break's START is deliberately NOT one (PRD §15: it only suspends a chunk, which
+            // resumes on the far side with its minimum intact). For a break's CLOSED parts that is the
+            // reference's own rule; where this parts company with it is a pose's OPEN tail, which the reference
+            // would treat as somebody else's return (`_clears`) and PRD §15 wants filled by the off-screen
+            // tasks while the on-screen chunk waits. Inside a break the gap IS what remains of it, so PRD §9's
+            // "never when its minimum exceeds the break's length" needs no special case.
             val nextZoneEdge =
                 noScreenRegions.asSequence()
                     .flatMap { sequenceOf(it.startEpochMillis, it.endEpochMillis) }
@@ -2821,7 +2835,7 @@ object SchedulerDomain {
             val breakEnd = if (insideBreak) sideRegions.first { it.endEpochMillis > cursor }.endEpochMillis else null
             val fitGap = listOfNotNull(nextBlock, nextZoneEdge, breakEnd).minOrNull()?.minus(cursor)
             val fitting = candidates.filter { fitGap == null || (minimumMillisOf[it] ?: 0L) <= fitGap }
-            // `side-dev/test.py` steady_cycle's "no unplaceable crumb", applied to the walk: minimum times are
+            // `side-dev/scheduler_logic.py` steady_cycle's "no unplaceable crumb", applied to the walk: minimum times are
             // authored in whole minutes, so anything shorter than one is not a slot, it is a seam — e.g. the
             // 20-second look-away, or what is left of a chunk when a break lands a few seconds before it ends.
             val crumb = gap != null && gap < MILLIS_PER_MINUTE
@@ -2884,7 +2898,7 @@ object SchedulerDomain {
             index++
         }
 
-        // --- phase 2 (`side-dev/test.py`): the context is frozen forever, so settle what is still owed and then
+        // --- phase 2 (`side-dev/scheduler_logic.py`): the context is frozen forever, so settle what is still owed and then
         // attach the analytic cycle — the "list of rules + repeat" of `side-dev/README.md` — unrolled out to the
         // horizon. Its shares are exact by construction, unlike the greedy's asymptotic ones. With screen
         // breaks enabled the context never freezes inside the horizon, so this simply never runs.
@@ -2905,7 +2919,7 @@ object SchedulerDomain {
                     cursor = end
                     index++
                 }
-                // `side-dev/test.py` `_phase`: the cycle is attached in the phase the walk would have gone on
+                // `side-dev/scheduler_logic.py` `_phase`: the cycle is attached in the phase the walk would have gone on
                 // with. A cycle built from a blank slate always opens with the same task, so opening there
                 // after a prefix that left another one starved hands the first task two slots in a row — one
                 // block of twice the minimum, the coarse scale the model exists to avoid.

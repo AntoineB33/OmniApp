@@ -770,7 +770,7 @@ class SchedulerSchedulerTest {
         val now = 1_000_000_000_000L
         // Look-away (non-rest), last looked away 25 min ago on a 20-min grid: its due (now−5min) passed with no
         // qualifying pause, so the break is still OWED. It therefore sits at the now-line and slides right with
-        // it — the reference's sliding period (`side-dev/test.py` tests 10–11) with an accepted set of nobody —
+        // it — the reference's sliding period (`side-dev/scheduler_logic.py` tests 10–11) with an accepted set of nobody —
         // instead of stepping the grid to now+15min as if it had been taken.
         val s = s0.copy(screenBreaks = listOf(ScreenBreak("Eyes", intervalMillis = 20 * MIN, durationMillis = 20_000L, lastRestMillis = now - 25 * MIN)))
         val panels = SchedulerDomain.fillSchedule(s, now)
@@ -788,7 +788,7 @@ class SchedulerSchedulerTest {
         // The fill that materialized the plan ran when the break was elsewhere (CLAUDE.md: time passing never
         // re-plans). As the owed break slides right with the now-line it drifts over auto panels the fill
         // placed past it, so the display has to cut them — "a period that accepts no task" has to stay true
-        // between fills, which is the sliding-period regime of `side-dev/test.py` tests 10–11.
+        // between fills, which is the sliding-period regime of `side-dev/scheduler_logic.py` tests 10–11.
         val now = 1_000_000_000_000L
         val auto = { id: String, start: Long, end: Long ->
             TaskPanel(id = id, taskId = TaskId("t"), title = "T", startEpochMillis = start, endEpochMillis = end, auto = true)
@@ -1013,7 +1013,7 @@ class SchedulerSchedulerTest {
     fun a_pinned_panel_by_contrast_leaves_the_gap_before_it_empty() {
         // Control for the test above: a *pinned* obstacle 20 min ahead is NOT a screen break, so nothing
         // resumes across it. The 20 minutes before it are shorter than any task's minimum, so — per
-        // `side-dev/test.py`'s `fitting` rule and PRD §10 ("a task panel can't be shorter than its minimum") —
+        // `side-dev/scheduler_logic.py`'s `fitting` rule and PRD §10 ("a task panel can't be shorter than its minimum") —
         // they are left empty rather than filled with a 20-minute sliver of A. The plan starts on the far
         // side of the obstacle. (Earlier revisions truncated A to 20 min here; that violated §10.)
         val (s0, a, b) = stateWithTwoTasks()

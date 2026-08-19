@@ -20,11 +20,11 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `side-dev/README.md` + `side-dev/test.py`: the cyclic proportional-share scheduler.
+ * `side-dev/README.md` + `side-dev/scheduler_logic.py`: the cyclic proportional-share scheduler.
  *
  * The first block is a **port test**: it replays the reference implementation's own nine cases through
  * [SchedulerPlanner] and asserts the rule list Python produces, slot for slot. Those expectations were taken
- * from `side-dev/test.py` itself (run its `build_cases()` and print `get_schedule_rules`), so a drift in either
+ * from `side-dev/scheduler_logic.py` itself (run its `build_cases()` and print `get_schedule_rules`), so a drift in either
  * direction fails here rather than silently in the calendar.
  *
  * The second block checks the properties the README states through the real [SchedulerDomain.fillSchedule] —
@@ -40,14 +40,14 @@ class SchedulerPlanTest {
     private val HOUR = 3_600_000L
     private val NOW = 1_000_000_000_000L
 
-    // ----- the port of `side-dev/test.py` ----------------------------------------------------------
+    // ----- the port of `side-dev/scheduler_logic.py` ----------------------------------------------------------
 
     private fun id(name: String) = TaskId(name)
 
     private fun planTask(name: String, priority: Double, minMinutes: Double) =
         PlanTask(id(name), priority, (minMinutes * MIN).toLong())
 
-    /** `side-dev/test.py`'s `AB()`: two 50 % tasks with a 10-minute minimum. */
+    /** `side-dev/scheduler_logic.py`'s `AB()`: two 50 % tasks with a 10-minute minimum. */
     private fun ab() = listOf(planTask("A", 50.0, 10.0), planTask("B", 50.0, 10.0))
 
     private fun block(name: String?, startMinutes: Double, durationMinutes: Double) =
@@ -60,7 +60,17 @@ class SchedulerPlanTest {
     private fun window(startMinutes: Double, endMinutes: Double?, vararg allowed: String) =
         PlanWindow((startMinutes * MIN).toLong(), endMinutes?.let { (it * MIN).toLong() }, allowed.map(::id).toSet())
 
-    /** The plan as `(task name or "IDLE", minutes)` pairs, which is how `side-dev/test.py` prints its rules. */
+    /**
+     * The same thing in exact millis. `(20·i + 1/3)` minutes does not land on a whole millisecond in `Double`,
+     * and a boundary a millisecond off is enough to make the walk emit a 1 ms sliver the reference — which
+     * keeps every value an exact rational — never has.
+     */
+    private fun windowMillis(startMillis: Long, endMillis: Long?, vararg allowed: String) =
+        PlanWindow(startMillis, endMillis, allowed.map(::id).toSet())
+
+    private val LOOK_AWAY = 20_000L
+
+    /** The plan as `(task name or "IDLE", minutes)` pairs, which is how `side-dev/scheduler_logic.py` prints its rules. */
     private fun rules(slots: List<org.example.project.scheduler.domain.PlanSlot>) =
         slots.map { (it.taskId?.value ?: "IDLE") to it.durationMillis.toDouble() / MIN }
 
@@ -188,8 +198,10 @@ class SchedulerPlanTest {
                 "A" to 10.0, "B" to 10.3333,
                 "A" to 10.0, "B" to 10.9211,
                 "A" to 10.0, "B" to 12.6219,
-                "A" to 10.0, "B" to 26.1236,
-                "A" to 60.0, "B" to 40.0,
+                // A may START a run that finishes inside its own block, so its last free slot and the block
+                // merge into one 68-minute placement (`_walls` / `_clears`: nobody comes back inside it).
+                "A" to 10.0, "B" to 18.1256,
+                "A" to 67.9981, "B" to 40.0,
                 "A" to 10.0, "B" to 12.4625,
                 "A" to 10.0, "B" to 10.8010,
             ),
@@ -270,6 +282,149 @@ class SchedulerPlanTest {
     }
 
     @Test
+    fun reference_test_9b_two_overlapping_periods_sum_their_bans_on_a_timeline_they_do_not_cover() {
+        // `side-dev/scheduler_logic.py` `_allowed_at`: periods may OVERLAP and the timeline need not be
+        // covered by them at all. What an instant refuses is the SUM of the bans of every period over it, and
+        // an instant no period covers refuses nobody. C is out from 100, B joins it at 200, and where the two
+        // overlap A holds the timeline alone.
+        val tasks = listOf(
+            planTask("A", 40.0, 10.0),
+            planTask("B", 30.0, 10.0),
+            planTask("C", 30.0, 10.0),
+        )
+        val plan = SchedulerPlanner(tasks).plan(
+            windows = listOf(
+                window(100.0, 300.0, "A", "B"), // forbids C
+                window(200.0, 400.0, "A", "C"), // forbids B — and [200, 300) forbids both
+            ),
+        )
+        assertPlan(
+            plan,
+            prefix = listOf(
+                "A" to 10.0, "B" to 10.2008, "C" to 15.4760,
+                "A" to 10.0, "B" to 10.5855, "C" to 26.1547,
+                "A" to 10.0, "B" to 12.3794,
+                "A" to 10.0, "B" to 14.6564,
+                "A" to 10.0, "B" to 19.7564,
+                "A" to 10.0, "B" to 30.7910,
+                "A" to 100.0, "C" to 60.0,
+                "A" to 10.0, "C" to 17.3474,
+                "A" to 10.0, "C" to 10.0, "B" to 58.1308,
+                "A" to 10.0, "B" to 16.2339,
+                "A" to 10.0, "C" to 10.1413, "B" to 12.0933,
+                "A" to 10.0, "C" to 10.0537,
+            ),
+            cycle = listOf("A" to 13.3333, "B" to 10.0, "C" to 10.0),
+            label = "test 9b",
+        )
+    }
+
+    @Test
+    fun the_clock_replay_window_is_measured_in_schedulable_time_not_wall_time() {
+        // `side-dev/scheduler_logic.py` `_lookback_start`: the window the past is read off is measured in the
+        // only currency the shares are about — time somebody could actually have been served. Measured in wall
+        // time, an instant nobody may run in pushes real service out of the window, and then a task served
+        // just before the last long exclusion reads as NEVER SERVED and leapfrogs the one that has waited.
+        val planner = SchedulerPlanner(ab())
+        // A "night" nobody may run in, from −600min to −10min.
+        val night = listOf(window(-600.0, -10.0))
+        val want = 40.0 * MIN // two minimal periods, exactly what `plan` asks for
+        // Wall time would stop at −40min, inside the night, and read the whole past as empty. Schedulable
+        // time steps over the 590 idle minutes and collects the missing 30 on the far side of them.
+        assertEquals(
+            (-630.0 * MIN).toLong(),
+            planner.lookbackStart(night, 0L, want),
+            "the replay window must be measured in schedulable time",
+        )
+        // With nothing refusing anybody the two readings coincide.
+        assertEquals((-40.0 * MIN).toLong(), planner.lookbackStart(emptyList(), 0L, want))
+    }
+
+    @Test
+    fun a_period_does_not_erase_the_ranking_of_everyone_it_excludes() {
+        // `side-dev/scheduler_logic.py` `_relax`: an excluded task's clock is held within one period of the
+        // served pool by TRANSLATING the whole excluded set, never by clamping each of them separately.
+        // Clamping set every task past the bound to the SAME value, so a period refusing eleven tasks left all
+        // eleven tied and their priorities stopped deciding which one went first.
+        val tasks = listOf(
+            planTask("A", 25.0, 10.0),
+            planTask("B", 25.0, 10.0),
+            planTask("C", 25.0, 10.0),
+            planTask("D", 25.0, 10.0),
+        )
+        val planner = SchedulerPlanner(tasks)
+        val period = planner.minPeriodMillis
+        val walk = planner.walk(
+            mapOf(
+                id("A") to 0.0,
+                id("B") to 1.0 * period,
+                id("C") to 4.0 * period,
+                id("D") to 9.0 * period,
+            ),
+        )
+        // Only A is allowed here: B, C and D are the excluded group.
+        walk.relax(0.0, period, listOf(id("A")))
+        val b = walk.clockOf(id("B"))
+        val c = walk.clockOf(id("C"))
+        val d = walk.clockOf(id("D"))
+        assertTrue(b < c && c < d, "the excluded group's ranking was erased: B=$b C=$c D=$d")
+        // The gaps inside the group are the claims themselves, so they survive the translation intact.
+        assertEquals(3.0 * period, c - b, 1.0)
+        assertEquals(5.0 * period, d - c, 1.0)
+        // …and the group as a whole is held to one period of credit against the served pool.
+        assertEquals(-period, b, 1.0)
+    }
+
+    @Test
+    fun a_chain_of_re_plans_is_the_same_schedule_as_one_long_plan() {
+        // `side-dev/test_configs.py` `check_resume_contract`: the rules AT the line are an ordinary plan from
+        // t_p, so a display that follows the line can only agree with what is drawn if resuming at t
+        // reproduces the walk that passed through t. Everything the walk carries and the seeding has to
+        // rebuild from the history is a way for that to fail, and each one has failed in turn: `last` read off
+        // `_head` ([SchedulerPlanner.lastRun]), the lookback measured in wall time
+        // ([SchedulerPlanner.lookbackStart]) and the forgetting itself ([SchedulerPlanner.replayClocks]).
+        val tasks = listOf(
+            planTask("A", 50.0, 45.0),
+            planTask("B", 25.0, 45.0),
+            planTask("C", 25.0, 45.0),
+        )
+        // The shape of `side-dev` test 12: a 20-second look-away every 20 minutes (it accepts NOBODY, so it
+        // only suspends a run), and a quarter-hour of every hour that only A may work in.
+        val windows = buildList {
+            for (i in 0 until 24) {
+                add(window(20.0 * i, 20.0 * i + 1.0 / 3.0)) // the look-away: accepts nobody
+            }
+            for (h in 0 until 8) add(window(60.0 * h + 45.0, 60.0 * h + 60.0, "A"))
+        }
+        val planner = SchedulerPlanner(tasks)
+        val long = planner.plan(windows = windows, nowMillis = 0L)
+        val committed = long.unroll(8 * 60 * MIN)
+
+        var checks = 0
+        for (piece in committed) {
+            val resumeAt = piece.startMillis
+            if (resumeAt <= 0L || resumeAt >= 6 * 60 * MIN) continue
+            val history = committed.mapNotNull { b ->
+                if (b.startMillis >= resumeAt) null
+                else PlanBlock(b.taskId, b.startMillis, minOf(b.endMillis, resumeAt))
+            }
+            val again = SchedulerPlanner(tasks).plan(
+                windows = windows,
+                nowMillis = resumeAt,
+                history = history,
+            )
+            assertEquals(
+                piece.taskId,
+                again.prefix.firstOrNull()?.taskId,
+                "walking through ${resumeAt / MIN}min gives ${piece.taskId?.value}, but a plan resumed " +
+                    "there gives ${again.prefix.firstOrNull()?.taskId?.value}",
+            )
+            checks++
+        }
+        assertTrue(checks >= 8, "not enough resumptions to be worth asserting: $checks")
+    }
+
+    @Test
     fun the_rule_list_is_finite_and_answers_any_instant_in_log_time() {
         // `side-dev/README.md`: the scheduler returns a finite list of rules, and drawing t = 0…x just unrolls
         // it. Both readings of the plan must agree at every instant.
@@ -342,9 +497,12 @@ class SchedulerPlanTest {
 
     @Test
     fun a_massive_past_exclusion_buys_a_bounded_compensation_not_an_equal_one() {
-        // A pinned solid for 17 hours right up to `now` — for B that is a 17-hour exclusion ending at the
-        // now-line, so it opens with the compensation ramp. The reference hands B 270 minutes and then goes
-        // back to alternating; it does NOT hand it back 17 hours.
+        // A pinned solid for 17 hours right up to `now`. Only obstacles still AHEAD bend the plan
+        // (`side-dev/scheduler_logic.py` `plan`: `self._set_field(pre, periods)`), so what the past leaves
+        // behind is not a field but the virtual clocks — and those are replayed with the walk's own
+        // forgetting ([SchedulerPlanner.replayClocks]), which holds A at exactly one period ahead of B
+        // however long it ran. So B leads with one catch-up chunk and the timeline is square again; it is
+        // NOT handed 17 hours, nor even the 270 minutes an un-forgotten reading would have owed it.
         val (s0, ids) = stateWithTasks("A", "B")
         val (a, b) = ids
         val s = s0.copy(panels = listOf(pinned("pin/0", a, NOW - 17 * HOUR, NOW)))
@@ -352,12 +510,15 @@ class SchedulerPlanTest {
         val spans = autoSpans(SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 48 * HOUR))
         assertEquals(b, spans.first().first, "the deprived task must lead")
         val lead = spans.first().second
-        assertEquals(270.0 * MIN, lead.toDouble(), MIN.toDouble(), "the reference opens with B for 270min")
         assertTrue(lead < 17 * HOUR, "B must not be handed the whole 17h back, got ${lead / MIN}min")
+        assertTrue(
+            lead <= 90 * MIN,
+            "the forgetting caps the catch-up at one period; got ${lead / MIN}min",
+        )
         // …and it settles back onto the 50/50 cycle rather than repaying hour for hour.
         val served = spans.groupBy { it.first }.mapValues { (_, v) -> v.sumOf { it.second } }
         val share = (served[b] ?: 0L).toDouble() / served.values.sum()
-        assertEquals(0.55, share, 0.05, "B should end up near half the window, got $share")
+        assertEquals(0.5, share, 0.05, "B should end up near half the window, got $share")
     }
 
     @Test
@@ -585,12 +746,12 @@ class SchedulerPlanTest {
         assertEquals(ids.toSet(), order.toSet())
     }
 
-    // ----- the two screen breaks as the reference's PERIODS (`side-dev/test.py` tests 10–11) -------
+    // ----- the two screen breaks as the reference's PERIODS (`side-dev/scheduler_logic.py` tests 10–11) -------
 
     /**
      * PRD §15: a screen break the now-line has reached is a **sliding period** — it moves right with the
      * now-line for as long as it is owed, and while it sits there it accepts a fixed set of tasks. These pin
-     * the shapes the reference produces for exactly that configuration, taken from `side-dev/test.py` run with
+     * the shapes the reference produces for exactly that configuration, taken from `side-dev/scheduler_logic.py` run with
      * the break expressed as its periods (the sliding window pinned at the plan's origin, which is where the
      * now-line reaching it puts it).
      */
@@ -643,6 +804,91 @@ class SchedulerPlanTest {
         )
     }
 
+    // ----- `side-dev` tests 12/13: the user works straight THROUGH the breaks -----------------------
+
+    /**
+     * `side-dev/README.md` tests 12–13: the break grid on a timeline the user never leaves. Test 13 is test 12
+     * with the priorities sliding, and its environment is exactly this — the three break periods arriving one
+     * after another while the tasks go on being scheduled around them.
+     *
+     * What makes it work at all is [SchedulerPlanner.fitsFrom]: "does the minimum fit?" counts the instants
+     * the task may actually run and STEPS OVER the ones that belong to nobody. A 20-second look-away every 20
+     * minutes would otherwise forbid every 45-minute task from ever starting — the timeline would go idle for
+     * want of anything that fits. Instead the run is SUSPENDED for the 20 seconds and resumes on the far side,
+     * so one 45-minute slot of A is spread over 20 + 19⅔ + 5⅓ minutes of real service.
+     */
+    @Test
+    fun a_45min_task_works_straight_through_a_20s_look_away_every_20min() {
+        // each accepts NOBODY
+        val breaks = (1..24).map { windowMillis(20L * it * MIN, 20L * it * MIN + LOOK_AWAY) }
+        val plan = SchedulerPlanner(listOf(planTask("A", 50.0, 45.0), planTask("B", 50.0, 45.0)))
+            .plan(windows = breaks)
+        assertPlan(
+            plan,
+            prefix = listOf(
+                "A" to 20.0, "IDLE" to 1.0 / 3.0, "A" to 19.6667, "IDLE" to 1.0 / 3.0,
+                "A" to 5.3333, "B" to 14.3333, "IDLE" to 1.0 / 3.0, "B" to 19.6667,
+                "IDLE" to 1.0 / 3.0, "B" to 11.0, "A" to 8.6667, "IDLE" to 1.0 / 3.0,
+                "A" to 19.6667, "IDLE" to 1.0 / 3.0, "A" to 16.6667, "B" to 3.0,
+                "IDLE" to 1.0 / 3.0, "B" to 19.6667, "IDLE" to 1.0 / 3.0, "B" to 19.6667,
+                "IDLE" to 1.0 / 3.0, "B" to 2.6667, "A" to 17.0, "IDLE" to 1.0 / 3.0,
+                "A" to 19.6667, "IDLE" to 1.0 / 3.0, "A" to 8.3333, "B" to 11.3333,
+                "IDLE" to 1.0 / 3.0, "B" to 19.6667, "IDLE" to 1.0 / 3.0, "B" to 14.0,
+                "A" to 5.6667, "IDLE" to 1.0 / 3.0, "A" to 19.6667, "IDLE" to 1.0 / 3.0,
+                "A" to 19.6667, "IDLE" to 1.0 / 3.0, "B" to 19.6667, "IDLE" to 1.0 / 3.0,
+                "B" to 19.6667, "IDLE" to 1.0 / 3.0, "B" to 5.6667, "A" to 14.0,
+                "IDLE" to 1.0 / 3.0, "A" to 19.6667, "IDLE" to 1.0 / 3.0, "A" to 11.3333,
+                "B" to 8.3333, "IDLE" to 1.0 / 3.0,
+            ),
+            // A timeline broken every 20 minutes forever never freezes, so the walk fills its rule budget in
+            // the prefix and there is no steady cycle to attach ("truncated timelines").
+            cycle = emptyList(),
+            label = "working through the look-away grid",
+        )
+    }
+
+    /**
+     * The same day with a **5-minute pose** on the hour: a closed opening minute, then four minutes only the
+     * off-screen task may work in.
+     *
+     * The pose is left entirely EMPTY, and that is the rule, not a gap: starting B at the tail's first instant
+     * would run past the instant A comes back and leave A unable to place its own minimum before the next
+     * pose ([SchedulerPlanner.wallsOf] / [SchedulerPlanner.clears]). A run is owed its whole minimum, so
+     * beginning one there would not use the period — it would lengthen the exclusion A is already serving.
+     */
+    @Test
+    fun a_5min_pose_the_user_works_through_is_left_empty_rather_than_lengthening_the_other_task_s_ban() {
+        val lookAways = (1..24).map { windowMillis(20L * it * MIN, 20L * it * MIN + LOOK_AWAY) }
+        val poses = (1..5).flatMap {
+            listOf(
+                windowMillis(60L * it * MIN, 60L * it * MIN + MIN),               // the closed minute: nobody
+                windowMillis(60L * it * MIN + MIN, 60L * it * MIN + 5 * MIN, "B"), // the tail: off-screen only
+            )
+        }
+        val plan = SchedulerPlanner(listOf(planTask("A", 50.0, 45.0), planTask("B", 50.0, 45.0)))
+            .plan(windows = lookAways + poses)
+        assertPlan(
+            plan,
+            prefix = listOf(
+                "A" to 20.0, "IDLE" to 1.0 / 3.0, "A" to 19.6667, "IDLE" to 1.0 / 3.0,
+                "A" to 19.6667, "IDLE" to 5.0, "B" to 15.0, "IDLE" to 1.0 / 3.0,
+                "B" to 19.6667, "IDLE" to 1.0 / 3.0, "B" to 19.6667, "IDLE" to 1.0,
+                "B" to 4.0, "A" to 15.0, "IDLE" to 1.0 / 3.0, "A" to 19.6667,
+                "IDLE" to 1.0 / 3.0, "A" to 19.6667, "IDLE" to 5.0, "B" to 15.0,
+                "IDLE" to 1.0 / 3.0, "B" to 19.6667, "IDLE" to 1.0 / 3.0, "B" to 19.6667,
+                "IDLE" to 1.0, "B" to 4.0, "A" to 15.0, "IDLE" to 1.0 / 3.0,
+                "A" to 19.6667, "IDLE" to 1.0 / 3.0, "A" to 10.3333, "B" to 9.3333,
+                "IDLE" to 1.0, "B" to 19.0, "IDLE" to 1.0 / 3.0, "B" to 16.6667,
+                "A" to 3.0, "IDLE" to 1.0 / 3.0, "A" to 19.6667, "IDLE" to 1.0 / 3.0,
+                "A" to 19.6667, "IDLE" to 1.0 / 3.0, "A" to 2.6667, "B" to 17.0,
+                "IDLE" to 1.0 / 3.0, "B" to 19.6667, "IDLE" to 1.0 / 3.0, "B" to 8.3333,
+                "A" to 11.3333, "IDLE" to 1.0 / 3.0,
+            ),
+            cycle = emptyList(),
+            label = "working through the pose grid",
+        )
+    }
+
     // ----- the atomic block: a period the running task is banned from SUSPENDS it -------------------
 
     @Test
@@ -670,18 +916,15 @@ class SchedulerPlanTest {
         // `side-dev/scheduler_logic.py`: a pre-placed block is locked to its coordinates, but a period still
         // dictates what may RUN there. Where the block's own task is refused the block is suspended and
         // resumes on the far side — it is walked edge by edge, not swallowed whole. Reference: a block of A on
-        // [20, 30) crossed by a ban of A on [25, 35) -> "A 25 | IDLE 5 | B 10 | A 13.894 | B 11.514 | A 11.093".
+        // [20, 30) crossed by a ban of A on [25, 35) -> "A 10 | B 10 | A 5 | IDLE 10 | A 5", i.e. the block's
+        // first 5 minutes run, the ban idles the next 10, and its remaining 5 resume past the ban.
         val plan = SchedulerPlanner(ab()).plan(
             blocks = listOf(block("A", 20.0, 10.0)),
-            windows = listOf(
-                window(0.0, 25.0, "A", "B"),
-                window(25.0, 35.0, "B"),
-                window(35.0, null, "A", "B"),
-            ),
+            windows = listOf(window(25.0, 35.0, "B")),
         )
         assertPlan(
             plan,
-            prefix = listOf("A" to 25.0, "IDLE" to 5.0, "B" to 10.0, "A" to 13.894, "B" to 11.514, "A" to 11.093),
+            prefix = listOf("A" to 10.0, "B" to 10.0, "A" to 5.0, "IDLE" to 10.0, "A" to 5.0),
             cycle = listOf("B" to 10.0, "A" to 10.0),
             label = "a block suspended by a period",
         )
@@ -689,7 +932,7 @@ class SchedulerPlanTest {
 
     @Test
     fun a_ban_shorter_than_the_deprived_task_s_own_minimum_creates_no_field() {
-        // `side-dev/test.py` `_set_field`: a 20-second ban cannot have cost a 10-minute task a slot, only
+        // `side-dev/scheduler_logic.py` `_set_field`: a 20-second ban cannot have cost a 10-minute task a slot, only
         // delayed it — and the virtual clock already repays a delay exactly. Compensating it as well would pay
         // the same debt twice and leave the ban swelling its neighbours forever after. This is what stops the
         // 20-min look-away cadence from distorting the plan around every one of its occurrences.

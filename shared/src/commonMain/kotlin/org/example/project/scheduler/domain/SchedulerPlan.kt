@@ -7,7 +7,7 @@ import org.example.project.scheduler.model.TaskId
 
 /**
  * PRD §9 / `side-dev/README.md`: the **cyclic proportional-share** scheduler — the Kotlin port of the reference
- * implementation in `side-dev/test.py`.
+ * implementation in `side-dev/scheduler_logic.py`.
  *
  * ### The rules, verbatim from `side-dev/README.md`
  * - each task has a **minimum time** and a **priority percentage**; once a task is placed, nothing else may be
@@ -41,11 +41,30 @@ import org.example.project.scheduler.model.TaskId
  * is still ahead the same greedy runs freely and its output goes to the prefix. Once the context is frozen
  * forever, the remaining imbalance is settled and the cycle is attached.
  *
+ * ### Resuming: a chain of re-plans is the same schedule as one long plan
+ * The app re-plans at every rule change and materializes its tail by extension, so a plan resumed at `t` must
+ * reproduce the walk that passed through `t`. Everything the walk carries and the seeding has to rebuild from
+ * the history is a way for that to fail, and three of them are load-bearing here:
+ * - [replayClocks] replays the past **the way the walk writes it** — edge by edge, with [PlanWalk.relax]
+ *   applied exactly where the walk applies it — rather than summing `served / p` over a window;
+ * - [lookbackStart] measures how far back that reaches in **schedulable** time, not wall time;
+ * - [lastRun], deliberately not [headRun], is what the walk carries as `last`.
+ *
+ * ### What may START here, and what merely bounds it
+ * A context change is not a wall. What bounds a chunk is the first instant *its own* task is turned away
+ * ([blockedFrom]); what decides whether a task may start is whether its minimum fits the instants it may
+ * actually **run** in ([fitsFrom], which steps over every interval belonging to nobody — a 20-second ban only
+ * *suspends* a run) **and** whether finishing that run would extend somebody else's ban ([wallsOf] + [clears]).
+ *
  * ### The influence field (`tau`)
  * A task can be deprived of the timeline in exactly two ways, and they are the same phenomenon: a fixed block
  * owned by *another* task forbids everyone else for its whole length, and a period window forbids every task it
  * does not list. Both are reduced to one object — an **exclusion**, an interval a given task is kept out of
- * ([exclusionsOf]). Around an exclusion the schedule is deliberately distorted in favour of the deprived task,
+ * ([exclusionsOf], computed per *instant*: the edges are cut first and what an instant refuses is the union
+ * of everything covering it, which is the only reading under which overlapping periods mean anything; and only
+ * obstacles still **ahead** build the field, since what already happened is history and reaches the walk
+ * through the clocks instead). Around an exclusion the schedule is deliberately distorted in favour of the
+ * deprived task,
  * and the distortion decays exponentially with the distance `d`:
  * ```
  *   a(L)       = L / tau                                  amplitude of an exclusion of length L
@@ -70,7 +89,7 @@ import org.example.project.scheduler.model.TaskId
  * Below one period nothing is forgotten and no slot is capped, so an unperturbed timeline behaves exactly as a
  * plain WFQ and the cycle stays exact.
  *
- * ### Deliberate deviations from `side-dev/test.py`
+ * ### Deliberate deviations from `side-dev/scheduler_logic.py`
  * - **`Fraction` → `Double` millis.** The reference keeps every value an exact rational so the cycle's shares
  *   are provably exact; Kotlin Multiplatform has no rational type, so the walk runs in `Double` milliseconds
  *   and slot durations are rounded to whole millis at the boundary. Over a 168-hour horizon that is ~10⁻⁷ of a
@@ -178,7 +197,7 @@ class SchedulerPlanner(
     val tasks: List<PlanTask>,
     /**
      * How far, in time, an exclusion is felt — and how fast an abnormal imbalance is forgotten. One
-     * [minPeriodMillis] by default, exactly as in `side-dev/test.py`.
+     * [minPeriodMillis] by default, exactly as in `side-dev/scheduler_logic.py`.
      */
     tauMillis: Double? = null,
     /**
@@ -267,27 +286,56 @@ class SchedulerPlanner(
     // ----- the influence field ------------------------------------------------------------------
 
     /**
-     * Every interval during which a task cannot be scheduled.
+     * `side-dev/scheduler_logic.py` `_sources`: per task, the intervals it is refused in **while somebody
+     * else is not**.
      *
-     * A fixed block owned by A excludes every *other* task for its whole length; a period window excludes every
-     * task it does not allow. These are the same event and are treated as one, so a long ban distorts the
-     * schedule around itself exactly like a long block does. An interval that excludes *everybody* creates no
-     * relative distortion and is dropped.
+     * A pre-placed block owned by A excludes every *other* task for its whole length; a period excludes every
+     * task it does not accept. These are the same event and are treated as one, so a long ban distorts the
+     * schedule around itself exactly like a long block does.
+     *
+     * Exclusions overlap freely — periods with each other and with the pre-placed blocks — and the timeline
+     * need not be covered by them at all, so what an instant refuses is the UNION of everything covering it
+     * and an instant nothing covers refuses nobody. Cutting at every edge first is what makes that union a
+     * property of the INSTANT rather than of one period, which is the only reading under which overlap means
+     * anything.
+     *
+     * An instant that refuses EVERYBODY is dropped, and it does not bridge the two exclusions it separates
+     * either: nobody is served there, so nobody is deprived relative to anybody, and the field is about
+     * relative deprivation. A wait no rival profits from is a pure delay, and the virtual clock already
+     * repays a delay exactly.
      */
     fun exclusionsOf(blocks: List<PlanBlock>, windows: List<PlanWindow>): Map<TaskId, List<LongRangeSpan>> {
         val everyone = share.keys
         if (everyone.isEmpty()) return emptyMap()
-        val spans = HashMap<TaskId, MutableList<LongRangeSpan>>()
-        fun add(start: Long, end: Long, excluded: Set<TaskId>) {
-            if (excluded.size >= everyone.size) return // hits everybody equally
-            for (id in excluded) spans.getOrPut(id) { mutableListOf() } += LongRangeSpan(start, end)
+        val opens = HashMap<Long, MutableList<Set<TaskId>>>()
+        val closes = HashMap<Long, MutableList<Set<TaskId>>>()
+        val edgeSet = HashSet<Long>()
+        fun raw(start: Long, end: Long, excluded: Set<TaskId>) {
+            if (end <= start) return
+            edgeSet += start
+            edgeSet += end
+            if (excluded.isEmpty()) return
+            opens.getOrPut(start) { mutableListOf() } += excluded
+            closes.getOrPut(end) { mutableListOf() } += excluded
         }
-        for (b in blocks) {
-            if (b.endMillis > b.startMillis) add(b.startMillis, b.endMillis, everyone - setOfNotNull(b.taskId))
-        }
+        for (b in blocks) raw(b.startMillis, b.endMillis, everyone.filterTo(HashSet()) { it != b.taskId })
         for (w in windows) {
-            val end = w.endMillis ?: FOREVER
-            if (end > w.startMillis) add(w.startMillis, end, everyone - w.allowed)
+            raw(w.startMillis, w.endMillis ?: FOREVER, everyone.filterTo(HashSet()) { it !in w.allowed })
+        }
+        if (edgeSet.size < 2) return emptyMap()
+        val edges = edgeSet.sorted()
+        val ban = HashMap<TaskId, Int>()
+        for (id in everyone) ban[id] = 0
+        val spans = HashMap<TaskId, MutableList<LongRangeSpan>>()
+        for (i in 0 until edges.size - 1) {
+            val a = edges[i]
+            closes[a]?.forEach { f -> for (id in f) ban[id] = (ban[id] ?: 0) - 1 }
+            opens[a]?.forEach { f -> for (id in f) ban[id] = (ban[id] ?: 0) + 1 }
+            val b = edges[i + 1]
+            if (b <= a) continue
+            val excluded = everyone.filter { (ban[it] ?: 0) > 0 }
+            if (excluded.size >= everyone.size) continue // hits everybody equally
+            for (id in excluded) spans.getOrPut(id) { mutableListOf() } += LongRangeSpan(a, b)
         }
         return spans.mapValues { (_, s) -> mergeSpans(s) }
     }
@@ -348,14 +396,28 @@ class SchedulerPlanner(
 
     // ----- context helpers ----------------------------------------------------------------------
 
-    /** The tasks the window covering [millis] accepts; every task when no window covers it. */
+    /** Every task, in the caller's tie-break order — the answer when no period covers an instant. */
+    private val allIds: List<TaskId> = tasks.map { it.id }
+
+    /**
+     * `side-dev/scheduler_logic.py` `_allowed_at`: who may run at [millis] — everyone, **less what EVERY
+     * period covering it refuses**.
+     *
+     * Periods may overlap and the timeline need not be covered by them at all. What an instant refuses is
+     * therefore the *sum* of the bans of every period over it (a task one of them forbids is forbidden
+     * whatever the others say), and an instant no period covers refuses nobody. Stated on [PlanWindow]'s
+     * `allowed` encoding, "the sum of the bans" is the **intersection** of the accepted sets.
+     */
     fun allowedAt(windows: List<PlanWindow>, millis: Long): List<TaskId> {
+        var banned: HashSet<TaskId>? = null
         for (w in windows) {
             if (w.startMillis <= millis && (w.endMillis == null || millis < w.endMillis)) {
-                return tasks.map { it.id }.filter { it in w.allowed }
+                val set = banned ?: HashSet<TaskId>().also { banned = it }
+                for (id in allIds) if (id !in w.allowed) set.add(id)
             }
         }
-        return tasks.map { it.id }
+        val ban = banned ?: return allIds
+        return allIds.filter { it !in ban }
     }
 
     /** The pre-placed block covering [millis], if any. */
@@ -377,48 +439,232 @@ class SchedulerPlanner(
     }
 
     /**
+     * `_bounds_after`: every instant the environment can change at, after [millis] — both edges of every
+     * period and of every pre-placed block. The walk asks about them constantly, so they are found once.
+     */
+    fun boundsAfter(blocks: List<PlanBlock>, windows: List<PlanWindow>, millis: Long): List<Long> {
+        val out = HashSet<Long>()
+        for (w in windows) {
+            if (w.startMillis > millis) out += w.startMillis
+            w.endMillis?.let { if (it > millis) out += it }
+        }
+        for (b in blocks) {
+            if (b.startMillis > millis) out += b.startMillis
+            if (b.endMillis > millis) out += b.endMillis
+        }
+        return out.sorted()
+    }
+
+    /**
+     * `_nobody_at`: is [millis] **nobody's** — a period refusing everyone, or a block owned by nobody?
+     *
+     * Such an interval SUSPENDS a run instead of ending it (`side-dev/README.md`'s atomic block: the period
+     * is scheduled with nothing and the task resumes on the far side), and it deprives nobody relative to
+     * anybody — which is already why it creates no field.
+     */
+    fun nobodyAt(blocks: List<PlanBlock>, windows: List<PlanWindow>, millis: Long): Boolean {
+        val block = blockAt(blocks, millis)
+        if (block != null) return block.taskId == null || block.taskId !in minimumOf
+        return allowedAt(windows, millis).isEmpty()
+    }
+
+    /** `_may_run`: may [id] actually run at [millis]? */
+    fun mayRun(id: TaskId, blocks: List<PlanBlock>, windows: List<PlanWindow>, millis: Long): Boolean {
+        val block = blockAt(blocks, millis)
+        if (block != null && block.taskId != id) return false
+        return id in allowedAt(windows, millis)
+    }
+
+    /**
+     * `_fits_from`: can [id] still pay [needMillis] of service from [millis] on?
+     *
+     * The room a task has is **not** simply the distance to the next boundary. An interval nobody may run in
+     * only suspends the run, so it costs the task nothing but time; an interval somebody ELSE may run in ends
+     * it, and starting there would blockade that somebody out of the period. So "does the minimum fit?"
+     * counts the instants the task may actually run and *steps over* the ones that belong to nobody.
+     *
+     * That is what keeps a short all-refusing period from making a long minimum unschedulable — a 20-second
+     * look-away every 20 minutes would otherwise forbid every 45-minute task from ever starting.
+     */
+    fun fitsFrom(
+        id: TaskId,
+        blocks: List<PlanBlock>,
+        windows: List<PlanWindow>,
+        millis: Long,
+        needMillis: Long,
+        bounds: List<Long>? = null,
+    ): Boolean {
+        if (needMillis <= 0L) return true
+        var got = 0L
+        var cur = millis
+        for (b in bounds ?: boundsAfter(blocks, windows, millis)) {
+            if (b <= cur) continue
+            when {
+                nobodyAt(blocks, windows, cur) -> Unit // suspended, not stopped
+                mayRun(id, blocks, windows, cur) -> {
+                    got += b - cur
+                    if (got >= needMillis) return true
+                }
+                else -> return false
+            }
+            cur = b
+        }
+        // past the last boundary nothing changes any more
+        return !nobodyAt(blocks, windows, cur) && mayRun(id, blocks, windows, cur)
+    }
+
+    /**
      * The first instant after [millis] at which **[id] itself** can no longer run, or null if it never stops.
      *
      * Not every context change stops every task. A window that bans B does not interrupt A, so a chunk of A
      * must be allowed to run straight through it: what bounds a chunk is where *its own* task is turned away,
-     * never merely where the context happens to change. Treating the two as one is what makes a short ban punch
-     * an unfillable hole into somebody else's slot — no 45-minute minimum fits in the 4 minutes left of a
-     * 5-minute screen break, so the tail an off-screen task is entitled to would go idle instead.
-     *
-     * A pre-placed block stops everyone, so it always bounds; a window bounds only if [id] is absent from it.
+     * never merely where the context happens to change. A pre-placed block stops everyone, so it always
+     * bounds; a window bounds only if [id] is absent from it.
      */
-    fun blockedFrom(id: TaskId, blocks: List<PlanBlock>, windows: List<PlanWindow>, millis: Long): Long? {
+    fun blockedFrom(
+        id: TaskId,
+        blocks: List<PlanBlock>,
+        windows: List<PlanWindow>,
+        millis: Long,
+        bounds: List<Long>? = null,
+    ): Long? {
         var best: Long? = null
         for (b in blocks) if (b.startMillis > millis && (best == null || b.startMillis < best!!)) best = b.startMillis
-        val bounds = sortedBounds(windows, millis)
-        for (bound in bounds) {
+        for (bound in bounds ?: sortedBounds(windows, millis)) {
+            if (bound <= millis) continue
             if (best != null && bound >= best!!) break
             if (id !in allowedAt(windows, bound)) return bound
         }
         return best
     }
 
+    /** One instant a task comes back from an exclusion, and who returns there. */
+    data class PlanWall(val millis: Long, val back: Set<TaskId>)
+
     /**
-     * The earliest instant after [millis] at which one of [missing] — the tasks that cannot be placed here —
-     * could be, either because it is let back in or because from there it has room for its whole minimum.
+     * `_walls`: every instant a task comes **back** from an exclusion, with who returns.
      *
-     * This is the only reason to end a chunk early: a context change that makes no new task placeable changes
-     * nothing about the decision, and cutting there would just split a slot in two for nothing.
+     * This is the other half of the atomic block. `side-dev/README.md` states one half — a run in progress is
+     * not replaced by a period it may not run in, the period is scheduled with nothing and the run resumes on
+     * the far side. The half that follows is about STARTING: a run begun at `t` is owed its whole minimum, so
+     * if a rival comes back at `e` with `t < e < t + minimum`, that rival's exclusion does not really end at
+     * `e` — it ends when the run does. Starting there does not merely use the period, it LENGTHENS somebody
+     * else's ban, and it is the one thing the virtual clock cannot repay, because the rival is not a candidate
+     * at the instant the decision is made.
+     *
+     * Only a RELATIVE deprivation counts, exactly as [exclusionsOf] counts it: an interval that refuses
+     * everybody is nobody's exclusion, so the instant it ends is not a return. And a rival whose own minimum
+     * does not fit from `e` either is not being deprived of anything, which is what keeps a densely broken
+     * timeline from idling forever for want of a legal start.
+     */
+    fun wallsOf(blocks: List<PlanBlock>, windows: List<PlanWindow>): List<PlanWall> {
+        val everyone = share.keys
+        if (everyone.isEmpty()) return emptyList()
+        val edgeSet = HashSet<Long>()
+        for (w in windows) {
+            edgeSet += w.startMillis
+            w.endMillis?.let { edgeSet += it }
+        }
+        for (b in blocks) {
+            edgeSet += b.startMillis
+            edgeSet += b.endMillis
+        }
+        val edges = edgeSet.sorted()
+        if (edges.size < 2) return emptyList()
+        // One sweep for the allowed set of every interval: asking each period about each edge instead is
+        // quadratic, and on three days of screen breaks both lists run into the hundreds.
+        val opens = HashMap<Long, MutableList<Set<TaskId>>>()
+        val closes = HashMap<Long, MutableList<Set<TaskId>>>()
+        for (w in windows) {
+            val forbidden = everyone.filterTo(HashSet()) { it !in w.allowed }
+            if (forbidden.isEmpty()) continue
+            opens.getOrPut(w.startMillis) { mutableListOf() } += forbidden
+            w.endMillis?.let { closes.getOrPut(it) { mutableListOf() } += forbidden }
+        }
+        val ban = HashMap<TaskId, Int>()
+        for (id in everyone) ban[id] = 0
+        val sets = ArrayList<Set<TaskId>>(edges.size)
+        for (a in edges) {
+            closes[a]?.forEach { f -> for (id in f) ban[id] = (ban[id] ?: 0) - 1 }
+            opens[a]?.forEach { f -> for (id in f) ban[id] = (ban[id] ?: 0) + 1 }
+            var allowed = everyone.filterTo(HashSet()) { (ban[it] ?: 0) == 0 }
+            val block = blockAt(blocks, a)
+            if (block != null) allowed = allowed.filterTo(HashSet()) { it == block.taskId }
+            sets += allowed
+        }
+        // `_fits_from` read off the sweep: the room a task has from the i-th edge, stepping over the intervals
+        // that belong to nobody and stopping at the first that belongs to somebody else.
+        fun fits(i: Int, id: TaskId): Boolean {
+            var got = 0L
+            val need = minimumOf[id] ?: 0L
+            for (j in i until edges.size - 1) {
+                if (sets[j].isEmpty()) continue
+                if (id !in sets[j]) return false
+                got += edges[j + 1] - edges[j]
+                if (got >= need) return true
+            }
+            return sets.last().isNotEmpty() && id in sets.last()
+        }
+        val out = mutableListOf<PlanWall>()
+        for (i in 1 until edges.size) {
+            val before = sets[i - 1]
+            if (before.isEmpty()) continue // nobody's exclusion, so no return
+            val back = sets[i].filterTo(HashSet()) { it !in before && fits(i, it) }
+            if (back.isNotEmpty()) out += PlanWall(edges[i], back)
+        }
+        return out
+    }
+
+    /**
+     * `_clears`: may [id] START a run of [needMillis] at [millis]?
+     *
+     * Only where finishing it costs no rival a SLOT. Running past a rival's return merely *delays* that
+     * rival, and the virtual clock repays a delay exactly the moment the rival is a candidate again — the
+     * same reason [setField] builds no field around an exclusion shorter than the deprived task's own
+     * minimum. What it cannot answer is a rival that could have run at its return and can no longer run at
+     * all by the time this run releases it: there the ban did not end where the period says it did, it ended
+     * where this run does, and the rival loses the whole slot rather than waiting for it.
+     */
+    fun clears(
+        walls: List<PlanWall>,
+        id: TaskId,
+        blocks: List<PlanBlock>,
+        windows: List<PlanWindow>,
+        millis: Long,
+        needMillis: Long,
+        bounds: List<Long>,
+    ): Boolean {
+        val end = millis + needMillis
+        val after = bounds.filter { it > end }
+        for (wall in walls) {
+            if (wall.millis <= millis) continue
+            if (wall.millis >= end) return true
+            for (rival in wall.back) {
+                if (rival == id) continue
+                if (!fitsFrom(rival, blocks, windows, end, minimumOf[rival] ?: 0L, after)) return false
+            }
+        }
+        return true
+    }
+
+    /**
+     * `_next_placeable`: the earliest instant after [millis] at which one of [missing] — the tasks that cannot
+     * be placed here — could be, either because it is let back in or because from there it has room for its
+     * whole minimum. This is the only reason to end a chunk early.
      */
     fun nextPlaceable(
         missing: Collection<TaskId>,
         blocks: List<PlanBlock>,
         windows: List<PlanWindow>,
         millis: Long,
+        bounds: List<Long>? = null,
     ): Long? {
         if (missing.isEmpty()) return null
-        val bounds = (sortedBounds(windows, millis) + blocks.map { it.endMillis }.filter { it > millis })
-            .distinct().sorted()
-        for (bound in bounds) {
+        val after = (bounds ?: boundsAfter(blocks, windows, millis)).filter { it > millis }
+        for (bound in after) {
             for (id in missing) {
-                if (id !in allowedAt(windows, bound)) continue
-                val room = blockedFrom(id, blocks, windows, bound)
-                if (room == null || room - bound >= (minimumOf[id] ?: 0L)) return bound
+                if (!mayRun(id, blocks, windows, bound)) continue
+                if (fitsFrom(id, blocks, windows, bound, minimumOf[id] ?: 0L, after)) return bound
             }
         }
         return null
@@ -477,16 +723,20 @@ class SchedulerPlanner(
     // ----- the plan -----------------------------------------------------------------------------
 
     /**
-     * `side-dev/test.py` `Scheduler.plan`, verbatim:
+     * `side-dev/scheduler_logic.py` `Scheduler.plan`, verbatim:
      *
-     * - **Phase 1** walks the disturbed part of the timeline (pre-placed blocks, period windows, and the tail
-     *   of the influence field) with the field-aware greedy → `prefix`;
+     * - **Phase 1** walks the disturbed part of the timeline (pre-placed blocks, periods, and the tail of the
+     *   influence field) with the field-aware greedy → `prefix`;
      * - **Phase 2**, once nothing is left to distort the schedule, settles what is still owed → `prefix`, then
      *   attaches the analytic cycle → `cycle`.
      *
      * [maxRules] is the "strict maximum rule limit" of `side-dev/README.md`: a cycle needing more rules falls
      * back to [coarseCycle], and a prefix that fills the budget before the context ever freezes returns with
      * **no cycle at all** (a truncated timeline).
+     *
+     * [history] is the timeline already committed before [nowMillis] — what a *resumed* plan must continue.
+     * Together with [replayClocks], [lastRun] and [lookbackStart] it is what makes a chain of re-plans and one
+     * long plan of the same environment the same schedule.
      */
     fun plan(
         blocks: List<PlanBlock> = emptyList(),
@@ -494,14 +744,29 @@ class SchedulerPlanner(
         nowMillis: Long = 0L,
         lookbackMillis: Double? = null,
         maxRules: Int = MAX_RULES,
+        history: List<PlanBlock> = emptyList(),
     ): Plan {
         val sorted = blocks.sortedBy { it.startMillis }
-        setField(sorted, windows)
 
-        val past = sorted.filter { it.endMillis <= nowMillis }
+        val past = sorted.filter { it.endMillis <= nowMillis } + history.filter { it.startMillis < nowMillis }
         val ahead = sorted.filter { it.endMillis > nowMillis }
+        // Only obstacles still AHEAD bend the plan: what already happened is history, not a blockage the
+        // timeline has to be compensated around. The past reaches the walk through the clocks instead.
+        setField(ahead, windows)
 
-        val walk = PlanWalk(this, seedClocks(past, nowMillis, lookbackMillis))
+        // The clocks are replayed over TWO periods, not one. A period is exactly the spacing of one task's
+        // slots, so a window one period wide samples the past at the rate the schedule repeats at: whatever
+        // the phase, a task whose slot has just left the window and whose next one has not yet entered it
+        // reads as NEVER SERVED, and a task that reads as never served claims the maximum however small its
+        // priority. Two periods cannot alias — a task's slot count in the window is one or two, never none.
+        val want = lookbackMillis ?: (2.0 * minPeriodMillis)
+        var windowStart = lookbackStart(windows, nowMillis, want)
+        past.minOfOrNull { it.startMillis }?.let { windowStart = maxOf(windowStart, it) }
+        windowStart = minOf(windowStart, nowMillis)
+
+        val walk = PlanWalk(this, replayClocks(past, windows, nowMillis, windowStart))
+        walk.clamp(nowMillis)
+
         val slots = mutableListOf<PlanSlot>()
         var t = nowMillis
         var freeTail = false
@@ -509,19 +774,29 @@ class SchedulerPlanner(
         // Safety valve: slots are merged, so their count no longer bounds the walk.
         val maxSteps = MAX_STEPS_PER_RULE * maxRules
 
-        // `side-dev/scheduler_logic.py` `_head`: the run still in progress at `nowMillis`, and how much of its
-        // minimum it has already served. The walk continues that run rather than starting a fresh one.
-        val head = headRun(past)
-        walk.serve(head?.first, 0.0) // `last = head_task`: the head is not picked twice in a row
+        // `_head`: the run still in progress at `nowMillis`, and how much of its minimum it has already
+        // served. The walk continues that run rather than starting a fresh one.
+        val head = headRun(past, nowMillis)
+        // `_last_run`, deliberately NOT `_head`: a run SURVIVES an idling interruption (which is what `_head`
+        // reads, and what the atomic block is about), but `last` is the other rule — a task is not picked
+        // twice in a row — and the walk clears it at every gap it pushes. A task that stopped and was not
+        // replaced never took a second turn, so nothing is owed on its account. Reading `last` off `_head`
+        // instead makes a RESUMED plan refuse the very task the timeline left off with, however far behind it
+        // is: on a timeline that re-plans at every boundary the rightful pick then loses a slot at every break.
+        walk.setLast(lastRun(past, nowMillis))
+
+        // Every instant the environment can change at, sorted once: the walk asks about them constantly, and
+        // with a three-day timeline there are many.
+        val allBounds = boundsAfter(ahead, windows, nowMillis)
+        var boundIndex = 0
+        // The instants a rival comes back from an exclusion: a run may not be in progress across one of them
+        // unless it was already running.
+        val walls = wallsOf(ahead, windows)
 
         /**
          * `run_served`: how much of its minimum the *current run* of [id] has already paid. Consecutive slots
          * of one task are one slot, and an idle hole **suspends** a run rather than ending it — the README's
          * atomic block is about a task's service, and a period that accepts nobody does not serve anyone.
-         *
-         * (One conflation with the reference: a block owned by **nobody** is a `null` slot here, exactly like
-         * an idle hole, so it suspends a run where the reference would end it. Both are "nothing of ours was
-         * served", and the case only differs when such a block lands mid-minimum.)
          */
         fun runServed(id: TaskId): Long {
             var total = 0L
@@ -540,12 +815,12 @@ class SchedulerPlanner(
         fun owed(id: TaskId): Long = ((minimumOf[id] ?: 0L) - runServed(id)).coerceAtLeast(0L)
 
         /**
-         * `side-dev/scheduler_logic.py` `pending`: the task **no other task may interrupt** — the one running,
-         * still short of its minimum — or null when nothing is owed. This is the README's atomic block,
-         * verbatim ("if task B is scheduled at t=0 and a period p that only allows task A is at t=1, and task B
-         * has a minimum time of 2, then the whole period p is scheduled with nothing"), and it is the rule a
-         * *sliding* period runs into constantly: a period the held task is not allowed in **suspends** it, it
-         * does not hand the timeline to somebody else.
+         * `pending`: the task **no other task may interrupt** — the one running, still short of its minimum —
+         * or null when nothing is owed. This is the README's atomic block, verbatim ("if task B is scheduled
+         * at t=0 and a period p that only allows task A is at t=1, and task B has a minimum time of 2, then
+         * the whole period p is scheduled with nothing"), and it is the rule a *sliding* period runs into
+         * constantly: a period the held task is not allowed in **suspends** it, it does not hand the timeline
+         * to somebody else.
          */
         fun pending(): TaskId? {
             for (i in slots.indices.reversed()) {
@@ -580,7 +855,7 @@ class SchedulerPlanner(
                 t = stop
                 freeTail = false
                 walk.relax(0.0, period, allowed) // no forgetting here: the block is not ours
-                walk.clamp(t - nowMillis)
+                walk.clamp(t)
                 continue
             }
 
@@ -595,13 +870,24 @@ class SchedulerPlanner(
             val held = pending()
             val candidates = if (held == null) allowed else if (held in allowed) listOf(held) else emptyList()
 
+            while (boundIndex < allBounds.size && allBounds[boundIndex] <= t) boundIndex++
+            val boundsAhead = allBounds.subList(boundIndex, allBounds.size)
             // Each task is bounded by where *it* is turned away, not by the next context change.
-            val room = candidates.associateWith { blockedFrom(it, ahead, windows, t) }
+            val room = candidates.associateWith { blockedFrom(it, ahead, windows, t, boundsAhead) }
             // "does the minimum fit?" is a question for a task about to *start*. A task already running has
             // started, and refusing it the room it has left would idle the timeline and still leave its run
             // short: it may be cut anywhere, by whatever it cannot pass.
+            //
+            // A task about to START must also be able to FINISH before it would extend somebody else's ban
+            // ([wallsOf]): a run is owed its whole minimum, so beginning one with less than that left before a
+            // rival comes back does not use the period, it lengthens the exclusion the rival is already
+            // serving. A task already running has no such choice to make — it is the atomic block itself.
             val fitting =
-                candidates.filter { room[it] == null || room[it]!! - t >= owed(it) || runServed(it) > 0L }
+                candidates.filter {
+                    runServed(it) > 0L ||
+                        (fitsFrom(it, ahead, windows, t, owed(it), boundsAhead) &&
+                            clears(walls, it, ahead, windows, t, owed(it), boundsAhead))
+                }
 
             if (fitting.isEmpty()) { // nothing can be placed here
                 if (limit == null) break
@@ -627,7 +913,7 @@ class SchedulerPlanner(
             // Forced cut: where this task itself is turned away.
             room[name]?.let { c = minOf(c, (it - t).toDouble()) }
             // Optional cut: hand the timeline back as soon as a rival can take it, once the minimum is paid.
-            val back = nextPlaceable(tasks.map { it.id }.filter { it !in fitting }, ahead, windows, t)
+            val back = nextPlaceable(allIds.filter { it !in fitting }, ahead, windows, t, boundsAhead)
             if (back != null) c = minOf(c, (maxOf(back, t + owed(name)) - t).toDouble())
             val placed = c.roundToLong().coerceAtLeast(1L)
             pushSlot(slots, name, placed)
@@ -637,7 +923,7 @@ class SchedulerPlanner(
             t += placed
             freeTail = true
             walk.relax(placed.toDouble(), period, allowed)
-            walk.clamp(t - nowMillis)
+            walk.clamp(t)
         }
 
         // --- phase 2: settle what is still owed, then repeat forever ---
@@ -658,7 +944,7 @@ class SchedulerPlanner(
                 walk.serve(name, placed.toDouble(), boost)
                 t += placed
                 walk.relax(placed.toDouble(), period, allowed)
-                walk.clamp(t - nowMillis)
+                walk.clamp(t)
             }
             cycle = steadyCycle(allowed)
             if (cycle.size > maxRules) cycle = coarseCycle(allowed)
@@ -670,54 +956,161 @@ class SchedulerPlanner(
     }
 
     /**
-     * The virtual clocks the walk starts from: the imbalance inherited from the already-placed past.
+     * `_lookback_start`: how far back the clocks are replayed — [wantMillis] of **SCHEDULABLE** time.
      *
-     * A task served exactly its share over the lookback window starts level; one that was never served starts
-     * a whole window behind. The window is one [minPeriodMillis] by default, shortened to the first past block
-     * when the history is younger than that — so a fresh account does not read as "everything is starved".
-     * Only differences matter, so the clocks are shifted to put the most starved task at zero.
+     * The window is what the past is read off, and it is measured in the only currency the shares are about:
+     * time somebody could actually have been served. Measuring it in wall time instead lets an instant nobody
+     * may run in push real service out of the window, and then a task served just before the last long
+     * exclusion reads as **never served** and leapfrogs the one that has been waiting. Over a timeline whose
+     * nights take nine hours out of every twenty-four that is not a rounding error: in `side-dev` test 12 it
+     * was the difference between a 50 %-priority task getting 2 % of the schedulable timeline and 35 % of it.
+     *
+     * Faithful to the reference, it counts **periods only** — a stretch occupied by a block owned by nobody
+     * (OmniApp's scheduled sleep) is not stepped over.
      */
-    fun seedClocks(past: List<PlanBlock>, nowMillis: Long, lookbackMillis: Double? = null): Map<TaskId, Double> {
-        val window = lookbackMillis ?: minPeriodMillis
-        var windowStart = nowMillis - window.roundToLong()
-        val earliest = past.minOfOrNull { it.startMillis }
-        if (earliest != null) windowStart = maxOf(windowStart, earliest)
-        windowStart = minOf(windowStart, nowMillis)
-        val elapsed = (nowMillis - windowStart).toDouble()
-
-        val served = HashMap<TaskId, Double>()
-        for (block in past) {
-            val id = block.taskId ?: continue
-            if (id !in share) continue
-            val overlap = minOf(block.endMillis, nowMillis) - maxOf(block.startMillis, windowStart)
-            if (overlap > 0L) served[id] = (served[id] ?: 0.0) + overlap.toDouble()
+    fun lookbackStart(windows: List<PlanWindow>, nowMillis: Long, wantMillis: Double): Long {
+        if (wantMillis <= 0.0) return nowMillis
+        val edges = HashSet<Long>().apply {
+            for (w in windows) {
+                if (w.startMillis < nowMillis) add(w.startMillis)
+                w.endMillis?.let { if (it < nowMillis) add(it) }
+            }
+        }.sortedDescending()
+        var got = 0.0
+        var cur = nowMillis
+        for (b in edges) {
+            val span = (cur - b).toDouble()
+            if (allowedAt(windows, b).isNotEmpty()) {
+                if (got + span >= wantMillis) return cur - (wantMillis - got).roundToLong()
+                got += span
+            }
+            cur = b
         }
-        val lag = share.mapValues { (id, p) -> (served[id] ?: 0.0) / p - elapsed }
-        val base = lag.values.minOrNull() ?: 0.0
-        return lag.mapValues { (_, l) -> l - base }
+        // before the earliest edge nothing changes any more
+        if (edges.isEmpty() || allowedAt(windows, cur - 1).isNotEmpty()) {
+            return cur - (wantMillis - got).roundToLong()
+        }
+        return cur
+    }
+
+    /**
+     * `_replay_clocks`: the virtual clocks at [nowMillis], **REPLAYED the way the walk writes them**.
+     *
+     * A plan resumed at `t` must continue the plan that walked through `t`: a chain of re-plans and one long
+     * plan of the same environment are the same schedule, and the only thing that can make them differ is
+     * state the walk carries but the seeding does not reconstruct. `last` was one such carrier
+     * ([lastRun]) and the lookback's currency was another ([lookbackStart]); the third is the FORGETTING
+     * itself. The walk relaxes after every slot — an imbalance older than a period decays exponentially, and
+     * an excluded group is translated back toward the pool — so reading the past as a flat sum of `served/p`
+     * over a window rebuilds a state the walk never held: a task idle for an hour reads as owed the whole
+     * hour, where the walk had already forgotten most of it.
+     *
+     * The remedy is not a different window but the same law: walk the past and apply [PlanWalk.relax] exactly
+     * where the walk applies it — over served time, with that stretch's own period, against whoever was
+     * allowed to run in it. Idling relaxes nothing, as in the walk.
+     *
+     * The replay is **edge by edge, not block by block**. A block in the history is a run the walk merged, and
+     * a period may well begin inside one: fifteen privileged-only minutes a privileged task works straight
+     * through leave no mark on the timeline at all, and reading the allowed set once at the block's start
+     * would miss them entirely — with them the whole excluded group's credit, which is the largest single term
+     * [PlanWalk.relax] contributes.
+     *
+     * With [PlanWalk.relax] removed this is `served/p` normalized, the arithmetic the seeding did before, so
+     * the window still bounds how far back it reads and a case with no history still starts every clock level.
+     */
+    fun replayClocks(
+        past: List<PlanBlock>,
+        windows: List<PlanWindow>,
+        nowMillis: Long,
+        windowStartMillis: Long,
+    ): Map<TaskId, Double> {
+        val seed = HashMap<TaskId, Double>(share.size)
+        for (id in share.keys) seed[id] = windowStartMillis.toDouble()
+        val walk = PlanWalk(this, seed)
+        val blocks = past.mapNotNull { b ->
+            val id = b.taskId
+            if (id == null || id !in share) return@mapNotNull null
+            val s = maxOf(b.startMillis, windowStartMillis)
+            val e = minOf(b.endMillis, nowMillis)
+            if (e > s) Triple(s, e, id) else null
+        }.sortedBy { it.first }
+        val edges = HashSet<Long>().apply {
+            for (w in windows) {
+                if (w.startMillis > windowStartMillis && w.startMillis < nowMillis) add(w.startMillis)
+                w.endMillis?.let { if (it > windowStartMillis && it < nowMillis) add(it) }
+            }
+        }.sorted()
+        for ((blockStart, blockEnd, id) in blocks) {
+            var t = blockStart
+            while (t < blockEnd) {
+                val i = upperBound(edges, t)
+                val stop = if (i < edges.size) minOf(blockEnd, edges[i]) else blockEnd
+                val allowed = allowedAt(windows, t)
+                val period = if (allowed.isNotEmpty()) periodOf(allowed) else minPeriodMillis
+                val c = (stop - t).toDouble()
+                walk.serve(id, c)
+                walk.relax(c, period, allowed)
+                t = stop
+            }
+        }
+        // The clocks are read for their DIFFERENCES; anchoring the earliest at `now` is what the seeding has
+        // always done, and it is what keeps [PlanWalk.clamp]'s band meaningful.
+        val out = walk.clocks()
+        val base = out.values.minOrNull() ?: 0.0
+        return out.mapValues { (_, x) -> nowMillis + x - base }
+    }
+
+    /** `bisect_right`: the index of the first entry of [sorted] strictly greater than [value]. */
+    private fun upperBound(sorted: List<Long>, value: Long): Int {
+        var lo = 0
+        var hi = sorted.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (sorted[mid] <= value) lo = mid + 1 else hi = mid
+        }
+        return lo
     }
 
     /** A new walk over this planner's rules, seeded with [clocks] (defaults to a level playing field). */
     fun walk(clocks: Map<TaskId, Double> = share.mapValues { 0.0 }): PlanWalk = PlanWalk(this, clocks)
 
     /**
-     * `side-dev/scheduler_logic.py` `_head`: the run still in progress at the end of [past] — the task, and how
-     * long it has been served — or null when the past ends on nothing of ours.
+     * `_head`: the run still in progress at the end of [past] — the task, and how long it has been served —
+     * or null when the past ends on nothing of ours.
      *
      * A run survives an interruption by something that is not a task (an idle stretch, a block owned by
      * nobody): the README's atomic block is about a task's *service*, and a period that accepts nobody
      * suspends a run rather than ending it. So the scan skips those and stops at the first different task.
      */
-    private fun headRun(past: List<PlanBlock>): Pair<TaskId, Long>? {
+    internal fun headRun(past: List<PlanBlock>, nowMillis: Long): Pair<TaskId, Long>? {
         var name: TaskId? = null
         var total = 0L
         for (block in past.sortedByDescending { it.startMillis }) {
             val id = block.taskId
             if (id == null || id !in minimumOf) continue // not one of ours: it does not end the run
             if (name == null) name = id else if (id != name) break
-            total += block.durationMillis
+            total += minOf(block.endMillis, nowMillis) - block.startMillis
         }
         return name?.let { it to total }
+    }
+
+    /**
+     * `_last_run`: the task the walk carries as `last` — the one running at the instant before [nowMillis],
+     * and **nothing** where the past ends in idling.
+     *
+     * This is deliberately not [headRun]. A run SURVIVES an idling interruption, which is what [headRun] reads
+     * and what the atomic block is about; `last` is the other rule — a task is not picked twice in a row so
+     * that what is owed a lot gets a denser presence rather than one long block — and the walk clears it at
+     * every gap it pushes. A task that stopped and was not replaced never took a second turn.
+     */
+    internal fun lastRun(past: List<PlanBlock>, nowMillis: Long): TaskId? {
+        var best: PlanBlock? = null
+        for (block in past) {
+            if (block.startMillis >= nowMillis || minOf(block.endMillis, nowMillis) < nowMillis) continue
+            if (best == null || block.startMillis > best.startMillis) best = block
+        }
+        val id = best?.taskId ?: return null
+        return if (id in minimumOf) id else null
     }
 
     /** The reference's `floor=owed(name) or minimum[name]`, as a nullable [chunkMillis] floor. */
@@ -856,16 +1249,19 @@ class SchedulerPlanner(
         floorMillis: Double? = null,
     ): Double {
         val p = shares[name] ?: 0.0
-        val minimum = floorMillis ?: (minimumOf[name] ?: 0L).toDouble()
-        if (p <= 0.0) return minimum // a zero-priority task has no catch-up to compute
+        val full = (minimumOf[name] ?: 0L).toDouble()
+        val floor = floorMillis ?: full
+        if (p <= 0.0) return floor // a zero-priority task has no catch-up to compute
         val mine = clocks[name] ?: 0.0
         // Only tasks that carry a share have a virtual clock, so only they can be the runner-up to catch.
         val target = candidates.filter { it != name && it in clocks }.minOfOrNull { clocks[it]!! } ?: mine
         val need = p * (target - mine) // time to catch the runner-up
-        var c = maxOf(minimum, need)
+        var c = maxOf(floor, need)
         if (boost != null && periodMillis != null) { // local, field-aware sizing
-            val unit = maxOf(minimum, p * periodMillis)
-            c = minOf(maxOf(c, minimum * boost), unit * boost)
+            // The natural unit is a property of the TASK (its whole minimum, or its share of the period), not
+            // of what this particular slot still owes — and the cap may never push the slot below its floor.
+            val unit = maxOf(full, p * periodMillis)
+            c = minOf(maxOf(c, floor * boost), maxOf(unit * boost, floor))
         }
         if (resolutionMillis > 0.0) c = ceilTo(c, resolutionMillis)
         return c
@@ -882,10 +1278,10 @@ class SchedulerPlanner(
     data class LongRangeSpan(val startMillis: Long, val endMillis: Long)
 
     companion object {
-        /** An end that never comes — the `FOREVER` of `side-dev/test.py`, kept in `Long` arithmetic. */
+        /** An end that never comes — the `FOREVER` of `side-dev/scheduler_logic.py`, kept in `Long` arithmetic. */
         const val FOREVER: Long = Long.MAX_VALUE
 
-        /** `side-dev/test.py` `MAX_RULES`: the strict rule limit of `side-dev/README.md`. */
+        /** `side-dev/scheduler_logic.py` `MAX_RULES`: the strict rule limit of `side-dev/README.md`. */
         const val MAX_RULES: Int = 50
 
         const val DEFAULT_MAX_BOOST: Double = 6.0
@@ -895,7 +1291,7 @@ class SchedulerPlanner(
         /** `max_reach` defaults to six `tau` in the reference. */
         const val DEFAULT_REACH_TAUS: Double = 6.0
 
-        /** `side-dev/test.py`: the phase-2 settling is bounded to four periods. */
+        /** `side-dev/scheduler_logic.py`: the phase-2 settling is bounded to four periods. */
         const val SETTLE_PERIODS: Double = 4.0
 
         private const val MAX_STEPS_PER_RULE = 200
@@ -933,7 +1329,7 @@ class SchedulerPlanner(
  * The running state of one walk: each task's **virtual clock** `vᵢ = servedᵢ / pᵢ` plus the task placed last.
  * Single-use and not thread-safe — [serve] mutates it as the caller's cursor sweeps the timeline.
  *
- * This is the whole of `side-dev/test.py`'s scheduling logic, and it is deliberately the **only** copy of it:
+ * This is the whole of `side-dev/scheduler_logic.py`'s scheduling logic, and it is deliberately the **only** copy of it:
  * both [SchedulerPlanner.plan] (the rule-list form of `side-dev/README.md`) and
  * [SchedulerDomain.fillSchedule] (the app's calendar fill, which additionally has to weave in screen breaks,
  * screen zones and concrete panels) are thin drivers over it, so the two can never disagree on the rules.
@@ -949,6 +1345,17 @@ class PlanWalk internal constructor(
         private set
 
     fun clockOf(id: TaskId): Double = v[id] ?: 0.0
+
+    /** A copy of the clocks as they stand — what [SchedulerPlanner.replayClocks] reads its replay off. */
+    fun clocks(): Map<TaskId, Double> = HashMap(v)
+
+    /**
+     * `side-dev/scheduler_logic.py` `plan`'s `last = self._last_run(past, t_now)`: the task the walk resumes
+     * behind. Set once, from the history, before the walk starts.
+     */
+    fun setLast(id: TaskId?) {
+        last = id
+    }
 
     /** `max v − min v` over [active]: how far from square the schedule is. */
     fun spread(active: Collection<TaskId>): Double {
@@ -1010,16 +1417,31 @@ class PlanWalk internal constructor(
                 if (over > 0.0) v[id] = v[id]!! - over * (1.0 - f)
             }
         }
+        // An excluded task's clock is held within one period of the served pool — an imbalance older than that
+        // is forgotten, which is what stops a long exclusion from buying an equally long catch-up. It is held
+        // by TRANSLATING the whole excluded set, never by clamping each of them separately: clamping sets
+        // every task past the bound to the SAME value, so a period that refuses eleven tasks would erase what
+        // distinguishes them and their priorities would stop deciding which one goes first. The bound is a
+        // property of the group's distance from the pool; the gaps inside the group are the claims themselves.
         val activeSet = live.toHashSet()
-        for (id in v.keys.toList()) {
-            if (id !in activeSet) v[id] = v[id]!!.coerceIn(lo - periodMillis, lo + periodMillis)
-        }
+        val idle = v.keys.filter { it !in activeSet }
+        if (idle.isEmpty()) return
+        val low = (lo - periodMillis) - idle.minOf { v[it]!! }  // the shift the credit cap asks for
+        val high = (lo + periodMillis) - idle.maxOf { v[it]!! } // the one the debt cap allows
+        // A group spread wider than 2·period cannot sit inside the band at all; the credit cap is the
+        // load-bearing half, so it wins.
+        val shift = if (low > high) low else maxOf(low, minOf(high, 0.0))
+        if (shift != 0.0) for (id in idle) v[id] = v[id]!! + shift
     }
 
-    /** Optional hard bound on the virtual clock ([SchedulerPlanner.maxLagMillis]); off by default. */
-    fun clamp(elapsedMillis: Long) {
+    /**
+     * Optional hard bound on the virtual clock ([SchedulerPlanner.maxLagMillis]); off by default. The clocks
+     * are anchored on the timeline itself ([SchedulerPlanner.replayClocks] puts the most starved task at
+     * `now`), so [millis] is the cursor's absolute position, exactly as in the reference.
+     */
+    fun clamp(millis: Long) {
         val lag = planner.maxLagMillis ?: return
-        val t = elapsedMillis.toDouble()
+        val t = millis.toDouble()
         for (id in v.keys.toList()) v[id] = v[id]!!.coerceIn(t - lag, t + lag)
     }
 }
