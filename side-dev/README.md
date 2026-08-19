@@ -94,7 +94,7 @@ The following rules must always be satisfied by the timeline:
  - after a ≥15-minutes stretch of only privileged allowed, or after one of the three periods aforementioned, the next 20s period is **20 minutes** later;
  - after a ≥5-minute stretch of only privileged allowed, the next 5min period is **1 hour** later;
  - after a ≥15-minute stretch of only privileged allowed, the next 15min period is **2 hours** later.
-The timeline of test 12 spans over 3 days. The first 24 hours of the timeline have the three periods aforementioned. At t<0, is it a period where no task is allowed. $t_p$ starts at 24h and moves to the right.
+The timeline of test 12 spans over 3 days. The first 24 hours of the timeline have the three periods aforementioned. At t<0, is it a period where no task is allowed. $t_p$ starts at 0 and the scheduler works on the whole timeline; when the definitive schedule is found up to t=24h, the $t_p$ line teleports to t=24h and moves to the right from there.
 It means that  when $t_p$ reaches the end, the three aforementioned periods are only found in the first 24 hours, because the $t_p$ line swiped them all like in test 11.
 Like for all tests, finding the right schedule for the next 10 minutes must not take more than 10 seconds. That means that if the scheduling is taking time for the whole timeline of the test, the user will see the schedule change each time the scheduler finds a better set of rules to satisfy the following requirement : if the right schedule is found for t < $t_1$, then 10 seconds later the right schedule must be found for t < $t_1$ + 10 minutes.
 
@@ -107,5 +107,5 @@ Answer proposed by claude code in claude_code_proposed_answer.md.
  
 # test 13 requirements
 
-Same as test 12, but the priority percentages are sliding continuously from one state at $t_p$=0 to another at $t_p$=48h. The result is of the same type, a single list of rules, simply at $t_p$ the scheduler is done to satisfy the priorities that are at exactly $t_p$.
+Same as test 12, but the priority percentages are sliding continuously from one state at t=24h to another at t=48h. At t<24h, the priority percentages are the same as t=24h. The result is of the same type, a single list of rules, simply at $t_p$ the scheduler is done to satisfy the priorities that are at exactly $t_p$.
 

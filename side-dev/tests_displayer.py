@@ -311,23 +311,106 @@ def period_lines(periods, max_lines=PERIOD_LINES, max_spans=PERIOD_SPANS, chars=
         out.append((f"... {len(ordered) - max_lines} more sets of refused tasks", None))
     return out or [("(none: every task may run everywhere)", None)]
 
-def info_layout(tasks, periods, width=780):
+def info_chars(width):
+    """How many characters of INFO_FONT fit across a block `width` pixels wide.
+
+    The canvas scrolls vertically only, so a line wider than the block is a line
+    the window cannot show: this is the budget every line in it is cut to, and
+    what is cut off is kept whole on the tooltip."""
+    return max(20, int(width // INFO_CHAR_W))
+
+def _state_text(tasks):
+    """One state of the percentages, as a line.
+
+    Tasks declaring the same minimum and the same percentage are collapsed into
+    a run, because the two states of twenty-one tasks differ in a handful of
+    numbers and naming them one by one buries exactly that."""
+    total = sum((t.priority for t in tasks), frac(0)) or frac(1)
+    groups = {}
+    for t in tasks:
+        groups.setdefault((t.min_time, t.priority), []).append(t.name)
+    return ";  ".join(f"{compact_names(names)} {human(m)} {_pct(pr / total)}"
+                      for (m, pr), names in groups.items())
+
+def _state_tip(head, tasks):
+    """The same state spelled out task by task, for the tooltip: the runs above
+    are folded, never hidden."""
+    total = sum((t.priority for t in tasks), frac(0)) or frac(1)
+    rows = [f"  {t.name:<4}{human(t.min_time):>8}{_pct(t.priority / total):>8}"
+            for t in tasks]
+    return "\n".join([head] + rows)
+
+def state_lines(states, chars=None, at=None):
+    """A sliding set of percentages: both its ends, WHEN each of them is in
+    force, and where the line stands between them (test 13).
+
+    The table above these lines is the state at t_p and says nothing about what
+    it is travelling between, which is the case itself: at t_p=36h "A 37.5%" is
+    a number, and "50% at 24h -> 25% at 48h, and we are halfway" is the answer.
+
+    So each end is named by the STRETCH OF t_p IT GOVERNS rather than by the one
+    instant it is pinned at -- a state is held outside the transition, so "at
+    24h" was a third of what there is to say about where it applies -- and a
+    line between the two says where t_p is, how far across it has come, and what
+    the percentages therefore are there. `at` is `(t_p, tasks)`, this frame's;
+    without it that line says the transition has not been entered.
+
+    The COUNT of lines does not depend on `at`, which is what lets the block be
+    measured once (`info_layout`) and re-worded every frame."""
+    if not states: return []
+    lo, hi = states[0][0], states[-1][0]
+    head = (f"the percentages SLIDE between two states, t_p {stamp(lo)} -> {stamp(hi)}, "
+            f"and are HELD at the nearer one outside that:")
+    tip = (f"the plan made at t_p satisfies the percentages at exactly t_p."
+           f"\nUp to t_p {stamp(lo)} the first state stands; from t_p {stamp(hi)} on,"
+           f"\nthe second does -- held, never extrapolated: a percentage carried"
+           f"\npast the state it was fitted to leaves the hundred it is a share of.")
+    out = [(_clip(head, chars), tip)]
+    for i, (pos, tasks) in enumerate(states):
+        first, last = i == 0, i == len(states) - 1
+        when = (f"t_p <= {stamp(pos)}" if first and not last else
+                f"t_p >= {stamp(pos)}" if last and not first else f"t_p = {stamp(pos)}")
+        label = "from" if first and not last else "to" if last and not first else "at"
+        out.append((_clip(f"  {label:<4} ({when}):  " + _state_text(tasks), chars),
+                    _state_tip(f"the percentages for {when}, the state pinned at "
+                               f"t_p {stamp(pos)}", tasks)))
+        if first and not last:
+            out.append(_crossing_line(lo, hi, at, chars))
+    return out
+
+def _crossing_line(lo, hi, at, chars):
+    """Where the line stands between the two states, and what the percentages
+    are there: the half of the answer a table read at t_p cannot give."""
+    if at is None:
+        return (_clip("  ...   (the transition: the line is not in it yet)", chars), None)
+    tp, tasks = at
+    x = (min(max((frac(tp) - lo) / (hi - lo), frac(0)), frac(1)) if hi > lo else frac(0))
+    where = ("before it, so the first state stands" if tp <= lo else
+             "past it, so the second state stands" if tp >= hi else
+             f"{float(x) * 100:.0f}% of the way across")
+    return (_clip(f"  ...   t_p = {stamp(tp)}, {where}:  " + _state_text(tasks), chars),
+            _state_tip(f"the percentages at the line, t_p {stamp(tp)}", tasks))
+
+def info_layout(tasks, periods, width=780, states=()):
     """The fixed shape of the block: how many task rows per column, the period
-    lines, and the height the two of them need."""
+    lines, the end states of a blend if the case has any, and the height the
+    three of them need."""
     cols_max = max(1, int(width // TASK_COL_W))
     rows = min(TASK_COL_ROWS, len(tasks)) or 1
     cols = -(-len(tasks) // rows)
     if cols > cols_max:
         rows = -(-len(tasks) // cols_max)
-    # the canvas scrolls vertically only, so a line wider than the block is a
-    # line the window cannot show: it is cut here and kept whole on the tooltip
-    plines = period_lines(periods, chars=max(20, int(width // INFO_CHAR_W)))
-    return rows, plines, INFO_LINE_H * (3 + rows + len(plines))
+    chars = info_chars(width)
+    plines = period_lines(periods, chars=chars)
+    slines = state_lines(states, chars=chars)
+    return rows, plines, slines, INFO_LINE_H * (3 + rows + len(plines) + len(slines))
 
 def draw_info(canvas, x, y, tasks, periods, got, open_total, rows, plines,
-              tag=None, tooltip=None):
+              slines=(), tag=None, tooltip=None):
     """Draw the block and return its height. `got` is `resulting_shares`, and
-    `open_total` how much timeline it was measured over."""
+    `open_total` how much timeline it was measured over. `slines` are the ends
+    of a sliding set of percentages (`state_lines`), drawn under the table they
+    are the two ends of -- nothing on a case whose percentages stand still."""
     tags = (tag,) if tag else ()
 
     def text(ty, s, fill, tx=None):
@@ -353,12 +436,17 @@ def draw_info(canvas, x, y, tasks, periods, got, open_total, rows, plines,
              "not a task:  " + ", ".join(f"{n} {_pct(s)}" for n, s in sorted(rest.items())),
              "#777777")
 
-    y2 = y + INFO_LINE_H * (2 + rows)
+    y1 = y + INFO_LINE_H * (2 + rows)
+    for i, (line, tip) in enumerate(slines):
+        item = text(y1 + INFO_LINE_H * i, line, "#7A0000" if tip else "#333333")
+        if tip and tooltip is not None: tooltip.register(item, tip)
+
+    y2 = y1 + INFO_LINE_H * len(slines)
     text(y2, f"static periods ({len(periods)}), by the set of tasks they do NOT allow:", "#333333")
     for i, (line, tip) in enumerate(plines):
         item = text(y2 + INFO_LINE_H * (1 + i), line, "#7030A0")
         if tip and tooltip is not None: tooltip.register(item, tip)
-    return INFO_LINE_H * (3 + rows + len(plines))
+    return INFO_LINE_H * (3 + rows + len(plines) + len(slines))
 
 
 def draw_schedules(root, canvas, test_cases, window_width=900):
@@ -399,14 +487,14 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
 
         # what the case declares, and what the schedule made of it. Nothing here
         # moves on a static case -- it is one plan -- so it is drawn once.
-        rows, plines, _h = info_layout(tasks, periods,
-                                       width=window_width - margin_left - margin_right)
+        rows, plines, slines, _h = info_layout(
+            tasks, periods, width=window_width - margin_left - margin_right)
         info_y = canvas.bbox(sub_id)[3] + 6
         drawn = [(b['start'], b['start'] + b['duration'], b['name']) for b in schedule]
         got, open_total = resulting_shares(drawn, periods, [t.name for t in tasks],
                                            lo=start_time, hi=start_time + total_duration)
         height = draw_info(canvas, margin_left, info_y, tasks, periods,
-                           got, open_total, rows, plines, tooltip=tooltip)
+                           got, open_total, rows, plines, slines, tooltip=tooltip)
         local_y_offset = info_y + height + 14
 
         max_row_idx = 0
@@ -548,6 +636,11 @@ class MovingCasePanel:
     FPS = 20
     MARGIN_LEFT = 90
     MARGIN_RIGHT = 30
+    # how much room the status sentence above the rules is given. It WRAPS
+    # inside the panel rather than running off the right edge of a canvas that
+    # only scrolls up and down -- which is what put test 13's "where the line
+    # stands between the two states" a thousand pixels past the window.
+    STATUS_H = 30
 
     def __init__(self, root, canvas, tooltip, y, title, mw, sweep_seconds, width=900):
         self.root, self.canvas, self.tooltip, self.mw = root, canvas, tooltip, mw
@@ -579,13 +672,19 @@ class MovingCasePanel:
 
         head = canvas.create_text(self.MARGIN_LEFT, y, text=title, font=("Arial", 11, "bold"), anchor="nw")
         self.y_status = canvas.bbox(head)[3] + 2
-        self.y_rules = self.y_status + 30
+        self.y_rules = self.y_status + self.STATUS_H
         # the tasks and the static periods, between the rules and the timeline.
         # Its SHAPE is fixed -- only the resulting shares in it move with t_p --
         # so the space it needs is measured once, here.
         self.y_info = self.y_rules + 16
-        self.info_rows, self.info_periods, info_h = info_layout(
-            mw.tasks, mw.periods, width=width - self.MARGIN_LEFT - self.MARGIN_RIGHT)
+        # the ends of a sliding set of percentages, where the case has any
+        # (test 13). They are a property of the case, not of t_p, so like the
+        # rest of the block's shape they are settled once, here.
+        self.info_ends = mw.blend_states() if hasattr(mw, "blend_states") else []
+        self.info_width = width - self.MARGIN_LEFT - self.MARGIN_RIGHT
+        self.info_chars = info_chars(self.info_width)
+        self.info_rows, self.info_periods, self.info_states, info_h = info_layout(
+            mw.tasks, mw.periods, width=self.info_width, states=self.info_ends)
         self.top = self.y_info + info_h + 12
         self.height = (self.top + self.rows * (self.ROW_H + self.ROW_SPACING) + 30) - y
         self._tick()
@@ -765,7 +864,7 @@ class MovingCasePanel:
 
         regime = mw.regime_at(tp)
         c.create_text(self.MARGIN_LEFT, self.y_status, anchor="nw", font=("Arial", 9),
-                      fill="#333333", tags=self.tag,
+                      fill="#333333", tags=self.tag, width=self.info_width,
                       text=f"t_p = {stamp(tp)}   ->   rules for t_p in {regime.label}"
                            f"   ({'playing' if self.playing else 'paused'};"
                            f" substituted into the rule list, not recomputed)")
@@ -784,8 +883,8 @@ class MovingCasePanel:
                                            [t.name for t in mw.tasks],
                                            lo=frac(0), hi=mw.span)
         draw_info(c, self.MARGIN_LEFT, self.y_info, mw.tasks, mw.periods,
-                  got, open_total,
-                  self.info_rows, self.info_periods, tag=self.tag, tooltip=self.tooltip)
+                  got, open_total, self.info_rows, self.info_periods,
+                  self.info_states, tag=self.tag, tooltip=self.tooltip)
 
         for start, end, name in drawn:
             if end <= start: continue
@@ -861,6 +960,10 @@ class ProgressiveCasePanel(MovingCasePanel):
 
     ROWS = 6
     FPS = 12
+    # its status sentence is the long one (the pace, the links, the regimes and
+    # the rules at the line), so it wraps to three lines where the moving cases
+    # take one
+    STATUS_H = 46
 
     def __init__(self, root, canvas, tooltip, y, title, pw, sweep_seconds, width=900):
         self.pw = pw
@@ -877,15 +980,36 @@ class ProgressiveCasePanel(MovingCasePanel):
 
     def _setup(self, width, sweep_seconds):
         pw = self.pw
-        self.tp = pw.tp_start
+        self.tp = pw.tp_home()
+        # whether the line is still WAITING at the origin for the first day to
+        # become definitive. It stops waiting the moment it teleports -- or the
+        # moment somebody moves it themselves, since a position the user chose
+        # is not one the panel may take back
+        self.parked = self.tp < pw.sweep_start
         self.rows = self.ROWS
         self.row_duration = pw.span / self.rows
         self.px_per_min = (width - self.MARGIN_LEFT - self.MARGIN_RIGHT) / float(self.row_duration)
-        self.step = (pw.span - pw.tp_start) / (sweep_seconds * self.FPS)
+        self.step = (pw.span - pw.sweep_start) / (sweep_seconds * self.FPS)
 
     def _tp_at(self, cx, row):
+        self.parked = False          # the user's own hand ends the wait
         t = super()._tp_at(cx, row)
         return min(max(t, self.pw.tp_start), self.pw.span)
+
+    def _teleport(self):
+        """The jump onto the definitive part -- test 12's t_p line landing at 24h.
+
+        Until then the line stands at the origin over a schedule being planned
+        whole, which is what the case is: the front crawls out of t=0 and
+        everything past it goes on changing. The instant the front reaches the
+        teleport instant the schedule under it will not move again, and the line
+        lands there. Nothing is swept by the jump -- the line was never at a
+        position in between, so no break in the first day was ever reached."""
+        pw = self.pw
+        if not self.parked or pw.tp_teleport is None: return False
+        if pw.settled < pw.tp_teleport: return False
+        self.tp, self.parked = pw.tp_teleport, False
+        return True
 
     # How much of the timeline may settle before the shares are measured again
     # while the chain is still growing -- a fiftieth of the span, so the number
@@ -972,12 +1096,13 @@ class ProgressiveCasePanel(MovingCasePanel):
     def _work(self):
         """On the DRAWING thread: say where the line is, and take what the
         worker has published. Nothing here derives anything."""
+        moved = self._teleport()
         self.at = self.tp
         self.want = None if self.playing else self.tp
         if self.deriver is None or self.deriver.generation == self.seen:
-            return False
+            return moved
         now = time.perf_counter()
-        if now - self.shown < self.PROGRESS_S: return False
+        if now - self.shown < self.PROGRESS_S: return moved
         self.seen, self.shown = self.deriver.generation, now
         return True
 
@@ -986,8 +1111,9 @@ class ProgressiveCasePanel(MovingCasePanel):
         if self.deriver is not None: self.deriver.stop()
 
     def _advance_tp(self):
+        self.parked = False          # a line under way is a line the user drives
         self.tp += self.step
-        if self.tp >= self.mw.span: self.tp = self.pw.tp_start
+        if self.tp >= self.mw.span: self.tp = self.pw.sweep_start
 
     def _status(self):
         pw = self.pw
@@ -997,18 +1123,17 @@ class ProgressiveCasePanel(MovingCasePanel):
         r = pw.rules_at(self.tp)
         rules = (f"rules at the line: exact, for t_p in {r.label}" if r is not None else
                  "rules at the line: provisional (stop the sweep to derive them)")
-        blend = ""
-        if pw.blend is not None:
-            tasks = pw.tasks_at(self.tp)
-            total = sum((t.priority for t in tasks), frac(0)) or frac(1)
-            share = lambda pred: sum(t.priority for t in tasks if pred(t)) / total * 100
-            blend = (f"   |   percentages here: A {float(share(lambda t: t.name == 'A')):.1f}%, "
-                     f"privileged {float(share(lambda t: t.name.startswith('P'))):.1f}%, "
-                     f"others {float(share(lambda t: t.name.startswith('N'))):.1f}%")
-        return (f"t_p = {stamp(self.tp)}   ->   definitive up to t = {stamp(pw.settled)}"
+        # where the percentages are at the line is NOT said here: it belongs
+        # beside the two states it is travelling between (`state_lines`), and
+        # appended to a sentence this long it was drawn a thousand pixels off
+        # the right edge of the canvas -- which is to say it was not drawn
+        wait = ("" if not self.parked else
+                f" (waiting at the origin: it teleports to {stamp(pw.tp_teleport)} "
+                f"once the definitive part reaches it)")
+        return (f"t_p = {stamp(self.tp)}{wait}   ->   definitive up to t = {stamp(pw.settled)}"
                 f"   ({len(pw.segments)} links, {len(pw.regimes)} regimes, {state}, "
                 f"{rate:.0f} min of timeline per second of work; {rules}, substituted "
-                f"into, not recomputed)" + blend)
+                f"into, not recomputed)")
 
     def _draw(self):
         c, pw, tp = self.canvas, self.pw, self.tp
@@ -1016,7 +1141,8 @@ class ProgressiveCasePanel(MovingCasePanel):
         c.delete(self.tag)
 
         c.create_text(self.MARGIN_LEFT, self.y_status, anchor="nw", font=("Arial", 9),
-                      fill="#333333", tags=self.tag, text=self._status())
+                      fill="#333333", tags=self.tag, width=self.info_width,
+                      text=self._status())
         seg = pw.segment_at(tp)
         c.create_text(self.MARGIN_LEFT, self.y_rules - 14, anchor="nw", font=("Courier", 8),
                       fill="#7A0000", tags=self.tag,
@@ -1046,9 +1172,14 @@ class ProgressiveCasePanel(MovingCasePanel):
         have = self.shares
         got = have[2] if have is not None else {}
         open_total = have[3] if have is not None else frac(0)
+        # the two end states are the CASE's and were measured once; where the
+        # line stands between them is this frame's, so the block is re-worded
+        # here rather than reused. Its shape does not move: the count of lines
+        # is the same with `at` as without it
+        slines = state_lines(self.info_ends, chars=self.info_chars, at=(tp, tasks))
         draw_info(c, self.MARGIN_LEFT, self.y_info, tasks, pw.periods,
-                  got, open_total,
-                  self.info_rows, self.info_periods, tag=self.tag, tooltip=self.tooltip)
+                  got, open_total, self.info_rows, self.info_periods,
+                  slines, tag=self.tag, tooltip=self.tooltip)
 
         for start, end, name in drawn:
             if end <= start: continue
@@ -1191,11 +1322,21 @@ def print_progressive_rules(title, pw, max_links=8, settle=True):
     the very object the panel is about to show, and the user would open the
     window on an answer that never moves again."""
     print(f"--- {title.splitlines()[0]} ---")
-    print_statement(pw.tasks_at(0), pw.periods)
-    if pw.blend is not None:
-        print("[ THE PERCENTAGES SLIDE ] the table above is the state at t_p=0; at the far "
-              "end of the blend:")
-        print_statement(pw.tasks_at(pw.span), pw.periods, with_periods=False)
+    # BOTH ends, each named by the STRETCH OF t_p IT GOVERNS (test 13): a state
+    # printed without that says what the percentages are and nothing about when
+    # they are that, which is the half the requirement is about -- and a state
+    # named by the one instant it is pinned at says a third of it, since outside
+    # the transition the nearer state is held rather than left behind.
+    states = pw.blend_states()
+    print_statement(pw.tasks_at(states[0][0] if states else pw.tp_start), pw.periods)
+    if states:
+        lo, hi = states[0][0], states[-1][0]
+        print(f"[ THE PERCENTAGES SLIDE ] the table above is the state HELD for "
+              f"t_p <= {stamp(lo)}; it crosses to the one below between "
+              f"t_p={stamp(lo)} and t_p={stamp(hi)}, and that one is then HELD "
+              f"for t_p >= {stamp(hi)}:")
+    for _pos, tasks in states[1:]:
+        print_statement(tasks, pw.periods, with_periods=False)
     print("[ PROGRESSIVE RULE SET - a chain of links, settled from t=0 outward ]")
     if not settle:
         print("  derived in the window, a link at a time: the definitive part grows")

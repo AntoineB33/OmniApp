@@ -1542,6 +1542,15 @@ class ProgressiveWindow(SlidingRules):
       seconds of work, and `steps` records every link so the checks can hold it
       to it.
 
+    The LINE itself starts at the origin, not at the far side of whatever is
+    already definitive: the scheduler is handed the whole timeline from t=0 and
+    the chain settles it from there, which is the state the display opens on --
+    a schedule still changing everywhere, and a definitive part growing out of
+    t=0. Once that part reaches `tp_teleport` the line jumps onto it (`tp_home`)
+    and the sweep starts from there. Nothing is swept by the jump: the line was
+    never at a position in between, so no period there was ever reached, let
+    alone dragged.
+
     The sliding period is tests 10-11's idea taken to its other extreme:
     instead of one period dragged along by t_p, a whole grid of them stands
     ahead of the line and each is REACHED in turn. Reached is not passed: a
@@ -1594,15 +1603,21 @@ class ProgressiveWindow(SlidingRules):
     # follow it.
     FIT_BUDGET = 6.0
 
-    def __init__(self, tasks, span, moving, marks=(), tp_start=0, pre_placed=(),
-                 periods=(), sliding=None, swept=None, lookahead=None,
+    def __init__(self, tasks, span, moving, marks=(), tp_start=0, tp_teleport=None,
+                 pre_placed=(), periods=(), sliding=None, swept=None, lookahead=None,
                  max_rules=MAX_RULES, local_rules=None, tol=Fraction(1, 120),
-                 blend=None, **kw):
+                 blend=None, blend_ends=(), **kw):
         self.tasks = list(tasks)
         # `blend(t) -> tasks` makes the PRIORITIES a function of the position a
         # plan is made from: a plan drawn from t satisfies the percentages of
         # exactly t. None (the ordinary case) means one fixed set for all of it.
         self.blend = blend
+        # ...and the positions the blend is pinned at -- the STATES it slides
+        # between, which are a statement about the case rather than about any
+        # one position of the line, and which a display asking `tasks_at(t_p)`
+        # could not recover: at t_p the table says where the percentages are,
+        # never what they are travelling from or to. Empty when nothing slides.
+        self.blend_ends = tuple(frac(b) for b in (blend_ends or ()))
         self.span = frac(span)
         self.moving = moving
         self._sliding = sliding
@@ -1610,6 +1625,16 @@ class ProgressiveWindow(SlidingRules):
         self.pre = [Placement(p['name'], frac(p['start']), frac(p['start']) + frac(p['duration']),
                               p.get('color', '#CCCCCC')) for p in pre_placed]
         self.tp_start = frac(tp_start)
+        # ...and where it JUMPS to once the chain has made the schedule under
+        # that instant definitive (test 12's 24h). The line starts at the origin
+        # and the scheduler works the WHOLE timeline from there; only when the
+        # part up to the teleport instant will not move again does the line land
+        # on it, and the sweep begins there. It is a jump and not a slide on
+        # purpose: the stretch behind it is being SETTLED, not swept -- the line
+        # reached no period in it, so nothing there was ever dragged. None (the
+        # ordinary case, tests 10-11) means the line simply starts where it
+        # starts and stays there until the user or the sweep moves it.
+        self.tp_teleport = None if tp_teleport is None else frac(tp_teleport)
         self.lookahead = frac(lookahead) if lookahead is not None else 6 * frac(60)
         self.max_rules = max_rules
         # The rules AT THE LINE are asked for one regime at a time, while the
@@ -1637,11 +1662,23 @@ class ProgressiveWindow(SlidingRules):
         # the timeline the line leaves behind it: the same chain, over the
         # environment the line has swept clean
         self.past = None if swept is None else ProgressiveWindow(
-            tasks, span, moving=swept, tp_start=tp_start, pre_placed=pre_placed,
+            tasks, span, moving=swept, tp_start=tp_start, tp_teleport=tp_teleport,
+            pre_placed=pre_placed,
             periods=periods, lookahead=lookahead, max_rules=max_rules,
-            local_rules=local_rules, tol=tol, blend=blend, **kw)
+            local_rules=local_rules, tol=tol, blend=blend, blend_ends=blend_ends,
+            **kw)
 
     # ---------------- the priorities a plan is made with ---------------- #
+
+    def blend_states(self):
+        """The two ends of the slide: `(position, tasks)`, in order.
+
+        What a display has to show for the answer to be readable at all -- the
+        table at t_p is one frame of a transition, and the transition is the
+        case. Empty unless the percentages slide AND the case says where their
+        states are pinned."""
+        if self.blend is None: return []
+        return [(b, self.tasks_at(b)) for b in self.blend_ends]
 
     def tasks_at(self, t):
         """The tasks as they stand at position t.
@@ -1672,6 +1709,10 @@ class ProgressiveWindow(SlidingRules):
         the line CONSUMING a period, which changes what the rules are derived
         from."""
         out = {self.tp_start, self.span}
+        # the teleport instant among them: the line lands on it the moment the
+        # front reaches it, so the front has to be able to STOP there rather
+        # than straddling it inside a link
+        if self.tp_teleport is not None: out.add(self.tp_teleport)
         out |= {frac(b) for b in extra}
         for p in self.pre:
             out |= {p.start, p.end}
@@ -1719,6 +1760,23 @@ class ProgressiveWindow(SlidingRules):
     def settled(self):
         """How much timeline the two chains have made definitive between them."""
         return self.front if self.past is None else min(self.front, self.past.front)
+
+    def tp_home(self):
+        """Where the line rests while nobody has taken hold of it.
+
+        The origin until the definitive part reaches the teleport instant, and
+        that instant afterwards. A display reads it rather than deciding for
+        itself: whether the schedule under the line will still move is the
+        chain's business, not the drawing's."""
+        if self.tp_teleport is None or self.settled < self.tp_teleport:
+            return self.tp_start
+        return self.tp_teleport
+
+    @property
+    def sweep_start(self):
+        """The position the sweep runs from: the teleport instant where there is
+        one, since the line does not begin moving until it has jumped."""
+        return self.tp_start if self.tp_teleport is None else self.tp_teleport
 
     def _commit_end(self, plan, t, limit, periods=None):
         """How far a plan may be used.

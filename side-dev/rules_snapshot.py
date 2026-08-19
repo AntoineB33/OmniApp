@@ -86,11 +86,19 @@ def moving_rules_lines(title, mw):
 
 PROGRESSIVE_LINKS = 6
 
+def line_positions(pw):
+    """The positions the rules at the line are recorded at: where the line
+    WAITS while the chain settles the first day, where it teleports to and
+    begins sweeping from, and a third of the way along that sweep -- the first
+    of the three at which a break is being dragged."""
+    sweep = pw.sweep_start
+    return sorted({pw.tp_start, sweep, sweep + (pw.span - sweep) / 3})
+
 def progressive_regime_lines(pw, at=()):
     """The affine rules at a few positions of the line -- the dynamic half of
     the answer, in the same form tests 10-11 record theirs."""
     out = [""]
-    for tp in (at or (pw.tp_start, pw.tp_start + (pw.span - pw.tp_start) / 3)):
+    for tp in (at or line_positions(pw)):
         r = pw.regime_at(tp)
         out.append(f"Rules at the line while t_p in {r.label}:")
         out.append(f"  Prefix: {r.prefix_text}")
@@ -106,21 +114,22 @@ def progressive_rules_lines(title, pw):
     in full, and what the three days actually gave each task. Any change to the
     scheduler moves the digest.
 
-    The rules AT THE LINE are recorded too, at the position the sweep starts
-    from and at the first one where a break is being dragged: they are what the
-    display substitutes t_p into, and a slope changing there is exactly the kind
-    of change this file exists to catch.
+    The rules AT THE LINE are recorded too, at the position the line waits at,
+    the one it teleports to and sweeps from, and the first one where a break is
+    being dragged: they are what the display substitutes t_p into, and a slope
+    changing there is exactly the kind of change this file exists to catch.
 
     `settle` is deterministic (the front is advanced link by link until it is
     done), so nothing about the machine's speed leaks in here."""
     pw.settle()
     out = [_heading(title)] + pw.lines(max_segments=PROGRESSIVE_LINKS)
-    if pw.blend is not None:
-        # the two states the percentages slide between: they are an INPUT to
-        # every link, so a change to them belongs in the diff beside the rules
-        for at, what in ((0, "from"), (pw.span, "to")):
-            out.append(f"Percentages {what} t_p={stamp(at)}: " + ", ".join(
-                f"{t.name} {float(t.priority):g}%" for t in pw.tasks_at(at)))
+    # the two states the percentages slide between: they are an INPUT to every
+    # link, so a change to them belongs in the diff beside the rules -- and each
+    # is recorded at the POSITION it is pinned at, since moving a state along
+    # the timeline changes every link without changing a single percentage
+    for at, tasks in pw.blend_states():
+        out.append(f"Percentages at t_p={stamp(at)}: " + ", ".join(
+            f"{t.name} {float(t.priority):g}%" for t in tasks))
     out += progressive_regime_lines(pw)
     served, busy = {}, 0
     for s, e, n in pw.timeline(pw.span):

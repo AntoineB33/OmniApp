@@ -15,11 +15,15 @@ it. No single prefix+cycle describes that, so `ProgressiveWindow` derives a
 CHAIN of rules and settles it link by link from t=0 outward, fast enough that
 the definitive part of the schedule grows by far more than the ten minutes per
 ten seconds the requirement asks for -- and the rules at the line itself are
-fitted affine in t_p, one regime at a time, so following it is arithmetic.
+fitted affine in t_p, one regime at a time, so following it is arithmetic. The
+line waits at the origin while that happens, over a schedule being planned
+whole, and teleports to t=24h the moment the first day of it is definitive; the
+sweep runs from there.
 Test 13 is test 12 with the PERCENTAGES sliding as well, from one arrangement
-at t_p=0 to another at t_p=48h: the same environment, the same kind of answer,
-each link (and the rules at the line) made to satisfy the percentages of
-exactly the position it is made from.
+at t_p=24h to another at t_p=48h -- the two states the window draws under its
+task table, and outside which the nearer one is held: the same environment, the
+same kind of answer, each link (and the rules at the line) made to satisfy the
+percentages of exactly the position it is made from.
 """
 
 import functools
@@ -238,7 +242,14 @@ def build_moving_cases(tau_scale=1):
 HOUR = frac(60)
 DAY = 24 * HOUR
 TEST12_SPAN = 3 * DAY
-TEST12_TP_START = DAY            # the line starts at the end of the first day
+# The line starts at the ORIGIN: the scheduler is handed the three days whole
+# and the chain settles them from t=0, which is what the display opens on. The
+# moment the definitive part reaches the end of the first day the line teleports
+# onto it (`ProgressiveWindow.tp_home`) and the sweep begins there -- so the
+# first day's breaks are never reached by the line, and are the ones still
+# standing when it has swiped every other one.
+TEST12_TP_START = frac(0)        # where the line waits while the chain settles
+TEST12_TP_SWEEP = DAY            # ...and where it teleports to, and sweeps from
 
 PRIVILEGED = [f"P{i}" for i in range(1, 11)]
 ORDINARY = [f"N{i}" for i in range(1, 11)]
@@ -367,11 +378,12 @@ TEST12_GRID = test12_grid()
 
 def test12_static():
     """The part of the environment the sliding line never reaches: the nights,
-    and the first day's breaks (t_p starts at the end of it)."""
+    and the first day's breaks (the line teleports over that day rather than
+    sweeping it, so nothing in it is ever dragged)."""
     return test12_nights() + test12_break_periods(
-        [g for g in TEST12_GRID if g[0] < TEST12_TP_START])
+        [g for g in TEST12_GRID if g[0] < TEST12_TP_SWEEP])
 
-TEST12_SWEPT = [g for g in TEST12_GRID if g[0] >= TEST12_TP_START]
+TEST12_SWEPT = [g for g in TEST12_GRID if g[0] >= TEST12_TP_SWEEP]
 
 def test12_swept(_tp):
     """The environment the line leaves BEHIND it: nothing but the standing one.
@@ -474,10 +486,17 @@ TEST12_TITLE = (
 #  Test 13: test 12 again, with the PERCENTAGES THEMSELVES sliding
 # --------------------------------------------------------------------------- #
 
+# The two ends the requirement names: the first state is the one in force at
+# t=24h -- where the line lands and the sweep begins (`TEST12_TP_SWEEP`) -- and
+# the second the one it reaches half a sweep later. Before the first and after
+# the second the nearer state stands, so the first day (settled while the line
+# waits at the origin) and the last day are each planned under one arrangement.
+TEST13_BLEND_START = TEST12_TP_SWEEP   # the state the sweep starts on
 TEST13_BLEND_END = 2 * DAY       # the second state is reached at t_p = 48h
+TEST13_BLEND_ENDS = (TEST13_BLEND_START, TEST13_BLEND_END)
 
-# Task A hands half of its share to the ten privileged tasks over the first two
-# days. The ten ordinary ones keep theirs, which is what holds the minimal
+# Task A hands half of its share to the ten privileged tasks over the day the line
+# crosses first. The ten ordinary ones keep theirs, which is what holds the minimal
 # period -- max(m_i/p_i), and so the field's decay constant tau -- still at the
 # 45min/2.5% of test 12 at every position: the blend changes who the timeline
 # is for, not the scale the compensation works at.
@@ -486,15 +505,17 @@ TEST13_TO = {"A": frac(25), **{n: frac(5) for n in PRIVILEGED},
              **{n: frac(2.5) for n in ORDINARY}}
 
 def test13_priorities(tp):
-    """The percentages at position tp: affine from the first state at t_p=0 to
-    the second at t_p=48h, and held at the second one after that.
+    """The percentages at position tp: affine from the first state at t_p=24h
+    to the second at t_p=48h, and held at whichever end is nearer outside that.
 
-    Held rather than extrapolated: a percentage is a share of a hundred, and a
-    line drawn past the state it was fitted to would take one of them negative
-    on the third day. The blend is a transition between two arrangements, so
-    outside it the nearer arrangement stands -- which is also what makes the
-    schedule continuous at 48h rather than kinked into nonsense."""
-    x = min(max(frac(tp), frac(0)), TEST13_BLEND_END) / TEST13_BLEND_END
+    Held rather than extrapolated, at BOTH ends: a percentage is a share of a
+    hundred, and a line drawn past a state it was fitted to would take one of
+    them negative on the third day and above its own start before the first. The
+    blend is a transition between two arrangements, so outside it the nearer
+    arrangement stands -- which is what makes the schedule continuous at 24h and
+    at 48h rather than kinked into nonsense at either."""
+    width = TEST13_BLEND_END - TEST13_BLEND_START
+    x = min(max(frac(tp) - TEST13_BLEND_START, frac(0)), width) / width
     return {n: TEST13_FROM[n] + (TEST13_TO[n] - TEST13_FROM[n]) * x for n in TEST13_FROM}
 
 def tasks13(tp):
@@ -510,32 +531,39 @@ def tasks13(tp):
 TEST13_TITLE = (
     "Test 13 (progressive rule list, SLIDING PERCENTAGES): test 12's three days, nights,\n"
     "-> tasks and grid of breaks -- but the priorities themselves slide, task A handing half\n"
-    "   its share to the ten privileged ones between t_p=0 and t_p=48h. The answer is the same\n"
+    "   its share to the ten privileged ones between t_p=24h and t_p=48h -- the two end\n"
+    "   states the window draws under its task table. The answer is the same\n"
     "   kind of object: one chain of rules, each link (and the rules at the line) made to\n"
     "   satisfy the percentages of exactly the position it is made from."
 )
 
 
-def progressive_window(tasks, blend=None, tau_scale=1):
+def progressive_window(tasks, blend=None, tau_scale=1, blend_ends=None):
     """Tests 12 and 13's window -- one environment, and the percentages either
     fixed (12) or sliding with the position they are planned from (13).
 
     One constructor for both, so that the only difference between the two cases
     is the thing the requirement names: `blend`. It is also what lets a check
-    build a window of its own without touching the ones on display."""
+    build a window of its own without touching the ones on display.
+
+    `blend_ends` are the two positions the sliding percentages are pinned at --
+    what the window has to SHOW, since a table read at t_p alone says what the
+    priorities are here and nothing about what they are sliding between."""
     return ProgressiveWindow(tasks, span=TEST12_SPAN, moving=test12_moving,
                              sliding=test12_at_line, swept=test12_swept,
-                             tp_start=TEST12_TP_START, periods=test12_static(),
+                             tp_start=TEST12_TP_START, tp_teleport=TEST12_TP_SWEEP,
+                             periods=test12_static(),
                              marks=[g[1] for g in TEST12_SWEPT],
                              max_rules=29, local_rules=12, blend=blend,
-                             **_tau_kw(tau_scale))
+                             blend_ends=blend_ends, **_tau_kw(tau_scale))
 
 def build_progressive_cases(tau_scale=1):
     """The cases whose rule list is derived a link at a time, while it is shown."""
     return [
         (TEST12_TITLE, progressive_window(tasks12(), tau_scale=tau_scale), 45),
-        (TEST13_TITLE, progressive_window(tasks13(0), blend=tasks13,
-                                          tau_scale=tau_scale), 45),
+        (TEST13_TITLE, progressive_window(tasks13(TEST13_BLEND_START), blend=tasks13,
+                                          tau_scale=tau_scale,
+                                          blend_ends=TEST13_BLEND_ENDS), 45),
     ]
 
 
@@ -778,7 +806,7 @@ def all_periods12():
     it are gone; the recurrence rules are about where they are PUT, so they are
     checked here against the grid entire, from t=0 to the end."""
     return test12_static() + test12_break_periods(
-        [g for g in TEST12_GRID if g[0] >= TEST12_TP_START])
+        [g for g in TEST12_GRID if g[0] >= TEST12_TP_SWEEP])
 
 def stretches12(periods):
     """The privileged-only stretches of a fixed environment, computed once: the
@@ -859,6 +887,9 @@ def check_drag_and_merge(samples=4096, verbose=True):
         touches the next five-minute break, that break is what is drawn at the
         line, 20 seconds to the left of where the grid had put it."""
     fails, merges = [], []
+    # from the origin, where the line waits, and not merely from where it lands:
+    # the positions it can be scrubbed to before the teleport owe the same rule
+    # (nothing is reached there, so nothing may be drawn at the line)
     span, start = TEST12_SPAN, TEST12_TP_START
     grid = [start + (span - start) * Fraction(i, samples) for i in range(samples + 1)]
     prev_len, prev_tp = None, None
@@ -1002,26 +1033,33 @@ def check_resume_contract(pw, samples=24, verbose=True, max_report=6):
         print()
     return fails
 
-def blend_shape_failures(prio=None, end=None):
+def blend_shape_failures(prio=None, start=None, end=None):
     """The blend itself: the two states, reached where they are supposed to be.
 
     Checked against the two arrangements rather than against the function's own
     output at another position -- an interpolation that quietly rescaled, or
-    that went on extrapolating past the second state, would agree with itself
-    everywhere and with the requirement nowhere."""
+    that went on extrapolating past either state, would agree with itself
+    everywhere and with the requirement nowhere. Both ends are held, so the
+    check is symmetric: a blend still anchored at t_p=0 would pass at 48h and
+    fail here at 24h, which is exactly the change the requirement made."""
     prio = test13_priorities if prio is None else prio
+    start = TEST13_BLEND_START if start is None else start
     end = TEST13_BLEND_END if end is None else end
     out = []
     def same(got, want, where):
         if any(abs(got[n] - want[n]) > Fraction(1, 10 ** 6) for n in want):
             out.append(f"the percentages at {where} are not the ones the state asks for")
-    same(prio(0), TEST13_FROM, "t_p=0")
+    same(prio(start), TEST13_FROM, "t_p=" + stamp(start))
     same(prio(end), TEST13_TO, "t_p=" + stamp(end))
     for f in (Fraction(1, 4), Fraction(1, 2), Fraction(7, 8)):
+        at = start + (end - start) * f
         want = {n: TEST13_FROM[n] + (TEST13_TO[n] - TEST13_FROM[n]) * f for n in TEST13_FROM}
-        same(prio(end * f), want, f"t_p={stamp(end * f)} (the blend is affine)")
+        same(prio(at), want, f"t_p={stamp(at)} (the blend is affine)")
+    same(prio(frac(0)), TEST13_FROM, "t_p=0 (held before the first state)")
+    same(prio(start / 2), TEST13_FROM,
+         f"t_p={stamp(start / 2)} (held before the first state)")
     same(prio(end + DAY), TEST13_TO, f"t_p={stamp(end + DAY)} (held past the second state)")
-    for t in (frac(0), end / 3, end, end + DAY):
+    for t in (frac(0), start, (start + end) / 3, end, end + DAY):
         if sum(prio(t).values()) != frac(100):
             out.append(f"the percentages at {stamp(t)} do not add up to 100")
     return out
@@ -1100,20 +1138,21 @@ def check_priority_blend(pw, tasks_at=None, samples=8, verbose=True, max_report=
         if shape(plan_with(tasks_at(tp), tp)) != mine:
             fails.append(f"t_p={stamp(tp)}: the plan at the line is not the plan the "
                          f"percentages at {stamp(tp)} give")
-        if shape(plan_with(tasks_at(0), tp)) != mine:
+        if shape(plan_with(tasks_at(pw.tp_start), tp)) != mine:
             moved += 1
     if not moved:
         fails.append("the sliding percentages change no plan anywhere on the sweep: "
                      "the scheduler is not reading them")
     if verbose:
         print("--- the percentages slide, and the plan at the line is made with them ---")
-        first, last = test13_priorities(0), test13_priorities(TEST13_BLEND_END)
+        first, last = test13_priorities(TEST13_BLEND_START), test13_priorities(TEST13_BLEND_END)
         print(f"  A {float(first['A']):g}% -> {float(last['A']):g}%, each privileged "
               f"{float(first['P1']):g}% -> {float(last['P1']):g}%, each other "
               f"{float(first['N1']):g}% -> {float(last['N1']):g}%, "
-              f"reached at {stamp(TEST13_BLEND_END)} and held")
+              f"between t_p={stamp(TEST13_BLEND_START)} and {stamp(TEST13_BLEND_END)}, "
+              f"held outside")
         print(f"  {moved} of the {len(grid)} sampled positions plan differently than the "
-              f"starting percentages would")
+              f"first state's percentages would")
         print("  PASS: at every sampled position the plan is the one the percentages "
               "of exactly that position give" if not fails else f"  FAIL ({len(fails)}):")
         for f in fails[:max_report]: print("    - " + f)
