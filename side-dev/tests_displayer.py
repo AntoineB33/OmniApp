@@ -18,15 +18,36 @@ A bar at the top of the window owns tau -- the constant the compensation field
 decays over, on both sides of a blockage -- as a multiple of each case's own
 default. Changing it rebuilds every rule list, since they are a function of it.
 
-Test 12's rule list is too long to derive before anything can be shown, so its
-panel settles one link of the chain between frames and draws whatever is known
-now: definitive up to the front, provisional past it. Scrolling to it straight
-away shows the far end of the schedule still changing while the definitive part
-grows from t=0.
+Tests 12 and 13's rule lists are too long to derive before anything can be
+shown, so their panel settles the chain on a BACKGROUND THREAD and draws
+whatever is known now: definitive up to the front, provisional past it.
+Scrolling to it straight away shows the far end of the schedule still changing
+while the definitive part grows from t=0.
+
+Those two are the cases that are DERIVED WHILE THEY ARE SHOWN, and one of them
+is on screen at a time: a second bar at the top chooses which (the last of them
+by default) and it is drawn at the bottom of the window. Only the case on
+screen derives. Choosing another does not restart anything -- the case being
+left keeps every link it has settled, because the chain lives in its own
+window object and the selector only swaps the PANEL, so a case chosen again
+goes on from the link it had reached. Two chains settling at once would be two
+workers competing for one interpreter and for the thread that draws, and each
+front would crawl at half its pace.
+
+Nothing that costs more than a frame runs on the thread that draws. Deriving one
+link of test 12's chain is a third of a second and fitting one regime is up to
+six, against a frame of a twelfth -- so a window that derived between frames was
+not a window that stayed answering, it was one that blocked for a third of a
+second at a time and, once, for six. The rebuild the tau bar triggers is the
+same shape: the scheduling runs on a worker and each stage is DRAWN, on the main
+thread, as it lands.
 """
 
+import queue
 import sys
+import threading
 import time
+import traceback
 from fractions import Fraction
 
 try:
@@ -429,6 +450,87 @@ def draw_schedules(root, canvas, test_cases, window_width=900):
     return y_offset
 
 
+# Handing the interpreter back to the drawing thread promptly.
+#
+# Every Tcl call releases the interpreter lock and has to queue for it again,
+# so once a worker is running, what a frame costs is not its work but its
+# thousand handovers. Measured on this window: 500 canvas calls take 1.9 ms
+# alone, 264 ms behind two workers at the default 5 ms switch interval, and
+# 8.4 ms at 0.5 ms. The default is tuned for threads that hold the lock in long
+# stretches; the thread that draws holds it in very short ones and needs it
+# back at once, which is exactly what a shorter interval buys. It costs the
+# workers a little throughput and buys the window a factor of thirty -- and
+# without it, moving the deriving off the frame achieves nothing at all,
+# because the frame then spends its time waiting rather than working.
+SWITCH_INTERVAL = 0.0005
+
+
+def share_the_interpreter():
+    """Called wherever a worker is started; idempotent."""
+    if sys.getswitchinterval() > SWITCH_INTERVAL:
+        sys.setswitchinterval(SWITCH_INTERVAL)
+
+
+class Deriver:
+    """A thread that derives while the window draws.
+
+    Deriving between frames does not keep a window answering, it only makes the
+    blocks shorter than the work: a link of test 12's chain is a third of a
+    second and a regime is up to six, against a frame of a twelfth, and both
+    were measured blocking the loop for exactly that long. On a thread of its
+    own the same work leaves the loop its slices -- the GIL costs THROUGHPUT
+    here, not responsiveness, and responsiveness is the one thing the window
+    may not spend, since what this case is FOR is watching the definitive part
+    grow and a frozen window shows nothing growing.
+
+    A thread alone is not enough, and it is worth being exact about why, because
+    the measurement is counter-intuitive: with the work moved here and nothing
+    else changed, a frame of test 12's panel went from 3.2 s to 3.2 s. The
+    deriving was gone from it and it was waiting instead -- every Tcl call
+    releases the interpreter lock and queues for it again behind a worker that
+    holds it for a whole switch interval. `share_the_interpreter` is the other
+    half of the fix and the frame is 42 ms with it.
+
+    What crosses the threads is the derived object itself -- written here, read
+    by the drawing thread -- and that is sound without a lock because the chain
+    is only ever appended to and publishes its front last (`_extend_chain`): a
+    reader between two commits sees an earlier state of it, never a torn one.
+
+    `generation` is the only handshake: it counts units of work done, so the
+    panel can tell a frame that is out of date from one that is not.
+    """
+
+    IDLE_SLEEP = 0.02          # nothing to derive: give the drawing thread all of it
+
+    def __init__(self, job):
+        self.job = job         # one unit of work; True if anything changed
+        self.generation = 0
+        self.stopped = False
+        share_the_interpreter()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        while not self.stopped:
+            try:
+                worked = self.job()
+            except Exception:                    # a derivation that raises must
+                traceback.print_exc()            # say so, not vanish with its
+                return                           # thread and leave a dead panel
+            if worked:
+                self.generation += 1
+            else:
+                time.sleep(self.IDLE_SLEEP)
+
+    def stop(self):
+        """Ask the thread to end after the unit it is in.
+
+        A unit is not interrupted -- a link is a third of a second and a fit is
+        bounded by its own deadline -- so a torn-down panel costs at most that
+        much of a background thread, and never anything of the window."""
+        self.stopped = True
+
+
 class MovingCasePanel:
     """A timeline whose one period slides, redrawn from the dynamic rules.
 
@@ -451,18 +553,25 @@ class MovingCasePanel:
         self.root, self.canvas, self.tooltip, self.mw = root, canvas, tooltip, mw
         self.title = title
         self.tag = f"moving{id(self)}"
+        # The timeline is deleted and rebuilt every frame; the buttons beside it
+        # are made once. They are therefore on a tag of their OWN -- one the
+        # frame never deletes and `destroy` does, which is what lets a panel be
+        # taken off the canvas without taking the case off with it.
+        self.chrome = self.tag + ":chrome"
         self.playing = False
         self.scrubbing = False
         self.stopped = False
+        self.dirty = True
         self._setup(width, sweep_seconds)
 
         assert tk is not None
         self.btn_copy = tk.Button(canvas, text="Copy\nRules", cursor="hand2",
                                   command=lambda: copy_dynamic_rules(root, title, mw))
-        canvas.create_window(15, y, window=self.btn_copy, anchor="nw")
+        canvas.create_window(15, y, window=self.btn_copy, anchor="nw", tags=self.chrome)
         self.btn_play = tk.Button(canvas, text="Play", width=6, cursor="hand2",
                                   command=self._toggle)
-        canvas.create_window(15, y + 48, window=self.btn_play, anchor="nw")
+        canvas.create_window(15, y + 48, window=self.btn_play, anchor="nw",
+                            tags=self.chrome)
 
         canvas.bind("<Button-1>", self._on_press, add="+")
         canvas.bind("<B1-Motion>", self._on_drag, add="+")
@@ -496,6 +605,7 @@ class MovingCasePanel:
     def _toggle(self):
         self.playing = not self.playing
         self.btn_play.config(text="Pause" if self.playing else "Play")
+        self.dirty = True          # the status line says which it is
 
     def stop(self):
         """End this panel's after() loop: its canvas is about to go.
@@ -503,6 +613,27 @@ class MovingCasePanel:
         A panel drives itself, so a rebuild that only destroyed the canvas would
         leave the loop drawing into a widget that no longer exists."""
         self.stopped = True
+
+    def destroy(self):
+        """Take this panel off the canvas -- and NOTHING else.
+
+        What a panel owns is the drawing; the case itself lives in `self.mw`,
+        which is left exactly as it stands. So a panel that is destroyed while
+        its chain is half derived costs the derivation nothing: put the same
+        window in a new panel and it goes on from the link it had reached.
+
+        The canvas bindings the panel added cannot be removed one by one (Tk
+        replaces the whole binding when it is rewritten), so the handlers ask
+        `_running()` instead: after this a stray click reaches a panel that
+        declines it rather than one that redraws itself back onto the canvas."""
+        self.stop()
+        if not self.canvas.winfo_exists(): return
+        for item in self.canvas.find_withtag(self.tag):
+            if self.tooltip is not None: self.tooltip.unregister(item)
+        self.canvas.delete(self.tag)
+        for button in (self.btn_copy, self.btn_play):
+            button.destroy()                 # takes its canvas window with it
+        self.canvas.delete(self.chrome)
 
     def _running(self):
         return not self.stopped and self.canvas.winfo_exists()
@@ -529,6 +660,7 @@ class MovingCasePanel:
         return self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
 
     def _on_press(self, event):
+        if not self._running(): return
         cx, cy = self._canvas_xy(event)
         row = self._row_under(cy)
         if row is None: return
@@ -536,16 +668,16 @@ class MovingCasePanel:
         self.scrubbing = True
         if self.playing: self._toggle()   # a position the user chose is not one
         self.tp = self._tp_at(cx, row)    # the sweep may take back
-        self._draw()
+        self._draw(); self.dirty = False; self._present()
 
     def _on_drag(self, event):
-        if not self.scrubbing: return
+        if not (self.scrubbing and self._running()): return
         cx, cy = self._canvas_xy(event)
         # once the drag has started it owns the pointer: leaving the row band
         # sideways or vertically drags along the row it began on, clamped
         row = self._row_under(cy)
         self.tp = self._tp_at(cx, row if row is not None else int(self.tp // self.row_duration))
-        self._draw()
+        self._draw(); self.dirty = False; self._present()
 
     def _on_release(self, _event):
         self.scrubbing = False
@@ -556,16 +688,61 @@ class MovingCasePanel:
     def _row_y(self, row_idx):
         return self.top + row_idx * (self.ROW_H + self.ROW_SPACING)
 
+    # A frame that DRAWS is not a frame the user sees. Tk repaints from an idle
+    # handler, and an idle handler runs only when no timer is due -- so four
+    # panels whose after() loops are perpetually overdue starve the idle queue
+    # for good: everything was drawn into the canvas and none of it was ever
+    # painted, which is the blank window that opens and never shows a test. A
+    # frame therefore ends by PRESENTING what it drew, and the next one is
+    # scheduled with a floor under its delay so the event queue always gets a
+    # slice of its own. (What made the loops overdue in the first place was
+    # deriving inside them, which is now a `Deriver`'s job -- but the floor
+    # stands: it is what a redraw of four full timelines costs that decides.)
+    MIN_DELAY_MS = 8
+
     def _tick(self):
         if not self._running(): return
-        self._draw()
+        t0 = time.perf_counter()
+        if self._work(): self.dirty = True
         if self.playing:
-            self.tp += self.step
-            if self.tp + self.mw.reach >= self.mw.span:   # the period itself, not
-                self.tp = frac(0)                         # merely its start, reached
-        refresh_scrollregion(self.canvas)                 # the end of the timeline
-        self.tooltip.refresh()
-        self.canvas.after(int(1000 / self.FPS), self._tick)
+            self._advance_tp()
+            self.dirty = True
+        # Redrawing a panel nothing has changed is not free -- it rebuilds every
+        # rectangle of the timeline and re-measures the scrollregion over the
+        # whole canvas -- and a paused panel changes nothing at all. So a frame
+        # draws only what moved, which is what leaves the loop the room to
+        # present it (and test 12's worker the room to settle its chain: the
+        # GIL is shared, so a frame not drawn is a link derived).
+        if self.dirty:
+            self._draw()
+            refresh_scrollregion(self.canvas)
+            self.tooltip.refresh()
+            self.dirty = False
+        self._present()
+        self.canvas.after(self._delay(t0), self._tick)
+
+    def _advance_tp(self):
+        self.tp += self.step
+        if self.tp + self.mw.reach >= self.mw.span:   # the period itself, not
+            self.tp = frac(0)                         # merely its start, reached
+                                                      # the end of the timeline
+
+    def _work(self):
+        """What this panel picks up between frames, if anything; True if the
+        drawing is now out of date. Nothing here: the rule list was fitted once,
+        when the case was built. It never DERIVES -- a frame that scheduled
+        would be a frame the window spent not answering."""
+        return False
+
+    def _delay(self, t0):
+        """The frame interval, measured from the START of the frame."""
+        spent = int((time.perf_counter() - t0) * 1000)
+        return max(self.MIN_DELAY_MS, int(1000 / self.FPS) - spent)
+
+    def _present(self):
+        """Run Tk's pending idle handlers: this is what puts the frame on
+        screen. Only idle events, so no user callback can re-enter the tick."""
+        if self._running(): self.canvas.update_idletasks()
 
     def _bar(self, start, end, **kw):
         """One span of the timeline, wrapped over the rows it crosses."""
@@ -671,9 +848,12 @@ class ProgressiveCasePanel(MovingCasePanel):
     why -- with the sweep paused and nothing touched -- the far end of the
     timeline goes on changing while the definitive part grows from t=0.
 
-    One link per frame rather than a worker thread: a link is a tenth of a
-    second, the frame that draws it is a sixtieth, and interleaving them keeps
-    the window answering while it fills. A thread would only add the GIL.
+    The deriving runs on a `Deriver`, not between frames. A link is a third of
+    a second and the frame that draws it a twelfth, so interleaving them does
+    not keep the window answering -- it blocks it for a third of a second at a
+    time, for the half-minute the chain takes, and then for the six a regime is
+    allowed. On its own thread the same work leaves every frame its slice, and
+    the panel only ever DRAWS what the worker has published.
 
     t_p behaves as it does everywhere else: everything left of it is frozen,
     and here it also consumes the breaks it goes past.
@@ -684,7 +864,16 @@ class ProgressiveCasePanel(MovingCasePanel):
 
     def __init__(self, root, canvas, tooltip, y, title, pw, sweep_seconds, width=900):
         self.pw = pw
+        # set before the base class runs its first frame, which reads them
+        self.want = None            # the position the worker owes rules for
+        self.at = None              # where the line is, for the worker to read
+        self.shares = None          # (tp, settled, got, open_total), published
+        self.measured = 0.0         # when the worker last measured them
+        self.seen = 0               # the last generation of its work drawn here
+        self.shown = 0.0            # when that was
+        self.deriver = None
         super().__init__(root, canvas, tooltip, y, title, pw, sweep_seconds, width=width)
+        self.deriver = Deriver(self._derive)
 
     def _setup(self, width, sweep_seconds):
         pw = self.pw
@@ -698,27 +887,107 @@ class ProgressiveCasePanel(MovingCasePanel):
         t = super()._tp_at(cx, row)
         return min(max(t, self.pw.tp_start), self.pw.span)
 
-    WORK_BUDGET = 0.02          # seconds of deriving per frame: one link
+    # How much of the timeline may settle before the shares are measured again
+    # while the chain is still growing -- a fiftieth of the span, so the number
+    # is seen to move about fifty times over the derivation and the measuring
+    # costs a couple of seconds of the worker's time in total. Every share
+    # quoted before the chain is settled is provisional anyway: it is read off a
+    # timeline whose far end is still changing, which is what the panel says.
+    SHARE_STEP = 50
 
-    def _tick(self):
-        if not self._running(): return
-        # The two chains first -- they are the timeline itself. Then the rules
-        # AT THE LINE, but ONLY while the line is standing still: deriving one
-        # takes a second or two and the sweep crosses a regime every frame, so
-        # doing it while playing would stall the line instead of moving it. A
-        # position the user stops at (or clicks on) becomes exact within a frame
-        # or two, and stays so -- a regime is derived once and kept.
-        if not self.pw.done:
-            self.pw.advance(budget=self.WORK_BUDGET)
-        elif not self.playing and not self.pw.has_rules_at(self.tp):
-            self.pw.regime_at(self.tp)
-        self._draw()
-        if self.playing:
-            self.tp += self.step
-            if self.tp >= self.mw.span: self.tp = self.pw.tp_start
-        refresh_scrollregion(self.canvas)
-        self.tooltip.refresh()
-        self.canvas.after(int(1000 / self.FPS), self._tick)
+    # ...and how often, at most, they are measured while it is still growing.
+    # The line moving makes them stale, and under the sweep it moves every
+    # frame -- so without a rate of their own, measuring them would take the
+    # whole worker and pressing Play would stop the chain settling altogether.
+    # This bounds them to about a tenth of it. Once the chain is settled the
+    # worker has nothing else to do and the gate is lifted, so a position the
+    # user scrubs to is measured at once.
+    SHARE_EVERY_S = 0.5
+
+    def _shares_at(self, tp):
+        """The resulting shares at tp, measured over the timeline as it stands.
+
+        This is the whole cost of a frame of this panel -- 65 ms of it against
+        1 ms for every rectangle on screen -- so it is measured HERE, on the
+        worker, and the frame only reads the answer."""
+        pw = self.pw
+        got, open_total = resulting_shares(
+            pw.timeline(tp, fit=False),
+            list(pw.periods) + list(pw.sliding(tp)),
+            [t.name for t in pw.tasks_at(tp)], lo=frac(0), hi=pw.span)
+        return (tp, pw.settled, got, open_total)
+
+    def _stale_shares(self):
+        at, have = self.at, self.shares
+        if at is None: return False
+        if have is None or have[0] != at: return True
+        return self.pw.settled - have[1] >= self.pw.span / self.SHARE_STEP
+
+    def _derive(self):
+        """One unit of work, ON THE WORKER THREAD.
+
+        The shares where the line has moved and they are due -- a frame is
+        waiting on them. Then the two chains, which are the timeline itself
+        and which the shares are only a number read off. Then the rules AT
+        THE LINE, but only for a line standing still: the sweep
+        crosses a regime every frame, so chasing it would spend every fit on a
+        position already left behind. A position the user stops at (or clicks
+        on) is derived and kept, and the frames until it lands draw the
+        standing chain there instead, which is the provisional answer the case
+        is allowed.
+
+        `local_end` is asked for as well, and not as an afterthought: it is the
+        second half of what a frame needs, and leaving it to the frame would put
+        a plan -- a tenth of a second -- back on the drawing thread at every new
+        position of the line. `ready_at` is the test both halves have to pass.
+        """
+        pw = self.pw
+        if self.stopped: return False
+        now = time.perf_counter()
+        if self._stale_shares() and (pw.done or now - self.measured >= self.SHARE_EVERY_S):
+            self.measured = now
+            self.shares = self._shares_at(self.at)
+            return True
+        if not pw.done:
+            pw.step()
+            return True
+        tp = self.want
+        if tp is not None and not pw.ready_at(tp):
+            pw.regime_at(tp)
+            pw.local_end(tp)
+            self.shares = None           # the rules at the line changed them
+            return True
+        return False
+
+    # How often a chain that is GROWING is redrawn. Not every frame: a link is
+    # a third of a second and covers twenty minutes of timeline, so redrawing at
+    # twelve frames a second draws the same picture three times over -- and a
+    # frame of this panel is a full timeline of rectangles plus the shares read
+    # off it, which is main-thread work the worker is competing for. Four times
+    # a second shows the front moving just as plainly and leaves the interpreter
+    # to the deriving. What the USER does is not throttled by this: a scrub
+    # draws from its own handler and the sweep sets `dirty` every frame.
+    PROGRESS_S = 0.25
+
+    def _work(self):
+        """On the DRAWING thread: say where the line is, and take what the
+        worker has published. Nothing here derives anything."""
+        self.at = self.tp
+        self.want = None if self.playing else self.tp
+        if self.deriver is None or self.deriver.generation == self.seen:
+            return False
+        now = time.perf_counter()
+        if now - self.shown < self.PROGRESS_S: return False
+        self.seen, self.shown = self.deriver.generation, now
+        return True
+
+    def stop(self):
+        super().stop()
+        if self.deriver is not None: self.deriver.stop()
+
+    def _advance_tp(self):
+        self.tp += self.step
+        if self.tp >= self.mw.span: self.tp = self.pw.tp_start
 
     def _status(self):
         pw = self.pw
@@ -728,10 +997,18 @@ class ProgressiveCasePanel(MovingCasePanel):
         r = pw.rules_at(self.tp)
         rules = (f"rules at the line: exact, for t_p in {r.label}" if r is not None else
                  "rules at the line: provisional (stop the sweep to derive them)")
+        blend = ""
+        if pw.blend is not None:
+            tasks = pw.tasks_at(self.tp)
+            total = sum((t.priority for t in tasks), frac(0)) or frac(1)
+            share = lambda pred: sum(t.priority for t in tasks if pred(t)) / total * 100
+            blend = (f"   |   percentages here: A {float(share(lambda t: t.name == 'A')):.1f}%, "
+                     f"privileged {float(share(lambda t: t.name.startswith('P'))):.1f}%, "
+                     f"others {float(share(lambda t: t.name.startswith('N'))):.1f}%")
         return (f"t_p = {stamp(self.tp)}   ->   definitive up to t = {stamp(pw.settled)}"
                 f"   ({len(pw.segments)} links, {len(pw.regimes)} regimes, {state}, "
                 f"{rate:.0f} min of timeline per second of work; {rules}, substituted "
-                f"into, not recomputed)")
+                f"into, not recomputed)" + blend)
 
     def _draw(self):
         c, pw, tp = self.canvas, self.pw, self.tp
@@ -757,10 +1034,19 @@ class ProgressiveCasePanel(MovingCasePanel):
         # an environment truncated at the 6h lookahead -- 33.79% for a task the
         # timeline underneath it was giving 2%.
         drawn = pw.timeline(tp, fit=False)
-        got, open_total = resulting_shares(drawn, list(pw.periods) + list(pw.sliding(tp)),
-                                           [t.name for t in pw.tasks],
-                                           lo=frac(0), hi=pw.span)
-        draw_info(c, self.MARGIN_LEFT, self.y_info, pw.tasks, pw.periods,
+        # the percentages are read AT THE LINE: where they slide (test 13) the
+        # table is the statement the plan at t_p was made to satisfy, so the
+        # targets the shares are being compared against are the ones in force
+        tasks = pw.tasks_at(tp)
+        # ...and MEASURED on the worker (`_shares_at`), because measuring them is
+        # the whole cost of this frame. Until it has answered for this position
+        # the table is drawn without them rather than the frame waiting: a share
+        # a moment behind the line is the same provisional number the rest of
+        # the panel is, and a window that stops to compute one is not.
+        have = self.shares
+        got = have[2] if have is not None else {}
+        open_total = have[3] if have is not None else frac(0)
+        draw_info(c, self.MARGIN_LEFT, self.y_info, tasks, pw.periods,
                   got, open_total,
                   self.info_rows, self.info_periods, tag=self.tag, tooltip=self.tooltip)
 
@@ -813,15 +1099,36 @@ class ProgressiveCasePanel(MovingCasePanel):
                           font=("Arial", 8, "bold"), anchor="nw", tags=self.tag)
 
 
-def draw_progressive_cases(root, canvas, tooltip, cases, y_offset, window_width=900, panels=None):
-    for title, pw, sweep in cases:
-        panel = ProgressiveCasePanel(root, canvas, tooltip, y_offset, title, pw, sweep,
-                                     width=window_width)
-        if panels is not None: panels.append(panel)
-        y_offset += panel.height + 30
-    return y_offset
+def draw_progressive_case(root, canvas, tooltip, case, y_offset, window_width=900):
+    """ONE derived case, at the bottom of the window.
 
-def print_statement(tasks, periods, shares=None, open_total=None):
+    Singular on purpose: a progressive case settles its chain on a worker for
+    minutes, so two of them shown at once are two workers competing for the
+    interpreter and for the thread that draws -- and the front of each crawls
+    at half the pace. Which one is on screen is the selector's business
+    (`Workbench.show_slow`); the others keep what they have derived and are not
+    drawn, so they derive nothing."""
+    title, pw, sweep = case
+    return ProgressiveCasePanel(root, canvas, tooltip, y_offset, title, pw, sweep,
+                                width=window_width)
+
+
+def menu_label(title, chars=70):
+    """A case's one-line name, for the selector: its title up to the colon that
+    ends the headline (`Test 12 (progressive rule list)`), never the paragraph
+    under it."""
+    head = title.splitlines()[0]
+    cut = head.find("): ")
+    if cut > 0: head = head[:cut + 1]
+    elif ": " in head: head = head.split(": ", 1)[0]
+    return head if len(head) <= chars else head[:chars - 3] + "..."
+
+
+def case_tag(title):
+    """The short name the bar uses when it is talking about several: `Test 12`."""
+    return menu_label(title).split(" (")[0]
+
+def print_statement(tasks, periods, shares=None, open_total=None, with_periods=True):
     """The case's own statement -- the same table the window draws, in text."""
     total = sum((t.priority for t in tasks), frac(0)) or frac(1)
     print(f"[ TASKS ] name, minimum, priority"
@@ -830,6 +1137,7 @@ def print_statement(tasks, periods, shares=None, open_total=None):
     for t in tasks:
         got = f" -> {_pct(shares.get(t.name, 0)):>8}" if shares is not None else ""
         print(f"  {t.name:<4}{human(t.min_time):>8}{_pct(t.priority / total):>8}{got}")
+    if not with_periods: return          # the second state of a blend: same environment
     print(f"[ STATIC PERIODS ] {len(periods)}, by the set of tasks they do NOT allow")
     for line, _tip in period_lines(periods):
         print("  " + line)
@@ -883,7 +1191,11 @@ def print_progressive_rules(title, pw, max_links=8, settle=True):
     the very object the panel is about to show, and the user would open the
     window on an answer that never moves again."""
     print(f"--- {title.splitlines()[0]} ---")
-    print_statement(pw.tasks, pw.periods)
+    print_statement(pw.tasks_at(0), pw.periods)
+    if pw.blend is not None:
+        print("[ THE PERCENTAGES SLIDE ] the table above is the state at t_p=0; at the far "
+              "end of the blend:")
+        print_statement(pw.tasks_at(pw.span), pw.periods, with_periods=False)
     print("[ PROGRESSIVE RULE SET - a chain of links, settled from t=0 outward ]")
     if not settle:
         print("  derived in the window, a link at a time: the definitive part grows")
@@ -925,16 +1237,30 @@ class Workbench:
     canvas they draw into is destroyed.
     """
 
-    def __init__(self, root, width=900):
+    def __init__(self, root, width=900, on_ready=None):
         self.root, self.width = root, width
         self.scale = 1.0
         self.panels, self.tooltip = [], None
         self.body = self.canvas = None
         self.cases = self.moving = self.progressive = None
+        # The derived cases: every one of them is KEPT (the chain each has
+        # settled lives in its own window object, which nothing here rebuilds),
+        # and exactly one of them is on screen and therefore deriving.
+        self.slow_index = None       # the user's choice, kept across rebuilds
+        self.slow_panel = None       # the one panel showing it
+        self.slow_y = 0              # where at the bottom of the canvas it goes
+        # `on_ready` is called, once, on the main thread when the first build is
+        # on screen: nothing may read `cases`/`moving`/`progressive` before that,
+        # since the build no longer finishes inside this constructor.
+        self.on_ready = on_ready
+        self.generation = 0          # which rebuild owns the display
+        self.pending = None          # the stages that build is finishing
+        self.built = True
+        self._y, self._t0 = 0, 0.0
         self._bar()
-        # the bar is on screen before the first build runs, so the window shows
-        # itself saying what it is doing rather than after it has finished
-        self.root.update_idletasks()
+        # The constructor now RETURNS before the build does, so the event loop
+        # is running while it runs -- which is the difference between a window
+        # that shows itself working and one Windows marks Not Responding.
         self.rebuild()
 
     # ---------------- the bar ---------------- #
@@ -969,6 +1295,97 @@ class Workbench:
 
         self.status = tk.Label(bar, text="", fg="#555555", font=("Arial", 9))
         self.status.pack(side=tk.LEFT, padx=10)
+        self._slow_bar()
+
+    BUILDING = "(building...)"
+
+    def _slow_bar(self):
+        """The selector for the cases that are DERIVED WHILE THEY ARE SHOWN.
+
+        Tests 12 and 13 are not built and then displayed: each settles a chain
+        of links on a worker for minutes, and the point of the case is watching
+        the definitive part grow. Two of them growing at once is two workers
+        competing for one interpreter and for the thread that draws, so each
+        front crawls at half its pace and the window pays for both.
+
+        So one is shown at a time, and only the one shown derives. Choosing
+        another does not restart anything: the case being left keeps every link
+        it has settled -- the chain is in its window object, which the selector
+        never touches -- and the one chosen goes on from the link IT had
+        reached. Coming back to a case is resuming it, not rerunning it."""
+        assert tk is not None
+        bar = tk.Frame(self.root, bd=1, relief="raised", padx=8, pady=4)
+        bar.pack(side=tk.TOP, fill=tk.X)
+        tk.Label(bar, text="derived while shown  (one at a time; the others keep "
+                           "what they have settled)",
+                 font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+        self.slow_text = tk.StringVar(value=self.BUILDING)
+        self.slow_menu = tk.OptionMenu(bar, self.slow_text, self.BUILDING)
+        self.slow_menu.config(width=44, anchor="w", state="disabled",
+                              font=("Arial", 9), cursor="hand2")
+        self.slow_menu.pack(side=tk.LEFT, padx=8)
+        self.slow_status = tk.Label(bar, text="", fg="#555555", font=("Arial", 9))
+        self.slow_status.pack(side=tk.LEFT)
+
+    # ---------------- which derived case is on screen ---------------- #
+
+    def _offer_slow(self):
+        """Fill the selector with the cases the build produced."""
+        menu = self.slow_menu["menu"]
+        menu.delete(0, "end")
+        for i, (title, _pw, _sweep) in enumerate(self.progressive or ()):
+            menu.add_command(label=menu_label(title),
+                             command=lambda i=i: self.show_slow(i, reveal=True))
+        self.slow_menu.config(state="normal" if self.progressive else "disabled")
+
+    def show_slow(self, index, reveal=False):
+        """Put one derived case at the bottom of the window, and only it.
+
+        The panel is what is swapped; the case is not. Destroying the panel
+        stops its worker after the unit it is in and leaves its window holding
+        every link settled so far, so the same case put back on screen carries
+        on from there -- which is why this is a display change and never a
+        derivation thrown away."""
+        if not self.progressive: return
+        index = max(0, min(index, len(self.progressive) - 1))
+        # choosing the case already on screen is not a reason to throw its panel
+        # away: the chain would survive it, but the position of the line would not
+        if index == self.slow_index and self.slow_panel is not None: return
+        self.slow_index = index
+        case = self.progressive[index]
+        self.slow_text.set(menu_label(case[0]))
+        if self.slow_panel is not None:
+            self.slow_panel.destroy()       # its chain stays in its window
+            self.slow_panel = None
+        self.slow_panel = draw_progressive_case(self.root, self.canvas, self.tooltip,
+                                                case, self.slow_y, window_width=self.width)
+        refresh_scrollregion(self.canvas)
+        # A case the USER asked for is one they want to look at, and it is at the
+        # bottom of a canvas several screens long. The build's own first call
+        # does not move the view: there the scroll offset being restored is the
+        # position the user was reading before the rebuild.
+        if reveal: self._scroll_to(self.slow_y)
+        self._say_slow()
+
+    def _scroll_to(self, y):
+        self.canvas.update_idletasks()          # the new scrollregion is in force
+        _x1, _y1, _x2, y2 = self.canvas.bbox("all") or (0, 0, 0, 0)
+        total = y2 + SCROLL_PADDING
+        if total > 0: self.canvas.yview_moveto(max(0.0, y - 12) / total)
+
+    def _say_slow(self):
+        """What the cases that are NOT on screen are holding, as they were left.
+
+        A snapshot, not a reading: a case nobody is showing derives nothing, so
+        the front quoted here is exactly where it will resume from."""
+        kept = ", ".join(
+            f"{case_tag(title)} "
+            + (f"definitive to {stamp(pw.settled)}" if pw.settled else "not started")
+            for i, (title, pw, _sweep) in enumerate(self.progressive or ())
+            if i != self.slow_index)
+        self.slow_status.config(
+            text=f"not shown, so not deriving: {kept}   (it resumes there when chosen)"
+                 if kept else "")
 
     @staticmethod
     def _parse(value):
@@ -1001,30 +1418,103 @@ class Workbench:
 
     # ---------------- the display under it ---------------- #
 
+    POLL_MS = 30
+
     def rebuild(self):
-        self._say("rebuilding the rule lists (the scheduler is run again)...")
-        self.root.update_idletasks()
+        """Start a build, and draw its stages as they land.
+
+        A stage costs what it costs -- fitting tests 10-11's regimes is seconds
+        of scheduling -- and seconds spent on the thread that draws are seconds
+        the window is not a window. So the scheduling runs on a worker. Tk is
+        not thread-safe, so the worker only ever BUILDS: the widgets of a stage
+        are made here, by the loop that owns them, the moment that stage
+        arrives. The display fills in from the top while the rest is still
+        being scheduled, and the bar says which stage is running.
+
+        The queue is handed to the worker rather than read off `self`: a
+        rebuild the user triggers while one is running must leave the old
+        worker writing into a queue nobody reads, not into the new one.
+        """
+        self.generation += 1
+        gen = self.generation
         offset = self._scroll_offset()
         self._teardown()
-
-        t0 = time.perf_counter()
-        cases = build_cases(self.scale)
-        moving = build_moving_cases(self.scale)
-        progressive = build_progressive_cases(self.scale)
-        load_colors(moving + progressive)
-        self.cases, self.moving, self.progressive = cases, moving, progressive
-
         self._make_body()
-        y = draw_schedules(self.root, self.canvas, cases, window_width=self.width)
-        self.tooltip = ToolTip(self.canvas)
-        y = draw_moving_cases(self.root, self.canvas, self.tooltip, moving, y,
-                              window_width=self.width, panels=self.panels)
-        draw_progressive_cases(self.root, self.canvas, self.tooltip, progressive, y,
-                               window_width=self.width, panels=self.panels)
-        refresh_scrollregion(self.canvas)
-        self._restore_scroll(offset)
-        self._say(f"{len(cases) + len(moving) + len(progressive)} cases rebuilt "
-                  f"in {time.perf_counter() - t0:.1f}s")
+        # the derived cases are a function of tau like everything else, so the
+        # ones on record are gone until the build hands over new ones: the
+        # selector must not offer a case whose panel it could no longer draw
+        self.progressive = None
+        self.slow_menu.config(state="disabled")
+        self.slow_text.set(self.BUILDING)
+        self.slow_status.config(text="")
+        self.pending = queue.Queue()
+        self.built = False
+        self._y, self._t0 = 0, time.perf_counter()
+        self._say("scheduling tests 1-10...")
+        share_the_interpreter()
+        threading.Thread(target=self._build, args=(gen, self.scale, self.pending),
+                         daemon=True).start()
+        self._collect(gen, offset, self.pending)
+
+    def _build(self, gen, scale, out):
+        """The whole build, off the drawing thread; one message per stage."""
+        try:
+            out.put((gen, "cases", build_cases(scale)))
+            out.put((gen, "moving", build_moving_cases(scale)))
+            out.put((gen, "progressive", build_progressive_cases(scale)))
+        except Exception as exc:                 # a build that dies says so in
+            traceback.print_exc()                # the bar rather than leaving
+            out.put((gen, "error", exc))         # the window filling for ever
+
+    def _collect(self, gen, offset, box):
+        """Draw whatever the builder has finished. Main thread only."""
+        if gen != self.generation: return        # a newer rebuild owns the display
+        while True:
+            try:
+                _g, stage, payload = box.get_nowait()
+            except queue.Empty:
+                break
+            self._draw_stage(stage, payload, offset)
+        if not self.built:
+            self.root.after(self.POLL_MS, lambda: self._collect(gen, offset, box))
+
+    def _draw_stage(self, stage, payload, offset):
+        if stage == "error":
+            self.built = True
+            self._say(f"the build failed: {payload}", "#B00000")
+            return
+        if stage == "cases":
+            self.cases = payload
+            self._y = draw_schedules(self.root, self.canvas, payload,
+                                     window_width=self.width)
+            refresh_scrollregion(self.canvas)
+            self._say("fitting the dynamic rule lists of tests 10-11...")
+        elif stage == "moving":
+            self.moving = payload
+            load_colors(payload)
+            self.tooltip = ToolTip(self.canvas)
+            self._y = draw_moving_cases(self.root, self.canvas, self.tooltip, payload,
+                                        self._y, window_width=self.width,
+                                        panels=self.panels)
+            refresh_scrollregion(self.canvas)
+            self._say("opening test 12's chain (it is derived in its panel, live)...")
+        else:
+            self.progressive = payload
+            load_colors(payload)
+            self.slow_y = self._y
+            self._offer_slow()
+            # the LAST of them by default -- and the user's own choice instead,
+            # where they have made one: a rebuild is a new tau, not a new mind.
+            self.show_slow(len(payload) - 1 if self.slow_index is None
+                           else self.slow_index)
+            self._restore_scroll(offset)
+            self.built = True
+            self._say(f"{len(self.cases) + len(self.moving) + len(payload)} cases "
+                      f"rebuilt in {time.perf_counter() - self._t0:.1f}s "
+                      f"(the derived ones one at a time, from the bar above)")
+            if self.on_ready is not None:
+                ready, self.on_ready = self.on_ready, None
+                ready(self)
 
     def _scroll_offset(self):
         """Where the viewport's top edge sits, in canvas pixels.
@@ -1046,6 +1536,10 @@ class Workbench:
     def _teardown(self):
         for panel in self.panels: panel.stop()
         self.panels = []
+        # not in `panels`: this one is swapped by the selector, not only by a
+        # rebuild, so it is held on its own
+        if self.slow_panel is not None: self.slow_panel.stop()
+        self.slow_panel = None
         if self.tooltip is not None: self.tooltip.hide()
         self.tooltip = None
         if self.body is not None: self.body.destroy()
@@ -1088,19 +1582,30 @@ def main():
         # regimes in their constructor, and that alone is seconds the user
         # would spend looking at no window at all.
         print("--- the window ---")
-        print("  it opens now. Test 12's chain is derived inside it, a link at a time")
-        print("  between frames, so scrolling down to it without pressing play shows")
-        print("  the far end still changing while the definitive part grows from t=0.")
+        print("  it opens now, empty, and fills itself in from the top: the scheduling")
+        print("  runs on worker threads, so the window answers throughout. The cases")
+        print("  that DERIVE while they are shown (tests 12 and 13) are chosen one at a")
+        print("  time from the bar at the top and drawn at the bottom -- the last of")
+        print("  them by default. Scrolling down to it without pressing play shows the")
+        print("  far end still changing while the definitive part grows from t=0.")
+        print("  Choosing another leaves the first holding every link it settled: only")
+        print("  the case on screen derives, and a case chosen again resumes there.")
+        print("  The rules are printed here once the build is on screen.")
         print("  The checks are `uv run tests_displayer.py --verify`.\n", flush=True)
 
         root = tk.Tk()
         root.title("Task Scheduler Timeline with Constraints (including the dynamic rule list)")
         root.geometry("950x700")
-        bench = Workbench(root, width=900)
-        # the statement and the rules, off the objects the window is showing --
-        # printed WITHOUT settling test 12, which is the panel's job to do live
-        print_terminal_results(bench.cases, bench.moving, bench.progressive,
-                               settle_progressive=False)
+        # The statement and the rules, off the objects the window is showing --
+        # printed WITHOUT settling test 12, which is its panel's job to do live.
+        # It waits for the build because the build no longer waits for anything:
+        # `Workbench` returns with the window empty and fills it from a worker,
+        # so there is nothing to print until it says there is.
+        def ready(bench):
+            print_terminal_results(bench.cases, bench.moving, bench.progressive,
+                                   settle_progressive=False)
+
+        Workbench(root, width=900, on_ready=ready)
         root.mainloop()
         return
 

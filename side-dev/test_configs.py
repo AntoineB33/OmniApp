@@ -16,6 +16,10 @@ CHAIN of rules and settles it link by link from t=0 outward, fast enough that
 the definitive part of the schedule grows by far more than the ten minutes per
 ten seconds the requirement asks for -- and the rules at the line itself are
 fitted affine in t_p, one regime at a time, so following it is arithmetic.
+Test 13 is test 12 with the PERCENTAGES sliding as well, from one arrangement
+at t_p=0 to another at t_p=48h: the same environment, the same kind of answer,
+each link (and the rules at the line) made to satisfy the percentages of
+exactly the position it is made from.
 """
 
 import functools
@@ -465,16 +469,73 @@ TEST12_TITLE = (
     "   definitive part grows while the rest still changes."
 )
 
+
+# --------------------------------------------------------------------------- #
+#  Test 13: test 12 again, with the PERCENTAGES THEMSELVES sliding
+# --------------------------------------------------------------------------- #
+
+TEST13_BLEND_END = 2 * DAY       # the second state is reached at t_p = 48h
+
+# Task A hands half of its share to the ten privileged tasks over the first two
+# days. The ten ordinary ones keep theirs, which is what holds the minimal
+# period -- max(m_i/p_i), and so the field's decay constant tau -- still at the
+# 45min/2.5% of test 12 at every position: the blend changes who the timeline
+# is for, not the scale the compensation works at.
+TEST13_FROM = {"A": frac(50), **{n: frac(2.5) for n in PRIVILEGED + ORDINARY}}
+TEST13_TO = {"A": frac(25), **{n: frac(5) for n in PRIVILEGED},
+             **{n: frac(2.5) for n in ORDINARY}}
+
+def test13_priorities(tp):
+    """The percentages at position tp: affine from the first state at t_p=0 to
+    the second at t_p=48h, and held at the second one after that.
+
+    Held rather than extrapolated: a percentage is a share of a hundred, and a
+    line drawn past the state it was fitted to would take one of them negative
+    on the third day. The blend is a transition between two arrangements, so
+    outside it the nearer arrangement stands -- which is also what makes the
+    schedule continuous at 48h rather than kinked into nonsense."""
+    x = min(max(frac(tp), frac(0)), TEST13_BLEND_END) / TEST13_BLEND_END
+    return {n: TEST13_FROM[n] + (TEST13_TO[n] - TEST13_FROM[n]) * x for n in TEST13_FROM}
+
+def tasks13(tp):
+    """Test 12's tasks, with the percentages of exactly position tp.
+
+    This is what `blend` hands the scheduler: a plan made from tp is made to
+    satisfy the priorities AT tp, constant across its own reach. A rule list is
+    a statement about the schedule from tp -- not about how the targets go on
+    moving after it -- and the next position of the line makes its own."""
+    p = test13_priorities(tp)
+    return [Task(t.name, p[t.name], t.min_time, t.color) for t in tasks12()]
+
+TEST13_TITLE = (
+    "Test 13 (progressive rule list, SLIDING PERCENTAGES): test 12's three days, nights,\n"
+    "-> tasks and grid of breaks -- but the priorities themselves slide, task A handing half\n"
+    "   its share to the ten privileged ones between t_p=0 and t_p=48h. The answer is the same\n"
+    "   kind of object: one chain of rules, each link (and the rules at the line) made to\n"
+    "   satisfy the percentages of exactly the position it is made from."
+)
+
+
+def progressive_window(tasks, blend=None, tau_scale=1):
+    """Tests 12 and 13's window -- one environment, and the percentages either
+    fixed (12) or sliding with the position they are planned from (13).
+
+    One constructor for both, so that the only difference between the two cases
+    is the thing the requirement names: `blend`. It is also what lets a check
+    build a window of its own without touching the ones on display."""
+    return ProgressiveWindow(tasks, span=TEST12_SPAN, moving=test12_moving,
+                             sliding=test12_at_line, swept=test12_swept,
+                             tp_start=TEST12_TP_START, periods=test12_static(),
+                             marks=[g[1] for g in TEST12_SWEPT],
+                             max_rules=29, local_rules=12, blend=blend,
+                             **_tau_kw(tau_scale))
+
 def build_progressive_cases(tau_scale=1):
-    """The case whose rule list is derived a link at a time, while it is shown."""
+    """The cases whose rule list is derived a link at a time, while it is shown."""
     return [
-        (TEST12_TITLE,
-         ProgressiveWindow(tasks12(), span=TEST12_SPAN, moving=test12_moving,
-                           sliding=test12_at_line, swept=test12_swept,
-                           tp_start=TEST12_TP_START, periods=test12_static(),
-                           marks=[g[1] for g in TEST12_SWEPT],
-                           max_rules=29, local_rules=12, **_tau_kw(tau_scale)),
-         45),
+        (TEST12_TITLE, progressive_window(tasks12(), tau_scale=tau_scale), 45),
+        (TEST13_TITLE, progressive_window(tasks13(0), blend=tasks13,
+                                          tau_scale=tau_scale), 45),
     ]
 
 
@@ -899,8 +960,10 @@ def check_resume_contract(pw, samples=24, verbose=True, max_report=6):
 
     So it is asserted directly, and with the ENVIRONMENT HELD FIXED: both plans
     are shown the same periods and the same lookahead, because the drag is
-    supposed to change the answer and would hide what this is looking for. What
-    is left over is the resumption, and nothing else.
+    supposed to change the answer and would hide what this is looking for. Where
+    the percentages themselves slide (test 13) they are held fixed for the same
+    reason -- both plans are made with the ones at g0. What is left over is the
+    resumption, and nothing else.
 
     The pairs are CONSECUTIVE links, and that is not a detail. Over one link the
     committed timeline is the long plan's own output, so the two really are the
@@ -915,15 +978,16 @@ def check_resume_contract(pw, samples=24, verbose=True, max_report=6):
     for g0, g1 in pairs[::step]:
         periods = list(pw.periods) + [w for w in pw.moving(g0)
                                       if frac(w['start']) <= g0 + pw.lookahead]
-        long = pw.sched.plan(timeline=[p for p in pw.pre if p.end > g0], periods=periods,
-                             t_now=g0, history=truncate(pw.base, g0), max_rules=MAX_RULES)
+        sched = pw._sched_at(g0)
+        long = sched.plan(timeline=[p for p in pw.pre if p.end > g0], periods=periods,
+                          t_now=g0, history=truncate(pw.base, g0), max_rules=MAX_RULES)
         acc, walked = g0, None
         for s in long.prefix:
             if acc <= g1 < acc + s.duration: walked = s.task; break
             acc += s.duration
         if walked is None: continue        # the long plan does not reach g1: nothing to hold
-        again = pw.sched.plan(timeline=[p for p in pw.pre if p.end > g1], periods=periods,
-                              t_now=g1, history=truncate(pw.base, g1), max_rules=MAX_RULES)
+        again = sched.plan(timeline=[p for p in pw.pre if p.end > g1], periods=periods,
+                           t_now=g1, history=truncate(pw.base, g1), max_rules=MAX_RULES)
         got = again.prefix[0].task if again.prefix else None
         checked += 1
         if got != walked:
@@ -938,13 +1002,134 @@ def check_resume_contract(pw, samples=24, verbose=True, max_report=6):
         print()
     return fails
 
+def blend_shape_failures(prio=None, end=None):
+    """The blend itself: the two states, reached where they are supposed to be.
+
+    Checked against the two arrangements rather than against the function's own
+    output at another position -- an interpolation that quietly rescaled, or
+    that went on extrapolating past the second state, would agree with itself
+    everywhere and with the requirement nowhere."""
+    prio = test13_priorities if prio is None else prio
+    end = TEST13_BLEND_END if end is None else end
+    out = []
+    def same(got, want, where):
+        if any(abs(got[n] - want[n]) > Fraction(1, 10 ** 6) for n in want):
+            out.append(f"the percentages at {where} are not the ones the state asks for")
+    same(prio(0), TEST13_FROM, "t_p=0")
+    same(prio(end), TEST13_TO, "t_p=" + stamp(end))
+    for f in (Fraction(1, 4), Fraction(1, 2), Fraction(7, 8)):
+        want = {n: TEST13_FROM[n] + (TEST13_TO[n] - TEST13_FROM[n]) * f for n in TEST13_FROM}
+        same(prio(end * f), want, f"t_p={stamp(end * f)} (the blend is affine)")
+    same(prio(end + DAY), TEST13_TO, f"t_p={stamp(end + DAY)} (held past the second state)")
+    for t in (frac(0), end / 3, end, end + DAY):
+        if sum(prio(t).values()) != frac(100):
+            out.append(f"the percentages at {stamp(t)} do not add up to 100")
+    return out
+
+def check_blend_transparency(steps=12, verbose=True, max_report=6):
+    """A blend that does not move is not there at all.
+
+    The sliding percentages enter through one seam -- the scheduler a plan is
+    made with is built from the tasks at that position -- and a seam like that
+    can be wrong in a way no comparison against ITSELF would show: rebuilding
+    the tasks per position re-derives the normalised shares, the minimal period
+    and so the decay constant, and reorders nothing only as long as it really
+    is the same list. So a window whose blend returns test 12's own tasks at
+    every position is stepped beside test 12's, and the two chains must agree
+    link for link and block for block.
+
+    Fresh windows, not the ones on display: a check may not settle the very
+    object the panel is there to derive live.
+    """
+    plain = progressive_window(tasks12())
+    flat = progressive_window(tasks12(), blend=lambda _t: tasks12())
+    for _ in range(steps):
+        plain.step()
+        flat.step()
+    shape = lambda pw: [(s.start, s.end, [(x.task, x.duration) for x in s.prefix + s.cycle])
+                        for s in pw.segments]
+    fails = []
+    if shape(plain) != shape(flat):
+        fails.append("a blend that returns the same tasks everywhere gives a different "
+                     "chain than no blend at all")
+    if plain.base != flat.base:
+        fails.append("a blend that returns the same tasks everywhere draws a different "
+                     "timeline than no blend at all")
+    if verbose:
+        print("--- the sliding percentages are a seam, and a flat one changes nothing ---")
+        print(f"  {len(plain.segments)} links compared, over the first {stamp(plain.front)} "
+              f"of the timeline")
+        print("  PASS: a blend that does not move gives test 12 back, link for link"
+              if not fails else f"  FAIL ({len(fails)}):")
+        for f in fails[:max_report]: print("    - " + f)
+        print()
+    return fails
+
+def check_priority_blend(pw, tasks_at=None, samples=8, verbose=True, max_report=6):
+    """The percentages the plan at the line is made with are the ones at the line.
+
+    Three things, because "the priorities slide" is a claim that can be honoured
+    on paper and ignored where it counts:
+
+      * the blend itself (`blend_shape_failures`);
+      * the plan at the line is the plan those percentages give -- rebuilt at
+        each sampled position from a scheduler constructed here, out of
+        `tasks_at(t_p)` alone, and compared slot for slot. It is not enough to
+        ask the window twice: that would agree with itself whatever it used;
+      * and it is NOT the plan the starting percentages give. A blend the
+        scheduler never actually reads would pass the first two checks and
+        change no schedule at all, so the check would be vacuous without a
+        position where the two answers really differ.
+    """
+    tasks_at = pw.tasks_at if tasks_at is None else tasks_at
+    fails = blend_shape_failures()
+    grid = [pw.tp_start + (pw.span - pw.tp_start) * Fraction(i, samples)
+            for i in range(samples + 1)]
+
+    def plan_with(tasks, tp):
+        return Scheduler(tasks, **pw.kw).plan(
+            timeline=[p for p in pw.pre if p.end > tp],
+            periods=[w for w in pw.sliding(tp)
+                     if frac(w['start']) <= tp + pw.lookahead] + pw.periods,
+            t_now=tp, history=pw.history_at(tp), max_rules=pw.local_rules)
+
+    shape = lambda plan: [(s.task, s.duration) for s in list(plan.prefix) + list(plan.cycle)]
+    moved = 0
+    for tp in grid:
+        mine = shape(pw.plan_at(tp))
+        if shape(plan_with(tasks_at(tp), tp)) != mine:
+            fails.append(f"t_p={stamp(tp)}: the plan at the line is not the plan the "
+                         f"percentages at {stamp(tp)} give")
+        if shape(plan_with(tasks_at(0), tp)) != mine:
+            moved += 1
+    if not moved:
+        fails.append("the sliding percentages change no plan anywhere on the sweep: "
+                     "the scheduler is not reading them")
+    if verbose:
+        print("--- the percentages slide, and the plan at the line is made with them ---")
+        first, last = test13_priorities(0), test13_priorities(TEST13_BLEND_END)
+        print(f"  A {float(first['A']):g}% -> {float(last['A']):g}%, each privileged "
+              f"{float(first['P1']):g}% -> {float(last['P1']):g}%, each other "
+              f"{float(first['N1']):g}% -> {float(last['N1']):g}%, "
+              f"reached at {stamp(TEST13_BLEND_END)} and held")
+        print(f"  {moved} of the {len(grid)} sampled positions plan differently than the "
+              f"starting percentages would")
+        print("  PASS: at every sampled position the plan is the one the percentages "
+              "of exactly that position give" if not fails else f"  FAIL ({len(fails)}):")
+        for f in fails[:max_report]: print("    - " + f)
+        print()
+    return fails
+
 def verify_progressive(cases=None, verbose=True, samples=24, max_report=6):
     cases = cases if cases is not None else build_progressive_cases()
-    failures = check_break_rules(verbose=verbose) + check_drag_and_merge(verbose=verbose)
+    failures = (check_break_rules(verbose=verbose) + check_drag_and_merge(verbose=verbose)
+                + check_blend_transparency(verbose=verbose))
     for title, pw, _sweep in cases:
         fail = lambda m, title=title: failures.append(f"{title.splitlines()[0]}: {m}")
         pw.settle()
         failures += check_resume_contract(pw, verbose=verbose)
+        if pw.blend is not None:
+            failures += check_priority_blend(pw, verbose=verbose)
         settled, worked = pw.pace()
 
         # 1. the pace it owes: 10 minutes of timeline per 10 seconds of work
@@ -1077,7 +1262,22 @@ def shares_line(tl, pw, tp=None):
     priv = sum(v for n, v in got.items() if n in PRIVILEGED)
     mine = sum(v for n, v in got.items() if n in pw.minimum)
     return (f"of the {human(open_total)} some task is allowed in: A "
-            f"{float(got.get('A', 0)) * 100:.1f}% (target 50%), the ten privileged "
-            f"{float(priv) * 100:.1f}%, the ten others "
+            f"{float(got.get('A', 0)) * 100:.1f}% (target {target_text(pw, ['A'])}), "
+            f"the ten privileged {float(priv) * 100:.1f}% "
+            f"(target {target_text(pw, PRIVILEGED)}), the ten others "
             f"{float(mine - priv - got.get('A', 0)) * 100:.1f}%, "
             f"offered and left empty {float(1 - mine) * 100:.1f}%")
+
+def target_text(pw, names):
+    """What a group of tasks is aiming at -- one number, or the two ends of the
+    slide where the percentages themselves move (test 13).
+
+    Read off the window's own `tasks_at`, so the number quoted next to a
+    measured share is the target that share was actually scheduled against."""
+    def share(t):
+        tasks = pw.tasks_at(t)
+        total = sum((x.priority for x in tasks), frac(0)) or frac(1)
+        return sum(x.priority for x in tasks if x.name in names) / total * 100
+    first, last = share(frac(0)), share(pw.span)
+    if abs(first - last) <= Fraction(1, 1000): return f"{float(first):g}%"
+    return f"{float(first):g}% -> {float(last):g}%"

@@ -1097,6 +1097,17 @@ class SlidingRules:
     SAMPLES = 8
     MAX_ROUNDS = 8
 
+    # A derivation may carry a wall-clock deadline (`ProgressiveWindow.regime_at`
+    # sets one). Past it the search stops NARROWING: what runs long is never one
+    # plan but the bisections that locate a breakpoint -- the one on the fit
+    # itself costs a whole `_fit`, ten-odd plans, per round. The rules are the
+    # scheduler's own either way; all that is given up past the deadline is the
+    # RANGE they are claimed for, and the caller answers for the one position.
+    _deadline = None
+
+    def _out_of_time(self):
+        return self._deadline is not None and time.perf_counter() > self._deadline
+
     # ---------------- breakpoints ---------------- #
 
     @staticmethod
@@ -1188,6 +1199,7 @@ class SlidingRules:
         # right up to its `hi`
         if hi - lo > 2 * self.MIN_RANGE: probes.append(hi - self.MIN_RANGE)
         for tp in probes:
+            if self._out_of_time(): return None
             if not self._reproduces(regime, tp): return None
         return regime
 
@@ -1215,7 +1227,10 @@ class SlidingRules:
         # strictly inside: hi belongs to the next regime, so sampling it would
         # "find" a breakpoint at the range's own edge in every failing range
         xs = [lo + Fraction(i, n) * (hi - lo) for i in range(n)]
-        shapes = [self._shape(x) for x in xs]
+        shapes = []
+        for x in xs:
+            if self._out_of_time(): return set()
+            shapes.append(self._shape(x))
         out = set()
         for (a, sa), (b, sb) in zip(zip(xs, shapes), zip(xs[1:], shapes[1:])):
             if sa != sb:
@@ -1223,6 +1238,8 @@ class SlidingRules:
                     a, b, lambda x, s=sa: self._shape(x) == s,
                     rounds=self.SPLIT_ROUNDS)))
         if out: return out
+        # the expensive one: every round of it is a whole `_fit`
+        if self._out_of_time(): return set()
         m, _ = self._bisect(lo, hi, lambda x: self._fit(lo, x) is not None, rounds=14)
         return {m} if lo < m < hi else {lo + (hi - lo) / 2}
 
@@ -1251,8 +1268,13 @@ class SlidingRules:
         return hi
 
     def _bisect(self, lo, hi, holds, rounds=32):
-        """(last position where `holds` is true, first where it is not)."""
+        """(last position where `holds` is true, first where it is not).
+
+        Stops early past the deadline: the bracket is then wider than it would
+        have been, which costs the caller a range and never an answer -- every
+        regime is verified before it is kept."""
         for _ in range(rounds):
+            if self._out_of_time(): break
             mid = (lo + hi) / 2
             if holds(mid): lo = mid
             else: hi = mid
@@ -1545,6 +1567,16 @@ class ProgressiveWindow(SlidingRules):
       display trick, and `regime_at(tp)` fits it into rules AFFINE in t_p so
       that following the line is arithmetic rather than scheduling.
 
+    The PERCENTAGES may slide too (`blend`, test 13). They are then a function
+    of the position a plan is made from, and nothing else about the machinery
+    changes: `_sched_at(t)` builds the scheduler with the priorities at t, a
+    link made from g satisfies the ones at g and the rules at the line satisfy
+    the ones at t_p exactly. That is the whole of it -- a rule list is a
+    statement about the schedule from one position, so the targets moving after
+    it is the next position's business, and the answer stays the same kind of
+    object. A blend that returns the same tasks everywhere is indistinguishable
+    from no blend at all.
+
     The regimes are fitted one at a time, around the position asked for, and
     cached: three days hold far too many to derive before anything is shown,
     and this is the "cache the state at anchors, recompute only the local
@@ -1554,12 +1586,23 @@ class ProgressiveWindow(SlidingRules):
 
     MAX_SEGMENT = frac(4 * 60)      # no link describes more than this at once
     SPLIT_ROUNDS = 18               # enough to place a breakpoint inside a bracket
-    FIT_BUDGET = 3.0                # seconds spent looking for one regime's range
+    # Seconds spent looking for one regime's range. It is a DEADLINE the search
+    # honours from the inside (`_out_of_time`), so it bounds the derivation
+    # rather than merely being consulted between its rounds -- which is what
+    # keeps the whole of it inside the requirement's ten seconds with room to
+    # spare, one plan (a tenth of a second) being the only thing that can still
+    # follow it.
+    FIT_BUDGET = 6.0
 
     def __init__(self, tasks, span, moving, marks=(), tp_start=0, pre_placed=(),
                  periods=(), sliding=None, swept=None, lookahead=None,
-                 max_rules=MAX_RULES, local_rules=None, tol=Fraction(1, 120), **kw):
+                 max_rules=MAX_RULES, local_rules=None, tol=Fraction(1, 120),
+                 blend=None, **kw):
         self.tasks = list(tasks)
+        # `blend(t) -> tasks` makes the PRIORITIES a function of the position a
+        # plan is made from: a plan drawn from t satisfies the percentages of
+        # exactly t. None (the ordinary case) means one fixed set for all of it.
+        self.blend = blend
         self.span = frac(span)
         self.moving = moving
         self._sliding = sliding
@@ -1596,7 +1639,24 @@ class ProgressiveWindow(SlidingRules):
         self.past = None if swept is None else ProgressiveWindow(
             tasks, span, moving=swept, tp_start=tp_start, pre_placed=pre_placed,
             periods=periods, lookahead=lookahead, max_rules=max_rules,
-            local_rules=local_rules, tol=tol, **kw)
+            local_rules=local_rules, tol=tol, blend=blend, **kw)
+
+    # ---------------- the priorities a plan is made with ---------------- #
+
+    def tasks_at(self, t):
+        """The tasks as they stand at position t.
+
+        The percentages may themselves be sliding, and then a plan made from t
+        is made to satisfy the ones at exactly t -- constant across its own
+        reach, since a rule list is a statement about the schedule from t, not
+        about how the targets go on moving after it."""
+        return self.tasks if self.blend is None else list(self.blend(frac(t)))
+
+    def _sched_at(self, t):
+        """The scheduler that plans from t. One object per call, and cheap:
+        it holds the percentages and nothing about the timeline."""
+        if self.blend is None: return self.sched
+        return Scheduler(self.tasks_at(t), **self.kw)
 
     # ---------------- where the chain is cut ---------------- #
 
@@ -1690,6 +1750,14 @@ class ProgressiveWindow(SlidingRules):
         seg, periods = self._segment(g, mark)
         end = self._commit_end(Plan(g, seg.prefix, seg.cycle), g, mark, periods)
         seg.end = end if end > g else mark
+        # The front is published LAST, and that ordering is load-bearing: the
+        # chain is derived on one thread and DRAWN on another (the window
+        # settles it in the background so it stays answering), and the only
+        # thing the drawing thread must never see is a front reaching past a
+        # link that is not there yet. Appending first and moving the front
+        # after leaves a reader between the two with an earlier state of the
+        # chain -- never a torn one -- and an earlier state is exactly what a
+        # provisional frame draws anyway.
         self.segments.append(seg)
         self.base += [Placement(n, s, e, self.sched.color.get(n, IDLE_COLOR))
                       for s, e, n in seg.unroll(g, seg.end)]
@@ -1700,10 +1768,10 @@ class ProgressiveWindow(SlidingRules):
         survive the line standing at g and the timeline already committed."""
         periods = list(self.periods) + [w for w in self.moving(g)
                                         if frac(w['start']) <= g + self.lookahead]
-        plan = self.sched.plan(timeline=[p for p in self.pre if p.end > g],
-                               periods=periods, t_now=g,
-                               history=truncate(self.base, g),
-                               max_rules=self.max_rules)
+        plan = self._sched_at(g).plan(timeline=[p for p in self.pre if p.end > g],
+                                      periods=periods, t_now=g,
+                                      history=truncate(self.base, g),
+                                      max_rules=self.max_rules)
         return Segment(g, end, list(plan.prefix), list(plan.cycle)), periods
 
     # ---------------- reading it: no scheduling, ever ---------------- #
@@ -1743,7 +1811,7 @@ class ProgressiveWindow(SlidingRules):
         affine rules are fitted to; the display never calls it."""
         tp = frac(tp)
         if tp not in self._plans:
-            self._plans[tp] = self.sched.plan(
+            self._plans[tp] = self._sched_at(tp).plan(
                 timeline=[p for p in self.pre if p.end > tp],
                 periods=[w for w in self.sliding(tp)
                          if frac(w['start']) <= tp + self.lookahead] + self.periods,
@@ -1795,6 +1863,20 @@ class ProgressiveWindow(SlidingRules):
         got = self._regime_cached(tp)
         if got is not None: return got
         t0 = time.perf_counter()
+        # The budget is a DEADLINE, honoured inside the search and not only
+        # between its rounds: one round of the bisection on the fit is a whole
+        # `_fit`, so a budget tested only at the top of the loop is overrun by
+        # however long the round it is in the middle of takes. Where the
+        # percentages themselves slide (test 13) the fits fail more often and
+        # the search reaches for that bisection more often, which is where the
+        # overrun was seen -- 12s against a 10s requirement.
+        self._deadline = t0 + self.FIT_BUDGET
+        try:
+            return self._derive_regime(tp, t0)
+        finally:
+            self._deadline = None
+
+    def _derive_regime(self, tp, t0):
         # Is tp the breakpoint itself? A regime covers [lo, hi), so if the plan
         # already has a different shape a hair to the right, no range starting
         # here can hold it and the answer is this one position. Asking outright
@@ -1868,6 +1950,18 @@ class ProgressiveWindow(SlidingRules):
         hi = min([c for c in cuts if c > tp], default=hi)
         return lo, max(hi, lo + self.MIN_RANGE)
 
+    def ready_at(self, tp):
+        """Whether the rules at tp can be READ without deriving anything.
+
+        Both halves, because `timeline` needs both: the regime the durations
+        are substituted into, and the plan its reach is measured off. A regime
+        is fitted for a RANGE of positions, so one covering tp is not enough --
+        `local_end` would still schedule for this particular tp, a tenth of a
+        second, in the middle of a frame. A display asks with this so that
+        drawing can never schedule; what it derives, it derives off-thread."""
+        tp = frac(tp)
+        return self._regime_cached(tp) is not None and tp in self._plans
+
     def blocks_at(self, tp, fit=True):
         r = self.regime_at(tp) if fit else self._regime_cached(frac(tp))
         return None if r is None else r.blocks(frac(tp))
@@ -1886,7 +1980,12 @@ class ProgressiveWindow(SlidingRules):
         out = [(p.start, min(p.end, tp), p.task) for p in self.history_at(tp)
                if p.start < min(tp, horizon)]
         far = tp
-        blocks = self.blocks_at(tp, fit=fit) if tp < horizon else None
+        # `fit=False` is the display's own call, and it may not schedule: the
+        # rules at the line are used only where everything they need is already
+        # derived, and until then the standing chain answers for that stretch
+        # too -- provisional, which is what it is.
+        usable = tp < horizon and (fit or self.ready_at(tp))
+        blocks = self.blocks_at(tp, fit=fit) if usable else None
         if blocks is not None:
             far = min(self.local_end(tp), horizon)
             pre, cyc = blocks

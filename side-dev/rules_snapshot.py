@@ -115,6 +115,12 @@ def progressive_rules_lines(title, pw):
     done), so nothing about the machine's speed leaks in here."""
     pw.settle()
     out = [_heading(title)] + pw.lines(max_segments=PROGRESSIVE_LINKS)
+    if pw.blend is not None:
+        # the two states the percentages slide between: they are an INPUT to
+        # every link, so a change to them belongs in the diff beside the rules
+        for at, what in ((0, "from"), (pw.span, "to")):
+            out.append(f"Percentages {what} t_p={stamp(at)}: " + ", ".join(
+                f"{t.name} {float(t.priority):g}%" for t in pw.tasks_at(at)))
     out += progressive_regime_lines(pw)
     served, busy = {}, 0
     for s, e, n in pw.timeline(pw.span):
