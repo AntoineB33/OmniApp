@@ -94,13 +94,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.WellKnownIds
 import kotlin.math.roundToInt
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.platform.isDeadKey
@@ -187,6 +190,9 @@ fun TaskSchedulerScreen(
     // on the top floating-window layer (above the calendar) and dismissed by clicks anywhere. Pass the
     // sub-list id to open it, or null to close. Defaults make the screen usable standalone (previews/tests).
     onSetWeightWindow: (CellListId?) -> Unit = {},
+    // PRD §5: same hoisting for the relative-priority window (the percentage's right-click menu). Pass the
+    // clicked cell's id to open it, or null to close.
+    onSetRelativeWindow: (CellId?) -> Unit = {},
 ) {
     val state by vm.state.collectAsState()
     val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
@@ -244,7 +250,10 @@ fun TaskSchedulerScreen(
     // PRD §5: the weight-table window closes if any cell enters Edit Mode. (A vanished sub-list — e.g.
     // via undo — is handled where the window is rendered.)
     LaunchedEffect(state.editSession) {
-        if (state.editSession != null) onSetWeightWindow(null)
+        if (state.editSession != null) {
+            onSetWeightWindow(null)
+            onSetRelativeWindow(null)
+        }
     }
 
     // PRD §10: the min-time input reverts to a simple display when another cell is selected or any
@@ -543,7 +552,14 @@ fun TaskSchedulerScreen(
                     // PRD §5: clicking a percentage opens that sub-list's window. Closing is by clicking
                     // anywhere else (the app's outside-press interceptor), not by re-clicking here — so
                     // this is deterministic regardless of when the interceptor runs during the gesture.
+                    onSetRelativeWindow(null)
                     onSetWeightWindow(listId)
+                },
+                // PRD §5: the percentage's right-click menu opens the relative-priority window instead.
+                // The two windows share the top layer, so opening one closes the other.
+                onOpenRelativePriority = { clickedCellId ->
+                    onSetWeightWindow(null)
+                    onSetRelativeWindow(clickedCellId)
                 },
                 minTimeEditCellId = minTimeEditCellId,
                 onToggleMinTimeEdit = { cellId ->
@@ -696,6 +712,7 @@ private fun CellListSection(
     visibleOrder: List<CellId>,
     priorities: Map<TaskId, Double>,
     onTogglePriorityWeights: (CellListId) -> Unit,
+    onOpenRelativePriority: (CellId) -> Unit,
     minTimeEditCellId: CellId?,
     onToggleMinTimeEdit: (CellId) -> Unit,
     onOpenTaskEdit: (TaskId) -> Unit,
@@ -792,6 +809,7 @@ private fun CellListSection(
                         )
                     },
             onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
+            onOpenRelativePriority = { onOpenRelativePriority(cellId) },
             onSetMinTime = { minutes ->
                 cell.taskId?.let { onIntent(SchedulerIntent.SetTaskMinimumTime(it, minutes)) }
             },
@@ -880,6 +898,7 @@ private fun CellListSection(
                 visibleOrder = visibleOrder,
                 priorities = priorities,
                 onTogglePriorityWeights = onTogglePriorityWeights,
+                onOpenRelativePriority = onOpenRelativePriority,
                 minTimeEditCellId = minTimeEditCellId,
                 onToggleMinTimeEdit = onToggleMinTimeEdit,
                 onOpenTaskEdit = onOpenTaskEdit,
@@ -1609,6 +1628,252 @@ internal fun PriorityWeightWindow(
 }
 
 /** Distinct slice color for the [index]-th task in a priority pie chart, spread around the hue wheel. */
+/**
+ * PRD §5 the **relative priority** window, opened from the "relative priority" entry of the percentage's
+ * right-click menu. At the top, the priority of this cell's task relative to the ancestor picked in the
+ * drop-down (root by default, which is the absolute percentage the cell already shows). Below, one
+ * horizontal chain per occurrence of the task under that ancestor, reading from the cell just under the
+ * ancestor on the left to the occurrence itself on the right — each showing its share of its own sub-list
+ * and a **pin**, which holds that share while the number at the top is retargeted.
+ *
+ * The pins are per (task, ancestor) pair (see [RelativePriorityPinKey]), so pinning here never affects
+ * the window opened for another task or against another ancestor.
+ */
+@Composable
+internal fun RelativePriorityWindow(
+    state: SchedulerState,
+    cellId: CellId,
+    onIntent: (SchedulerIntent) -> Unit,
+    onBoundsChange: (Rect?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val taskId = state.cells[cellId]?.taskId ?: return
+    val options = RelativePriorityDomain.relativeToOptions(state, cellId)
+    var relativeTo by remember(cellId) { mutableStateOf(WellKnownIds.MAIN_TASK) }
+    // An ancestor can disappear under the window (the tree is live); fall back to the root then.
+    if (relativeTo !in options) relativeTo = WellKnownIds.MAIN_TASK
+    var relativeToMenuOpen by remember(cellId) { mutableStateOf(false) }
+
+    val chains = RelativePriorityDomain.occurrenceChains(state, taskId, relativeTo)
+    val value = RelativePriorityDomain.relativePriority(state, taskId, relativeTo)
+    val pinned = state.relativePriorityPins[RelativePriorityPinKey(taskId, relativeTo)].orEmpty()
+
+    DisposableEffect(Unit) { onDispose { onBoundsChange(null) } }
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 12.dp,
+        border = BorderStroke(1.dp, SheetColors.grid),
+        // Same contract as the weight window: publish the bounds the app's outside-press check uses, and
+        // swallow the taps that land inside so pressing in the window never closes it.
+        modifier = modifier
+            .widthIn(max = 760.dp)
+            .heightIn(max = 600.dp)
+            .onGloballyPositioned { onBoundsChange(it.boundsInWindow()) }
+            .pointerInput(Unit) { detectTapGestures { } },
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                text = "Relative priority of " + quoted(state.tasks[taskId]?.title.orEmpty()),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PercentInputField(
+                    fraction = value,
+                    onSet = { onIntent(SchedulerIntent.SetRelativePriority(taskId, relativeTo, it)) },
+                )
+                Spacer(Modifier.width(16.dp))
+                Text(
+                    text = "Relative to:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(6.dp))
+                Box {
+                    TextButton(onClick = { relativeToMenuOpen = true }) {
+                        Text(relativeToLabel(state, relativeTo))
+                    }
+                    DropdownMenu(
+                        expanded = relativeToMenuOpen,
+                        onDismissRequest = { relativeToMenuOpen = false },
+                    ) {
+                        // Root first, then this cell's ancestors from the root-most down to its parent.
+                        options.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(relativeToLabel(state, option)) },
+                                onClick = {
+                                    relativeToMenuOpen = false
+                                    relativeTo = option
+                                },
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(
+                    onClick = { onIntent(SchedulerIntent.ClearRelativePriorityPins(taskId, relativeTo)) },
+                    enabled = pinned.isNotEmpty(),
+                ) {
+                    Text("Clear pins")
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            HorizontalDivider(color = SheetColors.grid)
+            Spacer(Modifier.height(8.dp))
+            if (chains.isEmpty()) {
+                Text(
+                    text = "No occurrence of this task under " + relativeToLabel(state, relativeTo) + ".",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Column(
+                    Modifier
+                        .verticalScroll(rememberScrollState())
+                        .horizontalScroll(rememberScrollState()),
+                ) {
+                    chains.forEach { chain ->
+                        Row(
+                            modifier = Modifier.padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            chain.forEachIndexed { index, chainCellId ->
+                                if (index > 0) {
+                                    Text(
+                                        text = " > ",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                RelativePriorityChainCell(
+                                    state = state,
+                                    cellId = chainCellId,
+                                    pinned = chainCellId in pinned,
+                                    onTogglePin = {
+                                        onIntent(
+                                            SchedulerIntent.ToggleRelativePriorityPin(
+                                                taskId,
+                                                relativeTo,
+                                                chainCellId,
+                                            )
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** The window's title quotes the task, and a task with no title reads as the tree's own placeholder. */
+private fun quoted(title: String): String = "\"" + title.ifBlank { "(untitled)" } + "\""
+
+/** The drop-down's label for a `t_r` choice: the conceptual root is named, every other task is its title. */
+private fun relativeToLabel(state: SchedulerState, taskId: TaskId): String =
+    if (taskId == WellKnownIds.MAIN_TASK) {
+        "root"
+    } else {
+        state.tasks[taskId]?.title.orEmpty().ifBlank { "(untitled)" }
+    }
+
+/**
+ * One cell of an occurrence chain: its title, its share of its own sub-list, and the pin that holds that
+ * share while the window's number is retargeted. A pinned cell is drawn with the active border so the set
+ * is readable at a glance.
+ */
+@Composable
+private fun RelativePriorityChainCell(
+    state: SchedulerState,
+    cellId: CellId,
+    pinned: Boolean,
+    onTogglePin: () -> Unit,
+) {
+    val title = state.cells[cellId]?.taskId?.let { state.tasks[it]?.title }.orEmpty()
+    Row(
+        modifier = Modifier
+            .border(if (pinned) 2.dp else 1.dp, if (pinned) SheetColors.activeBorder else SheetColors.grid)
+            .background(if (pinned) SheetColors.selectionFill else SheetColors.cellBackground)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title.ifBlank { "(untitled)" },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = formatPriorityPercent(RelativePriorityDomain.cellShare(state, cellId)),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(8.dp))
+        Box(
+            modifier = Modifier
+                .border(1.dp, if (pinned) SheetColors.activeBorder else SheetColors.grid)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onTogglePin,
+                )
+                .padding(horizontal = 4.dp, vertical = 1.dp),
+        ) {
+            Text(
+                text = if (pinned) "pinned" else "pin",
+                style = MaterialTheme.typography.labelSmall,
+                color =
+                    if (pinned) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+            )
+        }
+    }
+}
+
+/**
+ * The window's percentage field: the same "numbers and comma" input as the weight table (PRD §5), reading
+ * and writing a fraction as a percentage. Like a weight field it commits every valid keystroke — which is
+ * safe here because the edit targets an ABSOLUTE value: retargeting 5% and then 12% lands exactly where
+ * going straight to 12% would (the scale factors compose), so a half-typed number leaves nothing skewed.
+ */
+@Composable
+private fun PercentInputField(fraction: Double, onSet: (Double) -> Unit) {
+    var text by remember(fraction) { mutableStateOf(formatWeight((fraction * 10_000).roundToInt() / 100.0)) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        BasicTextField(
+            value = text,
+            onValueChange = { raw ->
+                val cleaned = raw.filter { it.isDigit() || it == ',' || it == '.' }
+                text = cleaned
+                cleaned.replace(',', '.').toDoubleOrNull()?.let { onSet((it / 100.0).coerceIn(0.0, 1.0)) }
+            },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.End,
+            ),
+            cursorBrush = SolidColor(SheetColors.activeBorder),
+            modifier = Modifier
+                .width(72.dp)
+                .border(1.dp, SheetColors.grid)
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+        )
+        Text(
+            text = " %",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 private fun priorityChartColor(index: Int, count: Int): Color {
     val hue = if (count <= 0) 0f else (index.toFloat() / count) * 360f
     return Color.hsv(hue, 0.55f, 0.85f)
@@ -1715,6 +1980,8 @@ private fun TaskRow(
     cellMenu: TaskCellMenuActions?,
     /** PRD §5: clicking the percentage opens the sub-list's priority-weight window. */
     onTogglePriorityWeights: () -> Unit,
+    /** PRD §5: the percentage's own right-click menu opens this cell's relative-priority window. */
+    onOpenRelativePriority: () -> Unit,
     onSetMinTime: (Int) -> Unit,
     onActivateMinTime: () -> Unit,
     onClick: (CellId, ctrl: Boolean, shift: Boolean, forceClearMulti: Boolean) -> Unit,
@@ -1734,6 +2001,8 @@ private fun TaskRow(
     val editFocusRequester = remember { FocusRequester() }
     // Whether this cell's right-click contextual menu ("edit" / "copy" / "deep copy") is showing.
     var contextMenuOpen by remember(cellId) { mutableStateOf(false) }
+    // PRD §5: the percentage column's own right-click menu ("relative priority" / "priority weights").
+    var priorityMenuOpen by remember(cellId) { mutableStateOf(false) }
     val hasContextMenu = cellMenu != null
     // Layout coordinates of this row, used to convert in-row pointer positions to window space so
     // the originating row can map an ongoing drag to the cell currently under the cursor.
@@ -2122,17 +2391,21 @@ private fun TaskRow(
                     }
                 }
                 // PRD §5: the percentage occupies a fixed-width column; clicking it opens the sub-list's
-                // priority-weight window (the editable table plus a chart of the sub-list's priorities).
+                // priority-weight window (the editable table plus a chart of the sub-list's priorities),
+                // and RIGHT-clicking it opens the percentage's own two-option menu instead of the cell's
+                // "edit / copy / deep copy" one — the press is consumed here so the row never sees it.
                 Box(
                     modifier = Modifier
                         .width(PERCENT_COLUMN_WIDTH)
                         .then(
                             if (priorityLabel != null) {
-                                Modifier.clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = onTogglePriorityWeights,
-                                )
+                                Modifier
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = onTogglePriorityWeights,
+                                    )
+                                    .then(contextMenuModifier(true) { priorityMenuOpen = true })
                             } else {
                                 Modifier
                             }
@@ -2145,6 +2418,25 @@ private fun TaskRow(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        DropdownMenu(
+                            expanded = priorityMenuOpen,
+                            onDismissRequest = { priorityMenuOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("relative priority") },
+                                onClick = {
+                                    priorityMenuOpen = false
+                                    onOpenRelativePriority()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("priority weights") },
+                                onClick = {
+                                    priorityMenuOpen = false
+                                    onTogglePriorityWeights()
+                                },
+                            )
+                        }
                     }
                 }
                 // PRD §10: the task's minimum-time field sits just to the right of the percentage. It
@@ -2187,9 +2479,12 @@ private fun TaskRow(
 }
 
 /**
- * A right-click (secondary button) on a cell opens its contextual menu ("edit" / "copy" / "deep copy").
- * Returns a no-op modifier when [enabled] is false (cells with no menu — empty / root-main), so only
- * eligible cells react. [onOpen] flips the row's local menu-visible flag.
+ * A right-click (secondary button) opens a contextual menu — the cell's own ("edit" / "copy" / "deep copy")
+ * on the row, and the two-option one on the priority-percentage column (PRD §5). Returns a no-op modifier
+ * when [enabled] is false (cells with no menu — empty / root-main), so only eligible cells react. [onOpen]
+ * flips the local menu-visible flag. The press is consumed, which both keeps the freshly opened menu from
+ * being dismissed by its own click and stops the row's handler re-opening the cell menu underneath the
+ * percentage's (children are dispatched to first, so the inner menu wins that column).
  */
 @OptIn(ExperimentalComposeUiApi::class)
 private fun contextMenuModifier(
@@ -2204,7 +2499,9 @@ private fun contextMenuModifier(
                 while (press.type != PointerEventType.Press) {
                     press = awaitPointerEvent()
                 }
-                if (press.buttons.isSecondaryPressed) {
+                // A right-click the percentage column already answered arrives here with its changes
+                // consumed: that column's menu REPLACES the cell's, so the row must let it pass.
+                if (press.buttons.isSecondaryPressed && press.changes.none { it.isConsumed }) {
                     // Consume so the freshly opened menu isn't dismissed by this same click.
                     press.changes.forEach { it.consume() }
                     onOpen()

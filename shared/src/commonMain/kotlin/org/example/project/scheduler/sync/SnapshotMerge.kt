@@ -125,6 +125,15 @@ object SnapshotMerge {
                     pickNullable(base.sleepingUntilMillis, local.sleepingUntilMillis, remote.sleepingUntilMillis),
                 sleepingSinceMillis =
                     pickNullable(base.sleepingSinceMillis, local.sleepingSinceMillis, remote.sleepingSinceMillis),
+                // PRD §5: the relative-priority pins merge per (task, ancestor) key — pinning on one device
+                // and on another keeps both keys — but one key's set resolves as a WHOLE value: it is one
+                // choice about how one edit distributes, not a bag of independent flags.
+                relativePriorityPins =
+                    mergeKeyed(
+                        base.relativePriorityPins,
+                        local.relativePriorityPins,
+                        remote.relativePriorityPins,
+                    ) { bb, ll, rr -> pick(bb, ll, rr) },
                 // histories / focusedWindow / selection / the display switches / the diagnostic logs stay
                 // LOCAL — see the class KDoc.
             )

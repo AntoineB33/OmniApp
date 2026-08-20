@@ -42,6 +42,7 @@ import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.engine.AppSchedulerHost
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.ScreenBreak
@@ -72,6 +73,7 @@ import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.ui.PriorityWeightWindow
+import org.example.project.scheduler.ui.RelativePriorityWindow
 import org.example.project.scheduler.ui.SignInDialog
 import org.example.project.scheduler.ui.SyncStatusChip
 import org.example.project.scheduler.ui.TaskSchedulerScreen
@@ -296,12 +298,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // its window-space rect, used to ignore presses inside it when dismissing on outside clicks.
         var weightWindowListId by remember { mutableStateOf<CellListId?>(null) }
         var weightWindowBounds by remember { mutableStateOf<Rect?>(null) }
+        // PRD §5: the cell whose relative-priority window is open (the percentage's right-click menu), or
+        // null when closed. Same top layer and same outside-press dismissal as the weight window; the two
+        // are mutually exclusive (opening either closes the other, in TaskSchedulerScreen).
+        var relativeWindowCellId by remember { mutableStateOf<CellId?>(null) }
+        var relativeWindowBounds by remember { mutableStateOf<Rect?>(null) }
         // Layout of the content area, so a press position (content-local) can be mapped to window space
         // and compared against the windows' bounds.
         var contentCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
         // PRD §5: the window closes when any cell enters Edit Mode (its sub-list typing context is gone).
         LaunchedEffect(schedulerState.editSession) {
-            if (schedulerState.editSession != null) weightWindowListId = null
+            if (schedulerState.editSession != null) {
+                weightWindowListId = null
+                relativeWindowCellId = null
+            }
         }
         // PRD §7/§14 Chores Manager: whether the floating chores window is open (local UI state, like the
         // calendar window; the chores data itself lives in the persisted scheduler state).
@@ -931,11 +941,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
                                     if (event.type != PointerEventType.Press) continue
-                                    if (weightWindowListId == null) continue
+                                    if (weightWindowListId == null && relativeWindowCellId == null) continue
                                     val pos = event.changes.firstOrNull()?.position ?: continue
                                     val win = contentCoords?.localToWindow(pos) ?: continue
-                                    if (weightWindowBounds?.contains(win) != true) {
+                                    if (weightWindowListId != null && weightWindowBounds?.contains(win) != true) {
                                         weightWindowListId = null
+                                    }
+                                    if (relativeWindowCellId != null && relativeWindowBounds?.contains(win) != true) {
+                                        relativeWindowCellId = null
                                     }
                                 }
                             }
@@ -948,6 +961,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 store = store,
                                 vm = vm,
                                 onSetWeightWindow = { weightWindowListId = it },
+                                onSetRelativeWindow = { relativeWindowCellId = it },
                             )
                     }
 
@@ -964,6 +978,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 priorities = SchedulerDomain.absoluteTaskPriorities(schedulerState),
                                 onIntent = { vm.dispatch(it) },
                                 onBoundsChange = { weightWindowBounds = it },
+                                modifier = Modifier.align(Alignment.Center).zIndex(50f),
+                            )
+                        }
+                    }
+
+                    // PRD §5: the relative-priority window, on the same top layer as the weight window.
+                    // Opened from the percentage's right-click menu; closed by the interceptor above (or by
+                    // the cell going away under it, e.g. an undo that deleted it).
+                    relativeWindowCellId?.let { cellId ->
+                        if (schedulerState.cells[cellId]?.taskId == null) {
+                            relativeWindowCellId = null
+                        } else {
+                            RelativePriorityWindow(
+                                state = schedulerState,
+                                cellId = cellId,
+                                onIntent = { vm.dispatch(it) },
+                                onBoundsChange = { relativeWindowBounds = it },
                                 modifier = Modifier.align(Alignment.Center).zIndex(50f),
                             )
                         }

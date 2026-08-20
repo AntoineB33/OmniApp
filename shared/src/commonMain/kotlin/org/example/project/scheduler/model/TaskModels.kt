@@ -474,6 +474,14 @@ data class Cell(
     val priorityWeights: List<Double> = listOf(1.0),
 )
 
+/**
+ * PRD §5 the relative-priority window: the key a set of **pinned** cells is filed under — the task whose
+ * relative priority is being edited, together with the ancestor task it is being measured against. Pinning
+ * is per pair by design (the user's rule): a cell pinned while editing task A relative to root is not
+ * pinned when the same window is opened for another task, or for A against another ancestor.
+ */
+data class RelativePriorityPinKey(val taskId: TaskId, val relativeTo: TaskId)
+
 @JvmInline
 value class CellListId(val value: String)
 

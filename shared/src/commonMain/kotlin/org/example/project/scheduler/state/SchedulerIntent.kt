@@ -109,6 +109,34 @@ sealed interface SchedulerIntent {
         val value: Double,
     ) : SchedulerIntent
 
+    /**
+     * PRD §5 the relative-priority window: set [taskId]'s priority **relative to** [relativeTo] to [value]
+     * (a fraction in `[0,1]`). Every cell of every occurrence chain has its percentage scaled by one common
+     * factor to get there, except the cells pinned for this (task, ancestor) pair. Recorded as one content
+     * delta, like any other weight edit — however many cells it had to move.
+     */
+    data class SetRelativePriority(
+        val taskId: TaskId,
+        val relativeTo: TaskId,
+        val value: Double,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §5 the relative-priority window: pin/unpin [cellId] for the (task, ancestor) pair, so its
+     * percentage holds while the relative priority is retargeted. Not undoable (it changes no priority).
+     */
+    data class ToggleRelativePriorityPin(
+        val taskId: TaskId,
+        val relativeTo: TaskId,
+        val cellId: CellId,
+    ) : SchedulerIntent
+
+    /** PRD §5 the relative-priority window: drop every pin of this (task, ancestor) pair. */
+    data class ClearRelativePriorityPins(
+        val taskId: TaskId,
+        val relativeTo: TaskId,
+    ) : SchedulerIntent
+
     /** PRD §5: set the nominal header weight of a sub-list's priority column (clamped to ≥ 0). */
     data class SetPriorityColumnWeight(
         val listId: CellListId,

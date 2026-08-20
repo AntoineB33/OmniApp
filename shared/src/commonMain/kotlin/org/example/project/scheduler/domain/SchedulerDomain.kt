@@ -460,7 +460,7 @@ object SchedulerDomain {
      * clearing its title — the cell keeps its id and the task lingers blank (kept alive by its
      * panels/records), but it must not count toward a sub-list's priority divisor nor show a percentage.
      */
-    private fun isPopulatedCell(state: SchedulerState, cellId: CellId): Boolean {
+    internal fun isPopulatedCell(state: SchedulerState, cellId: CellId): Boolean {
         val taskId = state.cells[cellId]?.taskId ?: return false
         return state.tasks[taskId]?.title?.isNotBlank() == true
     }
@@ -3538,7 +3538,7 @@ object SchedulerDomain {
     }
 
     /** PRD §5: default value of a weight field by column — column 0 defaults to 1, the rest to 0. */
-    private fun defaultWeightAt(column: Int): Double = if (column == 0) 1.0 else 0.0
+    internal fun defaultWeightAt(column: Int): Double = if (column == 0) 1.0 else 0.0
 
     fun parentTaskId(state: SchedulerState, cellId: CellId): TaskId? {
         val cell = state.cells[cellId] ?: return null

@@ -21,6 +21,7 @@ import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.PanelPins
+import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.Task
@@ -245,6 +246,18 @@ object SchedulerStateCodec {
                         it.repeats, it.enabled,
                     )
                 },
+            // PRD §5: the relative-priority window's pinned cells, sorted so the encoded payload (and the
+            // sync fingerprint with it) does not depend on the map's iteration order.
+            relativePriorityPins =
+                relativePriorityPins.entries
+                    .sortedWith(compareBy({ it.key.taskId.value }, { it.key.relativeTo.value }))
+                    .map { (key, cellIds) ->
+                        PersistedRelativePriorityPins(
+                            taskId = key.taskId.value,
+                            relativeTo = key.relativeTo.value,
+                            cellIds = cellIds.map(CellId::value).sorted(),
+                        )
+                    },
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
@@ -527,6 +540,14 @@ object SchedulerStateCodec {
                     )
                 },
             ),
+            // PRD §5: a payload written before the relative-priority window existed decodes to no pins.
+            relativePriorityPins =
+                relativePriorityPins
+                    .filter { it.cellIds.isNotEmpty() }
+                    .associate { entry ->
+                        RelativePriorityPinKey(TaskId(entry.taskId), TaskId(entry.relativeTo)) to
+                            entry.cellIds.map(::CellId).toSet()
+                    },
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
@@ -741,6 +762,9 @@ private data class PersistedState(
     val chores: List<PersistedChoreEntry> = emptyList(),
     // PRD §18: a missing alarm list decodes to empty (payloads written before the Alarms window existed).
     val alarms: List<PersistedAlarm> = emptyList(),
+    // PRD §5: the relative-priority window's pinned cells; a missing list decodes to no pins (payloads
+    // written before the window existed).
+    val relativePriorityPins: List<PersistedRelativePriorityPins> = emptyList(),
     // PRD §15: screen breaks are hidden by default, so payloads written before the display toggle existed
     // (and any that omit the field) decode with the switch off. Migration: DBs written under the old name
     // (the legacy "side tasks") stored this as `showSideTasks`; [JsonNames] lets those still decode into this
@@ -798,6 +822,17 @@ private data class PersistedSupabaseUsageEntry(
  */
 private fun dayOfWeekOrNull(isoDayNumber: Int): DayOfWeek? =
     DayOfWeek.entries.firstOrNull { it.isoDayNumber == isoDayNumber }
+
+/**
+ * PRD §5 the relative-priority window: the cells pinned for one (task, ancestor) pair. Every field carries
+ * a default so a payload written before the window existed decodes cleanly (as no pins at all).
+ */
+@Serializable
+private data class PersistedRelativePriorityPins(
+    val taskId: String = "",
+    val relativeTo: String = "",
+    val cellIds: List<String> = emptyList(),
+)
 
 /**
  * PRD §18 Alarms: one persisted alarm. Every field carries a default so a payload written by an older shape

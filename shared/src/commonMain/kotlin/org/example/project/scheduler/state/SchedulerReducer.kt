@@ -1,12 +1,14 @@
 package org.example.project.scheduler.state
 
 import org.example.project.scheduler.domain.AlarmDomain
+import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.PanelPins
+import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
@@ -75,6 +77,23 @@ object SchedulerReducer {
             is SchedulerIntent.DeleteTaskTree -> reduceDeleteTaskTree(state, intent.id)
             is SchedulerIntent.SetPriorityWeight ->
                 commitDelta(state, priorityTreeDelta(state, "Priority weight") { applySetPriorityWeight(it, intent.cellId, intent.column, intent.value) })
+            is SchedulerIntent.SetRelativePriority ->
+                commitDelta(
+                    state,
+                    priorityTreeDelta(state, "Relative priority") {
+                        RelativePriorityDomain.setRelativePriority(
+                            it,
+                            intent.taskId,
+                            intent.relativeTo,
+                            intent.value,
+                            it.relativePriorityPins[RelativePriorityPinKey(intent.taskId, intent.relativeTo)].orEmpty(),
+                        )
+                    },
+                )
+            is SchedulerIntent.ToggleRelativePriorityPin ->
+                reduceToggleRelativePriorityPin(state, intent.taskId, intent.relativeTo, intent.cellId)
+            is SchedulerIntent.ClearRelativePriorityPins ->
+                reduceClearRelativePriorityPins(state, intent.taskId, intent.relativeTo)
             is SchedulerIntent.SetPriorityColumnWeight ->
                 commitDelta(state, priorityTreeDelta(state, "Column weight") { applySetPriorityColumnWeight(it, intent.listId, intent.column, intent.weight) })
             is SchedulerIntent.AddPriorityColumn ->
@@ -2327,6 +2346,36 @@ private fun applySetTaskText(
     val task = state.tasks[taskId] ?: return state
     if (task.text == text) return state
     return state.copy(tasks = state.tasks + (taskId to task.copy(text = text)))
+}
+
+/**
+ * PRD §5 the relative-priority window: flip [cellId]'s pin for the (task, ancestor) pair. The empty set is
+ * dropped from the map rather than stored, so an account that never pins anything encodes nothing.
+ */
+private fun reduceToggleRelativePriorityPin(
+    state: SchedulerState,
+    taskId: TaskId,
+    relativeTo: TaskId,
+    cellId: CellId,
+): SchedulerState {
+    val key = RelativePriorityPinKey(taskId, relativeTo)
+    val current = state.relativePriorityPins[key].orEmpty()
+    val next = if (cellId in current) current - cellId else current + cellId
+    val pins =
+        if (next.isEmpty()) state.relativePriorityPins - key
+        else state.relativePriorityPins + (key to next)
+    return state.copy(relativePriorityPins = pins)
+}
+
+/** PRD §5 the relative-priority window's "clear pins" button. */
+private fun reduceClearRelativePriorityPins(
+    state: SchedulerState,
+    taskId: TaskId,
+    relativeTo: TaskId,
+): SchedulerState {
+    val key = RelativePriorityPinKey(taskId, relativeTo)
+    if (state.relativePriorityPins[key] == null) return state
+    return state.copy(relativePriorityPins = state.relativePriorityPins - key)
 }
 
 private fun applySetPriorityColumnWeight(

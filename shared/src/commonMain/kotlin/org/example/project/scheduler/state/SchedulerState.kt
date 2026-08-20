@@ -6,6 +6,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
+import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskId
@@ -343,6 +344,15 @@ data class SchedulerState(
      * a payload written before this field decodes to null.
      */
     val sleepingSinceMillis: Long? = null,
+    /**
+     * PRD §5 the relative-priority window: the cells whose percentage is **pinned** while a relative
+     * priority is retargeted, per (task, ancestor) pair (see [RelativePriorityPinKey]). Authoritative
+     * user-authored data — it cannot be recomputed from anything else — so it is persisted **and** synced
+     * like the alarms; a payload written before the window existed decodes to an empty map. Toggling a pin
+     * changes no priority by itself, so (like the §7 switch) it is not an Undo/Redo unit. A pin naming a
+     * cell that no longer exists is simply ignored, so a tree edit never has to prune this.
+     */
+    val relativePriorityPins: Map<RelativePriorityPinKey, Set<CellId>> = emptyMap(),
     /**
      * A bounded, local-only diagnostic log of the notification text the app has posted, shown as the
      * History Manager's **Notifications** column. Capped at [MAX_NOTIFICATION_LOG] — the earliest that
