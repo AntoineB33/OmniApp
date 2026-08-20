@@ -1276,6 +1276,43 @@ object SchedulerDomain {
     const val LOOK_AWAY_QUALIFYING_PAUSE_MILLIS: Long = 15L * MILLIS_PER_MINUTE
 
     /**
+     * PRD §15: where a screen break's **closed head** ends and its **open period** begins — the instant from
+     * which the break stops accepting nobody and starts accepting the tasks that need no screen. `null` when
+     * the break is closed end to end and so has no open part at all (the 20-second look-away, and any break
+     * shortened by the debug knobs to no more than its own closed head).
+     *
+     * One function for the two readers that must never disagree about the shape of a break: the §9 fill,
+     * which turns it into the periods it hands the walk ([fillSchedule]), and the calendar, which draws the
+     * open part **hollow** so the off-screen work the break accepts is visible inside it rather than covered
+     * by a solid band (`App.mergePanelsForDisplay`). The three shapes are `side-dev` test 11's periods: closed
+     * end to end, a closed [SCREEN_BREAK_CLOSED_HEAD_MILLIS] then a break-doable tail, or open throughout.
+     */
+    fun screenBreakOpenStartMillis(shape: ScreenBreakPeriod, startMillis: Long, endMillis: Long): Long? {
+        if (endMillis <= startMillis) return null
+        val opens =
+            when (shape) {
+                ScreenBreakPeriod.Closed -> endMillis
+                // Clamped to the break's own length, so a debug-retimed pose shorter than the head is closed
+                // end to end rather than opening before it starts.
+                ScreenBreakPeriod.ClosedMinuteThenBreakDoable ->
+                    minOf(startMillis + SCREEN_BREAK_CLOSED_HEAD_MILLIS, endMillis)
+                ScreenBreakPeriod.OffScreenOnly -> startMillis
+            }
+        return if (opens < endMillis) opens else null
+    }
+
+    /**
+     * [screenBreakOpenStartMillis] for a materialized screen-break [panel], whose shape is looked up by title
+     * among [screenBreaks] (the same match [fillSchedule] makes — a break's title is what its panels carry).
+     * An unknown title is treated as closed end to end, which is the conservative reading: an unrecognized
+     * band is drawn solid and accepts nobody.
+     */
+    fun screenBreakOpenStartMillis(screenBreaks: List<ScreenBreak>, panel: TaskPanel): Long? {
+        val shape = screenBreaks.firstOrNull { it.title == panel.title }?.shape ?: return null
+        return screenBreakOpenStartMillis(shape, panel.startEpochMillis, panel.endEpochMillis)
+    }
+
+    /**
      * PRD §15: the hardcoded set of screen breaks — periodic activities placed on the calendar with a real
      * spanning time. The §9 fill weaves them in without letting them reduce the surrounding task's minimum.
      */
@@ -2111,8 +2148,14 @@ object SchedulerDomain {
 
     /**
      * PRD §15 / `side-dev/scheduler_logic.py` tests 10–11: the work plan as it must be **displayed** while a screen break
-     * sits on the now-line — with the auto panels cut out of the break's span, so a break the now-line has
-     * reached really is "a period that accepts no task" for as long as it slides.
+     * sits on the now-line — with the auto panels cut out of what the break REFUSES, so a break the now-line
+     * has reached really is the period it says it is for as long as it slides.
+     *
+     * Refuses, not covers: a break is a period, and only the 20-second look-away is a period that accepts no
+     * task. The 5-minute pose's closed head and the part of any break the task at hand is not accepted in are
+     * cut; a pose's **open** period keeps the off-screen work it accepts, which is the part the calendar draws
+     * hollow ([screenBreakOpenStartMillis]). Cutting the whole span instead would state on screen that the
+     * scheduler may not use a period it is in fact filling.
      *
      * A break that is owed slides right with the now-line ([screenBreakNextStart]) while the plan under it does
      * not: the plan is materialized by [fillSchedule], which by CLAUDE.md's trigger rule runs on a **rule
@@ -2124,14 +2167,21 @@ object SchedulerDomain {
      * simplest regime — the disturbed slot is the one the cursor is in, and nothing else changes shape.
      *
      * Only [isRegeneratedPanel] panels are cut: a pinned/manual block and a chore are pre-placed blocks in the
-     * reference's sense and cannot be moved by a period. A panel straddling the now-line keeps its **elapsed**
-     * head (that time really was worked) and resumes past the break, so the cut is a hole, never a rewrite of
-     * the past. The resumed tail takes a distinct id so two display blocks never share one.
+     * reference's sense and cannot be moved by a period. Every refusing region begins at or after the now-line,
+     * so a panel straddling it keeps its **elapsed** head (that time really was worked) and resumes past the
+     * refusal — the cut is a hole, never a rewrite of the past. Each resumed piece takes a distinct id so two
+     * display blocks never share one.
      */
     fun clipPlanForPinnedScreenBreak(
         panels: List<TaskPanel>,
         breakPanels: List<TaskPanel>,
         nowMillis: Long,
+        // PRD §15: the break definitions the [breakPanels] were projected from, and the task attributes, so a
+        // pose's OPEN period keeps the work it accepts instead of being cut like its closed head. Left empty
+        // (tests, and any caller with no configuration in hand) every break reads as closed end to end, which
+        // is the conservative answer: the whole span is cut, exactly as before.
+        screenBreaks: List<ScreenBreak> = emptyList(),
+        tasks: Map<TaskId, Task> = emptyMap(),
     ): List<TaskPanel> {
         // How far the break covering the now-line reaches. Walked transitively, because the 5↔15 merge and a
         // look-away re-anchored onto a pose's edge can leave two touching markers: the plan resumes past the
@@ -2145,26 +2195,62 @@ object SchedulerDomain {
             end = next
         }
         if (end <= nowMillis) return panels
+        val chain = breakPanels.filter { it.endEpochMillis > nowMillis && it.startEpochMillis < end }
+        // What the chain refuses THIS task: every closed head, plus every open period whose own accepted set
+        // this task is not in. An off-screen task a pose accepts is not cut at all — the break slid over work
+        // it is happy to have there, and the calendar draws that part hollow for exactly that reason.
+        fun refusedRegions(taskId: TaskId?): List<TaskTimeRange> {
+            val task = taskId?.let { tasks[it] }
+            val out = mutableListOf<TaskTimeRange>()
+            for (band in chain) {
+                val from = maxOf(band.startEpochMillis, nowMillis)
+                val to = minOf(band.endEpochMillis, end)
+                if (to <= from) continue
+                val opens = screenBreakOpenStartMillis(screenBreaks, band)?.coerceIn(from, to) ?: to
+                if (opens > from) out += TaskTimeRange(from, opens)
+                if (to > opens && !breakPeriodAccepts(screenBreaks, band, task)) out += TaskTimeRange(opens, to)
+            }
+            return mergeOccupied(out)
+        }
         return panels.flatMap { panel ->
             when {
                 // Fixed blocks and the bands are not the plan; a period cannot move them.
                 !isRegeneratedPanel(panel) || panel.screenBreak || panel.sleep -> listOf(panel)
                 // Wholly past, or already past the break: untouched.
                 panel.endEpochMillis <= nowMillis || panel.startEpochMillis >= end -> listOf(panel)
-                // Wholly inside the break: only its elapsed head survives.
-                panel.endEpochMillis <= end ->
-                    if (panel.startEpochMillis < nowMillis) {
-                        listOf(panel.copy(endEpochMillis = nowMillis))
-                    } else {
-                        emptyList()
-                    }
-                else -> buildList {
-                    if (panel.startEpochMillis < nowMillis) add(panel.copy(endEpochMillis = nowMillis))
-                    add(panel.copy(id = panel.id + "/resume", startEpochMillis = end))
-                }
+                // Every refusing region starts at/after the now-line, so a straddling panel keeps its elapsed
+                // head (that time really was worked) and what survives resumes under a distinct id.
+                else -> panel.minus(refusedRegions(panel.taskId))
             }
         }
     }
+
+    /** Whether the period [band] is (per its [ScreenBreak.shape]) open to [task] — see [fillSchedule]. */
+    private fun breakPeriodAccepts(screenBreaks: List<ScreenBreak>, band: TaskPanel, task: Task?): Boolean {
+        if (task == null || task.onScreen) return false
+        return when (screenBreaks.firstOrNull { it.title == band.title }?.shape) {
+            ScreenBreakPeriod.ClosedMinuteThenBreakDoable -> task.doableDuringBreak
+            ScreenBreakPeriod.OffScreenOnly -> true
+            else -> false
+        }
+    }
+
+    /**
+     * This panel with [regions] (merged and sorted) cut out of it. The first surviving piece keeps the panel's
+     * id and each later one takes a distinct `/resume` id, so two display blocks can never share one.
+     */
+    private fun TaskPanel.minus(regions: List<TaskTimeRange>): List<TaskPanel> {
+        if (regions.isEmpty()) return listOf(this)
+        return subtractRegions(listOf(TaskTimeRange(startEpochMillis, endEpochMillis)), regions)
+            .mapIndexed { index, part -> piece(part.startEpochMillis, part.endEpochMillis, index) }
+    }
+
+    private fun TaskPanel.piece(start: Long, stop: Long, index: Int): TaskPanel =
+        copy(
+            id = if (index == 0) id else id + "/resume" + (if (index == 1) "" else index.toString()),
+            startEpochMillis = start,
+            endEpochMillis = stop,
+        )
 
     /** PRD §15: a cue boundary the now-line crossed — the atom of the engine's single ordered cue sweep. */
     enum class CueKind { LookAwayStart, RestPoseDue, WindDown }
@@ -2638,14 +2724,10 @@ object SchedulerDomain {
             val end = panel.endEpochMillis
             if (end <= start) continue
             // A debug-shortened break no longer than the closed head is closed end to end, whatever its shape.
+            // [screenBreakOpenStartMillis] is the single reading of that shape — the calendar draws the open
+            // part hollow off the very same function, so what is shown and what is scheduled cannot diverge.
             val shape = shapeByTitle[panel.title] ?: ScreenBreakPeriod.Closed
-            val opens =
-                when (shape) {
-                    ScreenBreakPeriod.Closed -> end
-                    ScreenBreakPeriod.ClosedMinuteThenBreakDoable ->
-                        minOf(start + SCREEN_BREAK_CLOSED_HEAD_MILLIS, end)
-                    ScreenBreakPeriod.OffScreenOnly -> start
-                }
+            val opens = screenBreakOpenStartMillis(shape, start, end) ?: end
             if (opens > start) breakClosed += TaskTimeRange(start, opens)
             if (end > opens) {
                 val tail = TaskTimeRange(opens, end)

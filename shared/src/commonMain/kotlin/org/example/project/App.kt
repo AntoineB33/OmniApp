@@ -44,6 +44,7 @@ import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.PanelPins
+import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
@@ -549,7 +550,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // the break's span here, on the display side — the reference's sliding-period regime, pinned to the
         // plan's own origin (`side-dev/scheduler_logic.py` tests 10–11).
         val displayWorkPlanPanels =
-            SchedulerDomain.clipPlanForPinnedScreenBreak(workPlanPanels, displaySidePanels, nowMillis)
+            SchedulerDomain.clipPlanForPinnedScreenBreak(
+                workPlanPanels, displaySidePanels, nowMillis,
+                // The break shapes + the task attributes, so only what a break REFUSES is cut: a pose's open
+                // period keeps the off-screen work it accepts, which is the part the band draws hollow.
+                schedulerState.screenBreaks, schedulerState.tasks,
+            )
 
         // PRD §14: reminder flags are calculated for the WHOLE focused week — from now to the end of the
         // week the calendar is showing — so navigating to a week shows its reminders. Like the screen-break
@@ -664,8 +670,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
             } + mergePanelsForDisplay(
                 displayWorkPlanPanels, displayReminderPanels, displaySidePanels, displaySleepPanels,
-                schedulerState.showScreenBreaks, schedulerState.showReminders, activeRegions,
-                displayInactivityGaps,
+                schedulerState.showScreenBreaks, schedulerState.showReminders,
+                schedulerState.screenBreaks, activeRegions, displayInactivityGaps,
             )
             ).map { record ->
             // Only real task blocks (records + auto/manual panels) carry the device-set segmentation; the
@@ -1317,6 +1323,10 @@ private fun mergePanelsForDisplay(
     sleepPanels: List<TaskPanel>,
     showScreenBreaks: Boolean,
     showReminders: Boolean,
+    // PRD §15: the break definitions the [sidePanels] were projected from — what each band's SHAPE is, so the
+    // calendar can draw the part of a 5-/15-min break that accepts off-screen tasks hollow rather than
+    // covering it with a solid band (see [SchedulerDomain.screenBreakOpenStartMillis]).
+    screenBreaks: List<ScreenBreak> = emptyList(),
     // PRD §15/§17: intervals the device/account was ACTIVE — the visible "Sleep" bands are carved here so a
     // window the user worked through shows a gap. Bridging still uses the UNCARVED sleep windows (below), so
     // hiding screen breaks doesn't fuse task blocks across a night just because part of it was carved.
@@ -1363,6 +1373,9 @@ private fun mergePanelsForDisplay(
                     entryId = side.id,
                     entryIds = listOf(side.id),
                     screenBreak = true,
+                    // PRD §15: where this break stops accepting nobody — the hollow part of the band.
+                    screenBreakOpenFromMillis =
+                        SchedulerDomain.screenBreakOpenStartMillis(screenBreaks, side),
                 )
             }
         }

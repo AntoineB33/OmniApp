@@ -196,6 +196,16 @@ data class CalendarRecord(
     /** PRD §15 Screen breaks: a periodic screen break, drawn as a time-positioned band spanning its real duration. */
     val screenBreak: Boolean = false,
     /**
+     * PRD §15: for a [screenBreak] band, the instant its **closed head** ends and its open period begins —
+     * the part of the break that accepts the tasks needing no screen (the 5-minute pose's last four minutes,
+     * the 15-minute pose end to end). That part is drawn **hollow** so the off-screen work the break accepts
+     * shows through it instead of being covered by a solid band. Null when the break accepts nobody over its
+     * whole length (the 20-second look-away), which draws solid throughout.
+     * Computed by [SchedulerDomain.screenBreakOpenStartMillis] — the same reading of the break's shape the §9
+     * fill schedules from, so what is drawn hollow is exactly what is open to a task.
+     */
+    val screenBreakOpenFromMillis: Long? = null,
+    /**
      * PRD §18 Alarms: one ring of an alarm, drawn as a zero-duration marker at its instant (like a reminder
      * tag, but not checkable — an alarm is not a task, it just goes off). One record per occurrence, so an
      * everyday alarm draws on each day of the week the calendar shows.
@@ -343,6 +353,12 @@ data class PlacedRecord(
     val checkedAtMillis: Long? = null,
     /** PRD §15 Screen breaks: a periodic screen break rendered as a time-positioned band over [startHour, endHour]. */
     val screenBreak: Boolean = false,
+    /**
+     * PRD §15: hour-of-day at which this screen break's open (hollow) part begins — see
+     * [CalendarRecord.screenBreakOpenFromMillis], clipped to this day. Null when the break is closed end to
+     * end here, so the whole band draws solid.
+     */
+    val screenBreakOpenFromHour: Float? = null,
     /** PRD §18 Alarms: one ring, rendered as a fixed-height marker at [startHour]. See [CalendarRecord.alarm]. */
     val alarm: Boolean = false,
     /** The user's sleep window, rendered as a labeled greyed band over [startHour, endHour]. */
@@ -406,10 +422,26 @@ fun recordsForDay(
                 val eh = if (e.date > day) 24f else e.hour + e.minute / 60f + e.second / 3600f
                 if (eh <= sh) null else PlacedDeviceSegment(sh.coerceIn(0f, 24f), eh.coerceIn(0f, 24f), seg.devices)
             }
+        // PRD §15: where the break's open (hollow) part begins, in this day's hour space. Clipped like the
+        // band itself — a break straddling midnight whose head ended yesterday is open from the day's top —
+        // and dropped when nothing of the open part falls on this day.
+        val dayStartHour = startHour.coerceIn(0f, 24f)
+        val dayEndHour = endHour.coerceIn(0f, 24f)
+        val openFromHour =
+            record.screenBreakOpenFromMillis?.let { millis ->
+                val opens = Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz)
+                val raw =
+                    when {
+                        opens.date < day -> 0f
+                        opens.date > day -> 24f
+                        else -> opens.hour + opens.minute / 60f + opens.second / 3600f
+                    }
+                raw.coerceIn(dayStartHour, dayEndHour)
+            }?.takeIf { it < dayEndHour }
         PlacedRecord(
             title = record.title,
-            startHour = startHour.coerceIn(0f, 24f),
-            endHour = endHour.coerceIn(0f, 24f),
+            startHour = dayStartHour,
+            endHour = dayEndHour,
             scheduled = record.scheduled,
             manual = record.manual,
             entryId = record.entryId,
@@ -422,6 +454,7 @@ fun recordsForDay(
             checked = record.checked,
             checkedAtMillis = record.checkedAtMillis,
             screenBreak = record.screenBreak,
+            screenBreakOpenFromHour = openFromHour,
             alarm = record.alarm,
             sleep = record.sleep,
             inactivity = record.inactivity,
@@ -3286,6 +3319,13 @@ private val SCREEN_BREAK_MIN_HEIGHT = 3.dp
 private val SCREEN_BREAK_LABEL_MIN_HEIGHT = 13.dp
 
 /**
+ * PRD §15: tint of the HOLLOW half of a screen-break band — the part that accepts the tasks needing no
+ * screen. Light enough that a task block scheduled inside the break reads through it, strong enough that the
+ * region still reads as part of the break.
+ */
+private const val SCREEN_BREAK_OPEN_ALPHA = 0.12f
+
+/**
  * PRD §15 Screen break, rendered as a real time-positioned band (one [overlapLayout] slice of it) spanning its
  * true duration so the §9 fill leaves an exact gap for it. Sub-minute screen breaks render at [SCREEN_BREAK_MIN_HEIGHT]
  * (a hairline); the title is drawn only when the band is tall enough ([SCREEN_BREAK_LABEL_MIN_HEIGHT]). The full
@@ -3304,38 +3344,39 @@ private fun ScreenBreakBand(
     underCandidates: List<PlacedRecord>,
 ) {
     val height = (hourHeight * (slice.bottomHour - slice.topHour)).coerceAtLeast(SCREEN_BREAK_MIN_HEIGHT)
-    val showLabel = height >= SCREEN_BREAK_LABEL_MIN_HEIGHT
     val timeRange = "${formatHm(marker.fullStartMillis, tz)} – ${formatHm(marker.fullEndMillis, tz)}"
+    // PRD §15: the break is split where its CLOSED head ends and its open period begins — the part that
+    // accepts the tasks needing no screen (a 5-min pose's last four minutes; a 15-min pose end to end). The
+    // closed part is a solid band, the open one is drawn HOLLOW — a tinted outline the blocks beneath show
+    // through — because it is not a stop at all for an off-screen task, it is a period reserved for one.
+    val closedHeight =
+        height * screenBreakClosedFraction(marker.screenBreakOpenFromHour, slice.topHour, slice.bottomHour)
+    val openHeight = height - closedHeight
+    // The title is drawn once, in whichever half can hold it — the closed one by preference, since a solid
+    // band carries small white text best.
+    val labelInClosed = closedHeight >= SCREEN_BREAK_LABEL_MIN_HEIGHT
+    val labelInOpen = !labelInClosed && openHeight >= SCREEN_BREAK_LABEL_MIN_HEIGHT
     Box(
         modifier = Modifier
             .offset(x = colWidth * slice.xFraction, y = hourHeight * slice.topHour)
             .width(colWidth * slice.widthFraction)
             .height(height),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 1.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(CalColors.accent)
-                .then(if (showLabel) Modifier.padding(horizontal = 4.dp) else Modifier),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            if (showLabel) {
-                Text(
-                    text = "●",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White,
-                )
-                Text(
-                    text = marker.title,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White,
-                    maxLines = 1,
-                    modifier = Modifier.weight(1f),
-                )
-            }
+        if (closedHeight > 0.dp) {
+            ScreenBreakSegment(
+                title = marker.title,
+                showLabel = labelInClosed,
+                hollow = false,
+                modifier = Modifier.fillMaxWidth().height(closedHeight),
+            )
+        }
+        if (openHeight > 0.dp) {
+            ScreenBreakSegment(
+                title = marker.title,
+                showLabel = labelInOpen,
+                hollow = true,
+                modifier = Modifier.offset(y = closedHeight).fillMaxWidth().height(openHeight),
+            )
         }
         // PRD §8: tiled by whichever underlying panel/band covers each sub-range (see [decorativeHoverZones]),
         // so the hover bubble stacks it below this screen break's own title/time. The zones are mapped onto
@@ -3361,6 +3402,62 @@ private fun ScreenBreakBand(
                             "${formatHm(it.fullStartMillis, tz)} – ${formatHm(it.fullEndMillis, tz)}"
                         },
                     ),
+            )
+        }
+    }
+}
+
+/**
+ * PRD §15: how much of a screen-break band's height is its CLOSED head — the part that accepts no task and is
+ * drawn solid; the rest is the open period, drawn hollow. [openFromHour] is where the band stops accepting
+ * nobody (null = never: closed end to end), and the band is the slice `[topHour, bottomHour]` of it.
+ *
+ * A fraction rather than an hour because a band is drawn at a MINIMUM height (a 20-second look-away is a
+ * hairline, far taller than its true span), so the split has to be mapped onto the rendered height. A
+ * zero-length slice — a sub-second break, or one clipped to a day boundary — has no room for a head: it draws
+ * as whatever it mostly is, which for a band with an open part is the open part.
+ */
+fun screenBreakClosedFraction(openFromHour: Float?, topHour: Float, bottomHour: Float): Float {
+    if (openFromHour == null) return 1f
+    val span = bottomHour - topHour
+    if (span <= 0f) return 0f
+    return ((openFromHour - topHour) / span).coerceIn(0f, 1f)
+}
+
+/**
+ * PRD §15: one half of a [ScreenBreakBand] — its closed head or its open period.
+ *
+ * [hollow] is the whole difference, and it is what the break's period MEANS: a closed stretch accepts no task
+ * at all and is painted solid, while the open one accepts every task that needs no screen (the 5-minute pose's
+ * break-doable tail, the 15-minute pose end to end) and is painted as a tinted outline the work beneath shows
+ * through — the same "decorative, not occupied" idiom the no-screen panels use.
+ */
+@Composable
+private fun ScreenBreakSegment(
+    title: String,
+    showLabel: Boolean,
+    hollow: Boolean,
+    modifier: Modifier,
+) {
+    Row(
+        modifier = modifier
+            .padding(horizontal = 1.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(if (hollow) CalColors.accent.copy(alpha = SCREEN_BREAK_OPEN_ALPHA) else CalColors.accent)
+            .then(if (hollow) Modifier.border(1.dp, CalColors.accent, RoundedCornerShape(4.dp)) else Modifier)
+            .then(if (showLabel) Modifier.padding(horizontal = 4.dp) else Modifier),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (showLabel) {
+            val labelColor = if (hollow) CalColors.accent else Color.White
+            Text(text = "●", style = MaterialTheme.typography.labelSmall, color = labelColor)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelSmall,
+                color = labelColor,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
             )
         }
     }
