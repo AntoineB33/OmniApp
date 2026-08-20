@@ -11,7 +11,11 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.ScrollableDefaults
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberScrollableState
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -48,13 +53,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -93,6 +97,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -103,12 +108,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.exp
+import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlin.time.Instant
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -621,10 +625,6 @@ private fun coalesceSlices(raw: Map<String, MutableList<PanelSlice>>): Map<Strin
         merged
     }
 }
-
-/** Monday of the week containing [date] (PRD §7 week view starts on Monday, like the mock-up). */
-internal fun startOfWeek(date: LocalDate): LocalDate =
-    date.minus(date.dayOfWeek.isoDayNumber - 1, DateTimeUnit.DAY)
 
 private fun monthLabel(date: LocalDate): String =
     "${date.month.displayName} ${date.year}"
@@ -2028,8 +2028,10 @@ private fun MiniMonthDay(
 }
 
 /**
- * PRD §7 Calendar: a floating, draggable in-app window (not a modal dialog) showing the week
- * containing [selectedDate] as a Google-Calendar style time grid. It is meant to be rendered inside
+ * PRD §7/§8 Calendar: a floating, draggable in-app window (not a modal dialog) showing a
+ * Google-Calendar style time grid that scrolls through the days ENDLESSLY — [selectedDate] only says
+ * where it opens (the leftmost column), and each column runs on into its own next day below. It is
+ * meant to be rendered inside
  * the page-content area so it floats over the tree but never over the lateral menu; grab the title
  * bar to move it around.
  */
@@ -2089,6 +2091,18 @@ fun CalendarFloatingWindow(
     initialOffset: Offset = Offset.Zero,
     /** Persists the window's new drag position when a drag gesture ends (local-only geometry). */
     onOffsetChange: (Offset) -> Unit = {},
+    /**
+     * PRD §8/§9: the day span the endless scroll currently has on screen — its first (top-left) day and
+     * how many days the grid covers. There is no focused WEEK to derive it from any more, so the
+     * schedule horizon and every display projection follow this instead.
+     */
+    onVisibleDaysChanged: (LocalDate, Int) -> Unit = { _, _ -> },
+    /**
+     * PRD §7: bumped on every date pick in the lateral month calendar. The grid scrolls away from
+     * [selectedDate] freely, so re-picking the day already selected must still jump back — this is what
+     * makes that pick observable.
+     */
+    jumpNonce: Int = 0,
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
     // Keep the title bar (the only drag handle) reachable: this window has a fixed [requiredSize] that, on a
@@ -2115,6 +2129,11 @@ fun CalendarFloatingWindow(
     // turn means "zoom toward the cursor".
     val zoomActions = remember { CalendarZoomActions() }
     var ctrlHeld by remember { mutableStateOf(false) }
+    // PRD §8 now-line lock: while on, the grid is held with the now-line at the MIDDLE of the viewport and
+    // a zoom pivots around it instead of the cursor; scrolling (or a date pick) releases it. Like the zoom
+    // itself this is pure per-device view state with no meaning beyond the open window, so it lives only in
+    // Compose state — neither persisted nor synced (CLAUDE.md: local-only view state).
+    var lockNowLine by remember { mutableStateOf(false) }
     // PRD §8: the calendar owns the keyboard while it is the active surface, so its own shortcuts (O to
     // toggle overlap, Ctrl+Z/Y to undo/redo the calendar history, Ctrl +/- to zoom) work even though the
     // tree normally holds focus. Focus is (re)claimed when the window opens and on every press inside it.
@@ -2220,6 +2239,23 @@ fun CalendarFloatingWindow(
                         modifier = Modifier.padding(end = 8.dp),
                     )
                 }
+                // PRD §8: hold the now-line at the middle of the view (see [WeekView]'s lock). The Switch
+                // consumes its own presses, so toggling it never starts the title-bar drag.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(end = 8.dp),
+                ) {
+                    Text(
+                        text = "Lock to now",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = CalColors.muted,
+                    )
+                    Switch(
+                        checked = lockNowLine,
+                        onCheckedChange = { lockNowLine = it },
+                    )
+                }
                 // PRD §14/§15: toggle whether reminders / screen breaks are drawn (cosmetic; notifications keep
                 // firing). The Switch consumes its own presses, so toggling it never starts the title-bar drag.
                 Row(
@@ -2281,6 +2317,10 @@ fun CalendarFloatingWindow(
                     onToggleReminder = onToggleReminder,
                     onAdjustWeights = onAdjustWeights,
                     overlapArmed = overlapArmed,
+                    jumpNonce = jumpNonce,
+                    onVisibleDaysChanged = onVisibleDaysChanged,
+                    lockNowLine = lockNowLine,
+                    onLockNowLineChange = { lockNowLine = it },
                 )
             }
         }
@@ -2289,7 +2329,10 @@ fun CalendarFloatingWindow(
 
 /** PRD §8 zoom: the week grid's hour-row height at zoom 1f, and the zoom bounds / per-step factor. */
 private val BASE_HOUR_HEIGHT = 48.dp
-private const val MIN_CALENDAR_ZOOM = 0.5f
+// Low enough that a WHOLE day (24 x 48 dp = 1152 dp) still fits in a short viewport, which is what the
+// date pick's whole-day fit ([wholeDayZoom]) asks for on a scaled/small window; the fit is clamped into
+// these bounds, so a floor above what the window needs would silently stop showing the whole day.
+private const val MIN_CALENDAR_ZOOM = 0.25f
 private const val MAX_CALENDAR_ZOOM = 16f
 private const val CALENDAR_ZOOM_STEP = 1.15f
 
@@ -2307,14 +2350,87 @@ internal fun calendarTickMinutes(hourHeight: Dp): Int {
 }
 
 /**
- * PRD §8 zoom-to-cursor: the new vertical scroll (px) that keeps the content currently under [focalY] (px
- * from the viewport top) under that same pixel after the grid's height is scaled by [scaleFactor]. The
- * content offset under the cursor is `currentScroll + focalY`; scaling moves it to `(…)*scaleFactor`, so the
- * scroll that re-pins it is `(…)*scaleFactor - focalY`. Clamped to ≥ 0 (the caller clamps the upper bound to
- * the post-zoom scroll range). Pure, so the anchor math is unit-tested independently of Compose.
+ * PRD §8 zoom-to-cursor: the new vertical offset (px along the timeline) that keeps the content currently
+ * under [focalY] (px from the viewport top) under that same pixel after the grid's height is scaled by
+ * [scaleFactor]. The content offset under the cursor is `currentOffset + focalY`; scaling moves it to
+ * `(…)*scaleFactor`, so the offset that re-pins it is `(…)*scaleFactor - focalY`. Deliberately UNCLAMPED:
+ * the grid scrolls endlessly in both directions, so a negative result is not "above the top" — it is the
+ * previous day, which [rollingDayShift] folds into the anchor. Pure, so the anchor math is unit-tested
+ * independently of Compose.
  */
-internal fun zoomAnchoredScroll(currentScroll: Int, focalY: Float, scaleFactor: Float): Int =
-    ((currentScroll + focalY) * scaleFactor - focalY).coerceAtLeast(0f).roundToInt()
+internal fun zoomAnchoredOffset(currentOffset: Float, focalY: Float, scaleFactor: Float): Float =
+    (currentOffset + focalY) * scaleFactor - focalY
+
+/**
+ * PRD §8 infinite scroll: how many WHOLE days [offsetPx] has run past the top of the day it is measured
+ * from, given a day's rendered height [dayHeightPx]. The grid holds the invariant
+ * `0 <= offsetPx < dayHeightPx` by adding this to its anchor day and subtracting the matching pixels after
+ * every scroll and zoom — which is what makes the scrolling endless without any scroll RANGE to run out
+ * of: the anchor rolls, the offset stays inside one day. Negative when the user scrolled up past the
+ * anchor day's midnight.
+ */
+internal fun rollingDayShift(offsetPx: Float, dayHeightPx: Float): Int =
+    if (dayHeightPx <= 0f) 0 else floor(offsetPx / dayHeightPx).toInt()
+
+/**
+ * PRD §8 infinite scroll: how many day-tall rows the grid must compose to cover a [viewportPx]-tall
+ * viewport under the `0 <= offset < dayHeightPx` invariant — the days that fit, plus one for the
+ * partly-scrolled row at the top. This is what bounds the work to the SCREEN (CLAUDE.md hot-path rule):
+ * the number of columns composed follows the viewport and the zoom, never how far the user has scrolled
+ * from today.
+ */
+internal fun rollingRowCount(viewportPx: Float, dayHeightPx: Float): Int =
+    if (dayHeightPx <= 0f || viewportPx <= 0f) 1 else ceil(viewportPx / dayHeightPx).toInt() + 1
+
+/**
+ * PRD §8 now-line lock: the vertical offset (px along the timeline) that puts the now-line at the MIDDLE of
+ * a [viewportPx]-tall viewport. [daysFromAnchorToToday] is how many days today sits below the anchor day
+ * (negative above it) and [dayFraction] how far into today the now-line is drawn, so the now-line's content
+ * y is `(days + fraction) * dayHeightPx` and centring it is that minus half a viewport. Deliberately
+ * UNCLAMPED for the same reason [zoomAnchoredOffset] is: a result outside the anchor day is not "off the
+ * calendar" but the neighbouring day, which [rollingDayShift] folds back into the anchor — so the lock
+ * works just as well at 00:10 (where the middle of the view is yesterday) as at noon. Pure, so the lock's
+ * anchor math is unit-tested independently of Compose.
+ */
+internal fun nowLineCenterOffset(
+    daysFromAnchorToToday: Int,
+    dayFraction: Float,
+    dayHeightPx: Float,
+    viewportPx: Float,
+): Float = (daysFromAnchorToToday + dayFraction) * dayHeightPx - viewportPx / 2f
+
+/**
+ * PRD §7 date pick: the zoom at which exactly one whole day fills a [viewportPx]-tall viewport, given the
+ * day's height [dayHeightPxAtZoom1] at zoom 1f. Picking a day in the side menu's month rail resets the
+ * calendar to that day at the top of the viewport at this zoom, so the user sees the whole day (and, with
+ * the day columns beside it, the whole week) rather than whatever slice of it the scroll had landed on.
+ * Clamped into the zoom bounds like any other zoom, and defensive about the pre-layout viewport of 0 px.
+ * The week the columns show is the picked day's own ([weekAnchorDay]), not the six days after it.
+ * Pure, so the fit is unit-tested independently of Compose.
+ */
+internal fun wholeDayZoom(viewportPx: Float, dayHeightPxAtZoom1: Float): Float =
+    if (viewportPx <= 0f || dayHeightPxAtZoom1 <= 0f) 1f
+    else (viewportPx / dayHeightPxAtZoom1).coerceIn(MIN_CALENDAR_ZOOM, MAX_CALENDAR_ZOOM)
+
+/**
+ * PRD §7 date pick: the day that must sit in the LEFTMOST column so the picked [date] is shown with its
+ * whole WEEK around it — the Monday of that week, matching the side menu's Monday-first month rail. The
+ * columns are consecutive days ([rollingDayAt]), so anchoring on the picked day itself would put it at the
+ * left edge and show the six days AFTER it: picking Friday would hide Monday-Thursday, which is not "go to
+ * that week" but "start the timeline there". Pure, so the week fit is unit-tested independently of Compose.
+ */
+internal fun weekAnchorDay(date: LocalDate): LocalDate =
+    date.minus(date.dayOfWeek.isoDayNumber - 1, DateTimeUnit.DAY)
+
+/**
+ * PRD §8 infinite scroll: the day drawn in column [column] of day-row [row], anchored at [anchorDay] — the
+ * day at the top of the viewport in the LEFTMOST column. Columns are consecutive days left→right, and each
+ * column continues into its own next day below: under day d sits day d+1, and above it d-1. So the
+ * calendar is one endless vertical timeline per column, each phase-shifted a day from its left neighbour,
+ * and the day headers roll over as the timeline scrolls past midnight.
+ */
+internal fun rollingDayAt(anchorDay: LocalDate, row: Int, column: Int): LocalDate =
+    anchorDay.plus(row + column, DateTimeUnit.DAY)
 
 /**
  * PRD §8 zoom: a holder the calendar's keyboard shortcuts (in [CalendarFloatingWindow]) use to drive the
@@ -2326,6 +2442,9 @@ private class CalendarZoomActions {
     var zoomOut: () -> Unit = {}
     var reset: () -> Unit = {}
 }
+
+/** PRD §8: how many day columns the grid shows side by side. Each is its own endless timeline. */
+private const val DAY_COLUMNS = 7
 
 @Composable
 private fun WeekView(
@@ -2345,9 +2464,13 @@ private fun WeekView(
     onToggleReminder: (PlacedRecord) -> Unit,
     onAdjustWeights: (Map<String, Double>) -> Unit,
     overlapArmed: Boolean,
+    jumpNonce: Int,
+    onVisibleDaysChanged: (LocalDate, Int) -> Unit,
+    /** PRD §8: hold the now-line at the middle of the viewport (see the lock block below). */
+    lockNowLine: Boolean,
+    /** Releases the lock: the user scrolled, or picked another date — either way, they looked elsewhere. */
+    onLockNowLineChange: (Boolean) -> Unit,
 ) {
-    val weekStart = startOfWeek(selectedDate)
-    val days = (0..6).map { weekStart.plus(it, DateTimeUnit.DAY) }
     val tz = remember { TimeZone.currentSystemDefault() }
     // Follows the (possibly simulated) clock so the now-line moves as accelerated time advances.
     val now = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz).time
@@ -2355,59 +2478,159 @@ private fun WeekView(
     var zoom by remember { mutableStateOf(1f) }
     val hourHeight = BASE_HOUR_HEIGHT * zoom
     val gutterWidth = 56.dp
-
-    val scrollState = rememberScrollState()
     val density = LocalDensity.current
-    val scope = rememberCoroutineScope()
+    val dayHeightPx = with(density) { (hourHeight * 24).toPx() }
+
+    // PRD §8 infinite scroll: the grid is not a week of 24-hour columns any more but a CONTINUOUS timeline.
+    // [anchorDay] is the day at the top of the viewport in the leftmost column and [offsetPx] how far into
+    // that day we are scrolled; every scroll/zoom restores `0 <= offsetPx < dayHeightPx` by rolling whole
+    // days into the anchor ([rollingDayShift]). That is the whole trick: there is no scroll range to hit,
+    // so scrolling down past midnight simply rolls every column onto its own next day, forever, and up
+    // onto the previous one. Column i draws [anchorDay] + i (see [rollingDayAt]).
+    var anchorDay by remember { mutableStateOf(selectedDate) }
+    var offsetPx by remember { mutableStateOf(0f) }
     // PRD §8 zoom-to-cursor: the pointer's Y within the scroll viewport (the focal point a zoom pivots
     // around) and the viewport height (the fallback focal — its centre — for keyboard zoom with no cursor).
     var focalYpx by remember { mutableStateOf<Float?>(null) }
     var viewportHpx by remember { mutableStateOf(0f) }
-    // PRD §8: serialize zoom steps. A fast wheel/keyboard burst launches several applyZoom coroutines; if
-    // they interleaved, each would read a `scrollState.value`/`zoom` that doesn't yet reflect the others'
-    // pending scrollTo while `zoom` had already jumped several steps, so the final scroll would be computed
-    // for a smaller zoom than actually applied and the anchored point would jump (teleport up). The lock
-    // makes each step read settled state and apply its own scrollTo before the next begins.
-    val zoomMutex = remember { Mutex() }
-    // Apply a zoom [factor] keeping the time at [focal] (px from the viewport top) under that same pixel:
-    // the content offset there is `scroll + focal`; after scaling it becomes `(scroll + focal) * f`, so the
-    // new scroll that puts it back under `focal` is `(scroll + focal) * f - focal`. A pinch's centroid also
-    // travels between events (two-finger pan): [focalAfter] is where the anchored time must land, so the
-    // content follows the fingers; keyboard/wheel zooms leave it at [focal].
-    suspend fun applyZoom(factor: Float, focal: Float, focalAfter: Float = focal) = zoomMutex.withLock {
-        val next = (zoom * factor).coerceIn(MIN_CALENDAR_ZOOM, MAX_CALENDAR_ZOOM)
-        val f = next / zoom
-        val target = zoomAnchoredScroll(scrollState.value, focal, f) + (focal - focalAfter).roundToInt()
-        if (next == zoom && target == scrollState.value) return@withLock
-        zoom = next
-        // scrollTo clamps to the *current* scroll range, which only grows after the taller grid re-lays
-        // out. So when zooming in (especially near the bottom, e.g. the evening) wait — bounded — for the
-        // range to catch up to `target`; otherwise the target is clamped short and the point drifts up.
-        var guard = 0
-        while (scrollState.maxValue < target && guard < 8) {
-            withFrameNanos { }
-            guard++
+    // PRD §8: while a block is being dragged/resized, lock the grid's vertical scroll so it doesn't
+    // compete with the block's own drag gesture.
+    var scrollLocked by remember { mutableStateOf(false) }
+    // The gesture handlers below outlive the composition that created them (`pointerInput(Unit)`), so they
+    // must never close over a plain per-composition value. State delegates and this holder are remembered
+    // objects, so reading through them is always current; the day height is recomputed from [zoom].
+    val densityState = rememberUpdatedState(density)
+
+    fun dayHeightPxAt(z: Float): Float = with(densityState.value) { (BASE_HOUR_HEIGHT * z * 24).toPx() }
+
+    // Restore the `0 <= offsetPx < dayHeight` invariant by rolling the whole days scrolled past into the
+    // anchor day. Called after every offset change; [dayH] is the height in force AFTER the change.
+    fun rebase(dayH: Float) {
+        val roll = rollingDayShift(offsetPx, dayH)
+        if (roll != 0) {
+            anchorDay = anchorDay.plus(roll, DateTimeUnit.DAY)
+            offsetPx -= roll * dayH
         }
-        scrollState.scrollTo(target)
     }
+
+    // PRD §8 now-line lock: while the title bar's switch is on, the timeline is held with the now-line at
+    // the middle of the viewport — so the plan around the present stays centred as the clock advances, and
+    // a zoom pivots on the now-line instead of the cursor. The gesture handlers below outlive the
+    // composition that created them (`pointerInput(Unit)` / the scrollable lambda), so they read the flag
+    // and the release callback through [rememberUpdatedState] rather than closing over them.
+    val lockNow = rememberUpdatedState(lockNowLine)
+    val releaseLock = rememberUpdatedState(onLockNowLineChange)
+    // How far into today the now-line sits, as a fraction of the day. Deliberately to the MINUTE and not
+    // finer: that is exactly where DayColumn's current-time indicator is drawn, and the lock must centre on
+    // the line the user can see, not on a truer instant a pixel away from it.
+    val nowFraction = (now.hour + now.minute / 60f) / 24f
+    val nowFractionState = rememberUpdatedState(nowFraction)
+    val todayState = rememberUpdatedState(today)
+
+    // Scroll so the now-line lands on the middle of the viewport, then roll the whole days out as usual.
+    // [dayH] is the day height in force AFTER whatever change prompted the re-centring.
+    fun centerOnNowLine(dayH: Float) {
+        if (dayH <= 0f || viewportHpx <= 0f) return
+        offsetPx = nowLineCenterOffset(
+            daysFromAnchorToToday = anchorDay.daysUntil(todayState.value),
+            dayFraction = nowFractionState.value,
+            dayHeightPx = dayH,
+            viewportPx = viewportHpx,
+        )
+        rebase(dayH)
+    }
+
+    // PRD §8 zoom-to-cursor: scale the timeline and re-pin the time under [focal]. A pinch's centroid also
+    // travels between events (two-finger pan): [focalAfter] is where the anchored time must land, so the
+    // content follows the fingers; keyboard/wheel zooms leave it at [focal]. Unlike the old bounded scroll
+    // state this needs no mutex and no wait for the scroll range to grow — the offset is a plain number
+    // with no upper bound, so a burst of zoom steps composes exactly, one synchronous update each.
+    fun applyZoom(factor: Float, focal: Float, focalAfter: Float = focal) {
+        val next = (zoom * factor).coerceIn(MIN_CALENDAR_ZOOM, MAX_CALENDAR_ZOOM)
+        if (next == zoom && focal == focalAfter) return
+        val f = next / zoom
+        zoom = next
+        val dayH = dayHeightPxAt(next)
+        // PRD §8 now-line lock: the zoom is anchored on the NOW-LINE, not on the cursor — so re-centre
+        // rather than re-pinning whatever happened to be under [focal]. A pinch's pan component
+        // ([focalAfter]) is dropped for the same reason: while locked, the middle of the view is the
+        // now-line and nothing else may move it.
+        if (lockNow.value && viewportHpx > 0f) {
+            centerOnNowLine(dayH)
+            return
+        }
+        offsetPx = zoomAnchoredOffset(offsetPx, focal, f) + (focal - focalAfter)
+        rebase(dayH)
+    }
+
+    // The scroll itself: an unbounded offset instead of a clamped ScrollState. Mirrors `verticalScroll`'s
+    // sign convention (same `reverseDirection`), so wheel, drag and fling behave exactly as before.
+    val scrollableState = rememberScrollableState { delta ->
+        // PRD §8 now-line lock: a scroll — wheel, drag or fling — is the user taking the view somewhere
+        // else, so it switches the lock off rather than being fought by it on the next tick.
+        if (delta != 0f && lockNow.value) releaseLock.value(false)
+        offsetPx += delta
+        rebase(dayHeightPxAt(zoom))
+        delta
+    }
+    val reverseScroll =
+        ScrollableDefaults.reverseDirection(LocalLayoutDirection.current, Orientation.Vertical, false)
+
     // Register the keyboard shortcuts (driven from CalendarFloatingWindow). They pivot around the cursor if
     // it is over the grid, else the viewport centre.
-    zoomActions.zoomIn = { scope.launch { applyZoom(CALENDAR_ZOOM_STEP, focalYpx ?: viewportHpx / 2f) } }
-    zoomActions.zoomOut = { scope.launch { applyZoom(1f / CALENDAR_ZOOM_STEP, focalYpx ?: viewportHpx / 2f) } }
-    zoomActions.reset = { scope.launch { applyZoom(1f / zoom, focalYpx ?: viewportHpx / 2f) } }
+    zoomActions.zoomIn = { applyZoom(CALENDAR_ZOOM_STEP, focalYpx ?: viewportHpx / 2f) }
+    zoomActions.zoomOut = { applyZoom(1f / CALENDAR_ZOOM_STEP, focalYpx ?: viewportHpx / 2f) }
+    zoomActions.reset = { applyZoom(1f / zoom, focalYpx ?: viewportHpx / 2f) }
     val ctrl = rememberUpdatedState(ctrlHeld)
 
     // PRD §8 (Google-Calendar style): open scrolled to the current time so today's "task to do now"
     // block (which starts at the present hour) is visible without manual scrolling. Show one hour of
     // lead context above it.
     LaunchedEffect(Unit) {
-        val target = with(density) { (hourHeight * (now.hour - 1)).toPx() }
-        scrollState.scrollTo(target.roundToInt().coerceAtLeast(0))
+        offsetPx = (with(densityState.value) { BASE_HOUR_HEIGHT.toPx() } * (now.hour - 1)).coerceAtLeast(0f)
+    }
+    // PRD §7: picking a date in the lateral month calendar RESETS the view onto that day's WHOLE WEEK —
+    // the week's Monday becomes the leftmost column's day ([weekAnchorDay]), scrolled to its midnight and
+    // zoomed so exactly one whole day fills the viewport. So the pick always lands on the same, legible
+    // view (the picked day's week of columns, each showing its whole day) however deep into a zoom or how
+    // far into a day's middle the endless scroll had wandered; an earlier behaviour kept the zoom and the
+    // time of day, which meant "go to the 12th" could show four hours of it, and anchoring on the picked
+    // day itself put it at the LEFT EDGE — showing the six days after it instead of the week around it.
+    // Keyed on [jumpNonce] as well as the date because the scroll can carry the grid AWAY
+    // from [selectedDate] (that is what endless scrolling is), so picking the day already selected — "take
+    // me back to today" — is a real jump with nothing changed to key on. The nonce is the pick itself.
+    LaunchedEffect(jumpNonce, selectedDate) {
+        anchorDay = weekAnchorDay(selectedDate)
+        // Before the first layout the viewport height is unknown, so there is no whole-day fit to compute:
+        // leave the zoom and the offset to the initial "open at the current hour" effect above. Only a real
+        // pick (which can only happen once the calendar is on screen and measured) resets the view.
+        if (viewportHpx > 0f) {
+            zoom = wholeDayZoom(viewportHpx, dayHeightPxAt(1f))
+            offsetPx = 0f
+        }
+        // PRD §8 now-line lock: a date pick is the same intent as a scroll — "take me elsewhere" — so it
+        // releases the lock, which would otherwise pull the grid straight back off that day on the next tick.
+        if (lockNow.value) releaseLock.value(false)
     }
 
-    // PRD §8: while a block is being dragged/resized, lock the grid's vertical scroll so it doesn't
-    // compete with the block's own drag gesture.
-    var scrollLocked by remember { mutableStateOf(false) }
+    // PRD §8 now-line lock: re-apply the centring whenever anything it is a function of moves — the clock,
+    // the zoom, the viewport height — and once when the switch is turned on. It is an effect rather than a
+    // layout-phase read of a derived offset because centring can roll the ANCHOR DAY over (at either end of
+    // the day the middle of the view belongs to the neighbouring one), which is a composition-level change.
+    // Cost follows the screen, not the history (CLAUDE.md hot-path rule): it is a handful of arithmetic per
+    // observed now-line, and the observed now-line is already quantized upstream.
+    LaunchedEffect(lockNowLine, nowMillis, zoom, viewportHpx) {
+        if (lockNowLine) centerOnNowLine(dayHeightPxAt(zoom))
+    }
+
+    // How many day-rows cover the viewport, and therefore which days are on screen: the columns span
+    // [anchorDay, anchorDay + DAY_COLUMNS - 1] at the top row and one day further down per row.
+    val rowCount = rollingRowCount(viewportHpx, dayHeightPx)
+    val visibleDayCount = rowCount + DAY_COLUMNS - 1
+    // PRD §9: the schedule horizon and every display projection follow what is actually on screen, so the
+    // span the scroll has landed on is reported up rather than derived from a "focused week" that no
+    // longer exists.
+    LaunchedEffect(anchorDay, visibleDayCount) { onVisibleDaysChanged(anchorDay, visibleDayCount) }
 
     // PRD §8 "there must not be overlaps" (default mode): every block on the calendar (records,
     // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live. Reminder tags
@@ -2435,7 +2658,7 @@ private fun WeekView(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = monthLabel(weekStart),
+                text = monthLabel(anchorDay),
                 style = MaterialTheme.typography.titleMedium,
             )
             if (overlapArmed) {
@@ -2448,12 +2671,14 @@ private fun WeekView(
             }
         }
 
-        // Day-of-week + date headers, aligned over their columns.
+        // Day-of-week + date headers, aligned over their columns. They name each column's day at the TOP of
+        // the viewport, so they roll forward one day at a time as the grid scrolls past midnight.
         Row(Modifier.fillMaxWidth()) {
             Spacer(Modifier.width(gutterWidth))
-            days.forEachIndexed { index, day ->
+            repeat(DAY_COLUMNS) { column ->
+                val day = rollingDayAt(anchorDay, row = 0, column = column)
                 DayHeader(
-                    weekday = WEEKDAY_SHORT[index],
+                    weekday = WEEKDAY_SHORT[day.dayOfWeek.isoDayNumber - 1],
                     dayOfMonth = day.dayOfMonth,
                     isToday = day == today,
                     modifier = Modifier.weight(1f),
@@ -2468,10 +2693,11 @@ private fun WeekView(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .clipToBounds()
                 .onSizeChanged { viewportHpx = it.height.toFloat() }
                 // PRD §8 zoom-to-cursor: track the cursor's Y in the viewport, and on Ctrl+scroll zoom
                 // toward it (consumed at the Initial pass so the grid doesn't also scroll). A plain wheel
-                // turn isn't consumed, so it falls through to the verticalScroll below. Ctrl is read from the
+                // turn isn't consumed, so it falls through to the scrollable below. Ctrl is read from the
                 // scroll event's own keyboard modifiers (not the focus-tracked [ctrl]) so zoom works whenever
                 // the cursor is over the calendar — even if it doesn't hold keyboard focus. Pointer hit-testing
                 // means a panel drawn over the calendar receives the wheel instead, so it correctly "doesn't count".
@@ -2520,7 +2746,7 @@ private fun WeekView(
                                         if (dy != 0f) {
                                             // Exponential so equal drags give equal zoom ratios; anchored
                                             // at the first tap's point.
-                                            scope.launch { applyZoom(exp(dy / 200f), pressPos.y) }
+                                            applyZoom(exp(dy / 200f), pressPos.y)
                                         }
                                         touch.consume()
                                     }
@@ -2551,9 +2777,7 @@ private fun WeekView(
                                 val dy = change?.scrollDelta?.y ?: 0f
                                 if (dy != 0f) {
                                     val focal = change!!.position.y
-                                    scope.launch {
-                                        applyZoom(if (dy < 0f) CALENDAR_ZOOM_STEP else 1f / CALENDAR_ZOOM_STEP, focal)
-                                    }
+                                    applyZoom(if (dy < 0f) CALENDAR_ZOOM_STEP else 1f / CALENDAR_ZOOM_STEP, focal)
                                     event.changes.forEach { it.consume() }
                                 }
                             }
@@ -2568,61 +2792,144 @@ private fun WeekView(
                                 if (oldFocal.isFinite() && newFocal.isFinite() &&
                                     (pinch != 1f || newFocal != oldFocal)
                                 ) {
-                                    scope.launch { applyZoom(pinch, oldFocal, newFocal) }
+                                    applyZoom(pinch, oldFocal, newFocal)
                                 }
                                 event.changes.forEach { it.consume() }
                             }
                         }
                     }
                 }
-                .verticalScroll(scrollState, enabled = !scrollLocked),
+                .scrollable(
+                    state = scrollableState,
+                    orientation = Orientation.Vertical,
+                    enabled = !scrollLocked,
+                    reverseDirection = reverseScroll,
+                ),
         ) {
-            Row(Modifier.fillMaxWidth().height(hourHeight * 24)) {
+            // Each day-row is positioned by a LAYOUT-phase read of [offsetPx] (`offset { … }`), never a
+            // composition-phase one: scrolling then only re-lays-out, and the DAY_COLUMNS × [rowCount]
+            // columns are recomposed once per day boundary crossed instead of once per scrolled pixel.
+            Row(Modifier.fillMaxSize()) {
                 // Time gutter: hour labels, plus sub-hour minute labels (":30", ":15", …) once zoomed in.
-                Column(Modifier.width(gutterWidth)) {
-                    val tick = calendarTickMinutes(hourHeight)
-                    val tickHeight = hourHeight * (tick / 60f)
-                    var minutes = 0
-                    while (minutes < 24 * 60) {
-                        val hour = minutes / 60
-                        val minute = minutes % 60
-                        Box(Modifier.height(tickHeight).fillMaxWidth().padding(end = 6.dp)) {
-                            Text(
-                                text = if (minute == 0) hourLabel(hour) else ":" + minute.toString().padStart(2, '0'),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (minute == 0) CalColors.muted else CalColors.muted.copy(alpha = 0.5f),
-                                textAlign = TextAlign.End,
-                                modifier = Modifier.fillMaxWidth().offset(y = (-6).dp),
-                            )
+                // Repeated per day-row — every column crosses midnight at the same height, so one gutter
+                // serves them all.
+                Box(Modifier.width(gutterWidth).fillMaxHeight()) {
+                    repeat(rowCount) { row ->
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                // requiredHeight, not height: [Modifier.height] enforces the INCOMING
+                                // constraints, and the scroll viewport hands down its own (bounded) height —
+                                // so a day taller than the viewport would be clamped to it. See [DayColumn]'s
+                                // own note below.
+                                .requiredHeight(hourHeight * 24)
+                                .offset { IntOffset(0, (row * dayHeightPx - offsetPx).roundToInt()) },
+                        ) {
+                            val tick = calendarTickMinutes(hourHeight)
+                            val tickHeight = hourHeight * (tick / 60f)
+                            var minutes = 0
+                            while (minutes < 24 * 60) {
+                                val hour = minutes / 60
+                                val minute = minutes % 60
+                                Box(Modifier.height(tickHeight).fillMaxWidth().padding(end = 6.dp)) {
+                                    Text(
+                                        text = if (minute == 0) hourLabel(hour)
+                                        else ":" + minute.toString().padStart(2, '0'),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (minute == 0) CalColors.muted
+                                        else CalColors.muted.copy(alpha = 0.5f),
+                                        textAlign = TextAlign.End,
+                                        modifier = Modifier.fillMaxWidth().offset(y = (-6).dp),
+                                    )
+                                }
+                                minutes += tick
+                            }
                         }
-                        minutes += tick
                     }
                 }
-                days.forEach { day ->
-                    DayColumn(
-                        day = day,
-                        tz = tz,
-                        isToday = day == today,
-                        hourHeight = hourHeight,
-                        now = if (day == today) now else null,
-                        records = recordsForDay(records, day, tz),
-                        onAddTaskAt = onAddTaskAt,
-                        onAddReminderAt = onAddReminderAt,
-                        onAddNoScreenAt = onAddNoScreenAt,
-                        onAddInactivityAt = onAddInactivityAt,
-                        onCommitBounds = onCommitBounds,
-                        onEditEntry = onEditEntry,
-                        onRemoveEntry = onRemoveEntry,
-                        onToggleReminder = onToggleReminder,
-                        onLockScroll = { scrollLocked = it },
-                        onAdjustWeights = onAdjustWeights,
-                        allBlocks = allBlocks,
-                        overlapArmed = overlapArmed,
-                        hoverScope = hoverScope,
-                        modifier = Modifier.weight(1f),
-                    )
+                repeat(DAY_COLUMNS) { column ->
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        repeat(rowCount) { row ->
+                            val day = rollingDayAt(anchorDay, row, column)
+                            // Keyed on the day so a column's transient state (an open contextual menu, an
+                            // armed move) belongs to the date it was opened on and cannot be inherited by
+                            // the next day that rolls into the same slot.
+                            key(day) {
+                                DayColumn(
+                                    day = day,
+                                    tz = tz,
+                                    isToday = day == today,
+                                    hourHeight = hourHeight,
+                                    now = if (day == today) now else null,
+                                    records = recordsForDay(records, day, tz),
+                                    onAddTaskAt = onAddTaskAt,
+                                    onAddReminderAt = onAddReminderAt,
+                                    onAddNoScreenAt = onAddNoScreenAt,
+                                    onAddInactivityAt = onAddInactivityAt,
+                                    onCommitBounds = onCommitBounds,
+                                    onEditEntry = onEditEntry,
+                                    onRemoveEntry = onRemoveEntry,
+                                    onToggleReminder = onToggleReminder,
+                                    onLockScroll = { scrollLocked = it },
+                                    onAdjustWeights = onAdjustWeights,
+                                    allBlocks = allBlocks,
+                                    overlapArmed = overlapArmed,
+                                    hoverScope = hoverScope,
+                                    // requiredHeight, not height: a day-row is `dayHeightPx` tall by
+                                    // construction (that is what the placement above assumes), but the
+                                    // scroll viewport is not — [Modifier.scrollable] passes its own bounded
+                                    // constraints straight through, where the old [verticalScroll] measured
+                                    // its content with maxHeight = Infinity. [Modifier.height] ENFORCES the
+                                    // incoming constraints, so it would clamp each row to the viewport
+                                    // height: the hour-line Column would then run out of main-axis space and
+                                    // measure its trailing hour boxes at zero height (the grid vanishing in
+                                    // the lower part of the view), and the rows would no longer tile.
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .requiredHeight(hourHeight * 24)
+                                        .offset { IntOffset(0, (row * dayHeightPx - offsetPx).roundToInt()) },
+                                )
+                            }
+                            // The header only names each column's TOP day, so every boundary scrolled into
+                            // view names the day it opens.
+                            if (row > 0) {
+                                Text(
+                                    text = "${WEEKDAY_SHORT[day.dayOfWeek.isoDayNumber - 1]} ${day.dayOfMonth}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (day == today) CalColors.accent else CalColors.muted,
+                                    modifier = Modifier
+                                        .offset {
+                                            IntOffset(0, (row * dayHeightPx - offsetPx).roundToInt() + 2)
+                                        }
+                                        .background(
+                                            CalColors.menuBackground.copy(alpha = 0.85f),
+                                            RoundedCornerShape(4.dp),
+                                        )
+                                        .padding(horizontal = 4.dp),
+                                )
+                            }
+                        }
+                    }
                 }
             }
+            Box(
+                Modifier.fillMaxSize().drawBehind {
+                    // The day boundaries, drawn over the columns (a block crossing midnight must not hide
+                    // the seam) and at one height for the whole grid — every column crosses into its own
+                    // next day at the same pixel.
+                    var row = 0
+                    while (row <= rowCount) {
+                        val y = row * dayHeightPx - offsetPx
+                        drawLine(
+                            color = CalColors.muted.copy(alpha = 0.55f),
+                            start = Offset(0f, y),
+                            end = Offset(size.width, y),
+                            strokeWidth = 1.5.dp.toPx(),
+                        )
+                        row++
+                    }
+                },
+            )
         }
         // PRD §8 hover title bubble, drawn above all columns; non-interactive so the cursor passes through.
         titleHover?.let { CalendarTitleBubble(it.title, it.pos, it.subtitle, it.underTitle, it.underSubtitle) }

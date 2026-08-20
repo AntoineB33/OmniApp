@@ -93,7 +93,6 @@ import org.example.project.ui.SimPauseScope
 import org.example.project.ui.SleepWindow
 import org.example.project.ui.TaskTreesWindow
 import org.example.project.ui.TimeSimPanel
-import org.example.project.ui.startOfWeek
 
 enum class OmniPage(val label: String) {
     TaskScheduler("Task Scheduler"),
@@ -398,43 +397,53 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
 
-        // PRD §15: screen breaks are projected from now to the END OF THE FOCUSED WEEK — the week the calendar
-        // window is showing ([startOfWeek] of [selectedDate], Monday-based, exclusive end = the next Monday's
-        // midnight). The scheduling horizon is the floor, so the near term is unchanged and navigating to a
-        // further-out week extends the screen-break markers to span it. `nowMillis` is the same `now` the last
-        // schedule refresh used (the tick loop sets both together), so within the schedule window this
-        // reproduces the screen-break panels already in [schedulerState.panels] and only adds the tail.
-        val focusedWeekStartMillis = startOfWeek(selectedDate).atStartOfDayIn(tz).toEpochMilliseconds()
-        val focusedWeekEndMillis =
-            startOfWeek(selectedDate).plus(7, DateTimeUnit.DAY).atStartOfDayIn(tz).toEpochMilliseconds()
-        // Every forward DISPLAY projection stops here: the end of the displayed week, floored at the horizon a
-        // closed calendar still needs. Never `now + 168h` unconditionally — a Sunday on the current week
-        // projects ~24h of sleep bands, not a week of them (PRD §9 "the horizon follows what is displayed").
-        val screenBreakHorizonMillis =
-            maxOf(nowMillis + SchedulerDomain.MIN_SCHEDULE_HORIZON_MILLIS, focusedWeekEndMillis)
+        // PRD §8: the calendar scrolls through the days ENDLESSLY — under day d sits day d+1 — so what is
+        // on screen is no longer "the week containing [selectedDate]" but a day span the scroll lands on, and
+        // the calendar reports it up as it rolls. Seeded with the span the grid opens on (today's column plus
+        // the six to its right, two day-rows deep) so the first frame projects what it is about to be asked
+        // for; [selectedDate] now only says which day the calendar JUMPS to when picked in the month rail.
+        var visibleFirstDay by remember { mutableStateOf(today) }
+        var visibleDayCount by remember { mutableStateOf(8) }
+        // PRD §7: a date pick in the month rail is an EVENT the calendar must act on even when it picks the
+        // day already selected (the scroll has since carried the grid elsewhere), so it is counted, not read.
+        var calendarJumpNonce by remember { mutableStateOf(0) }
 
-        // PRD §9: tell the ENGINE which week is on screen, so its §9 refills materialize the work plan out to
-        // exactly that week (clamped to [24h, 168h]) instead of unconditionally computing 168h of schedule the
-        // user is not looking at. Closing the calendar drops it back to the 24h floor the headless
-        // notification/cue paths need. Growing it (navigating further out) triggers one refill in the engine.
-        LaunchedEffect(engine, calendarOpen, focusedWeekEndMillis) {
-            engine.setCalendarHorizon(if (calendarOpen) focusedWeekEndMillis else null)
+        // PRD §15: screen breaks are projected from now to the END OF THE DISPLAYED SPAN. The scheduling
+        // horizon is the floor, so the near term is unchanged and scrolling further out extends the
+        // screen-break markers to span it. `nowMillis` is the same `now` the last schedule refresh used (the
+        // tick loop sets both together), so within the schedule window this reproduces the screen-break
+        // panels already in [schedulerState.panels] and only adds the tail.
+        val visibleSpanStartMillis = visibleFirstDay.atStartOfDayIn(tz).toEpochMilliseconds()
+        val visibleSpanEndMillis =
+            visibleFirstDay.plus(visibleDayCount, DateTimeUnit.DAY).atStartOfDayIn(tz).toEpochMilliseconds()
+        // Every forward DISPLAY projection stops here: the end of the displayed span, floored at the horizon a
+        // closed calendar still needs. Never `now + 168h` unconditionally — a grid sitting on today projects
+        // ~24h of sleep bands, not a week of them (PRD §9 "the horizon follows what is displayed").
+        val screenBreakHorizonMillis =
+            maxOf(nowMillis + SchedulerDomain.MIN_SCHEDULE_HORIZON_MILLIS, visibleSpanEndMillis)
+
+        // PRD §9: tell the ENGINE which days are on screen, so its §9 refills materialize the work plan out
+        // to exactly that span (clamped to [24h, 168h]) instead of unconditionally computing 168h of schedule
+        // the user is not looking at. Closing the calendar drops it back to the 24h floor the headless
+        // notification/cue paths need. Growing it (scrolling further out) triggers one refill in the engine.
+        LaunchedEffect(engine, calendarOpen, visibleSpanEndMillis) {
+            engine.setCalendarHorizon(if (calendarOpen) visibleSpanEndMillis else null)
         }
 
-        // PRD §9/§17 "schedule the whole week displayed": the engine materializes the work plan out to the
-        // displayed week, but never past its 168h CEILING. When the focused week reaches past that, compute
-        // the plan from the now-line out to that week for DISPLAY — off the UI thread (Dispatchers.Default) so
-        // a distant week "simply takes time to be displayed" instead of freezing, keyed only on the focused
-        // week so it doesn't rerun every now-tick. The result is never stored in the state, so navigating back
-        // to a near week just uses the near panels again and this far fill is dropped ("erased") — no retained
-        // multi-week memory. Nearer weeks need none of this: the engine already fills exactly to them
-        // (`engine.setCalendarHorizon` above), so `schedulerState.panels` covers the whole displayed week.
+        // PRD §9/§17 "schedule the whole span displayed": the engine materializes the work plan out to the
+        // displayed days, but never past its 168h CEILING. When the scroll reaches past that, compute the plan
+        // from the now-line out to there for DISPLAY — off the UI thread (Dispatchers.Default) so a distant
+        // day "simply takes time to be displayed" instead of freezing, keyed only on the displayed span so it
+        // doesn't rerun every now-tick. The result is never stored in the state, so scrolling back to a near
+        // day just uses the near panels again and this far fill is dropped ("erased") — no retained
+        // multi-week memory. Nearer days need none of this: the engine already fills exactly to them
+        // (`engine.setCalendarHorizon` above), so `schedulerState.panels` covers the whole displayed span.
         val nearHorizonEndMillis = nowMillis + SchedulerDomain.SCHEDULE_HORIZON_MILLIS
-        val focusedWeekBeyondNearHorizon = focusedWeekEndMillis > nearHorizonEndMillis
+        val visibleSpanBeyondNearHorizon = visibleSpanEndMillis > nearHorizonEndMillis
         var farWeekPlan by remember { mutableStateOf<List<TaskPanel>?>(null) }
         var farWeekCalculating by remember { mutableStateOf(false) }
-        LaunchedEffect(focusedWeekStartMillis, focusedWeekBeyondNearHorizon) {
-            if (!focusedWeekBeyondNearHorizon) {
+        LaunchedEffect(visibleSpanStartMillis, visibleSpanBeyondNearHorizon) {
+            if (!visibleSpanBeyondNearHorizon) {
                 farWeekPlan = null
                 farWeekCalculating = false
                 return@LaunchedEffect
@@ -444,7 +453,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val fill =
                 withContext(Dispatchers.Default) {
                     SchedulerDomain.fillSchedule(
-                        schedulerState, nowMillis, timeZone = tz, horizonMillis = focusedWeekEndMillis,
+                        schedulerState, nowMillis, timeZone = tz, horizonMillis = visibleSpanEndMillis,
                     )
                 }
             farWeekPlan = fill
@@ -453,7 +462,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The source for the calendar's real task BLOCKS: the near panels as usual, or the async far-week fill
         // (falling back to the near panels while it is still computing, so past/pinned blocks stay visible).
         val workPlanPanels =
-            if (focusedWeekBeyondNearHorizon) farWeekPlan ?: schedulerState.panels else schedulerState.panels
+            if (visibleSpanBeyondNearHorizon) farWeekPlan ?: schedulerState.panels else schedulerState.panels
         // The user's sleep windows — shown as "Sleep" blocks and avoided by the regular task fill (so no task
         // is scheduled while asleep). Screen breaks, by contrast, DO project across sleep so their eye-rest / pose
         // cues still render over the "Sleep" band for a user working through the night (PRD §15). The sleep
@@ -490,10 +499,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // accelerated leap) instead of letting the now-line cross a stale slot or freezing everything
         // downstream of a not-yet-served pose. Placement-only — stored screen-break state is untouched.
         //
-        // Bound to the VISIBLE week, not `[now, focusedWeekEnd]` (CLAUDE.md: hot-path display derivations
-        // scale with the screen, not with total history). When the focused week contains the present, the
+        // Bound to the VISIBLE days, not `[now, visibleSpanEnd]` (CLAUDE.md: hot-path display derivations
+        // scale with the screen, not with total history). When the displayed span contains the present, the
         // forward projection from `now` — which carries the overdue-slide + live-rest semantics near the
-        // now-line — is already bounded to `≤ 1` week (ends at `focusedWeekEnd`). When the focused week is
+        // now-line — is already bounded to `≤ 1` week (ends at `visibleSpanEnd`). When the displayed span is
         // entirely in the FUTURE, projecting from `now` would generate every occurrence between `now` and
         // that week; at a shrunk 5-min-break interval ([DebugFlags.breakIntervalMillisOverride]) that is tens of thousands of markers pushed
         // through the O(n²) placement scan, which froze the app when a distant day was opened. Reconstruct
@@ -514,11 +523,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val displayPastSidePanels =
             SchedulerDomain.takenScreenBreakPanels(
                 schedulerState.screenBreaks,
-                focusedWeekStartMillis,
-                minOf(nowMillis - 1, focusedWeekEndMillis),
+                visibleSpanStartMillis,
+                minOf(nowMillis - 1, visibleSpanEndMillis),
             )
         val displaySidePanels =
-            if (focusedWeekStartMillis <= nowMillis) {
+            if (visibleSpanStartMillis <= nowMillis) {
                 displayPastSidePanels +
                     SchedulerDomain.screenBreakPanels(
                         SchedulerDomain.screenBreaksForPlacement(
@@ -526,20 +535,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
                         ),
                         nowMillis,
-                        focusedWeekEndMillis,
+                        visibleSpanEndMillis,
                         // A decoupled 5-min pose (account1 fast-break) appears an interval after each qualifying
                         // pause; the future ones are the scheduled sleep windows (PRD §15).
                         qualifyingPauseWindows = SchedulerDomain.sleepRegions(
-                            schedulerState.sleep, nowMillis, focusedWeekEndMillis, tz,
+                            schedulerState.sleep, nowMillis, visibleSpanEndMillis, tz,
                         ),
                     )
             } else {
                 SchedulerDomain.screenBreakPanelsInWindow(
                     schedulerState.screenBreaks,
-                    focusedWeekStartMillis,
-                    focusedWeekEndMillis,
+                    visibleSpanStartMillis,
+                    visibleSpanEndMillis,
                     qualifyingPauseWindows = SchedulerDomain.sleepRegions(
-                        schedulerState.sleep, focusedWeekStartMillis, focusedWeekEndMillis, tz,
+                        schedulerState.sleep, visibleSpanStartMillis, visibleSpanEndMillis, tz,
                     ),
                 )
             }
@@ -557,14 +566,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 schedulerState.screenBreaks, schedulerState.tasks,
             )
 
-        // PRD §14: reminder flags are calculated for the WHOLE focused week — from now to the end of the
-        // week the calendar is showing — so navigating to a week shows its reminders. Like the screen-break
-        // projection they are regenerated for display (anchored at today's midnight, out to the focused
-        // week's end), with each tag's checked state carried over from the stored reminder panels by
+        // PRD §14: reminder flags are calculated for the WHOLE displayed span — from now to the end of the
+        // days the calendar is showing — so scrolling to a day shows its reminders. Like the screen-break
+        // projection they are regenerated for display (anchored at today's midnight, out to the displayed
+        // span's end), with each tag's checked state carried over from the stored reminder panels by
         // matching its deterministic id.
         val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
         val reminderHorizonDays =
-            ((focusedWeekEndMillis - todayStartMillis) / (24L * 60 * 60 * 1000)).toInt().coerceAtLeast(0)
+            ((visibleSpanEndMillis - todayStartMillis) / (24L * 60 * 60 * 1000)).toInt().coerceAtLeast(0)
         val displayReminderPanels =
             SchedulerDomain.regenerateChorePanels(
                 schedulerState.panels, schedulerState.chores, todayStartMillis, reminderHorizonDays, nowMillis,
@@ -578,7 +587,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // per-tick recompute is a fixed, tiny amount of work.
         val displayAlarmOccurrences =
             AlarmDomain.occurrencesInWindow(
-                schedulerState.alarms, focusedWeekStartMillis, focusedWeekEndMillis, tz,
+                schedulerState.alarms, visibleSpanStartMillis, visibleSpanEndMillis, tz,
             )
 
         // PRD §15/§17: where the account was demonstrably ACTIVE in the past window, the "Sleep" band is carved
@@ -598,12 +607,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // pause is never mistaken for activity that would carve the "Sleep" band.
         // PRD §12/§15 on-demand past fill: the engine's [inactivityGaps] only derives back 168h, so a week older
         // than that would render empty. Re-derive the account-wide pauses for DISPLAY from the full stored
-        // session history over a floor that reaches the focused week — any past week then fills on demand (an
-        // empty DB ⇒ the whole week is one open-ended inactivity gap). Recomputed every frame from
-        // `selectedDate`, so nothing older than the displayed week is retained (memory). Over the near-term
+        // session history over a floor that reaches the displayed span — any past day then fills on demand (an
+        // empty DB ⇒ the whole span is one open-ended inactivity gap). Recomputed every frame from the
+        // scrolled span, so nothing older than what is displayed is retained (memory). Over the near-term
         // window this reproduces the engine's value (same sessions); it only extends coverage further back.
         val displayFloorMillis =
-            minOf(nowMillis - SchedulerDomain.SCHEDULE_HORIZON_MILLIS, focusedWeekStartMillis)
+            minOf(nowMillis - SchedulerDomain.SCHEDULE_HORIZON_MILLIS, visibleSpanStartMillis)
         val displayDerivedGaps =
             SchedulerDomain.derivePauses(
                 activeSessions.map { TaskTimeRange(it.startMillis, it.endMillis) },
@@ -745,7 +754,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onMonthAnchorChange = { monthAnchor = it },
                     selectedDate = selectedDate,
                     today = today,
-                    onSelectDate = { selectedDate = it },
+                    onSelectDate = { selectedDate = it; calendarJumpNonce++ },
                     automaticSchedule = schedulerState.automaticSchedule,
                     onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
                     choresManagerOpen = choresManagerOpen,
@@ -929,6 +938,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 calendarOffset = it
                                 persistPlacement(FloatingWindow.Calendar, it, true)
                             },
+                            // PRD §8/§9: the endless scroll says which days are on screen; the horizon and
+                            // every display projection above are computed from exactly that span.
+                            onVisibleDaysChanged = { firstDay, dayCount ->
+                                visibleFirstDay = firstDay
+                                visibleDayCount = dayCount
+                            },
+                            jumpNonce = calendarJumpNonce,
                         )
 
                         // PRD §8 edit window, drawn over the calendar window and the tree — used for

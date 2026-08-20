@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
 import org.example.project.ui.calendarTickMinutes
 import org.example.project.ui.overlapLayout
 import org.example.project.ui.recordsForDay
-import org.example.project.ui.zoomAnchoredScroll
+import org.example.project.ui.zoomAnchoredOffset
 
 /**
  * PRD §8 Overlap Mode: unit tests for the pure [overlapLayout] horizontal-slicing algorithm — no
@@ -125,25 +125,28 @@ class OverlapLayoutTest {
 
     @Test
     fun zoom_keeps_the_content_under_the_cursor_fixed() {
-        // PRD §8: the new scroll must leave the time under the cursor (focalY px from the viewport top)
+        // PRD §8: the new offset must leave the time under the cursor (focalY px from the viewport top)
         // under that same pixel after the grid scales. Generic check: the content offset under the cursor,
-        // (scroll + focal), scales by the factor, and (newScroll + focal) must equal that scaled offset.
-        fun assertAnchored(scroll: Int, focal: Float, factor: Float) {
-            val newScroll = zoomAnchoredScroll(scroll, focal, factor)
-            val expectedContentUnderCursor = (scroll + focal) * factor
-            assertEquals(expectedContentUnderCursor, newScroll + focal, 1f, "anchor drifted")
+        // (offset + focal), scales by the factor, and (newOffset + focal) must equal that scaled offset.
+        fun assertAnchored(offset: Float, focal: Float, factor: Float) {
+            val newOffset = zoomAnchoredOffset(offset, focal, factor)
+            val expectedContentUnderCursor = (offset + focal) * factor
+            assertEquals(expectedContentUnderCursor, newOffset + focal, 1f, "anchor drifted")
         }
         // Zoom in at the top, in the middle of the day, and zoom out — the cursor's time stays put.
-        assertAnchored(scroll = 0, focal = 100f, factor = 2f) // top → newScroll 100
-        assertAnchored(scroll = 480, focal = 100f, factor = 2f) // 10:00 region, zoom in → 1060
-        assertAnchored(scroll = 1000, focal = 250f, factor = 1.15f) // evening, small zoom-in step
-        assertAnchored(scroll = 800, focal = 150f, factor = 0.5f) // zoom out
+        assertAnchored(offset = 0f, focal = 100f, factor = 2f) // top → newOffset 100
+        assertAnchored(offset = 480f, focal = 100f, factor = 2f) // 10:00 region, zoom in → 1060
+        assertAnchored(offset = 1000f, focal = 250f, factor = 1.15f) // evening, small zoom-in step
+        assertAnchored(offset = 800f, focal = 150f, factor = 0.5f) // zoom out
 
         // Spot-check exact values for the simplest cases.
-        assertEquals(100, zoomAnchoredScroll(0, 100f, 2f))
-        assertEquals(1060, zoomAnchoredScroll(480, 100f, 2f))
-        // Never scrolls above the top.
-        assertEquals(0, zoomAnchoredScroll(0, 100f, 0.5f))
+        assertEquals(100f, zoomAnchoredOffset(0f, 100f, 2f))
+        assertEquals(1060f, zoomAnchoredOffset(480f, 100f, 2f))
+        // PRD §8 infinite scroll: NOT clamped at the top any more. The timeline runs endlessly in both
+        // directions, so a negative offset is not "above the top" — it is the previous day, and the grid's
+        // rebase ([rollingDayShift]) folds it into the anchor. Clamping it here would pin the calendar to
+        // the anchor day's midnight and make zooming out near the top silently drift the anchored time.
+        assertEquals(-50f, zoomAnchoredOffset(0f, 100f, 0.5f))
     }
 
     @Test
