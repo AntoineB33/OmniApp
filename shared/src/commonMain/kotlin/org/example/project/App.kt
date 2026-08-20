@@ -59,6 +59,8 @@ import org.example.project.scheduler.debug.TimeLink
 import org.example.project.scheduler.debug.startTimeLink
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.platform.Diagnostics
+import org.example.project.scheduler.platform.currentDeviceKind
+import org.example.project.scheduler.platform.deviceLockedIntervals
 import org.example.project.scheduler.platform.installPauseCuePushBridge
 import org.example.project.scheduler.platform.installPlatformActivityListener
 import org.example.project.scheduler.platform.localPauseCueDeliveryPlatform
@@ -631,12 +633,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val activeRegions =
             accountActiveRegions +
                 (activeSince?.takeIf { it < nowMillis }?.let { listOf(TaskTimeRange(it, nowMillis)) } ?: emptyList())
-        // PRD §15: recorded past pauses render as greyed "Inactivity" bands, carved around the §17 sleep
-        // windows (already "Sleep"), so the two never overlap. Sub-minute remnants are noise, not a real
-        // away-from-every-device pause — e.g. the few seconds between the §17 scheduled wake (where "Sleep"
-        // ends) and the first session of a freshly-opened account, which would otherwise show as a tiny
-        // "20-second pause right after sleep" (see [SchedulerDomain.MIN_INACTIVITY_BAND_MILLIS]).
-        val inactivityBands =
+        // The account-wide NO-SCREEN periods over the displayed past — the recorded pauses, carved around
+        // the §17 sleep windows. Nothing draws these as a band any more (the calendar shows the two layers
+        // instead, and their overlap IS this set); they are kept for the diagnostics timeline, which is what
+        // reconstructs a reported calendar anomaly without asking the user to describe the screen. Sub-minute
+        // remnants are noise, not a real away-from-every-device pause — e.g. the few seconds between the §17
+        // scheduled wake and a freshly-opened account's first session ([MIN_INACTIVITY_BAND_MILLIS]).
+        val noScreenPeriods =
             SchedulerDomain.subtractRegions(displayInactivityGaps, displaySleepRegions)
                 .filter { it.endEpochMillis - it.startEpochMillis >= SchedulerDomain.MIN_INACTIVITY_BAND_MILLIS }
         // Diagnostics timeline (scripts/collect-diagnostics.bat): record the exact bands the calendar is
@@ -650,19 +653,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 SchedulerDomain.carveSleepPanels(displaySleepPanels, activeRegions)
                     .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
             )
-        val bandSignature = diagnosticsBandSignature(inactivityBands, carvedSleepHoles)
+        val bandSignature = diagnosticsBandSignature(noScreenPeriods, carvedSleepHoles)
         LaunchedEffect(bandSignature) {
-            Diagnostics.log("calendar shows Inactivity bands: ${Diagnostics.formatRanges(inactivityBands)}")
+            Diagnostics.log("calendar no-screen periods: ${Diagnostics.formatRanges(noScreenPeriods)}")
             if (carvedSleepHoles.isNotEmpty()) {
                 Diagnostics.log(
                     "calendar Sleep bands carved by activity at: ${Diagnostics.formatRanges(carvedSleepHoles)}",
                 )
             }
         }
-        // PRD §12 "∞ start": the earliest derived Inactivity/No-screen band is open-ended into the past when
-        // nothing precedes it — no activity session, task record, or user-authored/materialized panel begins
-        // before it (an emptied DB has none). Its start then renders as "∞" instead of a wall-clock time
-        // (which, clamped to the 168h derive floor, would read the same hour:minute as `now`).
+        // PRD §12 "∞ start": the earliest layer region is open-ended into the past when nothing precedes it
+        // — no activity session, task record, or user-authored/materialized panel begins before it (an
+        // emptied DB has none). Its start then renders as "∞" instead of a wall-clock time (which, clamped
+        // to the 168h derive floor, would read the same hour:minute as `now`).
         val earliestEvidenceMillis =
             listOfNotNull(
                 activeSessions.minOfOrNull { it.startMillis },
@@ -670,11 +673,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     .minOfOrNull { it.startEpochMillis },
                 schedulerState.tasks.values.flatMap { it.record }.minOfOrNull { it.startEpochMillis },
             ).minOrNull()
-        val openStartMillis = SchedulerDomain.derivedBandsOpenStart(inactivityBands, earliestEvidenceMillis)
         // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
         // user-authored, uniform blocks) drawn the same way; reminders (PRD §14) and screen breaks (PRD §15)
         // span the focused week.
-        val calendarRecords = (
+        val baseCalendarRecords = (
             schedulerState.tasks.values.flatMap { task ->
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
             } + mergePanelsForDisplay(
@@ -693,27 +695,142 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             } else {
                 record.copy(deviceSegments = deviceActivitySegments(record.range, activeSessions, nowMillis))
             }
-        } + inactivityBands.map { gap ->
-            // PRD §8/§15: the account-offline windows (no device held a WebSocket) render as derived
-            // "No screen" periods — same hatched pattern as a manual no-screen panel, but display-only
-            // (no entryId: not removable, not draggable). Manual no-screen panels stay separate blocks.
-            CalendarRecord(
-                title = "No screen",
-                range = gap,
-                noScreen = true,
-                openStart = openStartMillis != null && gap.startEpochMillis == openStartMillis,
+        }
+        // PRD §8: the elapsed timeline is fully accounted for — every past stretch is either a TASK PANEL or a
+        // GREY period. So whatever the panels leave uncovered in the past is drawn as a derived "Inactivity"
+        // band (the user's rule: "the areas in the past that don't have a task panel should have a grey panel
+        // either labelled inactivity or sleep"). "Sleep" is the other label, and the §17 sleep bands already
+        // draw and label themselves, so they are subtracted rather than relabelled — as are the hand-added
+        // inactivity panels, which are real panels and already grey. A screen break and a no-screen period
+        // are deliberately NOT subtracted: neither is a task panel, so idle time inside one is still idle
+        // (and the break's own band draws over whatever is underneath it). See [derivedInactivityBands],
+        // which also drops the sub-minute seams between adjacent panels. Display-only: no `entryId`, so it
+        // is neither removable nor draggable.
+        val pastCoveredRegions =
+            baseCalendarRecords
+                .filterNot { it.reminder || it.alarm || it.screenBreak || it.noScreen }
+                .map { it.range }
+        val pastInactivityRecords =
+            SchedulerDomain.derivedInactivityBands(pastCoveredRegions, displayFloorMillis, nowMillis)
+                .let { gaps ->
+                    // PRD §12 "∞ start": the earliest band is open-ended into the past when nothing precedes it.
+                    val open = SchedulerDomain.derivedBandsOpenStart(gaps, earliestEvidenceMillis)
+                    gaps.map { gap ->
+                        CalendarRecord(
+                            title = "Inactivity",
+                            range = gap,
+                            inactivity = true,
+                            openStart = open != null && gap.startEpochMillis == open,
+                        )
+                    }
+                }
+        // PRD §8 calendar LAYERS: two decorative oblique-line layers over the timeline — one for "no computer
+        // was unlocked", one (opposite slope) for "no phone was unlocked". Where BOTH fall, the stretch is a
+        // NO-SCREEN period (the user's own definition), which is the same set §9 places the off-screen tasks
+        // in and §15 counts as a pause.
+        //
+        // Each layer has two sources, answering different halves of the timeline:
+        //   • the PAST is evidence — the complement of that device kind's recorded activity. "No screen unless
+        //     a device reported activity", so an emptied account's whole past carries both layers.
+        //   • the FUTURE is assertion — nothing has been observed yet, so only what the rules PROMISE will be
+        //     unlocked-by-nobody counts: the §17 sleep windows and the §15 screen breaks (a break is by
+        //     definition time away from every screen). Screen breaks are asserted in the past too: a 20-second
+        //     look-away never stops the heartbeat, so evidence alone would never show it.
+        // The user's own no-screen periods (PRD §8) assert both layers across their whole span — a hand-added
+        // no-screen period IS "a period carrying both layers", and the derivation never overwrites it.
+        val layerAsserted =
+            SchedulerDomain.mergeOccupied(
+                schedulerState.panels.filter { it.noScreen }
+                    .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) } +
+                    displaySidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) } +
+                    displaySleepRegions.filter { it.endEpochMillis > nowMillis }
+                        .map { TaskTimeRange(maxOf(it.startEpochMillis, nowMillis), it.endEpochMillis) },
             )
-        } + displayAlarmOccurrences.map { occurrence ->
-            // PRD §18: a zero-duration marker at the ring instant. Named by the alarm's label, falling back
-            // to its time of day so a nameless alarm still reads as something on the calendar.
-            CalendarRecord(
-                title = occurrence.entry.label.ifBlank { formatAlarmClockTime(occurrence.entry.timeOfDayMinutes) },
-                range = TaskTimeRange(occurrence.instant, occurrence.instant),
-                entryId = occurrence.entry.id,
-                entryIds = listOf(occurrence.entry.id),
-                alarm = true,
+        // WHICH LAYER IS HATCHED WHERE IS THE DEVICE'S OWN OS HISTORY, not the app's activity heartbeats.
+        // The app only knows when it was itself running and being touched; the question a layer asks is
+        // whether the DEVICE was usable, so it is asked of the OS — the lock/unlock record where the platform
+        // exposes one, else the sleep/awake record ([deviceLockedIntervals], which documents why Windows
+        // forces the fallback). Two earlier readings were both wrong for the same reason: deriving the layer
+        // from the app's active sessions painted an unbroken week of "nobody unlocked" (the app had only been
+        // open ~15 minutes), and patching that by counting a banked task panel as evidence was a heuristic
+        // standing in for the real source.
+        //
+        // Only THIS device can be asked. Every other kind gets `null` — "cannot tell" — and a device that
+        // cannot tell is ASSUMED UNLOCKED, so running on a computer for the first time draws no phone layer
+        // rather than claiming the phone was locked all week (the user's own example).
+        //
+        // Bounded by the DISPLAYED span: there is no reason to ask about days that are not on screen, and
+        // scrolling further back moves [displayFloorMillis] and asks again. Re-asked on a coarse bucket of
+        // `now` as well, so a machine that goes to standby while the calendar is open is picked up without
+        // spawning a query per tick — the call costs a process launch, so it never runs on the UI thread and
+        // never on the display cadence.
+        val ownLayer = remember { SchedulerDomain.layerForDeviceKind(currentDeviceKind()) }
+        var lockedIntervals by remember { mutableStateOf<List<TaskTimeRange>?>(null) }
+        // Both ends of the asked window are QUANTIZED to the refresh period, or the effect would relaunch on
+        // every display tick: [displayFloorMillis] is `now − 168h` whenever the calendar is not scrolled past
+        // that, so it slides with the now-line and would re-key the scan ~every 30 s (observed: a PowerShell
+        // process per tick). Rounding the floor DOWN and the ceiling UP also means the window only ever grows
+        // between scans, so nothing in view is left unasked.
+        val lockScanSince = (displayFloorMillis / LOCK_HISTORY_REFRESH_MILLIS) * LOCK_HISTORY_REFRESH_MILLIS
+        val lockScanUntil =
+            ((nowMillis / LOCK_HISTORY_REFRESH_MILLIS) + 1) * LOCK_HISTORY_REFRESH_MILLIS
+        LaunchedEffect(lockScanSince, lockScanUntil) {
+            val since = lockScanSince
+            val until = lockScanUntil
+            val scanned =
+                withContext(Dispatchers.Default) {
+                    deviceLockedIntervals(since, until)?.map { TaskTimeRange(it.startMillis, it.endMillis) }
+                }
+            lockedIntervals = scanned
+            // scripts/collect-diagnostics.bat: the layers are read from the OS, so an anomaly in them is an
+            // anomaly in THIS answer — record it rather than asking the user to describe the hatching. One
+            // line per scan (at most one per LOCK_HISTORY_REFRESH_MILLIS), not per frame.
+            Diagnostics.log(
+                if (scanned == null) {
+                    "device lock history unavailable — ${ownLayer.name} assumed unlocked"
+                } else {
+                    val hatchedMillis = scanned.sumOf { it.endEpochMillis - it.startEpochMillis }
+                    "device lock history: ${scanned.size} locked span(s), " +
+                        "${hatchedMillis / 3_600_000}h of ${(until - since) / 3_600_000}h, layer ${ownLayer.name}"
+                },
             )
         }
+        val layerRecords =
+            SchedulerDomain.ActivityLayer.entries.flatMap { layer ->
+                val regions =
+                    SchedulerDomain.layerRegions(
+                        lockedIntervals = if (layer == ownLayer) lockedIntervals else null,
+                        assertedRegions = layerAsserted,
+                        sinceMillis = displayFloorMillis,
+                        untilMillis = nowMillis,
+                    )
+                // PRD §12 "∞ start": the earliest layer region is open-ended into the past when nothing at all
+                // precedes it (an emptied DB) — its drawn start is only the display floor, so it reads "∞".
+                val layerOpenStart = SchedulerDomain.derivedBandsOpenStart(regions, earliestEvidenceMillis)
+                regions.map { region ->
+                    CalendarRecord(
+                        title = layer.calendarLabel,
+                        range = region,
+                        layer = layer,
+                        openStart = layerOpenStart != null && region.startEpochMillis == layerOpenStart,
+                    )
+                }
+            }
+        val calendarRecords = baseCalendarRecords + pastInactivityRecords + layerRecords +
+            displayAlarmOccurrences.map { occurrence ->
+                // PRD §18: a zero-duration marker at the ring instant. Named by the alarm's label, falling
+                // back to its time of day so a nameless alarm still reads as something on the calendar.
+                CalendarRecord(
+                    title =
+                        occurrence.entry.label.ifBlank {
+                            formatAlarmClockTime(occurrence.entry.timeOfDayMinutes)
+                        },
+                    range = TaskTimeRange(occurrence.instant, occurrence.instant),
+                    entryId = occurrence.entry.id,
+                    entryIds = listOf(occurrence.entry.id),
+                    alarm = true,
+                )
+            }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
         var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
         // PRD §8 Manual add: a not-yet-committed default panel shown in the edit window with a Save
@@ -1307,26 +1424,33 @@ private fun removeBlockIntent(block: PlacedRecord): SchedulerIntent? = when {
 
 /**
  * Change-detection key for the diagnostics band log: the quantized (per-minute) INTERIOR edges of the
- * rendered Inactivity bands + carved-sleep holes, plus their counts. The single outermost start and end
+ * derived account-wide no-screen periods + carved-sleep holes, plus their counts. The single outermost start and end
  * are dropped because they track the sliding derive window and the advancing now-line — logging on those
  * would emit a line per tick. Any real shape change (a band added/removed, a hole opening inside the
  * coverage) moves an interior edge or a count and re-logs.
  */
 private fun diagnosticsBandSignature(
-    inactivityBands: List<TaskTimeRange>,
+    noScreenPeriods: List<TaskTimeRange>,
     carvedSleepHoles: List<TaskTimeRange>,
 ): String {
     val edges =
         buildList {
-            inactivityBands.forEach { add(it.startEpochMillis); add(it.endEpochMillis) }
+            noScreenPeriods.forEach { add(it.startEpochMillis); add(it.endEpochMillis) }
             carvedSleepHoles.forEach { add(it.startEpochMillis); add(it.endEpochMillis) }
         }.sorted()
     val interior = if (edges.size > 2) edges.subList(1, edges.size - 1) else emptyList()
-    return "${inactivityBands.size}/${carvedSleepHoles.size}:" +
+    return "${noScreenPeriods.size}/${carvedSleepHoles.size}:" +
         interior.joinToString(",") { (it / 60_000).toString() }
 }
 
 /** PRD §18: `HH:MM` for an alarm's time of day — the calendar marker's label when the alarm has none. */
+/**
+ * PRD §8 calendar layers: how coarsely this device's OS lock/standby history is re-read while the calendar
+ * stays on the same days. The query spawns a process, so it must not run on the display cadence; ten minutes
+ * is fine for a band whose whole job is to show where the device was not in use.
+ */
+private const val LOCK_HISTORY_REFRESH_MILLIS: Long = 10L * 60 * 1000
+
 private fun formatAlarmClockTime(minutes: Int): String {
     val m = ((minutes % AlarmEntry.MINUTES_PER_DAY) + AlarmEntry.MINUTES_PER_DAY) % AlarmEntry.MINUTES_PER_DAY
     return "${(m / 60).toString().padStart(2, '0')}:${(m % 60).toString().padStart(2, '0')}"

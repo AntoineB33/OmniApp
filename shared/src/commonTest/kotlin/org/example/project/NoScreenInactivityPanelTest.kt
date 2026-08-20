@@ -235,6 +235,72 @@ class NoScreenInactivityPanelTest {
     }
 
     @Test
+    fun fill_places_nothing_inside_a_hand_added_inactivity_period() {
+        // PRD §8 (the user's spec): an inactivity period is the GREY one, and grey means the scheduler places
+        // nothing there. This is what a §17 sleep window and a screen break's closed head already were; a
+        // hand-added inactivity period is the same period, so it accepts nobody too. (It used to classify
+        // nothing at all — the fill planned straight over it.)
+        val (s0, solo) = stateWithOneTask()
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddInactivityPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        val taskPanels = SchedulerDomain.fillSchedule(s, NOW).filter { it.taskId == solo }
+        assertTrue(taskPanels.isNotEmpty())
+        assertTrue(
+            taskPanels.none { it.startEpochMillis < NOW + 2 * HOUR && it.endEpochMillis > NOW + HOUR },
+            "no task may be scheduled inside an inactivity period",
+        )
+        // It is a period, not an occupancy obstacle: the plan flows up to it and resumes on the far side.
+        assertTrue(taskPanels.any { it.endEpochMillis == NOW + HOUR })
+        assertTrue(taskPanels.any { it.startEpochMillis == NOW + 2 * HOUR })
+    }
+
+    @Test
+    fun a_run_meeting_an_inactivity_period_is_suspended_by_it_rather_than_ended_by_it() {
+        // PRD §17 states this for a sleep window — a task that meets one is "split and resumes at wake, not
+        // charged for the sleep time, like a screen break" — and a sleep window is just an inactivity period
+        // with a label (§8), so every grey period SUSPENDS a run instead of ending it. The stretch belongs to
+        // NOBODY, so it costs the run only time; a screen-zone edge is the other kind of boundary — somebody
+        // else may run past it, so it ends the run and PRD §9/§10 cut the minimum there.
+        //
+        // What separates the two here: a suspending boundary does not count against "does the minimum fit?",
+        // so a run may START in the half-hour before the grey period even though its 45-minute minimum does
+        // not fit before it. Were the boundary a cutting one, both tasks would be unplaceable in that
+        // half-hour and it would be left idle.
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds[0], "A"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds[1], "B"))
+        s.tasks.keys.forEach { s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(it, 45)) }
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddInactivityPeriod(NOW + 30 * MIN, NOW + 90 * MIN))
+        val autos = SchedulerDomain.fillSchedule(s, NOW).filter { it.auto }.sortedBy { it.startEpochMillis }
+        val head = autos.first()
+        assertEquals(NOW, head.startEpochMillis, "the half-hour before the grey period must not be left idle")
+        assertEquals(NOW + 30 * MIN, head.endEpochMillis, "the run must stop at the grey period, not enter it")
+        assertEquals(
+            NOW + 90 * MIN,
+            autos.first { it.startEpochMillis >= NOW + 30 * MIN }.startEpochMillis,
+            "the plan must resume the instant the grey period ends",
+        )
+    }
+
+    @Test
+    fun an_inactivity_period_refuses_an_off_screen_task_too() {
+        // Grey excludes EVERYBODY — it is not a screen classification. An off-screen task, which a no-screen
+        // period would welcome, is turned away by an inactivity period exactly like an on-screen one.
+        val (s0, solo) = stateWithOneTask()
+        var s = SchedulerReducer.reduce(
+            s0,
+            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 3 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddInactivityPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        val taskPanels = SchedulerDomain.fillSchedule(s, NOW).filter { it.taskId == solo && it.auto }
+        assertTrue(taskPanels.isNotEmpty(), "the off-screen task must still fill the uncovered half")
+        assertTrue(
+            taskPanels.all { it.startEpochMillis >= NOW + 2 * HOUR },
+            "the inactivity period must refuse the off-screen task the no-screen period accepts",
+        )
+    }
+
+    @Test
     fun fill_schedules_nothing_for_an_off_screen_task_without_a_no_screen_period() {
         val (s0, solo) = stateWithOneTask()
         val s = SchedulerReducer.reduce(

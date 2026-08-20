@@ -1,11 +1,15 @@
 package org.example.project
 
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
+import kotlinx.datetime.daysUntil
 import kotlinx.datetime.plus
+import org.example.project.ui.nowLineCenterColumnShift
 import org.example.project.ui.nowLineCenterOffset
 import org.example.project.ui.rollingDayAt
 import org.example.project.ui.rollingDayShift
@@ -112,60 +116,92 @@ class RollingCalendarTest {
     private fun nowLineY(daysFromAnchor: Int, fraction: Float, dayHeightPx: Float, offset: Float): Float =
         (daysFromAnchor + fraction) * dayHeightPx - offset
 
+    /** The day-row the lock's offset puts the now-line's centred occurrence in. Mirrors the layout. */
+    private fun centredRow(fraction: Float, dayHeightPx: Float, viewportPx: Float, offset: Float): Int =
+        ((viewportPx / 2f + offset) / dayHeightPx - fraction).roundToInt()
+
     @Test
     fun the_lock_puts_the_now_line_on_the_middle_of_the_viewport() {
         val viewport = 600f
-        // Noon, today at the top of the grid: half a day down, minus half a viewport.
+        // Noon, the grid scrolled to the anchor day's midnight: half a day down, minus half a viewport.
         val offset = nowLineCenterOffset(
-            daysFromAnchorToToday = 0,
             dayFraction = 0.5f,
             dayHeightPx = dayHeight,
             viewportPx = viewport,
+            currentOffsetPx = 0f,
         )
         assertEquals(0.5f * dayHeight - 300f, offset, 0.01f)
         assertEquals(300f, nowLineY(0, 0.5f, dayHeight, offset), 0.01f)
 
-        // ...and it stays centred wherever in the day the now-line is, and whatever the viewport height.
+        // ...and wherever in the day the now-line is, wherever the grid is scrolled to and whatever the
+        // viewport height, the day-row the grid draws it in carries it dead centre.
         for (fraction in listOf(0f, 0.01f, 0.25f, 0.5f, 0.75f, 0.999f)) {
             for (viewportPx in listOf(200f, 600f, 1500f, 4000f)) {
-                val o = nowLineCenterOffset(0, fraction, dayHeight, viewportPx)
-                assertEquals(
-                    viewportPx / 2f,
-                    nowLineY(0, fraction, dayHeight, o),
-                    0.01f,
-                    "now-line off centre at fraction $fraction, viewport $viewportPx",
-                )
+                for (current in listOf(0f, 0.3f * dayHeight, 0.99f * dayHeight)) {
+                    val o = nowLineCenterOffset(fraction, dayHeight, viewportPx, current)
+                    assertEquals(
+                        viewportPx / 2f,
+                        nowLineY(centredRow(fraction, dayHeight, viewportPx, o), fraction, dayHeight, o),
+                        0.01f,
+                        "now-line off centre at fraction $fraction, viewport $viewportPx, from $current",
+                    )
+                }
             }
         }
     }
 
     @Test
-    fun the_lock_survives_the_rebase_that_rolls_the_middle_of_the_view_onto_another_day() {
-        // Just after midnight the middle of a centred view belongs to YESTERDAY, so the chosen offset is
-        // negative and the rebase walks the anchor a day back. The now-line must still be dead centre
-        // afterwards — this is the pairing that makes the lock work at either end of a day.
+    fun the_lock_holds_the_now_line_vertically_and_leaves_the_columns_their_days() {
+        // The bug this pins: the lock used to scroll to today's occurrence counted from the ANCHOR, so a
+        // calendar showing today in the fourth column scrolled three whole days to centre it — and a day of
+        // vertical scroll walks every date one column to the left, which is why turning the switch on
+        // dragged today into the leftmost column. The rows are a day apart and each column is its
+        // neighbour shifted by a day, so the NEAREST occurrence centres the now-line just as well while
+        // every column keeps the date it was showing.
         val viewport = 600f
-        var anchor = LocalDate(2026, 8, 20) // == today
-        val fraction = 10f / (24f * 60f) // 00:10
-        var offset = nowLineCenterOffset(0, fraction, dayHeight, viewport) // anchor == today
-        assertTrue(offset < 0f, "expected the centred view to reach back into the previous day")
+        val fraction = 0.6f
+        val anchor = LocalDate(2026, 8, 17)
+        val today = LocalDate(2026, 8, 20)
+        val daysToToday = anchor.daysUntil(today) // 3: today is the fourth column
+        val current = 0.5f * dayHeight
 
-        val roll = rollingDayShift(offset, dayHeight)
-        assertEquals(-1, roll)
-        anchor = anchor.plus(roll, DateTimeUnit.DAY)
-        offset -= roll * dayHeight
-        assertTrue(offset >= 0f && offset < dayHeight, "offset escaped its day: $offset")
-        // Today is now one row DOWN from the anchor, and the now-line is still centred.
-        assertEquals(LocalDate(2026, 8, 19), anchor)
-        assertEquals(300f, nowLineY(1, fraction, dayHeight, offset), 0.01f)
+        val offset = nowLineCenterOffset(fraction, dayHeight, viewport, current)
+        // The timeline moved by the centring and not by three days...
+        assertTrue(abs(offset - current) <= dayHeight / 2f, "the lock scrolled a whole day: $offset")
+        assertEquals(0, rollingDayShift(offset, dayHeight), "the rebase must not roll the anchor here")
+        // ...no anchor walk, since today is on the grid...
+        val row = centredRow(fraction, dayHeight, viewport, offset)
+        assertEquals(
+            0,
+            nowLineCenterColumnShift(daysToToday, fraction, dayHeight, viewport, offset, columns = 7),
+        )
+        // ...today is still drawn in the column it was in...
+        assertEquals(3, daysToToday - row)
+        assertEquals(today, rollingDayAt(anchor, row, daysToToday - row))
+        // ...and its now-line is dead centre.
+        assertEquals(300f, nowLineY(row, fraction, dayHeight, offset), 0.01f)
+    }
 
-        // The symmetric case: late in the day the centred view reaches into tomorrow, and rolls forward.
-        anchor = LocalDate(2026, 8, 20)
-        val late = 1f - 10f / (24f * 60f) // 23:50
-        offset = nowLineCenterOffset(0, late, dayHeight, viewport)
-        val rollForward = rollingDayShift(offset, dayHeight)
-        assertEquals(0, rollForward) // 23:50 minus 5 min of viewport is still inside the same day
-        assertEquals(300f, nowLineY(0, late, dayHeight, offset), 0.01f)
+    @Test
+    fun the_lock_walks_the_anchor_only_when_the_now_line_would_be_off_the_drawn_columns() {
+        // The one case the lock MAY move the calendar sideways: the user scrolled to another week and then
+        // asked to be locked to now, so the centred now-line belongs to no drawn column — and holding the
+        // columns still would faithfully hold a now-line that is nowhere on screen. The anchor is walked by
+        // exactly the overshoot (shifting it by d moves today's column by -d), landing today back in range.
+        val viewport = 600f
+        val fraction = 0.6f
+        val offset = nowLineCenterOffset(fraction, dayHeight, viewport, currentOffsetPx = 0.5f * dayHeight)
+        val row = centredRow(fraction, dayHeight, viewport, offset)
+
+        // Scrolled a week AHEAD of today: today's column is seven to the left of the first one.
+        val ahead = nowLineCenterColumnShift(row - 7, fraction, dayHeight, viewport, offset, columns = 7)
+        assertEquals(-7, ahead)
+        assertTrue((row - 7 - ahead) - row == 0, "the walk must land today in the first column")
+
+        // Scrolled BEHIND today: its column is past the last one, and the walk stops AT it (column 6).
+        val behind = nowLineCenterColumnShift(row + 9, fraction, dayHeight, viewport, offset, columns = 7)
+        assertEquals(3, behind)
+        assertTrue((row + 9 - behind) - row == 6, "the walk must land today in the last column")
     }
 
     @Test
@@ -175,14 +211,21 @@ class RollingCalendarTest {
         val viewport = 600f
         val fraction = 0.5f
         var dayH = dayHeight
-        var offset = nowLineCenterOffset(0, fraction, dayH, viewport)
+        var offset = nowLineCenterOffset(fraction, dayH, viewport, currentOffsetPx = 0f)
         for (step in listOf(1.15f, 1.15f, 8f, 1f / 3f, 0.5f)) {
+            // The zoom scales the timeline (and with it where the grid is scrolled to), then re-centres.
+            offset = nowLineCenterOffset(fraction, dayH * step, viewport, currentOffsetPx = offset * step)
             dayH *= step
-            offset = nowLineCenterOffset(0, fraction, dayH, viewport)
-            assertEquals(300f, nowLineY(0, fraction, dayH, offset), 0.01f, "lost the now-line at zoom $step")
+            assertEquals(
+                300f,
+                nowLineY(centredRow(fraction, dayH, viewport, offset), fraction, dayH, offset),
+                0.01f,
+                "lost the now-line at zoom $step",
+            )
         }
         // For contrast: the same zoom step anchored at a cursor 100 px from the top moves the now-line.
-        val cursorAnchored = zoomAnchoredOffset(nowLineCenterOffset(0, fraction, dayHeight, viewport), 100f, 2f)
+        val centred = nowLineCenterOffset(fraction, dayHeight, viewport, currentOffsetPx = 0f)
+        val cursorAnchored = zoomAnchoredOffset(centred, 100f, 2f)
         assertTrue(
             nowLineY(0, fraction, dayHeight * 2f, cursorAnchored) != 300f,
             "a cursor-anchored zoom should NOT keep the now-line centred",
@@ -191,9 +234,10 @@ class RollingCalendarTest {
 
     @Test
     fun the_lock_needs_no_measured_viewport_to_be_well_defined() {
-        // Before the first layout the viewport is 0 px; the offset is then simply the now-line's own
-        // content position, which is harmless (the caller skips the write until the height is known).
-        assertEquals(0.5f * dayHeight, nowLineCenterOffset(0, 0.5f, dayHeight, 0f), 0.01f)
+        // Before the first layout the viewport is 0 px; the offset is then the now-line's own position in
+        // its day, up to whole days (the caller skips the write until the height is known anyway).
+        val offset = nowLineCenterOffset(0.5f, dayHeight, 0f, currentOffsetPx = 0.5f * dayHeight)
+        assertEquals(0.5f * dayHeight, offset, 0.01f)
     }
 
     // ----- the date pick's whole-day fit --------------------------------------------------------

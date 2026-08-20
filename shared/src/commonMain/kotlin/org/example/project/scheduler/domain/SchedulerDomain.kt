@@ -17,6 +17,7 @@ import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.ScreenBreakPeriod
+import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
@@ -1850,6 +1851,91 @@ object SchedulerDomain {
     }
 
     /**
+     * PRD §8 calendar layers: the two decorative layers the calendar draws over the timeline — the oblique-line
+     * pattern for "no computer was unlocked" and the opposite-slope one for "no phone was unlocked". A stretch
+     * carrying BOTH is exactly a **no-screen period** (the user's rule: no computer and no phone unlocked at the
+     * same time), which is what §9 places the off-screen tasks in and what §15 counts as a pause.
+     *
+     * Each layer is read from the DEVICE's own history — its OS lock/unlock record, or its sleep/awake record
+     * where the platform exposes no other (see `deviceLockedIntervals`) — never from the app's own activity
+     * heartbeats, which only say when the app happened to be running. See [layerRegions].
+     */
+    enum class ActivityLayer(
+        /** What the layer says, shown on hover / in the phone's contextual menu. */
+        val calendarLabel: String,
+    ) {
+        NoComputerUnlocked("No computer unlocked"),
+        NoPhoneUnlocked("No phone unlocked"),
+    }
+
+    /** PRD §8: which layer a device of [kind] speaks for — everything that is not a phone is a computer. */
+    fun layerForDeviceKind(kind: DeviceKind): ActivityLayer =
+        if (kind == DeviceKind.Phone) ActivityLayer.NoPhoneUnlocked else ActivityLayer.NoComputerUnlocked
+
+    /**
+     * PRD §8: the regions the calendar hatches for one [ActivityLayer].
+     *
+     * [lockedIntervals] is the OS lock/standby history of that layer's device kind over
+     * `[sinceMillis, untilMillis]` (see `deviceLockedIntervals`), or **null when no device of that kind could
+     * tell** — and null is the load-bearing case: a device whose history is unavailable is assumed to have
+     * been UNLOCKED, so the first run on a computer draws no phone layer at all instead of claiming the phone
+     * was locked all week. This is the opposite default from the account-wide pause derivation
+     * ([derivePauses], "no screen unless a device reported activity"), and deliberately so: that one answers
+     * "was anybody working?" from the app's own heartbeats, while a layer answers "was this device usable?"
+     * from the OS, where silence means the question was never asked rather than "no".
+     *
+     * [assertedRegions] are the stretches the RULES promise nobody is unlocked in — the §17 sleep windows
+     * ahead of the now-line, the §15 screen breaks, and the user's own no-screen periods. They hold whether
+     * or not any history is available, so a device that cannot tell still shows those.
+     *
+     * Sub-minute slivers are dropped from the EVIDENCE (the seam rule, [MIN_INACTIVITY_BAND_MILLIS]): a
+     * machine that dips in and out of standby for seconds would otherwise draw hairlines of hatch all day.
+     * They are never dropped from [assertedRegions] — a 20-second look-away is a real claim and keeps its
+     * hatch however short it is.
+     */
+    fun layerRegions(
+        lockedIntervals: List<TaskTimeRange>?,
+        assertedRegions: List<TaskTimeRange>,
+        sinceMillis: Long,
+        untilMillis: Long,
+    ): List<TaskTimeRange> {
+        val evidence =
+            lockedIntervals.orEmpty()
+                .map {
+                    TaskTimeRange(
+                        maxOf(it.startEpochMillis, sinceMillis),
+                        minOf(it.endEpochMillis, untilMillis),
+                    )
+                }
+                .filter { it.endEpochMillis - it.startEpochMillis >= MIN_INACTIVITY_BAND_MILLIS }
+        return mergeOccupied(evidence + assertedRegions)
+    }
+
+    /**
+     * PRD §8: the past stretches the calendar draws as a derived GREY "Inactivity" band — the elapsed timeline
+     * minus everything already drawn over it ([coveredRegions]: the task panels, the §17 sleep bands, and the
+     * user's own hand-added inactivity panels). The rule it implements is that the past is fully accounted
+     * for: every elapsed stretch is either a task panel or a grey period labelled "Inactivity" or "Sleep".
+     *
+     * A no-screen period is deliberately NOT part of [coveredRegions]: it is not a task panel and it is not
+     * grey — it is the period carrying both "nobody unlocked" layers — so a past no-screen stretch with no
+     * work in it is idle time and reads as one. Neither is a screen break: its band draws over whatever is
+     * underneath, and a break nothing was scheduled in is idle time too.
+     *
+     * Sub-minute remnants are dropped ([MIN_INACTIVITY_BAND_MILLIS]): the seam between two adjacent panels is
+     * not a pause, and drawing it would litter the day with slivers.
+     */
+    fun derivedInactivityBands(
+        coveredRegions: List<TaskTimeRange>,
+        sinceMillis: Long,
+        untilMillis: Long,
+    ): List<TaskTimeRange> {
+        if (untilMillis <= sinceMillis) return emptyList()
+        return subtractRegions(listOf(TaskTimeRange(sinceMillis, untilMillis)), mergeOccupied(coveredRegions))
+            .filter { it.endEpochMillis - it.startEpochMillis >= MIN_INACTIVITY_BAND_MILLIS }
+    }
+
+    /**
      * Safety cap on the screen-break projection loop. Far above what any real horizon holds — ~700 occurrences a
      * week at production timings — so it only ever fires on a genuinely degenerate (near-zero span)
      * configuration. The placement itself is O(n) (see [simulateScreenBreaks]), so a large count is cheap in
@@ -2659,9 +2745,9 @@ object SchedulerDomain {
                         (keepExistingUntilMillis != null && it.auto && it.startEpochMillis < keepExistingUntilMillis)
             }
         }
-        // The user's sleep windows: rendered as "Sleep" bands, but NO LONGER task obstacles. The work plan
-        // projects straight through them (like the screen breaks) so a user working at night still sees the
-        // priority-ordered plan; those panels render tinted, under the "Sleep" band (see CalendarUi).
+        // The user's sleep windows. PRD §8: a sleep window IS an inactivity period — one labelled "Sleep" —
+        // so, like every grey period, it is a period accepting NOBODY (see [blockedRegions] below). It is
+        // still not an occupancy *obstacle*: a chunk crossing one suspends and resumes on the far side.
         val sleepPanels = sleepPanels(state.sleep, nowMillis, horizon, timeZone)
         // The task-tree timeline: while `now` sits between two dated trees the scheduler follows the two
         // trees' BLENDED priorities over the UNION of their leaves, not the live tree's own — so the plan
@@ -2691,9 +2777,23 @@ object SchedulerDomain {
         // that lives only in the other keyframe still gets its title (so its panels are not nameless), its
         // minimum time, its screen flags and its records.
         val working = state.copy(panels = kept, tasks = blendedTaskAttributes(state, nowMillis))
+        // PRD §8: an INACTIVITY period is the grey one — a stretch where the scheduler places NOTHING at
+        // all, stated as a period whose accepted set is empty. Three things are such a period and they are
+        // deliberately one concept: the user's hand-added inactivity periods, the §17 sleep windows (an
+        // inactivity period labelled "Sleep") and the closed heads of the screen breaks (handled below with
+        // the rest of each break's shape, since a break's head and tail are one panel). Excluding EVERYBODY
+        // equally, they create no influence field — the reference model's "interval belonging to nobody",
+        // which the walk steps over rather than ending a run on.
+        val blockedRegions =
+            mergeOccupied(
+                (kept.filter { it.inactivity } + sleepPanels)
+                    .map { TaskTimeRange(maxOf(it.startEpochMillis, nowMillis), it.endEpochMillis) }
+                    .filter { it.endEpochMillis > it.startEpochMillis },
+            )
         // PRD §9 screen switches: the no-screen periods *classify* the timeline rather than obstructing it
-        // — an on-screen task may only run outside them, an off-screen task only inside. Inactivity
-        // periods classify nothing (they stay screen periods). Neither is an occupancy obstacle.
+        // — an on-screen task may only run outside them, an off-screen task only inside. A no-screen period
+        // is not grey (it accepts the off-screen tasks); it is the period carrying both "nobody unlocked"
+        // layers. Neither it nor an inactivity period is an occupancy obstacle.
         val noScreenRegions =
             mergeOccupied(
                 kept.filter { it.noScreen }
@@ -2704,7 +2804,14 @@ object SchedulerDomain {
         // [breakClosedRegions] / [breakDoableRegions] / [breakOffScreenRegions] below), not occupancy
         // obstacles: a regular chunk suspends across one and resumes after it.
         val sideRegions = mergeOccupied(sidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
-        val breakStarts = sideRegions.mapTo(HashSet()) { it.startEpochMillis }
+        // The regions that SUSPEND a chunk instead of cutting it: the §15 screen breaks and the §8 grey
+        // periods (a hand-added inactivity period, a §17 sleep window). PRD §17 says it in as many words — a
+        // task that meets a sleep window is "split and resumes at wake, not charged for the sleep time, like
+        // a screen break" — and it is the same rule for the same reason: the stretch belongs to NOBODY, so it
+        // costs the run nothing but time. A screen-zone edge is the other kind of boundary: somebody else may
+        // run past it, so it ends the run and PRD §9/§10 cut the minimum there.
+        val suspendRegions = mergeOccupied(sideRegions + blockedRegions)
+        val suspendStarts = suspendRegions.mapTo(HashSet()) { it.startEpochMillis }
         // PRD §15: a screen break is a period, and *which* tasks it accepts is the break's own declared shape
         // ([ScreenBreakPeriod]) — the periods of `side-dev`'s test 11:
         //   - the 20-second look-away accepts **nobody**, end to end;
@@ -2756,7 +2863,9 @@ object SchedulerDomain {
         // "forever" and the field gives it a ramp before the ban and no phantom ramp after the horizon.
         val edges = buildList {
             add(nowMillis)
-            for (region in noScreenRegions + breakClosedRegions + breakDoableRegions + breakOffScreenRegions) {
+            for (region in
+                blockedRegions + noScreenRegions + breakClosedRegions + breakDoableRegions + breakOffScreenRegions
+            ) {
                 if (region.startEpochMillis in (nowMillis + 1) until horizon) add(region.startEpochMillis)
                 if (region.endEpochMillis in (nowMillis + 1) until horizon) add(region.endEpochMillis)
             }
@@ -2772,6 +2881,8 @@ object SchedulerDomain {
         val windows = edges.mapIndexed { i, start ->
             val accepted =
                 when {
+                    // PRD §8: a grey period (inactivity, sleep) and a break's closed head both accept nobody.
+                    covers(blockedRegions, start) -> emptyList()
                     covers(breakClosedRegions, start) -> emptyList()
                     covers(breakDoableRegions, start) -> breakDoable
                     covers(breakOffScreenRegions, start) -> offScreenTasks
@@ -2896,10 +3007,11 @@ object SchedulerDomain {
             }
             val gap = limit?.minus(cursor)
             val insideBreak = covers(sideRegions, cursor)
-            if (pending != null && !insideBreak && pending.first !in allowedHere) pending = null
-            val resume = if (insideBreak) null else pending
+            val insideSuspend = insideBreak || covers(blockedRegions, cursor)
+            if (pending != null && !insideSuspend && pending.first !in allowedHere) pending = null
+            val resume = if (insideSuspend) null else pending
             // Inside a screen break the suspended task must not be the one that fills it (PRD §15).
-            val candidates = if (insideBreak) allowedHere.filter { it != pending?.first } else allowedHere
+            val candidates = if (insideSuspend) allowedHere.filter { it != pending?.first } else allowedHere
             // `side-dev/scheduler_logic.py` `_fits_from`: a task is a candidate only while its minimum fits
             // the room ahead of it, and that room COUNTS THE INSTANTS IT MAY ACTUALLY RUN — an interval nobody
             // may run in only suspends a run, so it is stepped over. The boundary that decides is therefore the
@@ -2914,7 +3026,8 @@ object SchedulerDomain {
                 noScreenRegions.asSequence()
                     .flatMap { sequenceOf(it.startEpochMillis, it.endEpochMillis) }
                     .filter { it > cursor }.minOrNull()
-            val breakEnd = if (insideBreak) sideRegions.first { it.endEpochMillis > cursor }.endEpochMillis else null
+            val breakEnd =
+                if (insideSuspend) suspendRegions.first { it.endEpochMillis > cursor }.endEpochMillis else null
             val fitGap = listOfNotNull(nextBlock, nextZoneEdge, breakEnd).minOrNull()?.minus(cursor)
             val fitting = candidates.filter { fitGap == null || (minimumMillisOf[it] ?: 0L) <= fitGap }
             // `side-dev/scheduler_logic.py` steady_cycle's "no unplaceable crumb", applied to the walk: minimum times are
@@ -2925,7 +3038,7 @@ object SchedulerDomain {
             if (crumb || (resume == null && fitting.isEmpty())) {
                 if (gap == null) break
                 val tail = generated.lastOrNull()
-                if (!insideBreak && allowedHere.isNotEmpty() && freeTail && tail?.endEpochMillis == cursor) {
+                if (!insideSuspend && allowedHere.isNotEmpty() && freeTail && tail?.endEpochMillis == cursor) {
                     // A crumb too short for any minimum: the previous slot stretches over it (`free_tail`)
                     // rather than leaving a sliver the calendar cannot use. A screen break is never such a
                     // crumb — PRD §9/§15 already decided nobody whose minimum exceeds it may work there, so
@@ -2939,7 +3052,7 @@ object SchedulerDomain {
                     freeTail = false
                 }
                 cursor = limit
-                if (!insideBreak) pending = null
+                if (!insideSuspend) pending = null
                 continue
             }
 
@@ -2963,12 +3076,12 @@ object SchedulerDomain {
             // a debt to be taken back once the field is gone.
             walk.serve(taskId, placed.toDouble(), boost)
             walk.relax(placed.toDouble(), period, allowedHere)
-            if (!insideBreak) {
+            if (!insideSuspend) {
                 // PRD §15: only a screen break suspends a chunk. A fixed panel or a screen-zone edge
                 // truncates it instead (PRD §9/§10: the minimum IS cut there).
                 pending =
                     if (placed < need && need - placed >= MILLIS_PER_MINUTE &&
-                        limit != null && limit in breakStarts
+                        limit != null && limit in suspendStarts
                     ) {
                         taskId to (need - placed)
                     } else {

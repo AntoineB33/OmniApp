@@ -23,3 +23,19 @@ data class DeviceSleepGap(val startMillis: Long, val endMillis: Long)
  * or nothing on record) — the caller then falls back to the inexact tick-gap interval.
  */
 expect fun recentSleepGaps(sinceMillis: Long): List<DeviceSleepGap>
+
+/**
+ * PRD §8 calendar layers: the intervals within `[sinceMillis, untilMillis]` during which THIS device was
+ * **not unlocked** — the screen was locked where the OS exposes that, otherwise the machine was asleep or in
+ * standby (the spec's own fallback: "lock/unlock, or if not possible sleep/awake"). Oldest first, clipped to
+ * the window; an interval still open at [untilMillis] ends there.
+ *
+ * **null means "this device cannot tell"**, and that is a different answer from an empty list. Empty says the
+ * device was unlocked for the whole window; null says nothing is known, and the calendar then draws no layer
+ * for that device at all — a device whose history is unavailable is **assumed to have been unlocked**, so a
+ * first run on a computer never claims the user's phone was locked all week.
+ *
+ * Called off the UI thread, bounded by the span the calendar is DISPLAYING — there is no reason to ask the OS
+ * about days that are not on screen, and scrolling further back asks again.
+ */
+expect fun deviceLockedIntervals(sinceMillis: Long, untilMillis: Long): List<DeviceSleepGap>?

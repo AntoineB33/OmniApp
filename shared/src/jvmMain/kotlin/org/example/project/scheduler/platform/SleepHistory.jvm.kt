@@ -110,3 +110,79 @@ actual fun recentSleepGaps(sinceMillis: Long): List<DeviceSleepGap> = runCatchin
         }
         .toList()
 }.getOrElse { emptyList() }
+
+/**
+ * PRD §8 (desktop / Windows): this device's own "not unlocked" history over `[sinceMillis, untilMillis]`.
+ *
+ * The spec asks for **lock/unlock** first and allows **sleep/awake** where that is not possible, and on
+ * Windows it is not possible without elevation: the lock/unlock records (Security 4800/4801) need the "Other
+ * Logon/Logoff Events" audit policy enabled AND an administrative reader, and the non-elevated alternatives
+ * are no substitute — `Microsoft-Windows-Winlogon/Operational` only logs which notification SUBSCRIBER ran
+ * (811/812), and the TerminalServices session log records logon/logoff/disconnect, not lock. So this reads
+ * the same non-elevated Kernel-Power sleep (42/506) and wake (1/131/507) timeline as the rest of this file.
+ * On a Modern-Standby machine that is closer to lock/unlock than it sounds: 506 fires when the screen goes
+ * off, which is exactly the moment the device stops being unlocked.
+ *
+ * Returns **null** when the query cannot be answered at all (no `powershell`, a timeout, an error) — the
+ * caller then draws no layer for this device rather than claiming it was locked. An empty list is the other
+ * answer: the log was read and the device was never locked in the window. The two are told apart by a
+ * sentinel first line, since a successful query with no cycles prints nothing either.
+ *
+ * Bounded by the window: `StartTime`/`EndTime` are passed to the log query, so asking about the displayed
+ * days costs only those days. An interval still open at the end of the window is clipped to [untilMillis].
+ */
+actual fun deviceLockedIntervals(sinceMillis: Long, untilMillis: Long): List<DeviceSleepGap>? {
+    if (untilMillis <= sinceMillis) return emptyList()
+    // PowerShell variables are written as ${'$'}name so Kotlin doesn't try to interpolate them.
+    val script =
+        """
+        ${'$'}since = [DateTimeOffset]::FromUnixTimeMilliseconds($sinceMillis).LocalDateTime
+        ${'$'}until = [DateTimeOffset]::FromUnixTimeMilliseconds($untilMillis).LocalDateTime
+        ${'$'}enter = Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-Kernel-Power';ID=42,506;StartTime=${'$'}since;EndTime=${'$'}until} -MaxEvents 1000 -ErrorAction SilentlyContinue
+        ${'$'}exit  = Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-Kernel-Power';ID=1,131,507;StartTime=${'$'}since;EndTime=${'$'}until} -MaxEvents 1000 -ErrorAction SilentlyContinue
+        'OK'
+        ${'$'}all = @()
+        foreach (${'$'}e in ${'$'}enter) { ${'$'}all += [pscustomobject]@{ t = ${'$'}e.TimeCreated; sleep = ${'$'}true } }
+        foreach (${'$'}e in ${'$'}exit)  { ${'$'}all += [pscustomobject]@{ t = ${'$'}e.TimeCreated; sleep = ${'$'}false } }
+        ${'$'}all = ${'$'}all | Sort-Object t
+        ${'$'}lastSleep = ${'$'}null
+        foreach (${'$'}e in ${'$'}all) {
+            if (${'$'}e.sleep) {
+                if (${'$'}null -eq ${'$'}lastSleep) { ${'$'}lastSleep = ${'$'}e.t }
+            } else {
+                if (${'$'}null -ne ${'$'}lastSleep) {
+                    '' + [long]([DateTimeOffset]${'$'}lastSleep).ToUnixTimeMilliseconds() + ',' + [long]([DateTimeOffset]${'$'}e.t).ToUnixTimeMilliseconds()
+                    ${'$'}lastSleep = ${'$'}null
+                }
+            }
+        }
+        if (${'$'}null -ne ${'$'}lastSleep) {
+            '' + [long]([DateTimeOffset]${'$'}lastSleep).ToUnixTimeMilliseconds() + ',' + '$untilMillis'
+        }
+        """.trimIndent()
+    val lines =
+        runCatching {
+            val process =
+                ProcessBuilder("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+                    .redirectErrorStream(true)
+                    .start()
+            if (!process.waitFor(20, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                return@runCatching null
+            }
+            process.inputStream.bufferedReader().readText().lines().map { it.trim() }
+        }.getOrNull() ?: return null
+    // The sentinel is what separates "read the log, nothing was recorded" from "could not read the log".
+    if (lines.none { it == "OK" }) return null
+    return lines.asSequence()
+        .mapNotNull { line ->
+            val parts = line.split(",")
+            if (parts.size != 2) return@mapNotNull null
+            val a = parts[0].toLongOrNull() ?: return@mapNotNull null
+            val b = parts[1].toLongOrNull() ?: return@mapNotNull null
+            DeviceSleepGap(maxOf(a, sinceMillis), minOf(b, untilMillis))
+        }
+        .filter { it.endMillis > it.startMillis }
+        .sortedBy { it.startMillis }
+        .toList()
+}

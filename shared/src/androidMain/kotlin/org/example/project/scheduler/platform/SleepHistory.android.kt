@@ -13,3 +13,10 @@ actual fun lastWakeAfterLongSleepMillis(minSleepMillis: Long): Long? = null
  * phone records no gaps of its own — it only pulls the desktop's exact pause gaps from the synced table.
  */
 actual fun recentSleepGaps(sinceMillis: Long): List<DeviceSleepGap> = emptyList()
+
+/**
+ * PRD §8 (Android): no readable lock/unlock or sleep/wake HISTORY — the phone learns of a lock only as it
+ * happens (`AndroidUnlockTracker`), and nothing records the past. Return null, the documented "cannot tell"
+ * answer, so the calendar assumes this device was unlocked rather than inventing a week of locked time.
+ */
+actual fun deviceLockedIntervals(sinceMillis: Long, untilMillis: Long): List<DeviceSleepGap>? = null

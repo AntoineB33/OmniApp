@@ -28,10 +28,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
@@ -218,12 +218,19 @@ data class CalendarRecord(
     /** The user's sleep window, drawn as a labeled greyed band behind the task blocks. */
     val sleep: Boolean = false,
     /**
-     * PRD §15 device-sleep gaps: a past pause (the user was away/the device slept), drawn as a labeled
-     * greyed band exactly like [sleep] but reading "Inactivity". Derived bands carry no [entryId]
-     * (display-only); a user-authored inactivity *panel* (PRD §8/§12) sets [inactivity] WITH an [entryId]
-     * and renders as a real, removable block instead.
+     * PRD §8 inactivity period: a stretch where the scheduler places nothing, drawn GREY. Three things are
+     * one concept here — the user's hand-added inactivity periods, the §17 sleep windows (an inactivity
+     * period labelled "Sleep", which also sets [sleep]) and the closed heads of the §15 screen breaks (drawn
+     * by the break's own band). A user-authored panel carries an [entryId] and is a real, removable block.
      */
     val inactivity: Boolean = false,
+    /**
+     * PRD §8 calendar LAYERS: when set, this record is not a panel at all but one region of one decorative
+     * layer — the oblique-line hatch saying "no computer was unlocked" or (opposite slope) "no phone was
+     * unlocked". Layers are drawn ACROSS the day column over whatever else is there, displacing nothing; a
+     * region carrying both layers is a no-screen period. Display-only: no [entryId], never interactive.
+     */
+    val layer: SchedulerDomain.ActivityLayer? = null,
     /**
      * PRD §8/§9 no-screen period: a user-authored "No screen" panel, drawn as a decorative hatched block
      * (a pattern over the real panels). Off-screen tasks schedule inside it; on-screen tasks never do.
@@ -367,8 +374,10 @@ data class PlacedRecord(
     val alarm: Boolean = false,
     /** The user's sleep window, rendered as a labeled greyed band over [startHour, endHour]. */
     val sleep: Boolean = false,
-    /** PRD §15 device-sleep gaps: a past pause, rendered as a labeled greyed band reading "Inactivity". */
+    /** PRD §8: a grey period the scheduler places nothing in (hand-added, or a §17 sleep window). */
     val inactivity: Boolean = false,
+    /** PRD §8: one region of one decorative layer ("no computer/phone unlocked"). See [CalendarRecord.layer]. */
+    val layer: SchedulerDomain.ActivityLayer? = null,
     /** PRD §8/§9 no-screen period: a user-authored "No screen" panel, rendered as a hatched block. */
     val noScreen: Boolean = false,
     /** For a [sleep] band: its enclosing "No screen" window (>= the sleep range). See [CalendarRecord.noScreenRange]. */
@@ -462,6 +471,7 @@ fun recordsForDay(
             alarm = record.alarm,
             sleep = record.sleep,
             inactivity = record.inactivity,
+            layer = record.layer,
             noScreen = record.noScreen,
             noScreenRange = record.noScreenRange,
             openStart = record.openStart,
@@ -2384,20 +2394,59 @@ internal fun rollingRowCount(viewportPx: Float, dayHeightPx: Float): Int =
 
 /**
  * PRD §8 now-line lock: the vertical offset (px along the timeline) that puts the now-line at the MIDDLE of
- * a [viewportPx]-tall viewport. [daysFromAnchorToToday] is how many days today sits below the anchor day
- * (negative above it) and [dayFraction] how far into today the now-line is drawn, so the now-line's content
- * y is `(days + fraction) * dayHeightPx` and centring it is that minus half a viewport. Deliberately
- * UNCLAMPED for the same reason [zoomAnchoredOffset] is: a result outside the anchor day is not "off the
- * calendar" but the neighbouring day, which [rollingDayShift] folds back into the anchor — so the lock
- * works just as well at 00:10 (where the middle of the view is yesterday) as at noon. Pure, so the lock's
+ * a [viewportPx]-tall viewport, from [currentOffsetPx] — where the grid is scrolled to now. [dayFraction]
+ * is how far into its day the now-line is drawn, so centring it wants `dayFraction * dayHeightPx -
+ * viewportPx / 2` — plus any whole number of days, and WHICH whole number is the whole point.
+ *
+ * The lock is VERTICAL ONLY, and picking the occurrence NEAREST where the grid already is is what makes it
+ * so. Every day-row is one [dayHeightPx] apart and each column is its neighbour phase-shifted by a day
+ * ([rollingDayAt]), so the now-line has an occurrence every [dayHeightPx] down the timeline and they differ
+ * only in which column carries the centred one: scrolling to a whole-day-distant one walks every date a
+ * column to the left per day travelled. Counted from the ANCHOR (what this did first) a calendar showing
+ * today in the fourth column scrolled three whole days to centre it, and turning the switch on dragged
+ * today into the leftmost column. The nearest occurrence moves the timeline by less than half a day —
+ * exactly the vertical scroll the centring is worth — and the columns keep the days they were showing.
+ * Deliberately UNCLAMPED like [zoomAnchoredOffset]: a result outside the anchor day is the neighbouring
+ * day, which [rollingDayShift] folds back into the anchor without moving a pixel. Pure, so the lock's
  * anchor math is unit-tested independently of Compose.
  */
 internal fun nowLineCenterOffset(
+    dayFraction: Float,
+    dayHeightPx: Float,
+    viewportPx: Float,
+    currentOffsetPx: Float,
+): Float {
+    if (dayHeightPx <= 0f) return currentOffsetPx
+    val centred = dayFraction * dayHeightPx - viewportPx / 2f
+    return centred - ((centred - currentOffsetPx) / dayHeightPx).roundToInt() * dayHeightPx
+}
+
+/**
+ * PRD §8 now-line lock: how many whole days the ANCHOR must move for the now-line occurrence the lock
+ * centred to be one the grid actually draws — 0 whenever it already is, which is the normal case and is
+ * what keeps the lock from rearranging the columns.
+ *
+ * At [offsetPx] the centred now-line sits on the day-row `row` counted from the anchor, so today is drawn
+ * in column `daysFromAnchorToToday - row` ([rollingDayAt]: column c, row r draws `anchor + r + c`). When
+ * that column is off the grid — the user scrolled to another week and then asked to be locked to now — the
+ * anchor is walked until it is back in range, and this is the ONLY case where the lock may move the
+ * calendar sideways: without it "lock to now" would faithfully hold a now-line that is nowhere on screen.
+ * Shifting the anchor by `d` moves today's column by `-d`, so the shift is the overshoot itself. Pure, so
+ * the lock's anchor math is unit-tested independently of Compose.
+ */
+internal fun nowLineCenterColumnShift(
     daysFromAnchorToToday: Int,
     dayFraction: Float,
     dayHeightPx: Float,
     viewportPx: Float,
-): Float = (daysFromAnchorToToday + dayFraction) * dayHeightPx - viewportPx / 2f
+    offsetPx: Float,
+    columns: Int,
+): Int {
+    if (dayHeightPx <= 0f || columns <= 0) return 0
+    val row = ((viewportPx / 2f + offsetPx) / dayHeightPx - dayFraction).roundToInt()
+    val column = daysFromAnchorToToday - row
+    return column - column.coerceIn(0, columns - 1)
+}
 
 /**
  * PRD §7 date pick: the zoom at which exactly one whole day fills a [viewportPx]-tall viewport, given the
@@ -2520,6 +2569,11 @@ private fun WeekView(
     // and the release callback through [rememberUpdatedState] rather than closing over them.
     val lockNow = rememberUpdatedState(lockNowLine)
     val releaseLock = rememberUpdatedState(onLockNowLineChange)
+    // PRD §8 zoom vs. scroll: whether the last pointer event over the grid carried the zoom modifier
+    // (Ctrl/Cmd on the event itself, or the focus-tracked key state). The gesture handler below decides a
+    // wheel turn is a ZOOM on exactly this, and the scroller consults the SAME decision — so one notch can
+    // never be read as both a zoom AND a scroll, which is what silently switched the now-line lock off.
+    val zoomModifierHeld = remember { mutableStateOf(false) }
     // How far into today the now-line sits, as a fraction of the day. Deliberately to the MINUTE and not
     // finer: that is exactly where DayColumn's current-time indicator is drawn, and the lock must centre on
     // the line the user can see, not on a truer instant a pixel away from it.
@@ -2527,17 +2581,31 @@ private fun WeekView(
     val nowFractionState = rememberUpdatedState(nowFraction)
     val todayState = rememberUpdatedState(today)
 
-    // Scroll so the now-line lands on the middle of the viewport, then roll the whole days out as usual.
-    // [dayH] is the day height in force AFTER whatever change prompted the re-centring.
+    // Scroll so the now-line lands on the middle of the viewport — VERTICALLY, and only vertically: the
+    // occurrence nearest where the grid already is ([nowLineCenterOffset]), so the timeline moves less than
+    // half a day and every column keeps the date it was showing, then the ordinary rebase (which moves no
+    // pixel — it only re-indexes rows into the anchor). The anchor is walked on top of that in the one case
+    // it must be: when the centred now-line belongs to no drawn column, i.e. the user was looking at
+    // another week and asked to be taken back to now. [dayH] is the day height in force AFTER whatever
+    // change prompted the re-centring.
     fun centerOnNowLine(dayH: Float) {
         if (dayH <= 0f || viewportHpx <= 0f) return
         offsetPx = nowLineCenterOffset(
+            dayFraction = nowFractionState.value,
+            dayHeightPx = dayH,
+            viewportPx = viewportHpx,
+            currentOffsetPx = offsetPx,
+        )
+        rebase(dayH)
+        val shift = nowLineCenterColumnShift(
             daysFromAnchorToToday = anchorDay.daysUntil(todayState.value),
             dayFraction = nowFractionState.value,
             dayHeightPx = dayH,
             viewportPx = viewportHpx,
+            offsetPx = offsetPx,
+            columns = DAY_COLUMNS,
         )
-        rebase(dayH)
+        if (shift != 0) anchorDay = anchorDay.plus(shift, DateTimeUnit.DAY)
     }
 
     // PRD §8 zoom-to-cursor: scale the timeline and re-pin the time under [focal]. A pinch's centroid also
@@ -2556,6 +2624,11 @@ private fun WeekView(
         // ([focalAfter]) is dropped for the same reason: while locked, the middle of the view is the
         // now-line and nothing else may move it.
         if (lockNow.value && viewportHpx > 0f) {
+            // Scale around the middle of the view FIRST — the now-line is what sits there, so this is the
+            // zoom's own pivot — and only then re-centre. Snapping from the un-scaled offset would measure
+            // "nearest occurrence" in the old day height and could snap the timeline to the occurrence a
+            // day away, which is the sideways walk [nowLineCenterOffset] exists to avoid.
+            offsetPx = zoomAnchoredOffset(offsetPx, viewportHpx / 2f, f)
             centerOnNowLine(dayH)
             return
         }
@@ -2566,6 +2639,13 @@ private fun WeekView(
     // The scroll itself: an unbounded offset instead of a clamped ScrollState. Mirrors `verticalScroll`'s
     // sign convention (same `reverseDirection`), so wheel, drag and fling behave exactly as before.
     val scrollableState = rememberScrollableState { delta ->
+        // PRD §8 zoom vs. scroll: with the zoom modifier held a wheel turn is a ZOOM, never a scroll. The
+        // gesture handler above consumes those events, but a notch it declined (a burst whose vertical
+        // delta cancelled out, a device that reports the modifier on only part of the burst) would
+        // otherwise arrive here as an ordinary scroll — moving the grid and, worse, reading as "take me
+        // elsewhere" and switching the now-line lock off, after which every further zoom pivots on the
+        // cursor. Returning 0 consumes nothing: the zoom already had its say.
+        if (zoomModifierHeld.value) return@rememberScrollableState 0f
         // PRD §8 now-line lock: a scroll — wheel, drag or fling — is the user taking the view somewhere
         // else, so it switches the lock off rather than being fought by it on the next tick.
         if (delta != 0f && lockNow.value) releaseLock.value(false)
@@ -2636,8 +2716,10 @@ private fun WeekView(
     // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live. Reminder tags
     // (zero-duration, §14), alarm rings (zero-duration, §18) and screen-break markers (§15) are not blocks
     // and are excluded.
-    val allBlocks = records.filterNot { it.reminder || it.screenBreak || it.alarm || it.sleep || it.inactivity }
-        .map { calendarBlockKey(it) to it.range }
+    val allBlocks =
+        records.filterNot {
+            it.reminder || it.screenBreak || it.alarm || it.sleep || it.inactivity || it.layer != null
+        }.map { calendarBlockKey(it) to it.range }
 
     // PRD §8 hover title: the block/screen-break under the cursor, reported up from each element so a single
     // non-interactive overlay (below) draws the bubble. [viewportCoords] anchors the bubble in viewport
@@ -2772,14 +2854,21 @@ private fun WeekView(
                             }
                             val zoomModifier = event.keyboardModifiers.pointerCtrlPressed ||
                                 event.keyboardModifiers.pointerMetaPressed || ctrl.value
+                            // Publish the decision for the scroller below, which must not read the same
+                            // notch as a scroll (see [scrollableState]).
+                            zoomModifierHeld.value = zoomModifier
                             if (event.type == PointerEventType.Scroll && zoomModifier) {
-                                val change = event.changes.firstOrNull()
-                                val dy = change?.scrollDelta?.y ?: 0f
+                                // The whole burst's vertical delta, not just the first change's: a device
+                                // that splits a notch across changes would otherwise report 0 and leak the
+                                // event to the scroller.
+                                val dy = event.changes.fold(0f) { sum, change -> sum + change.scrollDelta.y }
                                 if (dy != 0f) {
-                                    val focal = change!!.position.y
+                                    val focal = event.changes.firstOrNull()?.position?.y ?: (viewportHpx / 2f)
                                     applyZoom(if (dy < 0f) CALENDAR_ZOOM_STEP else 1f / CALENDAR_ZOOM_STEP, focal)
-                                    event.changes.forEach { it.consume() }
                                 }
+                                // Consumed whatever it carried: with the modifier held this event is a zoom
+                                // and must never reach the scroller, even when it moved the zoom by nothing.
+                                event.changes.forEach { it.consume() }
                             }
                             // PRD §8 pinch-to-zoom (touch — the only zoom input on Android): with two+
                             // fingers down, zoom by the pinch ratio anchored at the fingers' centroid,
@@ -2818,11 +2907,18 @@ private fun WeekView(
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                // requiredHeight, not height: [Modifier.height] enforces the INCOMING
-                                // constraints, and the scroll viewport hands down its own (bounded) height —
-                                // so a day taller than the viewport would be clamped to it. See [DayColumn]'s
-                                // own note below.
-                                .requiredHeight(hourHeight * 24)
+                                // A day row is `dayHeightPx` tall by construction — that is what the
+                                // placement below assumes — but the scroll viewport hands down its own
+                                // (bounded) height. [Modifier.height] alone ENFORCES those incoming
+                                // constraints and would clamp the row to the viewport; [Modifier.requiredHeight]
+                                // ignores them but then CENTERS the overflow in the clamped slot, silently
+                                // shifting the whole grid by `(viewport - dayHeight) / 2` — the scroll math
+                                // knows nothing of that, so the calendar drew the wrong hours and the now-line
+                                // sat off the top of the view. Measuring unbounded and aligning TOP is the
+                                // only combination that gives a full-height row placed exactly where
+                                // [offsetPx] says. See [DayColumn]'s own note below.
+                                .wrapContentHeight(Alignment.Top, unbounded = true)
+                                .height(hourHeight * 24)
                                 .offset { IntOffset(0, (row * dayHeightPx - offsetPx).roundToInt()) },
                         ) {
                             val tick = calendarTickMinutes(hourHeight)
@@ -2875,18 +2971,26 @@ private fun WeekView(
                                     allBlocks = allBlocks,
                                     overlapArmed = overlapArmed,
                                     hoverScope = hoverScope,
-                                    // requiredHeight, not height: a day-row is `dayHeightPx` tall by
-                                    // construction (that is what the placement above assumes), but the
-                                    // scroll viewport is not — [Modifier.scrollable] passes its own bounded
-                                    // constraints straight through, where the old [verticalScroll] measured
-                                    // its content with maxHeight = Infinity. [Modifier.height] ENFORCES the
-                                    // incoming constraints, so it would clamp each row to the viewport
-                                    // height: the hour-line Column would then run out of main-axis space and
-                                    // measure its trailing hour boxes at zero height (the grid vanishing in
-                                    // the lower part of the view), and the rows would no longer tile.
+                                    // A day-row is `dayHeightPx` tall by construction (that is what the
+                                    // placement above assumes), but the scroll viewport is not —
+                                    // [Modifier.scrollable] passes its own bounded constraints straight
+                                    // through, where the old [verticalScroll] measured its content with
+                                    // maxHeight = Infinity. [Modifier.height] ENFORCES the incoming
+                                    // constraints, so it would clamp each row to the viewport height: the
+                                    // hour-line Column would then run out of main-axis space and measure its
+                                    // trailing hour boxes at zero height (the grid vanishing in the lower
+                                    // part of the view), and the rows would no longer tile. But
+                                    // [Modifier.requiredHeight] is NOT the answer either: it ignores the
+                                    // incoming constraints and then CENTERS the over-tall content in the
+                                    // clamped slot, adding a `(viewport - dayHeight) / 2` shift the scroll
+                                    // math does not know about — the grid then draws hours the offset never
+                                    // asked for and the now-line is pushed off the top of the view (its
+                                    // whole column with it). Measure unbounded, align TOP, then take the
+                                    // full day height.
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .requiredHeight(hourHeight * 24)
+                                        .wrapContentHeight(Alignment.Top, unbounded = true)
+                                        .height(hourHeight * 24)
                                         .offset { IntOffset(0, (row * dayHeightPx - offsetPx).roundToInt()) },
                                 )
                             }
@@ -3003,14 +3107,20 @@ private fun DayColumn(
     val screenBreakMarkers = records.filter { it.screenBreak }
     val alarmMarkers = records.filter { it.alarm }
     val sleepBands = records.filter { it.sleep }
-    // Derived bands (account-offline "No screen" windows, legacy Inactivity) carry no entryId; a
-    // user-authored no-screen / inactivity PANEL (entryId set) is a real, removable block and stays in
-    // the block pipeline (PRD §8/§12).
-    val inactivityBands = records.filter { (it.inactivity || it.noScreen) && it.entryId == null }
+    // PRD §8 calendar LAYERS: the two decorative "nobody unlocked" hatches. They are not panels — they are
+    // drawn ACROSS the column over everything else and displace nothing, so they are kept out of every
+    // pipeline that lays panels out or hit-tests them. An idle stretch that carries no panel now draws no
+    // band at all (the derived "Inactivity"/"No screen" bands are gone); it simply shows the layers.
+    val layerBands = records.filter { it.layer != null }
+    // PRD §8: the DERIVED grey bands — the past stretches no task panel covers, drawn grey and labelled
+    // "Inactivity" (the §17 sleep windows are the other grey label and draw as [sleepBands]). Derived means no
+    // [entryId]: display-only, neither removable nor draggable. A user-authored inactivity PANEL carries an
+    // entryId and stays a real block in the pipeline below.
+    val inactivityBands = records.filter { it.inactivity && it.entryId == null }
     val blockRecords =
         records.filterNot {
-            it.reminder || it.screenBreak || it.alarm || it.sleep ||
-                ((it.inactivity || it.noScreen) && it.entryId == null)
+            it.reminder || it.screenBreak || it.alarm || it.sleep || it.layer != null ||
+                (it.inactivity && it.entryId == null)
         }
     // PRD §17: the fill schedules the work plan straight through the nightly sleep windows, so a block may
     // land (partly) inside one. The overlapping sub-range is greyed "as if under the Sleep band" while the
@@ -3233,34 +3343,22 @@ private fun DayColumn(
             )
         }
 
-        // The user's sleep windows: a greyed band drawn behind the task blocks so sleep time reads as
-        // greyed even in the gaps between blocks. Past pauses (PRD §15 device-sleep gaps) render as the
-        // same band. The blocks the fill now schedules through the window are drawn on top, each greying
-        // its own sleep sub-range to match (see CalendarBlock's sleepHourRanges); the band's
-        // "Sleep"/"Inactivity" label is drawn on top of them below, so it stays legible at the band's start.
-        // PRD §8 decorative bands, drawn behind the task blocks. Two kinds stack here:
-        //   • an awake account-offline window reads "Inactivity" as its base + a "No screen" oblique-line
-        //     hatch ("/") on top;
-        //   • a sleep window is BY DEFINITION also a no-screen period, so it carries BOTH decorative
-        //     patterns — its own sleep hatch (oblique lines in the OPPOSITE direction, "\") crossed with
-        //     the no-screen "/" hatch — and its hover lists "Sleep" first, then "No screen". The no-screen
-        //     stretch may run past the sleep into a directly-following/preceding offline window, so the
-        //     sleep band's "No screen" line shows that enclosing window's (>=) span ([noScreenRange]).
-        // No-screen bands are composed FIRST and sleep bands ON TOP, so a slept-through night's hover
-        // resolves to the sleep band ("Sleep" first) rather than the offline band beneath it.
+        // PRD §8/§17: the user's sleep windows — a GREY band drawn behind the task blocks, because a sleep
+        // window is an inactivity period (one labelled "Sleep") and grey is exactly "the scheduler places
+        // nothing here". It carries no hatch of its own any more: the two oblique-line slopes now mean only
+        // "no computer unlocked" / "no phone unlocked", and a sleep window gets both of them from the
+        // LAYERS drawn over the whole column (see [layerBands] below) rather than painting its own. Its
+        // "Sleep" label is drawn on top of everything further down, so it stays legible at the band's start.
         data class DecorBand(
             val band: PlacedRecord,
             val baseLabel: String,
             val decorLabel: String?,
             val decorRange: TaskTimeRange?,
-            val noScreenHatch: Boolean,
-            val sleepHatch: Boolean,
         )
-        (inactivityBands.map {
-            DecorBand(it, "Inactivity", if (it.noScreen) "No screen" else null, null, it.noScreen, false)
-        } + sleepBands.map {
-            DecorBand(it, "Sleep", "No screen", it.noScreenRange, noScreenHatch = true, sleepHatch = true)
-        }).forEach { (band, baseLabel, decorLabel, decorRange, noScreenHatch, sleepHatch) ->
+        (
+            inactivityBands.map { DecorBand(it, "Inactivity", null, null) } +
+                sleepBands.map { DecorBand(it, "Sleep", "No screen", it.noScreenRange) }
+            ).forEach { (band, baseLabel, decorLabel, decorRange) ->
                 // PRD §8: like every other block, hovering the band pops the title + true (un-clipped) start–end times.
                 // PRD §12: a band open-ended into the past shows "∞" as its start (the drawn start is only the floor).
                 val timeRange = "${hmOrInfinity(band.fullStartMillis, band.openStart, tz)} – ${formatHm(band.fullEndMillis, tz)}"
@@ -3274,11 +3372,7 @@ private fun DayColumn(
                         .offset(y = hourHeight * band.startHour)
                         .height(hourHeight * (band.endHour - band.startHour))
                         .clipToBounds()
-                        .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA))
-                        // PRD §8 decorative panels: the no-screen "/" hatch, and — for a sleep window — the
-                        // sleep "\" hatch crossed over it, so the two stacked decorative panels read distinctly.
-                        .then(if (noScreenHatch) Modifier.obliqueHatch(CalColors.muted, reversed = false) else Modifier)
-                        .then(if (sleepHatch) Modifier.obliqueHatch(CalColors.muted, reversed = true) else Modifier),
+                        .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA)),
                 ) {
                     // PRD §8: the fill schedules work straight through the night / off-screen tasks land
                     // inside a no-screen window, so a real panel (or the derived Inactivity/No-screen band
@@ -3504,6 +3598,27 @@ private fun DayColumn(
             }
         }
 
+        // PRD §8 calendar LAYERS: the two decorative "nobody unlocked" hatches — "/" where no computer was
+        // unlocked, "\\" (opposite slope) where no phone was. Drawn OVER the panels, because a layer
+        // displaces nothing (PRD §8 panel taxonomy: decorative elements pattern the calendar rather than
+        // occupying it), and UNDER the now-line / reminder / alarm / screen-break markers, which have to stay
+        // crisp. A stretch carrying BOTH slopes is a no-screen period — the user's definition, and the same
+        // set §9 places the off-screen tasks in. Non-interactive: a plain drawing Box registers no pointer
+        // input, so every block underneath keeps its own hover, drag and right-click.
+        layerBands.forEach { band ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset(y = hourHeight * band.startHour)
+                    .height(hourHeight * (band.endHour - band.startHour))
+                    .clipToBounds()
+                    .obliqueHatch(
+                        CalColors.muted,
+                        reversed = band.layer == SchedulerDomain.ActivityLayer.NoPhoneUnlocked,
+                    ),
+            )
+        }
+
         // Current-time indicator (only on today's column).
         if (now != null) {
             val offsetY = hourHeight * (now.hour + now.minute / 60f)
@@ -3633,6 +3748,13 @@ private val SCREEN_BREAK_LABEL_MIN_HEIGHT = 13.dp
 private const val SCREEN_BREAK_OPEN_ALPHA = 0.12f
 
 /**
+ * PRD §8/§15: fill of the CLOSED head of a screen-break band — the 20-second look-away end to end, and the
+ * 5-minute pose's opening minute. That head is an inactivity period (the scheduler places nothing in it), so
+ * it is grey like the §17 sleep band, drawn inside the break's blue outline rather than as a solid blue slab.
+ */
+private const val SCREEN_BREAK_CLOSED_ALPHA = 0.34f
+
+/**
  * PRD §15 Screen break, rendered as a real time-positioned band (one [overlapLayout] slice of it) spanning its
  * true duration so the §9 fill leaves an exact gap for it. Sub-minute screen breaks render at [SCREEN_BREAK_MIN_HEIGHT]
  * (a hairline); the title is drawn only when the band is tall enough ([SCREEN_BREAK_LABEL_MIN_HEIGHT]). The full
@@ -3750,14 +3872,23 @@ private fun ScreenBreakSegment(
         modifier = modifier
             .padding(horizontal = 1.dp)
             .clip(RoundedCornerShape(4.dp))
-            .background(if (hollow) CalColors.accent.copy(alpha = SCREEN_BREAK_OPEN_ALPHA) else CalColors.accent)
-            .then(if (hollow) Modifier.border(1.dp, CalColors.accent, RoundedCornerShape(4.dp)) else Modifier)
+            // PRD §8/§15: the CLOSED head accepts no task at all, which is precisely an inactivity period —
+            // so it is painted GREY like every other one, inside the screen break's own blue outline. The
+            // open period keeps the blue tint: it is not a stop, it is time reserved for the off-screen work.
+            .background(
+                if (hollow) {
+                    CalColors.accent.copy(alpha = SCREEN_BREAK_OPEN_ALPHA)
+                } else {
+                    CalColors.muted.copy(alpha = SCREEN_BREAK_CLOSED_ALPHA)
+                },
+            )
+            .border(1.dp, CalColors.accent, RoundedCornerShape(4.dp))
             .then(if (showLabel) Modifier.padding(horizontal = 4.dp) else Modifier),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         if (showLabel) {
-            val labelColor = if (hollow) CalColors.accent else Color.White
+            val labelColor = CalColors.accent
             Text(text = "●", style = MaterialTheme.typography.labelSmall, color = labelColor)
             Text(
                 text = title,
@@ -4300,7 +4431,7 @@ private fun decorativeHoverZones(top: Float, bottom: Float, unders: List<PlacedR
     return zones
 }
 
-/** The band label for a derived (no-[entryId]) sleep/no-screen/inactivity record — see the drawing loop below. */
+/** The label for a derived (no-[entryId]) sleep / no-screen / inactivity record. */
 private fun decorativeBandLabel(r: PlacedRecord): String = when {
     r.sleep -> "Sleep"
     r.noScreen -> "No screen"
@@ -4308,8 +4439,8 @@ private fun decorativeBandLabel(r: PlacedRecord): String = when {
 }
 
 /**
- * The hover title for a [DecorativeHoverZone.under] record: a derived band's own label ("Sleep"/"No
- * screen"/"Inactivity") if it is one, otherwise the real panel's title.
+ * The hover title for a [DecorativeHoverZone.under] record: a derived band's own label if it is one,
+ * otherwise the real panel's title.
  */
 private fun underHoverTitle(u: PlacedRecord): String =
     if (u.entryId == null && (u.sleep || u.inactivity || u.noScreen)) decorativeBandLabel(u) else u.title
@@ -4339,11 +4470,12 @@ private fun CalendarBlockBody(color: Color, title: String, showTitle: Boolean, h
         modifier = Modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(3.dp))
+            // PRD §8: a NO-SCREEN period ([hatched]) is drawn as a faint outlined region, not a filled
+            // block — it is not grey (it accepts the off-screen tasks) and it draws no pattern of its own
+            // any more: it asserts both "nobody unlocked" LAYERS, which the column paints over it. An
+            // INACTIVITY period, by contrast, is a solid grey block: nothing is scheduled there at all.
             .background(color.copy(alpha = if (hatched) 0.10f else 0.30f))
-            .border(1.dp, color, RoundedCornerShape(3.dp))
-            // PRD §8 decorative panels: a no-screen period reads as an oblique-line pattern laid over the
-            // calendar rather than a solid task block.
-            .then(if (hatched) Modifier.obliqueHatch(color, reversed = false) else Modifier),
+            .border(1.dp, color, RoundedCornerShape(3.dp)),
     ) {
         if (showTitle) {
             Text(
