@@ -3060,7 +3060,7 @@ object SchedulerDomain {
             val boost = planner.boostAt(taskId, cursor)
             var need =
                 resume?.second
-                    ?: walk.chunkMillis(taskId, fitting, boost, period).roundToLong().coerceAtLeast(1L)
+                    ?: walk.chunkMillis(taskId, fitting, boost).roundToLong().coerceAtLeast(1L)
             // PRD §10: a task whose continuous effort is still running at the now-line is scheduled for the
             // REMAINDER of its minimum, not a fresh one, so the block it merges into is exactly one minimum
             // long. Only the first chunk can have such an effort behind it, and only when the walk did not
@@ -3105,7 +3105,7 @@ object SchedulerDomain {
                 while (cursor < settleEnd && index < maxPanels && walk.spread(allowedHere) > period) {
                     val name = walk.pick(allowedHere) ?: break
                     val boost = planner.boostAt(name, cursor)
-                    val need = walk.chunkMillis(name, allowedHere, boost, period).roundToLong().coerceAtLeast(1L)
+                    val need = walk.chunkMillis(name, allowedHere, boost).roundToLong().coerceAtLeast(1L)
                     val end = minOf(cursor + need, horizon)
                     if (end <= cursor) break
                     emit(name, cursor, end)

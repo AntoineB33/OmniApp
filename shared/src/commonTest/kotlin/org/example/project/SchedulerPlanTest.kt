@@ -157,7 +157,10 @@ class SchedulerPlanTest {
         assertPlan(
             plan,
             prefix = emptyList(),
-            cycle = listOf("A" to 37.5, "B" to 10.0, "C" to 15.0, "B" to 12.5),
+            // The two B slots are 12.5 then 10, not 10 then 12.5: `steadyCycle` settles the SIZES by the
+            // clock and then orders them densest-first, so the longer of B's two turns leads. Same slots,
+            // same shares — reference `Scheduler.steady_cycle`.
+            cycle = listOf("A" to 37.5, "B" to 12.5, "C" to 15.0, "B" to 10.0),
             label = "test 4",
         )
         assertEquals(75.0 * MIN, plan.periodMillis.toDouble(), 1.0)

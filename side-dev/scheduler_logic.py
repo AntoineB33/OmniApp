@@ -280,16 +280,68 @@ class Scheduler:
         pool = [n for n in candidates if n != last] or list(candidates)
         return min(pool, key=lambda n: (v[n], -self.p[n], n))
 
-    def _chunk(self, name, v, candidates, p=None, boost=None, T=None, floor=None):
+    def _round(self, name, rival, p):
+        """How much `name` may take before the one it is racing gets its turn.
+
+        A share is a RATIO, and a ratio is satisfied at any scale -- so "catch
+        the runner-up" alone says nothing about how coarsely. Left at that, a
+        task owed twenty of its rival's slots takes them as one block twenty
+        times as long: the shares come out exactly right and the answer is
+        still the one the README refuses ("A 1h, B 1h" for "A 10min, B 10min").
+        Its own rule for that is `_pick`'s -- a task is never picked twice in a
+        row -- and a single long chunk walks straight past it, because one slot
+        is one pick however long it is.
+
+        So the scale is set here, and by the only quantity in sight that has
+        one: the rival's own MINIMUM. Over a round in which `name` runs once
+        and the rival runs once, `name`'s share of the two is c / (c + m), so
+        the largest c that still leaves the rival its due is
+
+            c / (c + m) = p        ->      c = p * m / (1 - p)
+
+        -- A at 50% takes exactly one 45-minute slot against a 45-minute rival
+        and comes back every other one; A at 90% takes 405 minutes against the
+        same rival, because that is what 90% of a round costs. Neither is a
+        floor: `_chunk` still may not go under a task's own minimum, and a task
+        that is owed less than a round simply takes less.
+
+        This REPLACES `p * T` (the task's share of a whole period), which is
+        the same number wherever there are two tasks and too large wherever
+        there are more: a period is the spacing of the SLOWEST task's slots, so
+        with twenty rivals it let the fastest one take twenty rounds at once --
+        which is exactly the block the README's example is about, and, since a
+        run longer than a minimum has interior instants at which a re-plan
+        would pick somebody else, exactly what broke the resume contract.
+
+        None where there is nobody to race, or where `name` is the whole of the
+        share: a round with one runner in it has no scale to set."""
+        if not rival: return None
+        share = p[name]
+        if share >= 1: return None
+        return share * self.minimum[rival] / (1 - share)
+
+    def _chunk(self, name, v, candidates, p=None, boost=None, floor=None):
         p = p or self.p
         floor = self.minimum[name] if floor is None else floor
-        others = [v[n] for n in candidates if n != name]
-        target = min(others) if others else v[name]
+        others = [n for n in candidates if n != name]
+        target = min((v[n] for n in others), default=v[name])
         need = p[name] * (target - v[name])
         c = max(floor, need)
-        if boost is not None:
-            unit = max(self.minimum[name], p[name] * T)
-            c = min(max(c, floor * boost), max(unit * boost, floor))
+        # The field LIFTS and the round CAPS, and they are asked separately
+        # because they are answers to different questions: a boost is owed to
+        # this task whether or not anybody is there to race, while a round is
+        # measured against a rival and means nothing without one. Asking them
+        # together loses the lift exactly where the atomic block puts it -- a
+        # task still short of its minimum is the only candidate, so `others` is
+        # empty, and its resumed slot would fall back to the bare minimum.
+        b = 1 if boost is None else boost
+        if boost is not None: c = max(c, floor * b)
+        # the one that runs next if this chunk ends here -- `_pick`'s own answer
+        # among the others, since it is who this chunk is measured against
+        rival = min(others, key=lambda n: (v[n], -p[n], n), default=None)
+        unit = self._round(name, rival, p)
+        if unit is not None:
+            c = min(c, max(max(self.minimum[name], unit) * b, floor))
         if self.resolution: c = ceil_to(c, self.resolution)
         return c
 
@@ -306,20 +358,50 @@ class Scheduler:
             slots.append(Slot(task, duration, color))
 
     def steady_cycle(self, allowed):
+        """One period's worth of the arrangement the walk settles into: what
+        each task takes, and in what ORDER it takes it.
+
+        The two are separate questions and only the first is the clock's. Over
+        a period every task advances by exactly one T, so a builder that reads
+        the clocks alone must serve the whole of the fastest task's share
+        before the slowest one's turn comes round -- the twenty-slot block
+        again, `_tidy` merging it into one. That is a fact about a level start,
+        not about the arrangement: the walk itself only interleaves once its
+        clocks are staggered, which is what the prefix ahead of the cycle has
+        just spent a period doing.
+
+        So the sizes are settled by the clock (the loop below, capped by
+        `_round` exactly as the walk is) and the order by the rule the clock
+        cannot express: nobody twice in a row while somebody else still owes a
+        slot in this period, and the task with the most slots left going first
+        -- the densest arrangement of the multiset, and the one the walk lands
+        in. With A at 50% against twenty at 2.5% that is A between every pair
+        of them; with two tasks it is the plain alternation it always was.
+        Reordering cannot touch the shares: it is the same slots."""
         allowed = sorted(allowed)
         p = self._shares(allowed)
         T = self._period(allowed)
         rem = {n: p[n] * T for n in allowed}
         v = {n: Fraction(0) for n in allowed}
-        slots = []
+        parts = {n: [] for n in allowed}
+        last = None
         while any(rem[n] > 0 for n in allowed):
             live = [n for n in allowed if rem[n] > 0]
-            name = self._pick(v, live)
+            name = self._pick(v, live, last)
             c = min(self._chunk(name, v, live, p), rem[name])
             if rem[name] - c < self.minimum[name]: c = rem[name]
-            slots.append(Slot(name, c, self.color[name]))
+            parts[name].append(c)
             v[name] += c / p[name]
             rem[name] -= c
+            last = name
+
+        slots, last = [], None
+        left = lambda: [n for n in allowed if parts[n]]
+        while left():
+            pool = [n for n in left() if n != last] or left()
+            name = min(pool, key=lambda n: (-len(parts[n]), -p[n], n))
+            slots.append(Slot(name, parts[name].pop(0), self.color[name]))
+            last = name
         return slots
 
     def coarse_cycle(self, allowed):
@@ -827,7 +909,7 @@ class Scheduler:
 
             name = self._pick(v, fitting, last)
             boost = self._boost(name, t)
-            c = self._chunk(name, v, fitting, boost=boost, T=T,
+            c = self._chunk(name, v, fitting, boost=boost,
                             floor=owed(name) or self.minimum[name])
 
             room_limit = room[name]
@@ -856,7 +938,7 @@ class Scheduler:
                 if spread <= T: break
                 name = self._pick(v, allowed, last)
                 boost = self._boost(name, t)
-                c = self._chunk(name, v, allowed, boost=boost, T=T,
+                c = self._chunk(name, v, allowed, boost=boost,
                                 floor=owed(name) or self.minimum[name])
                 self._push(slots, name, c, self.color[name])
                 v[name] += c / (self.p[name] * boost)

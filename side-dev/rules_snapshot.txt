@@ -53,9 +53,9 @@ Shares: A 50%, B 50%
 Start: 0s
 Cycle:
 - task A 37min 30s
-- task B 10min
-- task C 15min
 - task B 12min 30s
+- task C 15min
+- task B 10min
 - repeat
 Period: 1h 15min
 Shares: A 50%, B 30%, C 20%
@@ -244,87 +244,87 @@ Regime 9  while t_p in (50min, 1h):
 
 === Test 11: the same sliding 20s period accepting NOTHING, in a crowded timeline ===
 The sliding period's position is t_p; every duration below is affine in it.
-Timeline span 1h, 26 regimes, at most 20 rules each (cap 50).
+Timeline span 1h, 26 regimes, at most 21 rules each (cap 50).
 Everything at t < t_p is frozen and is not restated here.
 
 Regime 1  while t_p in [0s, 4min):
   Prefix: IDLE 20s | A 4min - (t_p - 0s) | B 5min | A 4min | C 4min 40s | MAINTENANCE 6min | C 20s | D 5min | A 40s | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min | B 5min
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 2  while t_p in [4min, 9min):
   Prefix: IDLE 20s | B 5min - (t_p - 4min) | A 4min | C 4min 40s | MAINTENANCE 6min | C 20s | D 5min | A 40s | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min | B 5min
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 3  while t_p in [9min, 13min):
   Prefix: IDLE 20s | A 4min - (t_p - 9min) | C 4min 40s | MAINTENANCE 6min | C 20s | D 5min | A 40s | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min | B 5min
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 4  while t_p in [13min, 17min 40s):
   Prefix: IDLE 20s | C 4min 40s - (t_p - 13min) | MAINTENANCE 6min | C 20s | D 5min | A 40s | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min | B 5min
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 5  while t_p in [17min 40s, 18min):
   Prefix: IDLE 20s - (t_p - 17min 40s) | MAINTENANCE 6min | C 20s - (t_p - 17min 40s) | D 5min | A 40s + (t_p - 17min 40s) | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min | B 5min
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 6  while t_p in [18min, 23min 40s):
   Prefix: MAINTENANCE 6min - (t_p - 18min) | D 5min | A 1min | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min | B 5min
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 7  while t_p in [23min 40s, 24min):
   Prefix: MAINTENANCE 20s - (t_p - 23min 40s) | IDLE 0s + (t_p - 23min 40s) | D 5min | A 1min - (t_p - 23min 40s) | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min | B 5min
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 8  while t_p in [24min, 29min):
   Prefix: IDLE 20s | D 5min - (t_p - 24min) | A 40s | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min | B 5min
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 9  while t_p in [29min, 29min 40s):
   Prefix: IDLE 20s | A 40s - (t_p - 29min) | IDLE 4min | A 11min | IDLE 1min | A 4min | C 5min | A 4min | B 5min
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 10  while t_p in [29min 40s, 33min 40s):
   Prefix: IDLE 4min 20s - (t_p - 29min 40s) | A 11min | IDLE 1min | A 4min | C 5min | A 4min | B 5min
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 11  while t_p in [33min 40s, 44min):
   Prefix: IDLE 20s | A 11min - (t_p - 33min 40s) | IDLE 1min | A 4min | C 5min | A 4min | B 5min
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 12  while t_p in (44min, 44min 40s):
   Prefix: IDLE 20s | B 40s - (t_p - 44min) | IDLE 5min | B 2min | IDLE 4min | B 2min 20s
-  Cycle:  C 5min | D 5min | A 10min | B 5min | repeat
+  Cycle:  C 5min | D 5min | A 4min | B 5min | A 6min | repeat
 Regime 13  while t_p in (44min 40s, 47min):
   Prefix: IDLE 5min | B 2min 20s - (t_p - 44min 40s) | IDLE 4min | B 2min
-  Cycle:  C 5min | D 5min | A 10min | B 5min | repeat
+  Cycle:  C 5min | D 5min | A 4min | B 5min | A 6min | repeat
 Regime 14  while t_p in [47min, 47min 30s):
-  Prefix: IDLE 9min - (t_p - 47min) | B 2min 38.29s - 1.38*(t_p - 47min) | C 5min | D 6min 10.74s - 0.08549*(t_p - 47min) | A 4min | B 5min 47.08s - 0.05431*(t_p - 47min) | C 5min | D 5min 30.59s - 0.03421*(t_p - 47min) | A 7min
-  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+  Prefix: IDLE 9min - (t_p - 47min) | B 2min 38.29s - 1.38*(t_p - 47min) | C 5min | D 6min 10.74s - 0.08549*(t_p - 47min) | A 4min | B 5min 47.08s - 0.05431*(t_p - 47min) | C 5min | D 5min 30.59s - 0.03421*(t_p - 47min) | A 4min
+  Cycle:  B 5min | A 6min | C 5min | D 5min | A 4min | repeat
 Regime 15  while t_p in [47min 30s, 48min):
-  Prefix: IDLE 8min 30s - (t_p - 47min 30s) | B 1min 56.89s - 1.34*(t_p - 47min 30s) | C 5min | D 6min 8.18s - 0.09386*(t_p - 47min 30s) | A 4min | B 5min 45.45s - 0.05985*(t_p - 47min 30s) | C 5min | D 5min 29.56s - 0.03778*(t_p - 47min 30s) | A 7min
-  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+  Prefix: IDLE 8min 30s - (t_p - 47min 30s) | B 1min 56.89s - 1.34*(t_p - 47min 30s) | C 5min | D 6min 8.18s - 0.09386*(t_p - 47min 30s) | A 4min | B 5min 45.45s - 0.05985*(t_p - 47min 30s) | C 5min | D 5min 29.56s - 0.03778*(t_p - 47min 30s) | A 4min
+  Cycle:  B 5min | A 6min | C 5min | D 5min | A 4min | repeat
 Regime 16  while t_p in [48min, 48min 30s):
-  Prefix: IDLE 8min - (t_p - 48min) | B 1min 16.69s - 1.3*(t_p - 48min) | C 5min | D 6min 5.365s - 0.1023*(t_p - 48min) | A 4min | B 5min 43.66s - 0.06549*(t_p - 48min) | C 5min | D 5min 28.43s - 0.04145*(t_p - 48min) | A 7min
-  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+  Prefix: IDLE 8min - (t_p - 48min) | B 1min 16.69s - 1.3*(t_p - 48min) | C 5min | D 6min 5.365s - 0.1023*(t_p - 48min) | A 4min | B 5min 43.66s - 0.06549*(t_p - 48min) | C 5min | D 5min 28.43s - 0.04145*(t_p - 48min) | A 4min
+  Cycle:  B 5min | A 6min | C 5min | D 5min | A 4min | repeat
 Regime 17  while t_p in [48min 30s, 48min 39.55s):
-  Prefix: IDLE 7min 30s - (t_p - 48min 30s) | B 37.79s - 1.274*(t_p - 48min 30s) | C 5min | D 6min 2.274s - 0.1079*(t_p - 48min 30s) | A 4min | B 5min 41.68s - 0.06926*(t_p - 48min 30s) | C 5min | D 5min 27.17s - 0.04392*(t_p - 48min 30s) | A 7min
-  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+  Prefix: IDLE 7min 30s - (t_p - 48min 30s) | B 37.79s - 1.274*(t_p - 48min 30s) | C 5min | D 6min 2.274s - 0.1079*(t_p - 48min 30s) | A 4min | B 5min 41.68s - 0.06926*(t_p - 48min 30s) | C 5min | D 5min 27.17s - 0.04392*(t_p - 48min 30s) | A 4min
+  Cycle:  B 5min | A 6min | C 5min | D 5min | A 4min | repeat
 Regime 18  while t_p in [48min 39.55s, 48min 40s):
-  Prefix: IDLE 7min 20.45s - (t_p - 48min 39.55s) | B 25.64s - 1.267*(t_p - 48min 39.55s) | C 5min | D 6min 1.242s - 0.1093*(t_p - 48min 39.55s) | A 4min | B 5min 41.02s - 0.07022*(t_p - 48min 39.55s) | C 5min | D 5min 26.75s - 0.04455*(t_p - 48min 39.55s) | A 4min
-  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+  Prefix: IDLE 7min 20.45s - (t_p - 48min 39.55s) | B 25.64s - 1.267*(t_p - 48min 39.55s) | C 5min | D 6min 1.242s - 0.1093*(t_p - 48min 39.55s) | A 4min | B 5min 41.02s - 0.07022*(t_p - 48min 39.55s) | C 5min | D 5min 26.75s - 0.04455*(t_p - 48min 39.55s)
+  Cycle:  A 4min | B 5min | A 6min | C 5min | D 5min | repeat
 Regime 19  while t_p in [48min 40s, 49min):
-  Prefix: IDLE 7min 20s - (t_p - 48min 40s) | B 25.02s - 1.253*(t_p - 48min 40s) | C 5min | D 6min 1.203s - 0.1122*(t_p - 48min 40s) | A 4min | B 5min 40.99s - 0.07219*(t_p - 48min 40s) | C 5min | D 5min 26.74s - 0.04584*(t_p - 48min 40s) | A 4min
-  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+  Prefix: IDLE 7min 20s - (t_p - 48min 40s) | B 25.02s - 1.253*(t_p - 48min 40s) | C 5min | D 6min 1.203s - 0.1122*(t_p - 48min 40s) | A 4min | B 5min 40.99s - 0.07219*(t_p - 48min 40s) | C 5min | D 5min 26.74s - 0.04584*(t_p - 48min 40s)
+  Cycle:  A 4min | B 5min | A 6min | C 5min | D 5min | repeat
 Regime 20  while t_p in exactly 49min:
-  Prefix: IDLE 1min | A 4min | C 5min | D 6min 3.858s | A 6min | B 5min 39.41s | A 4min | D 5min 26.78s | C 5min | A 4min
-  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+  Prefix: IDLE 1min | A 4min | C 5min | D 6min 3.858s | A 4min | B 5min 42.7s | A 4min | D 5min 28.95s | C 5min
+  Cycle:  A 4min | B 5min | A 6min | C 5min | D 5min | repeat
 Regime 21  while t_p in (49min, 49min 40s):
-  Prefix: IDLE 5min | C 5min - (t_p - 49min) | D 6min 3.858s - 0.1774*(t_p - 49min) | A 4min | C 5min | B 5min 34.96s - 0.09342*(t_p - 49min) | A 4min | D 5min 23.83s - 0.06235*(t_p - 49min) | A 4min
-  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+  Prefix: IDLE 5min | C 5min - (t_p - 49min) | D 6min 3.858s - 0.1774*(t_p - 49min) | A 4min | C 5min | B 5min 34.96s - 0.09342*(t_p - 49min) | A 4min | D 5min 23.83s - 0.06235*(t_p - 49min)
+  Cycle:  A 4min | B 5min | A 6min | C 5min | D 5min | repeat
 Regime 22  while t_p in [49min 40s, 50min):
-  Prefix: IDLE 5min | C 4min 20s - (t_p - 49min 40s) | D 5min 56.76s - 0.1774*(t_p - 49min 40s) | A 4min | C 5min | B 5min 31.22s - 0.0941*(t_p - 49min 40s) | A 4min | D 5min 21.33s - 0.06304*(t_p - 49min 40s) | A 4min
-  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+  Prefix: IDLE 5min | C 4min 20s - (t_p - 49min 40s) | D 5min 56.76s - 0.1774*(t_p - 49min 40s) | A 4min | C 5min | B 5min 31.22s - 0.0941*(t_p - 49min 40s) | A 4min | D 5min 21.33s - 0.06304*(t_p - 49min 40s)
+  Cycle:  A 4min | B 5min | A 6min | C 5min | D 5min | repeat
 Regime 23  while t_p in (50min, 54min):
   Prefix: IDLE 5min | C 4min - (t_p - 50min)
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 24  while t_p in [54min, 58min):
   Prefix: IDLE 1min | A 4min
-  Cycle:  D 5min | A 10min | B 5min | C 5min | repeat
+  Cycle:  D 5min | A 4min | B 5min | A 6min | C 5min | repeat
 Regime 25  while t_p in (58min, 58min 57.56s):
-  Prefix: IDLE 5min | D 5min - (t_p - 58min) | A 4min
-  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+  Prefix: IDLE 5min | D 5min - (t_p - 58min)
+  Cycle:  A 4min | B 5min | A 6min | C 5min | D 5min | repeat
 Regime 26  while t_p in [58min 57.56s, 1h):
   Prefix: IDLE 5min | D 4min 2.439s - (t_p - 58min 57.56s)
-  Cycle:  B 5min | C 5min | D 5min | A 10min | repeat
+  Cycle:  B 5min | A 6min | C 5min | D 5min | A 4min | repeat
 
 === Test 12 (progressive rule list): three days, 21 tasks of 45min, a night every 24h, ===
 The rule list is a CHAIN: link i holds from its own start until the next one, and the display reads it by binary search.
@@ -347,7 +347,7 @@ Link 5  from [16h, 20h):
   Prefix: N6 10min | IDLE 20s | N6 20min | IDLE 20s | N6 14min 20s | IDLE 15min | N7 20min | IDLE 20s | N7 20min | IDLE 20s | N7 19min 20s | IDLE 5min | N8 20min | IDLE 20s | N8 20min | IDLE 20s | N8 14min 20s | IDLE 15min | N9 20min | IDLE 20s | N9 20min | IDLE 20s | N9 19min 20s | IDLE 5min | P1 20min | IDLE 20s | P1 20min | IDLE 20s | P1 5min
   Cycle:  (none)
 Link 6  from [20h, 24h):
-  Prefix: N9 15min | IDLE 5min | P1 20min | IDLE 20s | P1 20min | IDLE 20s | P1 29min 20s | A 20min | IDLE 20s | A 20min | IDLE 20s | A 5min 16.07s | P10 14min 3.934s | IDLE 1min | P10 24min | IDLE 20s | P10 6min 56.07s | P2 45min | P3 12min 43.93s | IDLE 8h | P3 32min 16.07s | A 3h 45min | P4 45min | A 47min 31.86s | P5 45min | P6 45min | P7 45min | P8 45min | P9 45min
+  Prefix: N9 15min | IDLE 5min | P1 20min | IDLE 20s | P1 20min | IDLE 20s | P1 29min 20s | A 20min | IDLE 20s | A 20min | IDLE 20s | A 5min 16.07s | P10 14min 3.934s | IDLE 1min | P10 24min | IDLE 20s | P10 6min 56.07s | P2 45min | P3 12min 43.93s | IDLE 8h | P3 32min 16.07s | A 47min 28.26s | P4 45min | A 47min 29.11s | P5 45min | A 47min 30.36s | P6 45min | A 47min 32.01s | P7 45min
   Cycle:  (none)
 ... 85 more links
 
@@ -355,18 +355,18 @@ Rules at the line while t_p in [0s, 8h):
   Prefix: IDLE 8h - (t_p - 0s) | A 20min | IDLE 20s | A 20min | IDLE 20s | A 19min 20s | IDLE 5min | N1 20min | IDLE 20s | N1 20min | IDLE 20s | N1 5min 10.62s
   Cycle:  (none)
 Rules at the line while t_p in [24h, 26h 20min):
-  Prefix: IDLE 8h - (t_p - 24h) | P3 32min 16.07s | A 3h 45min | P4 45min | A 47min 31.86s | P5 45min | P6 45min | P7 45min | P8 45min | P9 45min | A 5h 25min 12.07s | P10 45min
+  Prefix: IDLE 8h - (t_p - 24h) | P3 32min 16.07s | A 47min 28.26s | P4 45min | A 47min 29.11s | P5 45min | A 47min 30.36s | P6 45min | A 47min 32.01s | P7 45min | A 47min 34.06s | P8 45min
   Cycle:  (none)
 Rules at the line while t_p in [40h, 40h 20s):
-  Prefix: IDLE 1min | P8 29min 20s - (t_p - 40h) | IDLE 20s | P8 29min 20s | A 20min | IDLE 20s | A 20min | IDLE 20s | A 19min 20s | IDLE 5min | A 20min | IDLE 20s
+  Prefix: IDLE 1min | P8 13min 33.88s - (t_p - 40h) | P9 15min 46.12s | IDLE 20s | P9 29min 20s | A 20min | IDLE 20s | A 20min | IDLE 20s | A 19min 20s | IDLE 5min | A 20min
   Cycle:  (none)
 Cuts: 0s, 4h, 8h, 12h, 16h, 20h, 24h, 28h, ...
 Scheduled: 46h 5min of 72h
-Served: A 17h 57min 4.604s, N1 1h 42min 4.234s, N10 59min 20s, N2 1h 41min 48.41s, N3 59min 20s, N4 1h 41min 49.38s, N5 59min 20s, N6 54min 20s, N7 59min 20s, N8 54min 20s, N9 59min 20s, P1 1h 54min 20s, P10 2h 15min, P2 1h 37min 33.38s, P3 1h 30min, P4 1h 30min, P5 1h 30min, P6 1h 30min, P7 1h 30min, P8 1h 30min, P9 1h 30min
+Served: A 15h 56min 44.73s, N1 1h 41min 59.34s, N10 59min 20s, N2 1h 39min 43.85s, N3 59min 20s, N4 1h 42min 6.492s, N5 59min 20s, N6 1h 41min 48.56s, N7 59min 20s, N8 1h 41min 49.6s, N9 59min 20s, P1 1h 54min 20s, P10 2h 15min, P2 2h 4min 47.43s, P3 1h 30min, P4 1h 30min, P5 1h 30min, P6 1h 30min, P7 1h 30min, P8 1h 30min, P9 1h 30min
 
 === Test 13 (progressive rule list, SLIDING PERCENTAGES): test 12's three days, nights, ===
 The rule list is a CHAIN: link i holds from its own start until the next one, and the display reads it by binary search.
-Timeline span 72h, 91 links from 0s on, at most 48 rules each (cap 50).
+Timeline span 72h, 91 links from 0s on, at most 49 rules each (cap 50).
 Everything at t < 72h is definitive.
 
 Link 1  from [0s, 4h):
@@ -385,7 +385,7 @@ Link 5  from [16h, 20h):
   Prefix: N6 10min | IDLE 20s | N6 20min | IDLE 20s | N6 14min 20s | IDLE 15min | N7 20min | IDLE 20s | N7 20min | IDLE 20s | N7 19min 20s | IDLE 5min | N8 20min | IDLE 20s | N8 20min | IDLE 20s | N8 14min 20s | IDLE 15min | N9 20min | IDLE 20s | N9 20min | IDLE 20s | N9 19min 20s | IDLE 5min | P1 20min | IDLE 20s | P1 20min | IDLE 20s | P1 5min
   Cycle:  (none)
 Link 6  from [20h, 24h):
-  Prefix: N9 15min | IDLE 5min | P1 20min | IDLE 20s | P1 20min | IDLE 20s | P1 29min 20s | A 20min | IDLE 20s | A 20min | IDLE 20s | A 5min 16.07s | P10 14min 3.934s | IDLE 1min | P10 24min | IDLE 20s | P10 6min 56.07s | P2 45min | P3 12min 43.93s | IDLE 8h | P3 32min 16.07s | A 3h 45min | P4 45min | A 47min 31.86s | P5 45min | P6 45min | P7 45min | P8 45min | P9 45min
+  Prefix: N9 15min | IDLE 5min | P1 20min | IDLE 20s | P1 20min | IDLE 20s | P1 29min 20s | A 20min | IDLE 20s | A 20min | IDLE 20s | A 5min 16.07s | P10 14min 3.934s | IDLE 1min | P10 24min | IDLE 20s | P10 6min 56.07s | P2 45min | P3 12min 43.93s | IDLE 8h | P3 32min 16.07s | A 47min 28.26s | P4 45min | A 47min 29.11s | P5 45min | A 47min 30.36s | P6 45min | A 47min 32.01s | P7 45min
   Cycle:  (none)
 ... 85 more links
 Percentages at t_p=24h: A 50%, P1 2.5%, P2 2.5%, P3 2.5%, P4 2.5%, P5 2.5%, P6 2.5%, P7 2.5%, P8 2.5%, P9 2.5%, P10 2.5%, N1 2.5%, N2 2.5%, N3 2.5%, N4 2.5%, N5 2.5%, N6 2.5%, N7 2.5%, N8 2.5%, N9 2.5%, N10 2.5%
@@ -395,46 +395,46 @@ Rules at the line while t_p in [0s, 8h):
   Prefix: IDLE 8h - (t_p - 0s) | A 20min | IDLE 20s | A 20min | IDLE 20s | A 19min 20s | IDLE 5min | N1 20min | IDLE 20s | N1 20min | IDLE 20s | N1 5min 10.62s
   Cycle:  (none)
 Rules at the line while t_p in [24h, 26h 20min):
-  Prefix: IDLE 8h - (t_p - 24h) | P3 32min 16.07s | A 3h 45min - 0.07812*(t_p - 24h) | P4 45min | A 47min 31.86s - 2.52e-05*(t_p - 24h) | P5 45min | P6 45min | P7 45min | P8 45min | P9 45min | A 5h 25min 12.08s + 0.07815*(t_p - 24h) | P10 45min
+  Prefix: IDLE 8h - (t_p - 24h) | P3 32min 16.07s | A 47min 28.26s | P4 45min | A 47min 29.11s | P5 45min | A 47min 30.36s | P6 45min | A 47min 32.01s | P7 45min | A 47min 34.06s | P8 45min
   Cycle:  (none)
 Rules at the line while t_p in [40h, 40h 20s):
-  Prefix: IDLE 1min | P9 9min 46.07s - (t_p - 40h) | P10 19min 33.93s | IDLE 20s | P10 29min 20s | A 20min | IDLE 20s | A 20min | IDLE 20s | A 19min 20s | IDLE 5min | A 20min
+  Prefix: IDLE 1min | P9 10min 59.85s - (t_p - 40h) | P10 18min 20.15s | IDLE 20s | P10 29min 20s | A 20min | IDLE 20s | A 20min | IDLE 20s | A 19min 20s | IDLE 5min | A 20min
   Cycle:  (none)
 Cuts: 0s, 4h, 8h, 12h, 16h, 20h, 24h, 28h, ...
 Scheduled: 46h 5min of 72h
-Served: A 11h 30min 45.45s, N1 1h 41min 50.98s, N10 1h 45min 4.039s, N2 1h 40min 18.31s, N3 1h 46min 47.76s, N4 1h 41min 48.99s, N5 1h 46min 47.74s, N6 1h 41min 48.53s, N7 1h 46min 47.89s, N8 1h 41min 48.17s, N9 1h 46min 48.48s, P1 1h 54min 20s, P10 2h 15min, P2 2h 15min, P3 1h 50min 3.659s, P4 1h 30min, P5 1h 30min, P6 1h 30min, P7 1h 30min, P8 1h 30min, P9 1h 30min
+Served: A 11h 11min 23.67s, N1 1h 41min 50.87s, N10 1h 45min 27.01s, N2 1h 40min 40.39s, N3 1h 46min 47.74s, N4 1h 41min 49.47s, N5 1h 46min 47.7s, N6 1h 41min 48.47s, N7 1h 46min 47.93s, N8 1h 41min 48.12s, N9 1h 46min 48.54s, P1 1h 54min 20s, P10 2h 15min, P2 2h 15min, P3 2h 8min 40.09s, P4 1h 30min, P5 1h 30min, P6 1h 30min, P7 1h 30min, P8 1h 30min, P9 1h 30min
 
-=== Test 14 (progressive rule list): three days, two tasks of 45min at 50% each, and ===
+=== Test 14 (progressive rule list): three days, task A of 45min at 50% and twenty other ===
 The rule list is a CHAIN: link i holds from its own start until the next one, and the display reads it by binary search.
-Timeline span 72h, 18 links from 0s on, at most 29 rules each (cap 50).
+Timeline span 72h, 18 links from 0s on, at most 47 rules each (cap 50).
 Everything at t < 72h is definitive.
 
 Link 1  from [0s, 4h):
-  Prefix: IDLE 8h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min
+  Prefix: IDLE 8h | A 45min | B1 45min | B10 45min | B11 45min | B12 45min | B13 45min | B14 45min | B15 45min | B16 45min | B17 45min | B18 45min | B19 45min | B2 45min | B20 45min | B3 45min | B4 45min | B5 45min | B6 45min | B7 45min | B8 45min | IDLE 9h | B9 45min | A 45min | B1 45min | A 45min | B10 45min | A 45min | B11 45min
   Cycle:  (none)
 Link 2  from [4h, 8h):
-  Prefix: IDLE 4h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min
+  Prefix: IDLE 4h | A 45min | B1 45min | B10 45min | B11 45min | B12 45min | B13 45min | B14 45min | B15 45min | B16 45min | B17 45min | B18 45min | B19 45min | B2 45min | B20 45min | B3 45min | B4 45min | B5 45min | B6 45min | B7 45min | B8 45min | IDLE 9h | B9 45min | A 45min | B1 45min | A 45min | B10 45min | A 45min | B11 45min
   Cycle:  (none)
 Link 3  from [8h, 12h):
-  Prefix: A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min
+  Prefix: A 45min | B1 45min | B10 45min | B11 45min | B12 45min | B13 45min | B14 45min | B15 45min | B16 45min | B17 45min | B18 45min | B19 45min | B2 45min | B20 45min | B3 45min | B4 45min | B5 45min | B6 45min | B7 45min | B8 45min | IDLE 9h | B9 45min | A 45min | B1 45min | A 45min | B10 45min | A 45min | B11 45min | A 45min
   Cycle:  (none)
 Link 4  from [12h, 16h):
-  Prefix: B 30min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min
+  Prefix: B13 30min | B14 45min | B15 45min | B16 45min | B17 45min | B18 45min | B19 45min | B2 45min | B20 45min | B3 45min | B4 45min | B5 45min | B6 45min | B7 45min | B8 45min | IDLE 9h | B9 45min | A 45min | B1 45min | A 45min | B10 45min | A 45min | B11 45min | A 45min | B12 45min | A 45min | B13 45min | A 45min | B14 45min
   Cycle:  (none)
 Link 5  from [16h, 20h):
-  Prefix: A 15min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min
+  Prefix: B18 15min | B19 45min | B2 45min | B20 45min | B3 45min | B4 45min | B5 45min | B6 45min | B7 45min | B8 45min | IDLE 9h | B9 45min | A 45min | B1 45min | A 45min | B10 45min | A 45min | B11 45min | A 45min | B12 45min | A 45min | B13 45min | A 45min | B14 45min | A 45min | B15 45min | A 45min | B16 45min | A 45min
   Cycle:  (none)
 Link 6  from [20h, 24h):
-  Prefix: A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | IDLE 9h | A 45min | B 45min | A 45min
+  Prefix: B5 45min | B6 45min | B7 45min | B8 45min | IDLE 9h | B9 45min | A 45min | B1 45min | A 45min | B10 45min | A 45min | B11 45min | A 45min | B12 45min | A 45min | B13 45min | A 45min | B14 45min | A 45min | B15 45min | A 45min | B16 45min | A 45min | B17 45min | A 45min | IDLE 9h | A 45min | B18 45min | A 45min
   Cycle:  (none)
 ... 12 more links
 
 Rules at the line while t_p in [0s, 8h):
-  Prefix: IDLE 8h - (t_p - 0s) | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min
+  Prefix: IDLE 8h - (t_p - 0s) | A 45min | B1 45min | B10 45min | B11 45min | B12 45min | B13 45min | B14 45min | B15 45min | B16 45min | B17 45min | B18 45min
   Cycle:  (none)
 Rules at the line while t_p in [24h, 32h):
-  Prefix: IDLE 8h - (t_p - 24h) | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min | B 45min | A 45min
+  Prefix: IDLE 8h - (t_p - 24h) | B9 45min | A 45min | B1 45min | A 45min | B10 45min | A 45min | B11 45min | A 45min | B12 45min | A 45min | B13 45min
   Cycle:  (none)
 Cuts: 0s, 4h, 8h, 12h, 16h, 20h, 24h, 28h, ...
 Scheduled: 45h of 72h
-Served: A 22h 30min, B 22h 30min
+Served: A 15h 45min, B1 1h 30min, B10 1h 30min, B11 1h 30min, B12 1h 30min, B13 1h 30min, B14 1h 30min, B15 1h 30min, B16 1h 30min, B17 1h 30min, B18 1h 30min, B19 1h 30min, B2 1h 30min, B20 1h 30min, B3 1h 30min, B4 1h 30min, B5 1h 30min, B6 1h 30min, B7 1h 30min, B8 1h 30min, B9 45min

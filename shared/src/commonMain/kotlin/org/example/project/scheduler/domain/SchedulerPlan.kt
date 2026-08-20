@@ -683,6 +683,16 @@ class SchedulerPlanner(
      * shares inside it are exact by construction. The same greedy runs inside the period with two extra rules:
      * a slot never exceeds the task's remaining budget, and it never leaves a remainder smaller than the
      * minimum (that crumb could not be placed). No field, no forgetting here — this is the undisturbed regime.
+     *
+     * What each task takes and the ORDER it takes it in are two questions, and only the first is the clock's.
+     * Over a period every task advances by exactly one `T`, so a builder reading the clocks alone serves the
+     * whole of the fastest task's share before the slowest one's turn comes round — with twenty rivals, twenty
+     * slots in a row, which [pushSlot] then merges into precisely the long block [roundUnitMillis] exists to
+     * prevent. That is a fact about a level start, not about the arrangement: the walk itself only interleaves
+     * once its clocks are staggered, which is what the prefix ahead of the cycle has just spent a period
+     * doing. So the sizes are settled by the clock and the order by the rule the clock cannot express —
+     * nobody twice in a row while somebody else still owes a slot this period, most slots left going first.
+     * Reordering cannot touch the shares: it is the same slots.
      */
     fun steadyCycle(allowed: Collection<TaskId>): List<PlanSlot> {
         if (allowed.isEmpty()) return emptyList()
@@ -693,17 +703,35 @@ class SchedulerPlanner(
             for (id in order) put(id, (p[id] ?: 0.0) * period)
         }
         val v = HashMap<TaskId, Double>(order.size).apply { for (id in order) put(id, 0.0) }
-        val slots = mutableListOf<PlanSlot>()
+        val parts = HashMap<TaskId, MutableList<Long>>(order.size).apply {
+            for (id in order) put(id, mutableListOf())
+        }
+        var last: TaskId? = null
         var guard = 0
         while (order.any { (remaining[it] ?: 0.0) > CRUMB } && guard++ < MAX_CYCLE_SLOTS) {
             val live = order.filter { (remaining[it] ?: 0.0) > CRUMB }
-            val name = pickLowestClock(v, live, p, last = null) ?: break
-            var c = minOf(chunkMillis(name, v, live, p, boost = null, periodMillis = null), remaining[name]!!)
+            val name = pickLowestClock(v, live, p, last) ?: break
+            var c = minOf(chunkMillis(name, v, live, p, boost = null), remaining[name]!!)
             if (remaining[name]!! - c < (minimumOf[name] ?: 0L).toDouble()) c = remaining[name]!! // no crumb
             if (c <= 0.0) break
-            slots += PlanSlot(name, c.roundToLong())
+            parts[name]!! += c.roundToLong()
             v[name] = v[name]!! + c / (p[name] ?: 1.0)
             remaining[name] = remaining[name]!! - c
+            last = name
+        }
+
+        val slots = mutableListOf<PlanSlot>()
+        last = null
+        while (order.any { parts[it]!!.isNotEmpty() }) {
+            val left = order.filter { parts[it]!!.isNotEmpty() }
+            val pool = left.filter { it != last }.ifEmpty { left }
+            // the densest arrangement of what the clock allotted: whoever has the most turns still to take
+            val name = pool.maxWithOrNull(
+                compareBy<TaskId> { parts[it]!!.size }.thenBy { p[it] ?: 0.0 }
+                    .thenByDescending { it.value },
+            ) ?: break
+            slots += PlanSlot(name, parts[name]!!.removeAt(0))
+            last = name
         }
         return slots
     }
@@ -909,7 +937,7 @@ class SchedulerPlanner(
 
             val name = walk.pick(fitting, avoidLast = true) ?: break
             val boost = boostAt(name, t)
-            var c = walk.chunkMillis(name, fitting, boost, period, floorOf(name, owed(name)))
+            var c = walk.chunkMillis(name, fitting, boost, floorOf(name, owed(name)))
             // Forced cut: where this task itself is turned away.
             room[name]?.let { c = minOf(c, (it - t).toDouble()) }
             // Optional cut: hand the timeline back as soon as a rival can take it, once the minimum is paid.
@@ -938,7 +966,7 @@ class SchedulerPlanner(
                 val name = walk.pick(allowed, avoidLast = true) ?: break
                 val boost = boostAt(name, t)
                 val placed =
-                    walk.chunkMillis(name, allowed, boost, period, floorOf(name, owed(name)))
+                    walk.chunkMillis(name, allowed, boost, floorOf(name, owed(name)))
                         .roundToLong().coerceAtLeast(1L)
                 pushSlot(slots, name, placed)
                 walk.serve(name, placed.toDouble(), boost)
@@ -1232,9 +1260,35 @@ class SchedulerPlanner(
     }
 
     /**
+     * `side-dev/scheduler_logic.py` `Scheduler._round`: how much [rival] leaves for the task racing it — the
+     * SCALE of a slot, which "catch the runner-up" does not fix on its own.
+     *
+     * A share is a ratio and a ratio holds at any scale, so a task owed twenty of its rival's slots would
+     * otherwise take them as one block twenty times as long: the percentages come out exact and the answer is
+     * still the one `side-dev/README.md` refuses ("A 1h, B 1h" for "A 10min, B 10min"). The rule against that
+     * is [pickLowestClock]'s — never the same task twice in a row — and one long chunk walks straight past it,
+     * because a slot is one pick however long it is.
+     *
+     * So the scale comes from the only quantity in sight that has one, the RIVAL's own minimum: over a round
+     * in which each runs once, `c / (c + m) = p`, hence `c = p·m / (1 − p)`. A at 50% takes exactly one
+     * 45-minute slot against a 45-minute rival and comes back every other one; A at 90% takes 405 minutes
+     * against the same rival. It replaces `p·T` (the share of a whole *period*), which is the same number
+     * wherever there are two tasks and far too large wherever there are more — a period is the spacing of the
+     * SLOWEST task's slots, so with twenty rivals it licensed twenty rounds at once, and a run longer than a
+     * minimum has interior instants at which a re-plan picks somebody else (the resume contract).
+     *
+     * Null where there is nobody to race, or where the task is the whole of the share.
+     */
+    private fun roundUnitMillis(rival: TaskId?, share: Double): Double? {
+        if (rival == null || share >= 1.0) return null
+        return share * (minimumOf[rival] ?: 0L).toDouble() / (1.0 - share)
+    }
+
+    /**
      * How long the next slot of [name] should be: enough to catch up with the runner-up, never below the
-     * minimum. With a [boost] the sizing is field-aware — the slot may grow up to `boost ×` the task's natural
-     * unit (`max(minimum, p·T)`), which is exactly how the compensation around an exclusion is delivered.
+     * minimum, and never past its share of one round ([roundUnitMillis]). With a [boost] the sizing is
+     * field-aware — the slot may grow up to `boost ×` that unit, which is how the compensation around an
+     * exclusion is delivered.
      */
     internal fun chunkMillis(
         name: TaskId,
@@ -1242,7 +1296,6 @@ class SchedulerPlanner(
         candidates: List<TaskId>,
         shares: Map<TaskId, Double>,
         boost: Double?,
-        periodMillis: Double?,
         // `side-dev/scheduler_logic.py` `floor=owed(name) or minimum[name]`: a task RESUMING a run only owes
         // what is left of its minimum, so flooring it at the whole minimum again would over-serve it. Null
         // (the default) is the reference's own fallback — the full minimum, for a slot that is starting.
@@ -1254,14 +1307,24 @@ class SchedulerPlanner(
         if (p <= 0.0) return floor // a zero-priority task has no catch-up to compute
         val mine = clocks[name] ?: 0.0
         // Only tasks that carry a share have a virtual clock, so only they can be the runner-up to catch.
-        val target = candidates.filter { it != name && it in clocks }.minOfOrNull { clocks[it]!! } ?: mine
+        val others = candidates.filter { it != name && it in clocks }
+        val target = others.minOfOrNull { clocks[it]!! } ?: mine
         val need = p * (target - mine) // time to catch the runner-up
         var c = maxOf(floor, need)
-        if (boost != null && periodMillis != null) { // local, field-aware sizing
-            // The natural unit is a property of the TASK (its whole minimum, or its share of the period), not
-            // of what this particular slot still owes — and the cap may never push the slot below its floor.
-            val unit = maxOf(full, p * periodMillis)
-            c = minOf(maxOf(c, floor * boost), maxOf(unit * boost, floor))
+        // The field LIFTS and the round CAPS, and they are asked separately because they answer different
+        // questions: a boost is owed to this task whether or not anybody is there to race it, while a round is
+        // measured against a rival and means nothing without one. Asking them together loses the lift exactly
+        // where the atomic block puts it — a task still short of its minimum is the ONLY candidate, so there
+        // are no others, and its resumed slot would fall back to the bare minimum.
+        val b = boost ?: 1.0
+        if (boost != null) c = maxOf(c, floor * b)
+        // Who runs next if this chunk ends here — [pickLowestClock]'s own answer among the others, since it is
+        // the one the chunk is measured against.
+        val rival = pickLowestClock(clocks, others, shares, last = null)
+        roundUnitMillis(rival, p)?.let { round ->
+            // The natural unit is a property of the TASK (its whole minimum, or its share of a round), not of
+            // what this particular slot still owes — and the cap may never push the slot below its floor.
+            c = minOf(c, maxOf(maxOf(full, round) * b, floor))
         }
         if (resolutionMillis > 0.0) c = ceilTo(c, resolutionMillis)
         return c
@@ -1373,9 +1436,8 @@ class PlanWalk internal constructor(
         id: TaskId,
         candidates: List<TaskId>,
         boost: Double? = null,
-        periodMillis: Double? = null,
         floorMillis: Double? = null,
-    ): Double = planner.chunkMillis(id, v, candidates, planner.share, boost, periodMillis, floorMillis)
+    ): Double = planner.chunkMillis(id, v, candidates, planner.share, boost, floorMillis)
 
     /**
      * Charge [durationMillis] of timeline to [id] at the boosted rate. Boosted time is a genuinely higher
