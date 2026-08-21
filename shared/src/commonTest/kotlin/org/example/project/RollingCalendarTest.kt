@@ -9,11 +9,13 @@ import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.daysUntil
 import kotlinx.datetime.plus
+import org.example.project.ui.HourWindow
 import org.example.project.ui.nowLineCenterColumnShift
 import org.example.project.ui.nowLineCenterOffset
 import org.example.project.ui.rollingDayAt
 import org.example.project.ui.rollingDayShift
 import org.example.project.ui.rollingRowCount
+import org.example.project.ui.visibleHourWindow
 import org.example.project.ui.weekAnchorDay
 import org.example.project.ui.wholeDayZoom
 import org.example.project.ui.zoomAnchoredOffset
@@ -346,5 +348,94 @@ class RollingCalendarTest {
             val covered = rows * dayHeight - worstOffset
             assertTrue(covered >= viewport, "viewport $viewport not covered by $rows rows")
         }
+    }
+
+    // ----- viewport culling (ADR 0009) ----------------------------------------------------------
+
+    /** The hours of row [row] genuinely on screen, straight from the placement the grid uses. */
+    private fun onScreenHours(row: Int, offset: Float, dayH: Float, viewport: Float): Pair<Float, Float>? {
+        val topPx = maxOf(0f, offset - row * dayH)
+        val bottomPx = minOf(dayH, offset - row * dayH + viewport)
+        if (bottomPx <= topPx) return null
+        val hourPx = dayH / 24f
+        return topPx / hourPx to bottomPx / hourPx
+    }
+
+    @Test
+    fun the_culling_window_always_covers_everything_actually_on_screen() {
+        // The whole safety property of culling: snapping the window OUTWARD means it can never clip
+        // something the user can see, so nothing pops in late. Swept over every offset inside the day, at
+        // several zooms and viewport heights, for every row the grid composes.
+        for (zoom in listOf(0.25f, 1f, 2.5f, 8f)) {
+            val dayH = dayHeight * zoom
+            for (viewport in listOf(200f, 726f, 1400f)) {
+                for (rowOf in 0 until rollingRowCount(viewport, dayH)) {
+                    var offset = 0f
+                    while (offset < dayH) {
+                        val window = visibleHourWindow(rowOf, offset, dayH, viewport)
+                        val seen = onScreenHours(rowOf, offset, dayH, viewport)
+                        if (seen != null) {
+                            val (top, bottom) = seen
+                            assertTrue(
+                                window.topHour <= top + 1e-3f && window.bottomHour >= bottom - 1e-3f,
+                                "zoom $zoom viewport $viewport row $rowOf offset $offset: " +
+                                    "window $window clips visible [$top, $bottom]",
+                            )
+                            // And every visible element intersects it, which is what the columns ask.
+                            assertTrue(window.intersects(top, bottom))
+                        }
+                        offset += dayH / 97f // a prime-ish stride, so boundaries are not all hit head-on
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun a_row_scrolled_entirely_out_of_the_viewport_is_culled_whole() {
+        // The common case at zoom 1: the trailing row rollingRowCount composes sits below the fold, so it
+        // must contribute no UI node at all. This is where most of the saving comes from.
+        val window = visibleHourWindow(row = 1, offsetPx = 0f, dayHeightPx = dayHeight, viewportPx = 726f)
+        assertTrue(window.isEmpty)
+        assertTrue(!window.intersects(0f, 24f))
+        // Same for a row scrolled off the top.
+        assertTrue(visibleHourWindow(row = 0, offsetPx = dayHeight, dayHeightPx = dayHeight, viewportPx = 726f).isEmpty)
+    }
+
+    @Test
+    fun nothing_is_culled_before_the_viewport_has_been_measured() {
+        // First composition, no measured height yet: cull nothing rather than guess, so the first frame is
+        // correct and the window merely tightens once the viewport reports in.
+        assertEquals(HourWindow.WholeDay, visibleHourWindow(0, offsetPx = 0f, dayHeightPx = dayHeight, viewportPx = 0f))
+        assertEquals(HourWindow.WholeDay, visibleHourWindow(0, offsetPx = 0f, dayHeightPx = 0f, viewportPx = 726f))
+    }
+
+    @Test
+    fun the_window_is_quantized_so_scrolling_does_not_recompose_every_pixel() {
+        // Culling makes composition a function of the scroll, so the window is snapped to a quantum: over a
+        // whole day of travel the columns recompose a handful of times, not once per pixel. Without this,
+        // culling would cost more in recomposition than it saves in nodes.
+        for ((zoom, viewport) in listOf(1f to 726f, 8f to 726f, 0.5f to 1400f)) {
+            val dayH = dayHeight * zoom
+            val windows = mutableSetOf<HourWindow>()
+            var offset = 0f
+            while (offset < dayH) {
+                windows.add(visibleHourWindow(0, offset, dayH, viewport))
+                offset += 1f // one pixel at a time, the whole day
+            }
+            assertTrue(windows.size <= 26, "zoom $zoom viewport $viewport recomposed ${windows.size} times a day")
+        }
+    }
+
+    @Test
+    fun the_window_actually_culls_at_the_zooms_the_calendar_is_used_at() {
+        // The point of the exercise: a day row is a whole day tall and the viewport is not, so the composed
+        // span must be materially smaller than 24 h. (A test that only proved the safety property above
+        // would pass just as well if the window were always the whole day.)
+        val atOne = visibleHourWindow(0, offsetPx = 0f, dayHeightPx = dayHeight, viewportPx = 726f)
+        assertTrue(atOne.bottomHour - atOne.topHour <= 24f, "$atOne")
+        // Zoomed in, the saving is dramatic: a ~1.9 h viewport holds a few hours, not a day.
+        val zoomed = visibleHourWindow(0, offsetPx = 0f, dayHeightPx = dayHeight * 8f, viewportPx = 726f)
+        assertTrue(zoomed.bottomHour - zoomed.topHour <= 6f, "$zoomed")
     }
 }

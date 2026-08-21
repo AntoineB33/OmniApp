@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar viewport culling (PRD §8, ADR 0009) — SHIPPED 2026-08-21
+
+`DayColumn` emits UI nodes only for the hours inside the scroll viewport (`visibleHourWindow` → `HourWindow`,
+quantized to one viewport-height of travel so the scroll does not recompose per pixel); the hour gutter is culled
+the same way. Fixes "the app is sluggish while the calendar is open" — all the floating windows share one Compose
+scene, so the calendar's ~1,700 composed records were being redrawn on every frame any other window animated.
+2.2× / 3.7× / 11.6× fewer records composed at zoom 1 / 2.5 / 8 on a real account. Display-only: no scheduler,
+state, persistence or wire change. Tests: `RollingCalendarTest`.
+
 ### No-screen / inactivity calendar entities (PRD §8) — SHIPPED 2026-07-19
 
 `TaskPanel.noScreen` / `TaskPanel.inactivity` user-authored panels (authoritative, persisted + synced, old

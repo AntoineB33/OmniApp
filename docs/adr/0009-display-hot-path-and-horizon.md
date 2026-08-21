@@ -26,6 +26,46 @@ is simply big), distinct from persisted-DB FORMAT compatibility (ADR 0007).
 
 See the `timesim-large-account-ui-overload` note.
 
+## The calendar culls to the viewport (2026-08-21)
+
+The tick rule above is about how OFTEN work runs. This is about how MUCH is standing in the tree between ticks
+— a different cost, found from a different symptom.
+
+**Symptom.** With the calendar open, dragging the reminders window around made the whole app sluggish; with the
+calendar closed the same drag was smooth. Nothing was recomputing: the drag's offset is local state read in a
+layout-phase `offset { … }`, so it recomposes nothing.
+
+**Cause.** The floating windows are not OS windows — they are siblings in one `Box` in `App.kt`, so the whole
+app is ONE Compose scene on one UI thread, and Compose Desktop re-runs the draw pass over the entire visible
+node tree every frame (no per-node display list). Every frame the drag requested therefore redrew the whole
+calendar. On a real account that is ~122 panels/day × the 14 day-cells the grid composes (`DAY_COLUMNS` ×
+`rollingRowCount`) ≈ 1,700 records, each a `BoxWithConstraints` (a `SubcomposeLayout`) plus slices, a `Text`,
+a drag `pointerInput` and `calendarTitleHover`'s three more — order 20k nodes, most of them scrolled out of
+sight because a day row is 24 h tall and the viewport is not.
+
+**Fix.** `visibleHourWindow(row, offsetPx, dayHeightPx, viewportPx)` → an `HourWindow` per day-row; `DayColumn`
+emits nothing outside it. Measured on a real account: 2.2× fewer records composed at zoom 1, 3.7× at zoom 2.5,
+11.6× at zoom 8.
+
+### The two rules that keep it honest
+
+**The window is quantized, outward.** Culling makes composition a function of the scroll — read raw, it would
+recompose all 14 columns on every scrolled pixel and lose more than it wins. The window is snapped outward to a
+quantum of one viewport-height of travel (clamped to [1 h, 6 h]), so the columns recompose about once per
+screenful scrolled at any zoom, and *snapping outward* is what makes culling invisible: the window always covers
+at least what is on screen, so nothing pops in late. 6 h is the measured knee — a 2 h ceiling buys 2.7× instead
+of 2.2× at zoom 1 for three times the recompositions. The derived state is read inside the gutter/column
+content lambdas, not in `WeekView`'s body, so a quantum crossing recomposes those and nothing above them.
+
+**Only the emission is culled, never the lists.** `overlapLayout` still sees the whole day (a block's width
+comes from what it overlaps, so a partner off screen must still narrow the one on screen); the reminder and
+alarm stacking sweeps still run end to end (each slot depends on the one above it); hit-testing, the contextual
+menu and the drag snap set still see every block. One exemption: a block mid-drag stays mounted wherever the
+drag carries it, because its slices are what hold the gesture.
+
+Tests: `RollingCalendarTest` — the safety property (the window never clips anything on screen, swept over every
+offset × zoom × viewport × row), the quantization bound, and that it actually culls.
+
 ## The schedule horizon follows the DISPLAYED DAY SPAN, in both directions
 
 The engine does **not** systematically materialize 168 h.

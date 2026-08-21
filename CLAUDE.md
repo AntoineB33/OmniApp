@@ -210,6 +210,17 @@ crossing can be silently clipped by a clock jump.
 - **Anything recomputed on every `nowMillis` tick must be bounded by the visible window, never O(total
   history).** Under sim the now-line ticks ~20×/s; an O(history) recompute pegs the UI thread and the window
   is created but never shown — which looks exactly like "the app won't open".
+- **What the calendar COMPOSES is bounded by the visible window too.** A day row is one whole day tall while
+  the viewport is not, so every `DayColumn` culls its output to `visibleHourWindow(...)`: a record scrolled
+  out of view emits no UI node. This is a frame cost, not a tick cost — every floating window shares one
+  Compose scene, so whatever the calendar keeps in the tree is redrawn on every frame *anything* in the app
+  animates (dragging the reminders window was the reported symptom).
+- **The cull window is QUANTIZED (`visibleHourWindow`), and must stay so.** Culling makes composition a
+  function of the scroll; read unquantized, it would recompose every column on every scrolled pixel and cost
+  more than it saves. The day-rows are still *placed* by the layout-phase `offset { … }` read of `offsetPx`.
+- **Cull the EMISSION, never the list.** `overlapLayout` widths, the reminder/alarm stacking sweeps,
+  hit-testing, the contextual menu and the drag snap set all still see the whole day — a partner scrolled out
+  of view must still narrow the block on screen. A block mid-gesture is exempt: its slices hold the gesture.
 - **Test against a large, realistic DB**, not just an emptied one — an empty account hides the cost entirely.
 - **The schedule horizon follows the displayed day span**, clamped into [24 h, 168 h]. 168 h is a ceiling,
   not a target. There is no "focused week".

@@ -52,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
@@ -2393,6 +2394,61 @@ internal fun rollingRowCount(viewportPx: Float, dayHeightPx: Float): Int =
     if (dayHeightPx <= 0f || viewportPx <= 0f) 1 else ceil(viewportPx / dayHeightPx).toInt() + 1
 
 /**
+ * PRD §8 / ADR 0009 hot path: the span of a day-row that is actually inside the scroll viewport, in
+ * hour-of-day. Everything a [DayColumn] emits is culled to this, so a record scrolled out of view produces
+ * no UI node at all — a day row is one whole day tall while the viewport is not, so most of every composed
+ * row is off screen, and the floating windows all share ONE Compose scene: whatever the calendar keeps in
+ * the tree is walked and redrawn on every frame anything else in the app animates.
+ */
+internal data class HourWindow(val topHour: Float, val bottomHour: Float) {
+    /** True when this row holds nothing on screen at all — scrolled entirely past, or not yet reached. */
+    val isEmpty: Boolean get() = bottomHour <= topHour
+
+    /** Whether `[top, bottom]` (an hour-of-day range, possibly zero-length) has anything inside this window. */
+    fun intersects(top: Float, bottom: Float): Boolean = !isEmpty && bottom >= topHour && top <= bottomHour
+
+    companion object {
+        /** The whole day: what a row falls back to before the viewport height is known, so nothing is ever culled blind. */
+        val WholeDay = HourWindow(0f, 24f)
+
+        /** A row entirely outside the viewport — the usual fate of the trailing row [rollingRowCount] composes. */
+        val Empty = HourWindow(0f, 0f)
+    }
+}
+
+/**
+ * PRD §8 / ADR 0009: how far the grid may scroll before the composed [HourWindow] changes — one viewport
+ * height of travel, clamped. Culling makes COMPOSITION a function of the scroll, which unquantized would
+ * recompose all `DAY_COLUMNS × rowCount` columns on every scrolled pixel and cost more than it saves;
+ * snapping the window outward to a quantum makes it a function of the scroll's QUANTIZED position instead,
+ * so the columns recompose about once per screenful scrolled whatever the zoom. Same trick as the
+ * display now-line's quantum in `App.kt`, and the reason culling is free while the calendar merely sits there.
+ */
+private const val CULL_QUANTUM_MIN_HOURS = 1f
+private const val CULL_QUANTUM_MAX_HOURS = 6f
+
+/**
+ * The hours of day-row [row] inside a [viewportPx]-tall viewport scrolled to [offsetPx], snapped OUTWARD to
+ * a quantum (see [CULL_QUANTUM_MIN_HOURS]). Snapping outward is what makes culling invisible: the window
+ * always covers at least what is on screen, so nothing can pop in late.
+ *
+ * Returns [HourWindow.WholeDay] before the viewport has been measured (cull nothing until we know what is
+ * visible) and [HourWindow.Empty] for a row that lies entirely outside it.
+ */
+internal fun visibleHourWindow(row: Int, offsetPx: Float, dayHeightPx: Float, viewportPx: Float): HourWindow {
+    if (dayHeightPx <= 0f || viewportPx <= 0f) return HourWindow.WholeDay
+    val hourPx = dayHeightPx / 24f
+    val topHour = (offsetPx - row * dayHeightPx) / hourPx
+    val bottomHour = topHour + viewportPx / hourPx
+    if (bottomHour <= 0f || topHour >= 24f) return HourWindow.Empty
+    val quantum = (viewportPx / hourPx).coerceIn(CULL_QUANTUM_MIN_HOURS, CULL_QUANTUM_MAX_HOURS)
+    return HourWindow(
+        topHour = (floor(topHour / quantum) * quantum).coerceIn(0f, 24f),
+        bottomHour = (ceil(bottomHour / quantum) * quantum).coerceIn(0f, 24f),
+    )
+}
+
+/**
  * PRD §8 now-line lock: the vertical offset (px along the timeline) that puts the now-line at the MIDDLE of
  * a [viewportPx]-tall viewport, from [currentOffsetPx] — where the grid is scrolled to now. [dayFraction]
  * is how far into its day the now-line is drawn, so centring it wants `dayFraction * dayHeightPx -
@@ -2712,6 +2768,20 @@ private fun WeekView(
     // longer exists.
     LaunchedEffect(anchorDay, visibleDayCount) { onVisibleDaysChanged(anchorDay, visibleDayCount) }
 
+    // PRD §8 / ADR 0009 hot path: which hours of each day-row are on screen, so the columns below can cull
+    // everything else out of the UI tree entirely (see [HourWindow]). Read through a derivedStateOf -- and
+    // read INSIDE the gutter/column content lambdas below rather than here — so crossing a quantum
+    // recomposes those lambdas only, and a scroll within one recomposes nothing at all: the day-rows are
+    // still placed by the layout-phase `offset { ... }` read of [offsetPx], exactly as before.
+    val hourWindows = remember {
+        derivedStateOf {
+            val dayPx = dayHeightPxAt(zoom)
+            List(rollingRowCount(viewportHpx, dayPx)) { row ->
+                visibleHourWindow(row, offsetPx, dayPx, viewportHpx)
+            }
+        }
+    }
+
     // PRD §8 "there must not be overlaps" (default mode): every block on the calendar (records,
     // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live. Reminder tags
     // (zero-duration, §14), alarm rings (zero-duration, §18) and screen-break markers (§15) are not blocks
@@ -2921,10 +2991,24 @@ private fun WeekView(
                                 .height(hourHeight * 24)
                                 .offset { IntOffset(0, (row * dayHeightPx - offsetPx).roundToInt()) },
                         ) {
+                            // PRD §8 / ADR 0009: cull the labels to the hours on screen. Zoomed in, a
+                            // 24-hour gutter is hundreds of Text nodes per row and nearly all of them are
+                            // scrolled out of view.
+                            val window = hourWindows.value.getOrElse(row) { HourWindow.WholeDay }
                             val tick = calendarTickMinutes(hourHeight)
                             val tickHeight = hourHeight * (tick / 60f)
-                            var minutes = 0
-                            while (minutes < 24 * 60) {
+                            val ticksPerDay = 24 * 60 / tick
+                            // The labels are stacked in a Column, so the culled head has to keep its height
+                            // or every label below it would slide up the gutter.
+                            val firstTick =
+                                if (window.isEmpty) ticksPerDay
+                                else floor(window.topHour * 60f / tick).toInt().coerceIn(0, ticksPerDay)
+                            val lastTick =
+                                if (window.isEmpty) ticksPerDay
+                                else ceil(window.bottomHour * 60f / tick).toInt().coerceIn(firstTick, ticksPerDay)
+                            Spacer(Modifier.height(tickHeight * firstTick))
+                            var minutes = firstTick * tick
+                            while (minutes < lastTick * tick) {
                                 val hour = minutes / 60
                                 val minute = minutes % 60
                                 Box(Modifier.height(tickHeight).fillMaxWidth().padding(end = 6.dp)) {
@@ -2945,6 +3029,9 @@ private fun WeekView(
                 }
                 repeat(DAY_COLUMNS) { column ->
                     Box(Modifier.weight(1f).fillMaxHeight()) {
+                        // Read HERE (inside the column's content lambda) so crossing a cull quantum
+                        // recomposes the columns and nothing above them.
+                        val windows = hourWindows.value
                         repeat(rowCount) { row ->
                             val day = rollingDayAt(anchorDay, row, column)
                             // Keyed on the day so a column's transient state (an open contextual menu, an
@@ -2958,6 +3045,7 @@ private fun WeekView(
                                     hourHeight = hourHeight,
                                     now = if (day == today) now else null,
                                     records = recordsForDay(records, day, tz),
+                                    visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
                                     onAddTaskAt = onAddTaskAt,
                                     onAddReminderAt = onAddReminderAt,
                                     onAddNoScreenAt = onAddNoScreenAt,
@@ -3096,6 +3184,14 @@ private fun DayColumn(
     allBlocks: List<Pair<String, TaskTimeRange>>,
     overlapArmed: Boolean,
     hoverScope: CalendarTitleHoverScope,
+    /**
+     * PRD §8 / ADR 0009 hot path: the hours of this day inside the scroll viewport. Everything DRAWN below
+     * is culled to it — a record scrolled out of view produces no UI node at all. Only the drawn output is
+     * culled: hit-testing, the contextual menu, the drag/resize snap set and every layout a partly-visible
+     * element depends on ([overlapLayout]'s widths, the reminder/alarm stacking sweeps) still see the whole
+     * day, so what is on screen is identical to what an unculled column would show.
+     */
+    visibleHours: HourWindow,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -3122,6 +3218,15 @@ private fun DayColumn(
             it.reminder || it.screenBreak || it.alarm || it.sleep || it.layer != null ||
                 (it.inactivity && it.entryId == null)
         }
+    // PRD §8 / ADR 0009: is any of `[top, bottom]` on screen? Every emission below asks this first. The
+    // lists themselves are deliberately NOT filtered — the sweeps and layouts above/below need the whole
+    // day — so culling can never move an element, only omit one that is not visible anyway.
+    fun onScreen(top: Float, bottom: Float) = visibleHours.intersects(top, bottom)
+
+    /** The same test for the fixed-height markers, whose position is a Dp down the column, not an hour. */
+    fun onScreenDp(top: Dp, bottom: Dp) =
+        hourHeight > 0.dp && onScreen(top / hourHeight, bottom / hourHeight)
+
     // PRD §17: the fill schedules the work plan straight through the nightly sleep windows, so a block may
     // land (partly) inside one. The overlapping sub-range is greyed "as if under the Sleep band" while the
     // block stays a normal interactive block. Bands and blocks are both clipped to this day, so hour ranges
@@ -3160,6 +3265,9 @@ private fun DayColumn(
     // cancelled); they are hidden while the overlay shows.
     var dragPreview by remember { mutableStateOf<Pair<String, TaskTimeRange>?>(null) }
     val previewActive = dragPreview != null
+    // A block mid-gesture stays mounted even if the drag carries it out of view: its slices are what hold
+    // the gesture (see [CalendarBlock]), so culling them would cancel the drag under the user's finger.
+    val gestureKey = dragPreview?.first ?: movePending?.let { calendarBlockKey(it) }
     val midnightMillis = LocalDateTime(day.year, day.month, day.day, 0, 0)
         .toInstant(tz).toEpochMilliseconds()
     val liveRecords =
@@ -3359,6 +3467,7 @@ private fun DayColumn(
             inactivityBands.map { DecorBand(it, "Inactivity", null, null) } +
                 sleepBands.map { DecorBand(it, "Sleep", "No screen", it.noScreenRange) }
             ).forEach { (band, baseLabel, decorLabel, decorRange) ->
+                if (!onScreen(band.startHour, band.endHour)) return@forEach
                 // PRD §8: like every other block, hovering the band pops the title + true (un-clipped) start–end times.
                 // PRD §12: a band open-ended into the past shows "∞" as its start (the drawn start is only the floor).
                 val timeRange = "${hmOrInfinity(band.fullStartMillis, band.openStart, tz)} – ${formatHm(band.fullEndMillis, tz)}"
@@ -3381,6 +3490,7 @@ private fun DayColumn(
                     // band's own — instead of the two elements' independent hover reports racing/overwriting
                     // each other (see [deviceHoverZones]).
                     decorativeHoverZones(band.startHour, band.endHour, blockRecords).forEach { zone ->
+                        if (!onScreen(zone.top, zone.bottom)) return@forEach
                         // Line 1 (read first) = the real panel under this sub-range: an off-screen task the
                         // no-screen sits over, else the band's own base ("Inactivity"/"Sleep"). Line 2 = the
                         // "No screen" decorative on top. (A reachable hover is almost always a null zone —
@@ -3498,6 +3608,9 @@ private fun DayColumn(
         val layout = overlapLayout(effRecords)
         effRecords.forEach { record ->
             val key = calendarBlockKey(record)
+            // Culled AFTER [overlapLayout] has seen the whole day: a block's width comes from what it
+            // overlaps, so a partner scrolled out of view must still narrow the one on screen.
+            if (key != gestureKey && !onScreen(record.startHour, record.endHour)) return@forEach
             CalendarBlock(
                 record = record,
                 slices = layout[key] ?: listOf(
@@ -3529,6 +3642,8 @@ private fun DayColumn(
                 val colWidthPx = with(density) { colWidth.toPx() }
                 val handleWidth = 10.dp
                 handles.forEach { handle ->
+                    // Never culled while one is being dragged: the handle holds that gesture.
+                    if (weightDrag == null && !onScreen(handle.topHour, handle.bottomHour)) return@forEach
                     Box(
                         modifier = Modifier
                             .offset(
@@ -3578,6 +3693,7 @@ private fun DayColumn(
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val colWidth = maxWidth
                 liveRecords.forEach { rec ->
+                    if (!onScreen(rec.startHour, rec.endHour)) return@forEach
                     val recKey = calendarBlockKey(rec)
                     val recSlices = liveLayout[recKey]
                         ?: listOf(PanelSlice(rec.startHour, rec.endHour, xFraction = 0f, widthFraction = 1f))
@@ -3606,6 +3722,7 @@ private fun DayColumn(
         // set §9 places the off-screen tasks in. Non-interactive: a plain drawing Box registers no pointer
         // input, so every block underneath keeps its own hover, drag and right-click.
         layerBands.forEach { band ->
+            if (!onScreen(band.startHour, band.endHour)) return@forEach
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -3660,12 +3777,15 @@ private fun DayColumn(
                 val naturalY = hourHeight * (checkedAtHour(tag) ?: tag.startHour)
                 val y = lastScheduledBottom?.let { maxOf(naturalY, it) } ?: naturalY
                 lastScheduledBottom = y + REMINDER_TAG_HEIGHT
+                // The sweep must run over the WHOLE day — each tag's slot depends on the one above it —
+                // so it is the emission that is culled, never the list.
+                if (!onScreenDp(y, y + REMINDER_TAG_HEIGHT)) return@forEach
                 ReminderTag(tag, Modifier.offset(y = y)) { onToggleReminder(tag) }
             }
         reminderTags.filter(::onNowLine).forEachIndexed { i, tag ->
-            ReminderTag(tag, Modifier.offset(y = hourHeight * (nowHour ?: 0f) + REMINDER_TAG_HEIGHT * i)) {
-                onToggleReminder(tag)
-            }
+            val y = hourHeight * (nowHour ?: 0f) + REMINDER_TAG_HEIGHT * i
+            if (!onScreenDp(y, y + REMINDER_TAG_HEIGHT)) return@forEachIndexed
+            ReminderTag(tag, Modifier.offset(y = y)) { onToggleReminder(tag) }
         }
 
         // PRD §18 Alarms: each ring of each alarm is drawn at its own instant — a fixed-height marker, since
@@ -3677,6 +3797,7 @@ private fun DayColumn(
             val naturalY = hourHeight * marker.startHour
             val y = lastAlarmBottom?.let { maxOf(naturalY, it) } ?: naturalY
             lastAlarmBottom = y + ALARM_MARKER_HEIGHT
+            if (!onScreenDp(y, y + ALARM_MARKER_HEIGHT)) return@forEach
             AlarmMarker(marker, Modifier.offset(y = y))
         }
 
@@ -3686,7 +3807,10 @@ private fun DayColumn(
         // min rest pauses fill their region. A small minimum height keeps even a hairline visible/hoverable.
         // Coinciding screen breaks (e.g. the hourly and 2-hourly pose both due now) share the column width side
         // by side via [overlapLayout], exactly like overlapping task blocks.
-        if (screenBreakMarkers.isNotEmpty()) {
+        // Culled like the blocks: widths still come from [overlapLayout] over the whole day, and when
+        // nothing is on screen the wrapping subcomposition is skipped outright.
+        val visibleScreenBreaks = screenBreakMarkers.filter { onScreen(it.startHour, it.endHour) }
+        if (visibleScreenBreaks.isNotEmpty()) {
             val sideLayout = overlapLayout(screenBreakMarkers)
             // PRD §8: a screen break is drawn on top of everything else, so whatever sits under it (a
             // sleep/no-screen/inactivity band, or — rarely, since the fill normally carves an exact gap for
@@ -3695,7 +3819,7 @@ private fun DayColumn(
             val sideUnders = sleepBands + inactivityBands + blockRecords
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val colWidth = maxWidth
-                screenBreakMarkers.forEach { marker ->
+                visibleScreenBreaks.forEach { marker ->
                     val key = calendarBlockKey(marker)
                     val slices = sideLayout[key]
                         ?: listOf(PanelSlice(marker.startHour, marker.endHour, xFraction = 0f, widthFraction = 1f))
@@ -3710,6 +3834,7 @@ private fun DayColumn(
         // of the band even though the work plan now projects tinted blocks through the window. Non-
         // interactive (a plain Text Box consumes no pointer events), so the blocks beneath stay clickable.
         (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to "Inactivity" }).forEach { (band, label) ->
+            if (!onScreen(band.startHour, band.endHour)) return@forEach
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
