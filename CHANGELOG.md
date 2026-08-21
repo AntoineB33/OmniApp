@@ -11,6 +11,32 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Detached parent tasks survive a task-id change (PRD §4) — SHIPPED 2026-08-21
+
+Re-pointing a cell at another task id used to **delete** the task it left the moment it lost its last cell
+(`purgeOrphanTasks`), and the next edit boundary then collected its whole sub-tree (`pruneDetachedTree`), so
+"change the id, then set the previous id back" came back with an empty sub-list — the sub-tree was gone, with
+Undo as the only way back. The sub-list belongs to the **task id**, not to the cell (that is what makes mirrored
+sub-trees work), so a titled task that keeps a populated sub-list is now retained cell-less as a **detached
+parent** (`SchedulerDomain.isDetachedParentTask`): `purgeOrphanTasks` keeps it and `pruneDetachedTree` seeds its
+reachability walk with its sub-list. Assigning that id back to any cell restores the sub-tree — the same thing
+that already happened when the task kept a second occurrence elsewhere.
+
+**Deletion is unchanged and is what bounds the retention:** emptying a cell (PRD §4 *Deletion*) blanks its task's
+title, and a blank-titled task is never a detached parent, so the sub-tree still goes. That is also what keeps a
+peer's deletion sticking through `SnapshotMerge.repair` (the merged task is either absent or blank-titled). A
+*childless* task reassigned away is still purged.
+
+Also PRD §4 *Presentation*, which the label had never implemented: a task **no cell points at** is now named in
+the Change Task menu by its child titles instead of a path off the denormalized `Task.childTaskIds` — that path
+survived the detachment and read as a live location the task no longer had. `childTitlesLabel` reads the shared
+child list structurally (the source of truth `isLeafTask` uses), so a sub-tree that arrived by paste or by a move
+is named too. No state, persistence or wire change (detached lists/cells were already persisted as whole maps and
+`decode` does not prune). Tests: `SchedulerReducerTest`.
+
+Known scope limit: a detached parent is reachable only through the Change Task menu — there is no view listing
+them and no way to delete one without re-attaching it to a cell first.
+
 ### Calendar viewport culling (PRD §8, ADR 0009) — SHIPPED 2026-08-21
 
 `DayColumn` emits UI nodes only for the hours inside the scroll viewport (`visibleHourWindow` → `HourWindow`,

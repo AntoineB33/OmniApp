@@ -848,6 +848,13 @@ class SchedulerReducerTest {
         assertEquals(1.0, s.cells[first]!!.priorityWeights[0], 1e-9)
     }
 
+    /** Titles of the populated cells of [taskId]'s shared child list, in list order. */
+    private fun childTitles(s: SchedulerState, taskId: org.example.project.scheduler.model.TaskId): List<String> {
+        val listId = s.tasks[taskId]?.childListId ?: return emptyList()
+        return s.lists[listId]?.cellIds.orEmpty()
+            .mapNotNull { cellId -> s.cells[cellId]?.taskId?.let { s.tasks[it]?.title } }
+    }
+
     @Test
     fun mirrored_task_priority_sums_across_occurrences() {
         var s = SchedulerState.empty()
@@ -905,6 +912,66 @@ class SchedulerReducerTest {
 
         assertEquals(keeperId, s.cells[child]!!.taskId)
         assertFalse(s.tasks.containsKey(tempId))
+    }
+
+    @Test
+    fun reassigning_a_parent_cell_keeps_its_task_and_subtree() {
+        // PRD §4: the sub-list belongs to the *task id*, not to the cell. Pointing the cell at another id
+        // must not delete the task it left — it becomes a detached parent, still offered by the Change Task
+        // menu (labelled by its child titles, since it has no path anymore), and assigning it back brings
+        // the whole sub-tree back. Reported as: "I change the cell's task id, the sub-list empties; I set the
+        // previous id back and the sub-list does not come back".
+        var s = SchedulerState.empty()
+        val parentCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(parentCell, "abilities"))
+        val abilities = s.cells[parentCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(parentCell))
+        val subListId = s.tasks[abilities]!!.childListId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[subListId]!!.cellIds.first(), "drawing"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[subListId]!!.cellIds.last(), "guitar"))
+
+        // Change Task mode → "New task": the cell now shows a different task with an empty sub-list.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(parentCell))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetEditMode(CellEditMode.ChangeTask))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SelectCreateAssignTask)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Stay))
+        assertNotEquals(abilities, s.cells[parentCell]!!.taskId)
+
+        // The vacated task survives with its sub-tree, and the menu names it by what it holds (PRD §4).
+        assertTrue(SchedulerDomain.isDetachedParentTask(s, abilities))
+        assertEquals(childTitles(s, abilities), listOf("drawing", "guitar"))
+        val entry = SchedulerDomain.changeTaskMenuEntries(s, parentCell, "abilities").first { it.taskId == abilities }
+        assertEquals("drawing, guitar", entry.label)
+
+        // Setting the previous id back restores the sub-list.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AssignTaskId(parentCell, abilities))
+        assertEquals(abilities, s.cells[parentCell]!!.taskId)
+        assertEquals(listOf("drawing", "guitar"), childTitles(s, abilities))
+        assertFalse(SchedulerDomain.isDetachedParentTask(s, abilities))
+    }
+
+    @Test
+    fun emptying_a_parent_cell_still_deletes_its_subtree() {
+        // The other half of the rule above: emptying a cell is PRD §4 *Deletion*, and it blanks the task's
+        // title — which is exactly what keeps it out of [isDetachedParentTask], so the sub-tree still goes.
+        var s = SchedulerState.empty()
+        val parentCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(parentCell, "abilities"))
+        val abilities = s.cells[parentCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(parentCell))
+        val subListId = s.tasks[abilities]!!.childListId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[subListId]!!.cellIds.first(), "drawing"))
+        val drawing = s.cells[s.lists[subListId]!!.cellIds.first()]!!.taskId!!
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(parentCell, ctrl = false, shift = false, visibleOrder = listOf(parentCell)),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.EmptySelectedCells)
+
+        assertFalse(s.tasks.containsKey(drawing))
+        assertFalse(SchedulerDomain.isDetachedParentTask(s, abilities))
+        assertFalse(s.lists.containsKey(subListId))
     }
 
     @Test

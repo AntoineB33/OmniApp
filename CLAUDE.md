@@ -255,6 +255,19 @@ crossing can be silently clipped by a clock jump.
 - **The one sanctioned exception to "time never re-plans"** — and only because the cursor is **quantized**
   (`TASK_TREE_BLEND_STEPS` = 100). Do not reintroduce an unquantized/per-tick form.
 
+### A sub-list belongs to the task id, not to the cell
+
+- Every cell pointing at a task shows the **same** sub-tree — that is what mirroring is. So re-pointing a cell at
+  another id must **not** delete the task it left: a titled, cell-less task that still holds a populated sub-list
+  is a **detached parent** (`SchedulerDomain.isDetachedParentTask`), kept by `purgeOrphanTasks` and seeded into
+  `pruneDetachedTree`'s walk. Assigning that id back restores its sub-tree.
+- **The blank title is what deletes.** Emptying a cell (PRD §4 *Deletion*) blanks its task's title, and a
+  blank-titled task is never a detached parent — that single rule is what still collects an emptied parent's
+  sub-tree, and what keeps a peer's deletion sticking through `SnapshotMerge.repair`. Do not make the retention
+  key on anything else.
+- A task **no cell points at** is named in the Change Task menu by its child titles, never by a path (PRD §4):
+  `shortestTaskTreePath` reads the denormalized `Task.childTaskIds`, which outlives the detachment.
+
 ### Task trees are live alternatives, not backups
 
 - `SelectTaskTree` **flushes** the live tree into the entry being left before loading the target.

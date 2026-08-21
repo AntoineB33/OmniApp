@@ -706,6 +706,43 @@ object SchedulerDomain {
         state.cells.values.any { it.taskId == taskId }
 
     /**
+     * PRD §4: a **detached parent** — a titled task no cell points at anymore that still owns a populated
+     * sub-list. Re-pointing a cell at another task id does NOT delete the task it left: the sub-tree belongs
+     * to the *task id*, not to the cell, so the task survives cell-less with its children and the Change Task
+     * menu keeps offering it (with no path to show, it is labelled by its child titles — PRD §4
+     * *Presentation*). Assigning that id back to any cell brings the whole sub-tree back, exactly as it
+     * already does for a task that kept a second occurrence elsewhere.
+     *
+     * The escape hatch is the **title**: emptying a cell (PRD §4 *Deletion*) blanks its task's title, and a
+     * blank-titled task is never detached-parent, so "delete" still deletes the sub-tree. That is also what
+     * keeps a peer's deletion sticking through [org.example.project.scheduler.sync.SnapshotMerge] — the
+     * merged task is either gone or blank-titled, never a retained parent.
+     */
+    fun isDetachedParentTask(state: SchedulerState, taskId: TaskId): Boolean =
+        isDetachedParentTask(state, taskId, taskIdsWithCells(state))
+
+    /** All task ids some cell points at — [taskHasCells] for every task at once, in one pass. */
+    private fun taskIdsWithCells(state: SchedulerState): Set<TaskId> =
+        state.cells.values.mapNotNullTo(HashSet()) { it.taskId }
+
+    /**
+     * [isDetachedParentTask] against a [taskIdsWithCells] set built once — the GC passes below ask it of every
+     * task, and scanning the cells per task would make an ordinary edit O(tasks × cells).
+     */
+    private fun isDetachedParentTask(
+        state: SchedulerState,
+        taskId: TaskId,
+        taskIdsWithCells: Set<TaskId>,
+    ): Boolean {
+        if (isRootTask(taskId) || isMainTask(taskId)) return false
+        if (taskId in taskIdsWithCells) return false
+        val task = state.tasks[taskId] ?: return false
+        if (task.title.isBlank()) return false
+        val list = task.childListId?.let { state.lists[it] } ?: return false
+        return list.cellIds.any { state.cells[it]?.taskId != null }
+    }
+
+    /**
      * PRD §9: a task is *schedulable* only when it has no child task — the scheduler picks the leaves
      * of the tree (a parent task is just a grouping; its actual work lives in its children).
      *
@@ -3603,12 +3640,24 @@ object SchedulerDomain {
             .mapNotNull { state.tasks[it]?.title }
             .joinToString(" / ")
 
+    /**
+     * The titles under [taskId], read from its shared child list — the same structural source of truth
+     * [isLeafTask] uses, since the denormalized [Task.childTaskIds] only tracks freshly-typed children and
+     * goes stale. It is what names a task no cell points at in the Change Task menu (PRD §4), so it has to
+     * hold for a sub-tree that arrived by paste or by a move as well as one that was typed.
+     */
     fun childTitlesLabel(state: SchedulerState, taskId: TaskId): String {
         val task = state.tasks[taskId] ?: return ""
-        return task.childTaskIds
-            .mapNotNull { state.tasks[it]?.title }
-            .sorted()
-            .joinToString(", ")
+        val childList = task.childListId?.let { state.lists[it] }
+        val titles =
+            // No sub-list at all (a payload from before every titled task got one) is the only case with
+            // nothing structural to read; a sub-list that is merely EMPTY means a leaf, and must read as one.
+            if (childList == null) {
+                task.childTaskIds.mapNotNull { state.tasks[it]?.title }
+            } else {
+                childList.cellIds.mapNotNull { cellId -> state.cells[cellId]?.taskId?.let { state.tasks[it]?.title } }
+            }
+        return titles.filter { it.isNotBlank() }.distinct().sorted().joinToString(", ")
     }
 
     data class ChangeTaskMenuEntry(
@@ -3642,9 +3691,19 @@ object SchedulerDomain {
             { childTitlesLabel(state, it) },
         )
 
+    /**
+     * PRD §4 *Presentation*: a menu row shows the task's shortest path in the tree — "**or a list of child
+     * titles if no cells point to it**". A task no cell points at (a detached parent, [isDetachedParentTask],
+     * or a tombstone kept for its records) has no place in the tree to name, and [shortestTaskTreePath] would
+     * still report one off the denormalized [Task.childTaskIds], so name it by what it holds instead. A
+     * cell-less task with nothing under it falls back to its own title, so no row is ever blank.
+     */
     private fun changeTaskMenuLabel(state: SchedulerState, taskId: TaskId): String {
-        val pathLabel = taskPathLabel(state, taskId)
         val childLabel = childTitlesLabel(state, taskId)
+        if (!taskHasCells(state, taskId)) {
+            return childLabel.ifEmpty { state.tasks[taskId]?.title.orEmpty() }
+        }
+        val pathLabel = taskPathLabel(state, taskId)
         return if (childLabel.isNotEmpty()) "$pathLabel ($childLabel)" else pathLabel
     }
 
@@ -4046,11 +4105,15 @@ object SchedulerDomain {
         // record (§8) — such tasks linger only to keep showing their recorded periods in the calendar.
         // A task referenced by a calendar panel is also kept, so a scheduled task deleted from the tree
         // survives until the next refresh cuts and records its in-progress period (§9).
+        // A **detached parent** ([isDetachedParentTask]) is kept too: its sub-tree is real user data that
+        // belongs to the task id, so re-assigning that id restores it.
+        val withCells = taskIdsWithCells(state)
         val referenced =
-            state.cells.values.mapNotNull { it.taskId }.toSet() +
+            withCells +
                 setOf(WellKnownIds.ROOT_TASK, WellKnownIds.MAIN_TASK) +
                 state.tasks.filterValues { it.record.isNotEmpty() }.keys +
-                state.panels.mapNotNull { it.taskId }
+                state.panels.mapNotNull { it.taskId } +
+                state.tasks.keys.filter { isDetachedParentTask(state, it, withCells) }
         val tasks =
             state.tasks
                 .filterKeys { it in referenced }
@@ -4076,7 +4139,16 @@ object SchedulerDomain {
     fun pruneDetachedTree(state: SchedulerState): SchedulerState {
         val reachableCells = mutableSetOf<CellId>()
         val reachableLists = mutableSetOf<CellListId>()
-        val queue = ArrayDeque(listOf(state.rootListId))
+        // PRD §4: the root list, plus the sub-list of every **detached parent** — a titled task whose last
+        // cell was re-pointed at another id ([isDetachedParentTask]). Its sub-tree is not reachable from the
+        // root anymore, but it is not detached *from its task* either, so it is kept alive to come back with
+        // the id. A cell emptied to delete it blanks the title, which is exactly what excludes it here.
+        val withCells = taskIdsWithCells(state)
+        val detachedRoots =
+            state.tasks.keys.mapNotNull { taskId ->
+                state.tasks[taskId]?.childListId?.takeIf { isDetachedParentTask(state, taskId, withCells) }
+            }
+        val queue = ArrayDeque(listOf(state.rootListId) + detachedRoots)
         while (queue.isNotEmpty()) {
             val listId = queue.removeFirst()
             if (!reachableLists.add(listId)) continue
