@@ -10,6 +10,8 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.daysUntil
 import kotlinx.datetime.plus
 import org.example.project.ui.HourWindow
+import org.example.project.ui.OPENING_SPAN_MINUTES
+import org.example.project.ui.calendarSpanZoom
 import org.example.project.ui.nowLineCenterColumnShift
 import org.example.project.ui.nowLineCenterOffset
 import org.example.project.ui.rollingDayAt
@@ -240,6 +242,35 @@ class RollingCalendarTest {
         // its day, up to whole days (the caller skips the write until the height is known anyway).
         val offset = nowLineCenterOffset(0.5f, dayHeight, 0f, currentOffsetPx = 0.5f * dayHeight)
         assertEquals(0.5f * dayHeight, offset, 0.01f)
+    }
+
+    // ----- the opening fit -----------------------------------------------------------------------
+
+    @Test
+    fun opening_the_calendar_zooms_so_exactly_an_hour_and_a_half_fills_the_viewport() {
+        // A calendar that has just been opened shows OPENING_SPAN_MINUTES of timeline, whatever the
+        // viewport is — the zoom fit is what makes that span the same on every window size. The window is
+        // a fixed 720x540 dp, so every viewport it can offer is well inside the zoom ceiling (which caps
+        // the fit at 16 x 72 dp = 1152 px of 1 h 30 at this density).
+        val spanHeight = dayHeight * OPENING_SPAN_MINUTES / (24f * 60f)
+        for (viewport in listOf(200f, 400f, 600f, 1152f)) {
+            val zoom = calendarSpanZoom(viewport, dayHeight, OPENING_SPAN_MINUTES)
+            assertEquals(viewport, spanHeight * zoom, 0.01f, "1 h 30 does not fill a $viewport px viewport")
+        }
+    }
+
+    @Test
+    fun the_span_fit_is_the_whole_day_fit_generalized_and_is_bounded_the_same_way() {
+        // The date pick's fit is this one asked for a full day: one formula, so the two cannot drift.
+        for (viewport in listOf(400f, 900f, 4000f)) {
+            assertEquals(wholeDayZoom(viewport, dayHeight), calendarSpanZoom(viewport, dayHeight, 24 * 60))
+        }
+        // Clamped into the zoom bounds like any other zoom, and neutral before the first layout.
+        assertEquals(16f, calendarSpanZoom(viewportPx = 100_000f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 90))
+        assertEquals(0.25f, calendarSpanZoom(viewportPx = 1f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 90))
+        assertEquals(1f, calendarSpanZoom(viewportPx = 0f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 90))
+        assertEquals(1f, calendarSpanZoom(viewportPx = 600f, dayHeightPxAtZoom1 = 0f, spanMinutes = 90))
+        assertEquals(1f, calendarSpanZoom(viewportPx = 600f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 0))
     }
 
     // ----- the date pick's whole-day fit --------------------------------------------------------

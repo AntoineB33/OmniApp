@@ -2144,7 +2144,9 @@ fun CalendarFloatingWindow(
     // a zoom pivots around it instead of the cursor; scrolling (or a date pick) releases it. Like the zoom
     // itself this is pure per-device view state with no meaning beyond the open window, so it lives only in
     // Compose state — neither persisted nor synced (CLAUDE.md: local-only view state).
-    var lockNowLine by remember { mutableStateOf(false) }
+    // It starts ON: opening the calendar always lands on the present (with the matching [WeekView] zoom
+    // fit), and the window is only composed while it is open, so every open gets this fresh default.
+    var lockNowLine by remember { mutableStateOf(true) }
     // PRD §8: the calendar owns the keyboard while it is the active surface, so its own shortcuts (O to
     // toggle overlap, Ctrl+Z/Y to undo/redo the calendar history, Ctrl +/- to zoom) work even though the
     // tree normally holds focus. Focus is (re)claimed when the window opens and on every press inside it.
@@ -2514,8 +2516,24 @@ internal fun nowLineCenterColumnShift(
  * Pure, so the fit is unit-tested independently of Compose.
  */
 internal fun wholeDayZoom(viewportPx: Float, dayHeightPxAtZoom1: Float): Float =
-    if (viewportPx <= 0f || dayHeightPxAtZoom1 <= 0f) 1f
-    else (viewportPx / dayHeightPxAtZoom1).coerceIn(MIN_CALENDAR_ZOOM, MAX_CALENDAR_ZOOM)
+    calendarSpanZoom(viewportPx, dayHeightPxAtZoom1, MINUTES_PER_DAY)
+
+/**
+ * PRD §8 zoom: the zoom at which exactly [spanMinutes] of timeline fill a [viewportPx]-tall viewport, given
+ * the day's height [dayHeightPxAtZoom1] at zoom 1f. The whole-day fit above is this with a full day; the
+ * calendar's opening fit ([OPENING_SPAN_MINUTES]) is this with an hour and a half. Clamped into the zoom
+ * bounds like any other zoom, and defensive about the pre-layout viewport of 0 px.
+ * Pure, so the fit is unit-tested independently of Compose.
+ */
+internal fun calendarSpanZoom(viewportPx: Float, dayHeightPxAtZoom1: Float, spanMinutes: Int): Float =
+    if (viewportPx <= 0f || dayHeightPxAtZoom1 <= 0f || spanMinutes <= 0) 1f
+    else (viewportPx / (dayHeightPxAtZoom1 * spanMinutes / MINUTES_PER_DAY))
+        .coerceIn(MIN_CALENDAR_ZOOM, MAX_CALENDAR_ZOOM)
+
+private const val MINUTES_PER_DAY = 24 * 60
+
+/** PRD §8: the span of timeline a freshly opened calendar is zoomed to show — an hour and a half. */
+internal const val OPENING_SPAN_MINUTES = 90
 
 /**
  * PRD §7 date pick: the day that must sit in the LEFTMOST column so the picked [date] is shown with its
@@ -2725,6 +2743,20 @@ private fun WeekView(
     LaunchedEffect(Unit) {
         offsetPx = (with(densityState.value) { BASE_HOUR_HEIGHT.toPx() } * (now.hour - 1)).coerceAtLeast(0f)
     }
+
+    // PRD §8: a calendar that has just been opened always shows the same slice — [OPENING_SPAN_MINUTES] of
+    // timeline, around the now-line the lock (on by default) holds at the middle of the view. The fit needs
+    // the MEASURED viewport, which the first composition does not have yet, so it is applied on the first
+    // layout that reports one — and only then: after that the zoom is whatever the user made it.
+    var openingZoomApplied by remember { mutableStateOf(false) }
+    LaunchedEffect(viewportHpx) {
+        if (openingZoomApplied || viewportHpx <= 0f) return@LaunchedEffect
+        openingZoomApplied = true
+        val target = calendarSpanZoom(viewportHpx, dayHeightPxAt(1f), OPENING_SPAN_MINUTES)
+        // Through [applyZoom] rather than assigning [zoom], so the offset is re-anchored and rebased (and,
+        // while locked, re-centred on the now-line) exactly as any other zoom is.
+        applyZoom(target / zoom, viewportHpx / 2f)
+    }
     // PRD §7: picking a date in the lateral month calendar RESETS the view onto that day's WHOLE WEEK —
     // the week's Monday becomes the leftmost column's day ([weekAnchorDay]), scrolled to its midnight and
     // zoomed so exactly one whole day fills the viewport. So the pick always lands on the same, legible
@@ -2735,8 +2767,15 @@ private fun WeekView(
     // Keyed on [jumpNonce] as well as the date because the scroll can carry the grid AWAY
     // from [selectedDate] (that is what endless scrolling is), so picking the day already selected — "take
     // me back to today" — is a real jump with nothing changed to key on. The nonce is the pick itself.
+    // The effect also runs once when the window opens, which is not a pick: that run must neither fight the
+    // opening fit nor switch the default-on lock straight back off.
+    var firstJumpRun by remember { mutableStateOf(true) }
     LaunchedEffect(jumpNonce, selectedDate) {
         anchorDay = weekAnchorDay(selectedDate)
+        if (firstJumpRun) {
+            firstJumpRun = false
+            return@LaunchedEffect
+        }
         // Before the first layout the viewport height is unknown, so there is no whole-day fit to compute:
         // leave the zoom and the offset to the initial "open at the current hour" effect above. Only a real
         // pick (which can only happen once the calendar is on screen and measured) resets the view.
