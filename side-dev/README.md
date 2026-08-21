@@ -104,7 +104,7 @@ If the exact schedule can’t be found at this pace, then there must be using ap
 
 Answer proposed by claude code in claude_code_proposed_answer.md.
 
- 
+
 # test 13 requirements
 
 Same as test 12, but the priority percentages are sliding continuously from one state at t=24h to another at t=48h. At t<24h, the priority percentages are the same as t=24h. The result is of the same type, a single list of rules, simply at $t_p$ the scheduler is done to satisfy the priorities that are at exactly $t_p$.
@@ -113,5 +113,5 @@ Same as test 12, but the priority percentages are sliding continuously from one 
 # test 14 requirements
 
 task A 45min 50%
-task B 45min 50%
+20 other tasks that share the remaining 50%, all 45 minutes
 8 days of timeline, no task allowed from 23h to 8h.

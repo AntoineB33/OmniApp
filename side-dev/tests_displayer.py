@@ -642,6 +642,19 @@ class MovingCasePanel:
     # only scrolls up and down -- which is what put test 13's "where the line
     # stands between the two states" a thousand pixels past the window.
     STATUS_H = 30
+    # the room above the FIRST row of the timeline. A row does not begin at its
+    # own top: the t_p line overshoots it by 12px and the labels beside the
+    # markers ("definitive", a moving period's name) are anchored `sw` a few
+    # pixels higher still, so a row's drawing reaches about 20px above
+    # `_row_y(0)`. Reserving less than that does not clip anything -- the canvas
+    # has no rows -- it simply draws the timeline's first label ON TOP of the
+    # last line of the info block, which is what test 13's "static periods" line
+    # and its green "definitive" label were doing.
+    ROW_LABEL_H = 36
+    # how far a label lifted off a neighbour moves, and how many tiers it may
+    # use before it gives up and accepts the collision
+    LABEL_TIER_H = 12
+    LABEL_TIERS = 2
 
     def __init__(self, root, canvas, tooltip, y, title, mw, sweep_seconds, width=900):
         self.root, self.canvas, self.tooltip, self.mw = root, canvas, tooltip, mw
@@ -671,7 +684,14 @@ class MovingCasePanel:
         canvas.bind("<B1-Motion>", self._on_drag, add="+")
         canvas.bind("<ButtonRelease-1>", self._on_release, add="+")
 
-        head = canvas.create_text(self.MARGIN_LEFT, y, text=title, font=("Arial", 11, "bold"), anchor="nw")
+        # on `chrome`, with the buttons: the title is made ONCE, like they are,
+        # so the frame must not delete it -- but `destroy` must. Untagged it
+        # belonged to neither, and a canvas item on no tag is one nothing can
+        # take off: choosing another case in the selector left the title of the
+        # case being replaced on the canvas for good, and the new panel drew
+        # itself straight through it (test 14's paragraph under test 13's).
+        head = canvas.create_text(self.MARGIN_LEFT, y, text=title, tags=self.chrome,
+                                  font=("Arial", 11, "bold"), anchor="nw")
         self.y_status = canvas.bbox(head)[3] + 2
         self.y_rules = self.y_status + self.STATUS_H
         # the tasks and the static periods, between the rules and the timeline.
@@ -686,7 +706,7 @@ class MovingCasePanel:
         self.info_chars = info_chars(self.info_width)
         self.info_rows, self.info_periods, self.info_states, info_h = info_layout(
             mw.tasks, mw.periods, width=self.info_width, states=self.info_ends)
-        self.top = self.y_info + info_h + 12
+        self.top = self.y_info + info_h + self.ROW_LABEL_H
         self.height = (self.top + self.rows * (self.ROW_H + self.ROW_SPACING) + 30) - y
         self._tick()
 
@@ -903,14 +923,19 @@ class MovingCasePanel:
                                         font=("Arial", 9), tags=(self.tag, "task_panel"))
                     self.tooltip.register(txt, hover)
 
+        # what keeps two period labels apart. Test 11 slides three periods a few
+        # minutes from each other, which at this scale is a dozen pixels: named
+        # where they stand, the third is written straight through the second.
+        placed = {}
         for w in mw.moving(tp):
             for x1, y1, x2, y2 in self._bar(w['start'], w['end']):
                 rect = c.create_rectangle(x1, y1 - 6, max(x2, x1 + 2), y2 + 6,
                                           outline="#D40000", width=2, tags=self.tag)
                 self.tooltip.register(rect, w.get('label', 'period'))
             for x1, y1, _x2, _y2 in self._bar(w['start'], w['end'])[:1]:
-                c.create_text(x1, y1 - 8, text=w.get('label', ''), fill="#D40000",
-                              font=("Arial", 7), anchor="sw", tags=self.tag)
+                item = c.create_text(x1, y1 - 8, text=w.get('label', ''), fill="#D40000",
+                                     font=("Arial", 7), anchor="sw", tags=self.tag)
+                self._stagger(item, placed, y1)
 
         for row in range(self.rows):
             y1 = self._row_y(row)
@@ -922,6 +947,25 @@ class MovingCasePanel:
                           width=2, tags=self.tag)
             c.create_text(x1 + 2, y1 + self.ROW_H + 12, text="t_p", fill="#D40000",
                           font=("Arial", 8, "bold"), anchor="nw", tags=self.tag)
+
+    def _stagger(self, item, placed, row_y):
+        """Lift a label off the ones already named on its row.
+
+        A period is labelled where it STANDS, so two of them close together are
+        two labels in the same pixels -- and a label written over another is not
+        a shorter label, it is an unreadable one. `placed` remembers the right
+        edge and the tier of every label drawn on `row_y` this frame; a new one
+        that would start left of a right edge on its tier moves up a line.
+        `ROW_LABEL_H` is the room the top tier needs above the row."""
+        bb = self.canvas.bbox(item)
+        row = placed.setdefault(row_y, [])
+        if bb is None: return
+        tier = 0
+        while (tier + 1 < self.LABEL_TIERS
+               and any(t == tier and bb[0] < right for right, t in row)):
+            tier += 1
+            self.canvas.move(item, 0, -self.LABEL_TIER_H)
+        row.append((bb[2], tier))
 
     @staticmethod
     def _ellipsis(text, width=132):
