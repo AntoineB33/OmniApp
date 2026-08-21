@@ -688,9 +688,10 @@ class SchedulerPlanner(
      * Over a period every task advances by exactly one `T`, so a builder reading the clocks alone serves the
      * whole of the fastest task's share before the slowest one's turn comes round — with twenty rivals, twenty
      * slots in a row, which [pushSlot] then merges into precisely the long block [roundUnitMillis] exists to
-     * prevent. That is a fact about a level start, not about the arrangement: the walk itself only interleaves
-     * once its clocks are staggered, which is what the prefix ahead of the cycle has just spent a period
-     * doing. So the sizes are settled by the clock and the order by the rule the clock cannot express —
+     * prevent. This loop starts every clock level and gives each task exactly its share of one period, so
+     * every one of them ends it owing nothing, and the claim [pickNeediest] orders by is about who is BEHIND:
+     * what the loop settles is the multiset, not its order. So the sizes are settled by the clock and the
+     * order by the rule the clock cannot express —
      * nobody twice in a row while somebody else still owes a slot this period, most slots left going first.
      * Reordering cannot touch the shares: it is the same slots.
      */
@@ -710,7 +711,7 @@ class SchedulerPlanner(
         var guard = 0
         while (order.any { (remaining[it] ?: 0.0) > CRUMB } && guard++ < MAX_CYCLE_SLOTS) {
             val live = order.filter { (remaining[it] ?: 0.0) > CRUMB }
-            val name = pickLowestClock(v, live, p, last) ?: break
+            val name = pickNeediest(v, live, p, last) ?: break
             var c = minOf(chunkMillis(name, v, live, p, boost = null), remaining[name]!!)
             if (remaining[name]!! - c < (minimumOf[name] ?: 0L).toDouble()) c = remaining[name]!! // no crumb
             if (c <= 0.0) break
@@ -1218,14 +1219,62 @@ class SchedulerPlanner(
     }
 
     /**
-     * The most starved task; ties resolve by biggest share and then by the order [candidates] arrives in, so
-     * the walk is deterministic. Shared by [PlanWalk.pick] and [steadyCycle].
+     * `side-dev/scheduler_logic.py` `Scheduler._claims`: what each of [names] is OWED, counted in its OWN
+     * slots.
+     *
+     * The virtual clock `v = served/p` is a time, so comparing two of them directly asks "who has had least
+     * per unit of priority" — the right question where service is continuous. It is not the question here,
+     * because service is QUANTIZED: nobody may be served less than its own minimum, so one slot moves a task's
+     * clock by a whole period of its own, `T = m/p`, and those periods differ by the priority ratio. With A at
+     * 50% against twenty tasks at 2.5%, all of 45 minutes, A's slot costs it 90 minutes of clock and each of
+     * theirs costs 1800.
+     *
+     * Read raw, that says every one of the twenty (still at 0) outranks A the moment A has taken a single
+     * slot — and they take twenty slots in a row before A's second. That is `side-dev/README.md`'s monolithic
+     * block assembled out of twenty tasks instead of one, and the deficit it opens is never repaid, because
+     * the pick will not run A twice in a row and [roundUnitMillis] will not let its slot grow: A can hold its
+     * half from then on but can never catch up. Measured in `side-dev` test 14: 35% of three days against a
+     * target of 50%, and 5% of the first day.
+     *
+     * So the claim is the lag divided by the task's own period — the number of ITS OWN slots it is behind:
+     *
+     *     claim = (V − v) / T = (V − v)·p / m
+     *
+     * where `V` is the priority-weighted mean of the clocks: the point every one of them would sit at if the
+     * service so far had been exactly proportional (`Σ p·v` is `Σ served`, the time actually served, so the
+     * reference needs no new state — it is a function of the same clocks). Equivalently the claim is the
+     * task's real-time deficit `p·(V − v)` divided by the size of the slot that would repay it: a task 0.025
+     * of a slot behind does not outrank one half a slot ahead.
+     *
+     * Where every task shares one period `m/p` this is a monotone transform of `v` and picks exactly what the
+     * raw clock picked; it only parts company where the periods differ, which is where the raw clock was
+     * wrong. Renormalising [shares] over a subset scales every claim by one factor and so cannot change the
+     * order.
      */
-    internal fun pickLowestClock(
+    internal fun claims(
+        clocks: Map<TaskId, Double>,
+        names: List<TaskId>,
+        shares: Map<TaskId, Double>,
+    ): Map<TaskId, Double> {
+        val weight = names.sumOf { shares[it] ?: 0.0 }
+        if (weight <= 0.0) return names.associateWith { 0.0 }
+        val mean = names.sumOf { (shares[it] ?: 0.0) * (clocks[it] ?: 0.0) } / weight
+        return names.associateWith { id ->
+            val minimum = (minimumOf[id] ?: 0L).toDouble()
+            if (minimum <= 0.0) 0.0 else (mean - (clocks[id] ?: 0.0)) * (shares[id] ?: 0.0) / minimum
+        }
+    }
+
+    /**
+     * The most starved task — the biggest [claims]; ties resolve by biggest share and then by the order
+     * [candidates] arrives in, so the walk is deterministic. Shared by [PlanWalk.pick] and [steadyCycle].
+     */
+    internal fun pickNeediest(
         clocks: Map<TaskId, Double>,
         candidates: List<TaskId>,
         shares: Map<TaskId, Double>,
         last: TaskId?,
+        precomputed: Map<TaskId, Double>? = null,
     ): TaskId? {
         if (candidates.isEmpty()) return null
         // `last` is never picked twice in a row unless it is the only one left: a task that is owed a lot gets
@@ -1235,24 +1284,25 @@ class SchedulerPlanner(
         // considered when nothing with a real share is available.
         val real = pool.filter { it in share }
         val effective = real.ifEmpty { pool }
+        val claim = precomputed ?: claims(clocks, candidates, shares)
         var best: TaskId? = null
-        var bestClock = 0.0
+        var bestClaim = 0.0
         var bestShare = 0.0
         for (id in effective) {
-            val clock = clocks[id] ?: 0.0
+            val owed = claim[id] ?: 0.0
             val sh = shares[id] ?: 0.0
             val better =
                 when {
                     best == null -> true
-                    clock < bestClock - TIE_EPSILON -> true
-                    clock > bestClock + TIE_EPSILON -> false
+                    owed > bestClaim + TIE_EPSILON -> true
+                    owed < bestClaim - TIE_EPSILON -> false
                     // Ties resolve by the biggest share and then by the order [candidates] arrives in — which
                     // is the caller's deterministic tie-break (PRD §9: higher priority, then title).
                     else -> sh > bestShare
                 }
             if (better) {
                 best = id
-                bestClock = clock
+                bestClaim = owed
                 bestShare = sh
             }
         }
@@ -1266,7 +1316,7 @@ class SchedulerPlanner(
      * A share is a ratio and a ratio holds at any scale, so a task owed twenty of its rival's slots would
      * otherwise take them as one block twenty times as long: the percentages come out exact and the answer is
      * still the one `side-dev/README.md` refuses ("A 1h, B 1h" for "A 10min, B 10min"). The rule against that
-     * is [pickLowestClock]'s — never the same task twice in a row — and one long chunk walks straight past it,
+     * is [pickNeediest]'s — never the same task twice in a row — and one long chunk walks straight past it,
      * because a slot is one pick however long it is.
      *
      * So the scale comes from the only quantity in sight that has one, the RIVAL's own minimum: over a round
@@ -1318,9 +1368,10 @@ class SchedulerPlanner(
         // are no others, and its resumed slot would fall back to the bare minimum.
         val b = boost ?: 1.0
         if (boost != null) c = maxOf(c, floor * b)
-        // Who runs next if this chunk ends here — [pickLowestClock]'s own answer among the others, since it is
-        // the one the chunk is measured against.
-        val rival = pickLowestClock(clocks, others, shares, last = null)
+        // Who runs next if this chunk ends here — [pickNeediest]'s own answer among the others, since it
+        // is the one the chunk is measured against, so it is read off the same claim the pick orders by —
+        // over the whole candidate set, which is what that claim's reference clock is a mean of.
+        val rival = pickNeediest(clocks, others, shares, last = null, precomputed = claims(clocks, candidates, shares))
         roundUnitMillis(rival, p)?.let { round ->
             // The natural unit is a property of the TASK (its whole minimum, or its share of a round), not of
             // what this particular slot still owes — and the cap may never push the slot below its floor.
@@ -1365,7 +1416,7 @@ class SchedulerPlanner(
         /** Below this many millis a remaining budget is exhausted (the reference compares exact rationals). */
         private const val CRUMB = 0.5
 
-        /** Two virtual clocks this close are the same number, so the tie-break decides (see [pickLowestClock]). */
+        /** Two claims this close are the same number, so the tie-break decides (see [pickNeediest]). */
         private const val TIE_EPSILON = 1e-6
 
         private const val CEIL_EPSILON = 1e-9
@@ -1427,9 +1478,9 @@ class PlanWalk internal constructor(
         return live.maxOf { v[it]!! } - live.minOf { v[it]!! }
     }
 
-    /** The most starved of [candidates]; see [SchedulerPlanner.pickLowestClock]. */
+    /** The most starved of [candidates]; see [SchedulerPlanner.pickNeediest]. */
     fun pick(candidates: List<TaskId>, avoidLast: Boolean = true): TaskId? =
-        planner.pickLowestClock(v, candidates, planner.share, if (avoidLast) last else null)
+        planner.pickNeediest(v, candidates, planner.share, if (avoidLast) last else null)
 
     /** How long [id]'s next slot should be; see [SchedulerPlanner.chunkMillis]. */
     fun chunkMillis(

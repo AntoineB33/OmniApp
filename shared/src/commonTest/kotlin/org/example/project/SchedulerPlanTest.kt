@@ -892,6 +892,47 @@ class SchedulerPlanTest {
         )
     }
 
+    // ----- what a task is owed is counted in ITS OWN slots -----------------------------------------
+
+    @Test
+    fun reference_test_14_a_50_percent_task_interleaves_with_twenty_small_ones_from_the_first_morning() {
+        // `side-dev` test 14: A of 45min at 50%, twenty tasks of 45min sharing the other 50% (2.5% each), and
+        // nothing in the way but the nights (23h-8h, nobody allowed), over eight days. The case that caught
+        // the pick reading
+        // the virtual clock as a plain time: one slot moves A's clock by 90 minutes and one of theirs by 1800,
+        // so read raw every one of the twenty still at 0 outranked A the moment A had taken a single slot —
+        // and they took TWENTY slots in a row before A's second. That is `side-dev/README.md`'s monolithic
+        // block assembled out of twenty tasks instead of one, and it left A holding 5% of the first day and
+        // 35% of the three (target 50%), a deficit nothing repays: the never-twice rule caps A at every other
+        // slot from then on, so it can hold its half but never catch up.
+        //
+        // Counted in each task's OWN slots ([SchedulerPlanner.claims]) they interleave from the first morning,
+        // which is what the reference now emits, slot for slot.
+        val tasks = listOf(planTask("A", 50.0, 45.0)) +
+            // zero-padded so the reference's tie-break (by title) and the port's (the order the candidate
+            // list arrives in) agree, and the two can be compared slot for slot
+            (1..20).map { planTask("B" + it.toString().padStart(2, '0'), 2.5, 45.0) }
+        // one night per day, crossing midnight, so the timeline OPENS inside the one that began the day before
+        val nights = (-1..7).map { d ->
+            window(d * 24.0 * 60 + 23 * 60, (d + 1) * 24.0 * 60 + 8 * 60)
+        }
+        val plan = SchedulerPlanner(tasks).plan(windows = nights, maxRules = 26)
+        assertPlan(
+            plan,
+            prefix = listOf(
+                "IDLE" to 480.0,
+                "A" to 45.0, "B01" to 45.0, "B02" to 45.0,
+                "A" to 45.0, "B03" to 45.0, "A" to 45.0, "B04" to 45.0, "A" to 45.0, "B05" to 45.0,
+                "A" to 45.0, "B06" to 45.0, "A" to 45.0, "B07" to 45.0, "A" to 45.0, "B08" to 45.0,
+                "A" to 45.0, "B09" to 45.0, "A" to 45.0, "B10" to 45.0, "A" to 45.0,
+                "IDLE" to 540.0,
+                "B11" to 45.0, "B12" to 45.0, "A" to 45.0, "B13" to 45.0,
+            ),
+            cycle = emptyList(),
+            label = "test 14",
+        )
+    }
+
     // ----- the atomic block: a period the running task is banned from SUSPENDS it -------------------
 
     @Test

@@ -24,17 +24,23 @@ at t_p=24h to another at t_p=48h -- the two states the window draws under its
 task table, and outside which the nearer one is held: the same environment, the
 same kind of answer, each link (and the rules at the line) made to satisfy the
 percentages of exactly the position it is made from.
-Test 14 is the same three days with the environment stripped to the bone: test
-12's tasks -- A of 45 minutes at 50%, and twenty others of 45 minutes sharing the
+Test 14 is the same environment stripped to the bone, over EIGHT days: test 12's
+tasks -- A of 45 minutes at 50%, and twenty others of 45 minutes sharing the
 other 50% -- and nothing in the way but the nights. Nothing slides, so the chain
 is all that is left of test 12's machinery, and what is left of the answer is the
 arrangement alone: 50/50 between A and the twenty over a CYCLE, at the
 granularity the README asks for -- A every other slot with the twenty taking
 turns in between, not one block of A as long as all twenty of theirs together --
-each morning resuming the run the night interrupted. Three days is one cycle and
-a half, and the first of them is a cold start where every task's first turn comes
-before anybody's second, so what the three days measure is under the target: the
-cycle is the statement, the three days are how much of it fits.
+each morning resuming the run the night interrupted. It is the case that caught
+the pick reading the virtual clock as a plain time: `served/p` said that every
+one of the twenty outranked A the moment A had taken one slot, so the twenty
+took twenty slots in a row and A held 5% of the first day. What a task is owed is
+counted in ITS OWN slots (`Scheduler._claims`), and the twenty interleave with A
+from the first morning. Eight days is what makes that a MEASUREMENT rather than
+a shape: a cycle here is 1800 minutes of schedulable time, two working days, so
+three days were a cycle and a half and the cold start at the head of them was
+most of what the percentages saw. Four whole cycles leave the opening turn
+where it belongs, a rounding error.
 """
 
 import functools
@@ -569,10 +575,10 @@ def progressive_window(tasks, blend=None, tau_scale=1, blend_ends=None):
                              blend_ends=blend_ends, **_tau_kw(tau_scale))
 
 # --------------------------------------------------------------------------- #
-#  Test 14: three days, 21 tasks, and nothing in the way but the nights
+#  Test 14: eight days, 21 tasks, and nothing in the way but the nights
 # --------------------------------------------------------------------------- #
 
-TEST14_SPAN = 3 * DAY
+TEST14_SPAN = 8 * DAY
 TEST14_NIGHT_FROM = 23 * HOUR    # each night closes the timeline at 23h...
 TEST14_NIGHT_TO = 8 * HOUR       # ...and opens it again at 8h the next morning
 TEST14_OTHERS = [f"B{i}" for i in range(1, 21)]
@@ -595,7 +601,13 @@ def tasks14():
 
     And it asks the nights the same question twice over: a granularity that
     coarse makes the RESUME the case's second subject, since a block that long
-    is one the evening suspends and the morning has to carry on with."""
+    is one the evening suspends and the morning has to carry on with -- eight
+    times over, now, rather than twice.
+
+    Nothing else in the suite asks it: every case whose tasks share one period
+    `m/p` is ordered identically by the raw clock and by the slot claim, and a
+    twentyfold priority ratio at one minimum is the smallest arrangement where
+    the two part company."""
     return [Task("A", priority=50, min_time=45, color="#FF7B7B")] + [
         Task(n, priority=2.5, min_time=45, color=_shade((110, 170, 255), i, 20))
         for i, n in enumerate(TEST14_OTHERS)]
@@ -620,20 +632,27 @@ def test14_nights(span=TEST14_SPAN):
     return out
 
 TEST14_TITLE = (
-    "Test 14 (progressive rule list): three days, task A of 45min at 50% and twenty other\n"
+    "Test 14 (progressive rule list): EIGHT days, task A of 45min at 50% and twenty other\n"
     "-> tasks of 45min sharing the other 50% (2.5% each), and nothing in the way but the\n"
-    "   nights -- no task at all from 23h to 8h. Three days is still too long for one\n"
-    "   prefix+cycle (the environment changes twice a day), so the answer is test 12's chain\n"
-    "   over test 12's own tasks, with the breaks and the privileged-only periods taken\n"
-    "   away. 50/50 between A and the twenty over a cycle is only half of what it owes: a\n"
-    "   twentyfold ratio at a 45min minimum is the scale at which the README's OWN headline\n"
-    "   distinction bites -- A every other slot, each of the twenty once per twenty of A's,\n"
-    "   rather than one block of A as long as all twenty of theirs together -- and each\n"
-    "   morning resuming the run the night suspended. Stripped on purpose: with nothing in\n"
-    "   the way but the nights, a coarse answer or a chain that fails to resume shows here\n"
-    "   as a block anyone can point at, not as a percentage nobody can trace. The measured\n"
-    "   three days come out under the target because they are a cycle and a half, opening\n"
-    "   on a cold start where every task's first turn precedes anybody's second."
+    "   nights -- no task at all from 23h to 8h. Far too long for one prefix+cycle (the\n"
+    "   environment changes twice a day), so the answer is test 12's chain over test 12's own\n"
+    "   tasks, with the breaks and the privileged-only periods taken away. 50/50 between A and\n"
+    "   the twenty over a cycle is only half of what it owes: a twentyfold ratio at a 45min\n"
+    "   minimum is the scale at which the README's OWN headline distinction bites -- A every\n"
+    "   other slot, each of the twenty once per twenty of A's, rather than one block of A as\n"
+    "   long as all twenty of theirs together -- and each morning resuming the run the night\n"
+    "   suspended. Stripped on purpose: with nothing in the way but the nights, a coarse answer\n"
+    "   or a chain that fails to resume shows here as a block anyone can point at, not as a\n"
+    "   percentage nobody can trace. It is the case that caught the pick reading the virtual\n"
+    "   clock as a plain time: the twenty then took twenty slots in a row and A held 5% of the\n"
+    "   first day. What a task is owed is counted in its OWN slots. The span is EIGHT days\n"
+    "   because a cycle here is 1800 minutes of schedulable time -- two working days -- so\n"
+    "   three days were a cycle and a half and the opening turn was most of what the\n"
+    "   percentages saw; four whole cycles make the measurement the statement. One long plan\n"
+    "   gives A 49.4%, one slot short of the target, and that slot is the cold start. The CHAIN\n"
+    "   gives 47.5%: at 109h15 it resolves a tie among the twenty differently from the long\n"
+    "   walk, and from day 5 on it is three slots down -- a resume divergence three days were\n"
+    "   too short to reach, and the reason the span is what it is."
 )
 
 def progressive_window14(tau_scale=1):

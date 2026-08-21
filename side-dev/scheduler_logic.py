@@ -276,9 +276,60 @@ class Scheduler:
         if shift:
             for n in idle: v[n] += shift
 
-    def _pick(self, v, candidates, last=None):
+    def _claims(self, v, names, p=None):
+        """What each task is OWED, counted in its own slots.
+
+        The clock `v = served/p` is a time, so comparing two of them directly
+        asks "who has had least per unit of priority" -- the right question
+        where service is continuous. It is not the question here, because
+        service is QUANTIZED: nobody may be served less than its own minimum,
+        so one slot moves a task's clock by a whole period of its own,
+        `T = m/p`, and those periods differ by the priority ratio. With A at
+        50% against twenty at 2.5%, all of 45 minutes, A's slot costs it 90
+        minutes of clock and each of theirs costs 1800.
+
+        Read raw, that says every one of the twenty (still at 0) outranks A the
+        moment A has taken a single slot -- and they take twenty slots in a row
+        before A's second. That is the README's monolithic block assembled out
+        of twenty tasks instead of one, and the deficit it opens is never
+        repaid: `_pick` will not run A twice in a row and `_round` will not let
+        its slot grow, so A can hold its half from then on but can never catch
+        up (measured in test 14: 35% of three days against a target of 50%,
+        and 5% of the first day).
+
+        So the claim is the lag divided by the task's own period -- the number
+        of ITS OWN slots it is behind:
+
+            claim = (V - v) / T = (V - v) * p / m
+
+        where `V` is the priority-weighted mean of the clocks, the point every
+        one of them would sit at if the service so far had been exactly
+        proportional (`sum(p*v)` is `sum(served)`, the time actually served, so
+        no new state is needed: the reference is a function of the same
+        clocks). Equivalently it is the task's real-time deficit `p*(V - v)`
+        divided by the size of the slot that would repay it -- a task 0.025 of
+        a slot behind does not outrank one that is half a slot ahead.
+
+        Where every task has the same period -- one minimum and equal shares,
+        which is most of the small cases -- this is a monotone transform of
+        `v` and picks exactly what the raw clock picked. It only parts company
+        where the periods differ, which is where the raw clock was wrong.
+
+        Renormalising `p` over a subset scales every claim by one factor, so it
+        cannot change the order; `p` is threaded through only so that the
+        magnitudes `_chunk` reads are the shares it is working in."""
+        p = p or self.p
+        names = list(names)
+        weight = sum(p[n] for n in names)
+        if not weight: return {n: Fraction(0) for n in names}
+        mean = sum(p[n] * v[n] for n in names) / weight
+        return {n: (mean - v[n]) * p[n] / self.minimum[n] for n in names}
+
+    def _pick(self, v, candidates, last=None, p=None):
         pool = [n for n in candidates if n != last] or list(candidates)
-        return min(pool, key=lambda n: (v[n], -self.p[n], n))
+        claim = self._claims(v, candidates, p)
+        p = p or self.p
+        return min(pool, key=lambda n: (-claim[n], -p[n], n))
 
     def _round(self, name, rival, p):
         """How much `name` may take before the one it is racing gets its turn.
@@ -337,8 +388,10 @@ class Scheduler:
         b = 1 if boost is None else boost
         if boost is not None: c = max(c, floor * b)
         # the one that runs next if this chunk ends here -- `_pick`'s own answer
-        # among the others, since it is who this chunk is measured against
-        rival = min(others, key=lambda n: (v[n], -p[n], n), default=None)
+        # among the others, since it is who this chunk is measured against, so
+        # it is read off the same claim `_pick` orders by and not off raw `v`
+        claim = self._claims(v, candidates, p)
+        rival = min(others, key=lambda n: (-claim[n], -p[n], n), default=None)
         unit = self._round(name, rival, p)
         if unit is not None:
             c = min(c, max(max(self.minimum[name], unit) * b, floor))
@@ -361,14 +414,14 @@ class Scheduler:
         """One period's worth of the arrangement the walk settles into: what
         each task takes, and in what ORDER it takes it.
 
-        The two are separate questions and only the first is the clock's. Over
-        a period every task advances by exactly one T, so a builder that reads
-        the clocks alone must serve the whole of the fastest task's share
-        before the slowest one's turn comes round -- the twenty-slot block
-        again, `_tidy` merging it into one. That is a fact about a level start,
-        not about the arrangement: the walk itself only interleaves once its
-        clocks are staggered, which is what the prefix ahead of the cycle has
-        just spent a period doing.
+        The two are separate questions and only the first is the clock's. This
+        loop starts every clock level and gives each task exactly its share of
+        one period, so every one of them ends the period owing nothing -- the
+        claim `_pick` orders by is about who is BEHIND, and over a whole period
+        nobody is. What it settles is therefore the multiset and not its order,
+        and read straight off it hands the fastest task its whole share before
+        the slowest one's turn comes round -- the twenty-slot block again,
+        `_tidy` merging it into one.
 
         So the sizes are settled by the clock (the loop below, capped by
         `_round` exactly as the walk is) and the order by the rule the clock
@@ -387,7 +440,7 @@ class Scheduler:
         last = None
         while any(rem[n] > 0 for n in allowed):
             live = [n for n in allowed if rem[n] > 0]
-            name = self._pick(v, live, last)
+            name = self._pick(v, live, last, p)
             c = min(self._chunk(name, v, live, p), rem[name])
             if rem[name] - c < self.minimum[name]: c = rem[name]
             parts[name].append(c)

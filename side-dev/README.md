@@ -114,4 +114,4 @@ Same as test 12, but the priority percentages are sliding continuously from one 
 
 task A 45min 50%
 task B 45min 50%
-3 days of timeline, no task allowed from 23h to 8h.
+8 days of timeline, no task allowed from 23h to 8h.
