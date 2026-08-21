@@ -62,6 +62,7 @@ import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.scheduler.platform.currentDeviceKind
 import org.example.project.scheduler.platform.deviceLockedIntervals
+import org.example.project.scheduler.platform.installGlobalAwayHotkey
 import org.example.project.scheduler.platform.installPauseCuePushBridge
 import org.example.project.scheduler.platform.installPlatformActivityListener
 import org.example.project.scheduler.platform.localPauseCueDeliveryPlatform
@@ -241,6 +242,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // re-samples presence the moment it flips, instead of at the next minute beat. No-op on Android (the
         // service wires it directly) and iOS/web (no such signal).
         LaunchedEffect(engine) { installPlatformActivityListener { engine.onPlatformActivityChanged() } }
+        // PRD §15: the system-wide "I'm away" shortcut (Ctrl+Shift+Alt+A), flipping the same per-device away
+        // flag the left-menu button does. Claimed from the OS rather than handled in Compose because it is
+        // pressed precisely when OmniApp is NOT the focused window — the user is walking away from whatever
+        // they were working in — and a focus-scoped handler would only ever fire when the button is already
+        // one click away. Desktop-only; inert on Android/iOS.
+        LaunchedEffect(engine) { installGlobalAwayHotkey { engine.setUserAway(!engine.userAway.value) } }
         // PRD §15 / ARCHITECTURE.md §8 (iOS APNs, reqs #2/#6): give the platform's native push layer its two
         // callbacks — publish this phone's APNs token, and route a received pause-cue push into the engine.
         // A no-op off iOS (Android uses its FirebaseMessagingService instead; desktop/web have no push layer).
