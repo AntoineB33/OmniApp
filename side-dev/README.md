@@ -115,3 +115,7 @@ Same as test 12, but the priority percentages are sliding continuously from one 
 task A 45min 50%
 20 other tasks that share the remaining 50%, all 45 minutes
 8 days of timeline, no task allowed from 23h to 8h.
+
+
+
+In the test_displayer, the resulting share is the percentage of presence of the task in the whole drawn timeline minus the parts where no task is allowed.

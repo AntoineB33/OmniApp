@@ -90,6 +90,10 @@ class ToolTip:
         self.canvas.bind("<Button>", self._on_leave, add="+")
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
             self.canvas.bind_all(seq, self._on_wheel, add="+")
+        # a line the panel had to cut to the width of the window is kept whole
+        # HERE and nowhere else, so the right button copies out of this table
+        selection = getattr(canvas, "text_selection", None)
+        if selection is not None: selection.add_tooltip(self)
 
     def _on_wheel(self, _event):
         # bound at the application level, so a rebuild leaves this binding
@@ -146,6 +150,272 @@ class ToolTip:
         elif self.label is not None:
             self.label.config(text=text)
         self.tooltip_window.wm_geometry(f"+{x}+{y}")
+
+class TextSelection:
+    """The text on the canvas, selectable and copyable.
+
+    A canvas is not a text widget: what it holds is items, and an item is not
+    something a mouse can sweep unless the canvas is told how. Two gestures,
+    and both end with what was swept in the clipboard:
+
+      - beginning ON a line selects the characters the drag covers (Tk's own
+        item selection, so the highlight is the real one), and a bare click
+        with no drag takes that whole line;
+      - beginning on empty canvas draws a rubber band, and takes every line it
+        touches, in reading order -- which is how a whole block of the table,
+        or a rule and the line above it, comes out as text.
+
+    The two are one gesture and not two, because where a sweep BEGINS is not
+    where the user decided what to take: a drag that leaves the line it began
+    on stops being a character sweep and becomes the rubber band, from the
+    point it was pressed at. So the whole of what is above a timeline -- the
+    title, the tasks, the periods -- comes out by dragging down through it,
+    with no empty canvas to find first.
+
+    Ctrl+C copies the standing selection again (copying does not end it), and
+    the RIGHT button copies the hover text of whatever is under the pointer,
+    falling back to the line itself. That is the one that matters on a rule
+    line: what is drawn there was cut to the width of the window, and the
+    whole of it only ever exists on the tooltip.
+
+    A press the timeline wants for itself is not a selection: a panel that
+    scrubs t_p with the same button says which band it owns (`claim`), and a
+    press inside one is left alone."""
+
+    HIGHLIGHT = "#B5D5FF"
+    MARK_TAG = "text_selection"
+    TOAST_MS = 1100
+
+    def __init__(self, canvas):
+        self.canvas = canvas
+        self.tooltips = []           # where a cut-short line is kept whole
+        self.claims = []             # presses that belong to a panel, not here
+        self.text = ""               # what Ctrl+C would copy again
+        self.item = None             # the line a character sweep is inside
+        self.anchor = self.head = None
+        self.origin = None           # where a rubber band began
+        self.band = None
+        self.marks = []              # what a rubber band leaves highlighted
+        self.toast = None
+        self.toast_after = None
+        canvas.configure(selectbackground=self.HIGHLIGHT, selectforeground="black")
+        canvas.bind("<Button-1>", self._on_press, add="+")
+        canvas.bind("<B1-Motion>", self._on_drag, add="+")
+        canvas.bind("<ButtonRelease-1>", self._on_release, add="+")
+        canvas.bind("<Button-3>", self._on_right, add="+")
+        # bound at the application level, so the keystroke lands wherever the
+        # focus is -- and REPLACING whatever it was bound to before, so a
+        # rebuild leaves one handler and not one per canvas that ever existed
+        for seq in ("<Control-c>", "<Control-C>", "<Control-Insert>"):
+            canvas.bind_all(seq, self._on_copy)
+
+    # ---------------- what else on the canvas has a say ---------------- #
+
+    def add_tooltip(self, tooltip):
+        self.tooltips.append(tooltip)
+
+    def claim(self, predicate):
+        """`predicate(cx, cy)` is True where a press is that panel's business."""
+        self.claims.append(predicate)
+
+    def unclaim(self, predicate):
+        if predicate in self.claims: self.claims.remove(predicate)
+
+    def close(self):
+        self._hide_toast()
+
+    # ---------------- the gestures ---------------- #
+
+    def _on_press(self, event):
+        self._hide_toast()
+        self.canvas.focus_set()          # so Ctrl+C is ours and not the field's
+        cx, cy = self._canvas_xy(event)
+        self._clear()
+        if any(claim(cx, cy) for claim in tuple(self.claims)): return
+        # kept whatever is under the press: a sweep that leaves the line it
+        # began on turns into a band, and a band is drawn from here
+        self.origin = (cx, cy)
+        item = self._line_under(cx, cy)
+        if item is None: return
+        self.item = item
+        self.anchor = self.head = self.canvas.index(item, f"@{cx},{cy}")
+
+    def _on_drag(self, event):
+        cx, cy = self._canvas_xy(event)
+        if self.item is not None:
+            # a frame that redrew the panel took the line with it
+            if self.canvas.type(self.item) != "text":
+                self.item = None
+                return
+            if self._left_the_line(self.item, cy):
+                # the sweep is across lines now, so it is a band: drop the
+                # characters it had and go on from where it was pressed
+                self._clear()
+            else:
+                self.head = self.canvas.index(self.item, f"@{cx},{cy}")
+                lo, hi = sorted((self.anchor, self.head))
+                self.canvas.select_from(self.item, lo)
+                self.canvas.select_to(self.item, hi)
+                return
+        if self.origin is None: return
+        x0, y0 = self.origin
+        if self.band is None:
+            self.band = self.canvas.create_rectangle(x0, y0, cx, cy, width=1,
+                                                     dash=(3, 2), outline="#3070C0",
+                                                     tags=self.MARK_TAG)
+        else:
+            self.canvas.coords(self.band, x0, y0, cx, cy)
+
+    def _on_release(self, event):
+        cx, cy = self._canvas_xy(event)
+        if self.item is not None:
+            # pressed and let go without moving: the line, end to end
+            if self.anchor == self.head: self._select_whole(self.item)
+            self._take(self._swept_characters())
+        elif self.origin is not None:
+            x0, y0 = self.origin
+            self._take(self._swept_lines(x0, y0, cx, cy))
+        self.origin = None
+        if self.band is not None:
+            self.canvas.delete(self.band)
+            self.band = None
+
+    def _on_right(self, event):
+        cx, cy = self._canvas_xy(event)
+        detail = self._detail_under(cx, cy)
+        item = self._line_under(cx, cy)
+        text = detail or (self.canvas.itemcget(item, "text") if item else "")
+        if not text: return
+        self._clear()
+        if item is not None: self._mark(item)
+        self._take(text)
+
+    def _on_copy(self, _event=None):
+        # the tau field and the case selector keep their own Ctrl+C: this one
+        # only answers while the canvas itself has the focus
+        if not self.canvas.winfo_exists(): return
+        if self.canvas.focus_get() is not self.canvas: return
+        if not self.text: return
+        self._to_clipboard(self.text)
+        self._say(f"copied {self._size(self.text)} again")
+
+    # ---------------- what is under the pointer ---------------- #
+
+    def _canvas_xy(self, event):
+        return self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+
+    def _text_items(self, x1, y1, x2, y2):
+        c = self.canvas
+        return [i for i in c.find_overlapping(x1, y1, x2, y2) if c.type(i) == "text"]
+
+    def _left_the_line(self, item, cy):
+        """Has the sweep been carried off the row the line is drawn on?
+
+        Vertically only: running off either END of a line is still that line's
+        own sweep, and is how its last characters are taken."""
+        box = self.canvas.bbox(item)
+        return box is None or cy < box[1] or cy > box[3]
+
+    def _line_under(self, cx, cy):
+        items = self._text_items(cx, cy, cx, cy)
+        return items[-1] if items else None       # the topmost of them
+
+    def _detail_under(self, cx, cy):
+        """The hover text of anything under the pointer, a rectangle included."""
+        for item in reversed(self.canvas.find_overlapping(cx, cy, cx, cy)):
+            for tooltip in self.tooltips:
+                text = tooltip.data.get(item)
+                if text: return text
+        return None
+
+    # ---------------- what a gesture took ---------------- #
+
+    def _select_whole(self, item):
+        end = len(self.canvas.itemcget(item, "text"))
+        if not end: return
+        self.canvas.select_from(item, 0)
+        self.canvas.select_to(item, end - 1)
+        self.anchor, self.head = 0, end - 1
+
+    def _swept_characters(self):
+        if self.item is None or self.anchor is None: return ""
+        text = self.canvas.itemcget(self.item, "text")
+        lo, hi = sorted((self.anchor, self.head))
+        return text[lo:hi + 1]
+
+    def _swept_lines(self, x0, y0, x1, y1):
+        """Every line the band touches, top to bottom and then left to right.
+
+        The y is BUCKETED before it sorts: two items of one visual row are
+        drawn in different fonts and their tops differ by a pixel or two,
+        which read straight off would interleave a table's columns."""
+        c = self.canvas
+        x0, x1 = sorted((x0, x1))
+        y0, y1 = sorted((y0, y1))
+        found = []
+        for item in self._text_items(x0, y0, x1, y1):
+            text = c.itemcget(item, "text")
+            if not text.strip(): continue
+            box = c.bbox(item)
+            found.append((round(box[1] / 6), box[0], item, text))
+        found.sort(key=lambda row: (row[0], row[1]))
+        for _row, _x, item, _text in found: self._mark(item)
+        return "\n".join(text for _row, _x, _item, text in found)
+
+    def _mark(self, item):
+        x1, y1, x2, y2 = self.canvas.bbox(item)
+        rect = self.canvas.create_rectangle(x1 - 1, y1, x2 + 1, y2, outline="",
+                                            fill=self.HIGHLIGHT, tags=self.MARK_TAG)
+        self.canvas.tag_lower(rect, item)     # under the line it highlights,
+        self.marks.append(rect)               # not over it
+
+    def _clear(self):
+        self.item = self.anchor = self.head = None
+        for rect in self.marks: self.canvas.delete(rect)
+        self.marks = []
+        try:
+            self.canvas.select_clear()
+        except tk.TclError:
+            pass
+
+    def _take(self, text):
+        if not text: return
+        self.text = text
+        self._to_clipboard(text)
+        self._say(f"copied {self._size(text)}")
+
+    @staticmethod
+    def _size(text):
+        lines = text.count("\n") + 1
+        return (f"{lines} lines, " if lines > 1 else "") + f"{len(text)} characters"
+
+    def _to_clipboard(self, text):
+        self.canvas.clipboard_clear()
+        self.canvas.clipboard_append(text)
+        self.canvas.update_idletasks()   # handed over before the next frame
+
+    # ---------------- and what it says it took ---------------- #
+
+    def _say(self, text):
+        if tk is None: return
+        self._hide_toast()
+        x, y = self.canvas.winfo_pointerxy()
+        self.toast = tk.Toplevel(self.canvas)
+        self.toast.wm_overrideredirect(True)
+        tk.Label(self.toast, text=text, background="#DFF0D8", relief="solid",
+                 borderwidth=1, font=("Arial", 9)).pack()
+        self.toast.wm_geometry(f"+{x + 15}+{y - 28}")
+        self.toast_after = self.canvas.after(self.TOAST_MS, self._hide_toast)
+
+    def _hide_toast(self):
+        alive = self.canvas.winfo_exists()
+        if self.toast_after is not None and alive:
+            self.canvas.after_cancel(self.toast_after)
+        self.toast_after = None
+        if self.toast is not None:
+            if alive: self.toast.destroy()
+            self.toast = None
+
 
 def generate_schedule(prefix_blocks, cycle_blocks, total_duration, start=Fraction(0)):
     schedule = []
@@ -708,6 +978,11 @@ class MovingCasePanel:
             mw.tasks, mw.periods, width=self.info_width, states=self.info_ends)
         self.top = self.y_info + info_h + self.ROW_LABEL_H
         self.height = (self.top + self.rows * (self.ROW_H + self.ROW_SPACING) + 30) - y
+        # A press on the timeline is the user's hand on t_p and not a sweep of
+        # the block's label: the canvas is told which band is this panel's, and
+        # asks before it selects. Claimed only now -- `_claims` reads `top`.
+        self.selection = getattr(canvas, "text_selection", None)
+        if self.selection is not None: self.selection.claim(self._claims)
         self._tick()
 
     def _setup(self, width, sweep_seconds):
@@ -747,6 +1022,9 @@ class MovingCasePanel:
         `_running()` instead: after this a stray click reaches a panel that
         declines it rather than one that redraws itself back onto the canvas."""
         self.stop()
+        if self.selection is not None:
+            self.selection.unclaim(self._claims)   # the band is nobody's now
+            self.selection = None
         if not self.canvas.winfo_exists(): return
         for item in self.canvas.find_withtag(self.tag):
             if self.tooltip is not None: self.tooltip.unregister(item)
@@ -771,6 +1049,15 @@ class MovingCasePanel:
             if y1 - self.GRAB_PAD <= cy <= y1 + self.ROW_H + self.GRAB_PAD:
                 return row
         return None
+
+    def _claims(self, cx, cy):
+        """Is a press there this panel's business rather than a selection?
+
+        The same test `_on_press` makes, said once so the canvas can ask it
+        BEFORE it starts sweeping the label of a block the user meant to drag
+        t_p across."""
+        return (self._running() and self._row_under(cy) is not None
+                and self.MARGIN_LEFT <= cx <= self._x(self.row_duration))
 
     def _tp_at(self, cx, row):
         minutes = row * self.row_duration + frac(cx - self.MARGIN_LEFT) / frac(self.px_per_min)
@@ -1427,7 +1714,7 @@ class Workbench:
         self.root, self.width = root, width
         self.scale = 1.0
         self.panels, self.tooltip = [], None
-        self.body = self.canvas = None
+        self.body = self.canvas = self.selection = None
         self.cases = self.moving = self.progressive = None
         # The derived cases: every one of them is KEPT (the chain each has
         # settled lives in its own window object, which nothing here rebuilds),
@@ -1728,8 +2015,9 @@ class Workbench:
         self.slow_panel = None
         if self.tooltip is not None: self.tooltip.hide()
         self.tooltip = None
+        if self.selection is not None: self.selection.close()
         if self.body is not None: self.body.destroy()
-        self.body = self.canvas = None
+        self.body = self.canvas = self.selection = None
 
     def _make_body(self):
         assert tk is not None
@@ -1738,9 +2026,15 @@ class Workbench:
         canvas = tk.Canvas(self.body, bg="white")
         vbar = tk.Scrollbar(self.body, orient=tk.VERTICAL, command=canvas.yview)
         canvas.configure(yscrollcommand=vbar.set)
+        self._grab_the_trough(vbar, canvas)
         vbar.pack(side=tk.RIGHT, fill=tk.Y)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.canvas = canvas
+        # Made with the canvas and BEFORE anything is drawn into it: a tooltip
+        # registers itself with the selection as it is built, and a panel asks
+        # it for the band it scrubs. Held on the canvas so both can find it
+        # without being handed it through every drawing function there is.
+        canvas.text_selection = self.selection = TextSelection(canvas)
 
         def wheel(event):
             if getattr(event, 'num', 0) == 4 or event.delta > 0:
@@ -1754,6 +2048,47 @@ class Workbench:
         canvas.bind_all("<Next>", lambda e: canvas.yview_scroll(1, "pages"))
         canvas.bind_all("<Home>", lambda e: canvas.yview_moveto(0.0))
         canvas.bind_all("<End>", lambda e: canvas.yview_moveto(1.0))
+
+    @staticmethod
+    def _grab_the_trough(vbar, canvas):
+        """A press in the trough goes THERE, and goes on following the pointer.
+
+        Tk's own answer to a trough press is a page, repeated while the button
+        is held -- which on a schedule tens of screens long is neither where
+        the user pointed nor a distance they can predict: the pointer sits
+        still and the view keeps travelling. Here the press is a position.
+        The thumb is centred on it (a fraction is a point, and a thumb has a
+        length, so its TOP would land the pointer at the end of what it asked
+        for), and since the class binding is what would have started a drag,
+        the drag is taken over too -- so the press and everything after it are
+        one continuous move, whether it began on the thumb or on the trough.
+        """
+
+        def to(event):
+            first, last = canvas.yview()
+            span = last - first
+            canvas.yview_moveto(min(max(vbar.fraction(event.x, event.y) - span / 2, 0.0),
+                                    1.0))
+
+        def press(event):
+            # on the thumb, Tk's own drag is exactly right: leave it alone
+            if vbar.identify(event.x, event.y) not in ("trough1", "trough2"): return None
+            to(event)
+            vbar.dragging = True
+            return "break"          # the page-and-repeat never starts
+
+        def drag(event):
+            if not getattr(vbar, "dragging", False): return None
+            to(event)
+            return "break"
+
+        def release(_event):
+            vbar.dragging = False
+
+        vbar.dragging = False
+        vbar.bind("<Button-1>", press)
+        vbar.bind("<B1-Motion>", drag)
+        vbar.bind("<ButtonRelease-1>", release, add="+")
 
 
 def main():
@@ -1777,6 +2112,14 @@ def main():
         print("  Choosing another leaves the first holding every link it settled: only")
         print("  the case on screen derives, and a case chosen again resumes there.")
         print("  The rules are printed here once the build is on screen.")
+        print("  The text in it can be taken out: sweep a line to select the")
+        print("  characters (a bare click takes the whole line), or drag DOWN")
+        print("  through several -- from anywhere, a line or empty canvas -- to")
+        print("  take every line the box touches, in reading order: that is how")
+        print("  a whole heading, tasks and periods and all, comes out at once.")
+        print("  Both land in the clipboard, Ctrl+C copies the last one again, and the")
+        print("  right button copies the hover text -- which is where a rule line the")
+        print("  window had to cut short is kept whole.")
         print("  The checks are `uv run tests_displayer.py --verify`.\n", flush=True)
 
         root = tk.Tk()

@@ -78,7 +78,7 @@ forces the timing, so wherever a step says "press Sync" you are collapsing a wai
 - [ ] `./gradlew :shared:jvmTest` — full state-engine suite passes.
 - [ ] No persisted-DB migration regressions: if this release touched `SchedulerState` / any `Persisted*`
       type, confirm a decode test loads a **previous-shape** payload and heals/renders it (CLAUDE.md →
-      Persisted-DB compatibility). A blank checkbox here means the release is not ready.
+      State → Persisted-DB compatibility). A blank checkbox here means the release is not ready.
 
 ---
 

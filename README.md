@@ -223,7 +223,10 @@ Helpers in `scripts/internal/` are **not run by hand**: `account_db_admin.py` (c
 | [`PRD.md`](PRD.md) | **Core** product requirements — the application framework itself: page navigation, platform strategy, accounts, sync model, and the roadmap of future pages. |
 | [`docs/PRD_TaskScheduler.md`](docs/PRD_TaskScheduler.md) | The full behavioural specification of the **Task Scheduler page** — every interaction, in detail. The authority on what that page should do. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | How it is built: state model, persistence, history engine, sync. |
-| [`CLAUDE.md`](CLAUDE.md) | Working rules and hard-won invariants. Read before changing the scheduler, the sync engine or anything persisted. |
+| [`CLAUDE.md`](CLAUDE.md) | The active invariants — what you must not break. Read before changing the scheduler, the sync engine or anything persisted. |
+| [`docs/adr/`](docs/adr/README.md) | Architecture decision records: *why* each invariant exists, what was tried first, and the post-mortems behind it. |
+| [`CHANGELOG.md`](CHANGELOG.md) | Dated log of what changed when, including every Supabase and SQLite migration. |
+| [`docs/SCRIPTS.md`](docs/SCRIPTS.md) | The `scripts/` entry points: state dirs, fast-break variants, deploy gotchas. |
 | [`docs/PAUSE_CUE_DELIVERY.md`](docs/PAUSE_CUE_DELIVERY.md) | Runbook for the cross-device break-cue push chain. |
 | [`docs/MANUAL_TESTING.md`](docs/MANUAL_TESTING.md) | Manual test procedures for what unit tests can't cover. |
 | [`side-dev/README.md`](side-dev/README.md) | The scheduling model itself, with its reference implementation. |
