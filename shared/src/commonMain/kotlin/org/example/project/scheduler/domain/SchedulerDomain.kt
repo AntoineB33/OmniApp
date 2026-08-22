@@ -2180,13 +2180,20 @@ object SchedulerDomain {
      * occurrence, which slides to the now-line while owed ([screenBreakNextStart]) and belongs to the FORWARD
      * projection. (Drawn by both, an owed break would appear twice at once: at its fixed due and at the
      * now-line.) The two kinds differ in how far back the evidence reaches, and it is the same asymmetry as
-     * everywhere else in §15:
-     * - a **look-away** serves itself every time the app conducts one ([serveElapsedScreenBreaks]), so its
-     *   anchor steps one whole `duration + interval` cycle per break and walking it back reproduces the
-     *   occurrences actually conducted since the last pause reset the phase;
-     * - a **rest pose** is only ever served by an observed pause, so exactly one occurrence is vouched for —
-     *   the one ending at its anchor. Chaining a pose backwards would invent a tidy cadence of 5-min breaks the
-     *   user never took, which is the opposite of what this is for.
+     * everywhere else in §15 — **only a break the app CONDUCTED is drawn in the past**:
+     * - a **look-away** is conducted: the app announces it, waits its full [ScreenBreak.durationMillis] and
+     *   says "resume your work", and its anchor steps one whole `duration + interval` cycle per break that
+     *   elapsed WHOLLY ([serveElapsedScreenBreaks]), so walking the anchor back reproduces exactly the
+     *   occurrences that happened. One that started and did NOT finish — the manual "Look away now"
+     *   superseding the run in progress ([org.example.project.scheduler.engine.SchedulerEngine.restartLookAway]),
+     *   or the app stopping mid-break — never moved the anchor, so it is simply erased;
+     * - a **rest pose (5-/15-min) draws NOTHING in the past**. Nothing about a pose ever happens in the app:
+     *   it is only ever RECOGNIZED after the fact, from an observed pause ([pastScreenBreaksFromPauses]). That
+     *   pause is already on the calendar as what it really was — the two device layers, the no-screen period,
+     *   the derived Inactivity band — so stamping a pose band over it would restate one fact as a second
+     *   object, and assert the break's nominal 5-/15-min shape in place of the pause's real extent. (It also
+     *   made the anchor's own meaning visible as a lie: an anchor seeded from a long sleep drew a tidy 5-min
+     *   pose at the end of the night.)
      *
      * Deliberately NOT the [simulateScreenBreaks] grid: these are markers of what happened, so they need no
      * merge/absorption/re-anchor interleaving (those rules place FUTURE occurrences that do not overlap), and
@@ -2202,12 +2209,9 @@ object SchedulerDomain {
         val out = mutableListOf<TaskPanel>()
         for ((index, side) in screenBreaks.withIndex()) {
             if (!isValidScreenBreak(side) || side.lastRestMillis <= 0L) continue
-            // A pose has exactly one vouched-for occurrence, the one ending at its anchor (see the docstring).
-            if (side.restBreak) {
-                val start = side.lastRestMillis - side.durationMillis
-                if (start in fromMillis..toMillis) out += screenBreakPanel(index, side.title, start, side.lastRestMillis)
-                continue
-            }
+            // A pose is never conducted, only recognized from a pause the calendar already draws as itself, so
+            // it leaves no past marker at all (see the docstring).
+            if (side.restBreak) continue
             // The look-away chains backward a cycle at a time. Skip straight to the first occurrence that can
             // fall in the window, so the cost is the window's own span and not its distance from the anchor.
             val cycle = side.durationMillis + side.intervalMillis

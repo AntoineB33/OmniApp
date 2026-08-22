@@ -1408,6 +1408,18 @@ class SchedulerEngine(
                             SchedulerDomain.CueKind.LookAwayStart -> {
                                 val start = crossing.instant
                                 if (start in announcedStarts) continue
+                                // A manual "Look away now" is running in this occurrence's place. Its anchor
+                                // only moves when it finishes ([restartLookAway]), so this due is still a
+                                // crossable boundary — swallow it rather than announce a second break over the
+                                // one the user is already taking.
+                                if (manualLookAwayJob?.isActive == true) {
+                                    announcedStarts = announcedStarts + start
+                                    Diagnostics.log(
+                                        "look-away start ${Diagnostics.formatInstant(start)} superseded: the " +
+                                            "manual 'Look away now' break is running in its place",
+                                    )
+                                    continue
+                                }
                                 val end = crossing.endInstant
                                 val title = crossing.title
                                 // Decide the start's fate now (reads are synchronous and stable across this
@@ -1525,24 +1537,31 @@ class SchedulerEngine(
     /**
      * PRD §15 (20s look-away) manual redo: re-run the 20s pause now, superseding any look-away cue still
      * sounding or pending. Mirrors the old `restartLookAway` in App.kt (the cue scope is now [scope]).
+     *
+     * **The anchor moves when the break ENDS, not here.** The look-away is the one break the app conducts, and
+     * the calendar's past side is read off that anchor ([SchedulerDomain.takenScreenBreakPanels]), so stamping
+     * it at the press would write a break into the past before it happened — and the wrong one: `lastRestMillis`
+     * is an END, so an anchor set to `now` drew the 20 s BEFORE this break, i.e. the run this very press just
+     * interrupted. Advancing it only on completion is what makes both §15 rules true: a run that did not finish
+     * (this press superseding the previous one, the app stopping) leaves no trace at all, and the one that did
+     * finish stays drawn where it happened. Forward-only, since a pause may have served the break while it ran.
+     *
+     * While it runs, the automatic occurrence it stands in for must not announce itself as well — its due is
+     * still a crossable boundary until the anchor moves — so [launchCueSweep] swallows look-away starts for as
+     * long as [manualLookAwayJob] is active.
      */
     fun restartLookAway() {
-        val now = clock.nowMillis()
         val st = vm.state.value
         val lookAway = st.screenBreaks.firstOrNull { !it.restBreak } ?: return
         stopSpeaking()
         pendingEnds = emptySet()
         manualLookAwayJob?.cancel()
-        vm.dispatch(
-            SchedulerIntent.SetScreenBreaks(
-                st.screenBreaks.map { if (!it.restBreak) it.copy(lastRestMillis = now) else it },
-            ),
-        )
-        requestReschedule(now)
         val voice = st.lookAwayVoiceEnabled
         manualLookAwayJob = scope.launch {
             notifyUser("Screen break", lookAway.title)
             if (voice) speakCue(VoiceCue.LookAway)
+            // The break is the full duration counted from when the user was TOLD, so `resumeAt` is read after
+            // the cue, and it is the end this occurrence is recorded at if it gets there.
             val resumeAt = clock.nowMillis() + lookAway.durationMillis
             while (clock.nowMillis() < resumeAt) {
                 val speed = (clock as? SimAppClock)?.speed ?: 1.0
@@ -1550,6 +1569,17 @@ class SchedulerEngine(
                     if (speed > 0.0) ((resumeAt - clock.nowMillis()).toDouble() / speed).toLong() else Long.MAX_VALUE
                 delay(remainingReal.coerceIn(1L, LOOK_AWAY_RESUME_POLL_MILLIS))
             }
+            // It happened, wholly. Serve the break at its END — the same anchor arithmetic every other rest
+            // uses, so the drawn grid and the cue's due cannot drift (CLAUDE.md: every break recurs an interval
+            // after it ENDS). Re-read the state: 20 s is long enough for a pull or a pause to have moved it.
+            vm.dispatch(
+                SchedulerIntent.SetScreenBreaks(
+                    vm.state.value.screenBreaks.map {
+                        if (!it.restBreak) it.copy(lastRestMillis = maxOf(it.lastRestMillis, resumeAt)) else it
+                    },
+                ),
+            )
+            requestReschedule(clock.nowMillis())
             announceResumeWork(voice)
         }
     }

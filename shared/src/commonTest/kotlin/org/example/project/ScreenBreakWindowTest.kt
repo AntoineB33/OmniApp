@@ -38,6 +38,7 @@ class ScreenBreakWindowTest {
         // separates "happened" from "still owed" is the anchor — the end of the last rest that served the break
         // — so the pending occurrence is left to the forward projection, which slides it to the now-line. Drawn
         // by both, an owed break would appear twice at once: at its fixed due AND at the now-line.
+        // Only a break the app CONDUCTED is drawn, which is only ever the 20-s look-away.
         val now = 10 * 60 * MIN
         val cycle = 20 * MIN + 20 * SEC
         // Anchored 25 min back: the look-away it conducted ended there, and the ones before it a cycle apart.
@@ -55,12 +56,17 @@ class ScreenBreakWindowTest {
             SchedulerDomain.screenBreakPanels(listOf(la), now).any { it.startEpochMillis == now },
         )
 
-        // A POSE vouches for exactly one occurrence, the one ending at its anchor — the pause that served it.
-        // Chaining it backward would invent a cadence of 5-min breaks the user never took.
+        // A POSE draws NOTHING in the past, however well anchored. Nothing about a 5-/15-min pose ever
+        // happens in the app — it is only recognized after the fact from a pause, and that pause is already
+        // drawn as itself (the device layers, the no-screen period, the Inactivity band). A pose band there
+        // would restate the same fact as a second object with the wrong (nominal) extent.
         val pose = pose5.copy(lastRestMillis = now - 25 * MIN)
-        val poseTaken = SchedulerDomain.takenScreenBreakPanels(listOf(pose), now - 2 * 60 * MIN, now - 1)
-        assertEquals(1, poseTaken.size)
-        assertEquals(pose.lastRestMillis - 5 * MIN, poseTaken.single().startEpochMillis)
+        assertTrue(SchedulerDomain.takenScreenBreakPanels(listOf(pose), now - 2 * 60 * MIN, now - 1).isEmpty())
+        // …while the occurrence still AHEAD of the now-line is the forward projection's to draw, as ever.
+        assertTrue(
+            SchedulerDomain.screenBreakPanels(listOf(pose), now)
+                .any { it.startEpochMillis == pose.lastRestMillis + 60 * MIN },
+        )
 
         // An unanchored break has taken nothing.
         assertTrue(SchedulerDomain.takenScreenBreakPanels(listOf(lookAway), 0, now).isEmpty())

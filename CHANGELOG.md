@@ -11,6 +11,30 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Only a conducted break is drawn in the past (PRD §15, ADR 0003) — SHIPPED 2026-08-22
+
+The calendar's past side now shows **only the 20-second look-away**, and only when it ran whole.
+
+**The 5- and 15-minute poses draw nothing in the past.** A pose used to vouch for exactly one occurrence, the
+one ending at its anchor. But nothing about a pose ever happens in the app — it is only recognized after the
+fact from an observed pause — and that pause is already on the calendar as what it really was: the two device
+layers, the no-screen period, the derived "Inactivity" band. The pose band restated one fact as a second
+object and gave it the break's nominal 5/15 min in place of the pause's real extent (an anchor seeded from a
+night's sleep drew a tidy 5-min pose at the end of the night).
+
+**A look-away that started but did not finish is erased.** `lastRestMillis` is an END, so nothing may move it
+at a break's start — and the manual "Look away now" did exactly that, stamping the anchor at the press. That
+drew a 20-s break over the 20 s *before* the manual one (the tail of the run the press had just interrupted,
+offset by however late the press came), while the manual break itself — the one that actually happened — was
+never drawn at all, since nothing moved the anchor when it ended. `SchedulerEngine.restartLookAway` now
+dispatches on **completion**, to `resumeAt`, forward-only. A superseded run leaves no trace; a completed one
+stays drawn where it happened and pushes the next occurrence an interval past its end. While the manual break
+runs, the cue sweep swallows the automatic look-away start it stands in for (that due is still a crossable
+boundary until the anchor moves).
+
+Tests: `ManualLookAwayTest`, `ScreenBreakWindowTest`. No deploy needed beyond a client rebuild
+(`account{1,2,3}-*deploy*.bat`) — client-only display + engine change, no Supabase surface.
+
 ### Default sub-tree under every newly created task (PRD §4/§7) — SHIPPED 2026-08-22
 
 A new lateral-menu button, **"Default sub-tree"**, opens a floating window holding one per-account template

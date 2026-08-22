@@ -112,24 +112,58 @@ the drawn grid and the cue's due cannot drift.
 Quantized at one fill per cycle (~20 min in production), it is a genuine rule change (the no-task period
 moved), not a per-tick re-derive.
 
-## Past breaks stay drawn
+## Only a break the app CONDUCTED is drawn in the past
 
 `takenScreenBreakPanels`, the past half of `App.kt`'s `displaySidePanels`.
 
 Read off the ANCHORS, not the projection grid: `[anchor − duration, anchor]` is a break really taken, and
 everything after the anchor is the pending occurrence the FORWARD projection draws at the now-line (drawn
-by both, an owed break appears twice at once).
+by both, an owed break appears twice at once). Skips straight to the window, so cost follows the screen and
+not the distance from `now`.
 
-- A look-away **chains backward** a cycle at a time (its anchor steps one cycle per conducted break).
-- A **pose vouches for exactly one** occurrence, the one ending at its anchor. Chaining a pose would
-  invent a tidy cadence of 5-min breaks the user never took.
+Which of the three that leaves is **exactly the one the app conducts**:
 
-Skips straight to the window, so cost follows the screen and not the distance from `now`.
+- a **look-away** is conducted — the app announces it, waits its full length and says "resume your work" —
+  and its anchor steps one whole cycle per break that elapsed wholly (`serveElapsedScreenBreaks`). So it
+  **chains backward** a cycle at a time and reproduces the occurrences that really happened;
+- a **5-/15-min pose draws NOTHING in the past.** Nothing about a pose ever happens in the app: it is only
+  ever RECOGNIZED after the fact, from an observed pause (`pastScreenBreaksFromPauses`).
+
+> The pose used to vouch for exactly one occurrence, the one ending at its anchor. That was already the
+> weaker half of the rule (chaining it would have invented a whole cadence of 5-min breaks nobody took), and
+> even one is one too many: the pause it was read off is **already on the calendar as what it really was** —
+> the two device layers, the no-screen period, the derived Inactivity band. A pose band there restates one
+> fact as a second object, and swaps the pause's real extent for the break's nominal 5/15 min. It also made
+> the anchor's own meaning visible as a lie — an anchor seeded from a night's sleep drew a tidy 5-min pose at
+> the end of the night.
+
+## A look-away that did not finish is erased
+
+The anchor is an **END**, so nothing may move it at a break's start.
+
+The manual "Look away now" (`SchedulerEngine.restartLookAway`) supersedes any run still in progress. It used
+to stamp `lastRestMillis = now` at the press, which broke both halves at once: an END written at a START drew
+a 20-s break over the 20 s *before* the manual one — the tail of the run the press had just interrupted,
+offset by however late the press came — while the manual break itself, the one that actually happened, was
+never drawn at all, because nothing moved the anchor when it ended.
+
+It now dispatches on **completion**, to `resumeAt` and forward-only (20 s is long enough for a pull or a pause
+to have moved the anchor further along). Both §15 rules then fall out of the single anchor:
+
+- a run that did not finish — superseded by another press, or the app stopping mid-break — never moved
+  anything, so it leaves no trace;
+- one that ran its full length is served at its end, stays drawn where it happened, and the next occurrence
+  recurs an interval after it (the same arithmetic as every other rest).
+
+While it runs, the automatic occurrence it stands in for must not announce itself as well — the anchor has
+not moved yet, so that due is still a crossable boundary — so the cue sweep swallows look-away starts for as
+long as the manual job is active.
 
 Tests: `SchedulerSchedulerTest.a_conducted_look_away_break_serves_itself_so_the_cue_recurs` /
 `…_a_pause_under_a_dragging_pose_…` / `…_when_both_poses_are_owed_…` /
 `…_an_owed_pose_stops_the_look_away_counting_breaks_it_never_announced`;
-`ScreenBreakWindowTest.the_past_side_of_the_calendar_draws_the_breaks_that_were_taken_and_not_the_owed_one`.
+`ScreenBreakWindowTest.the_past_side_of_the_calendar_draws_the_breaks_that_were_taken_and_not_the_owed_one`;
+`ManualLookAwayTest`.
 
 ## The END of a break is a notification, not only a voice cue
 

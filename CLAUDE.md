@@ -165,8 +165,12 @@ Terminology: **"screen breaks"** everywhere — UI, docs, code identifiers, pers
 - **Three events serve a break** — a look-away the app conducted (poses excluded), a pose that happened
   (serves every shorter break), or a real pause ≥ 15 min. Nothing else; never assume a break was taken.
 - **Every break recurs an interval after it ENDS.**
-- **Past breaks are read off the ANCHORS, not the projection grid.** A look-away chains backward; a pose
-  vouches for exactly one occurrence.
+- **Only a break the app CONDUCTED is drawn in the past — so only the 20-s look-away**, read off the ANCHORS
+  and never off the projection grid, chaining backward a cycle at a time. A **5-/15-min pose draws nothing in
+  the past**: it is never conducted, only recognized from a pause the calendar already draws as itself.
+- **A look-away that started but did not finish is erased.** The anchor is an END, so it moves only on
+  completion — the manual "Look away now" supersedes the run in progress and is itself drawn only once its own
+  20 s are up. Never move the anchor at a break's start.
 - The **end** of a break is a notification, not only a voice cue.
 - A screen-break panel has **no Edit** (no editable object behind it). A sleep band's menu leads with Edit.
 
