@@ -7,6 +7,7 @@ import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.DefaultSubtreeNode
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.SleepSchedule
@@ -143,6 +144,15 @@ object SchedulerReducer {
             is SchedulerIntent.SetLookAwayVoice ->
                 if (state.lookAwayVoiceEnabled == intent.enabled) state
                 else state.copy(lookAwayVoiceEnabled = intent.enabled)
+            is SchedulerIntent.SetDefaultSubtree -> {
+                // PRD §4: only what could actually be grafted is stored (the editor's trailing blank rows
+                // exist while its window is open and nowhere else).
+                val normalized = SchedulerDomain.normalizeDefaultSubtree(intent.nodes)
+                if (state.defaultSubtree == normalized) state else state.copy(defaultSubtree = normalized)
+            }
+            is SchedulerIntent.SetDefaultSubtreeEnabled ->
+                if (state.defaultSubtreeEnabled == intent.enabled) state
+                else state.copy(defaultSubtreeEnabled = intent.enabled)
             is SchedulerIntent.SetSleepSchedule -> reduceSetSleepSchedule(state, intent.sleep, intent.todayEpochDay)
             is SchedulerIntent.SetSleepMode -> reduceSetSleepMode(state, intent.sleepingUntilMillis)
             is SchedulerIntent.MaterializePastSleep -> materializePastSleep(state, intent.ranges)
@@ -691,13 +701,25 @@ object SchedulerReducer {
     private fun endEditSession(state: SchedulerState): SchedulerState {
         val session = state.editSession
         val cleaned = evaluatePostEditCleanup(state)
-        val before = session?.treeBefore ?: cleaned.captureTree()
-        val after = cleaned.captureTree()
+        // PRD §4 Default sub-tree: a session that CREATED a task seeds it, once, at the end — not on every
+        // keystroke (each one re-runs the naming) and after the cleanup, so a cell abandoned empty is gone
+        // before anything could be grafted under it. It rides the session's single "Edit" unit, so one
+        // Ctrl+Z takes the seeded sub-tree back with the title that pulled it in.
+        val seeded =
+            if (session == null) {
+                cleaned
+            } else {
+                val grafted = graftDefaultSubtree(cleaned, session.cellId, session.treeBefore.tasks.keys)
+                // Show what was just created rather than leaving it folded away behind a collapsed cell.
+                if (grafted === cleaned) cleaned else grafted.copy(expanded = grafted.expanded + session.cellId)
+            }
+        val before = session?.treeBefore ?: seeded.captureTree()
+        val after = seeded.captureTree()
         val committed =
             if (after != before) {
-                commitDelta(cleaned, TreeMutationDelta(before = before, after = after, label = "Edit"))
+                commitDelta(seeded, TreeMutationDelta(before = before, after = after, label = "Edit"))
             } else {
-                cleaned
+                seeded
             }
         return committed.copy(
             editSession = null,
@@ -2488,8 +2510,86 @@ private fun setCellTitleDelta(
     title: String,
 ): Delta {
     val before = state.captureTree()
-    val after = applySetCellTitle(state, cellId, title).captureTree()
+    val named = applySetCellTitle(state, cellId, title)
+    // PRD §4: naming an empty cell CREATES a task, so the default sub-tree (§7) is grafted under it in the
+    // same history unit — undoing the title undoes the sub-tree with it.
+    val after = graftDefaultSubtree(named, cellId, state.tasks.keys).captureTree()
     return TreeMutationDelta(before = before, after = after, label = "Set title")
+}
+
+/**
+ * PRD §4 **Default sub-tree**: graft [SchedulerState.defaultSubtree] under [cellId] when the naming that just
+ * happened created a *new leaf* — the cell now points at a task that did not exist in [taskIdsBefore].
+ *
+ * That last test is the whole gate, and it is deliberately about the **task**, not about the cell's previous
+ * emptiness: typing into an empty cell and picking an existing task from the Change Task menu mirrors that
+ * task, which already brings its own sub-tree along (a sub-list belongs to the task id), so there is nothing
+ * to seed. The other guards are ordinary hygiene — the policy must be on, the template non-empty, the new
+ * task titled, and its sub-list still untouched (only the placeholder PRD §4 *Auto-Expansion* just made).
+ *
+ * A no-op returns the same state instance, so every existing edit path is unaffected while the switch is off.
+ */
+private fun graftDefaultSubtree(
+    state: SchedulerState,
+    cellId: CellId,
+    taskIdsBefore: Set<TaskId>,
+): SchedulerState {
+    if (!state.defaultSubtreeEnabled || state.defaultSubtree.isEmpty()) return state
+    val taskId = state.cells[cellId]?.taskId ?: return state
+    if (taskId in taskIdsBefore) return state
+    val task = state.tasks[taskId] ?: return state
+    if (task.title.isBlank()) return state
+    val childListId = task.childListId ?: return state
+    val childList = state.lists[childListId] ?: return state
+    // Only a freshly minted, still-empty sub-list is seeded — never one the user (or a paste) already built.
+    if (childList.cellIds.any { state.cells[it]?.taskId != null }) return state
+    return applyDefaultSubtreeNodes(state, childListId, state.defaultSubtree)
+}
+
+/**
+ * Builds [nodes] into [listId], one node per row, by driving the ordinary editing primitives: each node
+ * fills the list's trailing empty placeholder exactly as typing into it would ([applySetCellTitle] then
+ * appends the next placeholder), so occurrences, `childTaskIds`, the title index and auto-expansion are all
+ * maintained by the code that already owns them rather than by a second copy of those rules here.
+ *
+ * Those primitives are called **directly**, never through the `SetCellTitle` intent — which is what makes the
+ * graft terminate: a row this builds is a task *the graft* created, not one the user created, so it must not
+ * be seeded in turn (that would be an unbounded cascade, every seeded row re-applying the whole template for
+ * ever). The only descent is into a node's own [DefaultSubtreeNode.children], so the recursion is bounded by
+ * the template's depth.
+ *
+ * A node bound to an existing task ([DefaultSubtreeNode.taskId]) is assigned to it — which is what mirrors
+ * that task's own sub-tree under the new cell — and its template children are therefore *not* applied: the
+ * sub-list belongs to the task id, so the template has no say in it. A binding that this tree cannot honour
+ * (the task belongs to another task tree, has since been deleted, or would duplicate a task inside the
+ * sub-tree — [SchedulerDomain.canAssignTaskId]) falls back to minting a new task with the node's title, so
+ * the row still appears instead of silently vanishing.
+ */
+private fun applyDefaultSubtreeNodes(
+    state: SchedulerState,
+    listId: CellListId,
+    nodes: List<DefaultSubtreeNode>,
+): SchedulerState {
+    var working = state
+    for (node in nodes) {
+        val title = node.title.trim()
+        // Belt and braces: the stored template holds no blank row (SchedulerDomain.normalizeDefaultSubtree).
+        if (title.isEmpty()) continue
+        val list = working.lists[listId] ?: return working
+        val target = list.cellIds.lastOrNull { working.cells[it]?.taskId == null } ?: return working
+        val bound =
+            node.taskId?.takeIf { it in working.tasks && SchedulerDomain.canAssignTaskId(working, target, it) }
+        working =
+            if (bound != null) {
+                applySetCellTitle(applyAssignTaskId(working, target, bound), target, title, forceTaskId = bound)
+            } else {
+                applySetCellTitle(working, target, title)
+            }
+        if (bound != null || node.children.isEmpty()) continue
+        val childListId = working.cells[target]?.taskId?.let { working.tasks[it]?.childListId } ?: continue
+        working = applyDefaultSubtreeNodes(working, childListId, node.children)
+    }
+    return working
 }
 
 private fun applySetCellTitle(

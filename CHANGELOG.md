@@ -11,6 +11,68 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Default sub-tree under every newly created task (PRD §4/§7) — SHIPPED 2026-08-22
+
+A new lateral-menu button, **"Default sub-tree"**, opens a floating window holding one per-account template
+tree; the **switch to its left** says whether the policy is currently applied. While it is on, typing a title
+into an empty cell no longer produces a bare leaf: the template is grafted under the task that naming just
+created.
+
+**A template node's `taskId` IS the row's switch** — `null` means "New id" (mint a brand-new task every time
+the template is applied), a value means "point at this one task". There is no second boolean, and that is the
+point: "picking an existing task turns the switch off", "turning the switch on re-selects New id", and "the
+switch cannot be turned off while New id is selected" all fall out of the single field instead of being three
+rules something has to keep consistent. The row's menu is the ordinary §4 naming block
+(`SchedulerDomain.defaultSubtreeTaskMenuEntries`), so the window looks and behaves like every other field in
+the app that names an object.
+
+**A bound row contributes the bound task's own sub-tree, not the template's children.** A sub-list belongs to
+the task id, not to the cell (that is what mirroring is), so the template cannot give a mirrored task different
+children. Its template children are *kept* rather than deleted — turning the switch back on brings them back,
+the same retention rule detached parents got the day before.
+
+**The graft fires once, at `endEditSession`**, and only when the session actually **created** a task
+(`taskId !in session.treeBefore.tasks`). Two rejected placements: inside `applySetCellTitle`, which the paste
+path and the edit-session's own per-keystroke re-naming both call (a template would have been re-grafted on
+every letter, and pasted trees would have been seeded); and gated on "the cell was empty", which cannot tell
+creating a task from *reusing* one — reuse mirrors a task whose sub-tree already comes with the id, so there is
+nothing to seed. It builds the rows by driving `applySetCellTitle` / `applyAssignTaskId` rather than writing
+cells itself, so occurrences, `childTaskIds`, the title index and PRD §4 auto-expansion stay owned by the code
+that already owns them. Riding the session's single "Edit" unit means one `Ctrl + Z` takes the seeded sub-tree
+back with the title that pulled it in.
+
+A binding the live tree cannot honour — the task was deleted, belongs to another task tree, or would duplicate
+a task inside the sub-tree (`canAssignTaskId`) — falls back to a new task with the row's title, so a row never
+silently disappears. A template is account-wide while a task id lives in one task tree, so this is the ordinary
+case, not an edge one.
+
+State: `SchedulerState.defaultSubtree` + `defaultSubtreeEnabled`, authoritative (persisted **and** synced, JSON
+payload only — no SQLite schema change), resolved as one whole value by `SnapshotMerge` (interleaving two
+devices' node insertions would produce a template neither of them drew). Both decode to "no template, switch
+off" for payloads written before the feature, and `decode` runs `normalizeDefaultSubtree` so a blank-titled or
+oddly-bound node from an older/hand-edited payload is healed rather than reaching the graft. Deliberately
+**not** in `schedulingSignature`: a template schedules nothing until it is applied to a real cell.
+Tests: `DefaultSubtreeTest`. Deploy: client rebuild only.
+
+**The window is the task tree, plus one little switch per non-empty cell** (revised 2026-08-22, same day). The
+first cut drew the template as its own thing — a column of always-on `OutlinedTextField`s, a bin button per row,
+a caption naming the bound task — which read as a different feature from the tree it is a template *of*. It now
+renders through the task sheet's own chrome, extracted to `ui/TaskSheetChrome.kt` (`SheetColors`,
+`INDENT_STEP_DP`, `taskSheetGuideLines`, `TaskSheetExpandArrow`) and imported by both `TaskSchedulerScreen` and
+`DefaultSubtreeWindow`, so there is one copy of the look rather than two that drift. The gestures came with it:
+click to select, double-click **or simply typing** to open Edit Mode in place, `Enter`/`Shift+Enter`/`Tab`
+navigation, `Ctrl+Enter` for a line break, `Backspace`/`Delete` to empty a row. The bin button is gone — the
+blank title is what deletes, here as in the tree — and so is the caption: a bound row now **draws** the task's
+own sub-tree beneath it (`SchedulerDomain.taskSubtreeOutline`, depth-capped), greyed and uneditable, the way the
+tree draws a cell nothing may be done to. Only two columns are dropped, because a template has nothing to put in
+them: the priority percentage (§5 — no tree, so no absolute priority) and the minimum time (§10 — no real task
+yet); the switch takes the percentage's column at its width so both trees line up. The switch itself is drawn
+compact rather than as a Material `Switch`, which measures taller than a 28 dp task-sheet row and would have
+made the template's rows a different height from the tree's. Deploy: client rebuild only.
+
+Known scope limit: the template is one per account and shared by every task tree (§6); there is no per-tree
+template, and no way to re-apply it to tasks that already exist.
+
 ### Detached parent tasks survive a task-id change (PRD §4) — SHIPPED 2026-08-21
 
 Re-pointing a cell at another task id used to **delete** the task it left the moment it lost its last cell

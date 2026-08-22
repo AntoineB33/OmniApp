@@ -96,6 +96,7 @@ import org.example.project.ui.PlacedRecord
 import org.example.project.ui.ReminderEditWindow
 import org.example.project.ui.SimPauseScope
 import org.example.project.ui.SleepWindow
+import org.example.project.ui.DefaultSubtreeWindow
 import org.example.project.ui.TaskTreesWindow
 import org.example.project.ui.TimeSimPanel
 
@@ -104,7 +105,7 @@ enum class OmniPage(val label: String) {
 }
 
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
-private enum class FloatingWindow { Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TimeSim }
+private enum class FloatingWindow { Calendar, Reminders, History, Sleep, Alarms, TaskTrees, DefaultSubtree, TimeSim }
 
 // Debug "simulate pause + leap": pressing a break chip INSTANTLY jumps the sim clock forward by the whole
 // break ([SimAppClock.leap]) — the now-line leaps to the break's end rather than gliding there over ~1 real
@@ -333,6 +334,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // All task trees: whether the floating task-tree timeline window is open (local UI state; the trees
         // and their dates are authoritative synced state).
         var taskTreesWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.TaskTrees)) }
+        // PRD §4 Default sub-tree: whether the floating template window is open (local UI state; the template
+        // and the "is it applied" switch are authoritative synced state).
+        var defaultSubtreeWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.DefaultSubtree)) }
 
         // The floating windows are siblings in one Box, so their paint order is their declaration order.
         // To put the *currently focused* window on top of the layers, we keep an explicit stacking order
@@ -348,6 +352,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     FloatingWindow.Sleep,
                     FloatingWindow.Alarms,
                     FloatingWindow.TaskTrees,
+                    FloatingWindow.DefaultSubtree,
                     FloatingWindow.TimeSim,
                 ),
             )
@@ -363,6 +368,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Sleep -> sleepWindowOpen
             FloatingWindow.Alarms -> alarmWindowOpen
             FloatingWindow.TaskTrees -> taskTreesWindowOpen
+            FloatingWindow.DefaultSubtree -> defaultSubtreeWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
         }
         // The focused window is the topmost open one in the stack.
@@ -376,6 +382,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Sleep -> null
             FloatingWindow.Alarms -> null
             FloatingWindow.TaskTrees -> null
+            FloatingWindow.DefaultSubtree -> null
             FloatingWindow.TimeSim -> null
         }
         // PRD §7 window navigation: raise [id] to the top layer AND move scheduler focus onto it, which
@@ -405,6 +412,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var sleepOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Sleep, Offset(120f, -120f))) }
         var alarmOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Alarms, Offset(-120f, 120f))) }
         var taskTreesOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskTrees, Offset(-260f, -60f))) }
+        var defaultSubtreeOffset by
+            remember { mutableStateOf(savedOffset(FloatingWindow.DefaultSubtree, Offset(260f, -60f))) }
         // Persist each window's visibility whenever it opens/closes (its offset persists separately on drag-end).
         LaunchedEffect(calendarOpen) { persistPlacement(FloatingWindow.Calendar, calendarOffset, calendarOpen) }
         LaunchedEffect(choresManagerOpen) { persistPlacement(FloatingWindow.Reminders, remindersOffset, choresManagerOpen) }
@@ -412,6 +421,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         LaunchedEffect(sleepWindowOpen) { persistPlacement(FloatingWindow.Sleep, sleepOffset, sleepWindowOpen) }
         LaunchedEffect(alarmWindowOpen) { persistPlacement(FloatingWindow.Alarms, alarmOffset, alarmWindowOpen) }
         LaunchedEffect(taskTreesWindowOpen) { persistPlacement(FloatingWindow.TaskTrees, taskTreesOffset, taskTreesWindowOpen) }
+        LaunchedEffect(defaultSubtreeWindowOpen) {
+            persistPlacement(FloatingWindow.DefaultSubtree, defaultSubtreeOffset, defaultSubtreeWindowOpen)
+        }
 
         var selectedDate by remember { mutableStateOf(today) }
         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
@@ -906,6 +918,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleTaskTrees = {
                         onMenuWindowClicked(FloatingWindow.TaskTrees) { taskTreesWindowOpen = it }
                     },
+                    defaultSubtreeWindowOpen = defaultSubtreeWindowOpen,
+                    onToggleDefaultSubtree = {
+                        onMenuWindowClicked(FloatingWindow.DefaultSubtree) { defaultSubtreeWindowOpen = it }
+                    },
+                    defaultSubtreeEnabled = schedulerState.defaultSubtreeEnabled,
+                    onToggleDefaultSubtreeEnabled = {
+                        vm.dispatch(SchedulerIntent.SetDefaultSubtreeEnabled(it))
+                    },
                     sleeping = schedulerState.isSleeping(nowMillis),
                     onToggleSleepWork = {
                         if (schedulerState.isSleeping(clock.nowMillis())) {
@@ -919,7 +939,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     away = userAway,
                     onToggleAway = { engine.setUserAway(!userAway) },
                     anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen ||
-                        alarmWindowOpen || taskTreesWindowOpen,
+                        alarmWindowOpen || taskTreesWindowOpen || defaultSubtreeWindowOpen,
                     onCloseAllWindows = {
                         calendarOpen = false
                         choresManagerOpen = false
@@ -927,6 +947,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         sleepWindowOpen = false
                         alarmWindowOpen = false
                         taskTreesWindowOpen = false
+                        defaultSubtreeWindowOpen = false
                     },
                 )
 
@@ -1298,6 +1319,32 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             modifier = Modifier
                                 .align(Alignment.Center)
                                 .zIndex(windowZ(FloatingWindow.TaskTrees)),
+                        )
+                    }
+
+                    // PRD §4 Default sub-tree: the template grafted under every task the user creates. The
+                    // template and the switch beside its menu button are authoritative synced state; the
+                    // menus it shows are the ordinary §4 naming menus, read off the live tree.
+                    if (defaultSubtreeWindowOpen) {
+                        DefaultSubtreeWindow(
+                            nodes = schedulerState.defaultSubtree,
+                            enabled = schedulerState.defaultSubtreeEnabled,
+                            onChange = { vm.dispatch(SchedulerIntent.SetDefaultSubtree(it)) },
+                            taskMenuEntries = {
+                                SchedulerDomain.defaultSubtreeTaskMenuEntries(schedulerState, it)
+                            },
+                            titleSuggestions = { SchedulerDomain.titleSuggestions(schedulerState, it) },
+                            boundSubtree = { SchedulerDomain.taskSubtreeOutline(schedulerState, it) },
+                            onDismiss = { defaultSubtreeWindowOpen = false },
+                            initialOffset = defaultSubtreeOffset,
+                            onOffsetChange = {
+                                defaultSubtreeOffset = it
+                                persistPlacement(FloatingWindow.DefaultSubtree, it, true)
+                            },
+                            onRaise = { focusWindow(FloatingWindow.DefaultSubtree) },
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .zIndex(windowZ(FloatingWindow.DefaultSubtree)),
                         )
                     }
 

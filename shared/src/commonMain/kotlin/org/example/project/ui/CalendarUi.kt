@@ -686,6 +686,16 @@ fun LateralMenu(
     /** All task trees (the timeline of dated task trees): whether that window is open + toggle callback. */
     taskTreesWindowOpen: Boolean = false,
     onToggleTaskTrees: () -> Unit = {},
+    /** PRD §4 Default sub-tree: whether that window is open + toggle callback. */
+    defaultSubtreeWindowOpen: Boolean = false,
+    onToggleDefaultSubtree: () -> Unit = {},
+    /**
+     * PRD §4/§7 Default sub-tree: whether the policy is **currently applied** — the switch sitting to the LEFT
+     * of the "Default sub-tree" button. Off means a newly created task is seeded with nothing, as before the
+     * template existed; the template itself is kept either way.
+     */
+    defaultSubtreeEnabled: Boolean = false,
+    onToggleDefaultSubtreeEnabled: (Boolean) -> Unit = {},
     /**
      * Sleep/Work toggle: whether the user is currently in "sleeping" mode (pressed **Sleep**). The button reads
      * **Work** while sleeping and **Sleep** while working; pressing it flips the mode ([onToggleSleepWork]) and
@@ -842,6 +852,27 @@ fun LateralMenu(
             active = taskTreesWindowOpen,
             onClick = onToggleTaskTrees,
         )
+
+        // PRD §4 Default sub-tree: the template grafted under every newly created task. The switch to the
+        // button's left says whether that policy is applied right now — the button opens the template's own
+        // window either way, so the user can build it before switching it on.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Switch(
+                checked = defaultSubtreeEnabled,
+                onCheckedChange = onToggleDefaultSubtreeEnabled,
+            )
+            Spacer(Modifier.width(8.dp))
+            Box(Modifier.weight(1f)) {
+                MenuButton(
+                    label = "Default sub-tree",
+                    active = defaultSubtreeWindowOpen,
+                    onClick = onToggleDefaultSubtree,
+                )
+            }
+        }
     }
 }
 

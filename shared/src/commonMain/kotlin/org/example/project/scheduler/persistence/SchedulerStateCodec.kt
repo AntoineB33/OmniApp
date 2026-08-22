@@ -20,6 +20,7 @@ import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
+import org.example.project.scheduler.model.DefaultSubtreeNode
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.ScheduleUnitEntry
@@ -261,6 +262,9 @@ object SchedulerStateCodec {
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
+            // PRD §4 Default sub-tree: the template and whether it is currently applied.
+            defaultSubtree = defaultSubtree.map { it.toPersisted() },
+            defaultSubtreeEnabled = defaultSubtreeEnabled,
             focusedWindow = focusedWindow.name,
             histories = histories.toPersisted(),
             sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
@@ -271,6 +275,22 @@ object SchedulerStateCodec {
                 supabaseUsageLog.map {
                     PersistedSupabaseUsageEntry(it.timeMillis, it.resource, it.operation, it.requestBytes, it.responseBytes, it.status)
                 },
+        )
+
+    private fun DefaultSubtreeNode.toPersisted(): PersistedDefaultSubtreeNode =
+        PersistedDefaultSubtreeNode(
+            id = id,
+            title = title,
+            taskId = taskId?.value,
+            children = children.map { it.toPersisted() },
+        )
+
+    private fun PersistedDefaultSubtreeNode.toNode(): DefaultSubtreeNode =
+        DefaultSubtreeNode(
+            id = id,
+            title = title,
+            taskId = taskId?.let(::TaskId),
+            children = children.map { it.toNode() },
         )
 
     private fun SchedulerHistories.toPersisted(): PersistedHistories =
@@ -551,6 +571,12 @@ object SchedulerStateCodec {
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
+            // PRD §4: a payload written before the "Default sub-tree" window existed decodes to no template
+            // and the policy off — exactly the behaviour it had. [normalizeDefaultSubtree] heals a payload an
+            // older/hand-edited build could hold (a blank-titled node, or a binding on one) rather than
+            // letting it reach the graft.
+            defaultSubtree = SchedulerDomain.normalizeDefaultSubtree(defaultSubtree.map { it.toNode() }),
+            defaultSubtreeEnabled = defaultSubtreeEnabled,
             focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),
             histories = histories?.toHistories() ?: SchedulerHistories(),
             sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
@@ -775,6 +801,11 @@ private data class PersistedState(
     val showReminders: Boolean = true,
     // PRD §15: the 20s look-away voice cue; default on (payloads written before the toggle existed get the voice).
     val lookAwayVoiceEnabled: Boolean = true,
+    // PRD §4 Default sub-tree: the template grafted under a newly created task, and whether the policy is
+    // applied. Missing values decode to "no template, switch off" — payloads written before the window
+    // existed, for which nothing was ever grafted.
+    val defaultSubtree: List<PersistedDefaultSubtreeNode> = emptyList(),
+    val defaultSubtreeEnabled: Boolean = false,
     // PRD §7: the focused window; a missing value decodes to the task tree (payloads written before window
     // focus was persisted).
     val focusedWindow: String = "Tree",
@@ -796,6 +827,19 @@ private data class PersistedState(
     // The local-only Supabase-usage diagnostic log; a missing value decodes to empty (payloads written before
     // the History Manager's "Supabase usage" column existed). Local-only — stripped from the sync fingerprint.
     val supabaseUsageLog: List<PersistedSupabaseUsageEntry> = emptyList(),
+)
+
+/**
+ * PRD §4 Default sub-tree: one template node (see [DefaultSubtreeNode]). Recursive, and every field carries a
+ * default so a payload written by an older shape decodes cleanly. `taskId == null` is the node's switch in
+ * its **on** position ("new id"), which is also what a payload omitting the field says.
+ */
+@Serializable
+private data class PersistedDefaultSubtreeNode(
+    val id: String = "",
+    val title: String = "",
+    val taskId: String? = null,
+    val children: List<PersistedDefaultSubtreeNode> = emptyList(),
 )
 
 @Serializable

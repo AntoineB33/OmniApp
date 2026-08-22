@@ -345,6 +345,22 @@ data class SchedulerState(
      */
     val sleepingSinceMillis: Long? = null,
     /**
+     * PRD §4 **Default sub-tree**: the template grafted under every task the user creates by typing into an
+     * empty cell — a tree of titles, each either minting a fresh task id or bound to one existing task (see
+     * [org.example.project.scheduler.model.DefaultSubtreeNode]). Authoritative user data (nothing re-derives
+     * it): persisted **and** synced, like the alarms. Empty by default, and a payload written before the
+     * window existed decodes to empty, which is also what [defaultSubtreeEnabled] = false means in practice.
+     */
+    val defaultSubtree: List<org.example.project.scheduler.model.DefaultSubtreeNode> = emptyList(),
+    /**
+     * PRD §4/§7: whether the [defaultSubtree] policy is **currently applied** — the switch left of the
+     * "Default sub-tree" button in the lateral menu. Off by default (and for every payload written before the
+     * feature existed), so an existing account's cells keep behaving exactly as they did. Turning it off
+     * leaves the template stored and every sub-tree it already produced untouched: it only stops *future*
+     * cells from being seeded. Persisted + synced; not undoable (like the §7 automatic-schedule switch).
+     */
+    val defaultSubtreeEnabled: Boolean = false,
+    /**
      * PRD §5 the relative-priority window: the cells whose percentage is **pinned** while a relative
      * priority is retargeted, per (task, ancestor) pair (see [RelativePriorityPinKey]). Authoritative
      * user-authored data — it cannot be recomputed from anything else — so it is persisted **and** synced

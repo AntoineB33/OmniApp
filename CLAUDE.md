@@ -52,7 +52,7 @@ re-derives something mark the state dirty or trigger a sync push.
 
 | Class | Contents | Rule |
 | --- | --- | --- |
-| **Authoritative** | task tree, named task trees, user-authored/pinned panels, chores/reminders, sleep schedule, alarms, settings, Undo/Redo history units, manual record edits | persist + sync |
+| **Authoritative** | task tree, named task trees, the default sub-tree + its switch, user-authored/pinned panels, chores/reminders, sleep schedule, alarms, settings, Undo/Redo history units, manual record edits | persist + sync |
 | **Derived** | auto/screen-break/sleep panels, records the advance banks | persisted locally, **stripped from the wire**, never trigger a push on their own |
 | **Local-only view state** | focused window, tree selection, `showScreenBreaks`/`showReminders`, WindowNav/Selection history, window placement, OS-sleep scan checkpoint | persist locally, **never sync** |
 
@@ -267,6 +267,38 @@ crossing can be silently clipped by a clock jump.
   key on anything else.
 - A task **no cell points at** is named in the Change Task menu by its child titles, never by a path (PRD §4):
   `shortestTaskTreePath` reads the denormalized `Task.childTaskIds`, which outlives the detachment.
+
+### The default sub-tree
+
+PRD §4/§7: one per account, grafted under every task the user **creates**. Off by default
+(`defaultSubtreeEnabled`), authoritative, and outside `schedulingSignature` — a template schedules nothing
+until it is applied to a real cell.
+
+- **A node's `taskId` IS its switch.** `null` ⇒ "New id" ⇒ the switch is on. There is deliberately no second
+  boolean, which is what makes "the switch can't be off while New id is selected" true by construction rather
+  than by a rule someone has to enforce.
+- **A node bound to an existing task contributes that task's OWN sub-tree** — a sub-list belongs to the task
+  id — so its template children are kept but never applied. Do not "fix" this by writing into the bound task's
+  sub-list. The window **draws** that borrowed sub-tree under the row, greyed and uneditable.
+- **The window IS the task tree, plus one little switch per non-empty cell.** Same chrome, same indentation and
+  guide-lines, same expand arrows, same gestures (click to select, double-click or type to edit,
+  Enter/Shift+Enter/Tab, Backspace/Delete empties). That look lives in **one** place — `ui/TaskSheetChrome.kt`
+  (`SheetColors`, `INDENT_STEP_DP`, `taskSheetGuideLines`, `TaskSheetExpandArrow`) — which both trees import. A
+  second palette or a second indent step is how the two silently drift apart.
+- **Only the percentage and the minimum-time columns are dropped**, because a template is in no tree and has no
+  real task yet. The switch takes the percentage's column at the same width, so the two trees line up. Do not
+  add a bin button back: **the blank title is what deletes**, here as in the tree.
+- **It fires once, at `endEditSession`**, and only when the session **created** the task (`taskId !in
+  session.treeBefore.tasks`). Not per keystroke (each one re-runs the naming), and not when the session reused
+  an existing task (its sub-tree already came with the id). A sub-list that already holds a cell is never
+  re-seeded.
+- **The graft drives `applySetCellTitle` / `applyAssignTaskId`**, so occurrences, `childTaskIds`, the title
+  index and auto-expansion stay owned by the code that already owns them. Never a second copy of those rules.
+- **A seeded row must never seed in turn** — that is an unbounded cascade, not a deeper template. The graft
+  calls those primitives *directly*, never the `SetCellTitle` intent, so it descends only through the
+  template's own children and stops at its leaves. Never route it through the reducer's intent path.
+- A binding the live tree cannot honour (deleted, another task tree, or `canAssignTaskId` says no) falls back
+  to a new task. Paste and the other internal `applySetCellTitle` callers deliberately never graft.
 
 ### Task trees are live alternatives, not backups
 

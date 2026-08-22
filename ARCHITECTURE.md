@@ -53,7 +53,7 @@ flowchart TB
 
 | Component | Lives in | Owns | Must not |
 | --- | --- | --- | --- |
-| `SchedulerState` | `scheduler/state/SchedulerState.kt` | The entire immutable truth: task tree + named alternative trees, calendar panels, completed-work records, chores/reminders, alarms, sleep schedule, settings, Undo/Redo history units, and local-only view state. | Hold anything derivable (§4). |
+| `SchedulerState` | `scheduler/state/SchedulerState.kt` | The entire immutable truth: task tree + named alternative trees, the default sub-tree template, calendar panels, completed-work records, chores/reminders, alarms, sleep schedule, settings, Undo/Redo history units, and local-only view state. | Hold anything derivable (§4). |
 | `SchedulerIntent` | `scheduler/state/SchedulerIntent.kt` | Every user action *and* every engine event, as data. Its `syncsToServer()` draws the authoritative/derived line the whole sync model rests on (§8.1). | — |
 | `SchedulerReducer` | `scheduler/state/SchedulerReducer.kt` | The single place state changes: `(State, Intent) → State`, pure and synchronous. Returns the *same instance* for a no-op, so a tick cannot churn storage. | Perform I/O, read the clock on its own, or touch Compose. |
 | `SchedulerDomain` | `scheduler/domain/SchedulerDomain.kt` | Pure planning and projection: `fillSchedule` (the driver), screen-break and sleep projection, inactivity derivation, `schedulingSignature`, the cue due instants, display transforms such as sleep carving. | Depend on the ViewModel, the store or the network. |
@@ -64,7 +64,7 @@ flowchart TB
 | `SchedulerStore` / `SqlDelightSchedulerStore` / `SchedulerStateCodec` | `scheduler/persistence/` | Local persistence, schema migrations, JSON encode/decode, the `syncFingerprint` (the authoritative projection), and **healing** of states that older builds wrote (§4). | Surface a legacy shape as a live anomaly instead of repairing it. |
 | `SchedulerSyncEngine`, `RemoteSnapshotClient`, `RealtimeSnapshotSubscriber`, `SnapshotMerge` | `scheduler/sync/` | Accounts, the mutex-guarded `reconcile()`, the three-way merge, the Realtime subscription (§8). | Push anything derived. |
 | `DeviceHeartbeatPublisher`, `PauseCueGateway` | `scheduler/sync/` | The presence tick and the two pause-cue Edge Function calls (§8). | Carry schedule-dependent data on the tick (§8.1). |
-| UI | `App.kt`, `scheduler/ui/TaskSchedulerScreen.kt`, `ui/CalendarUi.kt`, `ui/{Alarm,Sleep,TaskTrees}Window.kt`, `ui/TimeSimPanel.kt` | Rendering, gestures, floating windows, and the **display-only** projections bounded by the visible week (§3). | Decide anything, or store anything. |
+| UI | `App.kt`, `scheduler/ui/TaskSchedulerScreen.kt`, `ui/CalendarUi.kt`, `ui/{Alarm,Sleep,TaskTrees,DefaultSubtree}Window.kt`, `ui/TaskSheetChrome.kt`, `ui/TimeSimPanel.kt` | Rendering, gestures, floating windows, and the **display-only** projections bounded by the visible week (§3). `TaskSheetChrome.kt` is the **one** copy of what a task-tree row looks like — the task tree and the default-sub-tree template both draw through it. | Decide anything, or store anything. Hold a second palette or indent step for a tree row. |
 | Platform seams | `scheduler/platform/*`, `time/AppClock.kt`, `scheduler/debug/TimeLink.kt` | `expect`/`actual` access to notifications, speech, alarms, clipboard, OS session state, the OS sleep log, and the injectable clock (§10). | Grow logic — the `actual`s are adapters. |
 
 ### 0.3 The primary flows

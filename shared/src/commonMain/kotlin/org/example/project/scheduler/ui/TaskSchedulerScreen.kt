@@ -116,39 +116,19 @@ import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.SelectionNavigate
+import org.example.project.ui.INDENT_STEP_DP
+import org.example.project.ui.PERCENT_COLUMN_WIDTH
+import org.example.project.ui.PRIORITY_COLUMN_MAX
+import org.example.project.ui.PRIORITY_COLUMN_MIN
+import org.example.project.ui.SheetColors
+import org.example.project.ui.TaskSheetExpandArrow
+import org.example.project.ui.taskSheetGuideLines
+import org.example.project.ui.isModifierKey
+import org.example.project.ui.printableChar
 import org.example.project.ui.EditMenuItem
 import org.example.project.ui.EditModeMenuBlock
 import org.example.project.ui.EditModeOption
 import kotlinx.coroutines.withTimeoutOrNull
-
-private object SheetColors {
-    val grid = Color(0xFFDADCE0)
-    val cellBackground = Color.White
-    val selectionFill = Color(0xFFE8F0FE)
-    val activeBorder = Color(0xFF1A73E8)
-    val nonSelectableFill = Color(0xFFF8F9FA)
-    val guideLine = Color(0xFFC7CBD1)
-    val overflowArrow = Color(0xFFD93025)
-    /** PRD §3 / §5: background of a cell or column while it is being drag-moved. */
-    val moveDragFill = Color(0xFFCFD3D8)
-}
-
-/** Indentation step (dp) per nesting level; also the spacing between hierarchy guide-lines. */
-private const val INDENT_STEP_DP = 16
-
-/** Horizontal offset (dp) of a level's guide-line, aligned under that ancestor's expand arrow. */
-private const val GUIDE_LINE_OFFSET_DP = 14
-
-/**
- * PRD §2 Priority Display: the text column before the priority percentage is sized to the widest
- * cell text of the sublist, clamped between these bounds so the percentages of one sublist all
- * align at the same horizontal position.
- */
-private val PRIORITY_COLUMN_MIN = 56.dp
-private val PRIORITY_COLUMN_MAX = 280.dp
-
-/** Fixed width of the displayed priority percentage, so the weight table columns align per row. */
-private val PERCENT_COLUMN_WIDTH = 52.dp
 
 /** Width of one weight-table column (number field + stacked +/- buttons). */
 private val WEIGHT_COLUMN_WIDTH = 60.dp
@@ -664,43 +644,6 @@ fun TaskSchedulerScreen(
         // layer, above the calendar — not here — so it sits over every other window and dismisses on a
         // click anywhere else (which still does its normal job).
     }
-}
-
-private fun androidx.compose.ui.input.key.Key.isModifierKey(): Boolean =
-    when (this) {
-        Key.ShiftLeft,
-        Key.ShiftRight,
-        Key.CtrlLeft,
-        Key.CtrlRight,
-        Key.AltLeft,
-        Key.AltRight,
-        Key.MetaLeft,
-        Key.MetaRight,
-        -> true
-        else -> false
-    }
-
-private fun androidx.compose.ui.input.key.KeyEvent.printableChar(): String? {
-    if (isCtrlPressed || isMetaPressed) return null
-    if (key.isModifierKey()) return null
-    if (key == Key.Enter || key == Key.Tab || key == Key.Escape || key == Key.Backspace) return null
-    if (key == Key.DirectionUp || key == Key.DirectionDown ||
-        key == Key.DirectionLeft || key == Key.DirectionRight
-    ) {
-        return null
-    }
-    val codePoint = utf16CodePoint
-    if (!codePoint.isValidTextCodePoint()) return null
-    return Char(codePoint).toString()
-}
-
-/** Rejects control codes and Unicode non-characters (e.g. U+FFFF from bare Shift on desktop). */
-private fun Int.isValidTextCodePoint(): Boolean {
-    if (this <= 0x1F) return false
-    if (this in 0x7F..0x9F) return false
-    if (this in 0xFDD0..0xFDEF) return false
-    if ((this and 0xFFFE) == 0xFFFE) return false
-    return true
 }
 
 @Composable
@@ -2158,23 +2101,8 @@ private fun TaskRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                // PRD §2: guide-lines on the left illustrate the parent-child hierarchy. One
-                // vertical line is drawn in the indentation gutter under each expanded ancestor's
-                // arrow; they only appear beneath expanded cells (collapsed cells hide their rows).
-                .drawBehind {
-                    val step = INDENT_STEP_DP.dp.toPx()
-                    val offset = GUIDE_LINE_OFFSET_DP.dp.toPx()
-                    val stroke = 1.dp.toPx()
-                    for (level in 0 until depth) {
-                        val x = level * step + offset
-                        drawLine(
-                            color = SheetColors.guideLine,
-                            start = Offset(x, 0f),
-                            end = Offset(x, size.height),
-                            strokeWidth = stroke,
-                        )
-                    }
-                }
+                // PRD §2: guide-lines on the left illustrate the parent-child hierarchy.
+                .taskSheetGuideLines(depth)
                 .padding(start = (depth * INDENT_STEP_DP).dp)
                 .defaultMinSize(minHeight = 28.dp)
                 .background(cellBackground)
@@ -2213,30 +2141,11 @@ private fun TaskRow(
                     )
                 }
             }
-            Box(
-                modifier = Modifier
-                    .size(20.dp)
-                    .then(
-                        if (hasChildren) {
-                            Modifier.clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = onToggleExpand,
-                            )
-                        } else {
-                            Modifier
-                        }
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (hasChildren) {
-                    Text(
-                        text = if (expanded) "▾" else "▸",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+            TaskSheetExpandArrow(
+                hasChildren = hasChildren,
+                expanded = expanded,
+                onToggle = onToggleExpand,
+            )
             if (isEditing) {
                 var textFieldValue by remember(cellId) { mutableStateOf(TextFieldValue()) }
                 SideEffect {

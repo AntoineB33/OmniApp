@@ -347,6 +347,27 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §4 **Default sub-tree**: replace the whole template with [nodes] (rows are edited live in the
+     * "Default sub-tree" window, §7). Blank-titled nodes are dropped with their children — the blank title is
+     * what deletes, here as in the tree — so the stored template holds only what could actually be grafted.
+     * Authoritative — persisted and synced; not undoable, and it never re-plans (the template is not part of
+     * [org.example.project.scheduler.domain.SchedulerDomain.schedulingSignature]: nothing is scheduled until
+     * it is applied to a real cell).
+     */
+    data class SetDefaultSubtree(
+        val nodes: List<org.example.project.scheduler.model.DefaultSubtreeNode>,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §4/§7: turn the default-sub-tree policy on/off (the switch left of the lateral-menu button). Off
+     * means new cells are created bare, exactly as before the feature existed; the template itself is kept
+     * either way. Persisted + synced; not undoable.
+     */
+    data class SetDefaultSubtreeEnabled(
+        val enabled: Boolean,
+    ) : SchedulerIntent
+
+    /**
      * Sets the user's sleep schedule (wake/goal/duration). The scheduler then leaves the nightly sleep
      * window empty. [todayEpochDay] anchors the 15-min-per-2-days wake drift at the current local day when
      * a goal different from the current wake is set. Persisted; recorded as an undoable Main History Unit

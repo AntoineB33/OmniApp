@@ -13,6 +13,7 @@ import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
+import org.example.project.scheduler.model.DefaultSubtreeNode
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.ScreenBreak
@@ -3783,6 +3784,86 @@ object SchedulerDomain {
             }
         }
     }
+
+    /**
+     * PRD §4 **Default sub-tree** (the lateral-menu window, §7): the identity menu of one template node.
+     *
+     * A leading **"New id"** row — the node mints a brand-new task every time the template is applied — then
+     * every existing user task whose title is exactly [draftText] and that still lives in the tree. It is the
+     * calendar's menu shape ([calendarTaskMenuEntries]) rather than the cell's: a template node has no cell,
+     * so there is no sibling list and no ancestor path to forbid; and unlike the calendar it does NOT require
+     * a leaf, because binding to a parent is exactly how a node brings a whole existing sub-tree along.
+     * Tombstones (tasks kept alive only by their records/panels) are excluded, like everywhere else.
+     *
+     * Picking a row here is what turns the node's switch **off**; picking "New id" turns it back on — see
+     * [org.example.project.scheduler.model.DefaultSubtreeNode].
+     */
+    fun defaultSubtreeTaskMenuEntries(
+        state: SchedulerState,
+        draftText: String,
+    ): List<ChangeTaskMenuEntry> {
+        val matching = matchingUserTaskIds(state, draftText).filter { taskHasCells(state, it) }
+        return buildList {
+            add(ChangeTaskMenuEntry(taskId = null, label = DEFAULT_SUBTREE_NEW_ID_LABEL))
+            for (taskId in matching) {
+                add(ChangeTaskMenuEntry(taskId = taskId, label = changeTaskMenuLabel(state, taskId)))
+            }
+        }
+    }
+
+    /** The label of the "new id" row of a default-sub-tree node's identity menu (PRD §4). */
+    const val DEFAULT_SUBTREE_NEW_ID_LABEL: String = "New id"
+
+    /**
+     * PRD §4: the template with everything that could never be grafted removed — **the blank title is what
+     * deletes**, here as in the tree itself, so a blank-titled node goes and takes its children with it (they
+     * have no cell to hang under). The editor keeps a trailing empty row per list only while its window is
+     * open, exactly as the tree keeps the bottom cell of a sub-list; nothing else may hold one.
+     *
+     * Applied by the reducer on [org.example.project.scheduler.state.SchedulerIntent.SetDefaultSubtree] and
+     * again on decode, so what is stored, synced, and grafted is always this form. It is safe against a title
+     * being retyped through empty: the editor pushes its own copy back on the next keystroke.
+     */
+    fun normalizeDefaultSubtree(nodes: List<DefaultSubtreeNode>): List<DefaultSubtreeNode> =
+        nodes.mapNotNull { node ->
+            if (node.title.isBlank()) null else node.copy(children = normalizeDefaultSubtree(node.children))
+        }
+
+    /**
+     * One row of a read-only rendering of a task's sub-tree: its title and the same for its children.
+     * A plain title tree — nothing here identifies a cell, because this is a *preview* of what a sub-list
+     * holds, not a slice of the tree the user can edit.
+     */
+    data class TaskOutlineNode(val title: String, val children: List<TaskOutlineNode>)
+
+    /**
+     * PRD §4: what a **default-sub-tree row bound to an existing task brings along** — that task's OWN
+     * sub-tree. A sub-list belongs to the task id, not to the cell, so the template has no say in what
+     * appears under such a row; the window draws this beneath it (greyed, uneditable) instead of the
+     * template children it keeps but cannot apply.
+     *
+     * Blank-titled cells are skipped (a tombstone or the trailing empty cell of a sub-list is not something
+     * the graft will produce). Depth is capped at [TASK_OUTLINE_MAX_DEPTH]: mirroring means the same task can
+     * appear under many parents, and a preview must not be able to walk further than the user can read.
+     */
+    fun taskSubtreeOutline(
+        state: SchedulerState,
+        taskId: TaskId,
+        depth: Int = 0,
+    ): List<TaskOutlineNode> {
+        if (depth >= TASK_OUTLINE_MAX_DEPTH) return emptyList()
+        val listId = state.tasks[taskId]?.childListId ?: return emptyList()
+        val list = state.lists[listId] ?: return emptyList()
+        return list.cellIds.mapNotNull { cellId ->
+            val childTaskId = state.cells[cellId]?.taskId ?: return@mapNotNull null
+            val title = state.tasks[childTaskId]?.title.orEmpty()
+            if (title.isBlank()) return@mapNotNull null
+            TaskOutlineNode(title, taskSubtreeOutline(state, childTaskId, depth + 1))
+        }
+    }
+
+    /** How deep [taskSubtreeOutline] descends before it stops. */
+    private const val TASK_OUTLINE_MAX_DEPTH = 12
 
     /**
      * PRD §8 calendar edit window default selection: unlike the tree (where "New task" is the default),
