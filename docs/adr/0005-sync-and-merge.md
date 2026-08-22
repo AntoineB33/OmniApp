@@ -261,8 +261,8 @@ idle and never restarted stay stale (the button is the manual collapse for that 
 
 Rows carry a `kind` column (schema v8, local `7.sqm`; remote migration `20260716000000`) so the calendar's
 hover bubble on a past task panel names **which devices were open**, and a **dashed separator** splits the
-panel where the device set changed (`deviceActivitySegments` + `deviceHoverZones` in `CalendarUi`, fed by
-`SchedulerEngine.activeSessions`). Tests: `DeviceActivitySegmentsTest`, `ActiveSessionSyncTest`.
+panel where the device set changed (`deviceActivitySegments` — hoisted per frame into `DeviceActivityIndex`,
+ADR 0009 — plus `deviceHoverZones` in `CalendarUi`, fed by `SchedulerEngine.activeSessions`). Tests: `DeviceActivitySegmentsTest`, `ActiveSessionSyncTest`.
 
 ## Retired: adopted remote-activity rows
 

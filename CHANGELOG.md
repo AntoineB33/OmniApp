@@ -73,6 +73,24 @@ made the template's rows a different height from the tree's. Deploy: client rebu
 Known scope limit: the template is one per account and shared by every task tree (§6); there is no per-tree
 template, and no way to re-apply it to tasks that already exist.
 
+### Calendar display indexes (PRD §8, ADR 0009) — SHIPPED 2026-08-22
+
+The two remaining per-frame derivations named by the culling entry below were the ones it did *not* land:
+`CalendarDisplayEquivalenceTest` was committed against a `recordsByDay` / `DeviceActivityIndex` that did not
+exist, so `:shared:jvmTest` had not compiled since. Both now exist and are used.
+
+`recordsByDay(records, firstDay, dayCount, tz)` places the whole visible span in one pass: each record's date
+range is read once and it is dropped into the buckets of the days it touches, clipped to the span, so nothing
+off-screen is built. It used to be one `recordsForDay` scan of every record in the account **per column**
+(`DAY_COLUMNS × rowCount` of them). `DeviceActivityIndex(sessions)` builds the label table, the "known since"
+floor and the start-ordered sessions once, and answers each panel by walking only the sessions that can
+overlap it (binary search + a prefix maximum of the end instants); the per-panel form rebuilt the whole table
+for every record on every observed now-line.
+
+Cost only — both are pinned against the previous definitions (`recordsForDay`, `deviceActivitySegments`, kept
+as the readable references) over randomized histories by `CalendarDisplayEquivalenceTest`. No scheduler,
+state, persistence or wire change. Deploy: client rebuild only.
+
 ### Detached parent tasks survive a task-id change (PRD §4) — SHIPPED 2026-08-21
 
 Re-pointing a cell at another task id used to **delete** the task it left the moment it lost its last cell

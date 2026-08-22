@@ -86,7 +86,7 @@ import org.example.project.ui.AlarmWindow
 import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.ChoresManagerWindow
-import org.example.project.ui.deviceActivitySegments
+import org.example.project.ui.DeviceActivityIndex
 import org.example.project.ui.HistoryManagerWindow
 import org.example.project.ui.IconMenuButton
 import org.example.project.ui.raiseOnPress
@@ -702,6 +702,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     .minOfOrNull { it.startEpochMillis },
                 schedulerState.tasks.values.flatMap { it.record }.minOfOrNull { it.startEpochMillis },
             ).minOrNull()
+        // ADR 0009 hot path: the session history is indexed ONCE per change instead of being re-labelled for
+        // every panel on every observed now-line (the segmentation below runs over every record there is).
+        val deviceActivityIndex = remember(activeSessions) { DeviceActivityIndex(activeSessions) }
         // Done periods (PRD §8 task record, green) plus every calendar panel (PRD §8/§9 — auto and
         // user-authored, uniform blocks) drawn the same way; reminders (PRD §14) and screen breaks (PRD §15)
         // span the focused week.
@@ -722,7 +725,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             ) {
                 record
             } else {
-                record.copy(deviceSegments = deviceActivitySegments(record.range, activeSessions, nowMillis))
+                record.copy(deviceSegments = deviceActivityIndex.segmentsFor(record.range, nowMillis))
             }
         }
         // PRD §8: the elapsed timeline is fully accounted for — every past stretch is either a TASK PANEL or a

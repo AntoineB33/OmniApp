@@ -341,6 +341,113 @@ fun deviceActivitySegments(
     return segments
 }
 
+/**
+ * ADR 0009 display hot path: [deviceActivitySegments] for MANY panels against ONE session history.
+ *
+ * The per-call form rebuilds the whole label table (a sort plus a pass over every session) for every panel
+ * it is asked about, so segmenting a day's worth of panels costs `panels x sessions log sessions` on every
+ * observed now-line. Here the labels, the "known since" floor and the start-ordered sessions are built once,
+ * and each query scans only the sessions that can actually overlap it (a descending walk from the last
+ * session starting before the window, stopped by a prefix maximum of the end instants).
+ *
+ * The OUTPUT is [deviceActivitySegments]'s, exactly - that function stays as the readable reference
+ * definition, and `CalendarDisplayEquivalenceTest` pins the two together over randomized histories.
+ */
+class DeviceActivityIndex(sessions: List<ActiveSessionRecord>) {
+
+    private val byStart: List<ActiveSessionRecord> = sessions.sortedBy { it.startMillis }
+
+    /** Stable per-install labels, in the same first-appearance order the per-call form assigns them in. */
+    private val labelById: Map<String, String> =
+        buildMap {
+            val kindCounts = mutableMapOf<String, Int>()
+            for (session in byStart) {
+                if (containsKey(session.deviceId)) continue
+                val base = when (session.kind.trim().lowercase()) {
+                    "" -> "Device"
+                    else -> session.kind.trim().lowercase().replaceFirstChar { it.uppercase() }
+                }
+                val n = (kindCounts[base] ?: 0) + 1
+                kindCounts[base] = n
+                put(session.deviceId, if (n == 1) base else "$base $n")
+            }
+        }
+
+    /** `maxEnd[i]` = the latest end instant among `byStart[0..i]`, so a backward scan knows when to stop. */
+    private val maxEnd: LongArray =
+        LongArray(byStart.size).also { out ->
+            var running = Long.MIN_VALUE
+            for (i in byStart.indices) {
+                running = maxOf(running, byStart[i].endMillis)
+                out[i] = running
+            }
+        }
+
+    /** Nothing is claimed before the oldest known session start - see [deviceActivitySegments]. */
+    private val knownSince: Long? = byStart.firstOrNull()?.startMillis
+
+    /** The segments of [range] up to [untilMillis], exactly as [deviceActivitySegments] would build them. */
+    fun segmentsFor(range: TaskTimeRange, untilMillis: Long): List<DeviceActivitySegment> {
+        val since = knownSince ?: return emptyList()
+        val start = maxOf(range.startEpochMillis, since)
+        val end = minOf(range.endEpochMillis, untilMillis)
+        if (end <= start) return emptyList()
+
+        // Every session that can touch `[start, end)`: it must begin before `end` (so the walk starts at the
+        // last such session) and end after `start` (so it stops once no earlier session reaches that far).
+        val overlapping = mutableListOf<ActiveSessionRecord>()
+        var i = firstStartingAtOrAfter(end) - 1
+        while (i >= 0 && maxEnd[i] > start) {
+            val session = byStart[i]
+            if (session.endMillis > start) overlapping.add(session)
+            i--
+        }
+        if (overlapping.isEmpty()) return listOf(DeviceActivitySegment(start, end, emptyList()))
+
+        val cuts = mutableListOf(start, end)
+        for (session in overlapping) {
+            val a = maxOf(session.startMillis, start)
+            val b = minOf(session.endMillis, end)
+            if (b > a) {
+                cuts.add(a)
+                cuts.add(b)
+            }
+        }
+        val bounds = cuts.distinct().sorted()
+        val segments = mutableListOf<DeviceActivitySegment>()
+        for (j in 0 until bounds.size - 1) {
+            val a = bounds[j]
+            val b = bounds[j + 1]
+            // Sorted distinct labels, so the open set does not depend on the order the sessions were walked.
+            val open =
+                overlapping.asSequence()
+                    .filter { it.startMillis < b && it.endMillis > a }
+                    .map { labelById.getValue(it.deviceId) }
+                    .distinct()
+                    .sorted()
+                    .toList()
+            val last = segments.lastOrNull()
+            if (last != null && last.devices == open && last.endMillis == a) {
+                segments[segments.lastIndex] = last.copy(endMillis = b)
+            } else {
+                segments.add(DeviceActivitySegment(a, b, open))
+            }
+        }
+        return segments
+    }
+
+    /** Binary search: the first index of [byStart] whose session starts at or after [millis]. */
+    private fun firstStartingAtOrAfter(millis: Long): Int {
+        var lo = 0
+        var hi = byStart.size
+        while (lo < hi) {
+            val mid = (lo + hi) / 2
+            if (byStart[mid].startMillis < millis) lo = mid + 1 else hi = mid
+        }
+        return lo
+    }
+}
+
 /** A [CalendarRecord] clipped to a single day, as start/end hour-of-day fractions in `[0, 24]`. */
 data class PlacedRecord(
     val title: String,
@@ -481,6 +588,45 @@ fun recordsForDay(
             deviceSegments = daySegments,
         )
     }
+
+/**
+ * ADR 0009 display hot path: [recordsForDay] for the WHOLE visible span at once, keyed by day.
+ *
+ * A column asking for its own day has to look at every record in the account to find the few that fall on
+ * it, so the grid as a whole costs `days x records` - and the calendar re-derives it whenever the records
+ * change. Here each record's date range is read once and it is dropped straight into the buckets of the
+ * days it touches (clipped to `[firstDay, firstDay + dayCount)`), so nothing outside the screen is ever
+ * built. Each bucket is then placed by [recordsForDay] itself, so the per-day output - including its order
+ * - is that function's, unchanged.
+ */
+fun recordsByDay(
+    records: List<CalendarRecord>,
+    firstDay: LocalDate,
+    dayCount: Int,
+    tz: TimeZone,
+): Map<LocalDate, List<PlacedRecord>> {
+    if (dayCount <= 0 || records.isEmpty()) return emptyMap()
+    val lastDay = firstDay.plus(dayCount - 1, DateTimeUnit.DAY)
+    val buckets = LinkedHashMap<LocalDate, MutableList<CalendarRecord>>()
+    for (record in records) {
+        val startDate =
+            Instant.fromEpochMilliseconds(record.range.startEpochMillis).toLocalDateTime(tz).date
+        val endDate = Instant.fromEpochMilliseconds(record.range.endEpochMillis).toLocalDateTime(tz).date
+        if (startDate > lastDay || endDate < firstDay) continue
+        var day = maxOf(startDate, firstDay)
+        val until = minOf(endDate, lastDay)
+        while (day <= until) {
+            buckets.getOrPut(day) { mutableListOf() }.add(record)
+            day = day.plus(1, DateTimeUnit.DAY)
+        }
+    }
+    val out = LinkedHashMap<LocalDate, List<PlacedRecord>>()
+    for ((day, dayRecords) in buckets) {
+        val placed = recordsForDay(dayRecords, day, tz)
+        if (placed.isNotEmpty()) out[day] = placed
+    }
+    return out
+}
 
 /**
  * Stable identity for a calendar block across the [CalendarRecord] (full) and [PlacedRecord]
@@ -2838,6 +2984,12 @@ private fun WeekView(
     // longer exists.
     LaunchedEffect(anchorDay, visibleDayCount) { onVisibleDaysChanged(anchorDay, visibleDayCount) }
 
+    // ADR 0009 hot path: place the records for the whole visible span ONCE, keyed by day, instead of having
+    // each of the `DAY_COLUMNS x rowCount` columns scan every record in the account to find its own day's.
+    val recordsPerDay = remember(records, anchorDay, visibleDayCount, tz) {
+        recordsByDay(records, anchorDay, visibleDayCount, tz)
+    }
+
     // PRD §8 / ADR 0009 hot path: which hours of each day-row are on screen, so the columns below can cull
     // everything else out of the UI tree entirely (see [HourWindow]). Read through a derivedStateOf -- and
     // read INSIDE the gutter/column content lambdas below rather than here — so crossing a quantum
@@ -3114,7 +3266,7 @@ private fun WeekView(
                                     isToday = day == today,
                                     hourHeight = hourHeight,
                                     now = if (day == today) now else null,
-                                    records = recordsForDay(records, day, tz),
+                                    records = recordsPerDay[day].orEmpty(),
                                     visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
                                     onAddTaskAt = onAddTaskAt,
                                     onAddReminderAt = onAddReminderAt,
