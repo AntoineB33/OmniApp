@@ -1916,11 +1916,17 @@ object SchedulerDomain {
      * [lockedIntervals] is the OS lock/standby history of that layer's device kind over
      * `[sinceMillis, untilMillis]` (see `deviceLockedIntervals`), or **null when no device of that kind could
      * tell** — and null is the load-bearing case: a device whose history is unavailable is assumed to have
-     * been UNLOCKED, so the first run on a computer draws no phone layer at all instead of claiming the phone
-     * was locked all week. This is the opposite default from the account-wide pause derivation
-     * ([derivePauses], "no screen unless a device reported activity"), and deliberately so: that one answers
-     * "was anybody working?" from the app's own heartbeats, while a layer answers "was this device usable?"
-     * from the OS, where silence means the question was never asked rather than "no".
+     * been LOCKED throughout, so running on a computer with no phone on the account hatches the whole asked
+     * past with the phone layer (the user's own example: "if I run the app on a computer and the data of the
+     * phone is not available because it is the first time I run the app, then it is considered that the phone
+     * was always locked in the past"). This is the SAME default as the account-wide pause derivation
+     * ([derivePauses], "no screen unless a device reported activity"): a device nobody can vouch for was not
+     * being used.
+     *
+     * Null and an EMPTY list stay different answers, which is why the seam is nullable: an empty list is the
+     * OS answering "this device was never locked over that window" and draws nothing at all. The window is
+     * `[sinceMillis, untilMillis]` — never beyond the now-line the caller passes as [untilMillis], because
+     * nothing ahead of it has been observed and only [assertedRegions] speak for the future.
      *
      * [assertedRegions] are the stretches the RULES promise nobody is unlocked in — the §17 sleep windows
      * ahead of the now-line, the §15 screen breaks, and the user's own no-screen periods. They hold whether
@@ -1937,8 +1943,15 @@ object SchedulerDomain {
         sinceMillis: Long,
         untilMillis: Long,
     ): List<TaskTimeRange> {
+        // "Cannot be asked" ⇒ locked for the whole asked window. Not seam-filtered and not clipped further:
+        // it is one span by construction. A degenerate window (nothing elapsed yet) asserts nothing.
+        if (lockedIntervals == null) {
+            val unaskable =
+                if (untilMillis > sinceMillis) listOf(TaskTimeRange(sinceMillis, untilMillis)) else emptyList()
+            return mergeOccupied(unaskable + assertedRegions)
+        }
         val evidence =
-            lockedIntervals.orEmpty()
+            lockedIntervals
                 .map {
                     TaskTimeRange(
                         maxOf(it.startEpochMillis, sinceMillis),

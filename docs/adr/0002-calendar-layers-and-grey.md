@@ -24,7 +24,8 @@ device is both.
   pause the app already derived — what §9 places the off-screen tasks in and §15 counts as a
   break-serving pause.
 - `CalendarLayerTest` pins that identity: `intersect(layerA, layerB) == derivePauses(all sessions)`.
-  If you touch either side, keep it true.
+  If you touch either side, keep it true. With an unaskable phone the intersection collapses to the
+  computer's own locked stretches — which is what the assumed-LOCKED default means.
 
 ## A layer is read from the DEVICE'S OS HISTORY, not from the app
 
@@ -46,23 +47,30 @@ Ahead of the now-line nothing is observed, so only the ASSERTED regions hatch (`
 `App.kt`: §17 sleep windows, §15 screen breaks, the user's own no-screen periods), and those hold for
 both layers whatever any history says.
 
-## A device that cannot be asked WAS UNLOCKED
+## A device that cannot be asked WAS LOCKED
 
-`null` from the seam ⇒ the layer is simply not drawn. The user's example: *"if I run the app on a
-computer and the data of the phone is not available because it is the first time I run the app, then it
-is considered that the phone was always unlocked in the past."*
+`null` from the seam ⇒ the layer hatches the **whole asked past**, `[displayFloor, now]`. The user's
+example: *"if I run the app on a computer and the data of the phone is not available because it is the
+first time I run the app, then it is considered that the phone was always locked in the past."*
 
-**This is the OPPOSITE default from `derivePauses`** ("no screen unless a device reported activity"),
-and the difference is the whole point:
-
-| Question | Source | Silence means |
-| --- | --- | --- |
-| "Was anybody working?" (`derivePauses`) | the app's own heartbeats | an answer — nobody was |
-| "Was this device usable?" (a layer) | the OS | the question was never asked |
+**This is the SAME default as `derivePauses`** ("no screen unless a device reported activity"): a device
+nobody can vouch for was not in use. Where the two still differ is only in what they read — the OS's
+record of the device versus the app's own heartbeats.
 
 Only THIS device can be asked (there is no channel carrying a peer's lock history), so every other kind
-gets `null`. `null` and an empty list are deliberately different answers, and the jvm actual tells them
-apart with an `'OK'` sentinel line, since a successful query with no cycles prints nothing either.
+gets `null`, and a computer with no phone on the account therefore draws `\` over its whole displayed
+past. `null` and an empty list stay deliberately different answers — an empty list is the OS saying "this
+device was never locked", which draws **nothing** — and the jvm actual tells them apart with an `'OK'`
+sentinel line, since a successful query with no cycles prints nothing either.
+
+**"Not asked yet" is a third state and is not `null`.** The first lock-history scan is a PowerShell
+process launch, so the own layer would otherwise flash a full-window hatch at every launch until it
+lands. `App.kt` gates it on `lockHistoryScanned`: before the first answer the own layer draws nothing,
+and a later re-scan keeps showing the previous answer while it runs.
+
+> Reversed on 2026-08-23. The first spec sentence said "unlocked"; the user corrected the word after
+> noticing that a phone with no app installed left the desktop calendar unhatched. Everything below about
+> *where* the evidence comes from is unchanged — only the meaning of silence flipped.
 
 ### Two earlier readings, both shipped and both wrong
 
@@ -186,7 +194,49 @@ Unifying them means deciding that a break is served by the OS saying the screen 
 changes cue timing and touches the engine/sync path — out of scope for a display fix. **Decide it
 before adding anything else that reads one and not the other.**
 
+## The hover bubble is a STACK of sections
+
+Closing the "the two slopes are unlabelled on screen" gap turned the bubble inside out.
+
+The calendar deliberately draws its elements across each other — a task inside a sleep window, a screen
+break over that task, the two layers hatched over all of it. The bubble used to be one element's title plus
+at most one "under" line, so those reports raced and overwrote each other: hovering a task inside a sleep
+window named the task and lost the window; a layer named nothing at all.
+
+It is now a list of `CalendarBubbleSection`s, one per thing true at the instant under the cursor, ordered
+by `CalendarBubbleSection.Kind.rank` — the user's ordering, top to bottom:
+
+    task = break > inactivity = sleep > no computer unlocked = no phone unlocked
+
+Equal ranks are deliberate **ties**, kept in collection order by a stable sort (so a sleep band's own "No
+screen" line still follows the band). One exclusion: **when there is a break there can't be a task**. A §15
+break *suspends* the chunk it lands in rather than cutting it, so the task's panel genuinely spans the
+break — but the user is not on that task during it, and naming it would be a lie. `orderedBubbleSections`
+is both rules, and the only place they live; `Modifier.calendarTitleHover` is the single funnel every
+report passes through, so nothing can report an unordered stack.
+
+### A layer still registers no pointer input
+
+The invariant holds: the drawn hatch is a bare `drawBehind` Box, displacing nothing and hit-testing
+nothing, so every block underneath keeps its hover, drag and right-click. What carries a layer's section is
+whatever the cursor is *actually* over — and where that is nothing (an idle past stretch draws no band at
+all any more), a bottom-most **pickup** tiling under every panel, band and marker. Anything drawn above
+wins its own hover; only the stretches nothing else claims fall through.
+
+The grey sleep/inactivity bands lost their hover children entirely for the same reason: they are pure
+drawing now, and their sections ride the pickup or the block on top.
+
+### Tiling, never nesting
+
+Two hover reporters at one position race — a parent's `Move` overwrites the child's report. So every
+hoverable element is cut at each covering section's boundary (`bubbleHoverZones`), exactly as
+`deviceHoverZones` already cut a block at each device-set change; the two compose (a block's own overlays
+are the device zones, re-tiled against the context). Emission is still culled to the visible window
+(ADR 0009).
+
+Tests: `CalendarBubbleSectionTest` (the ordering, the ties, the break/task exclusion).
+
 ## Known gap
 
-A layer is non-interactive, so it has no hover bubble on desktop and no entry in the phone's contextual
-menu — the two slopes are currently unlabelled on screen.
+The phone's contextual menu still names only the panel it was opened on — a phone has no hover bubble, and
+the touch menu was not reshaped into a section stack.

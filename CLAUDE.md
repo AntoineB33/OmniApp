@@ -193,11 +193,20 @@ crossing can be silently clipped by a clock jump.
   screen; **grey** says whether anything is scheduled.
 - **A layer is read from the DEVICE'S OS HISTORY** (`deviceLockedIntervals`), never from the app's own
   sessions or from banked panels. Both of those were shipped and both were wrong.
-- **A device that cannot be asked was UNLOCKED** (`null` ⇒ layer not drawn). This is the opposite default
-  from `derivePauses`, deliberately: `null` and an empty list are different answers.
+- **A device that cannot be asked was LOCKED** (`null` ⇒ the layer hatches the whole asked past; an empty
+  list ⇒ nothing drawn — the same default as `derivePauses`, and `null` and an empty list stay different
+  answers). "Not asked yet" is a third state: the own layer draws nothing until its first scan lands.
 - **A stretch carrying BOTH layers is a no-screen period**, identical to the account-wide derived pause.
   `CalendarLayerTest` pins that identity — keep it true.
-- Layers are non-interactive overlays: they displace nothing and register no pointer input.
+- Layers are non-interactive overlays: they displace nothing and register no pointer input. A layer is
+  *named* by the hover bubble anyway — its section rides whatever the cursor is over, or the bottom-most
+  hover pickup where that is nothing.
+- **The hover bubble is a STACK of sections**, one per thing true at the instant under the cursor, ordered
+  `task = break > inactivity = sleep > no computer unlocked = no phone unlocked` (equal ranks are ties, kept
+  in collection order). **When there is a break there can't be a task.** Both rules live in
+  `orderedBubbleSections`, applied in the one funnel `Modifier.calendarTitleHover` — never at a call site.
+- **Hover is TILED, never nested**: two reporters at one position race (the parent's Move wins). Cut the
+  element at every covering section's boundary (`bubbleHoverZones`) and give each tile one reporter.
 - **GREY = the scheduler places nothing here** — inactivity period, sleep window, the look-away end to end,
   the pose's closed head. It is not a screen classification: it refuses off-screen tasks too. A pose's open
   tail and the 15-min pose are **not** grey.

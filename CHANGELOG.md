@@ -11,6 +11,46 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The hover bubble is a stack of sections (PRD §8, ADR 0002) — SHIPPED 2026-08-23
+
+Hovering a **layer** now names it. The bubble was one title + one optional "under" line, which meant the
+elements the calendar draws across each other overwrote one another's reports — and a layer, being a
+non-interactive overlay, reported nothing at all.
+
+It is now a list of sections, one per thing true at the instant under the cursor, ordered by the user's
+rule, top to bottom: `task = break > inactivity = sleep > no computer unlocked = no phone unlocked`. Equal
+ranks are ties kept in collection order. One exclusion, also the user's: **when there is a break, there
+can't be a task** — a break suspends the chunk it lands in, so the panel spans it, but the user is not on
+that task.
+
+The layer itself still registers no pointer input. Its section rides whatever the cursor is over, plus a
+new bottom-most hover pickup under every panel and band for the stretches nothing else claims. The grey
+sleep/inactivity bands became pure drawing (their hover children are gone), and `decorativeHoverZones` was
+replaced by the general `bubbleHoverZones` tiler.
+
+Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`). No Supabase deploy.
+
+### A device that cannot be asked was LOCKED (PRD §8, ADR 0002) — SHIPPED 2026-08-23
+
+The layer default is **reversed**. `deviceLockedIntervals` returning `null` — "no device of this kind can tell"
+— now hatches the whole asked past `[displayFloor, now]` for that layer, where it used to draw nothing.
+
+The original spec sentence recorded in ADR 0002 said the unavailable device is *"considered to have been always
+**unlocked** in the past"*; the user corrected the word after noticing that a desktop with no app installed on
+the phone left the calendar largely unhatched. So the default now matches `derivePauses` rather than opposing
+it: a device nobody can vouch for was not in use. On a one-device account the `\` phone layer therefore covers
+the whole displayed past, and the "both layers ⇒ no-screen period" identity collapses to the computer's own
+locked stretches.
+
+`null` and an **empty list** stay different answers — an empty list is the OS saying "never locked" and still
+draws nothing. What is new is a **third** state: "not asked yet". The first scan spawns a PowerShell process,
+so treating pending as "cannot be asked" would flash a full-window hatch at every launch; `App.kt` gates the
+own layer on `lockHistoryScanned` and draws nothing until the first answer lands (a later re-scan keeps
+showing the previous answer while it runs).
+
+Display-only: nothing in the scheduler reads a layer. Tests: `CalendarLayerTest`. Client rebuild
+(`account{1,2,3}-*deploy*.bat`) — no Supabase surface.
+
 ### Only a conducted break is drawn in the past (PRD §15, ADR 0003) — SHIPPED 2026-08-22
 
 The calendar's past side now shows **only the 20-second look-away**, and only when it ran whole.

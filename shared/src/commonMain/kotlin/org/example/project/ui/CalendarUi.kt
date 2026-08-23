@@ -522,7 +522,7 @@ fun recordsForDay(
         if (start.date > day || end.date < day) return@mapNotNull null
         // Seconds are kept (not just hour+minute): a sub-minute look-away (e.g. a 20-s screen break that
         // stays within one minute) would otherwise collapse to startHour == endHour, giving its band a
-        // zero-length span — and [decorativeHoverZones] tiles nothing over a zero-length range, so the band
+        // zero-length span — and a zero-length range gives [bubbleHoverZones] nothing to place, so the band
         // (drawn at [SCREEN_BREAK_MIN_HEIGHT]) would be visible but un-hoverable (no info bubble). The
         // device-segment math below already carries seconds for the same reason.
         val startHour = if (start.date < day) 0f else start.hour + start.minute / 60f + start.second / 3600f
@@ -3346,7 +3346,7 @@ private fun WeekView(
             )
         }
         // PRD §8 hover title bubble, drawn above all columns; non-interactive so the cursor passes through.
-        titleHover?.let { CalendarTitleBubble(it.title, it.pos, it.subtitle, it.underTitle, it.underSubtitle) }
+        titleHover?.let { CalendarTitleBubble(it.sections, it.pos) }
         }
     }
 }
@@ -3454,6 +3454,65 @@ private fun DayColumn(
     // block stays a normal interactive block. Bands and blocks are both clipped to this day, so hour ranges
     // compare directly.
     val sleepHourRanges = sleepBands.map { it.startHour..it.endHour }
+    // PRD §8: the bubble sections EVERY hoverable element in this column stacks under its own — the grey
+    // periods the cursor sits inside and the two "nobody unlocked" LAYERS hatched over it. The layers
+    // themselves stay non-interactive (they displace nothing and register no pointer input, so every block
+    // underneath keeps its hover, drag and right-click); their section rides whatever the cursor is
+    // actually over, and the column-wide pickup below covers the stretches where that is nothing at all.
+    val contextOverlays: List<BubbleOverlay> =
+        buildList {
+            sleepBands.forEach { band ->
+                add(
+                    BubbleOverlay(
+                        band.startHour,
+                        band.endHour,
+                        CalendarBubbleSection(
+                            CalendarBubbleSection.Kind.Sleep,
+                            "Sleep",
+                            placedTimeRange(band, tz),
+                        ),
+                    ),
+                )
+                // A sleep window is by definition a no-screen period, and the enclosing offline window can
+                // reach past it on either side — so this line carries its own (wider) span.
+                band.noScreenRange?.let { range ->
+                    add(
+                        BubbleOverlay(
+                            band.startHour,
+                            band.endHour,
+                            CalendarBubbleSection(
+                                CalendarBubbleSection.Kind.NoScreen,
+                                "No screen",
+                                "${formatHm(range.startEpochMillis, tz)} – ${formatHm(range.endEpochMillis, tz)}",
+                            ),
+                        ),
+                    )
+                }
+            }
+            inactivityBands.forEach { band ->
+                add(
+                    BubbleOverlay(
+                        band.startHour,
+                        band.endHour,
+                        CalendarBubbleSection(
+                            CalendarBubbleSection.Kind.Inactivity,
+                            "Inactivity",
+                            placedTimeRange(band, tz),
+                        ),
+                    ),
+                )
+            }
+            layerBands.forEach { band ->
+                val layer = band.layer ?: return@forEach
+                add(
+                    BubbleOverlay(
+                        band.startHour,
+                        band.endHour,
+                        CalendarBubbleSection(bubbleKind(layer), layer.calendarLabel, placedTimeRange(band, tz)),
+                    ),
+                )
+            }
+        }
     // The right-click position (in this column's local pixels) that anchors the contextual menu; null
     // when no menu is open. [menuTarget] is the block the click landed on (null = empty space).
     var menuOffset by remember { mutableStateOf<Offset?>(null) }
@@ -3679,64 +3738,36 @@ private fun DayColumn(
         // "no computer unlocked" / "no phone unlocked", and a sleep window gets both of them from the
         // LAYERS drawn over the whole column (see [layerBands] below) rather than painting its own. Its
         // "Sleep" label is drawn on top of everything further down, so it stays legible at the band's start.
-        data class DecorBand(
-            val band: PlacedRecord,
-            val baseLabel: String,
-            val decorLabel: String?,
-            val decorRange: TaskTimeRange?,
-        )
-        (
-            inactivityBands.map { DecorBand(it, "Inactivity", null, null) } +
-                sleepBands.map { DecorBand(it, "Sleep", "No screen", it.noScreenRange) }
-            ).forEach { (band, baseLabel, decorLabel, decorRange) ->
-                if (!onScreen(band.startHour, band.endHour)) return@forEach
-                // PRD §8: like every other block, hovering the band pops the title + true (un-clipped) start–end times.
-                // PRD §12: a band open-ended into the past shows "∞" as its start (the drawn start is only the floor).
-                val timeRange = "${hmOrInfinity(band.fullStartMillis, band.openStart, tz)} – ${formatHm(band.fullEndMillis, tz)}"
-                // The "No screen" decorative line spans its enclosing offline window (>= the band itself).
-                val decorTimeRange =
-                    decorRange?.let { "${formatHm(it.startEpochMillis, tz)} – ${formatHm(it.endEpochMillis, tz)}" }
-                        ?: timeRange
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .offset(y = hourHeight * band.startHour)
-                        .height(hourHeight * (band.endHour - band.startHour))
-                        .clipToBounds()
-                        .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA)),
-                ) {
-                    // PRD §8: the fill schedules work straight through the night / off-screen tasks land
-                    // inside a no-screen window, so a real panel (or the derived Inactivity/No-screen band
-                    // itself, elsewhere) often sits under this decorative band. Tiled by which panel is
-                    // under each sub-range, so the hover bubble stacks that panel's title/time below this
-                    // band's own — instead of the two elements' independent hover reports racing/overwriting
-                    // each other (see [deviceHoverZones]).
-                    decorativeHoverZones(band.startHour, band.endHour, blockRecords).forEach { zone ->
-                        if (!onScreen(zone.top, zone.bottom)) return@forEach
-                        // Line 1 (read first) = the real panel under this sub-range: an off-screen task the
-                        // no-screen sits over, else the band's own base ("Inactivity"/"Sleep"). Line 2 = the
-                        // "No screen" decorative on top. (A reachable hover is almost always a null zone —
-                        // any real task here is drawn as its own block on top and reports itself.)
-                        val baseTitle = zone.under?.let(::underHoverTitle) ?: baseLabel
-                        val baseTimes = zone.under
-                            ?.let { "${formatHm(it.fullStartMillis, tz)} – ${formatHm(it.fullEndMillis, tz)}" }
-                            ?: timeRange
-                        Box(
-                            Modifier
-                                .offset(y = hourHeight * (zone.top - band.startHour))
-                                .fillMaxWidth()
-                                .height(hourHeight * (zone.bottom - zone.top))
-                                .calendarTitleHover(
-                                    baseTitle,
-                                    hoverScope,
-                                    subtitle = baseTimes,
-                                    underTitle = decorLabel,
-                                    underSubtitle = decorLabel?.let { decorTimeRange },
-                                ),
-                        )
-                    }
-                }
-            }
+        // Purely decorative: these register no pointer input at all — their bubble section comes from
+        // [contextOverlays], carried either by the block on top or by the column-wide pickup below.
+        (inactivityBands + sleepBands).forEach { band ->
+            if (!onScreen(band.startHour, band.endHour)) return@forEach
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset(y = hourHeight * band.startHour)
+                    .height(hourHeight * (band.endHour - band.startHour))
+                    .clipToBounds()
+                    .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA)),
+            )
+        }
+
+        // PRD §8: hovering a LAYER has to pop its section too — but a layer is a non-interactive overlay,
+        // and an idle past stretch draws no band at all any more, so on most of the timeline there would be
+        // nothing under the cursor to report it. This bottom-most tiling is that pickup: it lies under every
+        // panel, band and marker, so anything drawn above still wins its own hover and only the stretches
+        // nothing else claims fall through to here. Culled to the visible window like everything else
+        // (ADR 0009): a layer scrolled out of view emits no node.
+        bubbleHoverZones(0f, 24f, contextOverlays).forEach { zone ->
+            if (zone.sections.isEmpty() || !onScreen(zone.top, zone.bottom)) return@forEach
+            Box(
+                Modifier
+                    .offset(y = hourHeight * zone.top)
+                    .fillMaxWidth()
+                    .height(hourHeight * (zone.bottom - zone.top))
+                    .calendarTitleHover(zone.sections, hoverScope),
+            )
+        }
 
         // PRD §8 contextual menu, anchored at the right-click position. A block gets Edit/Remove; both a
         // block and a gap also get the "add" actions (anchored at the right-click time), so a panel's menu
@@ -3842,6 +3873,7 @@ private fun DayColumn(
                 // Every other block — everything but itself — so a non-overlap drag/resize snaps around them.
                 others = allBlocks.filter { it.first != key }.map { it.second },
                 sleepHourRanges = sleepHourRanges,
+                contextOverlays = contextOverlays,
                 overlapArmed = overlapArmed,
                 // Hide the resting (gesture-holding) slices while any move/resize preview overlay shows.
                 previewActive = previewActive,
@@ -4034,11 +4066,15 @@ private fun DayColumn(
         val visibleScreenBreaks = screenBreakMarkers.filter { onScreen(it.startHour, it.endHour) }
         if (visibleScreenBreaks.isNotEmpty()) {
             val sideLayout = overlapLayout(screenBreakMarkers)
-            // PRD §8: a screen break is drawn on top of everything else, so whatever sits under it (a
-            // sleep/no-screen/inactivity band, or — rarely, since the fill normally carves an exact gap for
-            // the break — a real panel) is otherwise hidden. Hover stacks that element's info below the
-            // break's own (see [decorativeHoverZones]).
-            val sideUnders = sleepBands + inactivityBands + blockRecords
+            // PRD §8: a screen break is drawn on top of everything else, so whatever sits under it is
+            // otherwise hidden — the grey periods and the layers ([contextOverlays]), plus, rarely (the fill
+            // normally carves an exact gap for the break), a real panel. A TASK panel under a break is
+            // dropped by the user's rule ("when there is a break, there can't be a task"); every other panel
+            // still stacks. See [orderedBubbleSections].
+            val sideUnders =
+                blockRecords.map {
+                    BubbleOverlay(it.startHour, it.endHour, panelBubbleSection(it, tz))
+                } + contextOverlays
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val colWidth = maxWidth
                 visibleScreenBreaks.forEach { marker ->
@@ -4116,8 +4152,8 @@ private fun ScreenBreakBand(
     colWidth: Dp,
     tz: TimeZone,
     hoverScope: CalendarTitleHoverScope,
-    /** PRD §8: real panels / derived activity bands that may sit under this (topmost) decorative band. */
-    underCandidates: List<PlacedRecord>,
+    /** PRD §8: the bubble sections stacked under this (topmost) band's own — see the caller's [sideUnders]. */
+    underOverlays: List<BubbleOverlay>,
 ) {
     val height = (hourHeight * (slice.bottomHour - slice.topHour)).coerceAtLeast(SCREEN_BREAK_MIN_HEIGHT)
     val timeRange = "${formatHm(marker.fullStartMillis, tz)} – ${formatHm(marker.fullEndMillis, tz)}"
@@ -4154,14 +4190,20 @@ private fun ScreenBreakBand(
                 modifier = Modifier.offset(y = closedHeight).fillMaxWidth().height(openHeight),
             )
         }
-        // PRD §8: tiled by whichever underlying panel/band covers each sub-range (see [decorativeHoverZones]),
-        // so the hover bubble stacks it below this screen break's own title/time. The zones are mapped onto
-        // the RENDERED [height] (not the break's true span): a sub-minute look-away draws at the coerced
+        // PRD §8: tiled by whatever else covers each sub-range (see [bubbleHoverZones]), so the bubble
+        // stacks those sections below this screen break's own. The zones are mapped onto the RENDERED
+        // [height] (not the break's true span): a sub-minute look-away draws at the coerced
         // [SCREEN_BREAK_MIN_HEIGHT] hairline, so sizing its hover zones by the ~0-height true duration would
         // leave the visible band un-hoverable — the pointer would fall through to the sleep band beneath and
         // the bubble would name that instead of the break (which must come first).
         val span = slice.bottomHour - slice.topHour
-        decorativeHoverZones(slice.topHour, slice.bottomHour, underCandidates).forEach { zone ->
+        val ownOverlay =
+            BubbleOverlay(
+                slice.topHour,
+                slice.bottomHour,
+                CalendarBubbleSection(CalendarBubbleSection.Kind.Break, marker.title, timeRange),
+            )
+        bubbleHoverZones(slice.topHour, slice.bottomHour, listOf(ownOverlay) + underOverlays).forEach { zone ->
             val fracTop = if (span > 0f) (zone.top - slice.topHour) / span else 0f
             val fracBottom = if (span > 0f) (zone.bottom - slice.topHour) / span else 1f
             Box(
@@ -4169,15 +4211,7 @@ private fun ScreenBreakBand(
                     .offset(y = height * fracTop)
                     .fillMaxWidth()
                     .height(height * (fracBottom - fracTop))
-                    .calendarTitleHover(
-                        marker.title,
-                        hoverScope,
-                        subtitle = timeRange,
-                        underTitle = zone.under?.let(::underHoverTitle),
-                        underSubtitle = zone.under?.let {
-                            "${formatHm(it.fullStartMillis, tz)} – ${formatHm(it.fullEndMillis, tz)}"
-                        },
-                    ),
+                    .calendarTitleHover(zone.sections, hoverScope),
             )
         }
     }
@@ -4249,25 +4283,130 @@ private fun ScreenBreakSegment(
 }
 
 /**
- * PRD §8 hover title: which block/screen-break the cursor is currently over and where. [pos] is the cursor
- * position in the calendar **viewport's** coordinates (not the scrolling content), so the bubble overlay
- * sits next to the pointer and follows it even while the grid scrolls under a still cursor. [ownerId]
- * identifies the reporting element so a stale `Exit` from the element the cursor just left can't clear a
- * hover the newly entered element has already set.
+ * PRD §8 hover bubble: ONE section of it. The bubble is a STACK of sections, because the calendar
+ * deliberately draws its elements across each other — a task inside a sleep window, a screen break over
+ * that task, and the two "nobody unlocked" LAYERS hatched across all of it. Each of those is a section, so
+ * one hover names everything true at the instant under the cursor instead of one element's report silently
+ * overwriting another's.
+ *
+ * [Kind.rank] is the user's ordering, read top to bottom:
+ * `task = break > inactivity = sleep > no computer unlocked = no phone unlocked`.
+ */
+data class CalendarBubbleSection(
+    val kind: Kind,
+    val title: String,
+    /**
+     * The section's second line — its start–end times, plus (for a task) the "Open: …" device line. Null
+     * for a section with no time range of its own.
+     */
+    val times: String? = null,
+) {
+    /** What a section is about. Equal [rank]s are deliberate ties (see [orderedBubbleSections]). */
+    enum class Kind(val rank: Int) {
+        Task(0),
+        Break(0),
+        Inactivity(1),
+        Sleep(1),
+        NoScreen(1),
+        NoComputerUnlocked(2),
+        NoPhoneUnlocked(2),
+    }
+}
+
+/**
+ * PRD §8: [sections] in the order the bubble draws them, top to bottom — by [CalendarBubbleSection.Kind.rank],
+ * ties in collection order (the sort is stable), duplicates dropped.
+ *
+ * The one exclusion, the user's rule: **when there is a break there can't be a task**. A §15 screen break
+ * SUSPENDS the chunk it lands in rather than cutting it, so the task's panel really does span the break —
+ * but the user is not on that task during it, so naming it would be a lie. The break's section replaces it;
+ * the grey periods and the layers still stack underneath.
+ */
+fun orderedBubbleSections(sections: List<CalendarBubbleSection>): List<CalendarBubbleSection> {
+    val hasBreak = sections.any { it.kind == CalendarBubbleSection.Kind.Break }
+    return sections
+        .filterNot { hasBreak && it.kind == CalendarBubbleSection.Kind.Task }
+        .distinct()
+        .sortedBy { it.kind.rank }
+}
+
+/**
+ * PRD §8: a bubble section covering the hour-of-day sub-range `[top, bottom]` of the element being tiled.
+ * Feeding these to [bubbleHoverZones] cuts the element into sub-ranges of CONSTANT section stack.
+ */
+private class BubbleOverlay(val top: Float, val bottom: Float, val section: CalendarBubbleSection)
+
+/** One hover tile of an element: the sub-range `[top, bottom]` and the sections covering all of it. */
+private class BubbleHoverZone(val top: Float, val bottom: Float, val sections: List<CalendarBubbleSection>)
+
+/**
+ * Tiles `[top, bottom]` at every [overlays] boundary strictly inside it, so each tile is covered by one
+ * constant set of sections and can carry a single hover reporter.
+ *
+ * Tiling rather than nesting is the calendar's rule for hover (see [deviceHoverZones]): two hover reporters
+ * at the same position race unpredictably, because a parent's Move overwrites the child's report.
+ */
+private fun bubbleHoverZones(top: Float, bottom: Float, overlays: List<BubbleOverlay>): List<BubbleHoverZone> {
+    fun sectionsAt(instant: Float) =
+        overlays.filter { it.top <= instant && it.bottom >= instant }.map { it.section }
+    // A zero-length span still has to report: a sub-minute look-away is drawn at a coerced minimum height
+    // (see [ScreenBreakBand]), so an empty tiling would leave a visible band un-hoverable.
+    if (bottom <= top) return listOf(BubbleHoverZone(top, bottom, sectionsAt(top)))
+    val cuts = mutableListOf(top, bottom)
+    for (o in overlays) {
+        if (o.top > top && o.top < bottom) cuts.add(o.top)
+        if (o.bottom > top && o.bottom < bottom) cuts.add(o.bottom)
+    }
+    cuts.sort()
+    val zones = mutableListOf<BubbleHoverZone>()
+    for (i in 0 until cuts.size - 1) {
+        val a = cuts[i]
+        val b = cuts[i + 1]
+        if (b - a <= 1e-5f) continue
+        zones += BubbleHoverZone(a, b, sectionsAt((a + b) / 2f))
+    }
+    return zones
+}
+
+/** PRD §8: which bubble section one of the two decorative [SchedulerDomain.ActivityLayer]s contributes. */
+private fun bubbleKind(layer: SchedulerDomain.ActivityLayer): CalendarBubbleSection.Kind =
+    when (layer) {
+        SchedulerDomain.ActivityLayer.NoComputerUnlocked -> CalendarBubbleSection.Kind.NoComputerUnlocked
+        SchedulerDomain.ActivityLayer.NoPhoneUnlocked -> CalendarBubbleSection.Kind.NoPhoneUnlocked
+    }
+
+/**
+ * PRD §8: the bubble section a placed panel / derived band contributes — a real task, a §15 screen break, or
+ * one of the grey / no-screen periods. [times] overrides the default start–end line (the block path appends
+ * its "Open: …" device line to it).
+ */
+private fun panelBubbleSection(r: PlacedRecord, tz: TimeZone, times: String? = null): CalendarBubbleSection {
+    val kind =
+        when {
+            r.screenBreak -> CalendarBubbleSection.Kind.Break
+            r.sleep -> CalendarBubbleSection.Kind.Sleep
+            r.noScreen -> CalendarBubbleSection.Kind.NoScreen
+            r.inactivity -> CalendarBubbleSection.Kind.Inactivity
+            else -> CalendarBubbleSection.Kind.Task
+        }
+    return CalendarBubbleSection(kind, underHoverTitle(r), times ?: placedTimeRange(r, tz))
+}
+
+/** PRD §8/§12: a placed element's true (un-clipped) start–end line; an open-ended start shows "∞". */
+private fun placedTimeRange(r: PlacedRecord, tz: TimeZone): String =
+    "${hmOrInfinity(r.fullStartMillis, r.openStart, tz)} – ${formatHm(r.fullEndMillis, tz)}"
+
+/**
+ * PRD §8 hover: the section stack the cursor is currently over, and where. [pos] is the cursor position in
+ * the calendar **viewport's** coordinates (not the scrolling content), so the bubble overlay sits next to
+ * the pointer and follows it even while the grid scrolls under a still cursor. [ownerId] identifies the
+ * reporting element so a stale `Exit` from the element the cursor just left can't clear a hover the newly
+ * entered element has already set.
  */
 private class CalendarTitleHover(
     val ownerId: Any,
-    val title: String,
+    val sections: List<CalendarBubbleSection>,
     val pos: Offset,
-    /** PRD §8: a second bubble line — the panel's start–end times; null for elements without a time range. */
-    val subtitle: String? = null,
-    /**
-     * PRD §8: hovering a decorative panel (sleep/no-screen/screen-break) also names whatever real panel or
-     * derived activity/inactivity period sits underneath it, stacked below the decorative element's own
-     * title/subtitle. Null for an element with nothing underneath (or that isn't decorative).
-     */
-    val underTitle: String? = null,
-    val underSubtitle: String? = null,
 )
 
 /**
@@ -4291,27 +4430,20 @@ private class CalendarTitleHoverScope(
  */
 @OptIn(ExperimentalComposeUiApi::class)
 private fun Modifier.calendarTitleHover(
-    title: String,
+    sections: List<CalendarBubbleSection>,
     scope: CalendarTitleHoverScope,
-    subtitle: String? = null,
-    underTitle: String? = null,
-    underSubtitle: String? = null,
 ): Modifier = composed {
     val ownerId = remember { Any() }
     var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    // The single funnel every hover report passes through, so the user's section ordering is applied in
+    // exactly one place. Held in a [rememberUpdatedState] because the pointer-input nodes below are keyed
+    // on the event type alone (a long-lived coroutine that must not restart mid-gesture) and would
+    // otherwise keep reporting the sections of the FIRST composition — these change on every plan.
+    val current = rememberUpdatedState(orderedBubbleSections(sections))
     val report: (Offset) -> Unit = report@{ local ->
         val viewport = scope.viewportCoords()?.takeIf { it.isAttached } ?: return@report
         val self = coords?.takeIf { it.isAttached } ?: return@report
-        scope.onHover(
-            CalendarTitleHover(
-                ownerId,
-                title,
-                viewport.localPositionOf(self, local),
-                subtitle,
-                underTitle,
-                underSubtitle,
-            ),
-        )
+        scope.onHover(CalendarTitleHover(ownerId, current.value, viewport.localPositionOf(self, local)))
     }
     this
         .onGloballyPositioned { coords = it }
@@ -4340,19 +4472,17 @@ private fun Modifier.onPointerEventCompat(
 }
 
 /**
- * The hover title bubble (PRD §8), drawn at [pos] (+16dp below the cursor, mirroring the old cursor-anchored
+ * The hover bubble (PRD §8), drawn at [pos] (+16dp below the cursor, mirroring the old cursor-anchored
  * placement). Rendered with plain draw modifiers only — no `Surface`/clickable/pointer-input — so it is
  * invisible to hit-testing and the cursor falls through to the block underneath even when it overtakes the
  * bubble during a fast scroll, keeping the title live.
+ *
+ * [sections] arrive already ordered (see [orderedBubbleSections]); each draws a title + times line, and a
+ * thin divider separates one from the next.
  */
 @Composable
-private fun CalendarTitleBubble(
-    text: String,
-    pos: Offset,
-    subtitle: String? = null,
-    underTitle: String? = null,
-    underSubtitle: String? = null,
-) {
+private fun CalendarTitleBubble(sections: List<CalendarBubbleSection>, pos: Offset) {
+    if (sections.isEmpty()) return
     val yOffsetPx = with(LocalDensity.current) { 16.dp.roundToPx() }
     Column(
         Modifier
@@ -4361,35 +4491,21 @@ private fun CalendarTitleBubble(
             .background(MaterialTheme.colorScheme.inverseSurface, RoundedCornerShape(4.dp))
             .padding(horizontal = 8.dp, vertical = 4.dp),
     ) {
-        Text(
-            text = text.ifEmpty { "(untitled)" },
-            color = MaterialTheme.colorScheme.inverseOnSurface,
-            style = MaterialTheme.typography.labelMedium,
-        )
-        // PRD §8: the panel's start–end times, shown as a second line when the hovered element has them.
-        if (subtitle != null) {
+        sections.forEachIndexed { index, section ->
+            if (index > 0) {
+                HorizontalDivider(
+                    Modifier.padding(vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.3f),
+                )
+            }
             Text(
-                text = subtitle,
-                color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.8f),
-                style = MaterialTheme.typography.labelSmall,
-            )
-        }
-        // PRD §8: hovering a decorative panel (sleep/no-screen/screen-break) stacks the real panel or
-        // derived activity/inactivity period underneath it below a thin divider, so both are visible at once
-        // instead of one element's report silently overwriting the other's.
-        if (underTitle != null) {
-            HorizontalDivider(
-                Modifier.padding(vertical = 4.dp),
-                color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.3f),
-            )
-            Text(
-                text = underTitle.ifEmpty { "(untitled)" },
+                text = section.title.ifEmpty { "(untitled)" },
                 color = MaterialTheme.colorScheme.inverseOnSurface,
                 style = MaterialTheme.typography.labelMedium,
             )
-            if (underSubtitle != null) {
+            if (section.times != null) {
                 Text(
-                    text = underSubtitle,
+                    text = section.times,
                     color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.8f),
                     style = MaterialTheme.typography.labelSmall,
                 )
@@ -4482,6 +4598,11 @@ private fun CalendarBlock(
      * tinted whole. The block stays a normal, fully interactive block drawn on top of the band.
      */
     sleepHourRanges: List<ClosedFloatingPointRange<Float>> = emptyList(),
+    /**
+     * PRD §8: the bubble sections this block's own stacks on top of — the grey periods it is drawn inside
+     * and the two "nobody unlocked" layers hatched over it. See the column's `contextOverlays`.
+     */
+    contextOverlays: List<BubbleOverlay> = emptyList(),
     overlapArmed: Boolean,
     /** True while a move/resize preview overlay is showing — hide these (gesture-only) resting slices. */
     previewActive: Boolean,
@@ -4666,22 +4787,29 @@ private fun CalendarBlock(
                             )
                         }
                     }
-                    hoverZones.forEach { zone ->
+                    // The block's own section, one overlay per device-set segment, then re-tiled together
+                    // with the grey periods and layers covering it so each tile reports one whole stack.
+                    val ownOverlays = hoverZones.map { zone ->
                         val line = zone.devices?.let { d ->
                             if (d.isEmpty()) "Open: no device" else "Open: ${d.joinToString(", ")}"
                         }
-                        Box(
-                            Modifier
-                                .offset(y = hourHeight * (zone.top - slice.topHour))
-                                .fillMaxWidth()
-                                .height(hourHeight * (zone.bottom - zone.top))
-                                .calendarTitleHover(
-                                    record.title,
-                                    hoverScope,
-                                    subtitle = if (line == null) timeRange else "$timeRange\n$line",
-                                ),
+                        BubbleOverlay(
+                            zone.top,
+                            zone.bottom,
+                            panelBubbleSection(record, tz, if (line == null) timeRange else "$timeRange\n$line"),
                         )
                     }
+                    bubbleHoverZones(slice.topHour, slice.bottomHour, ownOverlays + contextOverlays)
+                        .forEach { zone ->
+                            if (zone.sections.isEmpty()) return@forEach
+                            Box(
+                                Modifier
+                                    .offset(y = hourHeight * (zone.top - slice.topHour))
+                                    .fillMaxWidth()
+                                    .height(hourHeight * (zone.bottom - zone.top))
+                                    .calendarTitleHover(zone.sections, hoverScope),
+                            )
+                        }
                     // A dashed separator at every interior boundary where the device set changed (two
                     // adjacent segments always differ — equal neighbours were merged in the sweep).
                     record.deviceSegments.forEachIndexed { segIndex, seg ->
@@ -4753,31 +4881,6 @@ private fun deviceHoverZones(
     return zones
 }
 
-/**
- * One hover tile of a decorative panel's `[top, bottom]` hour range: [under] is the real panel or derived
- * activity/inactivity period whose time range is directly beneath this sub-range, if any — its title/time
- * are stacked below the decorative element's own title/subtitle in the hover bubble (PRD §8). Two
- * independent hover reporters at the same position race unpredictably (see [deviceHoverZones]'s note on
- * why nested/overlapping hover handlers aren't used), so this tiles the region instead, the same way.
- */
-private data class DecorativeHoverZone(val top: Float, val bottom: Float, val under: PlacedRecord?)
-
-/** Tiles `[top, bottom]` by whichever of [unders] overlaps each sub-range; uncovered leftovers get `under = null`. */
-private fun decorativeHoverZones(top: Float, bottom: Float, unders: List<PlacedRecord>): List<DecorativeHoverZone> {
-    val zones = mutableListOf<DecorativeHoverZone>()
-    var cursor = top
-    for (u in unders.filter { it.startHour < bottom && it.endHour > top }.sortedBy { it.startHour }) {
-        val a = maxOf(u.startHour, top)
-        val b = minOf(u.endHour, bottom)
-        if (b <= cursor) continue
-        if (a > cursor) zones.add(DecorativeHoverZone(cursor, a, null))
-        zones.add(DecorativeHoverZone(maxOf(a, cursor), b, u))
-        cursor = maxOf(cursor, b)
-    }
-    if (cursor < bottom) zones.add(DecorativeHoverZone(cursor, bottom, null))
-    return zones
-}
-
 /** The label for a derived (no-[entryId]) sleep / no-screen / inactivity record. */
 private fun decorativeBandLabel(r: PlacedRecord): String = when {
     r.sleep -> "Sleep"
@@ -4786,8 +4889,8 @@ private fun decorativeBandLabel(r: PlacedRecord): String = when {
 }
 
 /**
- * The hover title for a [DecorativeHoverZone.under] record: a derived band's own label if it is one,
- * otherwise the real panel's title.
+ * The bubble title for a placed record: a derived band's own label if it is one, otherwise the panel's
+ * title (see [panelBubbleSection]).
  */
 private fun underHoverTitle(u: PlacedRecord): String =
     if (u.entryId == null && (u.sleep || u.inactivity || u.noScreen)) decorativeBandLabel(u) else u.title

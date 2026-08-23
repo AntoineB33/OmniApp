@@ -16,8 +16,8 @@ import org.example.project.scheduler.platform.DeviceKind
  * The rule these tests pin is **where a layer's evidence comes from**: the DEVICE's own OS history (its
  * lock/unlock record, or its sleep/awake record where the platform exposes no other), never the app's own
  * activity heartbeats — the app only knows when it happened to be running. And the default when a device
- * cannot be asked is that it **was unlocked**, so a first run on a computer never claims the phone was locked
- * all week.
+ * cannot be asked is that it **was locked**, so a computer running with no phone on the account hatches the
+ * phone layer across the whole displayed past.
  */
 class CalendarLayerTest {
 
@@ -33,21 +33,23 @@ class CalendarLayerTest {
     // ----- where a layer's evidence comes from ---------------------------------------------------------
 
     @Test
-    fun a_device_that_cannot_be_asked_is_assumed_to_have_been_unlocked() {
+    fun a_device_that_cannot_be_asked_is_assumed_to_have_been_locked() {
         // The user's own example: "if I run the app on a computer and the data of the phone is not available
-        // because it is the first time I run the app, then it is considered that the phone was always unlocked
-        // in the past". Null is that answer, and it must draw NOTHING — not a full-window hatch.
-        assertTrue(regions(null).isEmpty())
-        // Note this is the OPPOSITE default from the account-wide pause derivation, which reads "no screen
-        // unless a device reported activity". The two answer different questions, and only this one is about
-        // whether a DEVICE was usable — where silence means the question was never asked, not "no".
+        // because it is the first time I run the app, then it is considered that the phone was always locked
+        // in the past". Null is that answer, and it hatches the WHOLE asked window.
+        assertEquals(listOf(TaskTimeRange(T0, T4)), regions(null))
+        // Same default as the account-wide pause derivation ("no screen unless a device reported activity"):
+        // a device nobody can vouch for was not in use.
         assertEquals(listOf(TaskTimeRange(T0, T4)), SchedulerDomain.derivePauses(emptyList(), T0, T4))
+        // A degenerate window asserts nothing rather than a zero-length band.
+        assertTrue(SchedulerDomain.layerRegions(null, emptyList(), T4, T4).isEmpty())
     }
 
     @Test
-    fun a_device_that_was_never_locked_draws_no_layer_either() {
-        // The other answer: the log WAS read and the device was unlocked throughout. Same drawing, different
-        // reason — which is why the seam returns a nullable list rather than folding both into "empty".
+    fun a_device_that_answered_it_was_never_locked_draws_no_layer() {
+        // The other answer, and the reason the seam is NULLABLE rather than folding both into "empty": the log
+        // WAS read and the device was unlocked throughout, so nothing is hatched — the exact opposite drawing
+        // from the unaskable device above.
         assertTrue(regions(emptyList()).isEmpty())
     }
 
@@ -70,16 +72,24 @@ class CalendarLayerTest {
         // …but an ASSERTED region is a claim the rules make, not a reading, so a 20-second look-away keeps its
         // hatch however short it is.
         val lookAway = TaskTimeRange(T0 + 2 * HOUR, T0 + 2 * HOUR + 20_000L)
-        assertEquals(listOf(lookAway), regions(null, asserted = listOf(lookAway)))
+        assertEquals(listOf(lookAway), regions(emptyList(), asserted = listOf(lookAway)))
     }
 
     @Test
-    fun the_asserted_regions_are_drawn_even_for_a_device_that_cannot_be_asked() {
+    fun the_asserted_regions_are_drawn_whatever_the_history_says() {
         // A sleep window / screen break / hand-added no-screen period says nobody is unlocked, whatever any
         // device's history does or does not show — so it hatches both layers.
         val night = at(2, 3)
-        assertEquals(listOf(night), regions(null, asserted = listOf(night)))
+        assertEquals(listOf(night), regions(emptyList(), asserted = listOf(night)))
         assertEquals(listOf(at(1, 3)), regions(listOf(at(1, 2)), asserted = listOf(night)))
+        // Including for a device that cannot be asked, whose evidence stops at the now-line: an asserted
+        // region AHEAD of it (a §17 sleep window, a projected screen break) is still hatched, and the two
+        // fuse rather than double-drawing.
+        val tomorrowNight = TaskTimeRange(T4 + 5 * HOUR, T4 + 8 * HOUR)
+        assertEquals(
+            listOf(TaskTimeRange(T0, T4), tomorrowNight),
+            regions(null, asserted = listOf(tomorrowNight)),
+        )
     }
 
     // ----- both layers at once is a no-screen period ---------------------------------------------------
@@ -87,10 +97,10 @@ class CalendarLayerTest {
     @Test
     fun both_layers_at_once_is_the_no_screen_period() {
         // The user's definition: "when no computer and no phone is unlocked at the same time, then it is a
-        // no-screen period". With a phone that cannot be asked there is no such stretch at all — which is the
-        // point of the assumed-unlocked default: an unknown device must not manufacture no-screen time.
+        // no-screen period". With a phone that cannot be asked — assumed locked throughout — the no-screen
+        // period is exactly where the COMPUTER was locked: nobody else could have been at a screen.
         val computerLocked = regions(listOf(at(1, 3)))
-        assertTrue(SchedulerDomain.intersectRegions(computerLocked, regions(null)).isEmpty())
+        assertEquals(computerLocked, SchedulerDomain.intersectRegions(computerLocked, regions(null)))
         // Once the phone's own history IS known, the overlap is the no-screen period.
         val phoneLocked = regions(listOf(at(2, 4)))
         assertEquals(listOf(at(2, 3)), SchedulerDomain.intersectRegions(computerLocked, phoneLocked))

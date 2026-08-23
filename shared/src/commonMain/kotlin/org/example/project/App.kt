@@ -762,8 +762,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // in and §15 counts as a pause.
         //
         // Each layer has two sources, answering different halves of the timeline:
-        //   • the PAST is evidence — the complement of that device kind's recorded activity. "No screen unless
-        //     a device reported activity", so an emptied account's whole past carries both layers.
+        //   • the PAST is evidence — that device kind's own OS lock/standby history, or, when no device of the
+        //     kind can be asked at all, the whole asked past (a device nobody can vouch for was locked).
         //   • the FUTURE is assertion — nothing has been observed yet, so only what the rules PROMISE will be
         //     unlocked-by-nobody counts: the §17 sleep windows and the §15 screen breaks (a break is by
         //     definition time away from every screen). Screen breaks are asserted in the past too: a 20-second
@@ -788,8 +788,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // standing in for the real source.
         //
         // Only THIS device can be asked. Every other kind gets `null` — "cannot tell" — and a device that
-        // cannot tell is ASSUMED UNLOCKED, so running on a computer for the first time draws no phone layer
-        // rather than claiming the phone was locked all week (the user's own example).
+        // cannot tell is ASSUMED LOCKED, so running on a computer with no phone on the account hatches the
+        // whole displayed past with the phone layer (the user's own example: the phone's data is not
+        // available, so it is considered to have been locked all along).
         //
         // Bounded by the DISPLAYED span: there is no reason to ask about days that are not on screen, and
         // scrolling further back moves [displayFloorMillis] and asks again. Re-asked on a coarse bucket of
@@ -798,6 +799,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // never on the display cadence.
         val ownLayer = remember { SchedulerDomain.layerForDeviceKind(currentDeviceKind()) }
         var lockedIntervals by remember { mutableStateOf<List<TaskTimeRange>?>(null) }
+        // A scan that has not COME BACK yet is not the same answer as one that came back empty-handed: under
+        // the assumed-LOCKED default the latter hatches the whole window, so treating "not asked yet" as
+        // "cannot be asked" would flash a full-window hatch over the own layer on every launch, until the
+        // first PowerShell query lands. Before that first answer the own layer draws nothing; a LATER re-scan
+        // keeps showing the previous answer while it runs, so this only ever gates the first one.
+        var lockHistoryScanned by remember { mutableStateOf(false) }
         // Both ends of the asked window are QUANTIZED to the refresh period, or the effect would relaunch on
         // every display tick: [displayFloorMillis] is `now − 168h` whenever the calendar is not scrolled past
         // that, so it slides with the now-line and would re-key the scan ~every 30 s (observed: a PowerShell
@@ -814,12 +821,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     deviceLockedIntervals(since, until)?.map { TaskTimeRange(it.startMillis, it.endMillis) }
                 }
             lockedIntervals = scanned
+            lockHistoryScanned = true
             // scripts/collect-diagnostics.bat: the layers are read from the OS, so an anomaly in them is an
             // anomaly in THIS answer — record it rather than asking the user to describe the hatching. One
             // line per scan (at most one per LOCK_HISTORY_REFRESH_MILLIS), not per frame.
             Diagnostics.log(
                 if (scanned == null) {
-                    "device lock history unavailable — ${ownLayer.name} assumed unlocked"
+                    "device lock history unavailable — ${ownLayer.name} assumed locked over the whole window"
                 } else {
                     val hatchedMillis = scanned.sumOf { it.endEpochMillis - it.startEpochMillis }
                     "device lock history: ${scanned.size} locked span(s), " +
@@ -831,7 +839,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             SchedulerDomain.ActivityLayer.entries.flatMap { layer ->
                 val regions =
                     SchedulerDomain.layerRegions(
-                        lockedIntervals = if (layer == ownLayer) lockedIntervals else null,
+                        lockedIntervals =
+                            when {
+                                layer != ownLayer -> null // no channel carries a peer's lock history
+                                lockHistoryScanned -> lockedIntervals
+                                else -> emptyList() // not asked yet ≠ cannot be asked
+                            },
                         assertedRegions = layerAsserted,
                         sinceMillis = displayFloorMillis,
                         untilMillis = nowMillis,
