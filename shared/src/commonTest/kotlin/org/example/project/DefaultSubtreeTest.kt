@@ -238,6 +238,52 @@ class DefaultSubtreeTest {
         assertEquals(emptyList(), childTitles(undone, cell))
     }
 
+    @Test
+    fun expanding_the_cell_being_edited_seeds_it_instead_of_opening_onto_nothing() {
+        // The graft fires at the END of the session, so the arrow clicked while still typing used to open the
+        // freshly named task onto its bare placeholder — the template only turned up after a click elsewhere
+        // had ended the session. Asking for the sub-tree is a forced exit (PRD §4), so it seeds it first.
+        val s0 = withTemplate(listOf(node("dst/0", "Plan"), node("dst/1", "Do")))
+        val cell = firstCell(s0)
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.BeginEdit(cell, initialText = "Project"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cell))
+
+        assertNull(s.editSession, "asking for the sub-tree ends the session")
+        assertEquals(listOf("Plan", "Do"), childTitles(s, cell))
+        assertTrue(cell in s.expanded, "the click asked for the sub-tree — it must be open")
+        // Still one Ctrl+Z: the graft rode the session's single "Edit" unit, the toggle added nothing.
+        assertEquals(1, s.histories.forCategory(HistoryCategory.Main).units.size)
+    }
+
+    @Test
+    fun expanding_another_cell_while_editing_seeds_the_edited_one_and_still_opens_the_other() {
+        val s0 = withTemplate(listOf(node("dst/0", "Plan")))
+        val other = firstCell(s0)
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(other, "Other"))
+        val cell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cell, initialText = "Project"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(other))
+
+        assertNull(s.editSession)
+        assertEquals(listOf("Plan"), childTitles(s, cell), "the edited cell is seeded by the forced exit")
+        assertTrue(other in s.expanded, "the arrow that was clicked still opens its own cell")
+    }
+
+    @Test
+    fun collapsing_the_cell_being_edited_still_collapses_it() {
+        // The graft force-expands what it seeded; a click asking for the opposite must still win.
+        val s0 = withTemplate(listOf(node("dst/0", "Plan")))
+        val cell = firstCell(s0)
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.BeginEdit(cell, initialText = "Project"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cell))
+        assertTrue(cell in s.expanded)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cell))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cell))
+        assertFalse(cell in s.expanded)
+        assertEquals(listOf("Plan"), childTitles(s, cell), "and nothing is seeded twice")
+    }
+
     // ---- the menu / the switch -----------------------------------------------------------------
 
     @Test

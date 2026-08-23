@@ -94,6 +94,18 @@ yet); the switch takes the percentage's column at its width so both trees line u
 compact rather than as a Material `Switch`, which measures taller than a 28 dp task-sheet row and would have
 made the template's rows a different height from the tree's. Deploy: client rebuild only.
 
+**Asking for a sub-tree ends the edit session** (fixed 2026-08-22, same day). Seeding at `endEditSession` has
+a visible corner: the expand arrow of the cell you are *still typing in* opened the freshly named task onto
+nothing but its empty placeholder, and the template only turned up after a click elsewhere had ended the
+session for it. `SchedulerIntent.ToggleExpand` now forces the exit first (PRD §4 *Forced Exit*, as clicking
+another cell already did) and applies the toggle only where the graft's own auto-expand did not already leave
+the cell in the state the click asked for. Seeding per keystroke was rejected again for the same reason as
+before, plus a new one: mid-session the "New task" draft can still be swapped for an existing id, and a draft
+that had already been seeded would survive that swap as a **detached parent** — a titled task with a populated
+sub-list no cell points at — leaving one junk sub-tree behind per abandoned draft. Tests: `DefaultSubtreeTest`
+(`expanding_the_cell_being_edited_seeds_it_instead_of_opening_onto_nothing`, plus the arrow of *another* cell
+and the collapse case). Deploy: client rebuild only.
+
 Known scope limit: the template is one per account and shared by every task tree (§6); there is no per-tree
 template, and no way to re-apply it to tasks that already exist.
 

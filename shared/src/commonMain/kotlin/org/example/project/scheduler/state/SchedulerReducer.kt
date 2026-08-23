@@ -68,7 +68,7 @@ object SchedulerReducer {
             SchedulerIntent.ClearSelection -> reduceClearSelection(state)
             SchedulerIntent.EmptySelectedCells -> reduceEmptySelected(state)
             is SchedulerIntent.ExitEdit -> reduceExitEdit(state, intent.navigation)
-            is SchedulerIntent.ToggleExpand -> commitDelta(state, ToggleExpandDelta(intent.cellId))
+            is SchedulerIntent.ToggleExpand -> reduceToggleExpand(state, intent.cellId)
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
             is SchedulerIntent.AssignTaskId -> commitDelta(state, assignTaskIdDelta(state, intent.cellId, intent.taskId))
             is SchedulerIntent.SelectTaskTree -> reduceSelectTaskTree(state, intent.id)
@@ -725,6 +725,29 @@ object SchedulerReducer {
             editSession = null,
             histories = committed.histories.copy(edit = SchedulerHistory()),
         )
+    }
+
+    /**
+     * PRD §4 *Forced Exit* + §7 *Default sub-tree*: asking for a sub-tree while a cell is being edited ends
+     * that session first.
+     *
+     * The default sub-tree is grafted **once, at the end of the session** ([endEditSession]) — never on a
+     * keystroke, each of which re-runs the naming and can still swap the "New task" draft for an existing id.
+     * So an expand arrow clicked mid-session would otherwise open the freshly named task onto nothing but its
+     * empty placeholder, and the template would only turn up after the next click elsewhere had ended the
+     * session for it.
+     *
+     * The graft expands the cell it seeded, so the toggle itself is applied only where the forced exit did
+     * not already leave the cell in the state the click asked for — and never on a cell the post-edit cleanup
+     * has just removed.
+     */
+    private fun reduceToggleExpand(state: SchedulerState, cellId: CellId): SchedulerState {
+        if (state.editSession == null) return commitDelta(state, ToggleExpandDelta(cellId))
+        val wantExpanded = cellId !in state.expanded
+        val exited = endEditSession(state)
+        if (exited.cells[cellId] == null) return exited
+        if ((cellId in exited.expanded) == wantExpanded) return exited
+        return commitDelta(exited, ToggleExpandDelta(cellId))
     }
 
     private fun reduceClick(state: SchedulerState, intent: SchedulerIntent.ClickCell): SchedulerState {

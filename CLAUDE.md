@@ -296,6 +296,9 @@ until it is applied to a real cell.
   session.treeBefore.tasks`). Not per keystroke (each one re-runs the naming), and not when the session reused
   an existing task (its sub-tree already came with the id). A sub-list that already holds a cell is never
   re-seeded.
+- **Asking for a sub-tree while a cell is being edited ends that session first** (`ToggleExpand` is a PRD §4
+  Forced Exit, like clicking another cell). Otherwise the arrow opens the just-named task onto its bare
+  placeholder. The toggle itself is skipped when the graft's auto-expand already answered the click.
 - **The graft drives `applySetCellTitle` / `applyAssignTaskId`**, so occurrences, `childTaskIds`, the title
   index and auto-expansion stay owned by the code that already owns them. Never a second copy of those rules.
 - **A seeded row must never seed in turn** — that is an unbounded cascade, not a deeper template. The graft
