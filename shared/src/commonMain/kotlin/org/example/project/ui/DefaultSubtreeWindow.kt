@@ -53,6 +53,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -384,6 +386,11 @@ private fun TemplateRow(
     val hasChildren = titled
     val rowFocus = remember(node.id) { FocusRequester() }
     val editFocus = remember(node.id) { FocusRequester() }
+    // PRD §4, as in the task tree: only a double-click on the TITLE opens Edit Mode. The tap handler sits on
+    // the whole row (it also selects), so it converts the press into window space and asks the title column
+    // whether it landed there.
+    val rowCoordinates = remember(node.id) { mutableStateOf<LayoutCoordinates?>(null) }
+    val titleBounds = remember(node.id) { TaskSheetTitleBounds() }
     // Only a selected, non-editing row takes the keyboard — while Edit Mode is on, the field owns it.
     val keyboardArmed = selected && !editing
     LaunchedEffect(keyboardArmed) { if (keyboardArmed) rowFocus.requestFocus() }
@@ -450,10 +457,19 @@ private fun TemplateRow(
                         Modifier
                     }
                 )
+                .onGloballyPositioned { rowCoordinates.value = it }
                 .pointerInput(node.id) {
                     detectTapGestures(
                         onTap = { scope.onSelect(node.id) },
-                        onDoubleTap = { scope.onBeginEdit(node.id, null) },
+                        onDoubleTap = { offset ->
+                            val windowX =
+                                rowCoordinates.value
+                                    ?.takeIf { it.isAttached }
+                                    ?.localToWindow(offset)?.x
+                            if (windowX == null || titleBounds.containsWindowX(windowX)) {
+                                scope.onBeginEdit(node.id, null)
+                            }
+                        },
                     )
                 }
                 .padding(horizontal = 4.dp),
@@ -465,7 +481,10 @@ private fun TemplateRow(
                 onToggle = { scope.onToggleCollapse(node.id) },
             )
             Box(
-                modifier = Modifier.width(titleColumnWidth).defaultMinSize(minHeight = 20.dp),
+                modifier = Modifier
+                    .width(titleColumnWidth)
+                    .defaultMinSize(minHeight = 20.dp)
+                    .taskSheetTitleBounds(titleBounds),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 if (editing) {

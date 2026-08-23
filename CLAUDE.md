@@ -340,9 +340,11 @@ until it is applied to a real cell.
   id — so its template children are kept but never applied. Do not "fix" this by writing into the bound task's
   sub-list. The window **draws** that borrowed sub-tree under the row, greyed and uneditable.
 - **The window IS the task tree, plus one little switch per non-empty cell.** Same chrome, same indentation and
-  guide-lines, same expand arrows, same gestures (click to select, double-click or type to edit,
+  guide-lines, same expand arrows, same gestures (click to select, double-click **the title column** or
+  type to edit — a double-click anywhere else in the row (the percentage, the minimum time, the expand
+  arrow, the empty tail) still selects and still drag-moves, but never opens Edit Mode,
   Enter/Shift+Enter/Tab, Backspace/Delete empties). That look lives in **one** place — `ui/TaskSheetChrome.kt`
-  (`SheetColors`, `INDENT_STEP_DP`, `taskSheetGuideLines`, `TaskSheetExpandArrow`) — which both trees import. A
+  (`SheetColors`, `INDENT_STEP_DP`, `taskSheetGuideLines`, `TaskSheetExpandArrow`, `TaskSheetTitleBounds`) — which both trees import. A
   second palette or a second indent step is how the two silently drift apart.
 - **Only the percentage and the minimum-time columns are dropped**, because a template is in no tree and has no
   real task yet. The switch takes the percentage's column at the same width, so the two trees line up. Do not

@@ -19,6 +19,9 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.utf16CodePoint
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.dp
 
 /**
@@ -161,3 +164,33 @@ private fun Int.isValidTextCodePoint(): Boolean {
     if ((this and 0xFFFE) == 0xFFFE) return false
     return true
 }
+
+/**
+ * PRD §4: Edit Mode is opened by a double-click **on the cell's title** — not on the rest of the row (the
+ * percentage, the minimum time, the switch, the empty tail). The row's pointer handler has to sit on the
+ * whole row anyway (it also selects, range-drags and move-drags), so the title column records its own
+ * window-space horizontal band here and the handler asks whether the press landed inside it.
+ *
+ * Deliberately not Compose state: it is written from the layout phase and read from a gesture coroutine, so
+ * nothing should recompose on it.
+ */
+internal class TaskSheetTitleBounds {
+    private var startX = Float.NaN
+    private var endX = Float.NaN
+
+    internal fun record(coordinates: LayoutCoordinates) {
+        startX = coordinates.positionInWindow().x
+        endX = startX + coordinates.size.width
+    }
+
+    /**
+     * Whether [windowX] falls in the title column. Unmeasured (the row has not been laid out yet) counts as
+     * inside, so a missing measurement can never make a title double-click do nothing.
+     */
+    internal fun containsWindowX(windowX: Float): Boolean =
+        startX.isNaN() || (windowX >= startX && windowX < endX)
+}
+
+/** Records the title column's band for [TaskSheetTitleBounds]. Put it on the title cell of a row. */
+internal fun Modifier.taskSheetTitleBounds(bounds: TaskSheetTitleBounds): Modifier =
+    onGloballyPositioned { bounds.record(it) }

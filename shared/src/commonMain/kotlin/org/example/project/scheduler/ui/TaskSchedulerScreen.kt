@@ -129,6 +129,8 @@ import org.example.project.ui.PRIORITY_COLUMN_MAX
 import org.example.project.ui.PRIORITY_COLUMN_MIN
 import org.example.project.ui.SheetColors
 import org.example.project.ui.TaskSheetExpandArrow
+import org.example.project.ui.TaskSheetTitleBounds
+import org.example.project.ui.taskSheetTitleBounds
 import org.example.project.ui.taskSheetGuideLines
 import org.example.project.ui.isModifierKey
 import org.example.project.ui.printableChar
@@ -2046,6 +2048,10 @@ private fun TaskRow(
     // Layout coordinates of this row, used to convert in-row pointer positions to window space so
     // the originating row can map an ongoing drag to the cell currently under the cursor.
     val rowCoordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
+    // PRD §4: only a double-click on the TITLE opens Edit Mode. The row-wide gesture handler below reads
+    // the title column's own band out of this to tell a title press from one on the percentage, the
+    // minimum time or the empty tail of the row.
+    val titleBounds = remember(cellId) { TaskSheetTitleBounds() }
     val currentResolveRowAt by rememberUpdatedState(resolveRowAt)
     LaunchedEffect(isEditing) {
         if (isEditing) editFocusRequester.requestFocus()
@@ -2085,14 +2091,21 @@ private fun TaskRow(
                 val doubleTapTimeout = viewConfiguration.doubleTapTimeoutMillis
                 val touchSlop = viewConfiguration.touchSlop
 
-                fun windowYOf(change: PointerInputChange): Float? =
+                fun windowPositionOf(change: PointerInputChange): Offset? =
                     rowCoordinates.value
                         ?.takeIf { it.isAttached }
-                        ?.localToWindow(change.position)?.y
+                        ?.localToWindow(change.position)
+
+                fun windowYOf(change: PointerInputChange): Float? = windowPositionOf(change)?.y
 
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
+                    // PRD §4: a double-click only opens Edit Mode when it lands on the title — pressing the
+                    // percentage, the minimum time or the row's empty tail still selects and still
+                    // drag-moves, but never starts an edit.
+                    val onTitle =
+                        windowPositionOf(down)?.let { titleBounds.containsWindowX(it.x) } ?: true
                     val modifiers = currentEvent.keyboardModifiers
                     val ctrl = modifiers.pointerCtrlPressed
                     val shift = modifiers.pointerShiftPressed
@@ -2144,7 +2157,7 @@ private fun TaskRow(
                     if (!currentCanMoveFromCell) {
                         onClick(cellId, false, false, true)
                         waitForUpOrCancellation()
-                        onDoubleClick()
+                        if (onTitle) onDoubleClick()
                         return@awaitEachGesture
                     }
 
@@ -2160,7 +2173,7 @@ private fun TaskRow(
                                 onMoveDragEnd()
                             } else {
                                 onClick(cellId, false, false, true)
-                                onDoubleClick()
+                                if (onTitle) onDoubleClick()
                             }
                             break
                         }
@@ -2261,7 +2274,8 @@ private fun TaskRow(
                 Box(
                     modifier = Modifier
                         .width(priorityColumnWidth)
-                        .defaultMinSize(minHeight = 20.dp),
+                        .defaultMinSize(minHeight = 20.dp)
+                        .taskSheetTitleBounds(titleBounds),
                     contentAlignment = Alignment.CenterStart,
                 ) {
                 BasicTextField(
@@ -2374,7 +2388,8 @@ private fun TaskRow(
                 Box(
                     modifier = Modifier
                         .width(priorityColumnWidth)
-                        .defaultMinSize(minHeight = 20.dp),
+                        .defaultMinSize(minHeight = 20.dp)
+                        .taskSheetTitleBounds(titleBounds),
                     contentAlignment = Alignment.CenterStart,
                 ) {
                     Text(
