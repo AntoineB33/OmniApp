@@ -11,6 +11,33 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### System-wide chords are swallowed, `Ctrl+Shift+Alt+E`, and a shortcuts window (PRD §7/§15, ADR 0011) — SHIPPED 2026-08-23
+
+Three changes to the same seam (`scheduler/platform/GlobalHotkey.kt`):
+
+**The chord is now claimed first come, first served.** Pressing `Ctrl+Shift+Alt+A` in Google Docs flipped the
+away flag *and* opened Docs' comments pane — one press, two actions. The claim was a plain `RegisterHotKey`,
+which consumes the keystroke only for the message queue: an application with its own `WH_KEYBOARD_LL` hook is
+called **before** the hot-key table and can act on a press the hot-key then eats. The app now installs a
+low-level keyboard hook of its own and returns non-zero for its chords, so the key is consumed at the head of
+the chain and nothing else in the session is handed it. `RegisterHotKey` is kept underneath as the fallback (a
+swallowed key never reaches the hot-key table, so the two cannot both fire); which claim is in force is
+published as `GlobalHotkeys.claim` and logged at startup. The hook has to do two things `RegisterHotKey` did
+for free — suppress auto-repeat, and pass **AltGr** through so `Shift+AltGr+E` still types its character on an
+AZERTY layout — and it must never block, being on the path of every keystroke in the session.
+
+**`Ctrl+Shift+Alt+E` takes the 20-second look-away**, from wherever the user is working. The seam went from one
+`installGlobalAwayHotkey(onPressed)` callback to `installGlobalHotkeys { shortcut -> … }` over a `GlobalShortcut`
+enum, which is now the only list of chords in the codebase.
+
+**A "Keyboard shortcuts" window** (the lateral menu's last button) lists every chord the app answers to,
+grouped by surface (`KeyboardShortcutCatalog`, `ui/ShortcutsWindow.kt`). The system-wide block is derived from
+`GlobalShortcut` — so the window can never advertise a chord the app does not claim — and carries the claim
+line, because "nothing happened" and "something else happened too" are otherwise undiagnosable.
+
+Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`). No Supabase deploy. The hook itself is
+Windows-native, so it is verified on the machine, not by a test.
+
 ### The hover bubble is a stack of sections (PRD §8, ADR 0002) — SHIPPED 2026-08-23
 
 Hovering a **layer** now names it. The bubble was one title + one optional "under" line, which meant the

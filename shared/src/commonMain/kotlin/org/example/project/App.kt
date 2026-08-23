@@ -62,7 +62,9 @@ import org.example.project.scheduler.persistence.createDefaultSchedulerStore
 import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.scheduler.platform.currentDeviceKind
 import org.example.project.scheduler.platform.deviceLockedIntervals
-import org.example.project.scheduler.platform.installGlobalAwayHotkey
+import org.example.project.scheduler.platform.GlobalHotkeys
+import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.platform.installGlobalHotkeys
 import org.example.project.scheduler.platform.installPauseCuePushBridge
 import org.example.project.scheduler.platform.installPlatformActivityListener
 import org.example.project.scheduler.platform.localPauseCueDeliveryPlatform
@@ -95,6 +97,7 @@ import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.PlacedRecord
 import org.example.project.ui.ReminderEditWindow
 import org.example.project.ui.SimPauseScope
+import org.example.project.ui.ShortcutsWindow
 import org.example.project.ui.SleepWindow
 import org.example.project.ui.DefaultSubtreeWindow
 import org.example.project.ui.TaskTreesWindow
@@ -105,7 +108,9 @@ enum class OmniPage(val label: String) {
 }
 
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
-private enum class FloatingWindow { Calendar, Reminders, History, Sleep, Alarms, TaskTrees, DefaultSubtree, TimeSim }
+private enum class FloatingWindow {
+    Calendar, Reminders, History, Sleep, Alarms, TaskTrees, DefaultSubtree, Shortcuts, TimeSim
+}
 
 // Debug "simulate pause + leap": pressing a break chip INSTANTLY jumps the sim clock forward by the whole
 // break ([SimAppClock.leap]) — the now-line leaps to the break's end rather than gliding there over ~1 real
@@ -243,12 +248,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // re-samples presence the moment it flips, instead of at the next minute beat. No-op on Android (the
         // service wires it directly) and iOS/web (no such signal).
         LaunchedEffect(engine) { installPlatformActivityListener { engine.onPlatformActivityChanged() } }
-        // PRD §15: the system-wide "I'm away" shortcut (Ctrl+Shift+Alt+A), flipping the same per-device away
-        // flag the left-menu button does. Claimed from the OS rather than handled in Compose because it is
-        // pressed precisely when OmniApp is NOT the focused window — the user is walking away from whatever
-        // they were working in — and a focus-scoped handler would only ever fire when the button is already
-        // one click away. Desktop-only; inert on Android/iOS.
-        LaunchedEffect(engine) { installGlobalAwayHotkey { engine.setUserAway(!engine.userAway.value) } }
+        // PRD §15: the system-wide chords (Ctrl+Shift+Alt+A "I'm away", Ctrl+Shift+Alt+E "Look away now"),
+        // driving exactly the same engine seams the left-menu buttons do. Claimed from the OS rather than
+        // handled in Compose because they are pressed precisely when OmniApp is NOT the focused window — the
+        // user is walking away from, or resting their eyes in the middle of, whatever they were working in —
+        // and a focus-scoped handler would only ever fire when the button is already one click away. The
+        // claim swallows the chord so no other application acts on the same press. Desktop-only; inert on
+        // Android/iOS.
+        LaunchedEffect(engine) {
+            installGlobalHotkeys { shortcut ->
+                when (shortcut) {
+                    GlobalShortcut.ToggleAway -> engine.setUserAway(!engine.userAway.value)
+                    GlobalShortcut.LookAwayNow -> engine.restartLookAway()
+                }
+            }
+        }
         // PRD §15 / ARCHITECTURE.md §8 (iOS APNs, reqs #2/#6): give the platform's native push layer its two
         // callbacks — publish this phone's APNs token, and route a received pause-cue push into the engine.
         // A no-op off iOS (Android uses its FirebaseMessagingService instead; desktop/web have no push layer).
@@ -296,6 +310,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val activeSessions by engine.activeSessions.collectAsState()
         // PRD §15: whether the user declared they are away from THIS device (left-menu "I'm away" button).
         val userAway by engine.userAway.collectAsState()
+        // PRD §7/§15: what claim the OS granted the system-wide chords — shown in the keyboard-shortcuts window,
+        // since a chord another application already owns is otherwise indistinguishable from a broken app.
+        val globalHotkeyClaim by GlobalHotkeys.claim.collectAsState()
 
         // PRD §7 calendar state, hoisted so the lateral menu (month grid) and the popup week view
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
@@ -337,6 +354,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §4 Default sub-tree: whether the floating template window is open (local UI state; the template
         // and the "is it applied" switch are authoritative synced state).
         var defaultSubtreeWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.DefaultSubtree)) }
+        // PRD §7 Keyboard shortcuts: whether the floating reference list of every chord is open (local UI state).
+        var shortcutsWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Shortcuts)) }
 
         // The floating windows are siblings in one Box, so their paint order is their declaration order.
         // To put the *currently focused* window on top of the layers, we keep an explicit stacking order
@@ -353,6 +372,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     FloatingWindow.Alarms,
                     FloatingWindow.TaskTrees,
                     FloatingWindow.DefaultSubtree,
+                    FloatingWindow.Shortcuts,
                     FloatingWindow.TimeSim,
                 ),
             )
@@ -369,6 +389,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Alarms -> alarmWindowOpen
             FloatingWindow.TaskTrees -> taskTreesWindowOpen
             FloatingWindow.DefaultSubtree -> defaultSubtreeWindowOpen
+            FloatingWindow.Shortcuts -> shortcutsWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
         }
         // The focused window is the topmost open one in the stack.
@@ -383,6 +404,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Alarms -> null
             FloatingWindow.TaskTrees -> null
             FloatingWindow.DefaultSubtree -> null
+            FloatingWindow.Shortcuts -> null
             FloatingWindow.TimeSim -> null
         }
         // PRD §7 window navigation: raise [id] to the top layer AND move scheduler focus onto it, which
@@ -414,6 +436,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var taskTreesOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskTrees, Offset(-260f, -60f))) }
         var defaultSubtreeOffset by
             remember { mutableStateOf(savedOffset(FloatingWindow.DefaultSubtree, Offset(260f, -60f))) }
+        var shortcutsOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Shortcuts, Offset(60f, 60f))) }
         // Persist each window's visibility whenever it opens/closes (its offset persists separately on drag-end).
         LaunchedEffect(calendarOpen) { persistPlacement(FloatingWindow.Calendar, calendarOffset, calendarOpen) }
         LaunchedEffect(choresManagerOpen) { persistPlacement(FloatingWindow.Reminders, remindersOffset, choresManagerOpen) }
@@ -423,6 +446,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         LaunchedEffect(taskTreesWindowOpen) { persistPlacement(FloatingWindow.TaskTrees, taskTreesOffset, taskTreesWindowOpen) }
         LaunchedEffect(defaultSubtreeWindowOpen) {
             persistPlacement(FloatingWindow.DefaultSubtree, defaultSubtreeOffset, defaultSubtreeWindowOpen)
+        }
+        LaunchedEffect(shortcutsWindowOpen) {
+            persistPlacement(FloatingWindow.Shortcuts, shortcutsOffset, shortcutsWindowOpen)
         }
 
         var selectedDate by remember { mutableStateOf(today) }
@@ -938,6 +964,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleDefaultSubtree = {
                         onMenuWindowClicked(FloatingWindow.DefaultSubtree) { defaultSubtreeWindowOpen = it }
                     },
+                    shortcutsWindowOpen = shortcutsWindowOpen,
+                    onToggleShortcuts = {
+                        onMenuWindowClicked(FloatingWindow.Shortcuts) { shortcutsWindowOpen = it }
+                    },
                     defaultSubtreeEnabled = schedulerState.defaultSubtreeEnabled,
                     onToggleDefaultSubtreeEnabled = {
                         vm.dispatch(SchedulerIntent.SetDefaultSubtreeEnabled(it))
@@ -955,7 +985,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     away = userAway,
                     onToggleAway = { engine.setUserAway(!userAway) },
                     anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen ||
-                        alarmWindowOpen || taskTreesWindowOpen || defaultSubtreeWindowOpen,
+                        alarmWindowOpen || taskTreesWindowOpen || defaultSubtreeWindowOpen || shortcutsWindowOpen,
                     onCloseAllWindows = {
                         calendarOpen = false
                         choresManagerOpen = false
@@ -964,6 +994,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         alarmWindowOpen = false
                         taskTreesWindowOpen = false
                         defaultSubtreeWindowOpen = false
+                        shortcutsWindowOpen = false
                     },
                 )
 
@@ -1361,6 +1392,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             modifier = Modifier
                                 .align(Alignment.Center)
                                 .zIndex(windowZ(FloatingWindow.DefaultSubtree)),
+                        )
+                    }
+
+                    // PRD §7 Keyboard shortcuts: the reference list of every chord, plus what claim the OS
+                    // granted the two system-wide ones (the only shortcuts another application can take).
+                    if (shortcutsWindowOpen) {
+                        ShortcutsWindow(
+                            claim = globalHotkeyClaim,
+                            onDismiss = { shortcutsWindowOpen = false },
+                            initialOffset = shortcutsOffset,
+                            onOffsetChange = {
+                                shortcutsOffset = it
+                                persistPlacement(FloatingWindow.Shortcuts, it, true)
+                            },
+                            onRaise = { focusWindow(FloatingWindow.Shortcuts) },
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .zIndex(windowZ(FloatingWindow.Shortcuts)),
                         )
                     }
 

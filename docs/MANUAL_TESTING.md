@@ -99,6 +99,17 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
 - [ ] Close and relaunch → the task tree, records, and pinned panels are exactly as left (local SQLite,
       ~400 ms save debounce — **no** sync involved).
 - [ ] Auto/side/sleep panels regenerate on load (they are derived, not persisted — reconstructibility rule).
+- [ ] **System-wide chords (Windows only, ADR 0011).** Open the lateral menu's **Keyboard shortcuts** window:
+      the system-wide block must read *"Claimed exclusively"*. Then, with **another application focused**
+      (a browser on a Google Doc is the case this was written for):
+  - [ ] `Ctrl+Shift+Alt+A` toggles "I'm away" / "I'm back" in OmniApp **and the focused application does
+        nothing at all** (Docs must NOT open its comments pane — that regression is the whole point of the hook).
+  - [ ] `Ctrl+Shift+Alt+E` starts the 20-second look-away (notification + voice cue), again with the focused
+        application unaffected. Pressing it again mid-break restarts it.
+  - [ ] Holding either chord down fires **once**, not repeatedly.
+  - [ ] On an AZERTY layout, `Shift+AltGr+E` still types its character (the hook must pass AltGr through).
+  - [ ] `diagnostics.log` shows `global hotkeys: claim=Exclusive` at startup and one `global hotkey pressed`
+        line per press (`scripts\collect-diagnostics.bat`).
 
 ---
 

@@ -19,6 +19,7 @@ migration history.
 | [0008](0008-task-trees-and-timeline.md) | Task trees and the timeline blend | live alternatives, keyframes, the quantized re-plan exception |
 | [0009](0009-display-hot-path-and-horizon.md) | Display hot path, horizon, rolling calendar | O(screen) rule, horizon clamping, the rolling grid and its layout trap |
 | [0010](0010-alarms.md) | Alarms (PRD §18) | phone arming vs. desktop sweep, the synthesized tone |
+| [0011](0011-global-keyboard-shortcuts.md) | System-wide keyboard shortcuts | the swallow rule, hook vs. `RegisterHotKey`, the shortcuts window |
 
 ## Related docs
 

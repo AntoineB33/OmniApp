@@ -445,6 +445,32 @@ cross-device presence.
 
 ---
 
+## System-wide keyboard shortcuts
+
+→ ADR 0011. Two chords, `Ctrl+Shift+Alt+A` ("I'm away" / "I'm back") and `Ctrl+Shift+Alt+E` ("Look away now"),
+claimed from the OS because each is pressed precisely when OmniApp is **not** the focused window. Never a
+Compose key handler.
+
+- **The chord must be SWALLOWED, not merely observed.** `RegisterHotKey` is not first-come, first-served: an
+  application with its own low-level hook is called before the hot-key table, so one press fired two actions
+  (Google Docs' comments pane opened alongside the away toggle). The claim is a `WH_KEYBOARD_LL` hook returning
+  non-zero; `RegisterHotKey` stays underneath purely as the fallback, and the two cannot double-fire.
+- **Nothing that can block runs inside the hook** — it is on the critical path of every keystroke in the
+  session, and Windows silently unhooks a callback that exceeds `LowLevelHooksTimeout`. Log and call the engine
+  on the dispatch thread.
+- The hook must handle what `RegisterHotKey` handled for us: **auto-repeat** (latch the down transition; swallow
+  the up only for a down we swallowed) and **AltGr** (right-Alt arrives as synthetic left-Ctrl + right-Alt, so
+  `Shift+AltGr+E` must pass through or the hook eats typed text).
+- **`GlobalShortcut` is the only list of chords.** The platform actual registers it and the keyboard-shortcuts
+  window prints it; never a second copy. `GlobalHotkeys.claim` says which claim the OS granted, and the window
+  shows it — "nothing happened" and "something else happened too" are otherwise undiagnosable.
+- Desktop-only (Android/iOS report `Unsupported`), and best-effort: a refused chord leaves the app running with
+  the lateral-menu buttons, never a failed start.
+- The lateral menu's **Keyboard shortcuts** window lists every chord in the app (`KeyboardShortcutCatalog`). The
+  per-surface entries are prose — add a chord and its entry in the same change.
+
+---
+
 ## Scripts
 
 → `docs/SCRIPTS.md` for the full reference (state dirs, fast-break variants, deploy gotchas, one-time setup).

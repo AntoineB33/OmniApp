@@ -5,7 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -203,11 +202,8 @@ fun DefaultSubtreeWindow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .pointerInput(Unit) {
-                        detectDragGestures(onDragEnd = { onOffsetChange(offset) }) { change, dragAmount ->
-                            change.consume()
-                            offset += dragAmount
-                        }
+                    .windowDragHandle(onDragEnd = { onOffsetChange(offset) }) { dragAmount ->
+                        offset += dragAmount
                     }
                     .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,

@@ -141,7 +141,8 @@ Which of the three that leaves is **exactly the one the app conducts**:
 
 The anchor is an **END**, so nothing may move it at a break's start.
 
-The manual "Look away now" (`SchedulerEngine.restartLookAway`) supersedes any run still in progress. It used
+The manual "Look away now" (`SchedulerEngine.restartLookAway`, the lateral-menu button and the system-wide
+`Ctrl+Shift+Alt+E` chord — ADR 0011) supersedes any run still in progress. It used
 to stamp `lastRestMillis = now` at the press, which broke both halves at once: an END written at a START drew
 a 20-s break over the 20 s *before* the manual one — the tail of the run the press had just interrupted,
 offset by however late the press came — while the manual break itself, the one that actually happened, was

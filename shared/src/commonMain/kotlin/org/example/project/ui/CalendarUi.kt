@@ -6,6 +6,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.focusable
@@ -92,6 +94,8 @@ import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -835,6 +839,9 @@ fun LateralMenu(
     /** PRD §4 Default sub-tree: whether that window is open + toggle callback. */
     defaultSubtreeWindowOpen: Boolean = false,
     onToggleDefaultSubtree: () -> Unit = {},
+    /** PRD §7 Keyboard shortcuts: whether the window listing every chord is open + toggle callback. */
+    shortcutsWindowOpen: Boolean = false,
+    onToggleShortcuts: () -> Unit = {},
     /**
      * PRD §4/§7 Default sub-tree: whether the policy is **currently applied** — the switch sitting to the LEFT
      * of the "Default sub-tree" button. Off means a newly created task is seeded with nothing, as before the
@@ -1019,8 +1026,58 @@ fun LateralMenu(
                 )
             }
         }
+
+        // PRD §7 Keyboard shortcuts: the reference list of every chord the app answers to — including the
+        // two system-wide ones, which are the only part of the app with no visible control of their own.
+        MenuButton(
+            label = "Keyboard shortcuts",
+            active = shortcutsWindowOpen,
+            onClick = onToggleShortcuts,
+        )
     }
 }
+
+/**
+ * The drag handle a floating window's title bar hangs on. Same gesture as `detectDragGestures`, with one
+ * difference that is the whole point: the press must be **unconsumed**.
+ *
+ * A title bar carries interactive controls — the calendar's "Lock to now" / "Reminders" / "Screen breaks"
+ * switches, and every window's ✕. `clickable` / `toggleable` consume the down on the Main pass before the bar
+ * (their ancestor) sees it, but `detectDragGestures` takes the down with `requireUnconsumed = false`, so a
+ * click that wobbles a couple of pixels crossed the touch slop and dragged the WINDOW — and, because the drag
+ * then consumed the move, the control's own press was cancelled and the switch never flipped. Requiring an
+ * unconsumed down hands the whole gesture to the control instead: the bar drags only where nothing else
+ * claimed the press.
+ *
+ * [onDrag] receives the movement delta (the caller owns clamping / persistence); [onDragEnd] fires only when
+ * a real drag ended with the pointer up.
+ */
+fun Modifier.windowDragHandle(
+    onDragEnd: () -> Unit = {},
+    onDrag: (Offset) -> Unit,
+): Modifier =
+    pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = true)
+            var overSlop = Offset.Zero
+            // Named `slopCrossing`, not `drag`: a local of that name would shadow the `drag(...)` gesture
+            // function called just below.
+            var slopCrossing: PointerInputChange?
+            do {
+                slopCrossing = awaitTouchSlopOrCancellation(down.id) { change, over ->
+                    change.consume()
+                    overSlop = over
+                }
+            } while (slopCrossing != null && !slopCrossing.isConsumed)
+            val started = slopCrossing ?: return@awaitEachGesture
+            onDrag(overSlop)
+            val completed = drag(started.id) { change ->
+                onDrag(change.positionChange())
+                change.consume()
+            }
+            if (completed) onDragEnd()
+        }
+    }
 
 /**
  * Raise a floating window to the top of the stack when the user presses anywhere inside it. The press is
@@ -1199,11 +1256,8 @@ fun ChoresManagerWindow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(CalColors.menuBackground)
-                    .pointerInput(Unit) {
-                        detectDragGestures(onDragEnd = { onOffsetChange(offset) }) { change, dragAmount ->
-                            change.consume()
-                            offset += dragAmount
-                        }
+                    .windowDragHandle(onDragEnd = { onOffsetChange(offset) }) { dragAmount ->
+                        offset += dragAmount
                     }
                     .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1463,11 +1517,8 @@ fun HistoryManagerWindow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(CalColors.menuBackground)
-                        .pointerInput(Unit) {
-                            detectDragGestures(onDragEnd = { onOffsetChange(offset) }) { change, dragAmount ->
-                                change.consume()
-                                offset += dragAmount
-                            }
+                        .windowDragHandle(onDragEnd = { onOffsetChange(offset) }) { dragAmount ->
+                            offset += dragAmount
                         }
                         .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -2405,12 +2456,9 @@ fun CalendarFloatingWindow(
                     .fillMaxWidth()
                     .onSizeChanged { headerHeightPx = it.height }
                     .background(CalColors.menuBackground)
-                    .pointerInput(Unit) {
-                        detectDragGestures(onDragEnd = { onOffsetChange(offset) }) { change, dragAmount ->
-                            change.consume()
-                            // Clamp the vertical drag so the header can't be dragged off the top/bottom edge.
-                            offset = Offset(offset.x + dragAmount.x, clampOffsetY(offset.y + dragAmount.y))
-                        }
+                    .windowDragHandle(onDragEnd = { onOffsetChange(offset) }) { dragAmount ->
+                        // Clamp the vertical drag so the header can't be dragged off the top/bottom edge.
+                        offset = Offset(offset.x + dragAmount.x, clampOffsetY(offset.y + dragAmount.y))
                     }
                     .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -2430,7 +2478,8 @@ fun CalendarFloatingWindow(
                     )
                 }
                 // PRD §8: hold the now-line at the middle of the view (see [WeekView]'s lock). The Switch
-                // consumes its own presses, so toggling it never starts the title-bar drag.
+                // consumes its own press and [windowDragHandle] requires an unconsumed one, so toggling it
+                // never starts the title-bar drag — not even when the click wobbles past the touch slop.
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -2447,7 +2496,7 @@ fun CalendarFloatingWindow(
                     )
                 }
                 // PRD §14/§15: toggle whether reminders / screen breaks are drawn (cosmetic; notifications keep
-                // firing). The Switch consumes its own presses, so toggling it never starts the title-bar drag.
+                // firing). As above, the drag handle leaves these presses alone.
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
