@@ -1,121 +1,71 @@
+# Scheduler System Specifications
+
 ### System Overview
 
-The scheduler is designed to allocate tasks along an infinite timeline, starting from $t_{now}$. Its primary goal is to distribute tasks according to their assigned priorities while maintaining the finest possible granularity and adapting to pre-existing schedule constraints.
+The scheduler allocates tasks along an infinite timeline, starting from $t_{now}$. Its primary goal is to distribute tasks according to their assigned **priority percentages** while adapting dynamically to environmental constraints, user interactions, and time-based rules. 
 
-### Task Allocation & Granularity
+To handle an infinite timeline, the scheduler outputs a **finite list of parameterized rules** (e.g., prefixes and repeating cycles) rather than an endless sequence. This allows downstream systems to compute the schedule for any timeframe with $O(1)$ complexity.
 
-Each task is defined by a **target priority percentage** and a **minimum execution time**.
+### Core Constraints & Task Allocation
 
-* **Atomic Blocks:** Once a task is scheduled, no other task can be placed until the current task's minimum execution time is met. e.g., if task B is scheduled at t=0 and a period p that only allows task A is at t=1, and task B has a minimum time of 2, then the whole period p is scheduled with nothing.
-* **Fine-Grained Scheduling:** The scheduler must match the target priority percentages across the smallest possible time window, avoiding unnecessarily large monolithic blocks.
-* *Example:* For Task A (50%, 10 min) and Task B (50%, 10 min), the scheduler should alternate `[Task A: 10m] -> [Task B: 10m] -> repeat`, rather than creating coarse blocks like `[Task A: 1h] -> [Task B: 1h]`.
+#### 1. Priority & Granularity
+Each task has a **target priority percentage**. The scheduler must match these percentages across the smallest possible time window, avoiding unnecessarily large monolithic blocks (e.g., alternating two 50% tasks in 10-minute intervals rather than 1-hour intervals).
 
+#### 2. Soft Minimum Execution Time
+Each task has a defined minimum execution time, which acts as a heavily weighted tendency rather than a strict atomic lock. 
+* **Completion Pull:** When a task begins, there is a very strong algorithmic tendency to continue scheduling it until its minimum time is reached. This tendency weakens as the task approaches its minimum time.
+* **Interruption Decay:** If a task is cut short before reaching its minimum time (e.g., due to a restrictive period), the tendency to resume this specific task decays progressively as $t$ increases.
 
+#### 3. Restrictive Periods
+Periods are predefined time windows that forbid specific sets of tasks.
+* Periods can overlap. The restrictions of overlapping periods are additive (if Period A forbids Task 1, and Period B forbids Task 2, their overlap forbids both).
+* Uncovered instants forbid nothing.
+* Instants that forbid *all* tasks do not create priority deficits, as all tasks are deprived equally.
 
-### Output Architecture ($O(1)$ Generation)
+#### 4. Compensation via Exponential Decay
+Pre-placed tasks or restrictive periods inevitably create priority deficits for excluded tasks. The scheduler compensates for this by scheduling deprived tasks immediately before or after a blockage. To prevent massive, disruptive overcompensation, this mechanism uses an **exponential decay** model. The influence of the debt repayment decays over distance from the blockage.
 
-Because the timeline is infinite, the scheduler does not generate an endless sequence. Instead, it outputs a **finite list of rules**—typically a specific sequence of initial placements followed by a repeating cycle. This allows any UI or downstream system to calculate and display the schedule from $t=0$ to $t=x$ with $O(1)$ complexity.
+### Interaction & Performance Requirements
 
-### Environmental Constraints & Compensation
+* **The Playhead ($t_p$):** $t_p$ represents the current evaluation cursor. **Everything at $t < t_p$ is frozen and immutable.**
+* **User Control:** The user can click anywhere on the schedule to move $t_p$ to that point. Dragging the cursor updates $t_p$ continuously. The system defaults to a paused state.
+* **Performance Benchmark:** The scheduler must be fast. Calculating the definitive schedule for the next 10 minutes must take **no more than 10 seconds**.
+* **Progressive Calculation:** If processing the entire timeline is too demanding, the scheduler must calculate short segments iteratively (e.g., if the schedule is solved for $t < t_1$, 10 seconds later it must be solved for $t < t_1 + \text{10 minutes}$). If exact schedules cannot be found in time, approved approximation strategies must be used.
 
-The timeline is not a blank slate. It is influenced by two main factors:
+---
 
-1. **Periods:** Time windows that each forbid a set of tasks. Periods **may overlap**, and what an instant forbids is the **sum** of the lists of every period covering it — a task one of them forbids is forbidden there whatever the others say. The timeline is **not** necessarily covered: an instant no period covers forbids nothing, so everybody may run. An instant that forbids *everybody* deprives nobody relative to anybody, so it creates no compensation of its own and does not join the exclusions on either side of it into one.
-2. **Pre-placed Tasks:** Tasks that have already been locked into the timeline.
+### Test Cases
 
-**Exponential Decay Compensation:**
-Pre-placed tasks and restrictive periods inevitably create priority deficits or surpluses. The scheduler naturally compensates for this by heavily scheduling a deprived task immediately before or after a blockage. However, this compensation utilizes an **exponential decay** model with a rounding epsilon. For instance, a 1-hour pre-placed block of Task A will moderately boost Task B around it. If Task A is locked for 100 hours, Task B's presence around it will be higher, but **exponential decay** higher. This exact same decay mechanism applies to restrictive periods: if a period forbids a task from running for a long duration, the compensation around that period is similarly bounded. The influence of the blockage decays over distance, preventing extreme, disruptive overcompensation at the boundaries.
+The following tests define the expected behavior of the scheduler under various constraints. In the testing display, the "resulting share" is calculated as the percentage of a task's presence across the drawn timeline, excluding periods where no tasks are allowed.
 
-Test 10 (task A 50% 10min and task B 50% 10min) must have a 20 second period that allows only task task A, and that continuously moves to the right. Of course the scheduling can change violently, but everything at t < $t_p$ stays frozen, such as $t_p$ is the starting time of the 20s period. The scheduler must add in its set of rules the rules for the dynamic schedule. This result in algebraic rules parameterized by $t_p$.
-Note: As explained in the Atomic Blocks paragraph, task B can be interrupted during its 10 first minutes by idling periods.
+#### Test 10: Dynamic Rules & $t_p$ Parameterization
+* **Tasks:** Task A (50%, 10 min minimum), Task B (50%, 10 min minimum).
+* **Environment:** A 20-second period that only allows Task A moves continuously to the right. 
+* **Requirement:** The schedule must change dynamically as $t_p$ moves, outputting algebraic rules parameterized by $t_p$. The timeline before $t_p$ remains frozen. Task B may be interrupted during its first 10 minutes by idling periods.
 
-idea of result: 
-When $t_p$ < 9min40, then:
-Cycle:
-- task A 10min
-- task B 10min
-- repeat
-When $t_p$ ≤ $t_1$, such as $t_1$ is a calculated time with $t_1$ > 9min40, then:
-Prefix:
-- task A $t_p$ + 20s
-- task B 10min + debt repayment (function of $t_p$ of complexity O(1))
-[more tasks depending on debt repayment...]
-Cycle:
-- task A 10min
-- task B 10min [or reverse, depending on debt repayment...]
-- repeat
-When $t_p$ is between $t_1$ and $t_1$ + 20s, then:
-Prefix:
-- task A $t_1$ + 20s
-- nothing  $t_p$ - $t_1$
-- task B 10min + debt repayment (function of $t_p$ of complexity O(1))
-[more tasks depending on debt repayment...]
-Cycle:
-- task A 10min
-- task B 10min [or reverse, depending on debt repayment...]
-- repeat
-When $t_p$ is between $t_1$ and $t_2$, then:
-Prefix:
-- task A $t_1$
-- task B $t_p$ - $t_1$ - 20s
-- nothing
-- task B ...
-...
+#### Test 11: Period Transitions & Pre-placed Tasks
+* **Tasks:** Inherited from Test 10, plus randomly pre-placed tasks.
+* **Environment:** 
+  * A moving 20-second period that allows *nothing*.
+  * A static 5-minute stretch (1 minute of *nothing*, followed by 4 minutes of *Task A only*).
+* **Requirement:** As soon as the moving 20-second period collides with the start of the 5-minute stretch at $t_p$, the 20-second period disappears permanently, and the 5-minute stretch shifts 20 seconds to the left.
 
-I wrote it here, but actually everything at t < $t_p$ stays frozen so there is no need to say it in the prefix rules.
+#### Test 12: Conditional Period Generation over 72 Hours
+* **Tasks:** Task A (50%, 45 min minimum) + 20 other tasks sharing the remaining 50% (all 45 min minimum). Half of the 20 tasks belong to a "Privileged" set.
+* **Environment Constraints (Daily):**
+  * 00:00 to 08:00: No tasks allowed.
+  * 23:00 to 08:00: Only "Privileged" tasks allowed.
+* **Dynamic Period Triggers:** 
+  Includes the 20-second and 5-minute periods from Test 11, plus a new 15-minute period. The final 4 minutes of the 5-minute period, and the entirety of the 15-minute period, only allow Privileged tasks.
+  * After a $\ge 15$-minute stretch of *Privileged only*, the next 20-second period is delayed by **20 minutes**.
+  * After a $\ge 5$-minute stretch of *Privileged only*, the next 5-minute period is delayed by **1 hour**.
+  * After a $\ge 15$-minute stretch of *Privileged only*, the next 15-minute period is delayed by **2 hours**.
+* **Execution:** Spans 3 days. $t_p$ starts at $0$. Once the system finds the schedule up to 24 hours, $t_p$ teleports to 24 hours and moves right. The dynamic periods will only appear in the first 24 hours due to the $t_p$ sweep. 
 
-The displayed schedule must update in real-time following the set of rules (not by triggering new calculations). If the 20s period reaches the end of the displayed timeline make it start anew. The timeline is independent of the user's screen size.
+#### Test 13: Sliding Priorities
+* **Configuration:** Identical to Test 12.
+* **Requirement:** Priority percentages slide continuously from one state at 24h to a new state at 48h. For $t < \text{24h}$, priorities match the 24h state. The scheduler must satisfy the exact priorities active at the precise moment of $t_p$.
 
-If the computation would take too much time, the area to find the schedule of shortens, which can trigger repeating computation to cover all the timeline that we want. Finding the right schedule for the next 10 minutes must not take more than 10 seconds.
-
-The movement of the period in test 10 is done by the displayer in response to the test configuration. The scheduler logic is the same used for every test.
-
-test 11 must be test 10 with already placed tasks and lots of periods and tasks definitions. The 20s period allows nothing, and there is a 1 minute period that allow nothing followed right after by a 4 minute period that only allow task A. The 1-minute and 4-minute periods form a 5-minute stretch that start at $t_p$ as soon as the 20s period reaches it (which makes the 5-minute stretch teleport 20 seconds to the left and the 20s period disappears forever).
-
-The user can simply click any where on a schedule block and $t_p$ becomes this point. If it was playing, it sets to pause. If the user clicks then drags, $t_p$ follows the mouse.
-It is set to pause by default.
-
-Reminders:
-- Everything at t < $t_p$ stays frozen.
-- As the idea of result shows, the whole timeline won't be filled just with task A and idling. The parameterization of $t_p$ prevents that fragmentation entirely
-- The decay requirement doesn't contradict with the minimum time requirement, which must always be satisfied.
-
-
-
-# test 12 requirements
-Add test 12 :
-Task A 50% 45 minutes
-20 other tasks that share the remaining 50%, all 45 minutes
-Half of the tasks are in the set “privileges” 
-De 0h à 8h: no task allowed
-De 23h à 8h: only tasks from “privileges”
-There are the same 20s and 5min periods from test 11, in addition to the 15min period. The 4 last minutes of the 5min period and the whole 15 minutes of the 15min period only allow tasks that are in the set “privileges”.
-The following rules must always be satisfied by the timeline:
- - after a ≥15-minutes stretch of only privileged allowed, or after one of the three periods aforementioned, the next 20s period is **20 minutes** later;
- - after a ≥5-minute stretch of only privileged allowed, the next 5min period is **1 hour** later;
- - after a ≥15-minute stretch of only privileged allowed, the next 15min period is **2 hours** later.
-The timeline of test 12 spans over 3 days. The first 24 hours of the timeline have the three periods aforementioned. At t<0, is it a period where no task is allowed. $t_p$ starts at 0 and the scheduler works on the whole timeline; when the definitive schedule is found up to t=24h, the $t_p$ line teleports to t=24h and moves to the right from there.
-It means that  when $t_p$ reaches the end, the three aforementioned periods are only found in the first 24 hours, because the $t_p$ line swiped them all like in test 11.
-Like for all tests, finding the right schedule for the next 10 minutes must not take more than 10 seconds. That means that if the scheduling is taking time for the whole timeline of the test, the user will see the schedule change each time the scheduler finds a better set of rules to satisfy the following requirement : if the right schedule is found for t < $t_1$, then 10 seconds later the right schedule must be found for t < $t_1$ + 10 minutes.
-
-Direct consequence: If the scheduling takes some time, when the user runs tests_displayer and immediately scrolls down to test 12 without clicking on play, the user can see the schedule still changing, while the definitive schedule grows from t=0.
-
-If the exact schedule can’t be found at this pace, then there must be using approximations, where t and $t_1$ are positions in the displayed timeline. If so, give me the list of those approximations, so that I can validate them. Update the code.
-
-Answer proposed by claude code in claude_code_proposed_answer.md.
-
-
-# test 13 requirements
-
-Same as test 12, but the priority percentages are sliding continuously from one state at t=24h to another at t=48h. At t<24h, the priority percentages are the same as t=24h. The result is of the same type, a single list of rules, simply at $t_p$ the scheduler is done to satisfy the priorities that are at exactly $t_p$.
-
-
-# test 14 requirements
-
-task A 45min 50%
-20 other tasks that share the remaining 50%, all 45 minutes
-8 days of timeline, no task allowed from 23h to 8h.
-
-
-
-In the test_displayer, the resulting share is the percentage of presence of the task in the whole drawn timeline minus the parts where no task is allowed.
+#### Test 14: Extended Timeline Setup
+* **Configuration:** Task A (50%, 45 min minimum) + 20 other tasks sharing the remaining 50% (all 45 min minimum).
+* **Environment:** 8-day timeline. No tasks are allowed between 23:00 and 08:00 daily.
