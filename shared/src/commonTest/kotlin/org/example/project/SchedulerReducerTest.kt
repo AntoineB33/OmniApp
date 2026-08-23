@@ -2576,17 +2576,18 @@ class SchedulerReducerTest {
             SchedulerIntent.ClickCell(cellId = visible[1], ctrl = false, shift = true, visibleOrder = visible),
         )
         s = SchedulerReducer.reduce(s, SchedulerIntent.CopySelection)
-        // PRD §4: tree lines, then the section separator, then the min-time appendix (one per task),
-        // then the PRD §13 schedule-unit and text appendices (both empty here).
-        val sep = SchedulerDomain.COPY_SECTION_SEPARATOR
-        assertEquals(listOf("A", "B", sep, "A\t45", "B\t45", sep, "", sep, ""), s.clipboard)
+        // PRD §4: a title line per task, each followed by its own named attribute lines.
+        assertEquals(
+            listOf("A", "\t- minimum time: 45 min", "B", "\t- minimum time: 45 min", ""),
+            s.clipboard,
+        )
 
         s = SchedulerReducer.reduce(
             s,
             SchedulerIntent.ClickCell(cellId = visible[2], ctrl = false, shift = false, visibleOrder = visible),
         )
         s = SchedulerReducer.reduce(s, SchedulerIntent.CopySelection)
-        assertEquals(listOf("C", sep, "C\t45", sep, "", sep, ""), s.clipboard)
+        assertEquals(listOf("C", "\t- minimum time: 45 min", ""), s.clipboard)
     }
 
     @Test
@@ -2708,11 +2709,20 @@ class SchedulerReducerTest {
             s,
             org.example.project.scheduler.state.SchedulerSelection(main = cA, selected = setOf(cA, cB)),
         )
-        // Tree section (unchanged for all-default weights) + separator + min-time appendix (PRD §4),
-        // then the PRD §13 schedule-unit and text appendices — emitted empty so a section's meaning
-        // stays its position.
-        val sep = SchedulerDomain.COPY_SECTION_SEPARATOR
-        assertEquals("A\n\tA1\n\t\tA1a\nB\n$sep\nA\t45\nA1\t45\nA1a\t45\nB\t45\n$sep\n\n$sep\n", text)
+        // PRD §4/§13: a tab-indented title line per task, each followed by its own named attribute
+        // lines one level deeper. Everything at its default value is omitted, so an untouched task is a
+        // title and its minimum time.
+        assertEquals(
+            "A\n" +
+                "\t- minimum time: 45 min\n" +
+                "\tA1\n" +
+                "\t\t- minimum time: 45 min\n" +
+                "\t\tA1a\n" +
+                "\t\t\t- minimum time: 45 min\n" +
+                "B\n" +
+                "\t- minimum time: 45 min\n",
+            text,
+        )
     }
 
     @Test
@@ -2792,15 +2802,19 @@ class SchedulerReducerTest {
             org.example.project.scheduler.state.SchedulerSelection(main = cP, selected = setOf(cP)),
         )
         val lines = text.split('\n')
-        // P parents the sub-list whose header is [1.0, 0.3] → emitted as an `h=` field on P's line.
-        assertEquals("P\th=1.0,0.3", lines[0])
-        // C1's own value row [2.0, 5.0] → emitted as a `w=` field.
-        assertEquals("\tC1\tw=2.0,5.0", lines[1])
+        // P parents the sub-list whose header is [1.0, 0.3] → its own named line under P.
+        assertEquals("P", lines[0])
+        assertEquals("\t- minimum time: 45 min", lines[1])
+        assertEquals("\t- sub-list weight columns: 1.0, 0.3", lines[2])
+        // C1's own value row [2.0, 5.0] → a named line under C1.
+        assertEquals("\tC1", lines[3])
+        assertEquals("\t\t- minimum time: 45 min", lines[4])
+        assertEquals("\t\t- priority weights: 2.0, 5.0", lines[5])
     }
 
     @Test
-    fun copy_appends_minimum_time_of_each_task_at_the_end() {
-        // P (min 30) with child C1 (min 90); the appendix lists both, after the separator (PRD §4).
+    fun copy_writes_the_minimum_time_of_each_task_as_its_own_line() {
+        // P (min 30) with child C1 (min 90); each carries its own named line (PRD §4).
         var s = SchedulerState.empty()
         val cP = s.lists[s.rootListId]!!.cellIds[0]
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cP, "P"))
@@ -2816,10 +2830,13 @@ class SchedulerReducerTest {
             s,
             org.example.project.scheduler.state.SchedulerSelection(main = cP, selected = setOf(cP)),
         )
-        // Appendix 1 of three (min times, then the PRD §13 schedule units and texts — both empty here).
-        val sep = SchedulerDomain.COPY_SECTION_SEPARATOR
-        val appendix = text.split("$sep\n")[1]
-        assertEquals("P\t30\nC1\t90\n", appendix)
+        assertEquals(
+            "P\n" +
+                "\t- minimum time: 30 min\n" +
+                "\tC1\n" +
+                "\t\t- minimum time: 90 min\n",
+            text,
+        )
     }
 
     @Test

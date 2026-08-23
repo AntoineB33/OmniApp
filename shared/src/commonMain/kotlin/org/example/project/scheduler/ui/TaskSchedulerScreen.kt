@@ -10,10 +10,14 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -50,6 +55,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -94,6 +100,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
@@ -191,6 +198,9 @@ fun TaskSchedulerScreen(
     // PRD §13: the task whose "edit" window is open, or null when it is closed. Opened from a cell's
     // right-click contextual menu.
     var editTaskId by remember { mutableStateOf<TaskId?>(null) }
+    // PRD §13: the cell whose "deep copy" depth window is open, or null when it is closed. The depth it
+    // asks for lives in the window, which is where the copy is made.
+    var deepCopyCellId by remember { mutableStateOf<CellId?>(null) }
     // The task-tree selector above the tree: its draft name, edit mode, and whether its field holds focus
     // (which is what reveals its menus and hands it the keyboard). Hoisted here so the screen's key handler
     // can commit on Enter and revert on Escape, exactly as it does for the min-time input.
@@ -553,12 +563,16 @@ fun TaskSchedulerScreen(
                     }
                 },
                 onOpenTaskEdit = { taskId -> editTaskId = taskId },
-                // PRD §13 "copy" / "deep copy": the cell's task (optionally with everything under it)
-                // serialized to the clipboard in the same format Ctrl+V pastes back.
-                onCopyCell = { cellId, deep ->
-                    val text = SchedulerDomain.copyCellText(state, cellId, deep)
+                // PRD §13 "copy": the cell's own task, with no children, in the same readable format
+                // Ctrl+V pastes back. Right-clicking inside a multi-selection copies the whole block, so
+                // the menu and Ctrl+C never disagree about what "the cell" means.
+                onCopyCell = { cellId ->
+                    val targets = SchedulerDomain.contextMenuCopyTargets(state, state.selection, cellId)
+                    val text = SchedulerDomain.copyCellsText(state, targets, maxDepth = 1)
                     if (text.isNotEmpty()) writeSystemClipboardText(text)
                 },
+                // PRD §13 "deep copy": asks for the maximum depth first — the copy happens from its window.
+                onDeepCopyCell = { cellId -> deepCopyCellId = cellId },
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -640,6 +654,26 @@ fun TaskSchedulerScreen(
             }
         }
 
+        // PRD §13: "deep copy" asks for its maximum depth here, then copies (see DeepCopyWindow).
+        deepCopyCellId?.let { cellId ->
+            if (state.cells[cellId] == null) {
+                deepCopyCellId = null
+            } else {
+                DeepCopyWindow(
+                    state = state,
+                    // The same block "copy" takes — a deep copy of a multi-selection is every selected
+                    // cell down to the chosen depth, not just the one under the cursor.
+                    cellIds = SchedulerDomain.contextMenuCopyTargets(state, state.selection, cellId),
+                    onCopy = { targets, maxDepth ->
+                        val text = SchedulerDomain.copyCellsText(state, targets, maxDepth)
+                        if (text.isNotEmpty()) writeSystemClipboardText(text)
+                        deepCopyCellId = null
+                    },
+                    onDismiss = { deepCopyCellId = null },
+                )
+            }
+        }
+
         // PRD §5: the priority-weight window is drawn by the app (App.kt) on the top floating-window
         // layer, above the calendar — not here — so it sits over every other window and dismisses on a
         // click anywhere else (which still does its normal job).
@@ -659,7 +693,8 @@ private fun CellListSection(
     minTimeEditCellId: CellId?,
     onToggleMinTimeEdit: (CellId) -> Unit,
     onOpenTaskEdit: (TaskId) -> Unit,
-    onCopyCell: (CellId, deep: Boolean) -> Unit,
+    onCopyCell: (CellId) -> Unit,
+    onDeepCopyCell: (CellId) -> Unit,
     moveDragActive: Boolean,
     moveDropTarget: MoveDropTarget?,
     resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>?,
@@ -747,8 +782,8 @@ private fun CellListSection(
                     ?.let { taskId ->
                         TaskCellMenuActions(
                             onEdit = { onOpenTaskEdit(taskId) },
-                            onCopy = { onCopyCell(cellId, false) },
-                            onDeepCopy = { onCopyCell(cellId, true) },
+                            onCopy = { onCopyCell(cellId) },
+                            onDeepCopy = { onDeepCopyCell(cellId) },
                         )
                     },
             onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
@@ -846,6 +881,7 @@ private fun CellListSection(
                 onToggleMinTimeEdit = onToggleMinTimeEdit,
                 onOpenTaskEdit = onOpenTaskEdit,
                 onCopyCell = onCopyCell,
+                onDeepCopyCell = onDeepCopyCell,
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -2589,6 +2625,195 @@ private fun TaskEditWindow(
                         onClick = { onSave(noScreenDoable, entries, text) },
                     ) { Text("Save") }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * PRD §13 "deep copy": the floating window that asks **how deep** the copy goes before making it.
+ *
+ * [cellIds] is what the menu resolved to — the right-clicked cell, or the whole selection block when the
+ * right-click landed inside one. The number alone would say nothing about the tree, so under it the window
+ * prints ONE path down to the deepest level that depth reaches (the deepest branch under whichever copied
+ * cell reaches furthest, cut to the asked-for number of levels). A path too long for the window scrolls
+ * horizontally and is **held at its deep end** —
+ * the newly-reached levels are what the user is choosing between — so the parents are hidden off to the
+ * left and the scrollbar under it is how they are brought back.
+ *
+ * **Enter** and the **copy** button both copy and close; **reset** puts the depth back to
+ * [SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH].
+ */
+@Composable
+private fun DeepCopyWindow(
+    state: SchedulerState,
+    cellIds: List<CellId>,
+    onCopy: (List<CellId>, Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val key = cellIds.firstOrNull()
+    // The raw text, so the field can be emptied while typing; a blank/0 depth simply copies nothing.
+    var depthText by remember(key) {
+        mutableStateOf(SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH.toString())
+    }
+    val depth = depthText.toIntOrNull() ?: 0
+    val path = SchedulerDomain.deepCopyPathTitles(state, cellIds, depth)
+    val canCopy = depth >= 1 && cellIds.isNotEmpty()
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(key) { focusRequester.requestFocus() }
+    fun setDepth(value: Int) {
+        depthText = value.coerceIn(1, 999).toString()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.25f))
+            // Tap (not clickable) to dismiss: a focused clickable also fires on Space/Enter, which would
+            // close the window while typing in the depth field.
+            .pointerInput(Unit) { detectTapGestures { onDismiss() } },
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 12.dp,
+            border = BorderStroke(1.dp, SheetColors.grid),
+            modifier = Modifier
+                .width(420.dp)
+                // Swallow taps so clicking inside the window doesn't reach the dismissing scrim.
+                .pointerInput(Unit) { detectTapGestures { } }
+                // The depth field holds the focus, so this ancestor sees its keys first: Enter is the
+                // window's own accept, not a character the field should ever receive.
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
+                        if (canCopy) onCopy(cellIds, depth)
+                        true
+                    } else {
+                        false
+                    }
+                },
+        ) {
+            Column(
+                Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    // Say how many cells are going, since the menu was opened on one of them.
+                    text = if (cellIds.size > 1) "Deep copy — ${cellIds.size} cells" else "Deep copy",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                HorizontalDivider()
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Maximum depth",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = depthText,
+                        onValueChange = { raw -> depthText = raw.filter { it.isDigit() }.take(3) },
+                        singleLine = true,
+                        modifier = Modifier.width(88.dp).focusRequester(focusRequester),
+                    )
+                    Column {
+                        WeightStepButton("+") { setDepth(depth + 1) }
+                        WeightStepButton("−") { setDepth(depth - 1) }
+                    }
+                }
+
+                HorizontalDivider()
+                Text(
+                    text = if (cellIds.size > 1) "Deepest of them copied down to" else "Copied down to",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                DeepCopyPathRow(path)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = { setDepth(SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH) }) {
+                        Text("reset")
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(enabled = canCopy, onClick = { onCopy(cellIds, depth) }) { Text("copy") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One path down the copied sub-tree, on a single scrolled line held at its deep end (see [DeepCopyWindow]),
+ * with a draggable scrollbar under it for the parents that fall off the left.
+ */
+@Composable
+private fun DeepCopyPathRow(path: List<String>) {
+    val scroll = rememberScrollState()
+    // Before the row is measured `maxValue` is Int.MAX_VALUE, which is not a length to divide by.
+    val maxScroll = scroll.maxValue.takeIf { it != Int.MAX_VALUE } ?: 0
+    // Re-run on the measured length too: the path changes with every keystroke, and the effect must land
+    // after the new width is known. Scrolling back to the parents changes neither key, so a deliberate
+    // scroll left is never yanked back.
+    LaunchedEffect(path, maxScroll) { scroll.scrollTo(scroll.maxValue) }
+
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SheetColors.nonSelectableFill, RoundedCornerShape(4.dp))
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .horizontalScroll(scroll),
+        ) {
+            Text(
+                text =
+                    if (path.isEmpty()) "—"
+                    else path.joinToString("  ›  ") { it.ifBlank { "(untitled)" } },
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+        if (maxScroll > 0) {
+            val scope = rememberCoroutineScope()
+            BoxWithConstraints(Modifier.fillMaxWidth().height(8.dp)) {
+                val trackWidth = maxWidth
+                val trackPx = with(LocalDensity.current) { trackWidth.toPx() }
+                // The thumb covers the visible share of the whole line.
+                val thumbWidth = trackWidth * (trackPx / (trackPx + maxScroll))
+                val travel = trackWidth - thumbWidth
+                // The drag maps thumb travel to an ABSOLUTE scroll position rather than a raw delta, so
+                // there is no direction convention to get backwards.
+                val perPixel = rememberUpdatedState(
+                    with(LocalDensity.current) { travel.toPx() }.let { if (it > 0f) maxScroll / it else 0f },
+                )
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .background(SheetColors.grid, RoundedCornerShape(3.dp)),
+                )
+                Box(
+                    Modifier
+                        .offset(x = travel * (scroll.value.toFloat() / maxScroll))
+                        .width(thumbWidth)
+                        .height(6.dp)
+                        .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(3.dp))
+                        .draggable(
+                            orientation = Orientation.Horizontal,
+                            state = rememberDraggableState { delta ->
+                                val target = scroll.value + delta * perPixel.value
+                                scope.launch { scroll.scrollTo(target.roundToInt()) }
+                            },
+                        ),
+                )
             }
         }
     }

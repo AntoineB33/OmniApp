@@ -91,6 +91,13 @@ object KeyboardShortcutCatalog {
                 ),
             ),
             KeyboardShortcutGroup(
+                title = "Deep copy window",
+                note = "While the task cell's \"deep copy\" depth window is open.",
+                shortcuts = listOf(
+                    KeyboardShortcut("Enter", "Copy down to the chosen depth and close the window"),
+                ),
+            ),
+            KeyboardShortcutGroup(
                 title = "Task-tree name field",
                 note = "While the name box above the tree holds the keyboard.",
                 shortcuts = listOf(

@@ -20,6 +20,7 @@ migration history.
 | [0009](0009-display-hot-path-and-horizon.md) | Display hot path, horizon, rolling calendar | O(screen) rule, horizon clamping, the rolling grid and its layout trap |
 | [0010](0010-alarms.md) | Alarms (PRD §18) | phone arming vs. desktop sweep, the synthesized tone |
 | [0011](0011-global-keyboard-shortcuts.md) | System-wide keyboard shortcuts | the swallow rule, hook vs. `RegisterHotKey`, the shortcuts window |
+| [0012](0012-clipboard-format.md) | The clipboard text is readable | what a copy carries, the prose format, paste strictness, the deep-copy depth window |
 
 ## Related docs
 

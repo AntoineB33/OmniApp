@@ -4311,10 +4311,33 @@ object SchedulerDomain {
     private val DEFAULT_WEIGHTS: List<Double> = listOf(1.0)
 
     /**
-     * PRD §4 separator between the tree section and the trailing min-time appendix. A lone form-feed
-     * line: fields escape `\f` (see [escapeField]) so real content can never be mistaken for it.
+     * PRD §4 separator between the tree section and the trailing title-keyed appendices, as builds before
+     * 1.6.0 wrote them. A lone form-feed line. Nothing emits it any more — the clipboard text is now the
+     * readable shape below — but [parseTreeText] still reads it, so text copied by an older build pastes.
      */
     const val COPY_SECTION_SEPARATOR: String = "\u000C"
+
+    /**
+     * PRD §13 "deep copy": the depth its window opens on, and the value its **reset** button returns to.
+     * A depth of 1 is the cell alone (what the menu's plain "copy" takes), 2 is the cell and its children.
+     */
+    const val DEEP_COPY_DEFAULT_DEPTH: Int = 20
+
+    /**
+     * An attribute line's marker. Everything indented one level under a title line and starting with it
+     * describes that task; anything else at that indent is a child task. A title that really starts with
+     * `- ` is escaped (`\- `), so a task can never be read as one of its own attributes.
+     */
+    private const val ATTR_MARKER: String = "- "
+
+    // The attribute names. They are prose on purpose — the clipboard text is meant to be read by a human —
+    // and this is their only copy: the parser matches against these same constants.
+    private const val ATTR_MIN_TIME: String = "minimum time"
+    private const val ATTR_NO_SCREEN: String = "can be done during a no-screen period"
+    private const val ATTR_WEIGHTS: String = "priority weights"
+    private const val ATTR_COLUMNS: String = "sub-list weight columns"
+    private const val ATTR_UNIT: String = "schedule unit"
+    private const val ATTR_TEXT: String = "text"
 
     /** True when the cell points at a task with a non-blank title (a real, copyable cell). */
     private fun isPopulated(state: SchedulerState, cellId: CellId): Boolean {
@@ -4322,8 +4345,12 @@ object SchedulerDomain {
         return state.tasks[taskId]?.title?.isNotBlank() == true
     }
 
-    /** Build the copied subtree rooted at [cellId] from the task's shared child list (populated cells). */
-    private fun copiedSubtree(state: SchedulerState, cellId: CellId): CopiedNode {
+    /**
+     * Build the copied subtree rooted at [cellId] from the task's shared child list (populated cells).
+     * [remainingDepth] counts the levels still to take, this node included — so 1 stops here, and the
+     * unbounded Ctrl+C passes [Int.MAX_VALUE].
+     */
+    private fun copiedSubtree(state: SchedulerState, cellId: CellId, remainingDepth: Int): CopiedNode {
         val cell = state.cells[cellId]
         val taskId = cell?.taskId
         val task = taskId?.let { state.tasks[it] }
@@ -4332,9 +4359,10 @@ object SchedulerDomain {
         val childList = task?.childListId?.let { state.lists[it] }
         val childHeader = childList?.weightColumns ?: DEFAULT_WEIGHTS
         val children =
-            childList?.cellIds.orEmpty()
+            if (remainingDepth <= 1) emptyList()
+            else childList?.cellIds.orEmpty()
                 .filter { isPopulated(state, it) }
-                .map { copiedSubtree(state, it) }
+                .map { copiedSubtree(state, it, remainingDepth - 1) }
         return CopiedNode(
             title = title,
             children = children,
@@ -4348,114 +4376,288 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §13 cell contextual menu "copy" / "deep copy": the cell's own task serialized to the same text
-     * [copyTreeText] produces — so it pastes back (Ctrl+V) with its schedule unit, its text, its no-screen
-     * switch, its minimum time and its weight row restored. [deep] keeps the subtree beneath the cell;
-     * otherwise only the cell itself is copied. Empty when [cellId] holds no titled task.
+     * PRD §13 cell contextual menu "copy" / "deep copy": the cells' tasks serialized to the same text
+     * [copyTreeText] produces — so they paste back (Ctrl+V) with their schedule unit, their text, their
+     * no-screen switch, their minimum time and their weight row restored.
+     *
+     * [maxDepth] is how many levels are taken, each cell itself counting as the first: 1 is "copy" (the
+     * cells alone) and the deep-copy window's own number is anything above. Empty when nothing in [cellIds]
+     * holds a titled task, or when [maxDepth] is below 1 (there is then nothing to copy).
      */
-    fun copyCellText(state: SchedulerState, cellId: CellId, deep: Boolean): String {
-        if (!isPopulated(state, cellId)) return ""
-        val node = copiedSubtree(state, cellId)
-        return renderCopiedNodes(listOf(if (deep) node else node.copy(children = emptyList())))
-    }
-
-    private fun formatWeights(weights: List<Double>): String = weights.joinToString(",") { it.toString() }
-
-    /**
-     * PRD §4 Copy: the selected cells' subtrees serialized to the app's tab-indented text. Each line is
-     * `<depth tabs><escaped title>` optionally followed by tab-separated fields carrying the priority
-     * weight table values — `w=<csv>` for the cell's own weight row and `h=<csv>` for the header of the
-     * sub-list it parents (both omitted when they are the default single column of 1). Then a
-     * [COPY_SECTION_SEPARATOR] line and, at the end, the minimum time of each distinct task in the copied
-     * tree as `<escaped title>\t<minutes>` lines (PRD §4). Uses the consecutive selection block when there
-     * is one, otherwise the main selection. Empty when nothing populated is selected.
-     */
-    fun copyTreeText(state: SchedulerState, selection: SchedulerSelection): String {
-        val roots =
-            orderedActiveSelectionInList(state, selection)?.second
-                ?: selection.main?.let { listOf(it) }.orEmpty()
-        val nodes = roots.filter { isPopulated(state, it) }.map { copiedSubtree(state, it) }
+    fun copyCellsText(state: SchedulerState, cellIds: List<CellId>, maxDepth: Int = 1): String {
+        if (maxDepth < 1) return ""
+        val nodes = cellIds.filter { isPopulated(state, it) }.map { copiedSubtree(state, it, maxDepth) }
         if (nodes.isEmpty()) return ""
         return renderCopiedNodes(nodes)
     }
 
     /**
-     * Serialize a copied forest to the clipboard text described on [copyTreeText] and [parseTreeText]:
-     * the tab-indented tree, then three [COPY_SECTION_SEPARATOR]-delimited appendices keyed by task title
-     * — minimum times, schedule units, task texts. The last two are always emitted (possibly empty) so a
-     * section's meaning is its position; a payload that stops after the min-time appendix is the older
-     * shape and still parses.
+     * PRD §13: the cells a right-click's "copy" / "deep copy" acts on. Right-clicking **inside** a
+     * multi-selection copies the whole block — the very block §4's Ctrl+C takes, so the menu and the chord
+     * never disagree — while a right-click on a cell outside the selection copies that cell alone.
+     */
+    fun contextMenuCopyTargets(
+        state: SchedulerState,
+        selection: SchedulerSelection,
+        cellId: CellId,
+    ): List<CellId> {
+        if (!isInActiveSelection(selection, cellId)) return listOf(cellId)
+        val block = orderedActiveSelectionInList(state, selection)?.second.orEmpty()
+        return if (cellId in block) block else listOf(cellId)
+    }
+
+    /**
+     * PRD §13 deep-copy window: the titles along ONE path down to the deepest level a copy of [maxDepth]
+     * levels would reach — the deepest branch under whichever of [cellIds] reaches furthest, cut to
+     * [maxDepth] entries (that cell's own title being the first). Shorter when the sub-tree runs out first,
+     * empty when none of them holds a titled task. The window prints it so the number reads as a real place
+     * in the tree, and taking the deepest of the copied cells keeps it the path the depth actually bites on.
+     */
+    fun deepCopyPathTitles(state: SchedulerState, cellIds: List<CellId>, maxDepth: Int): List<String> {
+        if (maxDepth < 1) return emptyList()
+        val path = ArrayList<String>()
+        // A mirrored task cannot contain itself, but the walk is guarded anyway: a cycle here would be an
+        // unbounded descent on the UI thread, and the window redraws it on every keystroke.
+        val seen = HashSet<CellId>()
+        var current: CellId? =
+            cellIds
+                .filter { isPopulated(state, it) }
+                .maxByOrNull { subtreeHeight(state, it, maxDepth, seen) }
+        while (current != null && path.size < maxDepth && seen.add(current)) {
+            val task = state.cells[current]?.taskId?.let { state.tasks[it] } ?: break
+            path.add(task.title)
+            val children =
+                task.childListId?.let { state.lists[it] }?.cellIds.orEmpty()
+                    .filter { isPopulated(state, it) && it !in seen }
+            // The deepest branch — measured over the whole depth asked for, not just the levels
+            // still to show, so raising the number EXTENDS the path instead of switching branches.
+            current = children.maxByOrNull { subtreeHeight(state, it, maxDepth, seen) }
+        }
+        return path
+    }
+
+    /** Height of the populated sub-tree at [cellId] (a leaf is 1), never counted beyond [limit]. */
+    private fun subtreeHeight(state: SchedulerState, cellId: CellId, limit: Int, seen: Set<CellId>): Int {
+        if (limit <= 1) return 1
+        val task = state.cells[cellId]?.taskId?.let { state.tasks[it] } ?: return 1
+        val children =
+            task.childListId?.let { state.lists[it] }?.cellIds.orEmpty()
+                .filter { isPopulated(state, it) && it !in seen }
+        if (children.isEmpty()) return 1
+        return 1 + children.maxOf { subtreeHeight(state, it, limit - 1, seen) }
+    }
+
+    private fun formatWeights(weights: List<Double>): String = weights.joinToString(", ") { it.toString() }
+
+    /**
+     * PRD §4 Copy: the selected cells' subtrees serialized to the app's clipboard text (see
+     * [renderCopiedNodes] for the shape). Uses the consecutive selection block when there is one, otherwise
+     * the main selection. Empty when nothing populated is selected.
+     */
+    fun copyTreeText(state: SchedulerState, selection: SchedulerSelection): String {
+        val roots =
+            orderedActiveSelectionInList(state, selection)?.second
+                ?: selection.main?.let { listOf(it) }.orEmpty()
+        return copyCellsText(state, roots, Int.MAX_VALUE)
+    }
+
+    /**
+     * Serialize a copied forest to the clipboard text [parseTreeText] reads back. **It has to be readable**
+     * (PRD §4/§13): what lands in the clipboard is the user's copy of their task as much as it is the app's,
+     * so every field is a named line in prose rather than a packed token, and a multi-line task text is
+     * carried as its own indented block instead of an escaped one-liner.
+     *
+     * A tab-indented title line per task, then — one level deeper — one `- <name>: <value>` line per thing
+     * the cell holds (its minimum time, the edit window's screen switch, its priority-weight row, the
+     * weight columns of the sub-list it parents), the schedule unit as one `- <step>: <n> min` line per
+     * step a level deeper still, and the task text verbatim under `- text:`. The task's children follow at
+     * the title line's own indent + 1, after its attributes.
+     *
+     * Only the minimum time is always written; everything else is omitted at its default value, so an
+     * ordinary task stays a title and one line.
      */
     private fun renderCopiedNodes(nodes: List<CopiedNode>): String {
         val sb = StringBuilder()
+        fun line(depth: Int, content: String) {
+            repeat(depth) { sb.append('\t') }
+            sb.append(content).append('\n')
+        }
+        fun attribute(depth: Int, name: String, value: String) = line(depth, "$ATTR_MARKER$name: $value")
         fun render(ns: List<CopiedNode>, depth: Int) {
             for (n in ns) {
-                repeat(depth) { sb.append('\t') }
-                sb.append(escapeField(n.title))
-                if (n.rowWeights != DEFAULT_WEIGHTS) sb.append('\t').append("w=").append(formatWeights(n.rowWeights))
+                line(depth, escapeTitleField(n.title))
+                val d = depth + 1
+                attribute(d, ATTR_MIN_TIME, "${n.minMinutes ?: DEFAULT_MINIMUM_MINUTES} min")
+                // PRD §13 edit-window switch. Only the non-default (off-screen) value is written, so an
+                // ordinary on-screen task says nothing about a screen — exactly as its window reads.
+                if (n.noScreenDoable) attribute(d, ATTR_NO_SCREEN, "yes")
+                if (n.rowWeights != DEFAULT_WEIGHTS) attribute(d, ATTR_WEIGHTS, formatWeights(n.rowWeights))
                 if (n.children.isNotEmpty() && n.childHeader != DEFAULT_WEIGHTS) {
-                    sb.append('\t').append("h=").append(formatWeights(n.childHeader))
+                    attribute(d, ATTR_COLUMNS, formatWeights(n.childHeader))
                 }
-                // PRD §13 Edit window switch. Only the non-default (off-screen) value is written, so an
-                // ordinary on-screen task's line is byte-for-byte what it always was.
-                if (n.noScreenDoable) sb.append('\t').append("ns=1")
-                sb.append('\n')
+                if (n.scheduleUnit.isNotEmpty()) {
+                    line(d, "$ATTR_MARKER$ATTR_UNIT:")
+                    for (step in n.scheduleUnit) {
+                        line(d + 1, "$ATTR_MARKER${escapeField(step.title)}: ${step.spanMinutes} min")
+                    }
+                }
+                if (n.text.isNotEmpty()) {
+                    line(d, "$ATTR_MARKER$ATTR_TEXT:")
+                    // Verbatim, one level deeper: an empty line keeps the indent so it stays part of the
+                    // block. This is the whole point of the format — the note reads as the note.
+                    for (textLine in n.text.split('\n')) line(d + 1, textLine)
+                }
                 render(n.children, depth + 1)
             }
         }
         render(nodes, 0)
-
-        // The appendices are keyed by title and collected in first-appearance order, so a task mirrored
-        // at several cells contributes once.
-        val minByTitle = LinkedHashMap<String, Int>()
-        val unitByTitle = LinkedHashMap<String, List<ScheduleUnitEntry>>()
-        val textByTitle = LinkedHashMap<String, String>()
-        fun collect(ns: List<CopiedNode>) {
-            for (n in ns) {
-                if (n.title !in minByTitle) minByTitle[n.title] = n.minMinutes ?: DEFAULT_MINIMUM_MINUTES
-                if (n.scheduleUnit.isNotEmpty() && n.title !in unitByTitle) unitByTitle[n.title] = n.scheduleUnit
-                if (n.text.isNotEmpty() && n.title !in textByTitle) textByTitle[n.title] = n.text
-                collect(n.children)
-            }
-        }
-        collect(nodes)
-
-        // PRD §4 appendix 1: the minimum time of each distinct task.
-        sb.append(COPY_SECTION_SEPARATOR).append('\n')
-        sb.append(minByTitle.entries.joinToString("\n") { "${escapeField(it.key)}\t${it.value}" })
-        // PRD §13 appendix 2: one line per schedule-unit step, `<task>\t<step title>\t<minutes>`, in order.
-        sb.append('\n').append(COPY_SECTION_SEPARATOR).append('\n')
-        sb.append(
-            unitByTitle.entries.joinToString("\n") { (title, entries) ->
-                entries.joinToString("\n") { "${escapeField(title)}\t${escapeField(it.title)}\t${it.spanMinutes}" }
-            },
-        )
-        // PRD §13 appendix 3: the task text, escaped onto a single line.
-        sb.append('\n').append(COPY_SECTION_SEPARATOR).append('\n')
-        sb.append(textByTitle.entries.joinToString("\n") { "${escapeField(it.key)}\t${escapeField(it.value)}" })
         return sb.toString()
     }
 
     private fun parseWeights(csv: String): List<Double>? {
-        if (csv.isEmpty()) return null
+        if (csv.isBlank()) return null
         val result = ArrayList<Double>()
-        for (part in csv.split(',')) result.add(part.toDoubleOrNull() ?: return null)
+        for (part in csv.split(',')) result.add(part.trim().toDoubleOrNull() ?: return null)
         return result
     }
 
+    /** How many leading tabs [line] carries — its depth in the serialized tree. */
+    private fun indentOf(line: String): Int {
+        var i = 0
+        while (i < line.length && line[i] == '\t') i++
+        return i
+    }
+
     /**
-     * PRD §4 Paste: parse the app's serialized text (see [copyTreeText]) into a forest carrying the
-     * priority weight values and per-task minimum times, or null when [text] is not in that format (an
-     * unknown line field, an unparseable weight/min-time, an indentation jump of more than one level, or
-     * nothing populated). The strictness is what makes paste a no-op for arbitrary clipboard text. A plain
-     * tab-indented title tree (no weight fields, no appendix) still parses — weights default and min-times
-     * stay null so paste leaves them at their defaults.
+     * PRD §4 Paste: parse the app's clipboard text (see [renderCopiedNodes]) into a forest carrying the
+     * priority weight values, the per-task minimum times and everything the edit window holds — or null
+     * when [text] is not in that format (an unknown attribute, an unparseable value, a real tab inside a
+     * title, an indentation jump of more than one level, or nothing populated). The strictness is what
+     * makes paste a no-op for arbitrary clipboard text. A plain tab-indented title tree still parses —
+     * weights default and min-times stay null, so paste leaves them at their defaults.
      */
     fun parseTreeText(text: String): List<CopiedNode>? {
         if (text.isBlank()) return null
-        val allLines = text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
-        // Split on every separator: section 0 is the tree, then the min-time / schedule-unit / text
-        // appendices. A payload written before the last two existed simply has fewer sections.
+        val lines = text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
+        // A form-feed section line is the pre-1.6.0 shape (tree + title-keyed appendices). Nothing writes
+        // it any more, but a clipboard filled by an older build must still paste.
+        if (lines.any { it == COPY_SECTION_SEPARATOR }) return parseLegacyTreeText(lines)
+        return parseReadableTreeText(lines)
+    }
+
+    private fun parseReadableTreeText(lines: List<String>): List<CopiedNode>? {
+        val entries = ArrayList<MutableCopiedNode>()
+        val depths = ArrayList<Int>()
+        var i = 0
+        while (i < lines.size) {
+            val depth = indentOf(lines[i])
+            val rest = lines[i].substring(depth)
+            if (rest.isBlank()) {
+                i++
+                continue
+            }
+            // An attribute with no task above it, or a real tab inside a title (a spreadsheet row pasted
+            // in) → not our format, so paste stays a no-op.
+            if (rest.startsWith(ATTR_MARKER) || rest.contains('\t')) return null
+            val node = MutableCopiedNode(title = unescapeField(rest))
+            entries.add(node)
+            depths.add(depth)
+            i++
+            // Everything marked and indented one level under the title describes THIS task.
+            while (i < lines.size) {
+                val d = indentOf(lines[i])
+                val body = lines[i].substring(d)
+                if (body.isBlank()) {
+                    i++
+                    continue
+                }
+                if (d != depth + 1 || !body.startsWith(ATTR_MARKER)) break
+                i++
+                val field = body.removePrefix(ATTR_MARKER)
+                when (field) {
+                    "$ATTR_UNIT:" -> {
+                        // One `- <step>: <n> min` line per step, in order, a level deeper.
+                        while (i < lines.size) {
+                            val sd = indentOf(lines[i])
+                            val step = lines[i].substring(sd)
+                            if (step.isBlank()) {
+                                i++
+                                continue
+                            }
+                            if (sd != depth + 2 || !step.startsWith(ATTR_MARKER)) break
+                            node.scheduleUnit.add(parseUnitStep(step.removePrefix(ATTR_MARKER)) ?: return null)
+                            i++
+                        }
+                    }
+                    "$ATTR_TEXT:" -> {
+                        // The verbatim block: every line indented deeper than the marker, that indent
+                        // stripped. A child task sits one level *shallower*, so it is never swallowed.
+                        val textLines = ArrayList<String>()
+                        while (i < lines.size && indentOf(lines[i]) >= depth + 2) {
+                            textLines.add(lines[i].substring(depth + 2))
+                            i++
+                        }
+                        node.text = textLines.joinToString("\n")
+                    }
+                    else -> if (!applyAttribute(node, field)) return null
+                }
+            }
+        }
+        return assembleForest(entries, depths)
+    }
+
+    /** Apply one `<name>: <value>` attribute to [node]; false when it is not one we write. */
+    private fun applyAttribute(node: MutableCopiedNode, field: String): Boolean {
+        val colon = field.indexOf(':')
+        if (colon < 0) return false
+        val name = field.substring(0, colon)
+        val value = field.substring(colon + 1).trim()
+        when (name) {
+            ATTR_MIN_TIME -> node.minMinutes = value.removeSuffix(" min").trim().toIntOrNull() ?: return false
+            ATTR_NO_SCREEN -> node.noScreenDoable = when (value) {
+                "yes" -> true
+                "no" -> false
+                else -> return false
+            }
+            ATTR_WEIGHTS -> node.rowWeights = parseWeights(value) ?: return false
+            ATTR_COLUMNS -> node.childHeader = parseWeights(value) ?: return false
+            else -> return false
+        }
+        return true
+    }
+
+    /** `<step title>: <n> min` — the title is taken up to the LAST colon, so a title may hold one. */
+    private fun parseUnitStep(field: String): ScheduleUnitEntry? {
+        if (!field.endsWith(" min")) return null
+        val head = field.dropLast(" min".length)
+        val colon = head.lastIndexOf(':')
+        if (colon < 0) return null
+        val span = head.substring(colon + 1).trim().toIntOrNull() ?: return null
+        return ScheduleUnitEntry(unescapeField(head.substring(0, colon)), span)
+    }
+
+    /** Nest a flat list of nodes by their indent; null on a jump of more than one level, or on nothing. */
+    private fun assembleForest(entries: List<MutableCopiedNode>, depths: List<Int>): List<CopiedNode>? {
+        if (entries.isEmpty()) return null
+        val roots = ArrayList<MutableCopiedNode>()
+        val ancestors = ArrayList<MutableCopiedNode>() // ancestors[d] = current node at depth d
+        for (i in entries.indices) {
+            val depth = depths[i]
+            if (depth > ancestors.size) return null // indentation jumped more than one level
+            val node = entries[i]
+            if (depth == 0) roots.add(node) else ancestors[depth - 1].children.add(node)
+            while (ancestors.size > depth) ancestors.removeAt(ancestors.size - 1)
+            ancestors.add(node)
+        }
+        return roots.map { it.toImmutable() }
+    }
+
+    /**
+     * The pre-1.6.0 clipboard shape: a tab-indented tree whose lines carry `w=` / `h=` / `ns=` fields, then
+     * [COPY_SECTION_SEPARATOR]-delimited appendices keyed by task title (minimum times, schedule units,
+     * texts). Kept read-only so a clipboard filled by an older build still pastes; nothing writes it.
+     */
+    private fun parseLegacyTreeText(allLines: List<String>): List<CopiedNode>? {
         val sections = ArrayList<List<String>>()
         var start = 0
         for (i in allLines.indices) {
@@ -4465,7 +4667,6 @@ object SchedulerDomain {
             }
         }
         sections.add(allLines.subList(start, allLines.size))
-        val treeLines = sections[0]
 
         // Appendix 1: `<escaped title>\t<minutes>` per distinct task. A malformed line → not our format.
         val minByTitle = HashMap<String, Int>()
@@ -4477,8 +4678,7 @@ object SchedulerDomain {
             minByTitle[unescapeField(line.substring(0, tab))] = minutes
         }
 
-        // Appendix 2 (PRD §13): `<escaped task>\t<escaped step title>\t<minutes>`, one line per step, in
-        // order. A task with no schedule unit contributes no line and so keeps the empty default.
+        // Appendix 2: `<escaped task>\t<escaped step title>\t<minutes>`, one line per step, in order.
         val unitByTitle = HashMap<String, MutableList<ScheduleUnitEntry>>()
         for (line in sections.getOrElse(2) { emptyList() }) {
             if (line.isBlank()) continue
@@ -4489,7 +4689,7 @@ object SchedulerDomain {
                 .add(ScheduleUnitEntry(unescapeField(fields[1]), span))
         }
 
-        // Appendix 3 (PRD §13): `<escaped task>\t<escaped text>` — the text is escaped onto one line.
+        // Appendix 3: `<escaped task>\t<escaped text>` — the text escaped onto one line.
         val textByTitle = HashMap<String, String>()
         for (line in sections.getOrElse(3) { emptyList() }) {
             if (line.isBlank()) continue
@@ -4500,21 +4700,18 @@ object SchedulerDomain {
 
         val entries = ArrayList<MutableCopiedNode>()
         val depths = ArrayList<Int>()
-        for (line in treeLines) {
-            var depth = 0
-            while (depth < line.length && line[depth] == '\t') depth++
+        for (line in sections[0]) {
+            val depth = indentOf(line)
             val rest = line.substring(depth)
             if (rest.isBlank()) continue
             val fields = rest.split('\t')
-            var rowWeights = DEFAULT_WEIGHTS
-            var childHeader = DEFAULT_WEIGHTS
-            var noScreenDoable = false
+            val node = MutableCopiedNode(title = unescapeField(fields[0]))
             for (field in fields.drop(1)) {
                 when {
-                    field.startsWith("w=") -> rowWeights = parseWeights(field.removePrefix("w=")) ?: return null
-                    field.startsWith("h=") -> childHeader = parseWeights(field.removePrefix("h=")) ?: return null
+                    field.startsWith("w=") -> node.rowWeights = parseWeights(field.removePrefix("w=")) ?: return null
+                    field.startsWith("h=") -> node.childHeader = parseWeights(field.removePrefix("h=")) ?: return null
                     field.startsWith("ns=") ->
-                        noScreenDoable = when (field.removePrefix("ns=")) {
+                        node.noScreenDoable = when (field.removePrefix("ns=")) {
                             "1" -> true
                             "0" -> false
                             else -> return null
@@ -4522,56 +4719,45 @@ object SchedulerDomain {
                     else -> return null // a real tab in content / unknown field → not our format
                 }
             }
-            entries.add(
-                MutableCopiedNode(
-                    title = unescapeField(fields[0]),
-                    rowWeights = rowWeights,
-                    childHeader = childHeader,
-                    noScreenDoable = noScreenDoable,
-                ),
-            )
+            node.minMinutes = minByTitle[node.title]
+            node.scheduleUnit.addAll(unitByTitle[node.title].orEmpty())
+            node.text = textByTitle[node.title].orEmpty()
+            entries.add(node)
             depths.add(depth)
         }
-        if (entries.isEmpty()) return null
-
-        val roots = ArrayList<MutableCopiedNode>()
-        val ancestors = ArrayList<MutableCopiedNode>() // ancestors[d] = current node at depth d
-        for (i in entries.indices) {
-            val depth = depths[i]
-            if (depth > ancestors.size) return null // indentation jumped more than one level
-            val node = entries[i]
-            if (depth == 0) roots.add(node) else ancestors[depth - 1].children.add(node)
-            while (ancestors.size > depth) ancestors.removeAt(ancestors.size - 1)
-            ancestors.add(node)
-        }
-        return roots.map { it.toImmutable(minByTitle, unitByTitle, textByTitle) }
+        return assembleForest(entries, depths)
     }
 
     private class MutableCopiedNode(
         val title: String,
         val children: MutableList<MutableCopiedNode> = mutableListOf(),
-        val rowWeights: List<Double> = listOf(1.0),
-        val childHeader: List<Double> = listOf(1.0),
-        val noScreenDoable: Boolean = false,
+        var rowWeights: List<Double> = listOf(1.0),
+        var childHeader: List<Double> = listOf(1.0),
+        var noScreenDoable: Boolean = false,
+        var minMinutes: Int? = null,
+        val scheduleUnit: MutableList<ScheduleUnitEntry> = mutableListOf(),
+        var text: String = "",
     ) {
-        fun toImmutable(
-            minByTitle: Map<String, Int>,
-            unitByTitle: Map<String, List<ScheduleUnitEntry>>,
-            textByTitle: Map<String, String>,
-        ): CopiedNode =
+        fun toImmutable(): CopiedNode =
             CopiedNode(
                 title = title,
-                children = children.map { it.toImmutable(minByTitle, unitByTitle, textByTitle) },
+                children = children.map { it.toImmutable() },
                 rowWeights = rowWeights,
                 childHeader = childHeader,
-                minMinutes = minByTitle[title],
+                minMinutes = minMinutes,
                 noScreenDoable = noScreenDoable,
-                scheduleUnit = unitByTitle[title].orEmpty(),
-                text = textByTitle[title].orEmpty(),
+                scheduleUnit = scheduleUnit.toList(),
+                text = text,
             )
     }
 
-    /** Escapes a tab-separated field (a title, a schedule-unit step name, a task text) onto one line. */
+    /** Escapes a title onto one line, and past a leading [ATTR_MARKER] that would read as an attribute. */
+    private fun escapeTitleField(s: String): String {
+        val escaped = escapeField(s)
+        return if (escaped.startsWith(ATTR_MARKER)) "\\$escaped" else escaped
+    }
+
+    /** Escapes a tab-separated field (a title, a schedule-unit step name) onto one line. */
     private fun escapeField(s: String): String =
         buildString {
             for (c in s) when (c) {

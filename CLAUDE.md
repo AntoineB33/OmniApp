@@ -281,6 +281,33 @@ crossing can be silently clipped by a clock jump.
 - A task **no cell points at** is named in the Change Task menu by its child titles, never by a path (PRD §4):
   `shortestTaskTreePath` reads the denormalized `Task.childTaskIds`, which outlives the detachment.
 
+### Copying a cell
+
+→ ADR 0012. One format for the tree's Ctrl+C and both contextual-menu entries: `renderCopiedNodes` writes it,
+`parseTreeText` reads it, and nothing else parses a clipboard.
+
+- **The clipboard text is for a PERSON to read**, not only for the app to parse: a tab-indented title line per
+  task, its fields as named `- <field>: <value>` lines one level deeper, the task text **verbatim** in its own
+  indented block. Do not re-pack it into flags and appendices for a shorter payload — that shape shipped, and it
+  put a form-feed and a `\n`-escaped note in the user's clipboard.
+- **A copy carries everything the cell's Edit window holds** (the screen switch, the schedule unit, the text)
+  plus its minimum time and its weight row, so Ctrl+V restores the task and not just its title.
+- **The attribute names ARE the format**: they exist once (the `ATTR_*` constants) and the parser matches those
+  same constants. A second copy is how a writer and a reader drift apart.
+- Fields belong to the **node**, never to the title — two tasks sharing a name must not share a minimum time.
+  A title that reads like an attribute line is escaped (`\- text:`).
+- **Paste stays a no-op for foreign text**: an unknown attribute, an unparseable value, a real tab inside a
+  title, or an indent jump ⇒ `null` ⇒ the reducer returns the state unchanged. A plain tab-indented title tree
+  still pastes, with its min-times left null.
+- The pre-1.6.0 form-feed shape is still **read** (a clipboard outlives a rebuild), never written.
+- **The menu and Ctrl+C must agree about what "the cell" is**: a right-click INSIDE a multi-selection copies the
+  whole block (`contextMenuCopyTargets`), exactly as Ctrl+C does; outside one, that cell alone. Copying only the
+  cell under the cursor while a dozen sat selected is what shipped and was wrong.
+- "copy" is depth 1; **"deep copy" asks for its depth first** (default and reset: 20) and prints one path down to
+  it. That path follows the deepest branch measured over the **whole** depth asked for — measured over the
+  remainder, every branch ties and the path jumps around as the number changes — and, over several copied
+  cells, starts from whichever of them reaches furthest.
+
 ### The default sub-tree
 
 PRD §4/§7: one per account, grafted under every task the user **creates**. Off by default

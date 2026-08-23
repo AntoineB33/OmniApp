@@ -11,6 +11,53 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The clipboard text is readable, and "deep copy" asks how deep (PRD §4/§13, ADR 0012) — SHIPPED 2026-08-23
+
+**The copy format was rewritten for a human reader.** A copy already carried everything the cell's edit window
+holds, but in a shape written for the parser alone: per-line flags (`w=1.0,0.3`, `h=…`, `ns=1`), three appendices
+**keyed by task title**, a bare **form-feed** line between them, and each task's text escaped onto one line as
+`line one\nline two`. Pasted anywhere but back into OmniApp it was unreadable. It is now prose — a tab-indented
+title line per task, one `- <field>: <value>` line per thing it holds a level deeper, the schedule unit as one
+`- <step>: <n> min` line per step, and the task text **verbatim** in its own indented block:
+
+```
+Deep work
+	- minimum time: 45 min
+	- can be done during a no-screen period: yes
+	- schedule unit:
+		- warm up: 5 min
+		- run: 25 min
+	- text:
+		the note, exactly as it was typed
+	Reading
+		- minimum time: 30 min
+```
+
+Everything at its default is omitted, so an untouched task is a title and its minimum time. The fields moved off
+the title-keyed appendices **onto the node** (two tasks sharing a name no longer share a minimum time or a text),
+a title that reads like an attribute line is escaped (`\- text:`), and paste stays as strict as before — an
+unknown attribute, an unparseable value, a real tab in a title or an indent jump is still a no-op, while a plain
+tab-indented title tree still pastes. The pre-1.6.0 form-feed shape is still **read** (a clipboard outlives a
+rebuild), never written.
+
+**The contextual copies act on the selection.** Right-clicking one of a dozen selected root cells and choosing
+"deep copy" copied a single line: PRD §13 describes the menu on "the cell" and the first implementation took
+that literally, while §4's Ctrl+C copies the selection — the same gesture to anyone using them.
+`SchedulerDomain.contextMenuCopyTargets` now resolves a right-click **inside** a multi-selection to the whole
+ordered block (the very one `copyTreeText` uses, so the menu and the chord cannot drift) and a right-click
+outside it to that cell alone; the depth window carries the block and names how many cells are going.
+
+**"deep copy" now asks for a maximum depth first.** A new window carries the depth (default **20**, restored by
+its **reset** button, the copied cell counting as the first level) and prints **one path** from that cell down to
+the deepest level the depth reaches, so the number reads as a place in the tree. The branch is picked by height
+measured over the *whole* depth asked for, so raising the number extends the path instead of switching branches;
+the line is held at its deep end with a draggable horizontal scrollbar for the parents that fall off the left.
+**Enter** or **copy** copies and closes. The menu's plain "copy" is now simply depth 1.
+
+Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`). No Supabase deploy. Verified by
+`:shared:jvmTest` (`TaskCellCopyTest`, `SchedulerReducerTest`); the window itself is UI, checked by running the
+desktop app.
+
 ### System-wide chords are swallowed, `Ctrl+Shift+Alt+E`, and a shortcuts window (PRD §7/§15, ADR 0011) — SHIPPED 2026-08-23
 
 Three changes to the same seam (`scheduler/platform/GlobalHotkey.kt`):
