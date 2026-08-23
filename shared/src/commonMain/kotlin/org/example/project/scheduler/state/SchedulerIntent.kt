@@ -162,6 +162,20 @@ sealed interface SchedulerIntent {
         val column: Int,
     ) : SchedulerIntent
 
+    /**
+     * PRD §5 the priority-weight window's **Cancel**: put the sub-list's weight table back to what it was
+     * when the window opened — [weightColumns] for the headers, [cellWeights] for each listed cell's row.
+     * A cell that has since left the sub-list keeps whatever its own table gave it.
+     *
+     * Recorded as one ordinary content delta, like any other weight edit, which is exactly what makes
+     * Ctrl+Z undo the cancel itself.
+     */
+    data class RestorePriorityWeights(
+        val listId: CellListId,
+        val weightColumns: List<Double>,
+        val cellWeights: Map<CellId, List<Double>>,
+    ) : SchedulerIntent
+
     /** PRD §5: reorder a priority column by dragging it to a new position. */
     data class MovePriorityColumn(
         val listId: CellListId,

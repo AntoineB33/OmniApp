@@ -71,6 +71,32 @@ Test: `a_pin_holds_its_share_even_when_an_unpinned_sibling_of_the_same_list_grow
 Like the weight table. That is safe only because the edit targets an ABSOLUTE value and the scale factors
 compose (`retargeting_twice_lands_where_going_straight_there_would`) — 5 % then 40 % is exactly 40 %.
 
+## The window's chart is the sub-list, not the tree
+
+The pie chart on the right of the **priority weights** window shows each task's percentage **within that
+sub-list** (`RelativePriorityDomain.cellShare`), not its absolute priority. The chart is the readout of the
+table beside it, and the table sets shares of one list; reading the legend against the whole tree put two
+different denominators side by side in one window.
+
+The slices themselves never changed: their sweeps were always normalized by the sub-list total, which for a
+set of shares of one list is 1. Only the legend's numbers moved.
+
+## Cancel is a history unit, not an escape hatch
+
+**Cancel** puts the whole table back to what it was when the window opened — every column header and every
+cell's weight row — in one step, not one edit back. The window captures that table on the composition that
+opens it (`remember(listId)` in `PriorityWeightWindow`) and holds it across every edit it makes, so the
+target never drifts; the button is disabled while the table still matches.
+
+It dispatches one `RestorePriorityWeights`, reduced as an ordinary `priorityTreeDelta` labelled "Cancel
+weight edits" — **the same kind of unit as any other weight edit, which is exactly what makes Ctrl+Z undo
+the cancel itself.** A cancel that would change nothing returns the state unchanged, so pressing it on an
+untouched table cannot leave an empty unit for Ctrl+Z to walk back over.
+
+The restore is scoped to that one sub-list's weights: a cell listed in the snapshot that has since moved to
+another list is left to its new table, and the list's membership is never rewritten. Cancel undoes weight
+edits, not tree edits.
+
 ## Known deviation from the spec's wording
 
 A chain cell is drawn as a compact chip (title + its sub-list percentage + the pin), not as a full

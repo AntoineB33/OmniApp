@@ -11,6 +11,28 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The weight window charts the sub-list, and has a Cancel (PRD §5, ADR 0004) — SHIPPED 2026-08-24
+
+**The pie chart on the right now shows each task's percentage *within the sub-list*** — the share the table on
+the left actually hands out (`RelativePriorityDomain.cellShare`) — instead of the task's absolute priority (its
+share of the whole tree). The slices never moved: their sweeps were already normalized by the sub-list total, so
+only the legend's numbers were reading against a different denominator than the table they sat next to. The
+heading says "Priorities in this list".
+
+**A Cancel button puts the whole table back to what it was when the window opened** — every column header and
+every cell's weight row, in one step, not one edit back. The window captures that table on the composition that
+opens it (`remember(listId)`) and keeps it across every edit it makes, so Cancel always returns to the start; the
+button is disabled while the table still matches. It dispatches one `RestorePriorityWeights` intent, reduced as
+an ordinary `priorityTreeDelta` labelled "Cancel weight edits", **which is what makes Ctrl+Z undo the cancel**.
+A cancel that would change nothing is a no-op and records no empty history unit. Only that one sub-list's weights
+are rewritten: a cell that has since moved to another list is left to its new table, and list membership is never
+touched (Cancel undoes weight edits, not tree edits).
+
+Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`). No Supabase deploy. Verified by
+`:shared:jvmTest` (`SchedulerReducerTest.cancel_restores_the_weight_table_the_window_opened_on`,
+`a_cancel_that_changes_nothing_records_no_history_unit`,
+`a_cells_share_of_its_own_sub_list_is_independent_of_its_parents`).
+
 ### The clipboard carries the task id, Ctrl+C is deep, Ctrl+X cuts (PRD §4/§13, ADR 0012) — SHIPPED 2026-08-23
 
 Four changes to the copy/paste seam, the same day the format above shipped.

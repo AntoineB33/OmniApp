@@ -1515,11 +1515,34 @@ private fun WeightTableHeader(
 private val WEIGHT_WINDOW_TITLE_WIDTH = 160.dp
 
 /**
+ * PRD §5: everything the priority-weight window can edit about one sub-list — the column headers and each
+ * listed cell's weight row. Captured when the window opens so **Cancel** can put it all back.
+ */
+private data class WeightTableSnapshot(
+    val weightColumns: List<Double>,
+    val cellWeights: Map<CellId, List<Double>>,
+)
+
+private fun weightTableSnapshot(state: SchedulerState, listId: CellListId): WeightTableSnapshot {
+    val list = state.lists[listId]
+    return WeightTableSnapshot(
+        weightColumns = list?.weightColumns.orEmpty(),
+        cellWeights = list?.cellIds.orEmpty()
+            .mapNotNull { id -> state.cells[id]?.let { id to it.priorityWeights } }
+            .toMap(),
+    )
+}
+
+/**
  * PRD §5 priority-weight window: a floating window opened by clicking a sub-list's absolute priority
  * percentage. Its left side is the editable weight table (a draggable/reorderable column header plus a
- * weight input per cell per column); its right side is a circular (pie) chart of the absolute priority
- * percentages of every task in the sub-list. Drawn by the app on the top floating-window layer; the app
+ * weight input per cell per column); its right side is a circular (pie) chart of each task's percentage
+ * **within this sub-list** — the share the table itself hands out, not the task's absolute priority, so
+ * the chart reads as the table's own output. Drawn by the app on the top floating-window layer; the app
  * dismisses it when a press lands outside [onBoundsChange]'s reported bounds.
+ *
+ * **Cancel** puts the whole table back to what it was when the window opened, as one content delta —
+ * so Ctrl+Z undoes the cancel like any other weight edit.
  */
 @Composable
 internal fun PriorityWeightWindow(
@@ -1536,6 +1559,10 @@ internal fun PriorityWeightWindow(
         list.cellIds.filter { id -> state.cells[id]?.taskId?.let { priorities[it] != null } == true }
     var draggedColumn by remember(listId) { mutableStateOf<Int?>(null) }
     var columnDropIndex by remember(listId) { mutableStateOf<Int?>(null) }
+    // The table as this window found it: captured on the composition that opened it, and kept across
+    // every edit made since — Cancel always goes back to the start, never one step.
+    val openedTable = remember(listId) { weightTableSnapshot(state, listId) }
+    val tableEdited = weightTableSnapshot(state, listId) != openedTable
 
     // Stop reporting bounds once the window goes away, so the app's outside-press check has no stale rect.
     DisposableEffect(Unit) { onDispose { onBoundsChange(null) } }
@@ -1553,7 +1580,9 @@ internal fun PriorityWeightWindow(
             .onGloballyPositioned { onBoundsChange(it.boundsInWindow()) }
             .pointerInput(Unit) { detectTapGestures { } },
     ) {
-            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
+        Column(Modifier.padding(16.dp)) {
+            // `fill = false` so a short table keeps the window short; the Cancel bar below always shows.
+            Row(Modifier.weight(1f, fill = false), verticalAlignment = Alignment.Top) {
                 // The table takes the remaining width and scrolls if it is wider/taller than the window,
                 // leaving the fixed-width chart column always visible on the right.
                 Column(
@@ -1608,11 +1637,32 @@ internal fun PriorityWeightWindow(
                 Spacer(Modifier.width(16.dp))
                 PriorityChart(
                     titles = populated.map { id -> state.cells[id]?.taskId?.let { state.tasks[it]?.title }.orEmpty() },
-                    fractions = populated.map { id -> state.cells[id]?.taskId?.let { priorities[it] } ?: 0.0 },
+                    // PRD §5: each row's share of THIS sub-list — the number the table on the left sets —
+                    // rather than the task's absolute priority (its share of the whole tree).
+                    fractions = populated.map { id -> RelativePriorityDomain.cellShare(state, id) },
                     modifier = Modifier.width(220.dp).verticalScroll(rememberScrollState()),
                 )
             }
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                // PRD §5 Cancel: back to the table this window opened on, as one undoable content delta.
+                TextButton(
+                    onClick = {
+                        onIntent(
+                            SchedulerIntent.RestorePriorityWeights(
+                                listId = listId,
+                                weightColumns = openedTable.weightColumns,
+                                cellWeights = openedTable.cellWeights,
+                            )
+                        )
+                    },
+                    enabled = tableEdited,
+                ) {
+                    Text("Cancel")
+                }
+            }
         }
+    }
 }
 
 /** Distinct slice color for the [index]-th task in a priority pie chart, spread around the hue wheel. */
@@ -1868,9 +1918,10 @@ private fun priorityChartColor(index: Int, count: Int): Color {
 }
 
 /**
- * PRD §5: a circular (pie) chart of the absolute priority percentages [fractions] (0..1) of the tasks
- * [titles] in a sub-list. Each slice's sweep is proportional to its fraction relative to the sub-list
- * total, followed by a colour-keyed legend giving each task's title and percentage.
+ * PRD §5: a circular (pie) chart of the priority percentages [fractions] (0..1) of the tasks [titles]
+ * **within one sub-list** — each task's share of that list, not of the whole tree. Each slice's sweep is
+ * proportional to its fraction relative to the sub-list total, followed by a colour-keyed legend giving
+ * each task's title and percentage.
  */
 @Composable
 private fun PriorityChart(
@@ -1881,7 +1932,7 @@ private fun PriorityChart(
     val total = fractions.sum().coerceAtLeast(1e-9)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Priorities",
+            text = "Priorities in this list",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

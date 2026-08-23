@@ -105,6 +105,15 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state, "Delete weight column") { applyDeletePriorityColumn(it, intent.listId, intent.column) })
             is SchedulerIntent.MovePriorityColumn ->
                 commitDelta(state, priorityTreeDelta(state, "Move weight column") { applyMovePriorityColumn(it, intent.listId, intent.from, intent.to) })
+            is SchedulerIntent.RestorePriorityWeights -> {
+                val restore = { s: SchedulerState ->
+                    applyRestorePriorityWeights(s, intent.listId, intent.weightColumns, intent.cellWeights)
+                }
+                // A cancel that changes nothing (the window was opened and nothing was edited) must not
+                // push an empty history unit for Ctrl+Z to walk back over.
+                if (restore(state) === state) state
+                else commitDelta(state, priorityTreeDelta(state, "Cancel weight edits", restore))
+            }
             is SchedulerIntent.SetTaskMinimumTime ->
                 commitDelta(state, priorityTreeDelta(state, "Minimum time") { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
             is SchedulerIntent.SetTaskScreenFlags -> {
@@ -2590,6 +2599,38 @@ private fun applyDeletePriorityColumn(
     }
     val columns = list.weightColumns.toMutableList().also { it.removeAt(column) }
     val lists = state.lists + (listId to list.copy(weightColumns = columns))
+    return state.copy(cells = cells, lists = lists)
+}
+
+/**
+ * PRD §5 the priority-weight window's **Cancel**: put [listId]'s weight table back to the headers and the
+ * per-cell weight rows it held when the window opened. Only that one table is touched — a cell listed in
+ * [cellWeights] that has since moved to another sub-list is left to its new table, and the list's
+ * membership itself is never rewritten (Cancel undoes weight edits, not tree edits).
+ *
+ * Returns the same instance when the table already matches, so the caller can skip the history unit.
+ */
+private fun applyRestorePriorityWeights(
+    state: SchedulerState,
+    listId: CellListId,
+    weightColumns: List<Double>,
+    cellWeights: Map<CellId, List<Double>>,
+): SchedulerState {
+    val list = state.lists[listId] ?: return state
+    if (weightColumns.isEmpty()) return state
+    val cells = state.cells.toMutableMap()
+    var changed = false
+    for ((cellId, weights) in cellWeights) {
+        val cell = cells[cellId] ?: continue
+        if (cell.parentListId != listId) continue
+        if (cell.priorityWeights == weights) continue
+        cells[cellId] = cell.copy(priorityWeights = weights)
+        changed = true
+    }
+    val columnsChanged = list.weightColumns != weightColumns
+    if (!changed && !columnsChanged) return state
+    val lists =
+        if (columnsChanged) state.lists + (listId to list.copy(weightColumns = weightColumns)) else state.lists
     return state.copy(cells = cells, lists = lists)
 }
 

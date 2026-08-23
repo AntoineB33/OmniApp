@@ -7,6 +7,7 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.persistence.PersistedSnapshot
@@ -846,6 +847,75 @@ class SchedulerReducerTest {
         // Column 0's default is 1 for both the header and every cell.
         assertEquals(1.0, s.lists[listId]!!.weightColumns[0], 1e-9)
         assertEquals(1.0, s.cells[first]!!.priorityWeights[0], 1e-9)
+    }
+
+    /** Everything the priority-weight window edits about one sub-list: the headers + each cell's row. */
+    private fun weightTable(
+        s: SchedulerState,
+        listId: org.example.project.scheduler.model.CellListId,
+    ): Pair<List<Double>, Map<org.example.project.scheduler.model.CellId, List<Double>>> =
+        s.lists[listId]!!.weightColumns to
+            s.lists[listId]!!.cellIds.associateWith { s.cells[it]!!.priorityWeights }
+
+    @Test
+    fun cancel_restores_the_weight_table_the_window_opened_on() {
+        var s = seedThreeTasks()
+        val listId = s.rootListId
+        val first = s.lists[listId]!!.cellIds.first()
+        // What the window captures as it opens.
+        val (openedColumns, openedCells) = weightTable(s, listId)
+        val cancel = SchedulerIntent.RestorePriorityWeights(listId, openedColumns, openedCells)
+
+        // Several edits of both kinds (a cell value and a whole new column).
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(first, 0, 9.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddPriorityColumn(listId))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityColumnWeight(listId, 1, 0.4))
+        assertNotEquals(openedColumns to openedCells, weightTable(s, listId))
+
+        // Cancel goes back to the start in one step — not one edit back.
+        s = SchedulerReducer.reduce(s, cancel)
+        assertEquals(openedColumns to openedCells, weightTable(s, listId))
+
+        // The cancel is itself a history unit, so Ctrl+Z brings the edited table back.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertEquals(listOf(1.0, 0.4), s.lists[listId]!!.weightColumns)
+        assertEquals(9.0, s.cells[first]!!.priorityWeights[0], 1e-9)
+        val units = s.histories.forCategory(HistoryCategory.Main).units
+        assertEquals("Cancel weight edits", units[units.lastIndex].delta.label)
+    }
+
+    @Test
+    fun a_cancel_that_changes_nothing_records_no_history_unit() {
+        var s = seedThreeTasks()
+        val listId = s.rootListId
+        val (columns, cells) = weightTable(s, listId)
+        val before = s.histories.forCategory(HistoryCategory.Main).units.size
+        s = SchedulerReducer.reduce(s, SchedulerIntent.RestorePriorityWeights(listId, columns, cells))
+        assertEquals(before, s.histories.forCategory(HistoryCategory.Main).units.size)
+    }
+
+    @Test
+    fun a_cells_share_of_its_own_sub_list_is_independent_of_its_parents() {
+        // The number the weight window's chart shows: A's two children split A's sub-list 3:1, whatever
+        // slice of the whole tree A itself holds (a third here, next to its two root siblings).
+        var s = seedThreeTasks()
+        val cP = s.lists[s.rootListId]!!.cellIds.first()
+        val pTask = s.cells[cP]!!.taskId!!
+        val childList = s.tasks[pTask]!!.childListId!!
+        val cC1 = s.lists[childList]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cC1, "C1"))
+        val cC2 = s.lists[childList]!!.cellIds[1]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cC2, "C2"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cC1, 0, 3.0))
+
+        val shares = s.lists[childList]!!.cellIds
+            .filter { SchedulerDomain.isPopulatedCell(s, it) }
+            .map { RelativePriorityDomain.cellShare(s, it) }
+        assertEquals(listOf(0.75, 0.25), shares.map { (it * 100).toInt() / 100.0 })
+        assertEquals(1.0, shares.sum(), 1e-9)
+        // …while C1's ABSOLUTE priority is that share of P's own third of the tree.
+        val absolute = SchedulerDomain.absoluteTaskPriorities(s)[s.cells[cC1]!!.taskId!!]!!
+        assertEquals(0.75 / 3.0, absolute, 1e-9)
     }
 
     /** Titles of the populated cells of [taskId]'s shared child list, in list order. */

@@ -257,6 +257,13 @@ crossing can be silently clipped by a clock jump.
 - **A pin means "hold this percentage", not "leave this weight alone"** — a pinned cell's weight may have to
   rise. Solve each sub-list over every chain cell, pinned included.
 - Pins are authoritative + synced, and **not** an Undo/Redo unit.
+- **The weight window's chart is the readout of the table beside it**: each task's share of THAT sub-list
+  (`cellShare`), never its absolute priority. The slice sweeps were always normalized by the list total; only
+  the legend's number was reading against the whole tree.
+- **Its Cancel restores the table the window OPENED on** — every header and every weight row, in one step,
+  never one edit back — as one ordinary `priorityTreeDelta`, which is what makes Ctrl+Z undo the cancel. A
+  cancel that changes nothing records no unit. It rewrites that one sub-list's weights and nothing else: a cell
+  that has since moved lists keeps its new table, and membership is never touched.
 
 ### The task-tree timeline
 
