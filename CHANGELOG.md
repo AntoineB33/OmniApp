@@ -11,6 +11,36 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The clipboard carries the task id, Ctrl+C is deep, Ctrl+X cuts (PRD §4/§13, ADR 0012) — SHIPPED 2026-08-23
+
+Four changes to the copy/paste seam, the same day the format above shipped.
+
+**Every copied node now writes its task id** (`- id: task/user/41`, the first attribute line), so a paste lands on
+the **same task** instead of a clone of it. `SchedulerReducer.pasteNodeInto` resolves it three ways: the id names a
+live titled task this cell may hold ⇒ the cell is pointed at **that** task (a mirror — its own sub-tree shows under
+it, and the clipboard's children and fields are not applied over it); the id is free (it was cut, or the payload
+predates this tree) ⇒ the task is rebuilt **under that id**, with `SchedulerState.reserveTaskId` walking the id
+counter past it; no id, or one the tree cannot honour (it would duplicate a task inside one sub-list) ⇒ a fresh
+task, as before. An id of any other shape (`task/root`, anything not `task/user/<n>`) is rejected at parse time, so
+paste stays a no-op for foreign text.
+
+**Ctrl+V replaces the cell it lands on.** It used to rename the target cell's task to the copied title and write
+the copied children over the existing ones. The cell is now re-pointed at the pasted task; the task that was there
+keeps its title and, with a populated sub-list, stays a detached parent its id brings back.
+
+**Ctrl+C is a deep copy and never opens a window**, and **Ctrl+X** is that copy plus the PRD §4 deletion of the
+same cells (one history unit, labelled "Cut", so one Ctrl+Z puts the sub-tree back — and the ids it freed are
+exactly what a later Ctrl+V restores).
+
+**The deep-copy depth is one number for the whole account** (`SchedulerState.deepCopyMaxDepth`, default 20,
+persisted **and synced**, healed into 1..999 on decode; a payload written before it decodes to 20). The deep-copy
+window opens on it and saves it when it copies — cancelling leaves it alone — and Ctrl+C / Ctrl+X then use it
+without asking. The menu's plain "copy" is still depth 1.
+
+Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`). No Supabase deploy. Verified by
+`:shared:jvmTest` (`TaskCellCopyTest`, `SchedulerReducerTest`, `DefaultSubtreeTest`); the depth window is UI,
+checked by running the desktop app.
+
 ### The clipboard text is readable, and "deep copy" asks how deep (PRD §4/§13, ADR 0012) — SHIPPED 2026-08-23
 
 **The copy format was rewritten for a human reader.** A copy already carried everything the cell's edit window

@@ -187,6 +187,11 @@ object SchedulerReducer {
             SchedulerIntent.SelectFirstChild -> reduceSelectFirstChild(state)
             SchedulerIntent.SelectAllVisibleCells -> reduceSelectAllVisible(state)
             SchedulerIntent.CopySelection -> reduceCopySelection(state)
+            SchedulerIntent.CutSelection -> reduceCutSelection(state)
+            is SchedulerIntent.SetDeepCopyMaxDepth -> {
+                val depth = intent.depth.coerceIn(SchedulerDomain.DEEP_COPY_DEPTH_RANGE)
+                if (state.deepCopyMaxDepth == depth) state else state.copy(deepCopyMaxDepth = depth)
+            }
             is SchedulerIntent.PasteTree -> reducePasteTree(state, intent.text)
             is SchedulerIntent.RecordNotification -> reduceRecordNotification(state, intent)
             is SchedulerIntent.RecordSupabaseUsage -> reduceRecordSupabaseUsage(state, intent)
@@ -672,6 +677,18 @@ object SchedulerReducer {
         return state.copy(clipboard = text.split('\n'))
     }
 
+    /**
+     * PRD §4/§13 Cut (Ctrl+X): the deep copy [reduceCopySelection] takes, and then the very same cells are
+     * emptied — the PRD §4 deletion, blank title and all, so the cut sub-tree's ids are freed and a paste
+     * can rebuild it under them. Both halves ride [reduceEmptySelected]'s single history unit.
+     */
+    private fun reduceCutSelection(state: SchedulerState): SchedulerState {
+        if (state.editSession != null) return state
+        val text = SchedulerDomain.copyTreeText(state, state.selection)
+        if (text.isEmpty()) return state
+        return reduceEmptySelected(state.copy(clipboard = text.split('\n')), label = "Cut")
+    }
+
     private fun reducePasteTree(state: SchedulerState, text: String): SchedulerState {
         if (state.editSession != null) return state
         // PRD §4 Paste: only the app's tab-indented tree format is accepted, onto a single selected cell.
@@ -906,7 +923,7 @@ object SchedulerReducer {
         return commitDelta(moved, TreeMutationDelta(before = before, after = after, label = "Move cells"))
     }
 
-    private fun reduceEmptySelected(state: SchedulerState): SchedulerState {
+    private fun reduceEmptySelected(state: SchedulerState, label: String = "Clear cells"): SchedulerState {
         if (state.editSession != null) return state
         val targets =
             SchedulerDomain.activeSelectionCells(state.selection)
@@ -935,6 +952,7 @@ object SchedulerReducer {
                 treeAfter = after,
                 selectionBefore = state.selection,
                 selectionAfter = selectionAfter,
+                label = label,
             ),
         )
     }
@@ -1767,42 +1785,90 @@ private fun pasteTreeAtCell(
 }
 
 /**
- * Set [cellId]'s title to [node]'s and rebuild [node]'s children under it (recursively). PRD §4: also
+ * PRD §13 paste: how [pasteNodeInto] resolves the identity of the task a copied node lands on.
+ *
+ * [Mirror] — the clipboard's id still names a live, titled task this cell may hold, so the cell is pointed
+ * at **that task**: the copy comes back as a mirror of the original, and its own sub-list (which belongs to
+ * the task id, not to the cell) is what shows under it, so the clipboard's children are not rebuilt.
+ *
+ * [Restore] — the id is free (the task was cut, or the clipboard predates this account's tree), so the task
+ * is rebuilt **under that same id**, fields, children and all. The id counter is walked past it so the next
+ * allocation cannot hand it out again.
+ *
+ * [Fresh] — no id in the clipboard (a plain title tree, or a pre-1.6.0 payload), or one the tree cannot
+ * honour (it would duplicate a task inside one sub-tree — [SchedulerDomain.canAssignTaskId]): a new task is
+ * minted with the copied content, exactly as paste always did.
+ */
+private enum class PasteIdentity { Mirror, Restore, Fresh }
+
+/**
+ * Set [cellId] to [node]'s task and rebuild [node]'s children under it (recursively). PRD §4: also
  * restores the copied priority-weight values — the cell's own weight row, the minimum time of its task,
  * and (before recursing) the header of the sub-list it parents. PRD §13: plus everything the cell's Edit
- * window holds — the no-screen switch, the schedule unit and the task text. Pasted cells always get
- * freshly allocated tasks/lists, so writing these never clobbers a pre-existing task.
+ * window holds — the no-screen switch, the schedule unit and the task text.
+ *
+ * PRD §4/§13: the copied cell **replaces** the target cell. The identity it lands on is [PasteIdentity];
+ * whichever it is, the cell is bound by forcing that id through [applySetCellTitle] (never by renaming
+ * whatever task the cell held), so a populated target is *vacated* by the code that already owns
+ * re-pointing a cell — its task keeps its title and, when its sub-list is populated, stays a detached
+ * parent the id can bring back.
  */
 private fun pasteNodeInto(
     state: SchedulerState,
     cellId: CellId,
     node: SchedulerDomain.CopiedNode,
 ): SchedulerState {
-    var working = applySetCellTitle(state, cellId, node.title)
-    // Restore this cell's priority-weight row (PRD §4/§5).
+    val live = node.taskId?.let { state.tasks[it] }
+    val identity =
+        when {
+            node.taskId == null -> PasteIdentity.Fresh
+            // A blank title is what deletes (PRD §4), so a blank-titled task under this id is not a task to
+            // mirror — it is the husk of one, and the clipboard's own content is what should come back.
+            live != null && live.title.isNotBlank() ->
+                if (SchedulerDomain.canAssignTaskId(state, cellId, node.taskId)) PasteIdentity.Mirror
+                else PasteIdentity.Fresh
+            else -> PasteIdentity.Restore
+        }
+    var working = state
+    val taskId =
+        when (identity) {
+            PasteIdentity.Mirror, PasteIdentity.Restore -> {
+                val id = node.taskId!!
+                if (identity == PasteIdentity.Restore) working = working.reserveTaskId(id)
+                id
+            }
+            PasteIdentity.Fresh -> working.allocateTaskId().let { (id, next) -> working = next; id }
+        }
+    // A mirrored task keeps the title it has now — the clipboard's copy of it may be stale, and renaming a
+    // task is not what pasting a mirror of it means.
+    val title = if (identity == PasteIdentity.Mirror) live!!.title else node.title
+    working = applySetCellTitle(working, cellId, title, forceTaskId = taskId)
+    if (working.cells[cellId]?.taskId != taskId) return state
+    // Links the task under its new parent (childTaskIds) and merges the occurrence — the same primitive the
+    // "change task" menu and the default-subtree graft drive, rather than a second copy of those rules.
+    working = applyAssignTaskId(working, cellId, taskId)
+    // Restore this cell's priority-weight row (PRD §4/§5). The row belongs to the CELL, so a mirror gets it too.
     working.cells[cellId]?.let { c ->
         working = working.copy(cells = working.cells + (cellId to c.copy(priorityWeights = node.rowWeights)))
     }
-    val pastedTaskId = working.cells[cellId]?.taskId
-    if (pastedTaskId != null) {
-        working.tasks[pastedTaskId]?.let { t ->
-            // Restore the minimum time (PRD §4/§10) only when the clipboard carried one — a plain
-            // tab-indented title tree must leave the fresh task's default alone. The PRD §13 Edit-window
-            // fields have no such distinction: their empty value *is* the default a fresh task gets.
-            working = working.copy(
-                tasks = working.tasks + (
-                    pastedTaskId to t.copy(
-                        minimumMinutes = node.minMinutes?.coerceAtLeast(0) ?: t.minimumMinutes,
-                        onScreen = !node.noScreenDoable,
-                        scheduleUnit = node.scheduleUnit,
-                        text = node.text,
-                    )
-                ),
-            )
-        }
+    // A mirror is the task that is already there: its own fields and its own sub-tree win.
+    if (identity == PasteIdentity.Mirror) return working
+    working.tasks[taskId]?.let { t ->
+        // Restore the minimum time (PRD §4/§10) only when the clipboard carried one — a plain
+        // tab-indented title tree must leave the fresh task's default alone. The PRD §13 Edit-window
+        // fields have no such distinction: their empty value *is* the default a fresh task gets.
+        working = working.copy(
+            tasks = working.tasks + (
+                taskId to t.copy(
+                    minimumMinutes = node.minMinutes?.coerceAtLeast(0) ?: t.minimumMinutes,
+                    onScreen = !node.noScreenDoable,
+                    scheduleUnit = node.scheduleUnit,
+                    text = node.text,
+                )
+            ),
+        )
     }
     if (node.children.isEmpty()) return working
-    val taskId = working.cells[cellId]?.taskId ?: return working
     // A non-blank title gives the cell a child sub-list with one empty placeholder (applySetCellTitle).
     val childListId = working.tasks[taskId]?.childListId ?: return working
     // Restore the child sub-list's weight-column header (PRD §4/§5).
@@ -2776,8 +2842,9 @@ internal data class EmptyCellsDelta(
     val treeAfter: TreeSnapshot,
     val selectionBefore: SchedulerSelection,
     val selectionAfter: SchedulerSelection,
+    // PRD §13: Ctrl+X empties the same cells, so the unit the History window shows says "Cut" instead.
+    override val label: String = "Clear cells",
 ) : Delta {
-    override val label: String = "Clear cells"
 
     override val details: List<String>
         get() = treeDiffLines(treeBefore, treeAfter) + selectionDiffLines(selectionBefore, selectionAfter)

@@ -395,10 +395,16 @@ fun TaskSchedulerScreen(
                     vm.dispatch(SchedulerIntent.SelectAllVisibleCells)
                     return@onPreviewKeyEvent true
                 }
-                if (mod && event.key == Key.C) {
+                // PRD §13: Ctrl+C is a DEEP copy and never asks — the depth is the account's own
+                // (state.deepCopyMaxDepth), which the deep-copy window sets. Ctrl+X copies the same text
+                // and then empties those very cells.
+                if (mod && (event.key == Key.C || event.key == Key.X)) {
                     val text = SchedulerDomain.copyTreeText(state, state.selection)
                     if (text.isNotEmpty()) {
-                        vm.dispatch(SchedulerIntent.CopySelection)
+                        vm.dispatch(
+                            if (event.key == Key.X) SchedulerIntent.CutSelection
+                            else SchedulerIntent.CopySelection,
+                        )
                         writeSystemClipboardText(text)
                     }
                     return@onPreviewKeyEvent true
@@ -665,6 +671,9 @@ fun TaskSchedulerScreen(
                     // cell down to the chosen depth, not just the one under the cursor.
                     cellIds = SchedulerDomain.contextMenuCopyTargets(state, state.selection, cellId),
                     onCopy = { targets, maxDepth ->
+                        // The depth is the ACCOUNT's, not this copy's: what the window is asked here is
+                        // also what Ctrl+C / Ctrl+X take from now on.
+                        vm.dispatch(SchedulerIntent.SetDeepCopyMaxDepth(maxDepth))
                         val text = SchedulerDomain.copyCellsText(state, targets, maxDepth)
                         if (text.isNotEmpty()) writeSystemClipboardText(text)
                         deepCopyCellId = null
@@ -2643,6 +2652,10 @@ private fun TaskEditWindow(
  *
  * **Enter** and the **copy** button both copy and close; **reset** puts the depth back to
  * [SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH].
+ *
+ * The depth is **the account's one setting** ([SchedulerState.deepCopyMaxDepth]), not this copy's: the
+ * window opens on it and copying writes it back, and §4's Ctrl+C / Ctrl+X then deep-copy by it without ever
+ * opening this window. Cancelling leaves the account's number alone.
  */
 @Composable
 private fun DeepCopyWindow(
@@ -2653,16 +2666,14 @@ private fun DeepCopyWindow(
 ) {
     val key = cellIds.firstOrNull()
     // The raw text, so the field can be emptied while typing; a blank/0 depth simply copies nothing.
-    var depthText by remember(key) {
-        mutableStateOf(SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH.toString())
-    }
+    var depthText by remember(key) { mutableStateOf(state.deepCopyMaxDepth.toString()) }
     val depth = depthText.toIntOrNull() ?: 0
     val path = SchedulerDomain.deepCopyPathTitles(state, cellIds, depth)
     val canCopy = depth >= 1 && cellIds.isNotEmpty()
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(key) { focusRequester.requestFocus() }
     fun setDepth(value: Int) {
-        depthText = value.coerceIn(1, 999).toString()
+        depthText = value.coerceIn(SchedulerDomain.DEEP_COPY_DEPTH_RANGE).toString()
     }
 
     Box(

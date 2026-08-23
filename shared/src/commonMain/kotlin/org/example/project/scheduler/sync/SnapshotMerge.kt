@@ -123,6 +123,8 @@ object SnapshotMerge {
                 defaultSubtree = pick(base.defaultSubtree, local.defaultSubtree, remote.defaultSubtree),
                 defaultSubtreeEnabled =
                     pick(base.defaultSubtreeEnabled, local.defaultSubtreeEnabled, remote.defaultSubtreeEnabled),
+                // PRD §13: the account-wide deep-copy depth is an ordinary scalar setting.
+                deepCopyMaxDepth = pick(base.deepCopyMaxDepth, local.deepCopyMaxDepth, remote.deepCopyMaxDepth),
                 lookAwayVoiceEnabled =
                     pick(base.lookAwayVoiceEnabled, local.lookAwayVoiceEnabled, remote.lookAwayVoiceEnabled),
                 // The sleep schedule's four fields drift together (a wake time implies its bedtime), so it is

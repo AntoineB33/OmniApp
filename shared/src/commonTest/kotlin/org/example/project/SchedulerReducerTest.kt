@@ -2576,9 +2576,16 @@ class SchedulerReducerTest {
             SchedulerIntent.ClickCell(cellId = visible[1], ctrl = false, shift = true, visibleOrder = visible),
         )
         s = SchedulerReducer.reduce(s, SchedulerIntent.CopySelection)
-        // PRD §4: a title line per task, each followed by its own named attribute lines.
+        // PRD §4/§13: a title line per task, each followed by its own named attribute lines — the
+        // task's id first, so pasting the text back lands on that very task.
+        val idA = s.cells[visible[0]]!!.taskId!!.value
+        val idB = s.cells[visible[1]]!!.taskId!!.value
         assertEquals(
-            listOf("A", "\t- minimum time: 45 min", "B", "\t- minimum time: 45 min", ""),
+            listOf(
+                "A", "\t- id: $idA", "\t- minimum time: 45 min",
+                "B", "\t- id: $idB", "\t- minimum time: 45 min",
+                "",
+            ),
             s.clipboard,
         )
 
@@ -2587,7 +2594,11 @@ class SchedulerReducerTest {
             SchedulerIntent.ClickCell(cellId = visible[2], ctrl = false, shift = false, visibleOrder = visible),
         )
         s = SchedulerReducer.reduce(s, SchedulerIntent.CopySelection)
-        assertEquals(listOf("C", "\t- minimum time: 45 min", ""), s.clipboard)
+        val idC = s.cells[visible[2]]!!.taskId!!.value
+        assertEquals(
+            listOf("C", "\t- id: $idC", "\t- minimum time: 45 min", ""),
+            s.clipboard,
+        )
     }
 
     @Test
@@ -2712,14 +2723,19 @@ class SchedulerReducerTest {
         // PRD §4/§13: a tab-indented title line per task, each followed by its own named attribute
         // lines one level deeper. Everything at its default value is omitted, so an untouched task is a
         // title and its minimum time.
+        fun id(cell: org.example.project.scheduler.model.CellId) = s.cells[cell]!!.taskId!!.value
         assertEquals(
             "A\n" +
+                "\t- id: ${id(cA)}\n" +
                 "\t- minimum time: 45 min\n" +
                 "\tA1\n" +
+                "\t\t- id: ${id(cA1)}\n" +
                 "\t\t- minimum time: 45 min\n" +
                 "\t\tA1a\n" +
+                "\t\t\t- id: ${id(cA1a)}\n" +
                 "\t\t\t- minimum time: 45 min\n" +
                 "B\n" +
+                "\t- id: ${id(cB)}\n" +
                 "\t- minimum time: 45 min\n",
             text,
         )
@@ -2804,12 +2820,14 @@ class SchedulerReducerTest {
         val lines = text.split('\n')
         // P parents the sub-list whose header is [1.0, 0.3] → its own named line under P.
         assertEquals("P", lines[0])
-        assertEquals("\t- minimum time: 45 min", lines[1])
-        assertEquals("\t- sub-list weight columns: 1.0, 0.3", lines[2])
+        assertEquals("\t- id: ${s.cells[cP]!!.taskId!!.value}", lines[1])
+        assertEquals("\t- minimum time: 45 min", lines[2])
+        assertEquals("\t- sub-list weight columns: 1.0, 0.3", lines[3])
         // C1's own value row [2.0, 5.0] → a named line under C1.
-        assertEquals("\tC1", lines[3])
-        assertEquals("\t\t- minimum time: 45 min", lines[4])
-        assertEquals("\t\t- priority weights: 2.0, 5.0", lines[5])
+        assertEquals("\tC1", lines[4])
+        assertEquals("\t\t- id: ${s.cells[cC1]!!.taskId!!.value}", lines[5])
+        assertEquals("\t\t- minimum time: 45 min", lines[6])
+        assertEquals("\t\t- priority weights: 2.0, 5.0", lines[7])
     }
 
     @Test
@@ -2832,8 +2850,10 @@ class SchedulerReducerTest {
         )
         assertEquals(
             "P\n" +
+                "\t- id: ${pTask.value}\n" +
                 "\t- minimum time: 30 min\n" +
                 "\tC1\n" +
+                "\t\t- id: ${c1Task.value}\n" +
                 "\t\t- minimum time: 90 min\n",
             text,
         )

@@ -449,6 +449,18 @@ sealed interface SchedulerIntent {
     data object CopySelection : SchedulerIntent
 
     /**
+     * PRD §4/§13 Cut (Ctrl+X): the same deep copy [CopySelection] takes, then the selected cells are
+     * emptied — one history unit, so a single Ctrl+Z puts the cut sub-tree back.
+     */
+    data object CutSelection : SchedulerIntent
+
+    /**
+     * PRD §13 deep copy: the account's one maximum depth (see [SchedulerState.deepCopyMaxDepth]), set from
+     * the deep-copy window. Clamped into [org.example.project.scheduler.domain.SchedulerDomain.DEEP_COPY_DEPTH_RANGE]; not an Undo/Redo unit.
+     */
+    data class SetDeepCopyMaxDepth(val depth: Int) : SchedulerIntent
+
+    /**
      * PRD §4 Paste: rebuild the tree structure serialized in [text] at the single selected cell — a
      * no-op unless [text] is in the app's tab-indented format.
      */

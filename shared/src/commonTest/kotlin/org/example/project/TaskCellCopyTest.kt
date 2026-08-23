@@ -64,8 +64,12 @@ class TaskCellCopyTest {
         // PRD §13: what lands in the clipboard is the user's copy of the task as much as the app's, so
         // every field is a named line and the task text is carried verbatim, not escaped onto one line.
         val (s, cP) = stateWithParentAndChild()
+        val idP = s.cells[cP]!!.taskId!!.value
+        val childList = s.tasks[s.cells[cP]!!.taskId!!]!!.childListId!!
+        val idC1 = s.cells[s.lists[childList]!!.cellIds[0]]!!.taskId!!.value
         assertEquals(
             "P\n" +
+                "\t- id: $idP\n" +
                 "\t- minimum time: 45 min\n" +
                 "\t- can be done during a no-screen period: yes\n" +
                 "\t- schedule unit:\n" +
@@ -75,6 +79,7 @@ class TaskCellCopyTest {
                 "\t\tline one\n" +
                 "\t\tline two\n" +
                 "\tC1\n" +
+                "\t\t- id: $idC1\n" +
                 "\t\t- minimum time: 45 min\n" +
                 "\t\t- text:\n" +
                 "\t\t\tchild note\n",
@@ -200,8 +205,11 @@ class TaskCellCopyTest {
         val c = s.lists[s.rootListId]!!.cellIds[0]
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c, "Plain"))
         val text = SchedulerDomain.copyCellsText(s, listOf(c), maxDepth = 1)
-        // The default (on-screen) is omitted, so an ordinary task's line is unchanged from before §13.
-        assertEquals("Plain", text.split('\n')[0])
+        // The default (on-screen) is omitted, so an ordinary task is its title, its id and its minimum time.
+        assertEquals(
+            listOf("Plain", "\t- id: ${s.cells[c]!!.taskId!!.value}", "\t- minimum time: 45 min", ""),
+            text.split('\n'),
+        )
         val (dst, target) = pasteIntoFreshTree(text)
         assertEquals(true, dst.tasks[dst.cells[target]!!.taskId!!]!!.onScreen)
     }
@@ -299,5 +307,210 @@ class TaskCellCopyTest {
         // An unknown per-line field is likewise rejected.
         assertEquals(null, SchedulerDomain.parseTreeText("P\tzz=1"))
         assertEquals(null, SchedulerDomain.parseTreeText("P\tns=2"))
+    }
+
+    // ----- PRD §13: the task id, the account-wide depth, Ctrl+X, and the replacing paste ----------
+
+    /** Root-level A{child A1{child A1a}} and X{child X1}. Returns the state. */
+    private fun stateWithTwoBranches(): SchedulerState {
+        var s = SchedulerState.empty()
+        val cA = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cA, "A"))
+        val cA1 = s.lists[s.tasks[s.cells[cA]!!.taskId!!]!!.childListId!!]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cA1, "A1"))
+        val cA1a = s.lists[s.tasks[s.cells[cA1]!!.taskId!!]!!.childListId!!]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cA1a, "A1a"))
+        val cX = s.lists[s.rootListId]!!.cellIds[1]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cX, "X"))
+        val cX1 = s.lists[s.tasks[s.cells[cX]!!.taskId!!]!!.childListId!!]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cX1, "X1"))
+        return s
+    }
+
+    private fun click(state: SchedulerState, cellId: CellId): SchedulerState =
+        SchedulerReducer.reduce(
+            state,
+            SchedulerIntent.ClickCell(
+                cellId = cellId,
+                ctrl = false,
+                shift = false,
+                visibleOrder = SchedulerDomain.selectableVisibleOrder(state),
+            ),
+        )
+
+    @Test
+    fun ctrl_c_deep_copies_to_the_account_depth_without_asking() {
+        // PRD §13: the depth is one number for the whole account — the deep-copy window sets it and Ctrl+C
+        // simply takes it, so the chord never opens a window.
+        var s = stateWithTwoBranches()
+        val cA = s.lists[s.rootListId]!!.cellIds[0]
+        assertEquals(SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH, s.deepCopyMaxDepth)
+        s = click(s, cA)
+
+        val deep = SchedulerDomain.parseTreeText(SchedulerDomain.copyTreeText(s, s.selection))!!.single()
+        assertEquals(listOf("A1"), deep.children.map { it.title })
+        assertEquals(listOf("A1a"), deep.children.single().children.map { it.title })
+
+        // Two levels: A1 comes, A1a does not — and the setting is what says so.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDeepCopyMaxDepth(2))
+        assertEquals(2, s.deepCopyMaxDepth)
+        val two = SchedulerDomain.parseTreeText(SchedulerDomain.copyTreeText(s, s.selection))!!.single()
+        assertEquals(listOf("A1"), two.children.map { it.title })
+        assertTrue(two.children.single().children.isEmpty())
+
+        // Out-of-range numbers are healed rather than stored (the window's field takes free text).
+        assertEquals(1, SchedulerReducer.reduce(s, SchedulerIntent.SetDeepCopyMaxDepth(0)).deepCopyMaxDepth)
+        assertEquals(999, SchedulerReducer.reduce(s, SchedulerIntent.SetDeepCopyMaxDepth(5000)).deepCopyMaxDepth)
+    }
+
+    @Test
+    fun cut_copies_the_sub_tree_and_empties_it_as_one_history_unit() {
+        var s = stateWithTwoBranches()
+        val cA = s.lists[s.rootListId]!!.cellIds[0]
+        val aTask = s.cells[cA]!!.taskId!!
+        s = click(s, cA)
+        val cut = SchedulerReducer.reduce(s, SchedulerIntent.CutSelection)
+
+        // The clipboard holds the same deep copy Ctrl+C takes...
+        assertEquals(SchedulerDomain.copyTreeText(s, s.selection).split('\n'), cut.clipboard)
+        // ...and the cells are gone, ids and all (a blank title is what deletes, PRD §4).
+        assertTrue(cA !in cut.cells)
+        assertTrue(aTask !in cut.tasks)
+        assertEquals(listOf("X"), rootTitles(cut))
+
+        // One Ctrl+Z puts the whole sub-tree back.
+        val undone = SchedulerReducer.reduce(cut, SchedulerIntent.Undo)
+        assertEquals(listOf("A", "X"), rootTitles(undone))
+        assertEquals("A1a", undone.tasks[undone.cells[cA]!!.taskId!!]?.let { deepestTitle(undone, it.id) })
+    }
+
+    @Test
+    fun a_cut_sub_tree_pastes_back_under_its_own_task_ids() {
+        // PRD §13: the clipboard carries the id, so cut + paste MOVES the tasks rather than cloning them.
+        var s = stateWithTwoBranches()
+        val cA = s.lists[s.rootListId]!!.cellIds[0]
+        val aTask = s.cells[cA]!!.taskId!!
+        val a1Task = s.cells[s.lists[s.tasks[aTask]!!.childListId!!]!!.cellIds[0]]!!.taskId!!
+        s = click(s, cA)
+        val text = SchedulerDomain.copyTreeText(s, s.selection)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CutSelection)
+
+        // Paste it under X, where nothing of it survives.
+        val cX = s.lists[s.rootListId]!!.cellIds[0]
+        val underX = s.lists[s.tasks[s.cells[cX]!!.taskId!!]!!.childListId!!]!!.cellIds.last()
+        s = click(s, underX)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTree(text))
+
+        val pasted = s.cells[underX]!!.taskId
+        assertEquals(aTask, pasted, "the pasted cell must hold the very task that was cut")
+        val pastedChildren = s.lists[s.tasks[aTask]!!.childListId!!]!!.cellIds.mapNotNull { s.cells[it]?.taskId }
+        assertEquals(listOf(a1Task), pastedChildren)
+        // The counter must be walked past a resurrected id, or the next new task would collide with it.
+        assertTrue(s.nextTaskCounter > aTask.value.substringAfterLast('/').toInt())
+    }
+
+    @Test
+    fun pasting_a_live_id_mirrors_that_task_instead_of_duplicating_it() {
+        // A sub-list belongs to the task id: pasting A where A may legally sit points the cell at A itself,
+        // so what shows under it is A's own sub-tree, not a second copy of it.
+        var s = stateWithTwoBranches()
+        val cA = s.lists[s.rootListId]!!.cellIds[0]
+        val aTask = s.cells[cA]!!.taskId!!
+        s = click(s, cA)
+        val text = SchedulerDomain.copyTreeText(s, s.selection)
+
+        val cX = s.lists[s.rootListId]!!.cellIds[1]
+        val underX = s.lists[s.tasks[s.cells[cX]!!.taskId!!]!!.childListId!!]!!.cellIds.last()
+        s = click(s, underX)
+        val tasksBefore = s.tasks.size
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTree(text))
+
+        assertEquals(aTask, s.cells[underX]!!.taskId)
+        assertEquals(tasksBefore, s.tasks.size, "a mirror creates no task")
+        // A itself is untouched: both cells point at it.
+        assertEquals(setOf(cA, underX), s.tasks[aTask]!!.occurrences.toSet())
+    }
+
+    @Test
+    fun paste_replaces_the_target_cell_and_leaves_its_task_a_detached_parent() {
+        // PRD §4/§13: the copied cell REPLACES the cell pasted onto — the task that was there is not
+        // renamed (it is mirrored elsewhere, it has a sub-tree), it is re-pointed away from.
+        var s = stateWithTwoBranches()
+        val cA = s.lists[s.rootListId]!!.cellIds[0]
+        val aTask = s.cells[cA]!!.taskId!!
+        s = click(s, cA)
+        val text = SchedulerDomain.copyTreeText(s, s.selection)
+
+        val cX = s.lists[s.rootListId]!!.cellIds[1]
+        val xTask = s.cells[cX]!!.taskId!!
+        s = click(s, cX)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PasteTree(text))
+
+        val landed = s.cells[cX]!!.taskId!!
+        assertTrue(landed != xTask, "the cell must not still hold the task it replaced")
+        assertEquals("A", s.tasks[landed]!!.title)
+        // A is already this list's first cell, so the copy cannot mirror it here: a fresh task carries the
+        // copied content instead (the tree may not hold one task twice in one sub-list).
+        assertTrue(landed != aTask)
+        assertEquals(listOf("A1"), childTitles(s, landed))
+        // X keeps its title and its sub-tree, as a detached parent its id can bring back.
+        assertEquals("X", s.tasks[xTask]!!.title)
+        assertTrue(s.cells.values.none { it.taskId == xTask })
+        assertEquals(listOf("X1"), childTitles(s, xTask))
+    }
+
+    @Test
+    fun an_id_line_the_app_never_writes_makes_paste_a_no_op() {
+        // PRD §4: an unparseable value ⇒ null ⇒ the reducer returns the state unchanged. An id of another
+        // shape could otherwise build a task over the tree's own root/main ids.
+        assertEquals(null, SchedulerDomain.parseTreeText("P\n\t- id: task/root\n"))
+        assertEquals(null, SchedulerDomain.parseTreeText("P\n\t- id: hello\n"))
+        assertEquals(null, SchedulerDomain.parseTreeText("P\n\t- id:\n"))
+        // The id the app writes parses.
+        assertEquals(
+            org.example.project.scheduler.model.TaskId("task/user/7"),
+            SchedulerDomain.parseTreeText("P\n\t- id: task/user/7\n")!!.single().taskId,
+        )
+    }
+
+    @Test
+    fun the_account_deep_copy_depth_survives_a_reload_and_a_payload_without_it() {
+        // Persisted-DB compatibility: a payload written before the setting existed decodes to the depth the
+        // deep-copy window used to open on, which is exactly how that build behaved.
+        val before = org.example.project.scheduler.persistence.SchedulerStateCodec.encode(SchedulerState.empty())
+        assertTrue(!before.contains("deepCopyMaxDepth"), "the fixture must predate the field")
+        val old = org.example.project.scheduler.persistence.SchedulerStateCodec.decode(before)
+        assertNotNull(old)
+        assertEquals(SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH, old.deepCopyMaxDepth)
+
+        val set = SchedulerState.empty().copy(deepCopyMaxDepth = 3)
+        val reloaded =
+            org.example.project.scheduler.persistence.SchedulerStateCodec.decode(
+                org.example.project.scheduler.persistence.SchedulerStateCodec.encode(set),
+            )
+        assertNotNull(reloaded)
+        assertEquals(3, reloaded.deepCopyMaxDepth)
+    }
+
+    private fun rootTitles(state: SchedulerState): List<String> =
+        state.lists[state.rootListId]!!.cellIds
+            .mapNotNull { state.cells[it]?.taskId?.let { id -> state.tasks[id]?.title } }
+            .filter { it.isNotBlank() }
+
+    private fun childTitles(state: SchedulerState, taskId: org.example.project.scheduler.model.TaskId): List<String> =
+        state.tasks[taskId]?.childListId?.let { state.lists[it] }?.cellIds.orEmpty()
+            .mapNotNull { state.cells[it]?.taskId?.let { id -> state.tasks[id]?.title } }
+            .filter { it.isNotBlank() }
+
+    /** The title at the bottom of the first branch under [taskId] — enough to say a sub-tree came back. */
+    private fun deepestTitle(state: SchedulerState, taskId: org.example.project.scheduler.model.TaskId): String {
+        var current = taskId
+        while (true) {
+            val next =
+                state.tasks[current]?.childListId?.let { state.lists[it] }?.cellIds.orEmpty()
+                    .mapNotNull { state.cells[it]?.taskId }
+                    .firstOrNull { state.tasks[it]?.title?.isNotBlank() == true } ?: return state.tasks[current]!!.title
+            current = next
+        }
     }
 }

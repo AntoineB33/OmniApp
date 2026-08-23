@@ -36,6 +36,15 @@ object SchedulerDomain {
 
     fun isRootTask(taskId: TaskId?): Boolean = taskId == WellKnownIds.ROOT_TASK
 
+    /**
+     * The id shape [SchedulerState.allocateTaskId] mints — the only one a clipboard payload may name
+     * (ADR 0012), so a pasted id can never land on the tree's own root/main tasks or on an id the counter
+     * will never walk past.
+     */
+    fun isUserTaskId(taskId: TaskId): Boolean = USER_TASK_ID_PATTERN.matches(taskId.value)
+
+    private val USER_TASK_ID_PATTERN = Regex("""task/user/\d+""")
+
     fun isSelectableCell(state: SchedulerState, cellId: CellId): Boolean {
         val cell = state.cells[cellId] ?: return false
         return !isMainTask(cell.taskId) && !isRootTask(cell.taskId)
@@ -4291,6 +4300,10 @@ object SchedulerDomain {
      * parents. [minMinutes] is the PRD §10 minimum time of this node's task (null when the clipboard text
      * carried no min-time appendix entry for it, e.g. a plain title tree, so paste keeps the default).
      *
+     * [taskId] is the copied cell's own task **identity**, so pasting back into the tree lands on that very
+     * task rather than on a duplicate of it (ADR 0012). Null when the clipboard text carried no id line —
+     * a plain title tree, or a pre-1.6.0 payload — and paste then mints a fresh task as it always did.
+     *
      * PRD §13 "copy" / "deep copy" additionally carry everything the cell's Edit window holds:
      * [noScreenDoable] (the switch — the task is done away from a screen, i.e. `!Task.onScreen`),
      * [scheduleUnit] and [text]. All three default to the *empty* value, which is also what a task the
@@ -4299,6 +4312,7 @@ object SchedulerDomain {
     data class CopiedNode(
         val title: String,
         val children: List<CopiedNode>,
+        val taskId: TaskId? = null,
         val rowWeights: List<Double> = listOf(1.0),
         val childHeader: List<Double> = listOf(1.0),
         val minMinutes: Int? = null,
@@ -4318,10 +4332,15 @@ object SchedulerDomain {
     const val COPY_SECTION_SEPARATOR: String = "\u000C"
 
     /**
-     * PRD §13 "deep copy": the depth its window opens on, and the value its **reset** button returns to.
-     * A depth of 1 is the cell alone (what the menu's plain "copy" takes), 2 is the cell and its children.
+     * PRD §13 "deep copy": the depth a fresh account starts at, and the value the window's **reset** button
+     * returns to. A depth of 1 is the cell alone (what the menu's plain "copy" takes), 2 is the cell and its
+     * children. The live value is [SchedulerState.deepCopyMaxDepth] — one number for the whole account, which
+     * the deep-copy window edits and §4's Ctrl+C / Ctrl+X then copy by without asking.
      */
     const val DEEP_COPY_DEFAULT_DEPTH: Int = 20
+
+    /** The deep-copy depth the window (and therefore the account setting) accepts. */
+    val DEEP_COPY_DEPTH_RANGE: IntRange = 1..999
 
     /**
      * An attribute line's marker. Everything indented one level under a title line and starting with it
@@ -4332,6 +4351,7 @@ object SchedulerDomain {
 
     // The attribute names. They are prose on purpose — the clipboard text is meant to be read by a human —
     // and this is their only copy: the parser matches against these same constants.
+    private const val ATTR_ID: String = "id"
     private const val ATTR_MIN_TIME: String = "minimum time"
     private const val ATTR_NO_SCREEN: String = "can be done during a no-screen period"
     private const val ATTR_WEIGHTS: String = "priority weights"
@@ -4347,8 +4367,7 @@ object SchedulerDomain {
 
     /**
      * Build the copied subtree rooted at [cellId] from the task's shared child list (populated cells).
-     * [remainingDepth] counts the levels still to take, this node included — so 1 stops here, and the
-     * unbounded Ctrl+C passes [Int.MAX_VALUE].
+     * [remainingDepth] counts the levels still to take, this node included — so 1 stops here.
      */
     private fun copiedSubtree(state: SchedulerState, cellId: CellId, remainingDepth: Int): CopiedNode {
         val cell = state.cells[cellId]
@@ -4366,6 +4385,7 @@ object SchedulerDomain {
         return CopiedNode(
             title = title,
             children = children,
+            taskId = taskId,
             rowWeights = rowWeights,
             childHeader = childHeader,
             minMinutes = task?.minimumMinutes,
@@ -4453,13 +4473,23 @@ object SchedulerDomain {
      * PRD §4 Copy: the selected cells' subtrees serialized to the app's clipboard text (see
      * [renderCopiedNodes] for the shape). Uses the consecutive selection block when there is one, otherwise
      * the main selection. Empty when nothing populated is selected.
+     *
+     * Ctrl+C is a **deep** copy that never asks: [maxDepth] defaults to the account's own
+     * [SchedulerState.deepCopyMaxDepth], the number the deep-copy window sets.
      */
-    fun copyTreeText(state: SchedulerState, selection: SchedulerSelection): String {
-        val roots =
-            orderedActiveSelectionInList(state, selection)?.second
-                ?: selection.main?.let { listOf(it) }.orEmpty()
-        return copyCellsText(state, roots, Int.MAX_VALUE)
-    }
+    fun copyTreeText(
+        state: SchedulerState,
+        selection: SchedulerSelection,
+        maxDepth: Int = state.deepCopyMaxDepth,
+    ): String = copyCellsText(state, copyTreeTargets(state, selection), maxDepth)
+
+    /**
+     * The cells §4's Ctrl+C / Ctrl+X act on: the consecutive selection block when there is one, otherwise
+     * the main selection alone. The cut needs the same list the copy took, so both read it from here.
+     */
+    fun copyTreeTargets(state: SchedulerState, selection: SchedulerSelection): List<CellId> =
+        orderedActiveSelectionInList(state, selection)?.second
+            ?: selection.main?.let { listOf(it) }.orEmpty()
 
     /**
      * Serialize a copied forest to the clipboard text [parseTreeText] reads back. **It has to be readable**
@@ -4468,13 +4498,13 @@ object SchedulerDomain {
      * carried as its own indented block instead of an escaped one-liner.
      *
      * A tab-indented title line per task, then — one level deeper — one `- <name>: <value>` line per thing
-     * the cell holds (its minimum time, the edit window's screen switch, its priority-weight row, the
+     * the cell holds (its task id, its minimum time, the edit window's screen switch, its priority-weight row, the
      * weight columns of the sub-list it parents), the schedule unit as one `- <step>: <n> min` line per
      * step a level deeper still, and the task text verbatim under `- text:`. The task's children follow at
      * the title line's own indent + 1, after its attributes.
      *
-     * Only the minimum time is always written; everything else is omitted at its default value, so an
-     * ordinary task stays a title and one line.
+     * Only the id and the minimum time are always written; everything else is omitted at its default value,
+     * so an ordinary task stays a title and two lines.
      */
     private fun renderCopiedNodes(nodes: List<CopiedNode>): String {
         val sb = StringBuilder()
@@ -4487,6 +4517,8 @@ object SchedulerDomain {
             for (n in ns) {
                 line(depth, escapeTitleField(n.title))
                 val d = depth + 1
+                // The identity first: pasting back into the tree lands on this very task (ADR 0012).
+                n.taskId?.let { attribute(d, ATTR_ID, it.value) }
                 attribute(d, ATTR_MIN_TIME, "${n.minMinutes ?: DEFAULT_MINIMUM_MINUTES} min")
                 // PRD §13 edit-window switch. Only the non-default (off-screen) value is written, so an
                 // ordinary on-screen task says nothing about a screen — exactly as its window reads.
@@ -4613,6 +4645,9 @@ object SchedulerDomain {
         val name = field.substring(0, colon)
         val value = field.substring(colon + 1).trim()
         when (name) {
+            // Only the shape the app itself mints: anything else is not our clipboard text, and paste
+            // must stay a no-op rather than build a task under an id the tree reserves (root/main).
+            ATTR_ID -> node.taskId = TaskId(value).takeIf { isUserTaskId(it) } ?: return false
             ATTR_MIN_TIME -> node.minMinutes = value.removeSuffix(" min").trim().toIntOrNull() ?: return false
             ATTR_NO_SCREEN -> node.noScreenDoable = when (value) {
                 "yes" -> true
@@ -4734,6 +4769,7 @@ object SchedulerDomain {
         var rowWeights: List<Double> = listOf(1.0),
         var childHeader: List<Double> = listOf(1.0),
         var noScreenDoable: Boolean = false,
+        var taskId: TaskId? = null,
         var minMinutes: Int? = null,
         val scheduleUnit: MutableList<ScheduleUnitEntry> = mutableListOf(),
         var text: String = "",
@@ -4742,6 +4778,7 @@ object SchedulerDomain {
             CopiedNode(
                 title = title,
                 children = children.map { it.toImmutable() },
+                taskId = taskId,
                 rowWeights = rowWeights,
                 childHeader = childHeader,
                 minMinutes = minMinutes,

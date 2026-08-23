@@ -57,7 +57,14 @@ object KeyboardShortcutCatalog {
                     KeyboardShortcut("Any character", "Start editing the selected cell with that character"),
                     KeyboardShortcut("Backspace / Delete", "Empty the selected cells (a blank title is what deletes)"),
                     KeyboardShortcut("Ctrl + A", "Select every visible cell"),
-                    KeyboardShortcut("Ctrl + C / Ctrl + V", "Copy the selected sub-tree / paste a tree in"),
+                    KeyboardShortcut(
+                        "Ctrl + C / Ctrl + X",
+                        "Deep-copy the selected sub-trees, to the account's maximum depth — Ctrl + X also empties them",
+                    ),
+                    KeyboardShortcut(
+                        "Ctrl + V",
+                        "Paste — the copied cell and its sub-tree replace the selected cell, keeping their task ids",
+                    ),
                 ),
             ),
             KeyboardShortcutGroup(

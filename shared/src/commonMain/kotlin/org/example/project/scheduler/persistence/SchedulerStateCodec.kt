@@ -265,6 +265,8 @@ object SchedulerStateCodec {
             // PRD §4 Default sub-tree: the template and whether it is currently applied.
             defaultSubtree = defaultSubtree.map { it.toPersisted() },
             defaultSubtreeEnabled = defaultSubtreeEnabled,
+            // PRD §13: the account's one deep-copy depth.
+            deepCopyMaxDepth = deepCopyMaxDepth,
             focusedWindow = focusedWindow.name,
             histories = histories.toPersisted(),
             sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
@@ -577,6 +579,9 @@ object SchedulerStateCodec {
             // letting it reach the graft.
             defaultSubtree = SchedulerDomain.normalizeDefaultSubtree(defaultSubtree.map { it.toNode() }),
             defaultSubtreeEnabled = defaultSubtreeEnabled,
+            // PRD §13: a payload written before the account-wide deep-copy depth existed decodes to the
+            // default the window used to open on, and a hand-edited out-of-range one is healed into range.
+            deepCopyMaxDepth = deepCopyMaxDepth.coerceIn(SchedulerDomain.DEEP_COPY_DEPTH_RANGE),
             focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),
             histories = histories?.toHistories() ?: SchedulerHistories(),
             sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
@@ -806,6 +811,9 @@ private data class PersistedState(
     // existed, for which nothing was ever grafted.
     val defaultSubtree: List<PersistedDefaultSubtreeNode> = emptyList(),
     val defaultSubtreeEnabled: Boolean = false,
+    // PRD §13 deep copy: the account-wide maximum depth. A missing value decodes to the depth the window
+    // used to open on, which is exactly what a payload written before the setting existed behaved as.
+    val deepCopyMaxDepth: Int = SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH,
     // PRD §7: the focused window; a missing value decodes to the task tree (payloads written before window
     // focus was persisted).
     val focusedWindow: String = "Tree",

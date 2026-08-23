@@ -283,8 +283,8 @@ crossing can be silently clipped by a clock jump.
 
 ### Copying a cell
 
-→ ADR 0012. One format for the tree's Ctrl+C and both contextual-menu entries: `renderCopiedNodes` writes it,
-`parseTreeText` reads it, and nothing else parses a clipboard.
+→ ADR 0012. One format for the tree's Ctrl+C / Ctrl+X and both contextual-menu entries: `renderCopiedNodes`
+writes it, `parseTreeText` reads it, and nothing else parses a clipboard.
 
 - **The clipboard text is for a PERSON to read**, not only for the app to parse: a tab-indented title line per
   task, its fields as named `- <field>: <value>` lines one level deeper, the task text **verbatim** in its own
@@ -292,6 +292,14 @@ crossing can be silently clipped by a clock jump.
   put a form-feed and a `\n`-escaped note in the user's clipboard.
 - **A copy carries everything the cell's Edit window holds** (the screen switch, the schedule unit, the text)
   plus its minimum time and its weight row, so Ctrl+V restores the task and not just its title.
+- **It carries the task id too**, so a paste lands on the SAME task, not a clone. Three identities
+  (`PasteIdentity`): the id names a live *titled* task this cell may hold ⇒ **mirror** it (a sub-list belongs to
+  the task id, so its own sub-tree shows and the clipboard's children/fields are never written over it); the id is
+  free ⇒ **restore** the task under that very id, and `reserveTaskId` walks the counter past it; no id, or one
+  `canAssignTaskId` refuses ⇒ a **fresh** task, as before. An id that is not the `task/user/<n>` the app mints is
+  rejected at parse time — never build a task over `task/root`/`task/main`.
+- **Ctrl+V REPLACES the cell it lands on**: the cell is re-pointed at the pasted task (never a rename of the task
+  that was there), which leaves that task a detached parent its id can bring back.
 - **The attribute names ARE the format**: they exist once (the `ATTR_*` constants) and the parser matches those
   same constants. A second copy is how a writer and a reader drift apart.
 - Fields belong to the **node**, never to the title — two tasks sharing a name must not share a minimum time.
@@ -303,10 +311,14 @@ crossing can be silently clipped by a clock jump.
 - **The menu and Ctrl+C must agree about what "the cell" is**: a right-click INSIDE a multi-selection copies the
   whole block (`contextMenuCopyTargets`), exactly as Ctrl+C does; outside one, that cell alone. Copying only the
   cell under the cursor while a dozen sat selected is what shipped and was wrong.
-- "copy" is depth 1; **"deep copy" asks for its depth first** (default and reset: 20) and prints one path down to
-  it. That path follows the deepest branch measured over the **whole** depth asked for — measured over the
-  remainder, every branch ties and the path jumps around as the number changes — and, over several copied
-  cells, starts from whichever of them reaches furthest.
+- **The depth is ONE number for the whole account** (`deepCopyMaxDepth`, default/reset 20, persisted + synced,
+  not an Undo/Redo unit). The deep-copy window opens on it and writes it back when it copies; **Ctrl+C is a deep
+  copy that never opens a window** and **Ctrl+X is that copy plus the §4 deletion** of the same cells (one history
+  unit, "Cut" — which is what frees the ids a later Ctrl+V restores).
+- "copy" is depth 1; **only "deep copy" opens the window**, which prints one path down to the depth. That path
+  follows the deepest branch measured over the **whole** depth asked for — measured over the remainder, every
+  branch ties and the path jumps around as the number changes — and, over several copied cells, starts from
+  whichever of them reaches furthest.
 
 ### The default sub-tree
 

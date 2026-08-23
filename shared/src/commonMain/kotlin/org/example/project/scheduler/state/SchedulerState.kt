@@ -361,6 +361,14 @@ data class SchedulerState(
      */
     val defaultSubtreeEnabled: Boolean = false,
     /**
+     * PRD §13 **deep copy**: the maximum number of levels a copy takes — **one number for the whole
+     * account**, not a per-copy question. The deep-copy window opens on it and writes it back, and §4's
+     * Ctrl+C / Ctrl+X then copy by it without asking anything (ADR 0012). Authoritative user-authored
+     * setting: persisted + synced, and (like the §7 switch) not an Undo/Redo unit. A payload written before
+     * the setting existed decodes to [org.example.project.scheduler.domain.SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH].
+     */
+    val deepCopyMaxDepth: Int = SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH,
+    /**
      * PRD §5 the relative-priority window: the cells whose percentage is **pinned** while a relative
      * priority is retargeted, per (task, ancestor) pair (see [RelativePriorityPinKey]). Authoritative
      * user-authored data — it cannot be recomputed from anything else — so it is persisted **and** synced
@@ -566,6 +574,16 @@ data class SchedulerState(
     fun allocateTaskId(): Pair<TaskId, SchedulerState> {
         val id = TaskId("task/user/$nextTaskCounter")
         return id to copy(nextTaskCounter = nextTaskCounter + 1)
+    }
+
+    /**
+     * Take [taskId] out of circulation: a task rebuilt under an id it already had (PRD §13 paste, ADR 0012)
+     * is not minted by [allocateTaskId], so the counter has to be walked past its suffix by hand or the very
+     * next allocation would hand the same id to a different task. A no-op for an id of another shape.
+     */
+    fun reserveTaskId(taskId: TaskId): SchedulerState {
+        val suffix = taskId.value.substringAfterLast('/').toIntOrNull() ?: return this
+        return if (suffix < nextTaskCounter) this else copy(nextTaskCounter = suffix + 1)
     }
 
     fun allocateCellId(listId: CellListId): Pair<CellId, SchedulerState> {
