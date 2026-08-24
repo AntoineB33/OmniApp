@@ -28,44 +28,20 @@ Pre-placed tasks or restrictive periods inevitably create priority deficits for 
 ### Interaction & Performance Requirements
 
 * **The Playhead ($t_p$):** $t_p$ represents the current evaluation cursor. **Everything at $t < t_p$ is frozen and immutable.**
-* **User Control:** The user can click anywhere on the schedule to move $t_p$ to that point. Dragging the cursor updates $t_p$ continuously. The system defaults to a paused state.
-* **Performance Benchmark:** The scheduler must be fast. Calculating the definitive schedule for the next 10 minutes must take **no more than 10 seconds**.
-* **Progressive Calculation:** If processing the entire timeline is too demanding, the scheduler must calculate short segments iteratively (e.g., if the schedule is solved for $t < t_1$, 10 seconds later it must be solved for $t < t_1 + \text{10 minutes}$). If exact schedules cannot be found in time, approved approximation strategies must be used.
 
----
+### Rule state evolution
 
-### Test Cases
+* **Rule State Definition:** A rule state is the set of tasks and their associated priority percentages and minimum execution time at a given moment in time.
+* **Rule State Evolution:** When there is one defined rule state, it stays the same forever. When multiple rule states are defined for specific moments in time, that means that between two consecutive rule states, the rule state transforms evenly from the first state to the second one.
 
-The following tests define the expected behavior of the scheduler under various constraints. In the testing display, the "resulting share" is calculated as the percentage of a task's presence across the drawn timeline, excluding periods where no tasks are allowed.
+### Dynamic Period
 
-#### Test 10: Dynamic Rules & $t_p$ Parameterization
-* **Tasks:** Task A (50%, 10 min minimum), Task B (50%, 10 min minimum).
-* **Environment:** A 20-second period that only allows Task A moves continuously to the right. 
-* **Requirement:** The schedule must change dynamically as $t_p$ moves, outputting algebraic rules parameterized by $t_p$. The timeline before $t_p$ remains frozen. Task B may be interrupted during its first 10 minutes by idling periods.
+Includes the 20-second and 5-minute periods from Test 11, plus a new 15-minute period. The final 4 minutes of the 5-minute period, and the entirety of the 15-minute period, only allow Privileged tasks.
+* After a $\ge 15$-minute stretch of *Privileged only*, the next 20-second period is delayed by **20 minutes**.
+* After a $\ge 5$-minute stretch of *Privileged only*, the next 5-minute period is delayed by **1 hour**.
+* After a $\ge 15$-minute stretch of *Privileged only*, the next 15-minute period is delayed by **2 hours**.
 
-#### Test 11: Period Transitions & Pre-placed Tasks
-* **Tasks:** Inherited from Test 10, plus randomly pre-placed tasks.
-* **Environment:** 
-  * A moving 20-second period that allows *nothing*.
-  * A static 5-minute stretch (1 minute of *nothing*, followed by 4 minutes of *Task A only*).
-* **Requirement:** As soon as the moving 20-second period collides with the start of the 5-minute stretch at $t_p$, the 20-second period disappears permanently, and the 5-minute stretch shifts 20 seconds to the left.
 
-#### Test 12: Conditional Period Generation over 72 Hours
-* **Tasks:** Task A (50%, 45 min minimum) + 20 other tasks sharing the remaining 50% (all 45 min minimum). Half of the 20 tasks belong to a "Privileged" set.
-* **Environment Constraints (Daily):**
-  * 00:00 to 08:00: No tasks allowed.
-  * 23:00 to 08:00: Only "Privileged" tasks allowed.
-* **Dynamic Period Triggers:** 
-  Includes the 20-second and 5-minute periods from Test 11, plus a new 15-minute period. The final 4 minutes of the 5-minute period, and the entirety of the 15-minute period, only allow Privileged tasks.
-  * After a $\ge 15$-minute stretch of *Privileged only*, the next 20-second period is delayed by **20 minutes**.
-  * After a $\ge 5$-minute stretch of *Privileged only*, the next 5-minute period is delayed by **1 hour**.
-  * After a $\ge 15$-minute stretch of *Privileged only*, the next 15-minute period is delayed by **2 hours**.
-* **Execution:** Spans 3 days. $t_p$ starts at $0$. Once the system finds the schedule up to 24 hours, $t_p$ teleports to 24 hours and moves right. The dynamic periods will only appear in the first 24 hours due to the $t_p$ sweep. 
 
-#### Test 13: Sliding Priorities
-* **Configuration:** Identical to Test 12.
-* **Requirement:** Priority percentages slide continuously from one state at 24h to a new state at 48h. For $t < \text{24h}$, priorities match the 24h state. The scheduler must satisfy the exact priorities active at the precise moment of $t_p$.
-
-#### Test 14: Extended Timeline Setup
-* **Configuration:** Task A (50%, 45 min minimum) + 20 other tasks sharing the remaining 50% (all 45 min minimum).
-* **Environment:** 8-day timeline. No tasks are allowed between 23:00 and 08:00 daily.
+### Progressive Calculation:
+The scheduler doesn't need to calculate the right schedule for the entire timeline, but if the definitive schedule is found for t < $t_1$, then 10 seconds later the definitive schedule must be found for t < $t_1$ + 10 minutes. As time passes, the scheduler returns one set of rule after the other to satisfy this pace. If exact schedules cannot be found in time, approved approximation strategies must be used. When the definitive schedule is found at a given time t, that means that up to t the definitive choice for the task panels has been made, as well as for when the 

@@ -58,8 +58,12 @@ object KeyboardShortcutCatalog {
                     KeyboardShortcut("Backspace / Delete", "Empty the selected cells (a blank title is what deletes)"),
                     KeyboardShortcut("Ctrl + A", "Select every visible cell"),
                     KeyboardShortcut(
+                        "Ctrl + F",
+                        "Open the find & replace bar — pressed again, it re-selects what is in the field",
+                    ),
+                    KeyboardShortcut(
                         "Ctrl + C / Ctrl + X",
-                        "Deep-copy the selected sub-trees, to the account's maximum depth — Ctrl + X also empties them",
+                        "Copy the selected sub-trees whole, however deep — Ctrl + X also empties them",
                     ),
                     KeyboardShortcut(
                         "Ctrl + V",
@@ -77,6 +81,18 @@ object KeyboardShortcutCatalog {
                     KeyboardShortcut("Shift + Tab", "Commit and move up"),
                     KeyboardShortcut("Ctrl + Enter", "Break the line inside the cell"),
                     KeyboardShortcut("Escape", "Cancel — every cell the session touched reverts"),
+                ),
+            ),
+            KeyboardShortcutGroup(
+                title = "Find & replace bar",
+                note = "While the tree's Ctrl + F bar holds the keyboard. It searches the whole tree, " +
+                    "collapsed rows included, and replacing renames the task — so every cell pointing at " +
+                    "it follows.",
+                shortcuts = listOf(
+                    KeyboardShortcut("Enter", "Go to the next match"),
+                    KeyboardShortcut("Shift + Enter", "Go to the previous match"),
+                    KeyboardShortcut("Enter (in the replace field)", "Replace the current match"),
+                    KeyboardShortcut("Escape", "Close the bar and hand the keyboard back to the tree"),
                 ),
             ),
             KeyboardShortcutGroup(
@@ -99,7 +115,7 @@ object KeyboardShortcutCatalog {
             ),
             KeyboardShortcutGroup(
                 title = "Deep copy window",
-                note = "While the task cell's \"deep copy\" depth window is open.",
+                note = "While the task cell's \"deep copy\" window is open (its depth and its three switches).",
                 shortcuts = listOf(
                     KeyboardShortcut("Enter", "Copy down to the chosen depth and close the window"),
                 ),

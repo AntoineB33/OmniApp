@@ -125,6 +125,12 @@ object SnapshotMerge {
                     pick(base.defaultSubtreeEnabled, local.defaultSubtreeEnabled, remote.defaultSubtreeEnabled),
                 // PRD §13: the account-wide deep-copy depth is an ordinary scalar setting.
                 deepCopyMaxDepth = pick(base.deepCopyMaxDepth, local.deepCopyMaxDepth, remote.deepCopyMaxDepth),
+                // ...and so is each of the three "what does a copy carry" switches beside it: they move
+                // independently in the window, so they merge independently.
+                copyIncludeIds = pick(base.copyIncludeIds, local.copyIncludeIds, remote.copyIncludeIds),
+                copyPriorityTables =
+                    pick(base.copyPriorityTables, local.copyPriorityTables, remote.copyPriorityTables),
+                copyIncludeText = pick(base.copyIncludeText, local.copyIncludeText, remote.copyIncludeText),
                 lookAwayVoiceEnabled =
                     pick(base.lookAwayVoiceEnabled, local.lookAwayVoiceEnabled, remote.lookAwayVoiceEnabled),
                 // The sleep schedule's four fields drift together (a wake time implies its bedtime), so it is

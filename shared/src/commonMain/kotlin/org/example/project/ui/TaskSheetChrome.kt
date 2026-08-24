@@ -44,6 +44,10 @@ internal object SheetColors {
     val overflowArrow = Color(0xFFD93025)
     /** PRD §3 / §5: background of a cell or column while it is being drag-moved. */
     val moveDragFill = Color(0xFFCFD3D8)
+    /** PRD §4 Find & replace: shading behind every hit of the Ctrl+F query inside a title. */
+    val searchMatchFill = Color(0xFFFFF2A8)
+    /** …and behind the one hit the find bar is currently sitting on. */
+    val searchCurrentFill = Color(0xFFFFB74D)
 }
 
 /** Indentation step (dp) per nesting level; also the spacing between hierarchy guide-lines. */

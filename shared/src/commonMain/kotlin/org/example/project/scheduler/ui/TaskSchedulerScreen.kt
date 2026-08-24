@@ -58,6 +58,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,7 +93,10 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
@@ -104,6 +108,7 @@ import kotlinx.coroutines.launch
 import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
+import org.example.project.scheduler.domain.TaskTreeSearch
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.RelativePriorityPinKey
@@ -128,6 +133,7 @@ import org.example.project.ui.PERCENT_COLUMN_WIDTH
 import org.example.project.ui.PRIORITY_COLUMN_MAX
 import org.example.project.ui.PRIORITY_COLUMN_MIN
 import org.example.project.ui.SheetColors
+import org.example.project.ui.TaskTreeFindBar
 import org.example.project.ui.TaskSheetExpandArrow
 import org.example.project.ui.TaskSheetTitleBounds
 import org.example.project.ui.taskSheetTitleBounds
@@ -170,6 +176,58 @@ private data class MoveDropTarget(
     val renderVia: CellId?,
 )
 
+/**
+ * PRD §4 Find & replace: what the Ctrl+F bar asks the tree to paint over its titles. Every hit of [query]
+ * is shaded, and the one the bar is sitting on ([current]) is shaded more strongly — so the row the ↑/↓
+ * arrows just revealed is told apart from its neighbours at a glance.
+ *
+ * Passed down whole rather than as a per-cell map: the ranges are cheap to recompute from a title, and a
+ * map would have to be rebuilt on every keystroke for a tree the user is mostly not looking at.
+ */
+private data class TreeSearchHighlight(
+    val query: String,
+    val options: TaskTreeSearch.Options,
+    val current: TaskTreeSearch.Match?,
+)
+
+/** Every hit of [highlight] inside [title]; empty when nothing is being searched for. */
+private fun searchRangesIn(title: String, highlight: TreeSearchHighlight?): List<IntRange> {
+    if (highlight == null || highlight.query.isEmpty() || title.isEmpty()) return emptyList()
+    return TaskTreeSearch.ranges(title, highlight.query, highlight.options)
+}
+
+/**
+ * PRD §4 Find & replace: [title] with every hit shaded, and [current] — the one the find bar is sitting on
+ * — shaded more strongly. Falls back to the plain string when nothing matches, so a row outside the search
+ * allocates no annotations at all.
+ *
+ * The empty title still renders as a single space, as it did before: a zero-width row would collapse the
+ * cell and misalign the sub-list's percentage column.
+ */
+private fun highlightedTitle(
+    title: String,
+    ranges: List<IntRange>,
+    current: IntRange?,
+): AnnotatedString {
+    val text = title.ifEmpty { " " }
+    if (ranges.isEmpty()) return AnnotatedString(text)
+    return buildAnnotatedString {
+        append(text)
+        for (range in ranges) {
+            if (range.first < 0 || range.last >= text.length) continue
+            val isCurrent = current != null && range.first == current.first && range.last == current.last
+            addStyle(
+                SpanStyle(
+                    background =
+                        if (isCurrent) SheetColors.searchCurrentFill else SheetColors.searchMatchFill,
+                ),
+                range.first,
+                range.last + 1,
+            )
+        }
+    }
+}
+
 @Composable
 fun TaskSchedulerScreen(
     modifier: Modifier = Modifier,
@@ -210,6 +268,100 @@ fun TaskSchedulerScreen(
     var treeNameDraft by remember { mutableStateOf("") }
     var treeEditMode by remember { mutableStateOf(TaskTreeEditMode.Change) }
     val activeTreeTitle = state.activeTaskTree?.title.orEmpty()
+
+    // PRD §4 Find & replace: the Ctrl+F bar's own state. Compose-only, like the calendar's zoom — a search
+    // is a way of looking at the tree, not a fact about it, so none of this is persisted or synced.
+    var findOpen by remember { mutableStateOf(false) }
+    var findQuery by remember { mutableStateOf(TextFieldValue()) }
+    var findReplacement by remember { mutableStateOf(TextFieldValue()) }
+    var findOptions by remember { mutableStateOf(TaskTreeSearch.Options()) }
+    var findReplaceExpanded by remember { mutableStateOf(false) }
+    var findFieldFocused by remember { mutableStateOf(false) }
+    var findMatchIndex by remember { mutableStateOf(0) }
+    // A query that has not been navigated yet: the first ↓ lands on the FIRST hit, not the second (and the
+    // first ↑ on the last). Typing resets it, which is what makes Ctrl+F, type, Enter behave as expected.
+    var findNavigated by remember { mutableStateOf(false) }
+    // Bumped by Ctrl+F so pressing it again re-focuses the field and re-selects it, even while it is open.
+    var findFocusTick by remember { mutableStateOf(0) }
+    val findFocusRequester = remember { FocusRequester() }
+    // The tree's scroll, hoisted so a revealed match can be brought into view, plus the viewport's own
+    // window band (recorded OUTSIDE the scroll modifier, so it is the viewport and not the scrolled
+    // content) to compare the row's band against.
+    val treeScroll = rememberScrollState()
+    var treeViewport by remember { mutableStateOf<ClosedFloatingPointRange<Float>?>(null) }
+
+    // Only computed while the bar is open: it walks the whole tree, and the tree's state object is replaced
+    // by every advance tick (records live on the tasks), so an always-on memo would re-walk on every tick.
+    val findMatches =
+        remember(findOpen, findQuery.text, findOptions, state.cells, state.lists, state.tasks) {
+            if (!findOpen) emptyList() else TaskTreeSearch.matches(state, findQuery.text, findOptions)
+        }
+    val findCurrentIndex = if (findMatches.isEmpty()) -1 else findMatchIndex.coerceIn(0, findMatches.lastIndex)
+    val findCurrentMatch = findMatches.getOrNull(findCurrentIndex)
+    val searchHighlight =
+        if (findOpen && findQuery.text.isNotEmpty()) {
+            TreeSearchHighlight(findQuery.text, findOptions, findCurrentMatch)
+        } else {
+            null
+        }
+
+    val goToFindMatch: (Int) -> Unit = { index ->
+        if (findMatches.isNotEmpty()) {
+            val size = findMatches.size
+            val wrapped = ((index % size) + size) % size
+            findMatchIndex = wrapped
+            findNavigated = true
+            val match = findMatches[wrapped]
+            vm.dispatch(SchedulerIntent.RevealCell(match.cellId, match.ancestors))
+        }
+    }
+    val findStep: (Int) -> Unit = { delta ->
+        if (findMatches.isNotEmpty()) {
+            val target =
+                if (findNavigated) findMatchIndex + delta
+                else if (delta >= 0) 0 else findMatches.lastIndex
+            goToFindMatch(target)
+        }
+    }
+    // Replace and Replace All both go through ReplaceTaskTitles — one path, one history label. Replace
+    // rewrites the current hit's range alone; Replace All rewrites every hit of every matched TASK, once
+    // per task, because renaming is per task and a mirrored task must not be rewritten once per occurrence.
+    val findReplaceCurrent: () -> Unit = {
+        val match = findCurrentMatch
+        val title = match?.let { state.tasks[it.taskId]?.title }
+        if (match != null && title != null && match.end <= title.length) {
+            vm.dispatch(
+                SchedulerIntent.ReplaceTaskTitles(
+                    mapOf(
+                        match.taskId to
+                            TaskTreeSearch.replaceRange(title, match.start, match.end, findReplacement.text),
+                    ),
+                ),
+            )
+        }
+    }
+    val findReplaceAll: () -> Unit = {
+        val titles =
+            TaskTreeSearch.replaceAllTitles(state, findQuery.text, findOptions, findReplacement.text)
+        if (titles.isNotEmpty()) vm.dispatch(SchedulerIntent.ReplaceTaskTitles(titles))
+    }
+    val closeFind: () -> Unit = {
+        findOpen = false
+        findFieldFocused = false
+        focusRequester.requestFocus()
+    }
+
+    // A new query starts its navigation over. Deliberately does NOT jump to the first hit as the user
+    // types: every jump is a selection history unit, and Alt+← would then have to walk back over one per
+    // keystroke. The tree shades every hit live, so typing still shows where they are.
+    LaunchedEffect(findQuery.text, findOptions) {
+        findMatchIndex = 0
+        findNavigated = false
+    }
+
+    LaunchedEffect(findOpen, findFocusTick) {
+        if (findOpen) findFocusRequester.requestFocus()
+    }
 
     // The field shows the selected tree's name whenever the user is not typing in it — so a switch, a rename,
     // an undo or a remote pull are all reflected without the field ever fighting the user's caret.
@@ -278,6 +430,34 @@ fun TaskSchedulerScreen(
         last
     }
 
+    // Bring the revealed row into view. The rows of a freshly expanded ancestor are not positioned yet on
+    // the frame the reveal is dispatched, so wait for their bounds to be reported (bounded, so a match on a
+    // row that never lands — an unexpandable ancestor — does not spin).
+    LaunchedEffect(findCurrentMatch, findMatches.size) {
+        val match = findCurrentMatch ?: return@LaunchedEffect
+        val occurrence = VisibleOccurrence(match.cellId, match.renderVia)
+        var bounds = rowBounds[occurrence]
+        var frames = 0
+        while (bounds == null && frames < 10) {
+            withFrameNanos { }
+            bounds = rowBounds[occurrence]
+            frames++
+        }
+        val row = bounds ?: return@LaunchedEffect
+        val viewport = treeViewport ?: return@LaunchedEffect
+        val margin = 24f
+        val delta =
+            when {
+                row.start < viewport.start + margin -> row.start - viewport.start - margin
+                row.endInclusive > viewport.endInclusive - margin ->
+                    row.endInclusive - viewport.endInclusive + margin
+                else -> 0f
+            }
+        if (delta != 0f) {
+            treeScroll.animateScrollTo((treeScroll.value + delta).roundToInt().coerceAtLeast(0))
+        }
+    }
+
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
     }
@@ -286,7 +466,11 @@ fun TaskSchedulerScreen(
         // PRD §10: don't pull focus to the tree root while a min-time input is open — that field
         // auto-focuses itself, and grabbing focus here would steal its caret. Same for the task-tree
         // selector's field, whose menus close the moment it loses focus.
-        if (state.editSession == null && minTimeEditCellId == null && !treeFieldFocused) {
+        // ... nor while the find bar holds it: a match navigation moves selection.main, which is exactly
+        // what re-runs this effect.
+        if (state.editSession == null && minTimeEditCellId == null && !treeFieldFocused &&
+            !findFieldFocused
+        ) {
             focusRequester.requestFocus()
         }
     }
@@ -307,6 +491,15 @@ fun TaskSchedulerScreen(
                 }
                 if (mod && event.key == Key.Y) {
                     vm.dispatch(SchedulerIntent.Redo)
+                    return@onPreviewKeyEvent true
+                }
+                // PRD §4 Find & replace. Above the Edit-Mode and min-time gates on purpose: Ctrl+F opens
+                // the bar from wherever the tree's keyboard is. Pressed again while open, it re-focuses
+                // the field and selects what is in it, so a new query simply overtypes the old one.
+                if (mod && event.key == Key.F) {
+                    findOpen = true
+                    findQuery = findQuery.copy(selection = TextRange(0, findQuery.text.length))
+                    findFocusTick++
                     return@onPreviewKeyEvent true
                 }
                 // PRD §5: selection history is undone/redone independently from content history.
@@ -397,9 +590,10 @@ fun TaskSchedulerScreen(
                     vm.dispatch(SchedulerIntent.SelectAllVisibleCells)
                     return@onPreviewKeyEvent true
                 }
-                // PRD §13: Ctrl+C is a DEEP copy and never asks — the depth is the account's own
-                // (state.deepCopyMaxDepth), which the deep-copy window sets. Ctrl+X copies the same text
-                // and then empties those very cells.
+                // PRD §4: Ctrl+C copies the ENTIRE sub-tree under the selection and asks nothing — the
+                // account's deep-copy depth belongs to the window, not to the chord. What each task
+                // carries is still the window's three switches. Ctrl+X copies the same text and then
+                // empties those very cells.
                 if (mod && (event.key == Key.C || event.key == Key.X)) {
                     val text = SchedulerDomain.copyTreeText(state, state.selection)
                     if (text.isNotEmpty()) {
@@ -525,7 +719,13 @@ fun TaskSchedulerScreen(
 
         Column(
             modifier = Modifier
-                .verticalScroll(rememberScrollState())
+                // Before verticalScroll, so these are the VIEWPORT's bounds and not the scrolled content's
+                // — the band a revealed match is scrolled into.
+                .onGloballyPositioned { coords ->
+                    val top = coords.positionInWindow().y
+                    treeViewport = top..(top + coords.size.height)
+                }
+                .verticalScroll(treeScroll)
                 // The tree keeps its natural width and scrolls horizontally when the content is wider than
                 // the viewport — it does NOT stretch to fill (or shrink to) the app's width, mirroring the
                 // vertical scroll above. width(IntrinsicSize.Max) sizes the column to its widest row so the
@@ -546,6 +746,7 @@ fun TaskSchedulerScreen(
                 depth = 0,
                 visibleOrder = visibleOrder,
                 priorities = priorities,
+                searchHighlight = searchHighlight,
                 onTogglePriorityWeights = { listId ->
                     // PRD §5: clicking a percentage opens that sub-list's window. Closing is by clicking
                     // anywhere else (the app's outside-press interceptor), not by re-clicking here — so
@@ -625,6 +826,36 @@ fun TaskSchedulerScreen(
         }
     }
 
+        // PRD §4: the find & replace bar, in the tree's top-right corner (VS Code's placement). A sibling
+        // of the tree rather than a child, so the tree's own key handler never sees what is typed in it.
+        if (findOpen) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 8.dp, end = 16.dp),
+            ) {
+                TaskTreeFindBar(
+                    query = findQuery,
+                    replacement = findReplacement,
+                    options = findOptions,
+                    replaceExpanded = findReplaceExpanded,
+                    matchCount = findMatches.size,
+                    currentIndex = findCurrentIndex,
+                    focusRequester = findFocusRequester,
+                    onQueryChange = { findQuery = it },
+                    onReplacementChange = { findReplacement = it },
+                    onOptionsChange = { findOptions = it },
+                    onToggleReplace = { findReplaceExpanded = !findReplaceExpanded },
+                    onFindNext = { findStep(1) },
+                    onFindPrevious = { findStep(-1) },
+                    onReplace = findReplaceCurrent,
+                    onReplaceAll = findReplaceAll,
+                    onClose = closeFind,
+                    onFocusChange = { findFieldFocused = it },
+                )
+            }
+        }
+
         // PRD §13: the floating "edit" window, overlaying the tree.
         editTaskId?.let { taskId ->
             val task = state.tasks[taskId]
@@ -672,11 +903,14 @@ fun TaskSchedulerScreen(
                     // The same block "copy" takes — a deep copy of a multi-selection is every selected
                     // cell down to the chosen depth, not just the one under the cursor.
                     cellIds = SchedulerDomain.contextMenuCopyTargets(state, state.selection, cellId),
-                    onCopy = { targets, maxDepth ->
-                        // The depth is the ACCOUNT's, not this copy's: what the window is asked here is
-                        // also what Ctrl+C / Ctrl+X take from now on.
+                    onCopy = { targets, maxDepth, options ->
+                        // The depth and the three switches are the ACCOUNT's, not this copy's: what the
+                        // window is asked here is what every later copy carries — the menu's "copy" and
+                        // §4's Ctrl+C / Ctrl+X included (the chord still takes the whole sub-tree).
                         vm.dispatch(SchedulerIntent.SetDeepCopyMaxDepth(maxDepth))
-                        val text = SchedulerDomain.copyCellsText(state, targets, maxDepth)
+                        vm.dispatch(SchedulerIntent.SetCopyOptions(options))
+                        // Explicit options: the dispatches above have not reached this composition's state.
+                        val text = SchedulerDomain.copyCellsText(state, targets, maxDepth, options)
                         if (text.isNotEmpty()) writeSystemClipboardText(text)
                         deepCopyCellId = null
                     },
@@ -699,6 +933,8 @@ private fun CellListSection(
     depth: Int,
     visibleOrder: List<CellId>,
     priorities: Map<TaskId, Double>,
+    /** PRD §4 Find & replace: what the Ctrl+F bar wants shaded, or null while the bar is closed. */
+    searchHighlight: TreeSearchHighlight?,
     onTogglePriorityWeights: (CellListId) -> Unit,
     onOpenRelativePriority: (CellId) -> Unit,
     minTimeEditCellId: CellId?,
@@ -782,6 +1018,13 @@ private fun CellListSection(
             isBeingMoved = isBeingMoved,
             priorityLabel = priorityLabel,
             priorityColumnWidth = priorityColumnWidth,
+            // The hits are shaded on the DISPLAYED title, so a cell being edited shows none: its draft is
+            // not what was searched, and the caret is the user's business.
+            searchRanges = if (isEditing) emptyList() else searchRangesIn(title, searchHighlight),
+            currentSearchRange =
+                searchHighlight?.current
+                    ?.takeIf { !isEditing && it.cellId == cellId && it.renderVia == renderVia }
+                    ?.let { it.start until it.end },
             textOverflow = (cellTextPx[cellId] ?: 0) > priorityColumnPx,
             minMinutes = cell.taskId?.let { state.tasks[it]?.minimumMinutes } ?: 0,
             minTimeEditing = minTimeEditCellId == cellId,
@@ -795,6 +1038,24 @@ private fun CellListSection(
                             onEdit = { onOpenTaskEdit(taskId) },
                             onCopy = { onCopyCell(cellId) },
                             onDeepCopy = { onDeepCopyCell(cellId) },
+                            // PRD §7/§13: the template on demand. Like "copy", it acts on the whole block
+                            // when the right-click lands inside a multi-selection.
+                            onAddDefaultSubtree =
+                                if (state.defaultSubtree.isEmpty()) {
+                                    null
+                                } else {
+                                    {
+                                        onIntent(
+                                            SchedulerIntent.AddDefaultSubtree(
+                                                SchedulerDomain.contextMenuCopyTargets(
+                                                    state,
+                                                    state.selection,
+                                                    cellId,
+                                                ),
+                                            ),
+                                        )
+                                    }
+                                },
                         )
                     },
             onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
@@ -886,6 +1147,7 @@ private fun CellListSection(
                 depth = depth + 1,
                 visibleOrder = visibleOrder,
                 priorities = priorities,
+                searchHighlight = searchHighlight,
                 onTogglePriorityWeights = onTogglePriorityWeights,
                 onOpenRelativePriority = onOpenRelativePriority,
                 minTimeEditCellId = minTimeEditCellId,
@@ -2014,10 +2276,14 @@ private fun TaskRow(
     isBeingMoved: Boolean,
     priorityLabel: String?,
     priorityColumnWidth: Dp,
+    /** PRD §4 Find & replace: the hits of the current query inside this row's title. */
+    searchRanges: List<IntRange>,
+    /** The one hit the find bar is sitting on, when it is in this row. */
+    currentSearchRange: IntRange?,
     textOverflow: Boolean,
     minMinutes: Int,
     minTimeEditing: Boolean,
-    /** PRD §13: the right-click contextual menu's three actions; null for a cell that has no menu. */
+    /** PRD §13: the right-click contextual menu's actions; null for a cell that has no menu. */
     cellMenu: TaskCellMenuActions?,
     /** PRD §5: clicking the percentage opens the sub-list's priority-weight window. */
     onTogglePriorityWeights: () -> Unit,
@@ -2040,7 +2306,8 @@ private fun TaskRow(
     editMenus: (@Composable () -> Unit)?,
 ) {
     val editFocusRequester = remember { FocusRequester() }
-    // Whether this cell's right-click contextual menu ("edit" / "copy" / "deep copy") is showing.
+    // Whether this cell's right-click contextual menu ("edit" / "copy" / "deep copy" / "add default
+    // sub-tree") is showing.
     var contextMenuOpen by remember(cellId) { mutableStateOf(false) }
     // PRD §5: the percentage column's own right-click menu ("relative priority" / "priority weights").
     var priorityMenuOpen by remember(cellId) { mutableStateOf(false) }
@@ -2221,7 +2488,7 @@ private fun TaskRow(
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // PRD §13 right-click contextual menu on a populated cell: exactly three options.
+            // PRD §13 right-click contextual menu on a populated cell.
             if (cellMenu != null) {
                 DropdownMenu(
                     expanded = contextMenuOpen,
@@ -2248,6 +2515,16 @@ private fun TaskRow(
                             cellMenu.onDeepCopy()
                         },
                     )
+                    // PRD §7: only offered where there is a template to add.
+                    cellMenu.onAddDefaultSubtree?.let { addDefaultSubtree ->
+                        DropdownMenuItem(
+                            text = { Text("add default sub-tree") },
+                            onClick = {
+                                contextMenuOpen = false
+                                addDefaultSubtree()
+                            },
+                        )
+                    }
                 }
             }
             TaskSheetExpandArrow(
@@ -2394,7 +2671,7 @@ private fun TaskRow(
                 ) {
                     Text(
                         modifier = Modifier.fillMaxWidth(),
-                        text = displayTitle.ifEmpty { " " },
+                        text = highlightedTitle(displayTitle, searchRanges, currentSearchRange),
                         style = textStyle,
                         softWrap = false,
                         overflow = TextOverflow.Clip,
@@ -2499,7 +2776,8 @@ private fun TaskRow(
 }
 
 /**
- * A right-click (secondary button) opens a contextual menu — the cell's own ("edit" / "copy" / "deep copy")
+ * A right-click (secondary button) opens a contextual menu — the cell's own ("edit" / "copy" / "deep copy" /
+ * "add default sub-tree")
  * on the row, and the two-option one on the priority-percentage column (PRD §5). Returns a no-op modifier
  * when [enabled] is false (cells with no menu — empty / root-main), so only eligible cells react. [onOpen]
  * flips the local menu-visible flag. The press is consumed, which both keeps the freshly opened menu from
@@ -2532,13 +2810,17 @@ private fun contextMenuModifier(
 }
 
 /**
- * PRD §13 the three actions of a populated cell's right-click contextual menu. Bundled so a cell either
- * has the whole menu or none of it (empty cells and the root/main cell get null).
+ * PRD §13 the actions of a populated cell's right-click contextual menu. Bundled so a cell either has the
+ * whole menu or none of it (empty cells and the root/main cell get null).
+ *
+ * [onAddDefaultSubtree] is null when there is no §7 template to add, which is the one entry that comes and
+ * goes: an account that never defined a default sub-tree is not offered it.
  */
 private class TaskCellMenuActions(
     val onEdit: () -> Unit,
     val onCopy: () -> Unit,
     val onDeepCopy: () -> Unit,
+    val onAddDefaultSubtree: (() -> Unit)?,
 )
 
 /**
@@ -2716,23 +2998,28 @@ private fun TaskEditWindow(
  * the newly-reached levels are what the user is choosing between — so the parents are hidden off to the
  * left and the scrollbar under it is how they are brought back.
  *
- * **Enter** and the **copy** button both copy and close; **reset** puts the depth back to
- * [SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH].
+ * Under the depth sit three switches saying **what** each copied task carries — its **id**, its sub-list's
+ * **priority table** (off: the cell's percentage of that sub-list instead), and its **text**.
  *
- * The depth is **the account's one setting** ([SchedulerState.deepCopyMaxDepth]), not this copy's: the
- * window opens on it and copying writes it back, and §4's Ctrl+C / Ctrl+X then deep-copy by it without ever
- * opening this window. Cancelling leaves the account's number alone.
+ * **Enter** and the **copy** button both copy and close; **reset** puts the depth back to
+ * [SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH] and turns all three switches back on.
+ *
+ * The depth and the switches are **the account's settings** ([SchedulerState.deepCopyMaxDepth] and the
+ * three `copy*` flags), not this copy's: the window opens on them and copying writes them back. §4's
+ * Ctrl+C / Ctrl+X take the whole sub-tree (the depth is this window's), but they carry what these switches
+ * say. Cancelling leaves all four alone.
  */
 @Composable
 private fun DeepCopyWindow(
     state: SchedulerState,
     cellIds: List<CellId>,
-    onCopy: (List<CellId>, Int) -> Unit,
+    onCopy: (List<CellId>, Int, SchedulerDomain.CopyOptions) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val key = cellIds.firstOrNull()
     // The raw text, so the field can be emptied while typing; a blank/0 depth simply copies nothing.
     var depthText by remember(key) { mutableStateOf(state.deepCopyMaxDepth.toString()) }
+    var options by remember(key) { mutableStateOf(SchedulerDomain.CopyOptions.from(state)) }
     val depth = depthText.toIntOrNull() ?: 0
     val path = SchedulerDomain.deepCopyPathTitles(state, cellIds, depth)
     val canCopy = depth >= 1 && cellIds.isNotEmpty()
@@ -2764,7 +3051,7 @@ private fun DeepCopyWindow(
                 // window's own accept, not a character the field should ever receive.
                 .onPreviewKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-                        if (canCopy) onCopy(cellIds, depth)
+                        if (canCopy) onCopy(cellIds, depth, options)
                         true
                     } else {
                         false
@@ -2804,6 +3091,27 @@ private fun DeepCopyWindow(
                 }
 
                 HorizontalDivider()
+                // What each copied task carries. The percentage row says which of the two forms the
+                // priority travels in, so the switch reads as a choice rather than as a loss.
+                DeepCopySwitchRow(
+                    label = "Copy the task ids",
+                    checked = options.includeIds,
+                    onCheckedChange = { options = options.copy(includeIds = it) },
+                )
+                DeepCopySwitchRow(
+                    label =
+                        if (options.priorityTables) "Copy the priority weight tables"
+                        else "Copy the priority percentage only",
+                    checked = options.priorityTables,
+                    onCheckedChange = { options = options.copy(priorityTables = it) },
+                )
+                DeepCopySwitchRow(
+                    label = "Copy the task text",
+                    checked = options.includeText,
+                    onCheckedChange = { options = options.copy(includeText = it) },
+                )
+
+                HorizontalDivider()
                 Text(
                     text = if (cellIds.size > 1) "Deepest of them copied down to" else "Copied down to",
                     style = MaterialTheme.typography.labelMedium,
@@ -2814,16 +3122,37 @@ private fun DeepCopyWindow(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = { setDepth(SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH) }) {
+                    TextButton(
+                        onClick = {
+                            setDepth(SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH)
+                            options = SchedulerDomain.CopyOptions()
+                        },
+                    ) {
                         Text("reset")
                     }
                     Spacer(Modifier.weight(1f))
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
-                    TextButton(enabled = canCopy, onClick = { onCopy(cellIds, depth) }) { Text("copy") }
+                    TextButton(enabled = canCopy, onClick = { onCopy(cellIds, depth, options) }) { Text("copy") }
                 }
             }
         }
+    }
+}
+
+/** One of the deep-copy window's "what does the copy carry" switches (see [DeepCopyWindow]). */
+@Composable
+private fun DeepCopySwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

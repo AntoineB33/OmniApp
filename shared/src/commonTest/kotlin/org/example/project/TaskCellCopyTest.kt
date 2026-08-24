@@ -4,6 +4,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.math.abs
+import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.ScheduleUnitEntry
@@ -339,9 +341,9 @@ class TaskCellCopyTest {
         )
 
     @Test
-    fun ctrl_c_deep_copies_to_the_account_depth_without_asking() {
-        // PRD §13: the depth is one number for the whole account — the deep-copy window sets it and Ctrl+C
-        // simply takes it, so the chord never opens a window.
+    fun ctrl_c_copies_the_whole_sub_tree_whatever_the_window_depth_says() {
+        // PRD §4: Ctrl+C is "all of it" — the account's deep-copy depth belongs to the WINDOW, and the
+        // chord asks nobody, so lowering that number must not silently shorten what the chord takes.
         var s = stateWithTwoBranches()
         val cA = s.lists[s.rootListId]!!.cellIds[0]
         assertEquals(SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH, s.deepCopyMaxDepth)
@@ -351,16 +353,147 @@ class TaskCellCopyTest {
         assertEquals(listOf("A1"), deep.children.map { it.title })
         assertEquals(listOf("A1a"), deep.children.single().children.map { it.title })
 
-        // Two levels: A1 comes, A1a does not — and the setting is what says so.
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetDeepCopyMaxDepth(2))
         assertEquals(2, s.deepCopyMaxDepth)
-        val two = SchedulerDomain.parseTreeText(SchedulerDomain.copyTreeText(s, s.selection))!!.single()
-        assertEquals(listOf("A1"), two.children.map { it.title })
+        val still = SchedulerDomain.parseTreeText(SchedulerDomain.copyTreeText(s, s.selection))!!.single()
+        assertEquals(listOf("A1a"), still.children.single().children.map { it.title })
+        // The window's own copy is what the number cuts short.
+        val two = SchedulerDomain.parseTreeText(SchedulerDomain.copyCellsText(s, listOf(cA), maxDepth = 2))!!.single()
         assertTrue(two.children.single().children.isEmpty())
 
         // Out-of-range numbers are healed rather than stored (the window's field takes free text).
         assertEquals(1, SchedulerReducer.reduce(s, SchedulerIntent.SetDeepCopyMaxDepth(0)).deepCopyMaxDepth)
         assertEquals(999, SchedulerReducer.reduce(s, SchedulerIntent.SetDeepCopyMaxDepth(5000)).deepCopyMaxDepth)
+    }
+
+    /**
+     * A -> {A1, A2} with a second weight column on A's sub-list and hand-set values, plus a value row on A
+     * itself. Returns the state and A's cell — the fixture both weight-table tests below copy.
+     */
+    private fun stateWithWeightTables(): Pair<SchedulerState, CellId> {
+        var s = SchedulerState.empty()
+        val cA = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cA, "A"))
+        val aList = s.tasks[s.cells[cA]!!.taskId!!]!!.childListId!!
+        val cA1 = s.lists[aList]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cA1, "A1"))
+        val cA2 = s.lists[aList]!!.cellIds[1]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cA2, "A2"))
+        // A second column on A's sub-list, with a header of its own and a value per row.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddPriorityColumn(aList))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityColumnWeight(aList, 1, 0.25))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cA1, 0, 3.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cA1, 1, 2.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cA2, 1, 1.0))
+        // And a row value on A itself, in the root list.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cA, 0, 4.0))
+        return s to cA
+    }
+
+    @Test
+    fun the_weight_table_of_every_copied_sub_list_travels_and_pastes_back() {
+        // PRD §4/§13: a copied sub-tree carries the priority weight TABLE of each sub-list it walks — the
+        // column header row and every cell's values — not just the cells' own rows.
+        val (s, cA) = stateWithWeightTables()
+        val aList = s.tasks[s.cells[cA]!!.taskId!!]!!.childListId!!
+        val text = SchedulerDomain.copyCellsText(s, listOf(cA), maxDepth = 20)
+        assertTrue(text.contains("- priority weights: 4.0"), text)
+        assertTrue(text.contains("- sub-list weight columns: 1.0, 0.25"), text)
+        assertTrue(text.contains("- priority weights: 3.0, 2.0"), text)
+
+        val (pasted, target) = pasteIntoFreshTree(text)
+        assertEquals(listOf(4.0), pasted.cells[target]!!.priorityWeights)
+        val newList = pasted.tasks[pasted.cells[target]!!.taskId!!]!!.childListId!!
+        assertEquals(s.lists[aList]!!.weightColumns, pasted.lists[newList]!!.weightColumns)
+        assertEquals(
+            s.lists[aList]!!.cellIds.take(2).map { s.cells[it]!!.priorityWeights },
+            pasted.lists[newList]!!.cellIds.take(2).map { pasted.cells[it]!!.priorityWeights },
+        )
+    }
+
+    @Test
+    fun the_priority_tables_switch_writes_the_sub_list_percentage_instead() {
+        // PRD §13: with the switch off the table is replaced by the one number it produces — each cell's
+        // percentage of its own sub-list — and pasting that back reproduces those very percentages.
+        val (s, cA) = stateWithWeightTables()
+        val aList = s.tasks[s.cells[cA]!!.taskId!!]!!.childListId!!
+        val shares = s.lists[aList]!!.cellIds.take(2).map { RelativePriorityDomain.cellShare(s, it) }
+        val text =
+            SchedulerDomain.copyCellsText(
+                s,
+                listOf(cA),
+                maxDepth = 20,
+                options = SchedulerDomain.CopyOptions(priorityTables = false),
+            )
+        assertTrue(!text.contains("- priority weights:"), text)
+        assertTrue(!text.contains("- sub-list weight columns:"), text)
+        // A is the root list's only populated cell, so it holds all of it.
+        assertTrue(text.contains("- priority in its sub-list: 100 %"), text)
+
+        val (pasted, target) = pasteIntoFreshTree(text)
+        val newList = pasted.tasks[pasted.cells[target]!!.taskId!!]!!.childListId!!
+        val restored = pasted.lists[newList]!!.cellIds.take(2).map { RelativePriorityDomain.cellShare(pasted, it) }
+        assertEquals(shares.size, restored.size)
+        shares.forEachIndexed { i, expected ->
+            assertTrue(abs(expected - restored[i]) < 1e-4, "share $i: $expected vs ${restored[i]}")
+        }
+    }
+
+    @Test
+    fun the_id_and_text_switches_leave_those_out_of_the_clipboard() {
+        // PRD §13: two of the three switches simply drop a line. Without the id the payload is foreign by
+        // construction, so pasting it mints NEW tasks rather than mirroring the ones it came from.
+        val (s, cP) = stateWithParentAndChild()
+        val pTask = s.cells[cP]!!.taskId!!
+        val text =
+            SchedulerDomain.copyCellsText(
+                s,
+                listOf(cP),
+                maxDepth = 20,
+                options = SchedulerDomain.CopyOptions(includeIds = false, includeText = false),
+            )
+        assertTrue(!text.contains("- id:"), text)
+        assertTrue(!text.contains("- text:"), text)
+        // Everything else the edit window holds still travels.
+        assertTrue(text.contains("- can be done during a no-screen period: yes"), text)
+        assertTrue(text.contains("- schedule unit:"), text)
+
+        val node = SchedulerDomain.parseTreeText(text)!!.single()
+        assertEquals(null, node.taskId)
+        assertEquals("", node.text)
+        // Pasted back into the very tree it came from, it lands on a task of its own.
+        var dst = click(s, s.lists[s.rootListId]!!.cellIds[1])
+        dst = SchedulerReducer.reduce(dst, SchedulerIntent.PasteTree(text))
+        val landed = dst.cells[dst.lists[dst.rootListId]!!.cellIds[1]]!!.taskId!!
+        assertTrue(landed != pTask, "a copy with no id must never mirror the task it came from")
+        assertEquals("P", dst.tasks[landed]!!.title)
+        assertEquals("", dst.tasks[landed]!!.text)
+    }
+
+    @Test
+    fun the_copy_switches_are_the_accounts_and_survive_a_reload() {
+        // Like the depth: one answer per account, so Ctrl+C obeys what the deep-copy window was told.
+        var s = SchedulerState.empty()
+        assertEquals(SchedulerDomain.CopyOptions(), SchedulerDomain.CopyOptions.from(s))
+        val off = SchedulerDomain.CopyOptions(includeIds = false, priorityTables = false, includeText = false)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCopyOptions(off))
+        assertEquals(off, SchedulerDomain.CopyOptions.from(s))
+        // Not an Undo/Redo unit (nothing to undo).
+        assertEquals(off, SchedulerDomain.CopyOptions.from(SchedulerReducer.reduce(s, SchedulerIntent.Undo)))
+
+        val reloaded =
+            org.example.project.scheduler.persistence.SchedulerStateCodec.decode(
+                org.example.project.scheduler.persistence.SchedulerStateCodec.encode(s),
+            )
+        assertNotNull(reloaded)
+        assertEquals(off, SchedulerDomain.CopyOptions.from(reloaded))
+
+        // Persisted-DB compatibility: a payload written before the switches existed carried all three.
+        val before = org.example.project.scheduler.persistence.SchedulerStateCodec.encode(SchedulerState.empty())
+        assertTrue(!before.contains("copyIncludeIds"), "the fixture must predate the field")
+        val old = org.example.project.scheduler.persistence.SchedulerStateCodec.decode(before)
+        assertNotNull(old)
+        assertEquals(SchedulerDomain.CopyOptions(), SchedulerDomain.CopyOptions.from(old))
     }
 
     @Test

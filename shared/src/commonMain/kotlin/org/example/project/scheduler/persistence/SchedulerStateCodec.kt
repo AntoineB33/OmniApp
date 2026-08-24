@@ -52,6 +52,7 @@ import org.example.project.scheduler.state.SleepDelta
 import org.example.project.scheduler.state.TaskTreeDelta
 import org.example.project.scheduler.state.TaskTreeEntry
 import org.example.project.scheduler.state.TaskTreeStateSnapshot
+import org.example.project.scheduler.state.SetExpandedDelta
 import org.example.project.scheduler.state.ToggleExpandDelta
 import org.example.project.scheduler.state.TreeMutationDelta
 import org.example.project.scheduler.state.TreeSnapshot
@@ -265,8 +266,11 @@ object SchedulerStateCodec {
             // PRD §4 Default sub-tree: the template and whether it is currently applied.
             defaultSubtree = defaultSubtree.map { it.toPersisted() },
             defaultSubtreeEnabled = defaultSubtreeEnabled,
-            // PRD §13: the account's one deep-copy depth.
+            // PRD §13: the account's one deep-copy depth, and its three "what does a copy carry" switches.
             deepCopyMaxDepth = deepCopyMaxDepth,
+            copyIncludeIds = copyIncludeIds,
+            copyPriorityTables = copyPriorityTables,
+            copyIncludeText = copyIncludeText,
             focusedWindow = focusedWindow.name,
             histories = histories.toPersisted(),
             sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
@@ -346,6 +350,8 @@ object SchedulerStateCodec {
                     label,
                 )
             is ToggleExpandDelta -> PersistedDelta.ToggleExpand(cellId.value)
+            is SetExpandedDelta ->
+                PersistedDelta.SetExpanded(before.map { it.value }, after.map { it.value })
             is TaskTreeDelta -> PersistedDelta.TaskTrees(before.toPersisted(), after.toPersisted(), label)
             is RecordDelta ->
                 PersistedDelta.Record(
@@ -582,6 +588,9 @@ object SchedulerStateCodec {
             // PRD §13: a payload written before the account-wide deep-copy depth existed decodes to the
             // default the window used to open on, and a hand-edited out-of-range one is healed into range.
             deepCopyMaxDepth = deepCopyMaxDepth.coerceIn(SchedulerDomain.DEEP_COPY_DEPTH_RANGE),
+            copyIncludeIds = copyIncludeIds,
+            copyPriorityTables = copyPriorityTables,
+            copyIncludeText = copyIncludeText,
             focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),
             histories = histories?.toHistories() ?: SchedulerHistories(),
             sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
@@ -644,6 +653,8 @@ object SchedulerStateCodec {
                 )
             is PersistedDelta.Panels -> PanelDelta(before.map { it.toPanel() }, after.map { it.toPanel() }, label)
             is PersistedDelta.ToggleExpand -> ToggleExpandDelta(CellId(cellId))
+            is PersistedDelta.SetExpanded ->
+                SetExpandedDelta(before.map { CellId(it) }.toSet(), after.map { CellId(it) }.toSet())
             is PersistedDelta.TaskTrees -> TaskTreeDelta(before.toTaskTreeState(), after.toTaskTreeState(), label)
             is PersistedDelta.Record ->
                 RecordDelta(
@@ -814,6 +825,11 @@ private data class PersistedState(
     // PRD §13 deep copy: the account-wide maximum depth. A missing value decodes to the depth the window
     // used to open on, which is exactly what a payload written before the setting existed behaved as.
     val deepCopyMaxDepth: Int = SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH,
+    // PRD §13 deep copy: the account's three "what does a copy carry" switches. Missing values decode to
+    // ON — a payload written before the switches existed came from a build that always carried all three.
+    val copyIncludeIds: Boolean = true,
+    val copyPriorityTables: Boolean = true,
+    val copyIncludeText: Boolean = true,
     // PRD §7: the focused window; a missing value decodes to the task tree (payloads written before window
     // focus was persisted).
     val focusedWindow: String = "Tree",
@@ -992,6 +1008,15 @@ private sealed interface PersistedDelta {
     @Serializable
     @SerialName("toggleExpand")
     data class ToggleExpand(val cellId: String) : PersistedDelta
+
+    /**
+     * PRD §4 Find & replace: the whole expansion set on both sides of revealing a search hit. New in
+     * 1.6.0 — a history written by an older build simply has none of these, and every older unit still
+     * decodes, since this is a new [PersistedDelta] subtype and not a field on an existing one.
+     */
+    @Serializable
+    @SerialName("setExpanded")
+    data class SetExpanded(val before: List<String>, val after: List<String>) : PersistedDelta
 
     @Serializable
     @SerialName("record")

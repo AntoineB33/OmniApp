@@ -11,6 +11,175 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The period editor, and what a grey period clears (PRD §8, ADR 0002) — SHIPPED 2026-08-24
+
+- **"Add a no-screen period" / "add an inactivity period" open an editor instead of laying a fixed hour.**
+  `ui/CalendarUi.kt`'s `PeriodEditWindow` (one window for both kinds, `CalendarPeriodKind`) gives each bound
+  three forms: a **date and time**, **"now"** (resolved at Save, not at open), or **"∞"**. Save is disabled
+  while a field is half-typed or the period runs backwards. The same window is now a period's **"Edit"** — a
+  hand-added inactivity period has one at last (a *derived* grey band still has none: no panel behind it) —
+  which retired `ManualEntryEditWindow`'s `timesOnly` mode.
+- **"∞" is `SchedulerDomain.OPEN_PAST_MILLIS` / `OPEN_FUTURE_MILLIS`** (1900 / 2200), real instants rather
+  than `Long.MIN_VALUE`/`MAX_VALUE`: every consumer does ordinary arithmetic on a panel's bounds and a
+  saturating sentinel would overflow the first `end - start`. `isOpenPast` / `isOpenFuture` recognize them,
+  and the hover bubble prints "∞" for either end.
+- **A grey period now overrides everything it covers.** An inactivity period trims/deletes **every** task
+  panel under it (a no-screen period still only the on-screen ones), and any task panel trims it in turn.
+- **A laid or dragged period clears the RECORDS under its elapsed part** — the on-screen tasks' for a
+  no-screen period, everybody's for a grey one. This is `StripNoScreenRecords`' §9 rule (`stripRecords`,
+  now parameterized by `onScreenOnly`) applied at once instead of at the next engine start. Outside
+  Undo/Redo, like every write to the record.
+- The point of all four: **an inactivity period from ∞ to now** declares the whole recorded past empty and
+  clears it in one gesture. Tests: `CalendarPeriodEditTest`.
+
+### The clipboard: whole-sub-tree Ctrl+C, and three switches on the deep-copy window (PRD §4/§13, ADR 0012) — SHIPPED 2026-08-24
+
+Four deltas, one gesture family.
+
+- **The weight TABLE of every copied sub-list is pinned as carried.** The parent node writes the sub-list's
+  `- sub-list weight columns:` header and each child writes its own `- priority weights:` row, so a pasted
+  sub-tree rebuilds the tables rather than only the titles. New round-trip test through a two-column sub-list
+  (`the_weight_table_of_every_copied_sub_list_travels_and_pastes_back`) — restoring the rows without the header
+  would silently re-normalize every percentage at the destination.
+- **`Ctrl+C` / `Ctrl+X` copy the ENTIRE sub-tree again** (`SchedulerDomain.FULL_SUBTREE_DEPTH`). For one day the
+  chord copied to the account's `deepCopyMaxDepth`, which made that number mean two things: a depth set for one
+  deep copy afterwards truncated every later `Ctrl+C`, with nothing on screen saying so. The three gestures now
+  divide purely by how much — menu "copy" = the cell, "deep copy" = the window's number, the chord = all of it —
+  and `deepCopyMaxDepth` is the window's own number and nothing else's.
+- **The deep-copy window gained three switches** (`SchedulerDomain.CopyOptions`, `SchedulerIntent.SetCopyOptions`,
+  `SchedulerState.copyIncludeIds` / `copyPriorityTables` / `copyIncludeText`): copy the task **ids**, copy the
+  **priority weight tables** (off ⇒ the cell's **percentage of its sub-list** instead), copy the task **text**.
+  Like the depth they are **one answer for the whole account** — persisted + synced, not Undo/Redo units, written
+  back when the window copies — so the menu's "copy" and the chords obey them. `reset` restores all three.
+- **The percentage form is stored as the node's single weight.** `copiedSubtree` writes `rowWeights = [share]`
+  with the default one-column header and the renderer prints `- priority in its sub-list: 37.5 %`; the parser
+  reads it back into that same weight. So the reducer's paste path is untouched, a sub-list of shares rebuilds
+  those shares, and the copy-time rounding (two decimals of a percent) makes a second round trip a no-op.
+
+One consequence worth stating: **ids off makes the payload foreign by construction**. The default-subtree paste
+gate is "did the app write this text?", answered by the id — so a copy taken with ids off pastes as new tasks and
+*is* seeded with the §7 template, exactly as typing those titles would be. That is the switch's meaning, not a
+leak in the gate.
+
+Client rebuild only (`account{1,2,3}-*deploy*.bat`); the three new fields are ordinary scalars in the snapshot,
+so nothing server-side changed and a payload written before them decodes with all three on.
+
+### Find & replace in the task tree (PRD §4) — SHIPPED 2026-08-24
+
+`Ctrl + F` opens a VS Code-shaped bar in the tree's top-right corner: query field, match counter, **Match
+Case** / **Match Whole Word**, `↑` / `↓`, close — and, behind the chevron, the replacement field with
+**Replace** / **Replace All**. New `TaskTreeSearch` (pure), `SchedulerIntent.RevealCell` /
+`ReplaceTaskTitles`, `SetExpandedDelta` (+ its `PersistedDelta.SetExpanded` mirror), `TaskTreeFindBar`.
+
+Three decisions worth keeping:
+
+- **The walk covers the whole tree, and visits each *list* once.** A search over
+  `selectableVisibleOccurrences` would have missed every collapsed row — most of the account. Visiting each
+  list once is what keeps a mirrored sub-tree (one list, many parents) from being re-walked per occurrence.
+  Each match carries the path that reached it, which is what the reveal expands.
+- **Revealing a match is ONE history unit** (`SetExpandedDelta` over the whole expansion set), not one
+  `ToggleExpandDelta` per level. Typing in the query field deliberately does not jump to the first hit
+  either: every jump is a selection unit, and `Alt + ←` would otherwise have to walk back one per keystroke.
+- **Replace is a rename, keyed by task.** It runs through `applySetCellTitle` — the primitive Rename mode
+  uses — so occurrences, the title index and the tombstone rule behave identically, and a task mirrored under
+  three parents is renamed once, not three times. A replacement that empties a title deletes by §4's ordinary
+  rule.
+
+No deploy needed beyond a client rebuild (`account{1,2,3}-*deploy*.bat`); nothing server-side changed.
+
+### The default sub-tree, the clipboard, and a menu entry to ask for it (PRD §4/§7/§13, ADR 0012) — SHIPPED 2026-08-24
+
+Two reports, same day.
+
+**1. Pasting foreign text seeded nothing.** With a template defined and the §7 switch on: copy text from
+another app, select an empty task cell *without* entering Edit Mode, Ctrl+V, expand — empty sub-tree.
+`graftDefaultSubtree` was only ever called from `setCellTitleDelta` and `endEditSession`, and a paste onto a
+selected cell opens no Edit session. Documented at the time as deliberate ("paste … deliberately never
+graft"), which was the wrong call: §7 grafts under every task the user **creates**, and pasting a title onto
+an empty cell creates one exactly as typing it does.
+
+**2. A deep-copied sub-tree pasted elsewhere seeded too.** The first fix gated on `PasteIdentity.Fresh`, which
+still caught a copied id the target list cannot honour (`canAssignTaskId` refuses a duplicate sibling) — so a
+pasted clone came back carrying the template. The gate is now the clipboard's **id**, not the identity:
+
+- **no id** (another app's tab-indented list, or a pre-1.6.0 clipboard) ⇒ seeded. `graftDefaultSubtree`'s
+  existing empty-sub-list guard means only a bare new leaf gets it — in a forest, every minted leaf, the same
+  as typing those titles by hand.
+- **any id** (Mirror, Restore, or a Fresh clone) ⇒ never. A copy of a sub-tree comes back as itself, and
+  `Ctrl+X` → `Ctrl+V` still returns a leaf exactly as it was cut.
+
+The pasted cell is **not** auto-expanded (unlike the end-of-session graft) — one paste can mint many leaves.
+
+**New: "add default sub-tree" in the cell's right-click menu** (`SchedulerIntent.AddDefaultSubtree`), the
+explicit gesture the narrowed gate leaves room for. Unlike the automatic graft it ignores the on/off switch and
+does not care whether the task is new. It acts on `contextMenuCopyTargets` (the whole block inside a
+multi-selection, as "copy" does), commits one Main history unit, and expands every cell it walked. Shown only
+where a template exists.
+
+**3. It applied beside the existing children, not to them.** Third report, same day. The first cut appended
+the template after whatever the cell already parented. Corrected: it lands on the **leaves** of the sub-tree
+the cell roots — a cell that parents nothing being its own leaf, so the plain and deep cases are one rule. A
+template says how a piece of work breaks down, so asking for it on a cell already broken down asks for it on
+the pieces. `defaultSubtreeApplicationTargets` resolves them off the state **before** anything is written (a
+filled leaf gains children, and re-walking the mutated state would seed the rows just written where the task is
+mirrored) and visits each **task id** once (one sub-list serves every occurrence; the id set is also the cycle
+guard).
+
+Covered by eleven `DefaultSubtreeTest` cases. No Supabase deploy; **client rebuild required**
+(`account{1,2,3}-*deploy*.bat`).
+
+### The no-screen record rule reads the OS, not just hand-drawn panels (PRD §9/§12, ADR 0002) — SHIPPED 2026-08-24
+
+**Diagnosis (account 3).** Past task panels for on-screen tasks sat under BOTH calendar layers — which is, by the
+layers' own identity, a no-screen period. Both hatches were individually right: the account has one desktop and
+no phone, so the phone layer is `null` ⇒ assumed locked over the whole past; and the Kernel-Power 42/506 record
+put the machine in Modern Standby for **98 h of the 168 h window**. What was wrong was underneath them —
+**43.4 h of recorded "work" across 206 records**, banked while the OS said the screen was off. Modern Standby is
+S0: the process keeps running and the advance tick keeps banking, so nothing but the OS log knows.
+
+**Root cause.** §9's "assume nothing happened" guard (`appendRecordOutsideNoScreen`) took its no-screen ranges
+from `state.panels.filter { it.noScreen }`, and the ONLY producer of such a panel is the §8 contextual-menu
+action `AddNoScreenPeriod`. Account 3 had zero, so the guard short-circuited on `noScreenRanges.isEmpty()` and
+every elapsed auto panel banked unconditionally. The bank read neither the OS lock history (which the layers
+read) nor the derived pauses (which the engine reads) — only what the user had drawn by hand.
+
+**The fix, in three parts:**
+
+1. `SchedulerDomain.observedNoScreenRegions` — the two layers' EVIDENCE halves intersected, i.e. the same
+   "a stretch carrying both layers is a no-screen period" identity the calendar draws, read for the scheduler.
+   Asserted regions (sleep windows, screen breaks) are deliberately NOT folded in: a break *suspends* a chunk
+   rather than cutting it (§15), so including them would silently stop recording across every break.
+2. `SchedulerReducer.noScreenEvidence`, a seam beside `liveRestGap` — the engine scans the OS lock history on a
+   coarse 10-minute bucket over a bounded 24 h window and injects the result; every banking path unions it with
+   the hand-drawn panels (`noScreenRangesFor`). The panels are an assertion and still hold; the evidence is what
+   fires when nobody drew one.
+3. `StripNoScreenRecords` — a one-shot pass at engine start that applies the same rule retroactively over the
+   displayed 168 h, carving the covered spans out of every ON-SCREEN task's record and materializing them as
+   "Inactivity" panels. Off-screen tasks are untouched (§9 allows them to run in a no-screen period, so their
+   records are true). Idempotent: once carved there is nothing left to subtract, and it returns the same state
+   instance. On account 3 it removes 43.4 h spread across 20 tasks, so relative priorities barely move.
+
+Unlike the tick that banks records, the strip **syncs**: `Task.record` is authoritative and the three-way merge
+UNIONS it, so a deletion that stayed local would be resurrected by the next peer that still had the span.
+
+**Two traps found while building it, both worth keeping in mind:**
+
+- **A failed query is not evidence.** `null` from `deviceLockedIntervals` means "assumed locked throughout" —
+  the right default for the calendar, the exact opposite of what the bank needs, where one PowerShell timeout
+  would blanket the window as no-screen and suppress every record. The OWN scan must SUCCEED to say anything;
+  the PEER's null keeps its assumed-locked meaning. Silence about a device we cannot reach is a rule; silence
+  from the one we can reach is a failure.
+- **The read must not run on the engine's dispatcher.** It spawns a PowerShell process and waits up to 20 s;
+  calling it inline stalled the advance tick and every sweep behind it (it broke `ScheduleStalenessRuleTest`).
+  It is now `withContext(Dispatchers.Default)`, as `App.kt` already did for its own layer scan.
+
+Still open, and now sharper: the engine's pause derivation still reads `device_active_session` while the layers
+and this guard read the OS. Three sources answered "was the user away?"; this makes it two.
+
+Tests: `ObservedNoScreenRegionsTest` (the intersection, the assumed-locked null, empty ≠ null, the 90 s seam
+filter, clipping at the now-line), `NoScreenEvidenceTest` (banking against evidence with no panel drawn, the
+union with a drawn panel, off-screen tasks exempt, the empty-seam default, and the strip's carve/idempotence).
+
 ### The weight window charts the sub-list, and has a Cancel (PRD §5, ADR 0004) — SHIPPED 2026-08-24
 
 **The pie chart on the right now shows each task's percentage *within the sub-list*** — the share the table on

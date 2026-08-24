@@ -3837,18 +3837,21 @@ private fun DayColumn(
                         style = MaterialTheme.typography.labelMedium,
                     )
                     Text(
-                        text = "${hmOrInfinity(target.fullStartMillis, target.openStart, tz)} – ${formatHm(target.fullEndMillis, tz)}",
+                        text =
+                            "${hmOrInfinity(target.fullStartMillis, target.openStart, tz)} – " +
+                                hmOrInfinityEnd(target.fullEndMillis, tz),
                         style = MaterialTheme.typography.labelSmall,
                         color = CalColors.muted,
                     )
                 }
             }
             if (target != null) {
-                // PRD §8: the menu on a task / no-screen / sleep panel leads with "Edit" — a task panel
-                // opens the calendar edit window, a no-screen period a times-only editor, a sleep band
-                // the §17 sleep-schedule window (routed by the App's onEditEntry). An inactivity period
-                // has nothing to edit (no task behind it) and only offers Remove.
-                if (!target.inactivity) {
+                // PRD §8: the menu on a task / period / sleep panel leads with "Edit" — a task panel
+                // opens the calendar edit window, a no-screen or inactivity period the shared period
+                // editor, a sleep band the §17 sleep-schedule window (all routed by the App's
+                // onEditEntry). A DERIVED grey band is display-only (no panel behind it, so no entryId)
+                // and has nothing to edit.
+                if (!target.inactivity || target.entryId != null) {
                     DropdownMenuItem(
                         text = { Text("Edit") },
                         onClick = { closeMenu(); onEditEntry(target) },
@@ -4443,7 +4446,7 @@ private fun panelBubbleSection(r: PlacedRecord, tz: TimeZone, times: String? = n
 
 /** PRD §8/§12: a placed element's true (un-clipped) start–end line; an open-ended start shows "∞". */
 private fun placedTimeRange(r: PlacedRecord, tz: TimeZone): String =
-    "${hmOrInfinity(r.fullStartMillis, r.openStart, tz)} – ${formatHm(r.fullEndMillis, tz)}"
+    "${hmOrInfinity(r.fullStartMillis, r.openStart, tz)} – ${hmOrInfinityEnd(r.fullEndMillis, tz)}"
 
 /**
  * PRD §8 hover: the section stack the cursor is currently over, and where. [pos] is the cursor position in
@@ -4779,7 +4782,9 @@ private fun CalendarBlock(
                                             // no-screen period gets the times-only editor), then reset so
                                             // a third tap starts a fresh pair. An inactivity period has
                                             // nothing to edit (PRD §8).
-                                            if (!record.inactivity) onEditEntry(record)
+                                            if (!record.inactivity || record.entryId != null) {
+                                                onEditEntry(record)
+                                            }
                                             lastTapUptime = 0L
                                         } else {
                                             lastTapUptime = downUptime
@@ -4992,6 +4997,21 @@ private fun CalendarBlockBody(color: Color, title: String, showTitle: Boolean, h
 
 private fun twoDigits(n: Int): String = n.toString().padStart(2, '0')
 
+/** The calendar date of [millis] as the ISO `YYYY-MM-DD` the period editor's date field reads and writes. */
+private fun formatDate(millis: Long, tz: TimeZone): String =
+    Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz).date.toString()
+
+/** `YYYY-MM-DD` + `H:mm`/`HH:mm` -> that local instant; null while either half is not (yet) valid. */
+private fun parseDateTime(dateText: String, timeText: String, tz: TimeZone): Long? {
+    val date = runCatching { LocalDate.parse(dateText.trim()) }.getOrNull() ?: return null
+    val parts = timeText.trim().split(":")
+    if (parts.size != 2) return null
+    val h = parts[0].toIntOrNull() ?: return null
+    val m = parts[1].toIntOrNull() ?: return null
+    if (h !in 0..23 || m !in 0..59) return null
+    return LocalDateTime(date, LocalTime(h, m)).toInstant(tz).toEpochMilliseconds()
+}
+
 private fun formatHm(millis: Long, tz: TimeZone): String {
     val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz)
     return "${twoDigits(dt.hour)}:${twoDigits(dt.minute)}"
@@ -5003,7 +5023,14 @@ private fun formatHm(millis: Long, tz: TimeZone): String {
  * wall-clock `HH:MM`.
  */
 private fun hmOrInfinity(millis: Long, openStart: Boolean, tz: TimeZone): String =
-    if (openStart) "∞" else formatHm(millis, tz)
+    if (openStart || SchedulerDomain.isOpenPast(millis)) "∞" else formatHm(millis, tz)
+
+/**
+ * PRD §8/§12: the END label of a period — "∞" when it never ends (a hand-added period saved with an open
+ * end, [SchedulerDomain.isOpenFuture]), else the wall-clock `HH:MM`.
+ */
+private fun hmOrInfinityEnd(millis: Long, tz: TimeZone): String =
+    if (SchedulerDomain.isOpenFuture(millis)) "∞" else formatHm(millis, tz)
 
 /** Parse "H:mm" / "HH:mm" onto the calendar date of [refMillis]; null when malformed. */
 private fun parseHmOnDateOf(text: String, refMillis: Long, tz: TimeZone): Long? {
@@ -5040,6 +5067,9 @@ private fun PinSwitchRow(label: String, checked: Boolean, onCheckedChange: (Bool
  *    (or the title currently picked from the suggestions);
  *  - a **Title suggestions** menu reusing an existing task's title.
  * Two fields edit the begin/end times. Rendered by [org.example.project.App] over everything.
+ *
+ * A no-screen / inactivity PERIOD has no task behind it and can run to "∞", so it is not edited here but in
+ * [PeriodEditWindow] — the one editor both of the §8 periods share.
  */
 @Composable
 fun ManualEntryEditWindow(
@@ -5062,11 +5092,6 @@ fun ManualEntryEditWindow(
      * (null taskId) has no task object to carry the flags, so the switches are hidden for it.
      */
     screenFlagsForTaskId: (TaskId) -> Pair<Boolean, Boolean>? = { null },
-    /**
-     * PRD §8: times-only mode, used to edit a **no-screen period** — it has no task behind it, so the
-     * window shows just the begin/end time fields (no task field/menus, no pins, no screen switches).
-     */
-    timesOnly: Boolean = false,
 ) {
     var title by remember { mutableStateOf(initialTitle) }
     // The explicitly-picked existing task, if any. PRD §8: unlike the tree, the calendar does NOT
@@ -5099,35 +5124,29 @@ fun ManualEntryEditWindow(
             modifier = Modifier.width(320.dp).clickable(enabled = false) {},
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    if (timesOnly) "Edit no-screen period" else "Edit task",
-                    style = MaterialTheme.typography.titleSmall,
-                )
+                Text("Edit task", style = MaterialTheme.typography.titleSmall)
 
-                if (!timesOnly) {
-                    OutlinedTextField(
-                        value = title,
-                        onValueChange = {
-                            title = it
-                            // Typing reverts to the default (first task of the menu), not "New task".
-                            selectedTaskId = null
-                            newTaskChosen = false
-                        },
-                        label = { Text("Task") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = {
+                        title = it
+                        // Typing reverts to the default (first task of the menu), not "New task".
+                        selectedTaskId = null
+                        newTaskChosen = false
+                    },
+                    label = { Text("Task") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
 
                 // --- Tasks menu: New task + existing leaf matches. Pass no exclusion so the matching
                 // task shows (and highlights) even when it was picked from the suggestions below. PRD §8:
                 // the first real task is selected by default; "New task" only when explicitly chosen. ---
-                val taskEntries = if (timesOnly) emptyList() else taskMenuEntries(title, null)
+                val taskEntries = taskMenuEntries(title, null)
                 // The effective task this window will save: the explicit pick, else (unless the user
                 // chose "New task") the first real task of the menu.
                 val effectiveTaskId =
                     when {
-                        timesOnly -> initialTaskId
                         newTaskChosen -> null
                         selectedTaskId != null && taskEntries.any { it.taskId == selectedTaskId } -> selectedTaskId
                         else -> SchedulerDomain.calendarDefaultMenuTaskId(taskEntries)
@@ -5156,15 +5175,11 @@ fun ManualEntryEditWindow(
                             emptyList()
                         },
                     suggestions =
-                        if (timesOnly) {
-                            emptyList()
-                        } else {
-                            titleSuggestions(title).map { suggestion ->
-                                EditMenuItem(suggestion) {
-                                    title = suggestion
-                                    selectedTaskId = taskIdForTitle(suggestion)
-                                    newTaskChosen = false
-                                }
+                        titleSuggestions(title).map { suggestion ->
+                            EditMenuItem(suggestion) {
+                                title = suggestion
+                                selectedTaskId = taskIdForTitle(suggestion)
+                                newTaskChosen = false
                             }
                         },
                 )
@@ -5187,15 +5202,12 @@ fun ManualEntryEditWindow(
                 }
 
                 // PRD §8 pin switches: the four independent pin dimensions. Only "existence" is enforced
-                // today (a pinned panel survives a reschedule); the rest are stored and shown. A
-                // no-screen period (times-only mode) is not rescheduled, so it has no pins to show.
-                if (!timesOnly) {
-                    EditMenuSectionLabel("Pins")
-                    PinSwitchRow("Existence", pins.existence) { pins = pins.copy(existence = it) }
-                    PinSwitchRow("Position", pins.position) { pins = pins.copy(position = it) }
-                    PinSwitchRow("Spanning", pins.spanning) { pins = pins.copy(spanning = it) }
-                    PinSwitchRow("Distance", pins.distance) { pins = pins.copy(distance = it) }
-                }
+                // today (a pinned panel survives a reschedule); the rest are stored and shown.
+                EditMenuSectionLabel("Pins")
+                PinSwitchRow("Existence", pins.existence) { pins = pins.copy(existence = it) }
+                PinSwitchRow("Position", pins.position) { pins = pins.copy(position = it) }
+                PinSwitchRow("Spanning", pins.spanning) { pins = pins.copy(spanning = it) }
+                PinSwitchRow("Distance", pins.distance) { pins = pins.copy(distance = it) }
 
                 // PRD §8 screen switches: task-level flags (not per-panel), re-seeded whenever the
                 // effective task changes. Hidden for a calendar-only "New task" (no task object yet).
@@ -5230,6 +5242,224 @@ fun ManualEntryEditWindow(
             }
         }
     }
+}
+
+/**
+ * PRD §8: which of the two hand-added calendar periods a [PeriodEditWindow] is editing. Both are placed,
+ * edited and drawn the same way; they differ only in who may be scheduled inside them (§9).
+ */
+enum class CalendarPeriodKind {
+    /** §8/§9 "No screen": a decorative hatched period only tasks needing no screen are scheduled in. */
+    NoScreen,
+
+    /** §8/§12 "Inactivity": a real GREY period the scheduler places nothing in at all. */
+    Inactivity,
+}
+
+/**
+ * PRD §8: how one bound of a period is given — an explicit wall-clock instant, the moving **now**-line, or
+ * **∞** (the period is open-ended on that side: it began before anything the calendar can show, or never
+ * ends). "Now" is a mode rather than a shortcut that fills the fields, so "from ∞ to now" means the instant
+ * the user saves, not the instant they opened the window.
+ */
+private enum class PeriodBound { At, Now, Infinite }
+
+/**
+ * PRD §8 "add a no-screen period" / "add an inactivity period": the period editor, opened by both
+ * contextual-menu entries and by a period's own "Edit". The right-click time only pre-fills it — nothing is
+ * laid on the calendar until Save — so a period can be given any span, including the open-ended ones the
+ * grid cannot express by dragging: **∞ → now** wipes the recorded past (every task panel and every banked
+ * record the period covers is removed, §9), and **now → ∞** keeps the scheduler out of the rest of the
+ * timeline.
+ *
+ * The two kinds share this one window: they are the same object with different rules about who may run
+ * inside them, and a second editor is how two things that must agree drift apart.
+ */
+@Composable
+fun PeriodEditWindow(
+    kind: CalendarPeriodKind,
+    isNew: Boolean,
+    startMillis: Long,
+    endMillis: Long,
+    nowMillis: Long,
+    tz: TimeZone,
+    onSave: (startMillis: Long, endMillis: Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // An already-open bound has no wall-clock time to show, so its (hidden) fields are seeded from `now`
+    // rather than from the sentinel instant — switching the bound back to "date & time" then offers today,
+    // not the year 1900.
+    val startSeed = if (SchedulerDomain.isOpenPast(startMillis)) nowMillis else startMillis
+    val endSeed = if (SchedulerDomain.isOpenFuture(endMillis)) nowMillis else endMillis
+    var startBound by remember {
+        mutableStateOf(if (SchedulerDomain.isOpenPast(startMillis)) PeriodBound.Infinite else PeriodBound.At)
+    }
+    var endBound by remember {
+        mutableStateOf(if (SchedulerDomain.isOpenFuture(endMillis)) PeriodBound.Infinite else PeriodBound.At)
+    }
+    var startDateText by remember { mutableStateOf(formatDate(startSeed, tz)) }
+    var startTimeText by remember { mutableStateOf(formatHm(startSeed, tz)) }
+    var endDateText by remember { mutableStateOf(formatDate(endSeed, tz)) }
+    var endTimeText by remember { mutableStateOf(formatHm(endSeed, tz)) }
+
+    val noScreen = kind == CalendarPeriodKind.NoScreen
+    val label = if (noScreen) "no-screen period" else "inactivity period"
+    val resolvedStart =
+        when (startBound) {
+            PeriodBound.Infinite -> SchedulerDomain.OPEN_PAST_MILLIS
+            PeriodBound.Now -> nowMillis
+            PeriodBound.At -> parseDateTime(startDateText, startTimeText, tz)
+        }
+    val resolvedEnd =
+        when (endBound) {
+            PeriodBound.Infinite -> SchedulerDomain.OPEN_FUTURE_MILLIS
+            PeriodBound.Now -> nowMillis
+            PeriodBound.At -> parseDateTime(endDateText, endTimeText, tz)
+        }
+    // Save stays disabled while a field is half-typed or the period runs backwards, so a malformed entry can
+    // never be silently rounded into a panel the user did not ask for.
+    val saveable = resolvedStart != null && resolvedEnd != null && resolvedEnd > resolvedStart
+
+    // Full-screen scrim; clicking outside dismisses (PRD §8 floating window over everything).
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.25f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 12.dp,
+            border = BorderStroke(1.dp, CalColors.grid),
+            // Swallow clicks so they don't reach the dismissing scrim.
+            modifier = Modifier.width(340.dp).clickable(enabled = false) {},
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text =
+                        when {
+                            !isNew -> "Edit $label"
+                            noScreen -> "Add a $label"
+                            else -> "Add an $label"
+                        },
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text =
+                        if (noScreen) {
+                            "Only tasks that need no screen are scheduled here. On-screen task panels and " +
+                                "the work banked inside it are removed."
+                        } else {
+                            "Grey: the scheduler places nothing here at all. Every task panel and every " +
+                                "hour of work banked inside it are removed."
+                        },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                PeriodBoundEditor(
+                    label = "Begins",
+                    bound = startBound,
+                    onBoundChange = { startBound = it },
+                    infiniteLabel = "∞ (always)",
+                    dateText = startDateText,
+                    onDateChange = { startDateText = it },
+                    timeText = startTimeText,
+                    onTimeChange = { startTimeText = it },
+                    valid = resolvedStart != null,
+                )
+                PeriodBoundEditor(
+                    label = "Ends",
+                    bound = endBound,
+                    onBoundChange = { endBound = it },
+                    infiniteLabel = "∞ (never)",
+                    dateText = endDateText,
+                    onDateChange = { endDateText = it },
+                    timeText = endTimeText,
+                    onTimeChange = { endTimeText = it },
+                    valid = resolvedEnd != null,
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        enabled = saveable,
+                        onClick = {
+                            val start = resolvedStart
+                            val end = resolvedEnd
+                            if (start != null && end != null && end > start) onSave(start, end)
+                        },
+                    ) { Text("Save") }
+                }
+            }
+        }
+    }
+}
+
+/** One bound of [PeriodEditWindow]: the three [PeriodBound] choices, plus the date/time fields "At" uses. */
+@Composable
+private fun PeriodBoundEditor(
+    label: String,
+    bound: PeriodBound,
+    onBoundChange: (PeriodBound) -> Unit,
+    infiniteLabel: String,
+    dateText: String,
+    onDateChange: (String) -> Unit,
+    timeText: String,
+    onTimeChange: (String) -> Unit,
+    valid: Boolean,
+) {
+    EditMenuSectionLabel(label)
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        PeriodBoundChip("date & time", bound == PeriodBound.At) { onBoundChange(PeriodBound.At) }
+        PeriodBoundChip("now", bound == PeriodBound.Now) { onBoundChange(PeriodBound.Now) }
+        PeriodBoundChip(infiniteLabel, bound == PeriodBound.Infinite) { onBoundChange(PeriodBound.Infinite) }
+    }
+    if (bound == PeriodBound.At) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                value = dateText,
+                onValueChange = onDateChange,
+                label = { Text("YYYY-MM-DD") },
+                isError = !valid,
+                singleLine = true,
+                modifier = Modifier.weight(1.6f),
+            )
+            OutlinedTextField(
+                value = timeText,
+                onValueChange = onTimeChange,
+                label = { Text("HH:mm") },
+                isError = !valid,
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+/** One selectable choice of a [PeriodBoundEditor]. */
+@Composable
+private fun PeriodBoundChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (selected) MaterialTheme.colorScheme.onSurface else CalColors.muted,
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .border(
+                1.dp,
+                if (selected) MaterialTheme.colorScheme.primary else CalColors.grid,
+                RoundedCornerShape(4.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+    )
 }
 
 /**

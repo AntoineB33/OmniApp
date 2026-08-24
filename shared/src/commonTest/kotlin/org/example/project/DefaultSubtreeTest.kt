@@ -27,6 +27,10 @@ import org.example.project.scheduler.state.SchedulerState
  * must not, that one Ctrl+Z takes the whole seeded sub-tree back with the title that pulled it in, and — per
  * the persisted-DB compatibility rule — that a payload written before the feature existed decodes to "no
  * template, switch off" while a template round-trips.
+ *
+ * Also the two clipboard rules (§13): pasting FOREIGN text creates a task, so it seeds — but a payload the app
+ * wrote carries an id, and a copy of a sub-tree comes back as itself however that id resolves. And the menu's
+ * on-demand "add default sub-tree", which ignores the switch and appends.
  */
 class DefaultSubtreeTest {
 
@@ -421,5 +425,256 @@ class DefaultSubtreeTest {
 
         assertEquals(shared, s.cells[reusing]!!.taskId)
         assertEquals(listOf("Inherited"), childTitles(s, reusing))
+    }
+
+    // ---- the graft and the clipboard ----------------------------------------------------------
+
+    /** Select [cellId] the way a click does, so a paste has a main selection to land on. */
+    private fun select(state: SchedulerState, cellId: CellId): SchedulerState =
+        SchedulerReducer.reduce(
+            state,
+            SchedulerIntent.ClickCell(
+                cellId = cellId,
+                ctrl = false,
+                shift = false,
+                visibleOrder = SchedulerDomain.selectableVisibleOrder(state),
+            ),
+        )
+
+    private fun paste(state: SchedulerState, cellId: CellId, text: String): SchedulerState =
+        SchedulerReducer.reduce(select(state, cellId), SchedulerIntent.PasteTree(text))
+
+    @Test
+    fun pasting_a_title_onto_an_empty_cell_grafts_the_template() {
+        // PRD §4/§7: a paste that MINTS a task creates one exactly as typing its title does. Pasting foreign
+        // text onto a selected empty cell never opens an Edit session, so the graft cannot ride
+        // `endEditSession` here — it has to happen in the paste itself.
+        val s0 = withTemplate(listOf(node("dst/0", "Plan"), node("dst/1", "Do")))
+        val cell = firstCell(s0)
+        val s = paste(s0, cell, "Project")
+
+        assertEquals("Project", s.tasks[s.cells[cell]!!.taskId!!]!!.title)
+        assertEquals(listOf("Plan", "Do"), childTitles(s, cell))
+    }
+
+    @Test
+    fun a_pasted_forest_seeds_every_minted_leaf_and_never_over_the_clipboard_s_own_children() {
+        val s0 = withTemplate(listOf(node("dst/0", "Plan")))
+        val cell = firstCell(s0)
+        val s = paste(s0, cell, "A\n\tB\n\tC")
+
+        assertEquals(listOf("B", "C"), childTitles(s, cell), "the clipboard's children are the sub-tree")
+        val (b, c) = childCells(s, cell)
+        assertEquals(listOf("Plan"), childTitles(s, b), "a leaf the paste minted is a task the user created")
+        assertEquals(listOf("Plan"), childTitles(s, c))
+    }
+
+    @Test
+    fun a_cut_leaf_pasted_back_is_restored_not_seeded() {
+        // Restore rebuilds a task under its own id — it is not a task the user just created, so a
+        // Ctrl+X → Ctrl+V round-trip must return the leaf exactly as it was cut.
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Leaf"))
+        val leafId = s.cells[firstCell(s)]!!.taskId!!
+        val text = SchedulerDomain.copyTreeText(select(s, firstCell(s)), select(s, firstCell(s)).selection)
+        s = SchedulerReducer.reduce(select(s, firstCell(s)), SchedulerIntent.CutSelection)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(true))
+
+        val target = firstCell(s)
+        s = paste(s, target, text)
+
+        assertEquals(leafId, s.cells[target]!!.taskId, "the cut id comes back, so this is a Restore")
+        assertEquals(emptyList(), childTitles(s, target), "a restored task must not gain rows it never had")
+    }
+
+    @Test
+    fun pasting_a_mirror_of_a_live_task_does_not_seed_it() {
+        // A sub-list belongs to the task id: a Mirror shows the task's OWN sub-tree, so there is nothing to
+        // seed — the same rule the graft already follows for a bound template node.
+        var s = SchedulerState.empty()
+        val leafCell = firstCell(s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(leafCell, "Leaf"))
+        val leafId = s.cells[leafCell]!!.taskId!!
+        val boxCell = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(boxCell, "Box"))
+        val boxList = s.tasks[s.cells[boxCell]!!.taskId!!]!!.childListId!!
+        val text = SchedulerDomain.copyTreeText(select(s, leafCell), select(s, leafCell).selection)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(true))
+
+        val target = s.lists[boxList]!!.cellIds.first()
+        s = paste(s, target, text)
+
+        assertEquals(leafId, s.cells[target]!!.taskId, "the same task, mirrored")
+        assertEquals(emptyList(), childTitles(s, target))
+    }
+
+    @Test
+    fun a_copy_of_a_sub_tree_never_seeds_even_when_its_ids_cannot_be_honoured() {
+        // The gate is the clipboard's id, not the identity it resolves to: a deep copy pasted into a list
+        // that already holds the task falls back to Fresh (canAssignTaskId refuses a duplicate sibling), and
+        // a clone of a copied sub-tree must still come back as itself, not as itself plus the template.
+        var s = SchedulerState.empty()
+        val leafCell = firstCell(s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(leafCell, "Leaf"))
+        val leafId = s.cells[leafCell]!!.taskId!!
+        val text = SchedulerDomain.copyTreeText(select(s, leafCell), select(s, leafCell).selection)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(true))
+
+        // The trailing placeholder of the SAME list, so the copied id would duplicate a sibling.
+        val target = s.lists[s.rootListId]!!.cellIds.last()
+        s = paste(s, target, text)
+
+        val pasted = s.cells[target]!!.taskId!!
+        assertTrue(pasted != leafId, "the id could not be honoured, so this is a Fresh clone")
+        assertEquals("Leaf", s.tasks[pasted]!!.title)
+        assertEquals(emptyList(), childTitles(s, target), "an app copy is a task's content, not a new task")
+    }
+
+    // ---- "add default sub-tree" (the §13 menu entry) --------------------------------------------
+
+    @Test
+    fun add_default_sub_tree_applies_the_template_under_the_cell() {
+        val s0 = withTemplate(listOf(node("dst/0", "Plan"), node("dst/1", "Do")))
+        // Built before the policy went on, so its sub-list starts empty.
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetCellTitle(firstCell(SchedulerState.empty()), "Project"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(s0.defaultSubtree))
+        val cell = firstCell(s)
+        assertEquals(emptyList(), childTitles(s, cell))
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell)))
+
+        assertEquals(listOf("Plan", "Do"), childTitles(s, cell))
+        assertTrue(cell in s.expanded, "what was just added must be visible, not folded away")
+    }
+
+    @Test
+    fun add_default_sub_tree_ignores_the_policy_switch() {
+        // The switch governs the AUTOMATIC graft; asking for the template explicitly is always an answer.
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        assertFalse(s.defaultSubtreeEnabled)
+
+        val cell = firstCell(s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell)))
+
+        assertEquals(listOf("Plan"), childTitles(s, cell))
+    }
+
+    @Test
+    fun add_default_sub_tree_goes_to_the_leaves_of_a_cell_that_is_already_broken_down() {
+        // A template says how a piece of work breaks down, so asking for it on a cell that is ALREADY broken
+        // down asks for it on the pieces — not for a second copy of it beside them.
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
+        val cell = firstCell(s)
+        val childList = s.tasks[s.cells[cell]!!.taskId!!]!!.childListId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[childList]!!.cellIds.first(), "Existing"))
+        val existing = s.lists[childList]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell)))
+
+        assertEquals(listOf("Existing"), childTitles(s, cell), "the cell itself is left alone")
+        assertEquals(listOf("Plan"), childTitles(s, existing), "the leaf is where the template lands")
+        assertTrue(cell in s.expanded, "the ancestors are opened, or the new rows are invisible")
+        assertTrue(existing in s.expanded)
+    }
+
+    @Test
+    fun add_default_sub_tree_reaches_every_leaf_and_no_branch() {
+        // Project { A { A1, A2 }, B } — the leaves are A1, A2 and B; A and Project are branches.
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
+        val cell = firstCell(s)
+        val projectList = s.tasks[s.cells[cell]!!.taskId!!]!!.childListId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[projectList]!!.cellIds.first(), "A"))
+        val cellA = s.lists[projectList]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[projectList]!!.cellIds.last(), "B"))
+        val cellB = s.lists[projectList]!!.cellIds[1]
+        val aList = s.tasks[s.cells[cellA]!!.taskId!!]!!.childListId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[aList]!!.cellIds.first(), "A1"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[aList]!!.cellIds.last(), "A2"))
+        val (cellA1, cellA2) = s.lists[aList]!!.cellIds.take(2)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        val tasksBefore = s.tasks.size
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell)))
+
+        assertEquals(listOf("Plan"), childTitles(s, cellA1))
+        assertEquals(listOf("Plan"), childTitles(s, cellA2))
+        assertEquals(listOf("Plan"), childTitles(s, cellB))
+        assertEquals(listOf("A1", "A2"), childTitles(s, cellA), "a branch is not a leaf")
+        assertEquals(listOf("A", "B"), childTitles(s, cell))
+        // Exactly one new task per leaf — nothing was seeded twice, and no seeded row seeded in turn.
+        assertEquals(tasksBefore + 3, s.tasks.size)
+    }
+
+    @Test
+    fun add_default_sub_tree_seeds_a_mirrored_leaf_once_and_never_walks_what_it_just_wrote() {
+        // "Shared" appears under both A and B (two root cells, so the mirror is allowed). Its sub-list
+        // belongs to the task id, so seeding it once IS seeding both occurrences — and the second visit must
+        // NOT find it newly non-empty and descend into the rows just written, which would be the cascade by
+        // another route.
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "A"))
+        val cellA = firstCell(s)
+        val cellB = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellB, "B"))
+        val aList = s.tasks[s.cells[cellA]!!.taskId!!]!!.childListId!!
+        val bList = s.tasks[s.cells[cellB]!!.taskId!!]!!.childListId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[aList]!!.cellIds.first(), "Shared"))
+        val sharedUnderA = s.lists[aList]!!.cellIds.first()
+        val shared = s.cells[sharedUnderA]!!.taskId!!
+        val sharedUnderB = s.lists[bList]!!.cellIds.first()
+        // Point B's first cell at the SAME task (the Change Task menu's "existing task" pick).
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(sharedUnderB, initialText = "Shared"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.PickTaskFromMenu(shared))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Down))
+        assertEquals(shared, s.cells[sharedUnderB]!!.taskId, "both cells point at the one task")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        val tasksBefore = s.tasks.size
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cellA, cellB)))
+
+        assertEquals(listOf("Plan"), childTitles(s, sharedUnderA))
+        assertEquals(listOf("Plan"), childTitles(s, sharedUnderB), "one sub-list, seen from both sides")
+        assertEquals(tasksBefore + 1, s.tasks.size, "seeded once, and never re-walked")
+    }
+
+    @Test
+    fun add_default_sub_tree_takes_every_cell_it_is_given_as_one_undoable_unit() {
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "A"))
+        val cellA = firstCell(s)
+        val cellB = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellB, "B"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        val beforeAdd = s
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cellA, cellB)))
+        assertEquals(listOf("Plan"), childTitles(s, cellA))
+        assertEquals(listOf("Plan"), childTitles(s, cellB))
+        assertEquals(1, s.histories.forCategory(HistoryCategory.Main).units.size - beforeAdd.histories.forCategory(HistoryCategory.Main).units.size)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertEquals(emptyList(), childTitles(s, cellA), "one Ctrl+Z takes the whole set back")
+        assertEquals(emptyList(), childTitles(s, cellB))
+        assertEquals(beforeAdd.captureTree(), s.captureTree())
+    }
+
+    @Test
+    fun add_default_sub_tree_is_a_no_op_without_a_template() {
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
+        val cell = firstCell(s)
+        assertTrue(s.defaultSubtree.isEmpty())
+
+        assertTrue(s === SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell))))
     }
 }

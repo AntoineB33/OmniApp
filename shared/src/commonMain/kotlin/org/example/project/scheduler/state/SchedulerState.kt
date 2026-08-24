@@ -369,6 +369,21 @@ data class SchedulerState(
      */
     val deepCopyMaxDepth: Int = SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH,
     /**
+     * PRD §13 deep copy: **what** a copy carries, beside how deep it goes — the three switches in the
+     * deep-copy window (see [org.example.project.scheduler.domain.SchedulerDomain.CopyOptions]). Like
+     * [deepCopyMaxDepth] these are **one answer for the whole account**, so §4's Ctrl+C / Ctrl+X and the
+     * menu's "copy" obey what the window was last told; authoritative (persisted + synced) and not an
+     * Undo/Redo unit. All three default to on, which is exactly what a payload written before they existed
+     * behaved as.
+     *
+     * [copyIncludeIds] off makes the text foreign by construction — it pastes back as new tasks, template
+     * and all (PRD §7) — [copyPriorityTables] off replaces each sub-list's weight table with the cell's
+     * percentage of that sub-list, and [copyIncludeText] off leaves the §13 task text behind.
+     */
+    val copyIncludeIds: Boolean = true,
+    val copyPriorityTables: Boolean = true,
+    val copyIncludeText: Boolean = true,
+    /**
      * PRD §5 the relative-priority window: the cells whose percentage is **pinned** while a relative
      * priority is retargeted, per (task, ancestor) pair (see [RelativePriorityPinKey]). Authoritative
      * user-authored data — it cannot be recomputed from anything else — so it is persisted **and** synced

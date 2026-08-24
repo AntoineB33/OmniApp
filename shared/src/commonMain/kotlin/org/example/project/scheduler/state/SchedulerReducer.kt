@@ -51,6 +51,23 @@ object SchedulerReducer {
     var liveRestGap: () -> SchedulerDomain.LiveRest? = { null }
 
     /**
+     * PRD §9/§12: the stretches the DEVICES say nobody was at a screen for — both calendar layers' OS
+     * lock/standby evidence intersected ([SchedulerDomain.observedNoScreenRegions]). An on-screen task banks
+     * NO record inside one: §9's rule is that the app must not assume the work happened.
+     *
+     * Injected rather than read here because `deviceLockedIntervals` is a platform call (a process launch on
+     * Windows) and this reducer is pure; the engine owns the scan and its cadence. Defaults to `{ emptyList() }`
+     * (no engine / tests) — which is exactly the behaviour before this seam existed.
+     *
+     * This is the SECOND source of no-screen ranges, not a replacement: the user's hand-drawn "No screen"
+     * panels are unioned in at each banking site. They were once the ONLY source, and since the sole producer
+     * of such a panel is the §8 contextual-menu action, the rule never fired at all on an account where the
+     * user had never drawn one — the app banked 43 h of "work" straight through a machine the OS reported
+     * asleep (account 3, 2026-08-24). Do not narrow this back to panels.
+     */
+    var noScreenEvidence: () -> List<TaskTimeRange> = { emptyList() }
+
+    /**
      * PRD §9: the instant every refill materializes the work plan out to, given `now` — **the horizon follows
      * the week the calendar is DISPLAYING** ([SchedulerDomain.scheduleHorizonEndMillis]) so the app never
      * computes days the user is not looking at. The engine injects a provider over the focused week `App.kt`
@@ -69,6 +86,8 @@ object SchedulerReducer {
             SchedulerIntent.EmptySelectedCells -> reduceEmptySelected(state)
             is SchedulerIntent.ExitEdit -> reduceExitEdit(state, intent.navigation)
             is SchedulerIntent.ToggleExpand -> reduceToggleExpand(state, intent.cellId)
+            is SchedulerIntent.RevealCell -> reduceRevealCell(state, intent.cellId, intent.ancestors)
+            is SchedulerIntent.ReplaceTaskTitles -> reduceReplaceTaskTitles(state, intent.titles)
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
             is SchedulerIntent.AssignTaskId -> commitDelta(state, assignTaskIdDelta(state, intent.cellId, intent.taskId))
             is SchedulerIntent.SelectTaskTree -> reduceSelectTaskTree(state, intent.id)
@@ -140,7 +159,7 @@ object SchedulerReducer {
             is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
             is SchedulerIntent.ExtendSchedule -> reduceExtendSchedule(state, intent.nowMillis)
             is SchedulerIntent.AdvanceSchedule ->
-                commitRecordChanges(state, advanceSchedule(state, intent.nowMillis))
+                commitRecordChanges(state, advanceSchedule(state, intent.nowMillis, noScreenEvidence()))
             is SchedulerIntent.SetAutomaticSchedule ->
                 if (state.automaticSchedule == intent.enabled) state
                 else state.copy(automaticSchedule = intent.enabled)
@@ -162,13 +181,19 @@ object SchedulerReducer {
             is SchedulerIntent.SetDefaultSubtreeEnabled ->
                 if (state.defaultSubtreeEnabled == intent.enabled) state
                 else state.copy(defaultSubtreeEnabled = intent.enabled)
+            is SchedulerIntent.AddDefaultSubtree -> reduceAddDefaultSubtree(state, intent.cellIds)
             is SchedulerIntent.SetSleepSchedule -> reduceSetSleepSchedule(state, intent.sleep, intent.todayEpochDay)
             is SchedulerIntent.SetSleepMode -> reduceSetSleepMode(state, intent.sleepingUntilMillis)
             is SchedulerIntent.MaterializePastSleep -> materializePastSleep(state, intent.ranges)
             is SchedulerIntent.ReportDeviceSleep ->
                 commitRecordChanges(
                     state,
-                    reduceReportDeviceSleep(state, intent.sleepStartEpochMillis, intent.sleepEndEpochMillis),
+                    reduceReportDeviceSleep(
+                        state,
+                        intent.sleepStartEpochMillis,
+                        intent.sleepEndEpochMillis,
+                        noScreenEvidence(),
+                    ),
                 )
             is SchedulerIntent.AddTaskPanel -> reduceAddTaskPanel(state, intent)
             is SchedulerIntent.AddNoScreenPeriod -> reduceAddNoScreenPeriod(state, intent)
@@ -180,6 +205,7 @@ object SchedulerReducer {
             is SchedulerIntent.RemoveTaskPanels -> reduceRemoveTaskPanels(state, intent.ids)
             is SchedulerIntent.ReplaceTaskPanels -> reduceReplaceTaskPanels(state, intent)
             is SchedulerIntent.RemoveRecordPeriod -> reduceRemoveRecordPeriod(state, intent)
+            is SchedulerIntent.StripNoScreenRecords -> reduceStripNoScreenRecords(state, intent.ranges)
             is SchedulerIntent.FocusWindow -> reduceFocusWindow(state, intent.window)
             is SchedulerIntent.SetCalendarFocus ->
                 reduceFocusWindow(state, if (intent.focused) AppWindow.Calendar else AppWindow.Tree)
@@ -200,6 +226,21 @@ object SchedulerReducer {
             is SchedulerIntent.SetDeepCopyMaxDepth -> {
                 val depth = intent.depth.coerceIn(SchedulerDomain.DEEP_COPY_DEPTH_RANGE)
                 if (state.deepCopyMaxDepth == depth) state else state.copy(deepCopyMaxDepth = depth)
+            }
+            is SchedulerIntent.SetCopyOptions -> {
+                val o = intent.options
+                if (state.copyIncludeIds == o.includeIds &&
+                    state.copyPriorityTables == o.priorityTables &&
+                    state.copyIncludeText == o.includeText
+                ) {
+                    state
+                } else {
+                    state.copy(
+                        copyIncludeIds = o.includeIds,
+                        copyPriorityTables = o.priorityTables,
+                        copyIncludeText = o.includeText,
+                    )
+                }
             }
             is SchedulerIntent.PasteTree -> reducePasteTree(state, intent.text)
             is SchedulerIntent.RecordNotification -> reduceRecordNotification(state, intent)
@@ -687,7 +728,7 @@ object SchedulerReducer {
     }
 
     /**
-     * PRD §4/§13 Cut (Ctrl+X): the deep copy [reduceCopySelection] takes, and then the very same cells are
+     * PRD §4/§13 Cut (Ctrl+X): the whole-sub-tree copy [reduceCopySelection] takes, and then those same cells are
      * emptied — the PRD §4 deletion, blank title and all, so the cut sub-tree's ids are freed and a paste
      * can rebuild it under them. Both halves ride [reduceEmptySelected]'s single history unit.
      */
@@ -711,6 +752,47 @@ object SchedulerReducer {
         val after = pasted.captureTree()
         if (before == after) return state
         return commitDelta(pasted, TreeMutationDelta(before = before, after = after, label = "Paste"))
+    }
+
+    /**
+     * PRD §7/§13 **"add default sub-tree"**: the template applied on demand, under every cell the §13 menu
+     * acts on ([SchedulerDomain.contextMenuCopyTargets], so the menu never disagrees with itself about what
+     * "the cell" is when it is right-clicked inside a multi-selection).
+     *
+     * Three deliberate differences from the automatic graft ([graftDefaultSubtree]):
+     *
+     * - the [SchedulerState.defaultSubtreeEnabled] switch is **not** consulted — it governs whether *new*
+     *   tasks are seeded without being asked, and this is the asking;
+     * - the cell's task need not be new;
+     * - the cells are expanded, so what was just added is visible rather than folded away.
+     *
+     * Where the rows land is [defaultSubtreeApplicationTargets]: the **leaves** of the sub-tree the cell
+     * roots, which is the cell itself when it parents nothing. A template is a description of how a piece of
+     * work is broken down, so asking for it on a cell that is already broken down means asking for it on the
+     * pieces — pushing a second copy of it in beside them is not what "add default sub-tree" reads as.
+     *
+     * The rows it lays down are built by [applyDefaultSubtreeNodes], which drives the editing primitives
+     * directly — so a seeded row never seeds in turn, here as in the graft.
+     */
+    private fun reduceAddDefaultSubtree(state: SchedulerState, cellIds: List<CellId>): SchedulerState {
+        if (state.editSession != null) return state
+        if (state.defaultSubtree.isEmpty()) return state
+        val targets = defaultSubtreeApplicationTargets(state, cellIds)
+        if (targets.leaves.isEmpty()) return state
+        val before = state.captureTree()
+        var working = state
+        for (cellId in targets.leaves) {
+            val childListId = working.cells[cellId]?.taskId?.let { working.tasks[it]?.childListId } ?: continue
+            working = applyDefaultSubtreeNodes(working, childListId, state.defaultSubtree)
+        }
+        val after = working.captureTree()
+        if (before == after) return state
+        return commitDelta(
+            // Everything walked, not only what was filled: the seeded rows sit at the bottom of the sub-tree,
+            // so the ancestors have to be open for them to be visible at all.
+            working.copy(expanded = state.expanded + targets.visited),
+            TreeMutationDelta(before = before, after = after, label = "Add default sub-tree"),
+        )
     }
 
     private fun editTextDelta(state: SchedulerState, text: String): Delta {
@@ -774,6 +856,101 @@ object SchedulerReducer {
         if (exited.cells[cellId] == null) return exited
         if ((cellId in exited.expanded) == wantExpanded) return exited
         return commitDelta(exited, ToggleExpandDelta(cellId))
+    }
+
+    /**
+     * PRD §4 Find & replace: put the row a search hit sits on on screen, then select it.
+     *
+     * Every collapsed ancestor along the hit's own path is expanded in ONE [SetExpandedDelta] — walking the
+     * hits with ↑/↓ would otherwise stack a separate expand/collapse unit per level per hit, and Ctrl+Z
+     * would spend a dozen presses climbing back out of the navigation before undoing anything the user did.
+     *
+     * Opening the find bar over a cell being edited is a §4 Forced Exit, exactly as [reduceToggleExpand]
+     * treats a click on another cell's arrow.
+     */
+    private fun reduceRevealCell(
+        state: SchedulerState,
+        cellId: CellId,
+        ancestors: List<CellId>,
+    ): SchedulerState {
+        var next = if (state.editSession != null) endEditSession(state) else state
+        if (!SchedulerDomain.isSelectableCell(next, cellId)) return next
+
+        var expandedAfter = next.expanded
+        for (ancestor in ancestors) {
+            if (ancestor in expandedAfter) continue
+            // The same guards [ToggleExpandDelta] applies: only a populated cell with a materialized
+            // sub-list can be expanded.
+            val taskId = next.cells[ancestor]?.taskId ?: continue
+            if (SchedulerDomain.isTextuallyEmptyCell(next, ancestor)) continue
+            val childListId = next.tasks[taskId]?.childListId ?: continue
+            if (next.lists[childListId] == null) continue
+            expandedAfter = expandedAfter + ancestor
+        }
+        if (expandedAfter != next.expanded) {
+            next = commitDelta(next, SetExpandedDelta(before = next.expanded, after = expandedAfter))
+        }
+
+        val after = selectionFor(next, main = cellId, explicitVia = ancestors.lastOrNull())
+        if (after == next.selection) return next
+        return commitDelta(
+            next,
+            SetSelectionDelta(before = next.selection, after = after),
+            HistoryCategory.Selection,
+        )
+    }
+
+    /**
+     * PRD §4 Find & replace ("replace all"): rename every task in [titles], as one history unit.
+     *
+     * Each rename goes through [applySetCellTitle] on one of the task's own cells — the very primitive
+     * Rename mode uses — so occurrences, the title index and the tombstone rule (a task with records/panels
+     * keeps its title and unbinds the cell instead) all behave exactly as they do when the title is typed.
+     *
+     * A replacement that consumes a whole title leaves a blank one, and §4's "the blank title is what
+     * deletes" then applies: the post-edit cleanup runs, and the selection is carried off any cell it
+     * collected. That sweep is skipped entirely when nothing was blanked, so a plain rename never collects
+     * unrelated empty cells the user left sitting mid-list.
+     */
+    private fun reduceReplaceTaskTitles(
+        state: SchedulerState,
+        titles: Map<TaskId, String>,
+    ): SchedulerState {
+        if (titles.isEmpty() || state.editSession != null) return state
+        val before = state.captureTree()
+        var next = state
+        var blanked = false
+        for ((taskId, title) in titles) {
+            val task = next.tasks[taskId] ?: continue
+            if (task.title == title) continue
+            val cellId =
+                task.occurrences.firstOrNull { SchedulerDomain.isSelectableCell(next, it) } ?: continue
+            if (title.isEmpty()) blanked = true
+            next = applySetCellTitle(next, cellId, title)
+        }
+        val cleaned = if (blanked) evaluatePostEditCleanup(next) else next
+        val after = cleaned.captureTree()
+        if (before == after) return state
+        val selectionAfter =
+            if (blanked) {
+                adjustSelectionAfterRemovedCells(
+                    beforeCleanup = next,
+                    afterCleanup = cleaned,
+                    selection = state.selection,
+                )
+            } else {
+                state.selection
+            }
+        return commitDelta(
+            state,
+            EmptyCellsDelta(
+                treeBefore = before,
+                treeAfter = after,
+                selectionBefore = state.selection,
+                selectionAfter = selectionAfter,
+                label = "Replace in titles",
+            ),
+        )
     }
 
     private fun reduceClick(state: SchedulerState, intent: SchedulerIntent.ClickCell): SchedulerState {
@@ -1128,7 +1305,10 @@ object SchedulerReducer {
         return commitPanels(resolved, resolvedPanels, label = "Add panel")
     }
 
-    /** PRD §8 "add a no-screen period": lay a "No screen" panel; on-screen task panels it covers are trimmed. */
+    /**
+     * PRD §8 "add a no-screen period": lay a "No screen" panel; on-screen task panels it covers are trimmed,
+     * and the on-screen RECORDS under its elapsed part are stripped ([stripRecordsUnderPeriod]).
+     */
     private fun reduceAddNoScreenPeriod(
         state: SchedulerState,
         intent: SchedulerIntent.AddNoScreenPeriod,
@@ -1145,10 +1325,16 @@ object SchedulerReducer {
                 noScreen = true,
             )
         val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
-        return commitPanels(resolved, resolvedPanels, label = "Add no-screen period")
+        return stripRecordsUnderPeriod(commitPanels(resolved, resolvedPanels, label = "Add no-screen period"), panel)
     }
 
-    /** PRD §8/§12 "add an inactivity period": a real panel recording the user was away; conflicts with nothing. */
+    /**
+     * PRD §8/§12 "add an inactivity period": a real GREY panel recording the user was away. Grey means the
+     * scheduler places nothing here — not even a task that needs no screen — so unlike a no-screen period it
+     * overrides EVERY task panel it covers (see [resolveScreenOverrides]) and strips every task record under
+     * its elapsed part, on-screen or not. That is what "an inactivity period from ∞ to now" does: it wipes
+     * the past clean of scheduled work.
+     */
     private fun reduceAddInactivityPeriod(
         state: SchedulerState,
         intent: SchedulerIntent.AddInactivityPeriod,
@@ -1164,7 +1350,11 @@ object SchedulerReducer {
                 endEpochMillis = end,
                 inactivity = true,
             )
-        return commitPanels(allocated, allocated.panels + panel, label = "Add inactivity period")
+        val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
+        return stripRecordsUnderPeriod(
+            commitPanels(resolved, resolvedPanels, label = "Add inactivity period"),
+            panel,
+        )
     }
 
     /**
@@ -1174,14 +1364,23 @@ object SchedulerReducer {
      * no-screen/inactivity periods themselves are never one.
      */
     private fun isOnScreenTaskPanel(state: SchedulerState, panel: TaskPanel): Boolean =
-        !panel.noScreen && !panel.inactivity && !panel.screenBreak && !panel.sleep && !panel.chore &&
-            (panel.taskId?.let { state.tasks[it]?.onScreen } ?: true)
+        isTaskPanel(panel) && (panel.taskId?.let { state.tasks[it]?.onScreen } ?: true)
+
+    /**
+     * PRD §8: true for a real (auto or user-authored) TASK panel of either screen kind — what an inactivity
+     * period overrides, since grey refuses on-screen and off-screen tasks alike. The periods themselves and
+     * the decorative reminder / screen-break / sleep bands are never one.
+     */
+    private fun isTaskPanel(panel: TaskPanel): Boolean =
+        !panel.noScreen && !panel.inactivity && !panel.screenBreak && !panel.sleep && !panel.chore
 
     /**
      * PRD §8 screen-override resolution: after the user lays / moves / resizes panel [changedId], trim or
-     * delete the panels of the OPPOSITE screen kind it now overlaps — an on-screen task panel overrides
-     * no-screen periods to fit itself, and a no-screen period overrides on-screen task panels. Off-screen
-     * tasks and inactivity periods conflict with neither, so they are left alone. A covered panel is
+     * delete the panels it now overlaps that cannot coexist with it — an on-screen task panel overrides
+     * no-screen periods to fit itself, and a no-screen period overrides on-screen task panels. An
+     * **inactivity period is grey**, and grey means the scheduler places nothing there (PRD §8/§9): it
+     * overrides every task panel it covers, off-screen ones included, and every task panel overrides it in
+     * turn. A covered panel is
      * deleted; one covered at an edge is trimmed; one covered in the middle is split (the far piece gets a
      * fresh id). Pieces shorter than [SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS] are dropped as slivers.
      */
@@ -1193,9 +1392,13 @@ object SchedulerReducer {
         val changed = panels.firstOrNull { it.id == changedId } ?: return state to panels
         val trimTarget: (TaskPanel) -> Boolean =
             when {
+                // Grey refuses everybody (PRD §8/§9), so an inactivity period overrides every task panel.
+                changed.inactivity -> { p -> isTaskPanel(p) }
                 changed.noScreen -> { p -> isOnScreenTaskPanel(state, p) }
-                isOnScreenTaskPanel(state, changed) -> { p -> p.noScreen }
-                else -> return state to panels
+                !isTaskPanel(changed) -> return state to panels
+                isOnScreenTaskPanel(state, changed) -> { p -> p.noScreen || p.inactivity }
+                // An off-screen task may run inside a no-screen period, but never inside a grey one.
+                else -> { p -> p.inactivity }
             }
         var working = state
         val out = ArrayList<TaskPanel>(panels.size)
@@ -1259,7 +1462,14 @@ object SchedulerReducer {
             )
         val (resolved, resolvedPanels) =
             resolveScreenOverrides(allocated, allocated.panels.toMutableList().also { it[index] = updated }, panelId)
-        return commitPanels(resolved, resolvedPanels, label = "Edit panel")
+        val committed = commitPanels(resolved, resolvedPanels, label = "Edit panel")
+        // PRD §8/§9: moving/resizing a no-screen or inactivity period re-applies its rule over its NEW span,
+        // exactly as laying it did — a period dragged over a past task must strip that work too.
+        return if (updated.noScreen || updated.inactivity) {
+            stripRecordsUnderPeriod(committed, updated)
+        } else {
+            committed
+        }
     }
 
     /** PRD §8 (uniform blocks): convert a task-record period into a user panel; drop it from the record. */
@@ -1375,7 +1585,7 @@ object SchedulerReducer {
      * tick returns the same instance.
      */
     private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
-        val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis))
+        val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
         if (!advanced.automaticSchedule) return advanced
         val filled =
             SchedulerDomain.fillSchedule(
@@ -1396,7 +1606,7 @@ object SchedulerReducer {
      * rules and must not rewrite what the user is looking at. A no-op tick returns the same instance.
      */
     private fun reduceExtendSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
-        val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis))
+        val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
         if (!advanced.automaticSchedule) return advanced
         val materializedUntil = SchedulerDomain.firstFreeMoment(advanced.panels, nowMillis)
         val filled =
@@ -1463,6 +1673,76 @@ object SchedulerReducer {
         return updated.copy(
             panels = SchedulerDomain.fillSchedule(
                 updated,
+                now,
+                liveRest = liveRestGap(),
+                horizonMillis = scheduleHorizonEndMillis(now),
+            ),
+        )
+    }
+
+    /**
+     * PRD §9/§12 retroactive: apply the "assume nothing happened" rule to work banked BEFORE that rule could
+     * see the OS lock history — subtract [ranges] from every ON-SCREEN task's record and materialize the
+     * removed spans as "Inactivity" panels, exactly as the banking path does going forward.
+     *
+     * Off-screen tasks are untouched: they are ALLOWED to run in a no-screen period (PRD §9), so their records
+     * over one are true. Same reason [appendRecordOutsideNoScreen] banks their whole span.
+     *
+     * Refills for the same reason [reduceRemoveRecordPeriod] does: the records seed the virtual clocks' past
+     * service, so removing some genuinely changes the plan, and the engine's signature watcher cannot see it.
+     * Returns the same instance when nothing was covered, so the start-up pass is a no-op on a clean account.
+     */
+    private fun reduceStripNoScreenRecords(
+        state: SchedulerState,
+        ranges: List<TaskTimeRange>,
+    ): SchedulerState = stripRecords(state, ranges, onScreenOnly = true)
+
+    /**
+     * PRD §8/§9/§12: the same rule the moment a period is **laid by hand** rather than at the next engine
+     * start — the span the user just declared they were not at a screen (or not working at all) cannot hold
+     * banked work, so the records under its elapsed part go. [TaskPanel.inactivity] decides who is affected:
+     * a no-screen period exempts off-screen tasks (§9 lets them run inside one), a grey inactivity period
+     * exempts nobody.
+     *
+     * A record is not an Undo/Redo unit (it lives outside the history, like every other banking side effect),
+     * so undoing the period restores the panels it trimmed but not the records it stripped — the same
+     * contract [reducePinRecord] and the advance tick already work under.
+     */
+    private fun stripRecordsUnderPeriod(state: SchedulerState, panel: TaskPanel): SchedulerState =
+        stripRecords(
+            state,
+            listOf(TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)),
+            onScreenOnly = !panel.inactivity,
+        )
+
+    /**
+     * Subtracts [ranges] from the record of every affected task (see [reduceStripNoScreenRecords] /
+     * [stripRecordsUnderPeriod] for which tasks those are) and materializes what was removed as past
+     * "Inactivity" panels. Returns the same instance when nothing was covered.
+     */
+    private fun stripRecords(
+        state: SchedulerState,
+        ranges: List<TaskTimeRange>,
+        onScreenOnly: Boolean,
+    ): SchedulerState {
+        if (ranges.isEmpty()) return state
+        val merged = SchedulerDomain.mergeOccupied(ranges)
+        val removed = ArrayList<TaskTimeRange>()
+        var tasks = state.tasks
+        for ((id, task) in state.tasks) {
+            if ((onScreenOnly && !task.onScreen) || task.record.isEmpty()) continue
+            val kept = SchedulerDomain.subtractRegions(task.record, merged)
+            if (kept == task.record) continue
+            removed += SchedulerDomain.intersectRegions(task.record, merged)
+            tasks = tasks + (id to task.copy(record = kept))
+        }
+        if (removed.isEmpty()) return state
+        val stripped = materializePastInactivity(state.copy(tasks = tasks), removed)
+        if (!stripped.automaticSchedule) return stripped
+        val now = clock.nowMillis()
+        return stripped.copy(
+            panels = SchedulerDomain.fillSchedule(
+                stripped,
                 now,
                 liveRest = liveRestGap(),
                 horizonMillis = scheduleHorizonEndMillis(now),
@@ -1877,14 +2157,25 @@ private fun pasteNodeInto(
             ),
         )
     }
-    if (node.children.isEmpty()) return working
+    // PRD §4/§7 **Default sub-tree**: pasting FOREIGN text onto an empty cell creates a task exactly as
+    // typing its title does, so the template is grafted under it. The gate is the clipboard's **id**, not
+    // [PasteIdentity]: an id means the app wrote this text, so what is landing is a task's own content —
+    // a copy of a sub-tree must come back as itself, whether it lands as a Mirror, a Restore, or (because
+    // [SchedulerDomain.canAssignTaskId] refused the id here) a Fresh clone. Only a payload with no id at
+    // all — another app's tab-indented list, or a pre-1.6.0 clipboard — is a task the user is creating.
+    // [graftDefaultSubtree]'s own "sub-list still untouched" guard then keeps a node that brought children
+    // of its own from being seeded on top of them, so this fires only on a bare new leaf.
+    fun seeded(s: SchedulerState): SchedulerState =
+        if (node.taskId == null) graftDefaultSubtree(s, cellId, state.tasks.keys) else s
+
+    if (node.children.isEmpty()) return seeded(working)
     // A non-blank title gives the cell a child sub-list with one empty placeholder (applySetCellTitle).
-    val childListId = working.tasks[taskId]?.childListId ?: return working
+    val childListId = working.tasks[taskId]?.childListId ?: return seeded(working)
     // Restore the child sub-list's weight-column header (PRD §4/§5).
     working.lists[childListId]?.let { l ->
         working = working.copy(lists = working.lists + (childListId to l.copy(weightColumns = node.childHeader)))
     }
-    val placeholder = working.lists[childListId]?.cellIds?.firstOrNull() ?: return working
+    val placeholder = working.lists[childListId]?.cellIds?.firstOrNull() ?: return seeded(working)
     working = pasteNodeInto(working, placeholder, node.children.first())
     var afterId = placeholder
     for (child in node.children.drop(1)) {
@@ -1892,7 +2183,7 @@ private fun pasteNodeInto(
         working = pasteNodeInto(withCell, newId, child)
         afterId = newId
     }
-    return working
+    return seeded(working)
 }
 
 private fun insertEmptyCellAfter(
@@ -2160,13 +2451,34 @@ private fun applySetPriorityWeight(
  * non-undoable side effect; it returns the same instance when nothing changed. Future panels are left
  * untouched (the §9 refill, [reduceRefreshSchedule], regenerates them).
  */
-private fun advanceSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
+/**
+ * PRD §9/§12: every stretch an on-screen task must NOT bank a record over — the user's hand-drawn "No screen"
+ * panels UNIONED with what the devices observed ([SchedulerReducer.noScreenEvidence]).
+ *
+ * Both halves are needed and neither is redundant. The panels are an assertion the user made and hold whatever
+ * any history says; the evidence is the OS's own lock/standby record, which is the only half that fires on an
+ * account where nobody ever drew a panel — the case that let 43 h of "work" bank straight through a sleeping
+ * machine before this union existed.
+ */
+private fun noScreenRangesFor(
+    state: SchedulerState,
+    noScreenEvidence: List<TaskTimeRange>,
+): List<TaskTimeRange> {
+    val drawn = state.panels.filter { it.noScreen }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+    if (drawn.isEmpty() && noScreenEvidence.isEmpty()) return emptyList()
+    return SchedulerDomain.mergeOccupied(drawn + noScreenEvidence)
+}
+
+private fun advanceSchedule(
+    state: SchedulerState,
+    nowMillis: Long,
+    noScreenEvidence: List<TaskTimeRange>,
+): SchedulerState {
     var tasks = state.tasks
     // PRD §9/§12: an elapsed span covered by a no-screen period banks NO record for an on-screen task —
     // the app must not assume the on-screen work happened, so the period reads as past inactivity (the
     // no-screen panel stays on the calendar; the task is still owed that work).
-    val noScreenRanges =
-        state.panels.filter { it.noScreen }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+    val noScreenRanges = noScreenRangesFor(state, noScreenEvidence)
     val coveredPieces = ArrayList<TaskTimeRange>()
     fun bank(taskId: TaskId?, startMillis: Long, endMillis: Long) {
         coveredPieces += noScreenCoveredPieces(tasks, noScreenRanges, taskId, startMillis, endMillis)
@@ -2389,6 +2701,7 @@ private fun reduceReportDeviceSleep(
     state: SchedulerState,
     sleepStart: Long,
     sleepEnd: Long,
+    noScreenEvidence: List<TaskTimeRange>,
 ): SchedulerState {
     val sleepLength = sleepEnd - sleepStart
     // §15: a device sleep counts as taking every screen break whose duration it covers (a long sleep satisfies
@@ -2409,8 +2722,7 @@ private fun reduceReportDeviceSleep(
             it.auto && !it.pinned &&
                 it.startEpochMillis <= sleepStart && sleepStart < it.endEpochMillis
         } ?: return base
-    val noScreenRanges =
-        base.panels.filter { it.noScreen }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+    val noScreenRanges = noScreenRangesFor(base, noScreenEvidence)
     val covered =
         noScreenCoveredPieces(base.tasks, noScreenRanges, current.taskId, current.startEpochMillis, sleepStart)
     val tasks =
@@ -2645,6 +2957,47 @@ private fun setCellTitleDelta(
     // same history unit — undoing the title undoes the sub-tree with it.
     val after = graftDefaultSubtree(named, cellId, state.tasks.keys).captureTree()
     return TreeMutationDelta(before = before, after = after, label = "Set title")
+}
+
+/**
+ * The cells [SchedulerIntent.AddDefaultSubtree] fills, and every cell it walked through to reach them.
+ */
+private class DefaultSubtreeTargets(val leaves: List<CellId>, val visited: Set<CellId>)
+
+/**
+ * PRD §7/§13 "add default sub-tree": the **leaves** of the sub-trees [cellIds] root — a cell that parents
+ * nothing being its own leaf, which is what makes the plain case (an empty cell, one template under it) and
+ * the deep case (a cell already broken down, the template under each piece) the same rule.
+ *
+ * Two things this must get right:
+ *
+ * - **The targets are read off the state BEFORE anything is written.** Filling a leaf gives it children, so a
+ *   traversal that kept walking a state it was mutating would come back to that task — mirrored elsewhere in
+ *   the same sub-tree — find it no longer a leaf, and seed the rows it had just laid down. That is the
+ *   cascade the graft avoids by calling the primitives directly, arriving here by another route.
+ * - **A task is visited once**, by id. A sub-list belongs to the task id, so every occurrence of a task is
+ *   the same sub-list: seeding it once IS seeding all of them, and the id set doubles as the cycle guard.
+ */
+private fun defaultSubtreeApplicationTargets(
+    state: SchedulerState,
+    cellIds: List<CellId>,
+): DefaultSubtreeTargets {
+    val leaves = mutableListOf<CellId>()
+    val visited = mutableSetOf<CellId>()
+    val seenTasks = mutableSetOf<TaskId>()
+    fun visit(cellId: CellId) {
+        val taskId = state.cells[cellId]?.taskId ?: return
+        if (!seenTasks.add(taskId)) return
+        visited += cellId
+        val children =
+            state.tasks[taskId]?.childListId
+                ?.let { state.lists[it]?.cellIds.orEmpty() }
+                .orEmpty()
+                .filter { state.cells[it]?.taskId != null }
+        if (children.isEmpty()) leaves += cellId else children.forEach(::visit)
+    }
+    cellIds.forEach(::visit)
+    return DefaultSubtreeTargets(leaves = leaves, visited = visited)
 }
 
 /**
@@ -2943,6 +3296,24 @@ internal data class PanelDelta(
     override fun undo(state: SchedulerState): SchedulerState = state.copy(panels = before)
 
     override fun redo(state: SchedulerState): SchedulerState = state.copy(panels = after)
+}
+
+/**
+ * PRD §4 Find & replace: the whole expansion set before/after revealing a search hit. One unit for the
+ * whole path, unlike [ToggleExpandDelta] which is one cell — see [SchedulerReducer.reduceRevealCell].
+ */
+internal data class SetExpandedDelta(
+    val before: Set<CellId>,
+    val after: Set<CellId>,
+) : Delta {
+    override val label: String = "Expand"
+
+    override val details: List<String>
+        get() = (after - before).map { "expand ${it.value}" } + (before - after).map { "collapse ${it.value}" }
+
+    override fun undo(state: SchedulerState): SchedulerState = state.copy(expanded = before)
+
+    override fun redo(state: SchedulerState): SchedulerState = state.copy(expanded = after)
 }
 
 internal data class ToggleExpandDelta(

@@ -37,6 +37,7 @@ import org.example.project.scheduler.persistence.SleepScanCheckpointStore
 import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.platform.DeviceSleepGap
 import org.example.project.scheduler.platform.Diagnostics
+import org.example.project.scheduler.platform.deviceLockedIntervals
 import org.example.project.scheduler.platform.currentDeviceKind
 import org.example.project.scheduler.platform.isScreenActive
 import org.example.project.scheduler.platform.sendSystemNotification
@@ -157,6 +158,21 @@ private const val ADVANCE_TICK_MILLIS_ACCEL: Long = 1_000
 // now-line moves every display tick; the heavier advance only needs ~1 s-of-sim granularity — banking
 // records at sub-second sim resolution is pointless and just churns the reducer.
 private const val SCHEDULE_ADVANCE_STEP_MILLIS: Long = 1_000
+
+/**
+ * PRD §9/§12: how often the engine re-reads the OS lock/standby history that feeds
+ * [SchedulerReducer.noScreenEvidence]. Reading it costs a process launch (a PowerShell query on Windows), so it
+ * is emphatically NOT on the advance cadence — 10 min, the same bucket the calendar's own layer scan uses.
+ */
+private const val NO_SCREEN_EVIDENCE_REFRESH_MILLIS: Long = 10L * 60 * 1000
+
+/**
+ * PRD §9/§12: how far back the engine asks about. The evidence only has to cover the span still waiting to be
+ * banked — the panels that elapsed since the last tick — so a day of slack is generous even across a long
+ * suspend, and it keeps the query bounded (ADR 0009: never O(total history)). The RETROACTIVE strip at startup
+ * asks over the display window instead, once.
+ */
+private const val NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS: Long = 24L * 60 * 60 * 1000
 
 // PRD §18 Alarms: how late (in REAL time, measured by [BoundarySweep] like every other boundary) a crossed
 // alarm instant may be and still ring on a device that has no OS alarm clock (see [launchAlarmSweep]). That
@@ -320,6 +336,13 @@ class SchedulerEngine(
     // next derive re-covers the pause); instead the first derive that completes with a session open again
     // retires it (see [refreshDerivedPausesNow]) — so a stale local presumption can never outlive the
     // server's account-wide answer, which may legitimately exclude the window (a peer was active).
+    // PRD §9/§12: the stretches the DEVICES observed nobody at a screen for — both calendar layers' OS
+    // lock/standby evidence intersected. Feeds SchedulerReducer.noScreenEvidence, so §9's "assume nothing
+    // happened" rule stops banking an on-screen task's record over a machine the OS says was asleep. Cached
+    // here because the read is a process launch; refreshed by [launchNoScreenEvidenceScan] on a coarse bucket.
+    // Derived, device-level and local: never persisted, never synced, never part of any fingerprint.
+    private val _noScreenEvidence = MutableStateFlow<List<TaskTimeRange>>(emptyList())
+
     private val _inactiveSince = MutableStateFlow<Long?>(null)
 
     /** End of this device's last finalized session — the live "Inactivity" tail's start (null = none pending). */
@@ -449,12 +472,18 @@ class SchedulerEngine(
         // duration (fluid under an accelerated leap; no post-leap snap when the derive lands). Placement-
         // only: the stored lastRestMillis still advances only via the derives' forward-only seeding
         // ([applySeededScreenBreaks]).
+        // PRD §9/§12: what the DEVICES observed about whether anyone was at a screen, feeding §9's "assume
+        // nothing happened" rule. Cached, because reading it is a process launch; refreshed on a coarse bucket
+        // by [launchNoScreenEvidenceScan] below and read here synchronously by every banking reducer path.
+        SchedulerReducer.noScreenEvidence = { _noScreenEvidence.value }
         SchedulerReducer.liveRestGap = {
             SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, clock.nowMillis())
         }
         // PRD §9: every refill materializes the plan out to the DISPLAYED week (24h floor when no calendar is
         // open), never unconditionally 168h — so staying on the current week computes no later day.
         SchedulerReducer.scheduleHorizonEndMillis = { now -> scheduleHorizonEndMillis(now) }
+        launchNoScreenEvidenceScan()
+        launchRetroactiveNoScreenStrip()
         launchAdvanceTick()
         launchScreenBreakSeeding()
         launchRuleChangeReschedule()
@@ -1222,6 +1251,109 @@ class SchedulerEngine(
      * Polled rather than slept-to-the-instant, like [launchHorizonReschedule], so a clock leap or a speed
      * change is noticed within one poll instead of after a full hour of real time.
      */
+    /**
+     * PRD §9/§12: read the stretches the devices say nobody was at a screen for over `[since, until]`.
+     *
+     * Only THIS device can be asked — there is no channel carrying a peer's lock history — so the other kind
+     * passes `null`, which [SchedulerDomain.observedNoScreenRegions] reads as assumed-LOCKED throughout, the
+     * same default the calendar layers use. On a phone-less account that makes the intersection exactly this
+     * computer's own locked spans.
+     */
+    private suspend fun readNoScreenEvidence(since: Long, until: Long): List<TaskTimeRange> {
+        val own = SchedulerDomain.layerForDeviceKind(currentDeviceKind())
+        // A query that FAILED is not evidence. `null` means "assumed locked throughout" to
+        // [SchedulerDomain.observedNoScreenRegions] — the right default for the CALENDAR, where hatching a
+        // stretch nobody can vouch for is honest — but the exact opposite of what the record bank needs: one
+        // PowerShell hiccup or a 20 s timeout would blanket the whole window as no-screen, suppress every
+        // record and grey out the day. So the OWN scan must SUCCEED to say anything at all; when it does not,
+        // the engine reports no evidence and banking behaves exactly as it did before this channel existed.
+        //
+        // The PEER's null keeps its assumed-locked meaning: that is the spec (a device nobody can ask was not
+        // in use), and it is what makes a phone-less account turn on the computer's own history. The asymmetry
+        // is deliberate — silence about a device we CANNOT reach is a rule, silence from the one we CAN reach
+        // is a failure.
+        //
+        // ADR 0009 / ADR 0002: the read spawns a PowerShell process and waits up to 20 s for it, so it must
+        // never run on the caller's dispatcher — blocking the engine scope stalls the advance tick and every
+        // cue/boundary sweep behind it. `App.kt` hands its own layer scan off the same way.
+        val locked =
+            withContext(Dispatchers.Default) {
+                runCatching { deviceLockedIntervals(since, until) }
+                    .getOrNull()
+                    ?.map { TaskTimeRange(it.startMillis, it.endMillis) }
+            } ?: return emptyList()
+        val computer = if (own == SchedulerDomain.ActivityLayer.NoComputerUnlocked) locked else null
+        val phone = if (own == SchedulerDomain.ActivityLayer.NoPhoneUnlocked) locked else null
+        return SchedulerDomain.observedNoScreenRegions(computer, phone, since, until)
+    }
+
+    /**
+     * PRD §9/§12 retroactive: apply the no-screen rule ONCE, at start-up, to work banked before the rule could
+     * see the OS lock history at all.
+     *
+     * Until [SchedulerReducer.noScreenEvidence] existed the rule keyed on hand-drawn "No screen" panels alone,
+     * and the only thing that creates one is the §8 contextual-menu action — so on an account where the user
+     * had never drawn one it never fired, and the app banked records straight through a machine its own OS
+     * reported asleep (account 3: 43 h across 206 records). Going forward the scan prevents that; this repairs
+     * what is already stored.
+     *
+     * Runs over the DISPLAYED past ([SchedulerDomain.SCHEDULE_HORIZON_MILLIS] back, the same floor the calendar
+     * uses) and is naturally idempotent — once the covered records are gone there is nothing left to subtract,
+     * so a later launch reduces to a no-op and returns the same state instance.
+     */
+    private fun launchRetroactiveNoScreenStrip() = scope.launch {
+        val now = clock.nowMillis()
+        val since = now - SchedulerDomain.SCHEDULE_HORIZON_MILLIS
+        val observed = readNoScreenEvidence(since, now)
+        if (observed.isEmpty()) return@launch
+        val before = vm.state.value
+        vm.dispatch(SchedulerIntent.StripNoScreenRecords(observed))
+        val after = vm.state.value
+        if (after === before) return@launch
+        // scripts/collect-diagnostics.bat: this REMOVES recorded work, so it must be visible in the timeline
+        // rather than silently changing every priority percentage.
+        fun recorded(state: SchedulerState): Long =
+            state.tasks.values.sumOf { task -> task.record.sumOf { it.endEpochMillis - it.startEpochMillis } }
+        Diagnostics.log(
+            "retroactive no-screen strip: removed ${(recorded(before) - recorded(after)) / 60_000}min of " +
+                "on-screen records over ${observed.size} observed no-screen span(s)",
+        )
+    }
+
+    /**
+     * PRD §9/§12: keep [_noScreenEvidence] fresh — the OS lock/standby history of every device kind that can be
+     * asked, intersected into the stretches nobody was at a screen for.
+     *
+     * Only THIS device can be asked (there is no channel carrying a peer's lock history), so the other kind
+     * passes `null`, which [SchedulerDomain.observedNoScreenRegions] reads as assumed-LOCKED throughout — the
+     * same default the calendar layers use. On a phone-less account that makes the intersection exactly this
+     * computer's own locked spans, which is the case that surfaced the bug.
+     *
+     * ADR 0009: the read costs a process launch, so it runs off the tick entirely — once per
+     * [NO_SCREEN_EVIDENCE_REFRESH_MILLIS], over a bounded [NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS] window, on the
+     * engine's own scope. A scan that fails leaves the previous answer standing rather than reverting to
+     * "nothing observed", so a transient query failure cannot silently re-enable banking over a sleeping
+     * machine.
+     */
+    private fun launchNoScreenEvidenceScan() = scope.launch {
+        while (true) {
+            val now = clock.nowMillis()
+            val since = now - NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS
+            val observed = readNoScreenEvidence(since, now)
+            if (observed != _noScreenEvidence.value) {
+                _noScreenEvidence.value = observed
+                // scripts/collect-diagnostics.bat: this is what the record bank actually applied, so an
+                // anomaly in a banked past panel is an anomaly in THIS answer. Logged only on change.
+                Diagnostics.log(
+                    "no-screen evidence: ${observed.size} span(s), " +
+                        "${observed.sumOf { it.endEpochMillis - it.startEpochMillis } / 60_000}min " +
+                        "over the last ${NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS / 3_600_000}h",
+                )
+            }
+            tickDelay(NO_SCREEN_EVIDENCE_REFRESH_MILLIS)
+        }
+    }
+
     private fun launchStaleReschedule() = scope.launch {
         fun pollInterval(): Long = if (timeAccelerated()) ADVANCE_TICK_MILLIS_ACCEL else ADVANCE_TICK_MILLIS_PROD
         // Nothing has re-planned yet at start-up; the rule-change watcher's first emission is about to, so

@@ -93,7 +93,9 @@ import org.example.project.ui.HistoryManagerWindow
 import org.example.project.ui.IconMenuButton
 import org.example.project.ui.raiseOnPress
 import org.example.project.ui.LateralMenu
+import org.example.project.ui.CalendarPeriodKind
 import org.example.project.ui.ManualEntryEditWindow
+import org.example.project.ui.PeriodEditWindow
 import org.example.project.ui.PlacedRecord
 import org.example.project.ui.ReminderEditWindow
 import org.example.project.ui.SimPauseScope
@@ -910,6 +912,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §14 "add a checked reminder": the right-click epoch-millis at which to open the reminder-check
         // window (null = closed).
         var addingReminderAtMillis by remember { mutableStateOf<Long?>(null) }
+        // PRD §8: the no-screen / inactivity period the period editor is open on (null = closed). Both
+        // "add a … period" menu entries and a period's own "Edit" open it — nothing is laid on the
+        // calendar until Save, which is what lets a period be given an open ("∞") bound the grid could
+        // never be dragged to.
+        var editingPeriod by remember { mutableStateOf<PeriodDraft?>(null) }
 
         // PRD §8 focus: the floating calendar window is the focused surface while it is open — so the
         // tree stops hijacking letter typing into Edit Mode and Ctrl+Z/Y route to the calendar history.
@@ -1115,13 +1122,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             // PRD §14 "add reminder": open the reminder editor at the click.
                             onAddReminderAt = { atMillis -> addingReminderAtMillis = atMillis },
-                            // PRD §8: lay a 1-hour no-screen / inactivity period at the right-click time
-                            // (then adjustable by drag/resize like any block).
+                            // PRD §8: open the period editor pre-filled with one hour from the right-click
+                            // time. The user picks the real bounds there (including "∞" and "now") and Save
+                            // lays the period; it stays adjustable by drag/resize like any block afterwards.
                             onAddNoScreenAt = { atMillis ->
-                                vm.dispatch(SchedulerIntent.AddNoScreenPeriod(atMillis, atMillis + 3_600_000L))
+                                editingPeriod =
+                                    PeriodDraft(CalendarPeriodKind.NoScreen, null, atMillis, atMillis + 3_600_000L)
                             },
                             onAddInactivityAt = { atMillis ->
-                                vm.dispatch(SchedulerIntent.AddInactivityPeriod(atMillis, atMillis + 3_600_000L))
+                                editingPeriod =
+                                    PeriodDraft(CalendarPeriodKind.Inactivity, null, atMillis, atMillis + 3_600_000L)
                             },
                             // PRD §8 (uniform blocks): committing a drag/resize updates the panel
                             // (auto blocks become user-authored), or pins a record into a panel.
@@ -1130,11 +1140,25 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     block, block.taskId, block.title, newStart, newEnd, block.pins, allowOverlap,
                                 )?.let(vm::dispatch)
                             },
-                            // PRD §8 "Edit": a sleep band's editable object is the §17 sleep schedule,
-                            // so its Edit opens the sleep window; every other panel opens the edit
-                            // window (a no-screen period in times-only mode, see below).
+                            // PRD §8 "Edit": a sleep band's editable object is the §17 sleep schedule, so
+                            // its Edit opens the sleep window; a no-screen / inactivity period has no task
+                            // behind it and opens the shared period editor; every other panel opens the
+                            // calendar edit window.
                             onEditEntry = { block ->
-                                if (block.sleep) sleepWindowOpen = true else editingBlock = block
+                                when {
+                                    block.sleep -> sleepWindowOpen = true
+                                    block.noScreen || block.inactivity ->
+                                        editingPeriod =
+                                            PeriodDraft(
+                                                kind =
+                                                    if (block.noScreen) CalendarPeriodKind.NoScreen
+                                                    else CalendarPeriodKind.Inactivity,
+                                                block = block,
+                                                startMillis = block.fullStartMillis,
+                                                endMillis = block.fullEndMillis,
+                                            )
+                                    else -> editingBlock = block
+                                }
                             },
                             // PRD §8 task contextual menu "Remove": delete the block by its source.
                             onRemoveEntry = { block -> removeBlockIntent(block)?.let(vm::dispatch) },
@@ -1192,9 +1216,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 screenFlagsForTaskId = { id ->
                                     schedulerState.tasks[id]?.let { it.onScreen to it.doableDuringBreak }
                                 },
-                                // PRD §8: a no-screen period has no task behind it — its editor is the
-                                // times-only variant (begin/end fields and Save).
-                                timesOnly = block.noScreen,
                                 onDismiss = { editingBlock = null; addingBlock = null },
                                 onSave = { taskId, title, startMillis, endMillis, pins, onScreen, doableDuringBreak ->
                                     val intent =
@@ -1214,6 +1235,37 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     addingBlock = null
                                 },
                             )
+                            }
+                        }
+
+                        // PRD §8: the period editor for both hand-added periods — add (no [block]) and
+                        // edit alike. Same modal z-layer as the calendar edit window.
+                        editingPeriod?.let { draft ->
+                            Box(Modifier.fillMaxSize().zIndex(100f)) {
+                                PeriodEditWindow(
+                                    kind = draft.kind,
+                                    isNew = draft.block == null,
+                                    startMillis = draft.startMillis,
+                                    endMillis = draft.endMillis,
+                                    nowMillis = nowMillis,
+                                    tz = tz,
+                                    onDismiss = { editingPeriod = null },
+                                    onSave = { start, end ->
+                                        val block = draft.block
+                                        val intent =
+                                            when {
+                                                // An existing period: the ordinary panel-bounds commit, which
+                                                // re-applies the period's own override rule over its new span.
+                                                block != null ->
+                                                    commitBoundsIntent(block, null, block.title, start, end, block.pins)
+                                                draft.kind == CalendarPeriodKind.NoScreen ->
+                                                    SchedulerIntent.AddNoScreenPeriod(start, end)
+                                                else -> SchedulerIntent.AddInactivityPeriod(start, end)
+                                            }
+                                        intent?.let(vm::dispatch)
+                                        editingPeriod = null
+                                    },
+                                )
                             }
                         }
 
@@ -1551,6 +1603,18 @@ private fun commitBoundsIntent(
 }
 
 /**
+ * PRD §8: what the period editor ([PeriodEditWindow]) is open on — which of the two periods, the block being
+ * edited (null while ADDING one), and the bounds the window opens with. [startMillis]/[endMillis] are the
+ * pre-fill only: what is laid comes back from the window's Save, which is where "∞"/"now" are resolved.
+ */
+private data class PeriodDraft(
+    val kind: CalendarPeriodKind,
+    val block: PlacedRecord?,
+    val startMillis: Long,
+    val endMillis: Long,
+)
+
+/**
  * PRD §8 task contextual menu "Remove": the intent that deletes a calendar [block] from its source —
  * a panel is removed, a green task-record period is dropped from the task record. Returns null when
  * the block has no removable identity (defensive).
@@ -1690,6 +1754,9 @@ private fun mergePanelsForDisplay(
                 // (drawn as decorative pattern / muted band) rather than task panels.
                 noScreen = head.noScreen,
                 inactivity = head.inactivity,
+                // PRD §8/§12: a hand-added period saved with an open ("∞") start reads as one in the hover
+                // bubble, exactly like a derived band that nothing precedes.
+                openStart = SchedulerDomain.isOpenPast(head.startEpochMillis),
             )
         }
     // The sleep windows render as their own labeled band behind the task blocks (drawn first), carved wherever

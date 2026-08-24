@@ -210,11 +210,51 @@ crossing can be silently clipped by a clock jump.
 - **GREY = the scheduler places nothing here** — inactivity period, sleep window, the look-away end to end,
   the pose's closed head. It is not a screen classification: it refuses off-screen tasks too. A pose's open
   tail and the 15-min pose are **not** grey.
+- **Grey refuses everybody on the calendar too, not only in the fill.** A hand-added inactivity period
+  overrides **every** task panel it covers (a no-screen period only the on-screen ones — §9 lets an
+  off-screen task run inside one), and any task panel overrides it in turn.
+- **A period LAID or DRAGGED over the past clears the work banked under it** — the on-screen tasks' records
+  for a no-screen period, everybody's for a grey one. Same rule as `StripNoScreenRecords` (`stripRecords`,
+  `onScreenOnly`), applied at once rather than at the next engine start; outside Undo/Redo like every write
+  to the record.
+- **Both "add a … period" entries open the PERIOD EDITOR** (`PeriodEditWindow`, one window for both kinds) —
+  they never lay a panel directly. Each bound is a date+time, **"now"** (resolved at Save), or **"∞"**
+  (`SchedulerDomain.OPEN_PAST_MILLIS` / `OPEN_FUTURE_MILLIS` — real 1900/2200 instants, never
+  `Long.MIN_VALUE`: every consumer does plain arithmetic on a panel's bounds). It is also a period's "Edit";
+  a *derived* grey band has none. The case it exists for: **an inactivity period from ∞ to now** empties the
+  recorded past.
 - Derived grey bands are `[displayFloor, now]` minus everything already drawn, except no-screen periods and
   screen breaks. Display-only, sub-minute remnants dropped.
-- Known and accepted: a task panel can sit under the computer hatch (the OS wins).
-- **Known inconsistency:** layers read the OS lock history; the engine's pause derivation still reads
-  `device_active_session`. Decide this before adding anything else that reads one and not the other.
+- Known and accepted: a task panel can sit under the computer hatch (the OS wins) — but it banks **no
+  record**, see below.
+- **Known inconsistency:** layers **and the §9 record bank** read the OS lock history; the engine's pause
+  derivation still reads `device_active_session`. Decide this before adding anything else that reads one and
+  not the other.
+
+### What may be banked as a record
+
+→ ADR 0002. **An on-screen task banks NO record over a no-screen period**, and "no-screen period" has two
+sources that are UNIONED, never one or the other:
+
+1. the user's hand-drawn "No screen" panels (`AddNoScreenPeriod` — the only producer of `noScreen = true`), and
+2. **what the devices observed** — both layers' OS lock/standby evidence intersected
+   (`SchedulerDomain.observedNoScreenRegions`), injected by the engine through `SchedulerReducer.noScreenEvidence`.
+
+Source 2 exists because source 1 alone is silent on any account where the user never drew a panel — which let
+43 h of "work" bank over a machine the OS reported asleep (account 3, 2026-08-24). Do not narrow the guard back
+to panels.
+
+- **An off-screen task is exempt**: §9 lets it run in a no-screen period, so its record over one is true.
+- **A failed lock query is NOT evidence.** `null` means "assumed locked throughout" — right for the calendar,
+  catastrophic for the bank, where one timeout would suppress every record. The OWN scan must SUCCEED to say
+  anything; a PEER's null keeps its assumed-locked meaning.
+- **The asserted regions are deliberately NOT evidence.** A screen break suspends a chunk rather than cutting
+  it (§15), so folding breaks/sleep windows in would stop recording across every break.
+- **The scan never runs on the engine's dispatcher** (ADR 0009): it is a process launch with a 20 s timeout,
+  and inline it stalls the advance tick and every sweep behind it. 10-minute bucket, bounded 24 h window.
+- `StripNoScreenRecords` applies the same rule retroactively, once at engine start. Idempotent, and unlike the
+  tick it **syncs** — `Task.record` is authoritative and the merge UNIONS it, so a local-only deletion would be
+  resurrected by a peer.
 
 ### Display hot path
 
@@ -299,6 +339,9 @@ writes it, `parseTreeText` reads it, and nothing else parses a clipboard.
   put a form-feed and a `\n`-escaped note in the user's clipboard.
 - **A copy carries everything the cell's Edit window holds** (the screen switch, the schedule unit, the text)
   plus its minimum time and its weight row, so Ctrl+V restores the task and not just its title.
+- **The priority-weight TABLE of every sub-list the copy walks travels with it** — the parent node carries the
+  sub-list's weight columns, each child carries its own value row. A copy that restored the rows without the
+  header would re-normalize every percentage at the destination.
 - **It carries the task id too**, so a paste lands on the SAME task, not a clone. Three identities
   (`PasteIdentity`): the id names a live *titled* task this cell may hold ⇒ **mirror** it (a sub-list belongs to
   the task id, so its own sub-tree shows and the clipboard's children/fields are never written over it); the id is
@@ -318,14 +361,43 @@ writes it, `parseTreeText` reads it, and nothing else parses a clipboard.
 - **The menu and Ctrl+C must agree about what "the cell" is**: a right-click INSIDE a multi-selection copies the
   whole block (`contextMenuCopyTargets`), exactly as Ctrl+C does; outside one, that cell alone. Copying only the
   cell under the cursor while a dozen sat selected is what shipped and was wrong.
-- **The depth is ONE number for the whole account** (`deepCopyMaxDepth`, default/reset 20, persisted + synced,
-  not an Undo/Redo unit). The deep-copy window opens on it and writes it back when it copies; **Ctrl+C is a deep
-  copy that never opens a window** and **Ctrl+X is that copy plus the §4 deletion** of the same cells (one history
-  unit, "Cut" — which is what frees the ids a later Ctrl+V restores).
-- "copy" is depth 1; **only "deep copy" opens the window**, which prints one path down to the depth. That path
+- **The three gestures divide by how much, and nothing else**: the menu's "copy" is the cell alone (depth 1),
+  "deep copy" is the window's number, **Ctrl+C is the ENTIRE sub-tree** (`FULL_SUBTREE_DEPTH`) and **Ctrl+X is
+  that copy plus the §4 deletion** of the same cells (one history unit, "Cut" — which is what frees the ids a
+  later Ctrl+V restores). Do not re-point the chord at the account depth: a number set for one deep copy would
+  then silently truncate every later Ctrl+C.
+- **The account's `deepCopyMaxDepth`** (default/reset 20, persisted + synced, not an Undo/Redo unit) is the
+  **deep-copy window's** number — the window opens on it and writes it back when it copies.
+- **What a copy carries is the account's too** — `CopyOptions`: `copyIncludeIds`, `copyPriorityTables`,
+  `copyIncludeText` (all default on, persisted + synced, not Undo/Redo units), the deep-copy window's three
+  switches. They govern **every** copy, the menu's "copy" and Ctrl+C/Ctrl+X included; scoped to the window they
+  would be unreachable from the everyday gesture.
+  - Tables off ⇒ the weight lines are replaced by `- priority in its sub-list: <n> %`, `cellShare` stored as the
+    node's **single weight** (so the paste path is untouched and the shares rebuild themselves), rounded at copy
+    time so a second round trip changes nothing.
+  - Ids off ⇒ the payload is foreign **by construction**: it pastes as new tasks and IS seeded with the §7
+    template. That is the switch's meaning, not a leak in the gate.
+- **only "deep copy" opens the window**, which prints one path down to the depth. That path
   follows the deepest branch measured over the **whole** depth asked for — measured over the remainder, every
   branch ties and the path jumps around as the number changes — and, over several copied cells, starts from
   whichever of them reaches furthest.
+
+### Find & replace (Ctrl+F)
+
+→ PRD §4. `TaskTreeSearch` is the whole of it; the bar (`ui/TaskTreeFindBar.kt`) is Compose-only state, like
+the calendar's zoom — a search is a way of looking at the tree, never a fact about it.
+
+- **The walk covers the WHOLE tree, and visits each LIST once.** A find over the visible rows would miss
+  every collapsed one; and a sub-list belongs to the task id, so a mirrored sub-tree is *one* list under
+  many parents — re-walking it per occurrence is exponential. Each match carries the path that reached it.
+- **A match is a range inside one title**, and a mirrored task is a row of its own — but **Replace All is
+  keyed by TASK**, once each: replacing means renaming (`applySetCellTitle`, the Rename-mode primitive), so
+  every cell pointing at the task follows. A replacement that empties a title deletes by §4's ordinary rule.
+- **Revealing a match is ONE history unit** (`SetExpandedDelta` over the whole expansion set), never one
+  `ToggleExpandDelta` per level. And **typing does not jump** — every jump is a selection unit, and
+  `Alt+←` would have to walk back one per keystroke. The shading is the live feedback.
+- The bar is a **sibling** of the tree, not a child, so the tree's `onPreviewKeyEvent` never sees what is
+  typed in it — and the tree's selection-keyed refocus effect must skip while the bar holds the keyboard.
 
 ### The default sub-tree
 
@@ -362,7 +434,26 @@ until it is applied to a real cell.
   calls those primitives *directly*, never the `SetCellTitle` intent, so it descends only through the
   template's own children and stops at its leaves. Never route it through the reducer's intent path.
 - A binding the live tree cannot honour (deleted, another task tree, or `canAssignTaskId` says no) falls back
-  to a new task. Paste and the other internal `applySetCellTitle` callers deliberately never graft.
+  to a new task.
+- **Only a paste of FOREIGN text seeds** — the gate is the clipboard's **id**, not `PasteIdentity`. An id
+  means the app wrote that text, so what is landing is a task's own content: a copied sub-tree comes back as
+  itself whether it lands as a Mirror, a Restore, or a Fresh clone (`canAssignTaskId` refused the id here).
+  Only a payload with **no id at all** — another app's tab-indented list, or a pre-1.6.0 clipboard — is a task
+  the user is creating. `graftDefaultSubtree`'s empty-sub-list guard then keeps the clipboard's own children
+  from being seeded over. The other internal `applySetCellTitle` callers still never graft.
+- **The §13 menu's "add default sub-tree" is the explicit answer** (`AddDefaultSubtree`), and it is
+  deliberately unlike the graft: it ignores the on/off switch (that switch governs the *automatic* graft, and
+  this is the asking) and it does not care whether the task is new. It acts on `contextMenuCopyTargets` — the
+  whole block inside a multi-selection, exactly as "copy" does — as one Main history unit. Offered only where a
+  template exists.
+- **It lands on the LEAVES of the sub-tree, never beside them** (`defaultSubtreeApplicationTargets`): a cell
+  that parents nothing is its own leaf, so the plain case and the deep case are one rule. A template says how
+  a piece of work breaks down, so asking for it on a cell already broken down asks for it on the pieces.
+  Every cell walked is expanded, or rows landing at the bottom would be invisible.
+- **The targets are read off the state BEFORE anything is written.** Filling a leaf gives it children; a
+  traversal of the state it is mutating would meet that task again (mirrored elsewhere in the same sub-tree),
+  find it no longer a leaf, and seed the rows it just wrote — the cascade, by another route. A task is visited
+  **once, by id**: one sub-list serves every occurrence, and the id set doubles as the cycle guard.
 
 ### Task trees are live alternatives, not backups
 

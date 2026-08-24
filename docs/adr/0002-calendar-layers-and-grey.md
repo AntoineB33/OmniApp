@@ -139,11 +139,44 @@ Tests: `NoScreenInactivityPanelTest.fill_places_nothing_inside_a_hand_added_inac
 `SchedulerSleepTest.fill_schedule_places_no_task_inside_a_sleep_window` /
 `…stops_at_the_sleep_window_and_resumes_after_it`.
 
+### Grey overrides on the CALENDAR too, not only in the fill — 2026-08-24
+
+"The scheduler places nothing here" was enforced forward (the fill) but not backward (what is already
+drawn). A hand-added inactivity period conflicted with nothing: it was laid straight over task panels and
+over banked records, so the calendar could show a grey period and, underneath it, the work it says did not
+happen.
+
+The override table is now:
+
+| the panel being laid / moved | overrides |
+| --- | --- |
+| inactivity period (grey) | **every** task panel it covers — on-screen and off-screen |
+| no-screen period | the **on-screen** task panels only (§9 lets an off-screen task run inside one) |
+| on-screen task panel | no-screen periods **and** inactivity periods |
+| off-screen task panel | inactivity periods only |
+
+and the same asymmetry decides whose **records** the period clears: a no-screen period strips the on-screen
+tasks' records under its elapsed part, a grey one strips everybody's. That strip is exactly
+`StripNoScreenRecords`' rule (§9's "assume nothing happened"), moved from "once, at the next engine start"
+to "the moment the period is laid or dragged" — the retroactive pass is still the same code (`stripRecords`),
+called with `onScreenOnly` flipped for grey. It stays outside Undo/Redo, like every other write to the
+record.
+
+**Why this became reachable:** the two menu entries used to lay a fixed hour at the click, so the widest
+period anybody could draw was a drag across the visible grid. They now open the **period editor**, whose two
+bounds can each be a date-and-time, "now", or **∞** (`SchedulerDomain.OPEN_PAST_MILLIS` /
+`OPEN_FUTURE_MILLIS` — real instants in 1900 / 2200, not saturating sentinels, because every consumer does
+plain arithmetic on a panel's bounds). "An inactivity period from ∞ to now" is then a one-gesture way to
+declare the whole recorded past empty, which is what the user asked for and what forced the question of what
+a grey period does to what is already there.
+
+Tests: `CalendarPeriodEditTest`.
+
 ### What did NOT change
 
 Both contextual-menu options stay (a no-screen period is "a period asserting both layers", an
 inactivity period is the grey one); the automatic override/trim between on-screen task panels and
-no-screen periods stays; and `materializePastInactivity` stays — a past no-screen period that covered a
+no-screen periods stays (it was widened, above, never narrowed); and `materializePastInactivity` stays — a past no-screen period that covered a
 SCHEDULED task still banks no record and materializes a real grey panel. That is about a task that was
 scheduled; the "draw nothing" rule is about an idle stretch where nothing was.
 
@@ -170,25 +203,50 @@ Display-only (no `entryId`): not removable, not draggable, unlike a hand-added i
 > A first pass read the spec's *"idling periods with no task panels are simply represented with no task
 > period"* as "draw nothing". It means "drawn as a period that is not a task".
 
-## Known and accepted: a task panel can sit UNDER the computer hatch
+## A task panel under the computer hatch — the deeper question, now ANSWERED
 
 On the reference machine the OS reports standby over stretches the schedule banked records for (e.g.
 10:25→10:43 on 2026-08-20). That is the device's record and the plan's assumption disagreeing, and the
 device wins — it is the source the spec names.
 
-The deeper question it exposes is whether `AdvanceSchedule` should bank a record at all over OS-reported
-standby (PRD §9's "assume nothing" rule currently keys on no-screen PANELS, not on the OS history). That
-is a scheduler change, not a display one, and was left alone.
+The deeper question this exposed — whether `AdvanceSchedule` should bank a record at all over OS-reported
+standby — was left alone here as "a scheduler change, not a display one". **It was answered on 2026-08-24,
+and the answer is no.** Account 3 showed why it could not stay open: past panels for on-screen tasks sat
+under BOTH layers, which by the identity above IS a no-screen period, and underneath them were 43.4 h of
+recorded "work" across 206 records. §9's "assume nothing" rule keyed on no-screen PANELS, and the only
+producer of one is the §8 menu action — so on an account where the user had never drawn one, the rule
+never fired at all.
+
+`SchedulerDomain.observedNoScreenRegions` now reads the two layers' evidence halves and intersects them;
+the engine injects that through `SchedulerReducer.noScreenEvidence`, and every banking path unions it with
+the hand-drawn panels. A one-shot `StripNoScreenRecords` applies the same rule to what older builds already
+stored. See CHANGELOG 1.6.0.
+
+Two things that bit, and will bite again:
+
+- **A failed query is not evidence.** `null` means "assumed locked throughout", which is right for the
+  calendar and catastrophic for the record bank — one PowerShell timeout would suppress every record. The
+  OWN scan must SUCCEED to say anything; the PEER's null keeps its assumed-locked meaning. Silence about a
+  device we cannot reach is a rule; silence from the one we can reach is a failure.
+- **The scan must not run on the engine's dispatcher** (ADR 0009). It is a process launch with a 20 s
+  timeout; inline, it stalls the advance tick and every sweep behind it.
+
+What is still NOT folded in: the asserted regions. A screen break suspends a chunk rather than cutting it
+(§15), so treating breaks and sleep windows as no-screen evidence would silently stop recording across
+every one of them. Only the OS evidence and the user's own drawn periods reach the bank.
 
 Tests: `CalendarLayerTest` (evidence source, the assumed-unlocked default, the seam filter, the
 no-screen intersection).
 
 ## Known inconsistency, deliberate and unresolved
 
-The OS lock history feeds the calendar's LAYERS only. The engine's own pause derivation
-(`inactivityGaps` → rest-pose seeding, sleep-band carving, and the §15 break-serving pause) still reads
-the `device_active_session` rows — so the calendar and the break cadence answer "was the user away?"
-from two different sources.
+The OS lock history feeds the calendar's LAYERS **and, since 2026-08-24, the §9 record bank**. The
+engine's own pause derivation (`inactivityGaps` → rest-pose seeding, sleep-band carving, and the §15
+break-serving pause) still reads the `device_active_session` rows — so the calendar and the break cadence
+answer "was the user away?" from two different sources.
+
+It used to be three: the bank answered from neither, reading only hand-drawn panels. That is what let
+43 h of work bank over a sleeping machine, and closing it moved the bank onto the OS's side of the split.
 
 Unifying them means deciding that a break is served by the OS saying the screen was locked, which
 changes cue timing and touches the engine/sync path — out of scope for a display fix. **Decide it

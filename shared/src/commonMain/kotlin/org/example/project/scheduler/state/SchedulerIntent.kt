@@ -4,6 +4,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTreeId
+import org.example.project.scheduler.model.TaskTimeRange
 
 /** PRD §8 extend/shorten: which edge of a calendar block the user grabbed. */
 enum class CalendarEdge { Start, End }
@@ -382,6 +383,21 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §7/§13 cell contextual menu **"add default sub-tree"**: apply the template on demand under the
+     * **leaves** of the sub-trees [cellIds] root — a cell that parents nothing being its own leaf. A template
+     * says how a piece of work breaks down, so asking for it on a cell that is already broken down asks for
+     * it on the pieces, not for a second copy of it beside them.
+     *
+     * Deliberately independent of the [SetDefaultSubtreeEnabled] switch (that switch governs the *automatic*
+     * graft; asking for it explicitly is always an answer) and, unlike the graft, it does not care whether
+     * the task is new. One undoable Main history unit for the whole set, and every cell walked is expanded so
+     * the rows — which land at the bottom of the sub-tree — are actually visible.
+     */
+    data class AddDefaultSubtree(
+        val cellIds: List<CellId>,
+    ) : SchedulerIntent
+
+    /**
      * Sets the user's sleep schedule (wake/goal/duration). The scheduler then leaves the nightly sleep
      * window empty. [todayEpochDay] anchors the 15-min-per-2-days wake drift at the current local day when
      * a goal different from the current wake is set. Persisted; recorded as an undoable Main History Unit
@@ -459,11 +475,41 @@ sealed interface SchedulerIntent {
     /** PRD §3: Ctrl+A selects every visible (selectable) cell. */
     data object SelectAllVisibleCells : SchedulerIntent
 
-    /** PRD §4 Copy: serialize the selected cells' subtrees to the (system) clipboard. */
+    /**
+     * PRD §4 Find & replace: bring the cell a search hit sits on **on screen** and select it — every
+     * ancestor along [ancestors] (outermost first, as
+     * [org.example.project.scheduler.domain.TaskTreeSearch.Match.ancestors] recorded it) is expanded in one
+     * history unit, so walking the hits never buries Ctrl+Z under a pile of expand/collapse units.
+     *
+     * The last ancestor is the occurrence the row is rendered under, which is what the selection's
+     * `renderVia` is set to — a mirrored cell must highlight in the copy the find bar navigated to, not in
+     * some other one.
+     */
+    data class RevealCell(
+        val cellId: CellId,
+        val ancestors: List<CellId> = emptyList(),
+    ) : SchedulerIntent
+
+    /**
+     * PRD §4 Find & replace ("replace all"): rename each task in [titles] to its new title, as ONE Main
+     * history unit.
+     *
+     * Renaming here means exactly what Rename mode means — the **task's** title changes, so every cell
+     * pointing at it follows. Keying by task is what keeps a mirrored task from being rewritten once per
+     * occurrence. Each rename runs through the same primitive typing a title does, so a replacement that
+     * empties a title deletes the cell by §4's ordinary rule ("the blank title is what deletes").
+     */
+    data class ReplaceTaskTitles(val titles: Map<TaskId, String>) : SchedulerIntent
+
+    /**
+     * PRD §4 Copy (Ctrl+C): serialize the selected cells' subtrees — **whole**, however deep they run — to the
+     * (system) clipboard. The §13 deep-copy window's maximum depth is that window's own; the chord asks nobody
+     * and truncates nothing. What each task carries is still the account's three copy switches.
+     */
     data object CopySelection : SchedulerIntent
 
     /**
-     * PRD §4/§13 Cut (Ctrl+X): the same deep copy [CopySelection] takes, then the selected cells are
+     * PRD §4/§13 Cut (Ctrl+X): the same whole-sub-tree copy [CopySelection] takes, then the selected cells are
      * emptied — one history unit, so a single Ctrl+Z puts the cut sub-tree back.
      */
     data object CutSelection : SchedulerIntent
@@ -473,6 +519,14 @@ sealed interface SchedulerIntent {
      * the deep-copy window. Clamped into [org.example.project.scheduler.domain.SchedulerDomain.DEEP_COPY_DEPTH_RANGE]; not an Undo/Redo unit.
      */
     data class SetDeepCopyMaxDepth(val depth: Int) : SchedulerIntent
+
+    /**
+     * PRD §13 deep copy: the account's three **what does a copy carry** switches (see
+     * [org.example.project.scheduler.domain.SchedulerDomain.CopyOptions]), set from the deep-copy window
+     * when it copies. Like the depth, one answer for the whole account and not an Undo/Redo unit.
+     */
+    data class SetCopyOptions(val options: org.example.project.scheduler.domain.SchedulerDomain.CopyOptions) :
+        SchedulerIntent
 
     /**
      * PRD §4 Paste: rebuild the tree structure serialized in [text] at the single selected cell — a
@@ -579,6 +633,24 @@ sealed interface SchedulerIntent {
         val taskId: TaskId,
         val startEpochMillis: Long,
         val endEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §9/§12 retroactive: drop from every ON-SCREEN task's record the parts covered by [ranges] — the
+     * stretches the devices say nobody was at a screen for (`SchedulerDomain.observedNoScreenRegions`) — and
+     * materialize them as "Inactivity" panels instead.
+     *
+     * The same rule `SchedulerReducer.noScreenEvidence` now applies as work is banked, applied ONCE at
+     * start-up to the work banked before that rule existed. It is needed because the rule used to key on
+     * hand-drawn "No screen" panels alone and so never fired on an account without one: account 3 carried
+     * 43 h of recorded on-screen "work" over spans its own OS reported the machine asleep.
+     *
+     * Unlike the tick that banks records, this **syncs**. `Task.record` is authoritative and the three-way
+     * merge UNIONS it, so a deletion that stayed local would be resurrected by the next peer that still had
+     * the span. Not undoable — the record lives outside Undo/Redo (PRD §8), like [RemoveRecordPeriod].
+     */
+    data class StripNoScreenRecords(
+        val ranges: List<TaskTimeRange>,
     ) : SchedulerIntent
 
     /**

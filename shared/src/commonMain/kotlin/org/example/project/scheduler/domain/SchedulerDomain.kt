@@ -794,6 +794,29 @@ object SchedulerDomain {
     const val MIN_MANUAL_ENTRY_MILLIS: Long = 60_000L
 
     /**
+     * PRD §8 "∞" period bound: the instant a hand-added no-screen / inactivity period **open into the past**
+     * begins at (1900-01-01T00:00Z), and [OPEN_FUTURE_MILLIS] the one an open-ended period runs to
+     * (2200-01-01T00:00Z).
+     *
+     * A real instant rather than `Long.MIN_VALUE`/`MAX_VALUE` on purpose: every consumer of a panel's bounds
+     * does ordinary arithmetic on them (`end - start`, `start + MIN_MANUAL_ENTRY_MILLIS`, the day clipping),
+     * and a saturating sentinel would overflow the first of those. These two are far enough outside any
+     * calendar the user can reach that the period covers "everything", and near enough that no sum overflows.
+     * They are only ever *recognized* by [isOpenPast] / [isOpenFuture] — which is what makes the bubble and the
+     * period editor print "∞" instead of a wall-clock time.
+     */
+    const val OPEN_PAST_MILLIS: Long = -2_208_988_800_000L
+
+    /** PRD §8 "∞" period bound, the future side. See [OPEN_PAST_MILLIS]. */
+    const val OPEN_FUTURE_MILLIS: Long = 7_258_118_400_000L
+
+    /** PRD §8: true when [millis] is the open-into-the-past "∞" bound (or beyond it). */
+    fun isOpenPast(millis: Long): Boolean = millis <= OPEN_PAST_MILLIS
+
+    /** PRD §8: true when [millis] is the open-into-the-future "∞" bound (or beyond it). */
+    fun isOpenFuture(millis: Long): Boolean = millis >= OPEN_FUTURE_MILLIS
+
+    /**
      * PRD §8 Manual add: the task chosen by the calendar's right-click "add a task" action — the one
      * with the biggest absolute priority percentage, breaking ties alphabetically by title (the
      * first in alphabetic order wins). Excludes the root/main tasks, tasks no longer in the tree,
@@ -1969,6 +1992,40 @@ object SchedulerDomain {
                 }
                 .filter { it.endEpochMillis - it.startEpochMillis >= MIN_INACTIVITY_BAND_MILLIS }
         return mergeOccupied(evidence + assertedRegions)
+    }
+
+    /**
+     * PRD §8/§9: the past stretches that were OBSERVED to be no-screen periods — the intersection of the two
+     * layers' evidence halves, i.e. the times neither a computer nor a phone was unlocked.
+     *
+     * This is the same identity [layerRegions] draws ("a stretch carrying BOTH layers is a no-screen period"),
+     * read for the SCHEDULER rather than for the calendar: §9's "assume nothing happened" rule must not bank an
+     * on-screen task's record over a stretch the devices say nobody was at a screen for. Before this existed,
+     * that rule keyed on hand-drawn "No screen" PANELS alone, so on an account where the user had never drawn
+     * one it never fired at all — the app banked work straight through a machine the OS reported asleep.
+     *
+     * Only the EVIDENCE halves intersect here; [layerRegions]' asserted regions (sleep windows, screen breaks,
+     * the user's own no-screen periods) are deliberately left out. A screen break SUSPENDS the chunk it lands
+     * in rather than cutting it (PRD §15), so folding the assertions in would silently stop recording across
+     * every break — a different rule from the one this answers. The hand-drawn periods reach the bank by their
+     * own route (the reducer unions them in).
+     *
+     * [computerLocked] / [phoneLocked] are the OS lock/standby histories of the two device kinds over
+     * `[sinceMillis, untilMillis]`, each **null when no device of that kind could tell** — and null carries the
+     * same assumed-LOCKED meaning it has in [layerRegions], which is what makes a phone-less account's whole
+     * past turn on the computer's history alone. Both null ⇒ the whole window, matching [derivePauses]' own
+     * "no screen unless a device reported activity" default.
+     */
+    fun observedNoScreenRegions(
+        computerLocked: List<TaskTimeRange>?,
+        phoneLocked: List<TaskTimeRange>?,
+        sinceMillis: Long,
+        untilMillis: Long,
+    ): List<TaskTimeRange> {
+        if (untilMillis <= sinceMillis) return emptyList()
+        val computer = layerRegions(computerLocked, emptyList(), sinceMillis, untilMillis)
+        val phone = layerRegions(phoneLocked, emptyList(), sinceMillis, untilMillis)
+        return intersectRegions(computer, phone)
     }
 
     /**
@@ -4297,7 +4354,10 @@ object SchedulerDomain {
      * A copied cell: its [title], the (populated) subtree beneath it, plus the PRD §4 priority-weight
      * table values needed to reproduce it — [rowWeights] is this cell's per-column value row (aligned to
      * its parent sub-list's columns) and [childHeader] is the weight-column header of the sub-list it
-     * parents. [minMinutes] is the PRD §10 minimum time of this node's task (null when the clipboard text
+     * parents — together, the weight **table** of every sub-list the copy walks. With the deep-copy
+     * window's "priority tables" switch off, [rowWeights] instead holds the single share the table
+     * produced (`[0.375]` for 37.5 % of its sub-list) and [childHeader] stays the default one column, so
+     * the paste rebuilds those percentages without the table that encoded them. [minMinutes] is the PRD §10 minimum time of this node's task (null when the clipboard text
      * carried no min-time appendix entry for it, e.g. a plain title tree, so paste keeps the default).
      *
      * [taskId] is the copied cell's own task **identity**, so pasting back into the tree lands on that very
@@ -4343,6 +4403,45 @@ object SchedulerDomain {
     val DEEP_COPY_DEPTH_RANGE: IntRange = 1..999
 
     /**
+     * PRD §4 `Ctrl+C` / `Ctrl+X`: the whole sub-tree, however deep it runs. The account's
+     * [SchedulerState.deepCopyMaxDepth] is the **deep-copy window's** number — the chord asks nobody and
+     * cuts nothing off.
+     */
+    const val FULL_SUBTREE_DEPTH: Int = Int.MAX_VALUE
+
+    /**
+     * PRD §13 deep-copy window: **what** a copy carries, beside how deep it goes. Three switches, one
+     * account-wide answer each ([SchedulerState.copyIncludeIds], [SchedulerState.copyPriorityTables],
+     * [SchedulerState.copyIncludeText]) — the window edits them and every copy in the app then obeys them,
+     * exactly as the depth setting already worked. Editing them in the window and finding `Ctrl+C` still
+     * carrying what they turned off is the drift the one-answer-per-account rule exists to prevent.
+     *
+     * - [includeIds] off ⇒ no `- id:` line. The copy is then indistinguishable from text the app did not
+     *   write, which is the point: it pastes back as **new** tasks (and, PRD §7, seeds the default sub-tree
+     *   under the leaves it mints), never as a mirror or a restore of the tasks it came from.
+     * - [priorityTables] off ⇒ the sub-list weight **tables** (the cell's weight row and the header of the
+     *   sub-list it parents) are replaced by the one number they exist to produce: the cell's **percentage
+     *   of its own sub-list**. Pasting that back reproduces the percentages — a single weight column whose
+     *   values are the shares — but not the table that happened to encode them.
+     * - [includeText] off ⇒ no `- text:` block. Everything else the edit window holds still travels.
+     */
+    data class CopyOptions(
+        val includeIds: Boolean = true,
+        val priorityTables: Boolean = true,
+        val includeText: Boolean = true,
+    ) {
+        companion object {
+            /** The account's answers (what every copy uses unless a caller says otherwise). */
+            fun from(state: SchedulerState): CopyOptions =
+                CopyOptions(
+                    includeIds = state.copyIncludeIds,
+                    priorityTables = state.copyPriorityTables,
+                    includeText = state.copyIncludeText,
+                )
+        }
+    }
+
+    /**
      * An attribute line's marker. Everything indented one level under a title line and starting with it
      * describes that task; anything else at that indent is a child task. A title that really starts with
      * `- ` is escaped (`\- `), so a task can never be read as one of its own attributes.
@@ -4356,6 +4455,7 @@ object SchedulerDomain {
     private const val ATTR_NO_SCREEN: String = "can be done during a no-screen period"
     private const val ATTR_WEIGHTS: String = "priority weights"
     private const val ATTR_COLUMNS: String = "sub-list weight columns"
+    private const val ATTR_SHARE: String = "priority in its sub-list"
     private const val ATTR_UNIT: String = "schedule unit"
     private const val ATTR_TEXT: String = "text"
 
@@ -4368,30 +4468,43 @@ object SchedulerDomain {
     /**
      * Build the copied subtree rooted at [cellId] from the task's shared child list (populated cells).
      * [remainingDepth] counts the levels still to take, this node included — so 1 stops here.
+     *
+     * [options] is what the copy carries (PRD §13): the id and the text are simply dropped when their
+     * switch is off, and with [CopyOptions.priorityTables] off the weight table is replaced by the single
+     * number it produces — the cell's **share of its own sub-list**, stored as its one weight so that
+     * pasting the forest back reproduces exactly those percentages.
      */
-    private fun copiedSubtree(state: SchedulerState, cellId: CellId, remainingDepth: Int): CopiedNode {
+    private fun copiedSubtree(
+        state: SchedulerState,
+        cellId: CellId,
+        remainingDepth: Int,
+        options: CopyOptions,
+    ): CopiedNode {
         val cell = state.cells[cellId]
         val taskId = cell?.taskId
         val task = taskId?.let { state.tasks[it] }
         val title = task?.title.orEmpty()
-        val rowWeights = cell?.priorityWeights ?: DEFAULT_WEIGHTS
         val childList = task?.childListId?.let { state.lists[it] }
-        val childHeader = childList?.weightColumns ?: DEFAULT_WEIGHTS
+        val rowWeights =
+            if (options.priorityTables) cell?.priorityWeights ?: DEFAULT_WEIGHTS
+            else listOf(roundedShare(RelativePriorityDomain.cellShare(state, cellId)))
+        // Without the tables there is no header to carry: the shares above ARE the single column.
+        val childHeader = if (options.priorityTables) childList?.weightColumns ?: DEFAULT_WEIGHTS else DEFAULT_WEIGHTS
         val children =
             if (remainingDepth <= 1) emptyList()
             else childList?.cellIds.orEmpty()
                 .filter { isPopulated(state, it) }
-                .map { copiedSubtree(state, it, remainingDepth - 1) }
+                .map { copiedSubtree(state, it, remainingDepth - 1, options) }
         return CopiedNode(
             title = title,
             children = children,
-            taskId = taskId,
+            taskId = taskId.takeIf { options.includeIds },
             rowWeights = rowWeights,
             childHeader = childHeader,
             minMinutes = task?.minimumMinutes,
             noScreenDoable = task?.onScreen == false,
             scheduleUnit = task?.scheduleUnit.orEmpty(),
-            text = task?.text.orEmpty(),
+            text = if (options.includeText) task?.text.orEmpty() else "",
         )
     }
 
@@ -4401,14 +4514,22 @@ object SchedulerDomain {
      * no-screen switch, their minimum time and their weight row restored.
      *
      * [maxDepth] is how many levels are taken, each cell itself counting as the first: 1 is "copy" (the
-     * cells alone) and the deep-copy window's own number is anything above. Empty when nothing in [cellIds]
-     * holds a titled task, or when [maxDepth] is below 1 (there is then nothing to copy).
+     * cells alone), the deep-copy window's own number is anything above, and [FULL_SUBTREE_DEPTH] is §4's
+     * Ctrl+C. Empty when nothing in [cellIds] holds a titled task, or when [maxDepth] is below 1 (there is
+     * then nothing to copy).
+     *
+     * [options] defaults to the account's three switches — what the deep-copy window last asked for.
      */
-    fun copyCellsText(state: SchedulerState, cellIds: List<CellId>, maxDepth: Int = 1): String {
+    fun copyCellsText(
+        state: SchedulerState,
+        cellIds: List<CellId>,
+        maxDepth: Int = 1,
+        options: CopyOptions = CopyOptions.from(state),
+    ): String {
         if (maxDepth < 1) return ""
-        val nodes = cellIds.filter { isPopulated(state, it) }.map { copiedSubtree(state, it, maxDepth) }
+        val nodes = cellIds.filter { isPopulated(state, it) }.map { copiedSubtree(state, it, maxDepth, options) }
         if (nodes.isEmpty()) return ""
-        return renderCopiedNodes(nodes)
+        return renderCopiedNodes(nodes, options)
     }
 
     /**
@@ -4470,18 +4591,42 @@ object SchedulerDomain {
     private fun formatWeights(weights: List<Double>): String = weights.joinToString(", ") { it.toString() }
 
     /**
+     * A cell's share of its sub-list, rounded to the two decimals of a percentage the clipboard prints
+     * (PRD §13, "priority tables off"). Rounding here rather than at the render keeps the copy and the
+     * paste at the same number: the text says what the node holds, so a second round trip changes nothing.
+     */
+    private fun roundedShare(share: Double): Double = (share * 10_000.0).roundToInt() / 10_000.0
+
+    /** `0.375` → `37.5`, with no trailing `.0` — the percentage as a person would write it. */
+    private fun formatSharePercent(share: Double): String {
+        val percent = (share * 10_000.0).roundToInt() / 100.0
+        val whole = percent.toLong()
+        return if (percent == whole.toDouble()) whole.toString() else percent.toString()
+    }
+
+    /** `37.5 %` (or `37.5`) → `0.375`; null when it is not a number, so the paste is a no-op. */
+    private fun parseSharePercent(value: String): Double? {
+        val percent = value.removeSuffix("%").trim().toDoubleOrNull() ?: return null
+        if (percent < 0.0) return null
+        return roundedShare(percent / 100.0)
+    }
+
+    /**
      * PRD §4 Copy: the selected cells' subtrees serialized to the app's clipboard text (see
      * [renderCopiedNodes] for the shape). Uses the consecutive selection block when there is one, otherwise
      * the main selection. Empty when nothing populated is selected.
      *
-     * Ctrl+C is a **deep** copy that never asks: [maxDepth] defaults to the account's own
-     * [SchedulerState.deepCopyMaxDepth], the number the deep-copy window sets.
+     * Ctrl+C copies the **entire** sub-tree and asks nothing: [maxDepth] defaults to [FULL_SUBTREE_DEPTH].
+     * The account's [SchedulerState.deepCopyMaxDepth] belongs to the deep-copy window — the chord is the
+     * gesture for "all of it", and the window is the one that cuts a copy short. *What* each node carries
+     * is still the account's ([CopyOptions.from]), so the window's three switches govern the chord too.
      */
     fun copyTreeText(
         state: SchedulerState,
         selection: SchedulerSelection,
-        maxDepth: Int = state.deepCopyMaxDepth,
-    ): String = copyCellsText(state, copyTreeTargets(state, selection), maxDepth)
+        maxDepth: Int = FULL_SUBTREE_DEPTH,
+        options: CopyOptions = CopyOptions.from(state),
+    ): String = copyCellsText(state, copyTreeTargets(state, selection), maxDepth, options)
 
     /**
      * The cells §4's Ctrl+C / Ctrl+X act on: the consecutive selection block when there is one, otherwise
@@ -4504,9 +4649,10 @@ object SchedulerDomain {
      * the title line's own indent + 1, after its attributes.
      *
      * Only the id and the minimum time are always written; everything else is omitted at its default value,
-     * so an ordinary task stays a title and two lines.
+     * so an ordinary task stays a title and two lines. [options] drops what the deep-copy window's switches
+     * turned off, and swaps the weight table for its percentage.
      */
-    private fun renderCopiedNodes(nodes: List<CopiedNode>): String {
+    private fun renderCopiedNodes(nodes: List<CopiedNode>, options: CopyOptions = CopyOptions()): String {
         val sb = StringBuilder()
         fun line(depth: Int, content: String) {
             repeat(depth) { sb.append('\t') }
@@ -4523,9 +4669,16 @@ object SchedulerDomain {
                 // PRD §13 edit-window switch. Only the non-default (off-screen) value is written, so an
                 // ordinary on-screen task says nothing about a screen — exactly as its window reads.
                 if (n.noScreenDoable) attribute(d, ATTR_NO_SCREEN, "yes")
-                if (n.rowWeights != DEFAULT_WEIGHTS) attribute(d, ATTR_WEIGHTS, formatWeights(n.rowWeights))
-                if (n.children.isNotEmpty() && n.childHeader != DEFAULT_WEIGHTS) {
-                    attribute(d, ATTR_COLUMNS, formatWeights(n.childHeader))
+                // PRD §13: the whole weight table of every sub-list travels — this cell's value row, and
+                // the weight columns of the sub-list it parents — unless the window's switch asked for the
+                // percentage those two produce instead, which is written on every node (it IS the copy).
+                if (options.priorityTables) {
+                    if (n.rowWeights != DEFAULT_WEIGHTS) attribute(d, ATTR_WEIGHTS, formatWeights(n.rowWeights))
+                    if (n.children.isNotEmpty() && n.childHeader != DEFAULT_WEIGHTS) {
+                        attribute(d, ATTR_COLUMNS, formatWeights(n.childHeader))
+                    }
+                } else {
+                    attribute(d, ATTR_SHARE, "${formatSharePercent(n.rowWeights.firstOrNull() ?: 1.0)} %")
                 }
                 if (n.scheduleUnit.isNotEmpty()) {
                     line(d, "$ATTR_MARKER$ATTR_UNIT:")
@@ -4656,6 +4809,9 @@ object SchedulerDomain {
             }
             ATTR_WEIGHTS -> node.rowWeights = parseWeights(value) ?: return false
             ATTR_COLUMNS -> node.childHeader = parseWeights(value) ?: return false
+            // The percentage form of the two above (the deep-copy window's "priority tables" switch, off).
+            // It lands as the node's single weight, so a sub-list of shares rebuilds those very shares.
+            ATTR_SHARE -> node.rowWeights = listOf(parseSharePercent(value) ?: return false)
             else -> return false
         }
         return true
