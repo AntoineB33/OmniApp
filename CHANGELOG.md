@@ -11,6 +11,32 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "All tasks" — the flat, sortable list of every task in the tree (PRD §7) — SHIPPED 2026-08-26
+
+- **New lateral-menu button, "All tasks"**, opening a floating window (`ui/TaskListWindow.kt`) that lists every
+  task of the LIVE tree with two columns: its **number of occurrences** and its **absolute priority
+  percentage**. A mirrored task is **one row** — the tree's shape is exactly what the window is there to see
+  past — carrying the cell count and the priority summed over all its chains.
+- **A sorter configuration at the top**: which of the two figures orders the list (`TaskListSort.Occurrences` /
+  `TaskListSort.Priority`) and which direction (highest first, top to bottom / lowest first, bottom to top).
+- **The ordering lives in the domain** (`SchedulerDomain.taskListEntries`), not in the composable, so the rows
+  are testable and the tie-break is one rule: equal figures fall back to the title then the id, so the order is
+  total and cannot shuffle between recompositions — and the tie-break is **not** reversed with the direction.
+- **The rows are counted off `state.cells`**, exactly as `absoluteTaskPriorities` and
+  `RelativePriority.occurrenceChains` count them, so the two columns can never disagree about what an
+  occurrence is. A task deleted by blanking its title (§4) is therefore gone from the list even while its
+  records keep it alive, and a detached parent is not listed either — it is not in the tree.
+- **The percentage is `absoluteTaskPriorities`, not `blendedTaskPriorities`** — the same identity the tree's own
+  percentage column keeps: this window reads the arrangement on screen, which is what the user is editing, not
+  the keyframe blend the scheduler is following. `formatPriorityPercent` was made `internal` and reused rather
+  than copied, so the two readouts round identically.
+- **The sorter is Compose-only state**, like the calendar's zoom and the §4 find bar: how a list is ordered on
+  screen is a way of looking at the tree, never a fact about it — not persisted, not synced, no history unit.
+  Only the window's own placement/visibility persists, like every other floating window's.
+- `TaskListWindowTest` pins the mirrored row, the agreement with the tree's percentages, both sort keys, both
+  directions, the tie-break and the deleted-task exclusion.
+- Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy.
+
 ### "Switch task" — the button that refuses the task the now-line is on (PRD §7, ADR 0011) — SHIPPED 2026-08-26
 
 - **New lateral-menu button, "Switch task", with the system-wide chord `Ctrl+Shift+Alt+Z`.** It refuses the

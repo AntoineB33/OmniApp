@@ -540,6 +540,82 @@ object SchedulerDomain {
         return cellsByTask.keys.associateWith { absolute(it) }
     }
 
+    // ----- The task list ("All tasks") ---------------------------------------------------------
+
+    /**
+     * PRD §7 lateral menu ("All tasks"): the two figures that window may order its rows by.
+     *
+     * Both are readouts of the tree the user is editing, never of the scheduler's blended view — see
+     * [TaskListEntry].
+     */
+    enum class TaskListSort {
+        /** How many cells of the tree point at the task (a mirrored task counts once per cell). */
+        Occurrences,
+
+        /** The task's absolute priority share — the same number its rows show in the tree. */
+        Priority,
+    }
+
+    /**
+     * One row of the "All tasks" window: a task of the **live** tree, with the two figures it is sorted by.
+     *
+     * [priority] is [absoluteTaskPriorities], not [blendedTaskPriorities], for the same reason the tree's
+     * own percentage column is: this window is a readout of the arrangement on screen, which is what the
+     * user is editing — not of the keyframe blend the scheduler happens to be following right now.
+     */
+    data class TaskListEntry(
+        val taskId: TaskId,
+        val title: String,
+        val occurrences: Int,
+        val priority: Double,
+    )
+
+    /**
+     * Every task the tree actually holds, ordered by [sort] — [descending] puts the largest figure at the
+     * top (the window's "top to bottom"), otherwise the smallest leads ("bottom to top").
+     *
+     * The rows are the **populated** cells' tasks, counted off `state.cells` exactly as
+     * [absoluteTaskPriorities] and [RelativePriority.occurrenceChains] count them, so the two columns can
+     * never disagree about what an occurrence is. Consequences worth knowing: a task "deleted" by blanking
+     * its title (PRD §4) is gone from the list even while its records keep it alive, and a *detached
+     * parent* — titled, but with no cell pointing at it — is not listed either, since it is not in the tree.
+     *
+     * Ties fall back to the title and then the id so the order is total: without that, the many tasks
+     * sharing 0 % (or one occurrence) would be free to shuffle between recompositions.
+     */
+    fun taskListEntries(
+        state: SchedulerState,
+        sort: TaskListSort = TaskListSort.Priority,
+        descending: Boolean = true,
+    ): List<TaskListEntry> {
+        val priorities = absoluteTaskPriorities(state)
+        val counts = HashMap<TaskId, Int>()
+        for (cell in state.cells.values) {
+            val taskId = cell.taskId ?: continue
+            if (!isPopulatedCell(state, cell.id)) continue
+            counts[taskId] = (counts[taskId] ?: 0) + 1
+        }
+        val entries = counts.map { (taskId, count) ->
+            TaskListEntry(
+                taskId = taskId,
+                title = state.tasks[taskId]?.title.orEmpty(),
+                occurrences = count,
+                priority = priorities[taskId] ?: 0.0,
+            )
+        }
+        val byFigure = when (sort) {
+            TaskListSort.Occurrences ->
+                if (descending) compareByDescending<TaskListEntry> { it.occurrences }
+                else compareBy { it.occurrences }
+            TaskListSort.Priority ->
+                if (descending) compareByDescending<TaskListEntry> { it.priority }
+                else compareBy { it.priority }
+        }
+        return entries.sortedWith(
+            byFigure.thenBy { it.title.lowercase() }.thenBy { it.taskId.value },
+        )
+    }
+
     // ----- The task-tree timeline ("All task trees") -------------------------------------------
 
     /**

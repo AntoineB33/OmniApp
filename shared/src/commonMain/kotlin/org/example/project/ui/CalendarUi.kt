@@ -836,6 +836,9 @@ fun LateralMenu(
     /** All task trees (the timeline of dated task trees): whether that window is open + toggle callback. */
     taskTreesWindowOpen: Boolean = false,
     onToggleTaskTrees: () -> Unit = {},
+    /** All tasks (the flat, sortable list of every task in the tree): whether it is open + toggle callback. */
+    taskListWindowOpen: Boolean = false,
+    onToggleTaskList: () -> Unit = {},
     /** PRD §4 Default sub-tree: whether that window is open + toggle callback. */
     defaultSubtreeWindowOpen: Boolean = false,
     onToggleDefaultSubtree: () -> Unit = {},
@@ -1011,6 +1014,14 @@ fun LateralMenu(
             label = "All task trees",
             active = taskTreesWindowOpen,
             onClick = onToggleTaskTrees,
+        )
+
+        // Every task of the tree, flat and sorted: the two figures the tree's shape hides — how often a task
+        // recurs across the whole tree, and how much priority it actually carries.
+        MenuButton(
+            label = "All tasks",
+            active = taskListWindowOpen,
+            onClick = onToggleTaskList,
         )
 
         // PRD §4 Default sub-tree: the template grafted under every newly created task. The switch to the

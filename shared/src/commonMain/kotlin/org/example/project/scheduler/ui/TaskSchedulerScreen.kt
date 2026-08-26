@@ -151,8 +151,13 @@ private val WEIGHT_COLUMN_WIDTH = 60.dp
 /** PRD §10: width of the per-task minimum-time field (minutes input + stacked +/- buttons + unit). */
 private val MIN_TIME_COLUMN_WIDTH = 72.dp
 
-/** Renders a priority fraction (0..1) as a percentage with at most one decimal: 50%, 33.3%, 0.4%. */
-private fun formatPriorityPercent(fraction: Double): String {
+/**
+ * Renders a priority fraction (0..1) as a percentage with at most one decimal: 50%, 33.3%, 0.4%.
+ *
+ * `internal`, not private: the "All tasks" window prints the very same absolute priority, and a second
+ * copy of this rounding is how two readouts of one number start disagreeing at the first decimal.
+ */
+internal fun formatPriorityPercent(fraction: Double): String {
     val tenths = (fraction * 1000).roundToInt()
     val whole = tenths / 10
     val decimal = tenths % 10

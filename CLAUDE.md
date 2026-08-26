@@ -406,6 +406,21 @@ the calendar's zoom — a search is a way of looking at the tree, never a fact a
 - The bar is a **sibling** of the tree, not a child, so the tree's `onPreviewKeyEvent` never sees what is
   typed in it — and the tree's selection-keyed refocus effect must skip while the bar holds the keyboard.
 
+### The "All tasks" list
+
+→ PRD §7. `SchedulerDomain.taskListEntries` is the whole of it; `ui/TaskListWindow.kt` only draws it.
+
+- **It is a readout of the LIVE tree**: `absoluteTaskPriorities` (the identity the tree's own percentage column
+  keeps), never `blendedTaskPriorities`. `formatPriorityPercent` is shared with the tree — a second copy is how
+  two readouts of one number start disagreeing at the first decimal.
+- **A mirrored task is ONE row.** Occurrences are counted off `state.cells` through `isPopulatedCell`, exactly
+  as `absoluteTaskPriorities` and `RelativePriority.occurrenceChains` count them, so the two columns can never
+  disagree about what an occurrence is. A blank-titled (deleted) task and a detached parent are not in the list.
+- **Ties fall back to the title then the id, and the tie-break is NOT reversed with the direction** — otherwise
+  a block of tasks sharing one percentage re-shuffles every time the arrow is flipped.
+- **The sorter is Compose-only state**, like the calendar's zoom and the find bar: an ordering is a way of
+  looking at the tree, never a fact about it. Not persisted, not synced, no history unit.
+
 ### The default sub-tree
 
 PRD §4/§7: one per account, grafted under every task the user **creates**. Off by default

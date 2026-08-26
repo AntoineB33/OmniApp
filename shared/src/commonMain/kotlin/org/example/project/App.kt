@@ -102,6 +102,7 @@ import org.example.project.ui.SimPauseScope
 import org.example.project.ui.ShortcutsWindow
 import org.example.project.ui.SleepWindow
 import org.example.project.ui.DefaultSubtreeWindow
+import org.example.project.ui.TaskListWindow
 import org.example.project.ui.TaskTreesWindow
 import org.example.project.ui.TimeSimPanel
 
@@ -111,7 +112,7 @@ enum class OmniPage(val label: String) {
 
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
 private enum class FloatingWindow {
-    Calendar, Reminders, History, Sleep, Alarms, TaskTrees, DefaultSubtree, Shortcuts, TimeSim
+    Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, DefaultSubtree, Shortcuts, TimeSim
 }
 
 // Debug "simulate pause + leap": pressing a break chip INSTANTLY jumps the sim clock forward by the whole
@@ -355,6 +356,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // All task trees: whether the floating task-tree timeline window is open (local UI state; the trees
         // and their dates are authoritative synced state).
         var taskTreesWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.TaskTrees)) }
+        // All tasks: whether the flat, sortable list of every task in the tree is open (local UI state).
+        var taskListWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.TaskList)) }
+        // Its sorter configuration. Compose-only state, like the calendar's zoom and the §4 find bar: how a
+        // list is ordered on screen is a way of looking at the tree, not a fact about it — so it is never
+        // persisted, never synced, and records no history unit.
+        var taskListSort by remember { mutableStateOf(SchedulerDomain.TaskListSort.Priority) }
+        var taskListDescending by remember { mutableStateOf(true) }
         // PRD §4 Default sub-tree: whether the floating template window is open (local UI state; the template
         // and the "is it applied" switch are authoritative synced state).
         var defaultSubtreeWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.DefaultSubtree)) }
@@ -375,6 +383,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     FloatingWindow.Sleep,
                     FloatingWindow.Alarms,
                     FloatingWindow.TaskTrees,
+                    FloatingWindow.TaskList,
                     FloatingWindow.DefaultSubtree,
                     FloatingWindow.Shortcuts,
                     FloatingWindow.TimeSim,
@@ -392,6 +401,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Sleep -> sleepWindowOpen
             FloatingWindow.Alarms -> alarmWindowOpen
             FloatingWindow.TaskTrees -> taskTreesWindowOpen
+            FloatingWindow.TaskList -> taskListWindowOpen
             FloatingWindow.DefaultSubtree -> defaultSubtreeWindowOpen
             FloatingWindow.Shortcuts -> shortcutsWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
@@ -407,6 +417,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Sleep -> null
             FloatingWindow.Alarms -> null
             FloatingWindow.TaskTrees -> null
+            FloatingWindow.TaskList -> null
             FloatingWindow.DefaultSubtree -> null
             FloatingWindow.Shortcuts -> null
             FloatingWindow.TimeSim -> null
@@ -438,6 +449,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var sleepOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Sleep, Offset(120f, -120f))) }
         var alarmOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Alarms, Offset(-120f, 120f))) }
         var taskTreesOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskTrees, Offset(-260f, -60f))) }
+        var taskListOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskList, Offset(-60f, 100f))) }
         var defaultSubtreeOffset by
             remember { mutableStateOf(savedOffset(FloatingWindow.DefaultSubtree, Offset(260f, -60f))) }
         var shortcutsOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Shortcuts, Offset(60f, 60f))) }
@@ -448,6 +460,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         LaunchedEffect(sleepWindowOpen) { persistPlacement(FloatingWindow.Sleep, sleepOffset, sleepWindowOpen) }
         LaunchedEffect(alarmWindowOpen) { persistPlacement(FloatingWindow.Alarms, alarmOffset, alarmWindowOpen) }
         LaunchedEffect(taskTreesWindowOpen) { persistPlacement(FloatingWindow.TaskTrees, taskTreesOffset, taskTreesWindowOpen) }
+        LaunchedEffect(taskListWindowOpen) { persistPlacement(FloatingWindow.TaskList, taskListOffset, taskListWindowOpen) }
         LaunchedEffect(defaultSubtreeWindowOpen) {
             persistPlacement(FloatingWindow.DefaultSubtree, defaultSubtreeOffset, defaultSubtreeWindowOpen)
         }
@@ -970,6 +983,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleTaskTrees = {
                         onMenuWindowClicked(FloatingWindow.TaskTrees) { taskTreesWindowOpen = it }
                     },
+                    taskListWindowOpen = taskListWindowOpen,
+                    onToggleTaskList = {
+                        onMenuWindowClicked(FloatingWindow.TaskList) { taskListWindowOpen = it }
+                    },
                     defaultSubtreeWindowOpen = defaultSubtreeWindowOpen,
                     onToggleDefaultSubtree = {
                         onMenuWindowClicked(FloatingWindow.DefaultSubtree) { defaultSubtreeWindowOpen = it }
@@ -995,7 +1012,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     away = userAway,
                     onToggleAway = { engine.setUserAway(!userAway) },
                     anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen ||
-                        alarmWindowOpen || taskTreesWindowOpen || defaultSubtreeWindowOpen || shortcutsWindowOpen,
+                        alarmWindowOpen || taskTreesWindowOpen || taskListWindowOpen ||
+                        defaultSubtreeWindowOpen || shortcutsWindowOpen,
                     onCloseAllWindows = {
                         calendarOpen = false
                         choresManagerOpen = false
@@ -1003,6 +1021,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         sleepWindowOpen = false
                         alarmWindowOpen = false
                         taskTreesWindowOpen = false
+                        taskListWindowOpen = false
                         defaultSubtreeWindowOpen = false
                         shortcutsWindowOpen = false
                     },
@@ -1421,6 +1440,39 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             modifier = Modifier
                                 .align(Alignment.Center)
                                 .zIndex(windowZ(FloatingWindow.TaskTrees)),
+                        )
+                    }
+
+                    // All tasks: every task of the LIVE tree, flat, over its sorter configuration. The two
+                    // columns are readouts of the tree on screen (SchedulerDomain.taskListEntries), so the
+                    // percentage is the same absolute priority the tree's own rows show — not the keyframe
+                    // blend the scheduler follows. Ordering happens in the domain, which is why the sort is
+                    // part of the remember key: the list is recomputed when the tree or the sorter changes,
+                    // never per now-line tick.
+                    if (taskListWindowOpen) {
+                        val taskListEntries = remember(schedulerState, taskListSort, taskListDescending) {
+                            SchedulerDomain.taskListEntries(
+                                state = schedulerState,
+                                sort = taskListSort,
+                                descending = taskListDescending,
+                            )
+                        }
+                        TaskListWindow(
+                            entries = taskListEntries,
+                            sort = taskListSort,
+                            onSortChange = { taskListSort = it },
+                            descending = taskListDescending,
+                            onDirectionChange = { taskListDescending = it },
+                            onDismiss = { taskListWindowOpen = false },
+                            initialOffset = taskListOffset,
+                            onOffsetChange = {
+                                taskListOffset = it
+                                persistPlacement(FloatingWindow.TaskList, it, true)
+                            },
+                            onRaise = { focusWindow(FloatingWindow.TaskList) },
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .zIndex(windowZ(FloatingWindow.TaskList)),
                         )
                     }
 
