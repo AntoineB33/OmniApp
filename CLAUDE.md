@@ -52,7 +52,7 @@ re-derives something mark the state dirty or trigger a sync push.
 
 | Class | Contents | Rule |
 | --- | --- | --- |
-| **Authoritative** | task tree, named task trees, the default sub-tree + its switch, user-authored/pinned panels, chores/reminders, sleep schedule, alarms, settings, Undo/Redo history units, manual record edits | persist + sync |
+| **Authoritative** | task tree, named task trees, the default sub-tree + its switch, user-authored/pinned panels, chores/reminders, sleep schedule, alarms, settings, the system-wide chord bindings, Undo/Redo history units, manual record edits | persist + sync |
 | **Derived** | auto/screen-break/sleep panels, records the advance banks | persisted locally, **stripped from the wire**, never trigger a push on their own |
 | **Local-only view state** | focused window, tree selection, `showScreenBreaks`/`showReminders`, WindowNav/Selection history, window placement, OS-sleep scan checkpoint | persist locally, **never sync** |
 
@@ -671,8 +671,8 @@ cross-device presence.
 
 ## System-wide keyboard shortcuts
 
-→ ADR 0011. Three chords, `Ctrl+Shift+Alt+A` ("I'm away" / "I'm back"), `Ctrl+Shift+Alt+E` ("Look away now")
-and `Ctrl+Shift+Alt+Z` ("Switch task"), claimed from the OS because each is pressed precisely when OmniApp is
+→ ADR 0011. Three chords — "I'm away" / "I'm back", "Look away now", "Switch task" — shipping as
+`Ctrl+Shift+Alt+A` / `+E` / `+Z` and claimed from the OS because each is pressed precisely when OmniApp is
 **not** the focused window. Never a Compose key handler.
 
 - **The chord must be SWALLOWED, not merely observed.** `RegisterHotKey` is not first-come, first-served: an
@@ -694,6 +694,35 @@ and `Ctrl+Shift+Alt+Z` ("Switch task"), claimed from the OS because each is pres
 - **`GlobalShortcut` is the only list of chords.** The platform actual registers it and the keyboard-shortcuts
   window prints it; never a second copy. `GlobalHotkeys.claim` says which claim the OS granted, and the window
   shows it — "nothing happened" and "something else happened too" are otherwise undiagnosable.
+
+### Rebinding the three (and only the three)
+
+- **These are the ONLY rebindable shortcuts in the app**, because they are the only ones that can collide with
+  anything outside it — a system-wide claim is first come, first served. Every other chord is a Compose handler
+  scoped to a surface; do not make one of those rebindable.
+- **`GlobalShortcut.defaultBinding` is what it SHIPS with, never what the app is listening for.** The live chord
+  is `GlobalShortcutBindings.chordOf(state.shortcutBindings, …)` — the window, the receipt notification and the
+  diagnostics all go through it. `GlobalShortcut.chord` is gone precisely so nothing can print the wrong one.
+- **`SchedulerState.shortcutBindings` holds OVERRIDES ONLY.** An untouched shortcut is absent and follows the
+  default, so a changed default reaches every account that never rebound it, and **"reset" is a removal** — never
+  a write of today's default. Persisted + synced (the chords are the account's), and — unlike the settings beside
+  it — **it IS an Undo/Redo unit** (`ShortcutBindingDelta`, Main), whose two sides carry the whole map because a
+  reset is a removal.
+- **`ShortcutKey` is a closed set** (A–Z, 0–9, F1–F12) and its **entry names are the persisted form**. No
+  punctuation, no numpad, no Escape/Tab/Enter: a layout-dependent key would give an AZERTY user a chord the
+  QWERTY peer sharing that account has not got.
+- **Two rules, and they live once** — `GlobalShortcutBindings.rejection`: at least **two** of Ctrl/Shift/Alt (the
+  claim swallows the chord session-wide, so one modifier would take Ctrl+C from every application), and no two
+  shortcuts on one chord. The window shows its sentence and the reducer refuses on it; never a second predicate.
+  Consequence: swapping two chords needs a third in between — do not "fix" that by stealing the other's chord.
+- **Rebinding is a CAPTURE**, and the capture stands the claim down (`setGlobalHotkeyCapture`). Otherwise the
+  chords the app already owns are the one set it can never hear. Balanced on take / Escape / focus lost / close.
+- **`installGlobalHotkeys` re-registers on a later call** — that is how a rebinding lands without a restart. The
+  hot-key table belongs to the loop thread, so the change is posted to it (`WM_OMNIAPP_RECONFIGURE`), never
+  written from the UI thread.
+- **Both healing paths exist because the collision is reachable without either device causing it**: merging per
+  shortcut can land two shortcuts on one chord (`SnapshotMerge.repair`), and an older/hand-edited payload can
+  hold one the rules refuse today (decode). Both drop back to the default.
 - Desktop-only (Android/iOS report `Unsupported`), and best-effort: a refused chord leaves the app running with
   the lateral-menu buttons, never a failed start.
 - The lateral menu's **Keyboard shortcuts** window lists every chord in the app (`KeyboardShortcutCatalog`). The

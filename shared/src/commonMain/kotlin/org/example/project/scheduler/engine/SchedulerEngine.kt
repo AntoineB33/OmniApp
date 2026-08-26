@@ -38,6 +38,7 @@ import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.platform.DeviceSleepGap
 import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.platform.GlobalShortcutBindings
 import org.example.project.scheduler.platform.deviceLockedIntervals
 import org.example.project.scheduler.platform.currentDeviceKind
 import org.example.project.scheduler.platform.isScreenActive
@@ -1757,7 +1758,11 @@ class SchedulerEngine(
      * engine entry points, and a click needs no receipt — the window is already in front of the user.
      */
     fun announceShortcutReceived(shortcut: GlobalShortcut) {
-        notifyUser(SHORTCUT_RECEIVED_TITLE, "${shortcut.chord} — ${shortcut.action}")
+        // The chord the ACCOUNT is bound to, not the one the enum ships with (PRD §7: the
+        // keyboard-shortcuts window can rebind these three). A receipt naming a chord the user does not
+        // have would be worse than none — it is the one line they check when a press seems to go nowhere.
+        val chord = GlobalShortcutBindings.chordOf(vm.state.value.shortcutBindings, shortcut)
+        notifyUser(SHORTCUT_RECEIVED_TITLE, "$chord — ${shortcut.action}")
     }
 
     // PRD §15 device-sleep gaps: after a sleep is detected, query the OS sleep/wake log off-thread for the

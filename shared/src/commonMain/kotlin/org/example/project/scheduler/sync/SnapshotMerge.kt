@@ -9,6 +9,9 @@ import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.PersistedSnapshot
+import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.platform.GlobalShortcutBindings
+import org.example.project.scheduler.platform.ShortcutBinding
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.TaskTreeEntry
@@ -131,6 +134,17 @@ object SnapshotMerge {
                 copyPriorityTables =
                     pick(base.copyPriorityTables, local.copyPriorityTables, remote.copyPriorityTables),
                 copyIncludeText = pick(base.copyIncludeText, local.copyIncludeText, remote.copyIncludeText),
+                // PRD §7 Keyboard shortcuts: the chord overrides merge PER SHORTCUT — rebinding "I'm away" on
+                // the desktop while the laptop rebinds "Switch task" keeps both — but one shortcut's chord is
+                // a whole value, never a key from one device wearing the other's modifiers. Resetting is a
+                // removal, and mergeKeyed treats it as one: deleted on one side and untouched on the other
+                // stays deleted, i.e. back to the default.
+                shortcutBindings =
+                    mergeKeyed(
+                        base.shortcutBindings,
+                        local.shortcutBindings,
+                        remote.shortcutBindings,
+                    ) { bb, ll, rr -> pick(bb, ll, rr) },
                 lookAwayVoiceEnabled =
                     pick(base.lookAwayVoiceEnabled, local.lookAwayVoiceEnabled, remote.lookAwayVoiceEnabled),
                 // The sleep schedule's four fields drift together (a wake time implies its bedtime), so it is
@@ -370,7 +384,44 @@ object SnapshotMerge {
                 // flush itself; reading as "never named" is the state that loses nothing.
                 activeTaskTreeId =
                     state.activeTaskTreeId?.takeIf { id -> state.taskTrees.any { it.id == id } },
+                // PRD §7 Keyboard shortcuts: merging per shortcut can produce something neither device ever
+                // had — two shortcuts landing on ONE chord, because each rebound a different shortcut onto
+                // it. The claim cannot honour that (one press, two actions), so the collision is dropped back
+                // to the default: the loser's own device shows it back on its shipped chord, which is visible
+                // in the window, where a chord silently answering the wrong action would not be.
+                shortcutBindings = repairShortcutBindings(state.shortcutBindings),
             )
         return SchedulerDomain.pruneDetachedTree(rooted)
+    }
+
+    /**
+     * Keep only the overrides that leave the **resolved** table honourable: every chord bound to at most one
+     * action, and none below [GlobalShortcutBindings.MIN_MODIFIERS].
+     *
+     * The resolved table is what matters, not the overrides alone: dropping one puts its shortcut back on the
+     * chord it ships with, and that could collide in turn — so the check is re-run until nothing collides. A
+     * collision is always broken by dropping an **override**, never a default (the defaults are distinct by
+     * construction, and each is what its own dropped override falls back to), so the loop can only shrink the
+     * map and always terminates. Everything is walked in [GlobalShortcut] order, so two devices merging the
+     * same pair reach the same table whatever order their maps iterate in.
+     */
+    private fun repairShortcutBindings(
+        bindings: Map<GlobalShortcut, ShortcutBinding>,
+    ): Map<GlobalShortcut, ShortcutBinding> {
+        val kept = LinkedHashMap<GlobalShortcut, ShortcutBinding>()
+        GlobalShortcut.entries.forEach { shortcut ->
+            val binding = bindings[shortcut] ?: return@forEach
+            if (binding.modifierCount >= GlobalShortcutBindings.MIN_MODIFIERS) kept[shortcut] = binding
+        }
+        while (true) {
+            val resolved = GlobalShortcutBindings.resolve(kept)
+            val firstHolder = HashMap<ShortcutBinding, GlobalShortcut>()
+            val victim =
+                GlobalShortcut.entries.firstNotNullOfOrNull { shortcut ->
+                    val held = firstHolder.put(resolved.getValue(shortcut), shortcut) ?: return@firstNotNullOfOrNull null
+                    if (shortcut in kept) shortcut else held
+                }
+            if (victim == null || kept.remove(victim) == null) return kept
+        }
     }
 }

@@ -11,6 +11,58 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The keyboard-shortcuts window can rebind the system-wide chords — SHIPPED 2026-08-26
+
+- **The ask:** make the keyboard-shortcuts window able to customize the shortcuts.
+- **Scope, and why it stops where it does.** Only the **three system-wide chords** are rebindable. They are
+  the only shortcuts in the app that can collide with anything *outside* it — a system-wide claim is first
+  come, first served, so a chord another application already owns is simply unusable until the user can move
+  it (the window's own claim line has been reporting exactly that failure). Every other entry in the window is
+  a Compose `onPreviewKeyEvent` branch scoped to a surface: nothing to collide with, and nothing that reads
+  the branches back, so making those rebindable would mean re-routing ~40 hardcoded branches through a lookup
+  for a failure that cannot happen there. The rest of the window stays a reference list.
+- **`GlobalShortcut` now carries a `defaultBinding`, not a `chord`.** The live chord is
+  `GlobalShortcutBindings.chordOf(state.shortcutBindings, shortcut)`, and the window, the receipt notification
+  and the diagnostics all print *that*. The old `chord` property is gone so nothing can advertise a chord the
+  app is not claiming.
+- **`ShortcutBinding` = a `ShortcutKey` + Ctrl/Shift/Alt.** `ShortcutKey` is a **closed** set (A–Z, 0–9,
+  F1–F12) whose entry names are the persisted form: a chord has to survive the snapshot, the sync wire and
+  every platform actual's own naming, and a layout-dependent key would give an AZERTY user a chord the QWERTY
+  peer sharing that account has not got. No Win/Meta flag — Windows reserves it.
+- **`SchedulerState.shortcutBindings` holds the OVERRIDES only.** An untouched shortcut is absent and follows
+  its shipped chord, so a default changed in a later build still reaches every account that never rebound it,
+  and **"Reset" removes the entry** rather than writing today's default in. Persisted **and synced** (the
+  chords are the account's, so they follow the user to every machine).
+- **A rebinding IS an Undo/Redo unit** — `ShortcutBindingDelta`, one Main unit, unlike the account settings
+  beside it (`deepCopyMaxDepth`, the copy switches). It is one deliberate gesture on something whose effect is
+  invisible from where the user is sitting when the chord is struck. Both sides carry the whole override map,
+  because a reset is a *removal* and a delta saying only "X is now Y" could not put one back.
+- **Two rules, stated once** (`GlobalShortcutBindings.rejection`, which the reducer refuses on and the window
+  quotes): **at least two of Ctrl/Shift/Alt** — the claim swallows the chord session-wide, so one modifier
+  would take Ctrl+C or Alt+F4 away from every application the user runs and none at all would eat their
+  typing — and **no two shortcuts on one chord**. Consequence, accepted: swapping two chords needs a third in
+  between; stealing the other shortcut's chord silently would be worse.
+- **Rebinding is a capture, not a text field**, and the capture **stands the OS claim down**
+  (`setGlobalHotkeyCapture`, a new expect/actual). Without it the chords the app already owns would be the one
+  set of chords it could never hear: the hook swallows them and `RegisterHotKey` consumes them underneath,
+  before Compose is handed the key. On Windows the flag short-circuits the hook and empties the hot-key table;
+  it is balanced on a chord taken, Escape, focus lost, or the window closing.
+- **`installGlobalHotkeys(bindings, onShortcut)`** — the seam was already "claim once, re-point the callback";
+  a later call now also **re-registers the chords**, which is how a rebinding lands with no restart
+  (`App.kt`'s `LaunchedEffect` is keyed on the bindings). `RegisterHotKey(NULL, …)` belongs to the thread that
+  made it, so the UI thread posts `WM_OMNIAPP_RECONFIGURE` to the hot-key loop instead of touching the table;
+  the hook just re-reads a volatile field. The hook's modifier check is now an **exact** match against the
+  binding (a modifier the chord does not ask for must be up), with the AltGr pass-through preserved.
+- **Two healing paths, because the collision is reachable without either device causing it.** Merging per
+  shortcut can land two shortcuts on one chord when each device rebound a *different* one onto it —
+  `SnapshotMerge.repair` drops the collision back to the default; and decode drops any stored row this build
+  cannot name or that today's rules refuse, so the claim never holds a chord the window would not let the user
+  set.
+- Tests: `GlobalShortcutRebindTest` (new — the rules, overrides-only, the history unit, the codec round trip,
+  a pre-1.6.0 payload, decode healing), plus new cases in `SnapshotMergeTest` and updates to
+  `KeyboardShortcutsCatalogTest`. **Redeploy:** client app rebuild (`account{1,2,3}-*deploy*.bat`); no
+  Supabase change (the bindings ride the existing whole-document snapshot).
+
 ### Every system-wide chord posts a receipt notification — SHIPPED 2026-08-26
 
 - **The ask:** pressing `Ctrl+Shift+Alt+<letter>` should raise a notification, so the user can tell the app

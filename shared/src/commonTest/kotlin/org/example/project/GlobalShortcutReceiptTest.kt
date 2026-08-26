@@ -42,7 +42,7 @@ class GlobalShortcutReceiptTest {
             assertEquals("Shortcut received", entry.title)
             // The chord itself is the message — two chords struck in quick succession must be tellable apart.
             assertTrue(
-                entry.message.startsWith(shortcut.chord),
+                entry.message.startsWith(shortcut.defaultChord),
                 "receipt for ${shortcut.name} does not name its chord: ${entry.message}",
             )
             assertTrue(

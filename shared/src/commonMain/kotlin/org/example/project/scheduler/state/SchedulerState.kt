@@ -14,6 +14,8 @@ import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.scheduler.model.WellKnownIds
+import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.platform.ShortcutBinding
 
 data class SchedulerSelection(
     val main: CellId? = null,
@@ -509,6 +511,23 @@ data class SchedulerState(
      * many entries are kept and the rest ignored (see [NotificationLogEntry]). Derived / local-only: it
      * never affects the sync fingerprint and is never adopted from a remote pull.
      */
+    /**
+     * PRD §7 **Keyboard shortcuts**: the chord the user has bound each system-wide
+     * [org.example.project.scheduler.platform.GlobalShortcut] to, set in the keyboard-shortcuts window.
+     *
+     * Only the **overrides** are held — a shortcut the user has never rebound is simply absent and follows
+     * [org.example.project.scheduler.platform.GlobalShortcut.defaultBinding], which is also what "reset"
+     * puts back and what every payload written before the window could rebind anything decodes to. Read it
+     * through [org.example.project.scheduler.platform.GlobalShortcutBindings], never directly, so a default
+     * and an override are printed and claimed by the same code.
+     *
+     * Authoritative user-authored data (nothing re-derives it): persisted **and** synced — the chords are
+     * the account's, not this device's, so the user's own keyboard follows them to every machine. And unlike
+     * the other account-wide settings beside it, a rebinding **is** an Undo/Redo unit: it is a deliberate
+     * one-gesture change to something the user can lose track of (the chord is struck with another window in
+     * front, so a mis-capture is not visible from where they are sitting), and Ctrl+Z is the way back.
+     */
+    val shortcutBindings: Map<GlobalShortcut, ShortcutBinding> = emptyMap(),
     val notificationLog: List<NotificationLogEntry> = emptyList(),
     /**
      * A bounded, local-only diagnostic log of every Supabase HTTP call the app made, shown as the History

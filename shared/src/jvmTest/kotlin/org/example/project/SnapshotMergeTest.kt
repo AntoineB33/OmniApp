@@ -11,6 +11,10 @@ import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.persistence.SchedulerStateCodec
+import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.platform.GlobalShortcutBindings
+import org.example.project.scheduler.platform.ShortcutBinding
+import org.example.project.scheduler.platform.ShortcutKey
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.NoOpDelta
@@ -355,5 +359,61 @@ class SnapshotMergeTest {
             ),
             "an undecodable snapshot must fail the merge so the caller can fall back to the plain pull",
         )
+    }
+
+    // ---- PRD §7 keyboard shortcuts ---------------------------------------------------------------
+
+    @Test
+    fun each_device_rebinding_a_different_shortcut_keeps_both() {
+        // The chords are the account's, so they merge like any other per-key setting: rebinding "I'm away"
+        // on the desktop while the laptop moves "Switch task" must not cost either of them their chord.
+        val base = tree("1" to "A")
+        val local = base.copy(shortcutBindings = mapOf(GlobalShortcut.ToggleAway to ShortcutBinding(ShortcutKey.K, shift = false)))
+        val remote = base.copy(shortcutBindings = mapOf(GlobalShortcut.SwitchTask to ShortcutBinding(ShortcutKey.F12, ctrl = false)))
+
+        val merged = SnapshotMerge.mergeStates(base, local, remote)
+
+        assertEquals("Ctrl+Alt+K", GlobalShortcutBindings.chordOf(merged.shortcutBindings, GlobalShortcut.ToggleAway))
+        assertEquals("Shift+Alt+F12", GlobalShortcutBindings.chordOf(merged.shortcutBindings, GlobalShortcut.SwitchTask))
+    }
+
+    @Test
+    fun resetting_a_chord_on_one_device_survives_the_merge() {
+        // A reset is a REMOVAL from the override map; deleted on one side and untouched on the other stays
+        // deleted, i.e. the shortcut goes back to the chord it ships with rather than being resurrected.
+        val moved = ShortcutBinding(ShortcutKey.K, shift = false)
+        val base = tree("1" to "A").copy(shortcutBindings = mapOf(GlobalShortcut.ToggleAway to moved))
+        val local = base.copy(shortcutBindings = emptyMap())
+
+        val merged = SnapshotMerge.mergeStates(base, local, base)
+
+        assertTrue(merged.shortcutBindings.isEmpty())
+        assertEquals(
+            GlobalShortcut.ToggleAway.defaultChord,
+            GlobalShortcutBindings.chordOf(merged.shortcutBindings, GlobalShortcut.ToggleAway),
+        )
+    }
+
+    @Test
+    fun a_merge_never_leaves_two_shortcuts_on_one_chord() {
+        // Neither device ever had this: each rebound a DIFFERENT shortcut onto the same chord, and merging
+        // per shortcut keeps both. The claim cannot honour one press meaning two actions, so the repair
+        // drops the collision back to the default — visibly, in the window.
+        val clash = ShortcutBinding(ShortcutKey.K, shift = false)
+        val base = tree("1" to "A")
+        val local = base.copy(shortcutBindings = mapOf(GlobalShortcut.ToggleAway to clash))
+        val remote = base.copy(shortcutBindings = mapOf(GlobalShortcut.LookAwayNow to clash))
+
+        val merged = SnapshotMerge.mergeStates(base, local, remote)
+        val live = GlobalShortcutBindings.resolve(merged.shortcutBindings)
+
+        assertEquals(
+            GlobalShortcut.entries.size,
+            live.values.toSet().size,
+            "the merged table binds one chord to two actions: $live",
+        )
+        // The survivor keeps the chord; the loser is back on the one it ships with.
+        assertEquals(clash, live.getValue(GlobalShortcut.ToggleAway))
+        assertEquals(GlobalShortcut.LookAwayNow.defaultBinding, live.getValue(GlobalShortcut.LookAwayNow))
     }
 }

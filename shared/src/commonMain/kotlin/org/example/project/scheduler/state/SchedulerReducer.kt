@@ -15,6 +15,9 @@ import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.WellKnownIds
+import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.platform.GlobalShortcutBindings
+import org.example.project.scheduler.platform.ShortcutBinding
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.model.TaskTreeId
@@ -228,6 +231,8 @@ object SchedulerReducer {
                 val depth = intent.depth.coerceIn(SchedulerDomain.DEEP_COPY_DEPTH_RANGE)
                 if (state.deepCopyMaxDepth == depth) state else state.copy(deepCopyMaxDepth = depth)
             }
+            is SchedulerIntent.SetGlobalShortcutBinding ->
+                reduceSetGlobalShortcutBinding(state, intent.shortcut, intent.binding)
             is SchedulerIntent.SetCopyOptions -> {
                 val o = intent.options
                 if (state.copyIncludeIds == o.includeIds &&
@@ -855,6 +860,34 @@ object SchedulerReducer {
         return commitDelta(
             state.copy(defaultSubtree = after),
             DefaultSubtreeDelta(before = template, after = after, label = "Default sub-tree switch"),
+            HistoryCategory.Main,
+        )
+    }
+
+    /**
+     * PRD §7 Keyboard shortcuts: bind one system-wide chord, or (null [binding]) put it back to the one it
+     * ships with.
+     *
+     * The stored map holds **overrides only**, so a reset removes the entry rather than writing the default
+     * into it — otherwise an account would freeze the default it happened to be on when the user pressed
+     * "reset", and a later build's changed default would never reach it.
+     *
+     * A rebinding the rules refuse is a no-op here. The window checks the same predicate and shows the
+     * sentence, so this guard is the backstop for anything dispatching without asking, not the user-facing
+     * check.
+     */
+    private fun reduceSetGlobalShortcutBinding(
+        state: SchedulerState,
+        shortcut: GlobalShortcut,
+        binding: ShortcutBinding?,
+    ): SchedulerState {
+        val before = state.shortcutBindings
+        if (binding != null && GlobalShortcutBindings.rejection(before, shortcut, binding) != null) return state
+        val after = if (binding == null) before - shortcut else before + (shortcut to binding)
+        if (after == before) return state
+        return commitDelta(
+            state.copy(shortcutBindings = after),
+            ShortcutBindingDelta(before = before, after = after),
             HistoryCategory.Main,
         )
     }
@@ -3591,6 +3624,32 @@ internal data class TaskTreeDelta(
     override fun undo(state: SchedulerState): SchedulerState = state.applyTaskTreeState(before)
 
     override fun redo(state: SchedulerState): SchedulerState = state.applyTaskTreeState(after)
+}
+
+/**
+ * PRD §7 Keyboard shortcuts: one rebinding of a system-wide chord (or one reset back to the default).
+ *
+ * Both sides carry the whole **override map**, not just the one shortcut: a reset *removes* an entry, and a
+ * delta that stated only "shortcut X is now Y" could not put a removal back. It is a Main unit like the
+ * task-tree and template gestures — see [SchedulerState.shortcutBindings] for why this setting is undoable
+ * where the account's other settings are not.
+ */
+internal data class ShortcutBindingDelta(
+    val before: Map<GlobalShortcut, ShortcutBinding>,
+    val after: Map<GlobalShortcut, ShortcutBinding>,
+) : Delta {
+    override val label: String = "Keyboard shortcut"
+
+    override val details: List<String>
+        get() = GlobalShortcut.entries.mapNotNull { shortcut ->
+            val b = GlobalShortcutBindings.chordOf(before, shortcut)
+            val a = GlobalShortcutBindings.chordOf(after, shortcut)
+            if (b == a) null else "${shortcut.action}: $b → $a"
+        }
+
+    override fun undo(state: SchedulerState): SchedulerState = state.copy(shortcutBindings = before)
+
+    override fun redo(state: SchedulerState): SchedulerState = state.copy(shortcutBindings = after)
 }
 
 internal object NoOpDelta : Delta {

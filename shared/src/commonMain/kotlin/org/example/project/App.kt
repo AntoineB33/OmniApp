@@ -263,8 +263,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // handler would only ever fire when the button is already one click away. The
         // claim swallows the chord so no other application acts on the same press. Desktop-only; inert on
         // Android/iOS.
-        LaunchedEffect(engine) {
-            installGlobalHotkeys { shortcut ->
+        // Keyed on the bindings too (PRD §7): rebinding a chord in the keyboard-shortcuts window has to reach
+        // the OS claim without a restart, and the seam's later calls are exactly the re-registration path.
+        LaunchedEffect(engine, schedulerState.shortcutBindings) {
+            installGlobalHotkeys(schedulerState.shortcutBindings) { shortcut ->
                 // The receipt FIRST, and unconditionally: the chord is struck with another window in front, so
                 // without it "OmniApp never got the press" and "OmniApp got it and had nothing to do" look
                 // identical from where the user is sitting. It is posted here, at the OS seam, and not inside
@@ -1628,10 +1630,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     }
 
                     // PRD §7 Keyboard shortcuts: the reference list of every chord, plus what claim the OS
-                    // granted the two system-wide ones (the only shortcuts another application can take).
+                    // granted the three system-wide ones (the only shortcuts another application can take —
+                    // and so the only ones the window lets the user rebind).
                     if (shortcutsWindowOpen) {
                         ShortcutsWindow(
                             claim = globalHotkeyClaim,
+                            bindings = schedulerState.shortcutBindings,
+                            onRebind = { shortcut, binding ->
+                                vm.dispatch(SchedulerIntent.SetGlobalShortcutBinding(shortcut, binding))
+                            },
                             onDismiss = { shortcutsWindowOpen = false },
                             initialOffset = shortcutsOffset,
                             onOffsetChange = {

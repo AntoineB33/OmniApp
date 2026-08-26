@@ -4,6 +4,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.platform.ShortcutBinding
+import org.example.project.scheduler.platform.ShortcutKey
 import org.example.project.ui.KeyboardShortcutCatalog
 
 /**
@@ -18,21 +20,40 @@ class KeyboardShortcutsCatalogTest {
 
     @Test
     fun everyGlobalShortcutIsListed() {
-        val listed = KeyboardShortcutCatalog.globalGroup.shortcuts.map { it.keys }
-        assertEquals(GlobalShortcut.entries.map { it.chord }, listed)
-        assertTrue(KeyboardShortcutCatalog.groups.first() === KeyboardShortcutCatalog.globalGroup)
+        val listed = KeyboardShortcutCatalog.globalGroup().shortcuts.map { it.keys }
+        assertEquals(GlobalShortcut.entries.map { it.defaultChord }, listed)
+        assertEquals("System-wide", KeyboardShortcutCatalog.groups().first().title)
     }
 
-    /** The two chords the app actually claims — spelled out here so a silent re-binding fails the build. */
+    /**
+     * The system-wide block prints the chord the ACCOUNT is bound to, not the shipped one — the whole point
+     * of the rebinding. A window still advertising `Ctrl+Shift+Alt+A` while the claim is on `Ctrl+Alt+K` is
+     * the one kind of entry that actively misleads, in the one block where it can now happen.
+     */
+    @Test
+    fun theGlobalBlockPrintsTheAccountsOwnChords() {
+        val rebound = ShortcutBinding(ShortcutKey.K, ctrl = true, shift = false, alt = true)
+        val group = KeyboardShortcutCatalog.globalGroup(mapOf(GlobalShortcut.ToggleAway to rebound))
+
+        assertEquals("Ctrl+Alt+K", group.shortcuts.first().keys)
+        // Everything the user did NOT rebind still reads as the chord it ships with.
+        assertEquals(
+            GlobalShortcut.entries.drop(1).map { it.defaultChord },
+            group.shortcuts.drop(1).map { it.keys },
+        )
+    }
+
+    /** The three chords the app ships with — spelled out here so a silent change of default fails the build. */
     @Test
     fun theGlobalChordsAreTheDocumentedOnes() {
-        assertEquals("Ctrl+Shift+Alt+A", GlobalShortcut.ToggleAway.chord)
-        assertEquals("Ctrl+Shift+Alt+E", GlobalShortcut.LookAwayNow.chord)
+        assertEquals("Ctrl+Shift+Alt+A", GlobalShortcut.ToggleAway.defaultChord)
+        assertEquals("Ctrl+Shift+Alt+E", GlobalShortcut.LookAwayNow.defaultChord)
+        assertEquals("Ctrl+Shift+Alt+Z", GlobalShortcut.SwitchTask.defaultChord)
     }
 
     @Test
     fun noGroupListsTheSameChordTwice() {
-        KeyboardShortcutCatalog.groups.forEach { group ->
+        KeyboardShortcutCatalog.groups().forEach { group ->
             val keys = group.shortcuts.map { it.keys }
             assertEquals(keys.distinct(), keys, "duplicate chord in \"${group.title}\"")
             assertTrue(group.shortcuts.isNotEmpty(), "empty group \"${group.title}\"")

@@ -55,6 +55,11 @@ import org.example.project.scheduler.state.DefaultSubtreeDelta
 import org.example.project.scheduler.state.DefaultSubtreeTemplate
 import org.example.project.scheduler.state.defaultSubtreeIsEmpty
 import org.example.project.scheduler.state.TaskTreeDelta
+import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.platform.GlobalShortcutBindings
+import org.example.project.scheduler.platform.ShortcutBinding
+import org.example.project.scheduler.platform.ShortcutKey
+import org.example.project.scheduler.state.ShortcutBindingDelta
 import org.example.project.scheduler.state.TaskTreeEntry
 import org.example.project.scheduler.state.TaskTreeStateSnapshot
 import org.example.project.scheduler.state.SetExpandedDelta
@@ -287,6 +292,9 @@ object SchedulerStateCodec {
             copyIncludeIds = copyIncludeIds,
             copyPriorityTables = copyPriorityTables,
             copyIncludeText = copyIncludeText,
+            // PRD §7 Keyboard shortcuts: the account's system-wide chord OVERRIDES, sorted by shortcut so
+            // one binding table has exactly one encoding (the fingerprint is this payload, byte for byte).
+            shortcutBindings = shortcutBindings.toPersistedRows(),
             focusedWindow = focusedWindow.name,
             histories = histories.toPersisted(),
             sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
@@ -464,6 +472,8 @@ object SchedulerStateCodec {
                     before?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
                     PersistedSleep(after.wakeMinutes, after.goalWakeMinutes, after.sleepDurationMinutes, after.anchorEpochDay),
                 )
+            is ShortcutBindingDelta ->
+                PersistedDelta.ShortcutBindings(before.toPersistedRows(), after.toPersistedRows())
             NoOpDelta -> PersistedDelta.NoOp
         }
 
@@ -725,6 +735,12 @@ object SchedulerStateCodec {
             copyIncludeIds = copyIncludeIds,
             copyPriorityTables = copyPriorityTables,
             copyIncludeText = copyIncludeText,
+            // PRD §7 Keyboard shortcuts: a payload written before the window could rebind anything has no
+            // entries at all, which is exactly "every chord is the one it ships with". A row naming a
+            // shortcut or a key this build does not have is DROPPED rather than surfaced (that shortcut
+            // falls back to its default), and so is one the rules would refuse — decode heals what an older
+            // or hand-edited payload holds, it never hands the claim a chord the app would not accept.
+            shortcutBindings = shortcutBindings.toShortcutBindings(),
             focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),
             histories = histories?.toHistories() ?: SchedulerHistories(),
             sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
@@ -813,6 +829,8 @@ object SchedulerStateCodec {
                     before?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
                     SleepSchedule(after.wakeMinutes, after.goalWakeMinutes, after.sleepDurationMinutes, after.anchorEpochDay),
                 )
+            is PersistedDelta.ShortcutBindings ->
+                ShortcutBindingDelta(before.toShortcutBindings(), after.toShortcutBindings())
             PersistedDelta.NoOp -> NoOpDelta
         }
 
@@ -985,6 +1003,10 @@ private data class PersistedState(
     val copyIncludeIds: Boolean = true,
     val copyPriorityTables: Boolean = true,
     val copyIncludeText: Boolean = true,
+    // PRD §7 Keyboard shortcuts: the account's system-wide chord overrides. A missing value decodes to none,
+    // i.e. every chord is the one it ships with — which is what every payload written before the window could
+    // rebind anything behaved as.
+    val shortcutBindings: List<PersistedShortcutBinding> = emptyList(),
     // PRD §7: the focused window; a missing value decodes to the task tree (payloads written before window
     // focus was persisted).
     val focusedWindow: String = "Tree",
@@ -1056,6 +1078,54 @@ private data class PersistedSupabaseUsageEntry(
  */
 private fun dayOfWeekOrNull(isoDayNumber: Int): DayOfWeek? =
     DayOfWeek.entries.firstOrNull { it.isoDayNumber == isoDayNumber }
+
+/**
+ * PRD §7 Keyboard shortcuts: the stored override rows, back as the map
+ * [org.example.project.scheduler.state.SchedulerState.shortcutBindings] holds.
+ *
+ * **Decode heals** (CLAUDE.md): a row this build cannot name — a shortcut or a key that has since gone, a
+ * duplicate, or a chord [GlobalShortcutBindings] would refuse today because the rules tightened — is dropped,
+ * and that shortcut falls back to the chord it ships with. The alternative is an account whose claim silently
+ * holds a chord the app would never let the user set, which is undiagnosable from the window.
+ */
+/**
+ * PRD §7 Keyboard shortcuts: the override map as stored rows, **sorted by shortcut** so one binding table has
+ * exactly one encoding — the sync fingerprint is this payload byte for byte, and a map's iteration order must
+ * never be able to look like an edit.
+ */
+private fun Map<GlobalShortcut, ShortcutBinding>.toPersistedRows(): List<PersistedShortcutBinding> =
+    entries.sortedBy { it.key.name }
+        .map { (shortcut, b) -> PersistedShortcutBinding(shortcut.name, b.key.name, b.ctrl, b.shift, b.alt) }
+
+private fun List<PersistedShortcutBinding>.toShortcutBindings(): Map<GlobalShortcut, ShortcutBinding> {
+    val resolved = LinkedHashMap<GlobalShortcut, ShortcutBinding>()
+    for (row in this) {
+        val shortcut = GlobalShortcut.entries.firstOrNull { it.name == row.shortcut } ?: continue
+        val key = ShortcutKey.entries.firstOrNull { it.name == row.key } ?: continue
+        if (shortcut in resolved) continue
+        val binding = ShortcutBinding(key, ctrl = row.ctrl, shift = row.shift, alt = row.alt)
+        if (GlobalShortcutBindings.rejection(resolved, shortcut, binding) != null) continue
+        resolved[shortcut] = binding
+    }
+    return resolved
+}
+
+/**
+ * PRD §7 Keyboard shortcuts: one system-wide chord the user has rebound (defaults are simply absent).
+ *
+ * Both enums are stored by **entry name**, which is why [org.example.project.scheduler.platform.ShortcutKey]
+ * is a closed set that must not be renamed. Every field carries a default so a hand-edited or older payload
+ * decodes rather than failing — a row that decodes to something this build cannot name is then dropped by
+ * [toShortcutBindings], leaving that shortcut on the chord it ships with.
+ */
+@Serializable
+private data class PersistedShortcutBinding(
+    val shortcut: String = "",
+    val key: String = "",
+    val ctrl: Boolean = false,
+    val shift: Boolean = false,
+    val alt: Boolean = false,
+)
 
 /**
  * PRD §5 the relative-priority window: the cells pinned for one (task, ancestor) pair. Every field carries
@@ -1209,6 +1279,18 @@ private sealed interface PersistedDelta {
         val before: PersistedTaskTreeState,
         val after: PersistedTaskTreeState,
         val label: String,
+    ) : PersistedDelta
+
+    /**
+     * PRD §7 Keyboard shortcuts: one rebinding of a system-wide chord. New in 1.6.0 — a history written by
+     * an older build simply holds none of these, and every older unit still decodes, since this is a new
+     * [PersistedDelta] subtype and not a field on an existing one.
+     */
+    @Serializable
+    @SerialName("shortcutBindings")
+    data class ShortcutBindings(
+        val before: List<PersistedShortcutBinding>,
+        val after: List<PersistedShortcutBinding>,
     ) : PersistedDelta
 
     @Serializable

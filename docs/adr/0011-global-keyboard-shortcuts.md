@@ -4,11 +4,13 @@
 
 Three of the app's actions are wanted at a moment when OmniApp is, by definition, **not** the focused window:
 
-| Chord | Action | Why the app is not in front |
+| Default chord | Action | Why the app is not in front |
 | --- | --- | --- |
 | `Ctrl+Shift+Alt+A` | "I'm away" / "I'm back" (`SchedulerEngine.setUserAway`) | the user is walking away from whatever they were working in |
 | `Ctrl+Shift+Alt+E` | "Look away now" (`SchedulerEngine.restartLookAway`) | the user decides mid-task to rest their eyes |
 | `Ctrl+Shift+Alt+Z` | "Switch task" (`SchedulerEngine.forceTaskSwitch`) | the user is inside the work they have decided to get off |
+
+Those are the chords the app *ships* with; since 1.6.0 each of them is **rebindable** - see *Rebinding*, below.
 
 So none of them can be a Compose `onPreviewKeyEvent` handler: a focus-scoped chord fires only in the one
 situation where the lateral-menu button is already one click away. All are claimed from the OS in
@@ -85,6 +87,12 @@ both have to be recognised.
   installing repeatedly is exactly the behaviour anti-malware heuristics flag. One install, one fallback.
 - **A separate boolean/second enum for "which chords exist".** The window would drift from what the OS was
   actually asked for. `GlobalShortcut` is the single source, and `KeyboardShortcutsCatalogTest` pins it.
+- **Rebinding as a typed text field** ("Ctrl+Alt+K"). Two spellings of one chord, and a parser to keep in step
+  with the printer. The capture reuses the printer and cannot disagree with it.
+- **Storing the full binding table rather than the overrides.** It would freeze whatever the defaults happened to
+  be on the day the user first opened the window.
+- **Letting a rebinding steal the chord off another shortcut** (resetting that one to its default). Silently
+  changing a shortcut the user did not ask about, to fix a conflict the message already explains.
 
 ## Not Windows
 
@@ -94,15 +102,60 @@ shortcut must never keep the app from starting.
 
 ## The keyboard-shortcuts window (PRD §7)
 
-The lateral menu's last button opens `ShortcutsWindow`, a plain reference list built from
-`KeyboardShortcutCatalog`: the system-wide block first (derived from `GlobalShortcut`, plus the claim line),
-then the task tree, Edit Mode, history, calendar and the tree-name field. Those per-surface blocks are prose —
+The lateral menu's last button opens `ShortcutsWindow`, built from `KeyboardShortcutCatalog`: the system-wide
+block first (derived from `GlobalShortcut` resolved against the account's bindings, plus the claim line), then
+the task tree, Edit Mode, history, calendar and the tree-name field. Those per-surface blocks are prose —
 nothing can read the `onPreviewKeyEvent` branches back — so a new chord and its catalogue entry belong in the
 same change.
 
+## Rebinding (1.6.0)
+
+**Only the system-wide three can be rebound**, and that is not an arbitrary line. A system-wide claim is first
+come, first served, so a chord another application already owns is *unusable* until the user can move it —
+these three are the only shortcuts in the app that can collide with anything outside it. Everything else in the
+window is a Compose handler scoped to a surface: nothing to collide with, and (per the paragraph above) nothing
+to read the handlers back off, so a rebindable per-surface chord would mean re-routing ~40 hardcoded branches
+through a lookup for no failure it fixes.
+
+- **The binding is the account's**: `SchedulerState.shortcutBindings`, persisted **and** synced. The user's
+  keyboard follows them to every machine. Unlike the settings beside it (`deepCopyMaxDepth`, the copy switches)
+  a rebinding **is** an Undo/Redo unit — one deliberate gesture, on something whose effect is invisible from
+  where the user is sitting when it is struck, so Ctrl+Z is the way back.
+- **Overrides only.** A shortcut nobody has touched is *absent* from the map and follows
+  `GlobalShortcut.defaultBinding`, so a default changed in a later build reaches every account that never
+  rebound it — and "reset" is a removal, never a write of today's default.
+- **The vocabulary is closed** (`ShortcutKey`: A-Z, 0-9, F1-F12). A chord has to survive the persisted snapshot,
+  the sync wire and every platform actual's own naming; and a key whose position moves with the layout would
+  give an AZERTY user a chord their QWERTY peer's machine does not have, for a binding that is the *account's*.
+- **Two rules, in `GlobalShortcutBindings.rejection`** — the reducer refuses on it and the window shows its
+  sentence, so a refused chord is never a silent no-op:
+  1. **At least two of Ctrl/Shift/Alt.** The claim swallows the chord session-wide, so one modifier would take
+     Ctrl+C or Alt+F4 away from every application the user runs, and none at all would eat their typing.
+  2. **No two shortcuts on one chord.** One press cannot mean two actions. (Consequence: *swapping* two chords
+     needs a third chord in between. Stealing the other shortcut's chord silently would be worse.)
+- **Capture, not a text field.** The user presses the chord they want — and `setGlobalHotkeyCapture(true)` stands
+  the claim down while the row listens, because otherwise the chords the app already owns would be precisely the
+  ones it could never hear: the hook swallows them, and `RegisterHotKey` consumes them underneath, before Compose
+  is handed the key. The flag empties the hot-key table from the loop thread and short-circuits the hook; it is
+  balanced on a chord taken, Escape, focus lost, or the window closing.
+- **Re-registration is the seam's own idempotence.** `installGlobalHotkeys` was already "claim once, re-point the
+  callback"; a later call now also rewrites the chords. `RegisterHotKey(NULL, …)` belongs to the thread that made
+  it, so the UI thread posts `WM_OMNIAPP_RECONFIGURE` to the hot-key loop rather than touching the table itself.
+  The hook needs no such thing — it re-reads a volatile field on the next keystroke.
+- **Merging can produce what neither device had**: two shortcuts landing on one chord, because each device
+  rebound a *different* shortcut onto it. `SnapshotMerge.repair` drops the collision back to the default, and
+  decode heals a stored table the rules would refuse today the same way — an account whose claim silently holds
+  a chord the window would not let the user set is undiagnosable from the window.
+
 ## Tests
 
-`KeyboardShortcutsCatalogTest` — every `GlobalShortcut` is listed, in order, in the window's first block; the two
-chords are the documented ones; no group lists a chord twice or carries a blank entry. The hook itself is
-Windows-native and is verified on the machine (`Diagnostics` logs `global hotkeys: claim=…` at startup and
-`global hotkey pressed: …` on each press; `scripts\collect-diagnostics.bat` collects both).
+`KeyboardShortcutsCatalogTest` — every `GlobalShortcut` is listed, in order, in the window's first block, at the
+chord the *account* is bound to; the shipped chords are the documented ones; no group lists a chord twice or
+carries a blank entry. `GlobalShortcutRebindTest` — the two rules, overrides-only + reset-as-removal, the single
+Main history unit (including undoing a reset), the codec round trip, a pre-1.6.0 payload, and decode healing a
+table today's rules refuse. `SnapshotMergeTest` — per-shortcut merge, a reset surviving, and the collision
+repair. `GlobalShortcutReceiptTest` — every press posts a receipt naming its chord.
+
+The hook itself is Windows-native and is verified on the machine (`Diagnostics` logs `global hotkeys: claim=…`
+at startup, `global hotkeys: rebound to …` on a rebinding, and `global hotkey pressed: …` on each press;
+`scripts\collect-diagnostics.bat` collects them).

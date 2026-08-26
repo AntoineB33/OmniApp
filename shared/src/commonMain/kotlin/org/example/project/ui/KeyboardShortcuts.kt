@@ -1,6 +1,8 @@
 package org.example.project.ui
 
 import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.platform.GlobalShortcutBindings
+import org.example.project.scheduler.platform.ShortcutBinding
 
 /** One line of the keyboard-shortcuts window: the chord, and what striking it does. */
 data class KeyboardShortcut(val keys: String, val description: String)
@@ -22,8 +24,9 @@ data class KeyboardShortcutGroup(
  * It is written down rather than derived, because the handlers it describes are spread across
  * `TaskSchedulerScreen`, `CalendarUi` and `DefaultSubtreeWindow` as ordinary `onPreviewKeyEvent` branches and
  * there is nothing to read them off. The one part that *is* derived is the system-wide block: those chords
- * come straight from [GlobalShortcut], which is also what the platform actual registers with the OS — so the
- * window can never advertise a chord the app does not actually claim.
+ * come straight from [GlobalShortcut] resolved against the account's own bindings, which is also exactly what
+ * the platform actual registers with the OS — so the window can never advertise a chord the app does not
+ * actually claim, and it is the only block the user can rebind.
  *
  * Keep a new chord and its entry here in the same change; `KeyboardShortcutsCatalogTest` only pins the half
  * that can be checked mechanically (that every [GlobalShortcut] is listed, and that nothing is listed twice
@@ -31,19 +34,33 @@ data class KeyboardShortcutGroup(
  */
 object KeyboardShortcutCatalog {
 
-    /** The system-wide chords, listed straight off [GlobalShortcut] so the two can never disagree. */
-    val globalGroup: KeyboardShortcutGroup =
+    /**
+     * The system-wide chords, listed straight off [GlobalShortcut] so the two can never disagree — at
+     * whatever chord the account has each of them bound to ([bindings], the user's overrides). It is a
+     * function and not a `val` for exactly that reason: these three are the only entries in the whole window
+     * that are not a constant, and a stored list would print the shipped chord next to a claim on a different
+     * one.
+     */
+    fun globalGroup(bindings: Map<GlobalShortcut, ShortcutBinding> = emptyMap()): KeyboardShortcutGroup =
         KeyboardShortcutGroup(
             title = "System-wide",
             note = "Claimed from the operating system, so they work while OmniApp is not the focused window. " +
                 "Desktop only. Each press posts a \"Shortcut received\" notification naming the chord, so a " +
-                "press that never reached the app is distinguishable from one that did.",
-            shortcuts = GlobalShortcut.entries.map { KeyboardShortcut(it.chord, it.action) },
+                "press that never reached the app is distinguishable from one that did. These three can be " +
+                "rebound below; the rest of this window is fixed.",
+            shortcuts =
+                GlobalShortcut.entries.map {
+                    KeyboardShortcut(GlobalShortcutBindings.chordOf(bindings, it), it.action)
+                },
         )
 
-    val groups: List<KeyboardShortcutGroup> =
+    /** Every block the window prints, the system-wide one first and bound to the account's own chords. */
+    fun groups(bindings: Map<GlobalShortcut, ShortcutBinding> = emptyMap()): List<KeyboardShortcutGroup> =
+        listOf(globalGroup(bindings)) + fixedGroups
+
+    /** Everything below the system-wide block: prose, and the same on every account. */
+    val fixedGroups: List<KeyboardShortcutGroup> =
         listOf(
-            globalGroup,
             KeyboardShortcutGroup(
                 title = "Task tree",
                 note = "While the tree holds the keyboard and no cell is being edited.",

@@ -580,6 +580,21 @@ sealed interface SchedulerIntent {
         SchedulerIntent
 
     /**
+     * PRD §7 Keyboard shortcuts: bind the system-wide [shortcut] to [binding], or — with [binding] null —
+     * put it back to the chord it ships with
+     * ([org.example.project.scheduler.platform.GlobalShortcut.defaultBinding]).
+     *
+     * Refused (a no-op) when
+     * [org.example.project.scheduler.platform.GlobalShortcutBindings.rejection] has an answer: the window
+     * shows that same sentence rather than dispatching, so the reducer's guard is the backstop and not the
+     * user-facing check. An accepted rebinding is **one Undo/Redo unit** in the Main history.
+     */
+    data class SetGlobalShortcutBinding(
+        val shortcut: org.example.project.scheduler.platform.GlobalShortcut,
+        val binding: org.example.project.scheduler.platform.ShortcutBinding?,
+    ) : SchedulerIntent
+
+    /**
      * PRD §4 Paste: rebuild the tree structure serialized in [text] at the single selected cell — a
      * no-op unless [text] is in the app's tab-indented format.
      */
