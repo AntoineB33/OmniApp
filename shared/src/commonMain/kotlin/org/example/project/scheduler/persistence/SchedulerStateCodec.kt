@@ -21,6 +21,7 @@ import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.DefaultSubtreeNode
+import org.example.project.scheduler.model.ForcedTaskStart
 import org.example.project.scheduler.model.ForcedTaskSwitch
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.RelativePriorityPinKey
@@ -280,6 +281,9 @@ object SchedulerStateCodec {
             // PRD §7 "Switch task": the outstanding refusal, flattened to its two scalars.
             forcedSwitchTaskId = forcedSwitch?.taskId?.value,
             forcedSwitchAtMillis = forcedSwitch?.atMillis,
+            // PRD §13 "start this task now": the outstanding request, flattened the same way.
+            forcedStartTaskId = forcedStart?.taskId?.value,
+            forcedStartAtMillis = forcedStart?.atMillis,
             notificationLog = notificationLog.map { PersistedNotificationEntry(it.timeMillis, it.title, it.message) },
             supabaseUsageLog =
                 supabaseUsageLog.map {
@@ -606,6 +610,11 @@ object SchedulerStateCodec {
                 forcedSwitchTaskId?.let { id ->
                     forcedSwitchAtMillis?.let { at -> ForcedTaskSwitch(TaskId(id), at) }
                 },
+            // PRD §13 "start this task now": same two-halves rule as the refusal above.
+            forcedStart =
+                forcedStartTaskId?.let { id ->
+                    forcedStartAtMillis?.let { at -> ForcedTaskStart(TaskId(id), at) }
+                },
             notificationLog = notificationLog.map { NotificationLogEntry(it.timeMillis, it.title, it.message) },
             supabaseUsageLog =
                 supabaseUsageLog.map {
@@ -860,6 +869,11 @@ private data class PersistedState(
     // what every payload written before the button existed says.
     val forcedSwitchTaskId: String? = null,
     val forcedSwitchAtMillis: Long? = null,
+    // PRD §13 "start this task now" (see [org.example.project.scheduler.model.ForcedTaskStart]): the task the
+    // user asked for and the instant they asked for it. Missing values decode to no outstanding request —
+    // which is what every payload written before the menu entry existed says.
+    val forcedStartTaskId: String? = null,
+    val forcedStartAtMillis: Long? = null,
     // The local-only diagnostic notification log; a missing value decodes to empty (payloads written before
     // the History Manager's Notifications column existed). Local-only — stripped from the sync fingerprint.
     val notificationLog: List<PersistedNotificationEntry> = emptyList(),

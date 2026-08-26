@@ -353,6 +353,23 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §13 **"start this task now"** — the task cell's right-click menu: [taskId] must be the task the plan
+     * places at the now-line.
+     *
+     * The mirror image of [ForceTaskSwitch], and recorded the same way: a standing
+     * [org.example.project.scheduler.model.ForcedTaskStart] plus an immediate re-plan from inside its own
+     * reducer, because the press IS the calculation event and a marker in
+     * [org.example.project.scheduler.domain.SchedulerDomain.schedulingSignature] would fire a second,
+     * *un*-asked re-plan the moment it was spent. Unlike the menu's "copy" this names ONE task however many
+     * cells are selected — "start *this* task" has no meaning for a block. A task that is not a schedulable
+     * leaf is a no-op (a parent task is a grouping and is never placed). The instant is the reducer's clock,
+     * like the other user-authored edits that re-plan on the spot. Persisted + synced; not undoable.
+     */
+    data class ForceTaskStart(
+        val taskId: TaskId,
+    ) : SchedulerIntent
+
+    /**
      * PRD §15 Screen breaks: show/hide the screen breaks on the calendar (a cosmetic display preference). Hiding
      * does not touch the schedule or notifications. Persisted; not undoable.
      */

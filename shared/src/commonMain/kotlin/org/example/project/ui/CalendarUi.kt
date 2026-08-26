@@ -1891,23 +1891,18 @@ private fun HistoryUnitRow(
  */
 @Composable
 private fun HistoryUnitInfoWindow(unit: HistoryUnit, onDismiss: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.3f))
-            .clickable(onClick = onDismiss),
-        contentAlignment = Alignment.Center,
-    ) {
+        // A sort-2 pop-up: it draws on the top layer, blocks nothing behind it, and the host
+        // dismisses it as soon as a press lands anywhere else (see TransientPopupHost).
+    TransientPopupLayer {
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 14.dp,
             border = BorderStroke(1.dp, CalColors.grid),
             modifier = Modifier
+                .transientPopupCard(onDismiss)
                 .padding(24.dp)
-                .widthIn(min = 280.dp, max = 460.dp)
-                // Swallow clicks on the card so they don't fall through to the dismiss scrim.
-                .clickable(enabled = false) {},
+                .widthIn(min = 280.dp, max = 460.dp),
         ) {
             Column(
                 modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
@@ -5125,21 +5120,15 @@ fun ManualEntryEditWindow(
     // shown so they round-trip across edits until their enforcement lands.
     var pins by remember { mutableStateOf(initialPins) }
 
-    // Full-screen scrim; clicking outside dismisses (PRD §8 floating window over everything).
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.25f))
-            .clickable(onClick = onDismiss),
-        contentAlignment = Alignment.Center,
-    ) {
+        // A sort-2 pop-up: it draws on the top layer, blocks nothing behind it, and the host
+        // dismisses it as soon as a press lands anywhere else (see TransientPopupHost).
+    TransientPopupLayer {
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 12.dp,
             border = BorderStroke(1.dp, CalColors.grid),
-            // Swallow clicks so they don't reach the dismissing scrim.
-            modifier = Modifier.width(320.dp).clickable(enabled = false) {},
+            modifier = Modifier.transientPopupCard(onDismiss).width(320.dp),
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Edit task", style = MaterialTheme.typography.titleSmall)
@@ -5338,14 +5327,9 @@ fun PeriodEditWindow(
     // never be silently rounded into a panel the user did not ask for.
     val saveable = resolvedStart != null && resolvedEnd != null && resolvedEnd > resolvedStart
 
-    // Full-screen scrim; clicking outside dismisses (PRD §8 floating window over everything).
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.25f))
-            .clickable(onClick = onDismiss),
-        contentAlignment = Alignment.Center,
-    ) {
+        // A sort-2 pop-up: it draws on the top layer, blocks nothing behind it, and the host
+        // dismisses it as soon as a press lands anywhere else (see TransientPopupHost).
+    TransientPopupLayer {
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface,
@@ -5522,19 +5506,15 @@ fun ReminderEditWindow(
             else -> reminderIdForTitle(title) ?: ""
         }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.25f))
-            .clickable(onClick = onDismiss),
-        contentAlignment = Alignment.Center,
-    ) {
+        // A sort-2 pop-up: it draws on the top layer, blocks nothing behind it, and the host
+        // dismisses it as soon as a press lands anywhere else (see TransientPopupHost).
+    TransientPopupLayer {
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 12.dp,
             border = BorderStroke(1.dp, CalColors.grid),
-            modifier = Modifier.width(320.dp).clickable(enabled = false) {},
+            modifier = Modifier.transientPopupCard(onDismiss).width(320.dp),
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Add reminder", style = MaterialTheme.typography.titleSmall)
@@ -5650,19 +5630,15 @@ fun ReminderConstraintEditWindow(
         onDismissRequest = onDismiss,
         properties = PopupProperties(focusable = true),
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.25f))
-                .clickable(onClick = onDismiss),
-            contentAlignment = Alignment.Center,
-        ) {
+        // A sort-2 pop-up (see TransientPopupHost); the Popup above only lifts it out of the
+        // manager window's nesting.
+        TransientPopupLayer {
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 12.dp,
                 border = BorderStroke(1.dp, CalColors.grid),
-                modifier = Modifier.width(320.dp).clickable(enabled = false) {},
+                modifier = Modifier.transientPopupCard(onDismiss).width(320.dp),
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Constrain to reminder", style = MaterialTheme.typography.titleSmall)

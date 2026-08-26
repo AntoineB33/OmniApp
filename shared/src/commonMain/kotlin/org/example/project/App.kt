@@ -13,14 +13,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.zIndex
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -81,6 +77,9 @@ import org.example.project.scheduler.ui.SignInDialog
 import org.example.project.scheduler.ui.SyncStatusChip
 import org.example.project.scheduler.ui.TaskSchedulerScreen
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
+import org.example.project.scheduler.ui.TaskEditWindow
+import org.example.project.scheduler.ui.DeepCopyWindow
+import org.example.project.scheduler.platform.writeSystemClipboardText
 import org.example.project.time.AppClock
 import org.example.project.time.SimAppClock
 import org.example.project.time.SystemAppClock
@@ -105,6 +104,9 @@ import org.example.project.ui.DefaultSubtreeWindow
 import org.example.project.ui.TaskListWindow
 import org.example.project.ui.TaskTreesWindow
 import org.example.project.ui.TimeSimPanel
+import org.example.project.ui.LocalTransientPopupHost
+import org.example.project.ui.TransientPopupHost
+import org.example.project.ui.transientPopupDismissRoot
 
 enum class OmniPage(val label: String) {
     TaskScheduler("Task Scheduler"),
@@ -323,19 +325,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
         val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz).date
         var calendarOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Calendar)) }
+        // Every sort-2 pop-up in the app registers here: the host keeps at most one of them open and
+        // dismisses it as soon as a press lands anywhere else (see TransientPopupHost).
+        val transientPopups = remember { TransientPopupHost() }
         // PRD §5: the sub-list whose priority-weight window is open (opened by clicking a percentage in the
-        // tree), or null when closed. Drawn on the top floating-window layer below; [weightWindowBounds] is
-        // its window-space rect, used to ignore presses inside it when dismissing on outside clicks.
+        // tree), or null when closed. A sort-2 pop-up, like every window below that is about one object.
         var weightWindowListId by remember { mutableStateOf<CellListId?>(null) }
-        var weightWindowBounds by remember { mutableStateOf<Rect?>(null) }
         // PRD §5: the cell whose relative-priority window is open (the percentage's right-click menu), or
-        // null when closed. Same top layer and same outside-press dismissal as the weight window; the two
-        // are mutually exclusive (opening either closes the other, in TaskSchedulerScreen).
+        // null when closed. The two are mutually exclusive, now by construction (the host closes the other).
         var relativeWindowCellId by remember { mutableStateOf<CellId?>(null) }
-        var relativeWindowBounds by remember { mutableStateOf<Rect?>(null) }
-        // Layout of the content area, so a press position (content-local) can be mapped to window space
-        // and compared against the windows' bounds.
-        var contentCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+        // PRD §13: the task whose "edit" window is open, and the cell whose "deep copy" window is open.
+        // Both are raised out of TaskSchedulerScreen so they draw ABOVE the floating windows rather than
+        // under whichever one happens to be stacked over the tree.
+        var editTaskId by remember { mutableStateOf<TaskId?>(null) }
+        var deepCopyCellId by remember { mutableStateOf<CellId?>(null) }
         // PRD §5: the window closes when any cell enters Edit Mode (its sub-list typing context is gone).
         LaunchedEffect(schedulerState.editSession) {
             if (schedulerState.editSession != null) {
@@ -946,11 +949,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             addingReminderAtMillis = null
         }
 
+        CompositionLocalProvider(LocalTransientPopupHost provides transientPopups) {
         Box(
             modifier = Modifier
                 .background(MaterialTheme.colorScheme.background)
                 .safeContentPadding()
                 .fillMaxSize()
+                // The one observer that dismisses sort-2 pop-ups. It sits above the lateral menu too — a
+                // menu button opens or focuses a window, which is exactly "something else is in focus".
+                .transientPopupDismissRoot(transientPopups)
         ) {
             Row(modifier = Modifier.fillMaxSize()) {
                 // The lateral menu is omitted entirely while collapsed, so the content takes the full width
@@ -1033,30 +1040,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clipToBounds()
-                        .onGloballyPositioned { contentCoords = it }
-                        // PRD §5: the priority-weight window closes when a press lands anywhere outside it,
-                        // and that press still does its normal job (selecting a cell, focusing the calendar,
-                        // …). We observe presses in the Initial pass without consuming them — an ancestor of
-                        // every window, so it catches clicks on the tree and on other floating windows alike.
-                        // A press inside the window's own bounds is ignored.
-                        .pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                                    if (event.type != PointerEventType.Press) continue
-                                    if (weightWindowListId == null && relativeWindowCellId == null) continue
-                                    val pos = event.changes.firstOrNull()?.position ?: continue
-                                    val win = contentCoords?.localToWindow(pos) ?: continue
-                                    if (weightWindowListId != null && weightWindowBounds?.contains(win) != true) {
-                                        weightWindowListId = null
-                                    }
-                                    if (relativeWindowCellId != null && relativeWindowBounds?.contains(win) != true) {
-                                        relativeWindowCellId = null
-                                    }
-                                }
-                            }
-                        },
+                        .clipToBounds(),
                 ) {
                     when (page) {
                         OmniPage.TaskScheduler ->
@@ -1066,12 +1050,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 vm = vm,
                                 onSetWeightWindow = { weightWindowListId = it },
                                 onSetRelativeWindow = { relativeWindowCellId = it },
+                                onSetEditTask = { editTaskId = it },
+                                onSetDeepCopyCell = { deepCopyCellId = it },
                             )
                     }
 
-                    // PRD §5: the priority-weight window, on the top floating-window layer (zIndex above the
-                    // managed windows' 0..n stack, below the modal edit window's 100). Opened from a tree
-                    // percentage; closed by the outside-press interceptor above.
+                    // PRD §5: the priority-weight window — a sort-2 pop-up, so it opens above the managed
+                    // windows' 0..n stack and the host closes it on the first press landing elsewhere.
                     weightWindowListId?.let { listId ->
                         if (schedulerState.lists[listId] == null) {
                             weightWindowListId = null
@@ -1081,15 +1066,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 listId = listId,
                                 priorities = SchedulerDomain.absoluteTaskPriorities(schedulerState),
                                 onIntent = { vm.dispatch(it) },
-                                onBoundsChange = { weightWindowBounds = it },
-                                modifier = Modifier.align(Alignment.Center).zIndex(50f),
+                                onDismiss = { weightWindowListId = null },
+                                modifier = Modifier.align(Alignment.Center).zIndex(100f),
                             )
                         }
                     }
 
-                    // PRD §5: the relative-priority window, on the same top layer as the weight window.
-                    // Opened from the percentage's right-click menu; closed by the interceptor above (or by
-                    // the cell going away under it, e.g. an undo that deleted it).
+                    // PRD §5: the relative-priority window, the same sort on the same layer. Opened from the
+                    // percentage's right-click menu; also cleared when the cell goes away under it (an undo).
                     relativeWindowCellId?.let { cellId ->
                         if (schedulerState.cells[cellId]?.taskId == null) {
                             relativeWindowCellId = null
@@ -1098,9 +1082,93 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 state = schedulerState,
                                 cellId = cellId,
                                 onIntent = { vm.dispatch(it) },
-                                onBoundsChange = { relativeWindowBounds = it },
-                                modifier = Modifier.align(Alignment.Center).zIndex(50f),
+                                onDismiss = { relativeWindowCellId = null },
+                                modifier = Modifier.align(Alignment.Center).zIndex(100f),
                             )
+                        }
+                    }
+
+                    // PRD §13: the tree's "edit" window. Raised out of TaskSchedulerScreen so it is on the
+                    // top layer like every other sort-2 pop-up — inside the tree it drew UNDER any floating
+                    // window stacked over it.
+                    editTaskId?.let { taskId ->
+                        val task = schedulerState.tasks[taskId]
+                        if (task == null) {
+                            editTaskId = null
+                        } else {
+                            Box(Modifier.fillMaxSize().zIndex(100f)) {
+                                TaskEditWindow(
+                                    task = task,
+                                    // PRD §13: the screen switch and the schedule unit only exist for a
+                                    // schedulable leaf task — a parent is a grouping and is never placed,
+                                    // so its window is text only.
+                                    isLeaf = SchedulerDomain.isLeafTask(schedulerState, taskId),
+                                    onSave = { noScreenDoable, entries, text ->
+                                        // One intent per section, and only for the sections that actually
+                                        // changed — so Save on an untouched window adds nothing to the
+                                        // Undo/Redo history (PRD §6).
+                                        val onScreen = !noScreenDoable
+                                        if (onScreen != task.onScreen) {
+                                            vm.dispatch(
+                                                SchedulerIntent.SetTaskScreenFlags(
+                                                    taskId = taskId,
+                                                    onScreen = onScreen,
+                                                    doableDuringBreak = task.doableDuringBreak,
+                                                ),
+                                            )
+                                        }
+                                        if (entries != task.scheduleUnit) {
+                                            vm.dispatch(SchedulerIntent.SetScheduleUnit(taskId, entries))
+                                        }
+                                        if (text != task.text) {
+                                            vm.dispatch(SchedulerIntent.SetTaskText(taskId, text))
+                                        }
+                                        editTaskId = null
+                                    },
+                                    onDismiss = { editTaskId = null },
+                                )
+                            }
+                        }
+                    }
+
+                    // PRD §13: "deep copy" asks for its maximum depth here, then copies (DeepCopyWindow).
+                    // Raised for the same reason as the edit window above.
+                    deepCopyCellId?.let { cellId ->
+                        if (schedulerState.cells[cellId] == null) {
+                            deepCopyCellId = null
+                        } else {
+                            Box(Modifier.fillMaxSize().zIndex(100f)) {
+                                DeepCopyWindow(
+                                    state = schedulerState,
+                                    // The same block "copy" takes — a deep copy of a multi-selection is
+                                    // every selected cell down to the chosen depth, not just the one under
+                                    // the cursor.
+                                    cellIds = SchedulerDomain.contextMenuCopyTargets(
+                                        schedulerState,
+                                        schedulerState.selection,
+                                        cellId,
+                                    ),
+                                    onCopy = { targets, maxDepth, options ->
+                                        // The depth and the three switches are the ACCOUNT's, not this
+                                        // copy's: what the window is asked here is what every later copy
+                                        // carries — the menu's "copy" and §4's Ctrl+C / Ctrl+X included
+                                        // (the chord still takes the whole sub-tree).
+                                        vm.dispatch(SchedulerIntent.SetDeepCopyMaxDepth(maxDepth))
+                                        vm.dispatch(SchedulerIntent.SetCopyOptions(options))
+                                        // Explicit options: the dispatches above have not reached this
+                                        // composition's state.
+                                        val text = SchedulerDomain.copyCellsText(
+                                            schedulerState,
+                                            targets,
+                                            maxDepth,
+                                            options,
+                                        )
+                                        if (text.isNotEmpty()) writeSystemClipboardText(text)
+                                        deepCopyCellId = null
+                                    },
+                                    onDismiss = { deepCopyCellId = null },
+                                )
+                            }
                         }
                     }
 
@@ -1617,6 +1685,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onFetch = { vm.syncNow() },
                 )
             }
+        }
         }
     }
 }

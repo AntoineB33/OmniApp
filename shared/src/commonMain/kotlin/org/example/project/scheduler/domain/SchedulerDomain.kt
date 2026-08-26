@@ -15,6 +15,7 @@ import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.DefaultSubtreeNode
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
+import org.example.project.scheduler.model.ForcedTaskStart
 import org.example.project.scheduler.model.ForcedTaskSwitch
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.ScreenBreak
@@ -2795,6 +2796,29 @@ object SchedulerDomain {
         return if (granted) null else switch.taskId
     }
 
+    /**
+     * PRD §13 **"start this task now"**: [start] if the request it records is still **outstanding** at
+     * [nowMillis], else null — the task [fillSchedule] puts in the first slot it places.
+     *
+     * The liveness rule is [liveForcedSwitchTask]'s, unchanged: a marker is outstanding until some **other**
+     * task has actually been served past the instant it was made. For a refusal that means "the plan started
+     * something else, as asked"; for a request it means "the plan has moved on from the task I asked for" —
+     * the same event ends both. While the named task is still the one running since [ForcedTaskStart.atMillis]
+     * the request is unanswered, so a re-plan in between (a rule change, the hourly staleness refresh) keeps
+     * the user on it instead of quietly picking somebody else. Reading it off [past] — the same recorded
+     * history the virtual clocks are seeded from — is what keeps CLAUDE.md's resume contract. A marker stamped
+     * in the future (a peer's clock ahead of ours) is not yet live.
+     */
+    internal fun liveForcedStartTask(
+        start: ForcedTaskStart?,
+        past: List<PlanBlock>,
+        nowMillis: Long,
+    ): TaskId? {
+        if (start == null || start.atMillis > nowMillis) return null
+        val answered = past.any { it.taskId != null && it.taskId != start.taskId && it.endMillis > start.atMillis }
+        return if (answered) null else start.taskId
+    }
+
     // ----- §13 Schedule Unit ------------------------------------------------------------------
 
     /** PRD §13: total spanning time (minutes) of a schedule unit's entries. */
@@ -3181,6 +3205,15 @@ object SchedulerDomain {
                 ?: planner.lastRun(pastBlocks, nowMillis),
         )
 
+        // PRD §13 "start this task now": the mirror image of the refusal above — the user named the task the
+        // plan must place, so it takes the FIRST slot this fill picks rather than being kept out of it. It is
+        // consumed there and nowhere else: the walk is charged for the slot exactly as if it had chosen it,
+        // and everything after is the ordinary walk. A named task the current period will not have (a break,
+        // a no-screen zone, a minimum that does not fit before the next cutting edge) simply loses its turn
+        // here — the marker is not honoured by hunting for a later window, since "now" is the whole of what
+        // was asked; the request then dies the ordinary way, as soon as another task has been served past it.
+        var forcedStartTask = liveForcedStartTask(state.forcedStart, pastBlocks, nowMillis)
+
         val generated = mutableListOf<TaskPanel>()
         var cursor = nowMillis
         var index = 0
@@ -3301,7 +3334,12 @@ object SchedulerDomain {
                 continue
             }
 
-            val taskId = resume?.first ?: walk.pick(fitting) ?: break
+            // PRD §13 "start this task now" — asked once, at the first slot the fill actually places.
+            // A suspended chunk is never preempted (PRD §15 — it is mid-placement, not a fresh pick); at the
+            // FIRST pick, which is the only one this can be, there is none.
+            val forcedHere = forcedStartTask?.takeIf { resume == null && it in fitting }
+            forcedStartTask = null
+            val taskId = forcedHere ?: resume?.first ?: walk.pick(fitting) ?: break
             val boost = planner.boostAt(taskId, cursor)
             var need =
                 resume?.second
@@ -3346,6 +3384,24 @@ object SchedulerDomain {
             val allowedHere = accepted[windowAt(cursor)]
             if (allowedHere.isNotEmpty()) {
                 val period = planner.periodOf(allowedHere)
+                // PRD §13 "start this task now": the request is answered wherever the fill's first slot falls,
+                // and on a timeline nothing disturbs (no screen breaks, no fixed blocks) that is HERE — phase 1
+                // freezes before placing anything. Same act as there: the named task is emitted and charged
+                // like any other pick, so the settle below and the cycle after it (phased off the walk) go on
+                // from exactly the state the walk would have been in had it chosen the task itself.
+                forcedStartTask?.takeIf { it in allowedHere }?.let { forced ->
+                    val boost = planner.boostAt(forced, cursor)
+                    val need = walk.chunkMillis(forced, allowedHere, boost).roundToLong().coerceAtLeast(1L)
+                    val end = minOf(cursor + need, horizon)
+                    if (end > cursor) {
+                        emit(forced, cursor, end)
+                        walk.serve(forced, (end - cursor).toDouble(), boost)
+                        walk.relax((end - cursor).toDouble(), period, allowedHere)
+                        cursor = end
+                        index++
+                    }
+                }
+                forcedStartTask = null
                 val settleEnd = minOf(cursor + (SchedulerPlanner.SETTLE_PERIODS * period).roundToLong(), horizon)
                 while (cursor < settleEnd && index < maxPanels && walk.spread(allowedHere) > period) {
                     val name = walk.pick(allowedHere) ?: break

@@ -67,7 +67,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -89,7 +88,6 @@ import androidx.compose.ui.input.pointer.isShiftPressed as pointerShiftPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
@@ -133,6 +131,8 @@ import org.example.project.ui.PERCENT_COLUMN_WIDTH
 import org.example.project.ui.PRIORITY_COLUMN_MAX
 import org.example.project.ui.PRIORITY_COLUMN_MIN
 import org.example.project.ui.SheetColors
+import org.example.project.ui.TransientPopupLayer
+import org.example.project.ui.transientPopupCard
 import org.example.project.ui.TaskTreeFindBar
 import org.example.project.ui.TaskSheetExpandArrow
 import org.example.project.ui.TaskSheetTitleBounds
@@ -245,6 +245,10 @@ fun TaskSchedulerScreen(
     // PRD §5: same hoisting for the relative-priority window (the percentage's right-click menu). Pass the
     // clicked cell's id to open it, or null to close.
     onSetRelativeWindow: (CellId?) -> Unit = {},
+    // PRD §13: the same hoisting for the two sort-2 pop-ups the tree opens — the task "edit" window and the
+    // "deep copy" depth window. Drawn by the app so they land on the top layer, above every floating window.
+    onSetEditTask: (TaskId?) -> Unit = {},
+    onSetDeepCopyCell: (CellId?) -> Unit = {},
 ) {
     val state by vm.state.collectAsState()
     val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
@@ -260,12 +264,6 @@ fun TaskSchedulerScreen(
     // PRD §10: the minimum-time value the open input started with, so Escape can restore it (mirroring
     // how Edit Mode's Escape reverts a cell to its pre-edit text). Null when no input is open.
     var minTimeEditOriginal by remember { mutableStateOf<Int?>(null) }
-    // PRD §13: the task whose "edit" window is open, or null when it is closed. Opened from a cell's
-    // right-click contextual menu.
-    var editTaskId by remember { mutableStateOf<TaskId?>(null) }
-    // PRD §13: the cell whose "deep copy" depth window is open, or null when it is closed. The depth it
-    // asks for lives in the window, which is where the copy is made.
-    var deepCopyCellId by remember { mutableStateOf<CellId?>(null) }
     // The task-tree selector above the tree: its draft name, edit mode, and whether its field holds focus
     // (which is what reveals its menus and hands it the keyboard). Hoisted here so the screen's key handler
     // can commit on Enter and revert on Escape, exactly as it does for the min-time input.
@@ -776,7 +774,7 @@ fun TaskSchedulerScreen(
                         minTimeEditCellId = cellId
                     }
                 },
-                onOpenTaskEdit = { taskId -> editTaskId = taskId },
+                onOpenTaskEdit = { taskId -> onSetEditTask(taskId) },
                 // PRD §13 "copy": the cell's own task, with no children, in the same readable format
                 // Ctrl+V pastes back. Right-clicking inside a multi-selection copies the whole block, so
                 // the menu and Ctrl+C never disagree about what "the cell" means.
@@ -786,7 +784,7 @@ fun TaskSchedulerScreen(
                     if (text.isNotEmpty()) writeSystemClipboardText(text)
                 },
                 // PRD §13 "deep copy": asks for the maximum depth first — the copy happens from its window.
-                onDeepCopyCell = { cellId -> deepCopyCellId = cellId },
+                onDeepCopyCell = { cellId -> onSetDeepCopyCell(cellId) },
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
@@ -861,68 +859,6 @@ fun TaskSchedulerScreen(
             }
         }
 
-        // PRD §13: the floating "edit" window, overlaying the tree.
-        editTaskId?.let { taskId ->
-            val task = state.tasks[taskId]
-            if (task == null) {
-                editTaskId = null
-            } else {
-                TaskEditWindow(
-                    task = task,
-                    // PRD §13: the screen switch and the schedule unit only exist for a schedulable leaf
-                    // task — a parent task is a grouping and is never placed, so its window is text only.
-                    isLeaf = SchedulerDomain.isLeafTask(state, taskId),
-                    onSave = { noScreenDoable, entries, text ->
-                        // One intent per section, and only for the sections that actually changed — so
-                        // Save on an untouched window adds nothing to the Undo/Redo history (PRD §6).
-                        val onScreen = !noScreenDoable
-                        if (onScreen != task.onScreen) {
-                            vm.dispatch(
-                                SchedulerIntent.SetTaskScreenFlags(
-                                    taskId = taskId,
-                                    onScreen = onScreen,
-                                    doableDuringBreak = task.doableDuringBreak,
-                                ),
-                            )
-                        }
-                        if (entries != task.scheduleUnit) {
-                            vm.dispatch(SchedulerIntent.SetScheduleUnit(taskId, entries))
-                        }
-                        if (text != task.text) {
-                            vm.dispatch(SchedulerIntent.SetTaskText(taskId, text))
-                        }
-                        editTaskId = null
-                    },
-                    onDismiss = { editTaskId = null },
-                )
-            }
-        }
-
-        // PRD §13: "deep copy" asks for its maximum depth here, then copies (see DeepCopyWindow).
-        deepCopyCellId?.let { cellId ->
-            if (state.cells[cellId] == null) {
-                deepCopyCellId = null
-            } else {
-                DeepCopyWindow(
-                    state = state,
-                    // The same block "copy" takes — a deep copy of a multi-selection is every selected
-                    // cell down to the chosen depth, not just the one under the cursor.
-                    cellIds = SchedulerDomain.contextMenuCopyTargets(state, state.selection, cellId),
-                    onCopy = { targets, maxDepth, options ->
-                        // The depth and the three switches are the ACCOUNT's, not this copy's: what the
-                        // window is asked here is what every later copy carries — the menu's "copy" and
-                        // §4's Ctrl+C / Ctrl+X included (the chord still takes the whole sub-tree).
-                        vm.dispatch(SchedulerIntent.SetDeepCopyMaxDepth(maxDepth))
-                        vm.dispatch(SchedulerIntent.SetCopyOptions(options))
-                        // Explicit options: the dispatches above have not reached this composition's state.
-                        val text = SchedulerDomain.copyCellsText(state, targets, maxDepth, options)
-                        if (text.isNotEmpty()) writeSystemClipboardText(text)
-                        deepCopyCellId = null
-                    },
-                    onDismiss = { deepCopyCellId = null },
-                )
-            }
-        }
 
         // PRD §5: the priority-weight window is drawn by the app (App.kt) on the top floating-window
         // layer, above the calendar — not here — so it sits over every other window and dismisses on a
@@ -1040,6 +976,15 @@ private fun CellListSection(
                     ?.takeIf { selectable }
                     ?.let { taskId ->
                         TaskCellMenuActions(
+                            // PRD §13 "start this task now": the plan puts this task at the now-line. It names
+                            // ONE task however many cells are selected — unlike "copy", "start *this* task"
+                            // has no meaning for a block — and only a schedulable leaf can be asked for.
+                            onStartNow =
+                                if (SchedulerDomain.isLeafTask(state, taskId)) {
+                                    { onIntent(SchedulerIntent.ForceTaskStart(taskId)) }
+                                } else {
+                                    null
+                                },
                             onEdit = { onOpenTaskEdit(taskId) },
                             onCopy = { onCopyCell(cellId) },
                             onDeepCopy = { onDeepCopyCell(cellId) },
@@ -1819,7 +1764,7 @@ internal fun PriorityWeightWindow(
     listId: CellListId,
     priorities: Map<TaskId, Double>,
     onIntent: (SchedulerIntent) -> Unit,
-    onBoundsChange: (Rect?) -> Unit,
+    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val list = state.lists[listId] ?: return
@@ -1833,21 +1778,17 @@ internal fun PriorityWeightWindow(
     val openedTable = remember(listId) { weightTableSnapshot(state, listId) }
     val tableEdited = weightTableSnapshot(state, listId) != openedTable
 
-    // Stop reporting bounds once the window goes away, so the app's outside-press check has no stale rect.
-    DisposableEffect(Unit) { onDispose { onBoundsChange(null) } }
-
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
         shadowElevation = 12.dp,
         border = BorderStroke(1.dp, SheetColors.grid),
-        // Bound the window to the screen (so the chart on the right is never pushed off-screen), publish
-        // its window-space bounds (the app ignores presses inside them) and swallow taps that land inside.
+        // Bound the window to the screen (so the chart on the right is never pushed off-screen).
+        // [transientPopupCard] does the rest: it is a sort-2 pop-up.
         modifier = modifier
+            .transientPopupCard(onDismiss)
             .widthIn(max = 760.dp)
-            .heightIn(max = 600.dp)
-            .onGloballyPositioned { onBoundsChange(it.boundsInWindow()) }
-            .pointerInput(Unit) { detectTapGestures { } },
+            .heightIn(max = 600.dp),
     ) {
         Column(Modifier.padding(16.dp)) {
             // `fill = false` so a short table keeps the window short; the Cancel bar below always shows.
@@ -1951,7 +1892,7 @@ internal fun RelativePriorityWindow(
     state: SchedulerState,
     cellId: CellId,
     onIntent: (SchedulerIntent) -> Unit,
-    onBoundsChange: (Rect?) -> Unit,
+    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val taskId = state.cells[cellId]?.taskId ?: return
@@ -1965,20 +1906,16 @@ internal fun RelativePriorityWindow(
     val value = RelativePriorityDomain.relativePriority(state, taskId, relativeTo)
     val pinned = state.relativePriorityPins[RelativePriorityPinKey(taskId, relativeTo)].orEmpty()
 
-    DisposableEffect(Unit) { onDispose { onBoundsChange(null) } }
-
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
         shadowElevation = 12.dp,
         border = BorderStroke(1.dp, SheetColors.grid),
-        // Same contract as the weight window: publish the bounds the app's outside-press check uses, and
-        // swallow the taps that land inside so pressing in the window never closes it.
+        // Same contract as the weight window — a sort-2 pop-up.
         modifier = modifier
+            .transientPopupCard(onDismiss)
             .widthIn(max = 760.dp)
-            .heightIn(max = 600.dp)
-            .onGloballyPositioned { onBoundsChange(it.boundsInWindow()) }
-            .pointerInput(Unit) { detectTapGestures { } },
+            .heightIn(max = 600.dp),
     ) {
         Column(Modifier.padding(16.dp)) {
             Text(
@@ -2499,6 +2436,16 @@ private fun TaskRow(
                     expanded = contextMenuOpen,
                     onDismissRequest = { contextMenuOpen = false },
                 ) {
+                    // PRD §13: only offered on a schedulable leaf — a parent task is never placed.
+                    cellMenu.onStartNow?.let { startNow ->
+                        DropdownMenuItem(
+                            text = { Text("start this task now") },
+                            onClick = {
+                                contextMenuOpen = false
+                                startNow()
+                            },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("edit") },
                         onClick = {
@@ -2818,10 +2765,12 @@ private fun contextMenuModifier(
  * PRD §13 the actions of a populated cell's right-click contextual menu. Bundled so a cell either has the
  * whole menu or none of it (empty cells and the root/main cell get null).
  *
- * [onAddDefaultSubtree] is null when there is no §7 template to add, which is the one entry that comes and
- * goes: an account that never defined a default sub-tree is not offered it.
+ * [onAddDefaultSubtree] is null when there is no §7 template to add, and [onStartNow] when the cell's task is
+ * not a schedulable leaf — the two entries that come and go: an account that never defined a default sub-tree
+ * is not offered it, and a parent task is a grouping the scheduler never places, so there is nothing to start.
  */
 private class TaskCellMenuActions(
+    val onStartNow: (() -> Unit)?,
     val onEdit: () -> Unit,
     val onCopy: () -> Unit,
     val onDeepCopy: () -> Unit,
@@ -2839,7 +2788,7 @@ private class TaskCellMenuActions(
  * ([SchedulerDomain.canSaveScheduleUnit]).
  */
 @Composable
-private fun TaskEditWindow(
+internal fun TaskEditWindow(
     task: Task,
     isLeaf: Boolean,
     onSave: (noScreenDoable: Boolean, entries: List<ScheduleUnitEntry>, text: String) -> Unit,
@@ -2853,22 +2802,15 @@ private fun TaskEditWindow(
     // A parent task's schedule unit is not editable here, so it can never block its own Save.
     val canSave = !isLeaf || SchedulerDomain.canSaveScheduleUnit(entries, minimumMinutes)
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.25f))
-            // Tap (not clickable) to dismiss: a focused clickable also fires on Space/Enter, which would
-            // close the window while typing in a field.
-            .pointerInput(Unit) { detectTapGestures { onDismiss() } },
-        contentAlignment = Alignment.Center,
-    ) {
+        // A sort-2 pop-up: it draws on the top layer, blocks nothing behind it, and the host
+        // dismisses it as soon as a press lands anywhere else (see TransientPopupHost).
+    TransientPopupLayer {
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 12.dp,
             border = BorderStroke(1.dp, SheetColors.grid),
-            // Swallow taps so clicking inside the window doesn't reach the dismissing scrim.
-            modifier = Modifier.width(360.dp).pointerInput(Unit) { detectTapGestures { } },
+            modifier = Modifier.transientPopupCard(onDismiss).width(360.dp),
         ) {
             Column(
                 Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
@@ -3015,7 +2957,7 @@ private fun TaskEditWindow(
  * say. Cancelling leaves all four alone.
  */
 @Composable
-private fun DeepCopyWindow(
+internal fun DeepCopyWindow(
     state: SchedulerState,
     cellIds: List<CellId>,
     onCopy: (List<CellId>, Int, SchedulerDomain.CopyOptions) -> Unit,
@@ -3034,24 +2976,17 @@ private fun DeepCopyWindow(
         depthText = value.coerceIn(SchedulerDomain.DEEP_COPY_DEPTH_RANGE).toString()
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.25f))
-            // Tap (not clickable) to dismiss: a focused clickable also fires on Space/Enter, which would
-            // close the window while typing in the depth field.
-            .pointerInput(Unit) { detectTapGestures { onDismiss() } },
-        contentAlignment = Alignment.Center,
-    ) {
+        // A sort-2 pop-up: it draws on the top layer, blocks nothing behind it, and the host
+        // dismisses it as soon as a press lands anywhere else (see TransientPopupHost).
+    TransientPopupLayer {
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 12.dp,
             border = BorderStroke(1.dp, SheetColors.grid),
             modifier = Modifier
+                .transientPopupCard(onDismiss)
                 .width(420.dp)
-                // Swallow taps so clicking inside the window doesn't reach the dismissing scrim.
-                .pointerInput(Unit) { detectTapGestures { } }
                 // The depth field holds the focus, so this ancestor sees its keys first: Enter is the
                 // window's own accept, not a character the field should ever receive.
                 .onPreviewKeyEvent { event ->

@@ -6,6 +6,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
+import org.example.project.scheduler.model.ForcedTaskStart
 import org.example.project.scheduler.model.ForcedTaskSwitch
 import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.Task
@@ -401,6 +402,14 @@ data class SchedulerState(
      * A payload written before the button existed decodes to null, i.e. no refusal outstanding.
      */
     val forcedSwitch: ForcedTaskSwitch? = null,
+    /**
+     * PRD §13 **"start this task now"**: the standing request the task cell's right-click menu records — "put
+     * this task at the now-line". See [ForcedTaskStart] for why it is the mirror image of [forcedSwitch] and
+     * for when it stops being live. Authoritative: persisted **and** synced (the plan is the account's, not
+     * this device's); not undoable. A payload written before the entry existed decodes to null, i.e. nothing
+     * asked for.
+     */
+    val forcedStart: ForcedTaskStart? = null,
     /**
      * A bounded, local-only diagnostic log of the notification text the app has posted, shown as the
      * History Manager's **Notifications** column. Capped at [MAX_NOTIFICATION_LOG] — the earliest that

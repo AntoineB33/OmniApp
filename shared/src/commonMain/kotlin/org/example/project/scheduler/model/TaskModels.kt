@@ -485,6 +485,36 @@ data class ForcedTaskSwitch(
 )
 
 /**
+ * PRD §13 **"start this task now"** (the task cell's right-click menu): the mirror image of
+ * [ForcedTaskSwitch] — the user named [taskId] at [atMillis] and the plan must start *that* task there.
+ *
+ * The two are deliberately the same shape, because they are the same lever read from the two ends: a refusal
+ * says which task the walk must not pick at the cursor, a request says which one it must. Neither is a rule
+ * change — [taskId] is charged for the slot exactly as if the walk had chosen it
+ * ([org.example.project.scheduler.domain.PlanWalk.serve]), so it pays for the time in its own virtual clock
+ * and the schedule after it is the same schedule the walk would have gone on with. It costs nothing to
+ * anybody else either: only the FIRST slot of the fill is named, the rest is the ordinary walk.
+ *
+ * **Live only while it is still outstanding**, judged by exactly the predicate [ForcedTaskSwitch] uses: until
+ * some *other* task has been served past [atMillis]. That is what "the plan has moved on" means for both of
+ * them — while the named task is still the one running since [atMillis] the request is unanswered, so every
+ * re-plan in between (a rule change, the hourly staleness refresh) keeps the user on the task they asked for
+ * instead of quietly handing them another one; the instant the timeline genuinely moves on, the request has
+ * been honoured. Read off the recorded past like the refusal, so a chain of re-plans still reaches the same
+ * schedule as one long plan (CLAUDE.md's resume contract), and the reducer's advance tick drops the spent
+ * marker so it cannot linger in the payload.
+ *
+ * Authoritative user intent — nothing re-derives it — so it is persisted **and** synced, like the refusal and
+ * the alarms; it is not an Undo/Redo unit (asking for a task changes no rule).
+ */
+data class ForcedTaskStart(
+    /** The task the user asked to be doing — the one the plan must place at [atMillis]. */
+    val taskId: TaskId,
+    /** The instant the request was made; the plan must start [taskId] here. */
+    val atMillis: Long,
+)
+
+/**
  * A UI cell that points to a [taskId] (or null for placeholders/empty cells).
  * Multiple cells can point to the same [taskId] across different parents/lists.
  */

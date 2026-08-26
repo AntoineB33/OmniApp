@@ -8,6 +8,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.DefaultSubtreeNode
+import org.example.project.scheduler.model.ForcedTaskStart
 import org.example.project.scheduler.model.ForcedTaskSwitch
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.RelativePriorityPinKey
@@ -162,6 +163,7 @@ object SchedulerReducer {
             is SchedulerIntent.AdvanceSchedule ->
                 commitRecordChanges(state, advanceSchedule(state, intent.nowMillis, noScreenEvidence()))
             is SchedulerIntent.ForceTaskSwitch -> reduceForceTaskSwitch(state, intent.nowMillis)
+            is SchedulerIntent.ForceTaskStart -> reduceForceTaskStart(state, intent.taskId)
             is SchedulerIntent.SetAutomaticSchedule ->
                 if (state.automaticSchedule == intent.enabled) state
                 else state.copy(automaticSchedule = intent.enabled)
@@ -1618,6 +1620,31 @@ object SchedulerReducer {
     }
 
     /**
+     * PRD §13 **"start this task now"** ([SchedulerIntent.ForceTaskStart]): record the user's request for
+     * [taskId] and re-plan on the spot, so that task is what the now-line lands on.
+     *
+     * The mirror image of [reduceForceTaskSwitch], for the same reasons and with the same shape: the request
+     * is a [org.example.project.scheduler.model.ForcedTaskStart] — a fact about the past, read by the fill as
+     * the task of its first slot — not an edit to any rule, which is why it re-plans from inside this reducer
+     * instead of riding [SchedulerDomain.schedulingSignature]. Only a **schedulable leaf** can be asked for: a
+     * parent task is a grouping the scheduler never places, so the request would be unanswerable. Asking for a
+     * task also clears an outstanding refusal **of that same task** — the user has just said explicitly what
+     * the earlier press said only negatively, and leaving both standing would have the fill place the task and
+     * go on refusing it. The marker is stored even while §7 auto-scheduling is off: the plan is not being
+     * computed at all then, and the request is honoured by the fill that resumes it.
+     */
+    private fun reduceForceTaskStart(state: SchedulerState, taskId: TaskId): SchedulerState {
+        if (!SchedulerDomain.taskHasCells(state, taskId) || !SchedulerDomain.isLeafTask(state, taskId)) return state
+        val now = clock.nowMillis()
+        val requested =
+            state.copy(
+                forcedStart = ForcedTaskStart(taskId, now),
+                forcedSwitch = state.forcedSwitch?.takeIf { it.taskId != taskId },
+            )
+        return reduceRefreshSchedule(requested, now)
+    }
+
+    /**
      * PRD §9 rolling horizon ([SchedulerIntent.ExtendSchedule]): advance, then materialize the plan further
      * WITHOUT re-planning it. Everything already laid down ahead of the now-line is kept and fed to the
      * scheduling walk as committed service, so the tail continues the same plan rather than replacing it — a horizon that
@@ -2505,9 +2532,17 @@ private fun advanceSchedule(
     // here so the marker cannot linger in the persisted payload once it has been honoured.
     val switch = state.forcedSwitch
     var switchSpent = false
+    // PRD §13 "start this task now": the standing request is spent by exactly the same event, for the mirror
+    // reason — once another task's work is banked past the instant it was made, the plan has moved on from the
+    // task that was asked for, so the request has been answered ([SchedulerDomain.liveForcedStartTask]).
+    val start = state.forcedStart
+    var startSpent = false
     fun bank(taskId: TaskId?, startMillis: Long, endMillis: Long) {
         if (switch != null && taskId != null && taskId != switch.taskId && endMillis > switch.atMillis) {
             switchSpent = true
+        }
+        if (start != null && taskId != null && taskId != start.taskId && endMillis > start.atMillis) {
+            startSpent = true
         }
         coveredPieces += noScreenCoveredPieces(tasks, noScreenRanges, taskId, startMillis, endMillis)
         tasks = appendRecordOutsideNoScreen(tasks, noScreenRanges, taskId, startMillis, endMillis)
@@ -2550,12 +2585,13 @@ private fun advanceSchedule(
             }
         }
     }
-    if (!changed && !switchSpent) return state
+    if (!changed && !switchSpent && !startSpent) return state
     val advanced =
         state.copy(
             tasks = tasks,
             panels = remaining,
             forcedSwitch = if (switchSpent) null else state.forcedSwitch,
+            forcedStart = if (startSpent) null else state.forcedStart,
         )
     return materializePastInactivity(advanced, coveredPieces)
 }

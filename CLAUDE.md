@@ -96,6 +96,13 @@ re-derives something mark the state dirty or trigger a sync push.
   its own reducer, or dropping the spent marker would fire a second, un-refused re-plan. It stays live until
   **another task has actually been served past `at`** (`liveForcedSwitchTask`, read off the recorded past, so
   the resume contract holds); the advance tick drops it then.
+- **PRD §13 "start this task now" is the SAME lever from the other end.** The task cell's menu records a
+  `ForcedTaskStart(task, at)` and the fill puts that task in the **first slot it places** — charged like any
+  other pick, so only that slot is the user's answer. Same liveness predicate as the refusal
+  (`liveForcedStartTask`: outstanding until another task has been served past `at`), same reason it is not in
+  `schedulingSignature`, same drop by the advance tick. Offered on a schedulable **leaf** only; asking for a
+  task clears an outstanding refusal *of that same task*. It is answered in phase 1 **and** in phase 2 — a
+  timeline nothing disturbs freezes before phase 1 places anything, and the request must not vanish there.
 - **The clock replay walks the past EDGE BY EDGE**, applying `relax` where the walk applies it. Its window is
   two `minPeriod`s measured in **schedulable** time, never wall time.
 - **Only obstacles still AHEAD build the influence field.** The boost is capped (`maxBoost` = 6) and decays to
@@ -289,6 +296,39 @@ to panels.
 - Horizon growth dispatches `ExtendSchedule`, not `RefreshSchedule`.
 - Day rows are `wrapContentHeight(Alignment.Top, unbounded = true).height(dayHeight)` — both halves
   load-bearing. `requiredHeight` silently centres the row and shows the wrong hours.
+
+---
+
+## Pop-up windows
+
+`ui/PopupWindows.kt`. There are **two sorts, and the sort is not a choice** — it follows from what the
+pop-up is about.
+
+- **Sort 1, a window.** Opens on the top layer, then behaves like every other window: whatever is focused
+  next stacks on top of it, and it stays open until it is closed. `App`'s `windowStack`.
+- **Sort 2, a transient pop-up.** Opens on the top layer and **leaves the moment anything else takes
+  focus**.
+
+**The test is whether it could have several instances open at once.** A pop-up about ONE object — a task,
+a cell, a sub-list, a calendar block, a period, a reminder, a history unit, a tree entry — is sort 2,
+because "the edit window of task A" and "the edit window of task B" are two different windows and the user
+only ever means the one they just asked for. A pop-up there is exactly one of is sort 1. So sort 1 is
+precisely `windowStack` (Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, DefaultSubtree,
+Shortcuts, TimeSim) and every other pop-up in the app is sort 2.
+
+- **At most one sort-2 pop-up is open at a time** — `TransientPopupHost.open` dismisses the others, so the
+  invariant holds by construction and not by every opener remembering to close its predecessor.
+- **A sort-2 pop-up is NOT modal: no scrim, blocks nothing.** The press that dismisses it still does its
+  normal job (focusing the calendar, selecting a cell). The full-screen scrims that shipped before ate that
+  press, which cost a second click and made "it leaves when something else is focused" unobservable.
+- **Dismissal discards** whatever was half-typed in it. That is the sort's price, not an oversight — the
+  old scrim click did the same.
+- **One observer, at the app root** (`transientPopupDismissRoot`), watching the **Initial** pass without
+  consuming. Never a per-pop-up outside-press handler. Presses inside a `DropdownMenu`/`Popup` draw in their
+  own layer and never reach it, which is what keeps a pop-up's own menus from closing it.
+- **A sort-2 pop-up must be drawn where it can be on top.** The tree's `TaskEditWindow` / `DeepCopyWindow`
+  are raised out of `TaskSchedulerScreen` into `App` for that reason (inside the tree they drew *under* any
+  floating window stacked over it); `ReminderConstraintEditWindow` uses a `Popup` for the same reason.
 
 ---
 

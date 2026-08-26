@@ -144,6 +144,8 @@ object SnapshotMerge {
                 // so it resolves as a whole value — never a task from one device paired with an instant from
                 // the other, which would refuse a task at a moment nobody asked about.
                 forcedSwitch = pickNullable(base.forcedSwitch, local.forcedSwitch, remote.forcedSwitch),
+                // PRD §13 "start this task now": the request is the same indivisible statement.
+                forcedStart = pickNullable(base.forcedStart, local.forcedStart, remote.forcedStart),
                 // PRD §5: the relative-priority pins merge per (task, ancestor) key — pinning on one device
                 // and on another keeps both keys — but one key's set resolves as a WHOLE value: it is one
                 // choice about how one edit distributes, not a bag of independent flags.

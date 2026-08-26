@@ -11,6 +11,59 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Two sorts of pop-up window (`ui/PopupWindows.kt`) — SHIPPED 2026-08-26
+
+- **The sort of a pop-up is no longer a per-call-site decision.** Sort 1 opens on the top layer and then lets
+  whatever is focused next stack on top of it, staying open — that is `App`'s `windowStack`. Sort 2 opens on
+  the top layer and leaves the moment anything else takes focus.
+- **The test is whether it could have several instances open at once**: a pop-up about ONE object (a task, a
+  cell, a sub-list, a calendar block, a period, a reminder, a history unit, a tree entry) is sort 2. Which
+  makes sort 1 exactly the ten lateral-menu windows, and every other pop-up in the app sort 2.
+- **Replaces three ad-hoc tiers**: the managed `windowStack`; the two priority windows at `zIndex(50f)` with a
+  bespoke outside-press interceptor in `App`; and eight full-screen-scrim modals at `zIndex(100f)`. The
+  interceptor is now the one app-root `transientPopupDismissRoot` (Initial pass, consumes nothing) feeding a
+  `TransientPopupHost`, and every scrim is gone.
+- **What visibly changes.** A sort-2 pop-up no longer blocks the app behind it, so the press that dismisses it
+  also does its normal job — one click to close the task-edit window *and* focus the calendar, where the scrim
+  cost two. At most one sort-2 pop-up is open at a time, by construction (`open` dismisses the others) rather
+  than by each opener remembering to close its predecessor — the priority pair's hand-written mutual exclusion
+  was the only place that had ever been done. Dismissal still discards a half-typed edit, exactly as clicking
+  the old scrim did.
+- **`TaskEditWindow` / `DeepCopyWindow` are raised out of `TaskSchedulerScreen` into `App`** (hoisted like the
+  priority windows already were, via `onSetEditTask` / `onSetDeepCopyCell`). Declared inside the tree they drew
+  *under* any floating window stacked over it, so "appears at the top layer" was simply false for them.
+- `TransientPopupHostTest` pins the rules: outside press dismisses, inside press does not, a pop-up that has
+  not laid out yet is not "inside", opening one closes the one already open, and `close` (Save/Cancel) never
+  calls back into a composable that is already gone.
+- Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy.
+
+### "start this task now" on a task cell (PRD §13) — SHIPPED 2026-08-26
+
+- **New entry at the top of the task cell's right-click menu**: "start this task now" asks the schedule to put
+  that task at the now-line. It is the mirror image of §7's "Switch task" button — one refuses the task the
+  now-line is on, the other names the one it must be on — and both are the same lever read from opposite ends.
+- **The model shape is the switch's, deliberately.** A `ForcedTaskStart(task, at)` is recorded (authoritative:
+  persisted + synced, merged as one whole value, not an Undo/Redo unit) and the fill puts that task in the
+  **first slot it places**, charged through `PlanWalk.serve` exactly like a slot the walk had chosen — so only
+  that first slot is the user's answer and the schedule after it is the one the walk would have gone on with.
+  No new scheduling rule, and nothing in `schedulingSignature`: the press re-plans inside its own reducer
+  (`reduceForceTaskStart`), for the same reason the refusal does.
+- **Liveness is the refusal's own predicate** (`SchedulerDomain.liveForcedStartTask`): outstanding until some
+  *other* task has been served past `at` — for a refusal that means "the plan started something else", for a
+  request "the plan has moved on". So a re-plan in between (a rule change, the hourly staleness refresh) keeps
+  the user on the task they asked for, and the advance tick drops the marker once it is spent, exactly as it
+  already did for `forcedSwitch`.
+- **Answered in phase 1 and in phase 2.** A timeline nothing disturbs (no screen breaks, no fixed blocks)
+  freezes before phase 1 places anything and builds the plan from the analytic cycle, so the request is placed
+  there too — before the settle loop, which then squares up from the walk state it left.
+- Offered only on a **schedulable leaf** (a parent task is a grouping §9 never places), and it names ONE task
+  however many cells are selected — unlike "copy", "start *this* task" has no meaning for a block. Asking for a
+  task also clears an outstanding refusal *of that same task*.
+- `ForcedTaskStartTest` pins the whole contract (the pick, the one-slot scope, the two no-ops, the liveness,
+  the advance-tick drop, the interaction with an outstanding refusal, and the decode of a payload written
+  before the entry existed).
+- Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy.
+
 ### A freshly minted sub-list is never shown expanded (PRD §4) — FIXED 2026-08-26
 
 - **Anomaly**: typing a title into an empty task cell and pressing Enter unfolded the new task onto nothing but

@@ -359,10 +359,13 @@ private fun TaskTreeDetailWindow(
         color = MaterialTheme.colorScheme.surface,
         shadowElevation = 12.dp,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        // A sort-2 pop-up — it is about ONE tree entry — so it leaves as soon as a press lands
+        // elsewhere (see TransientPopupHost). Still draggable while it is up.
         modifier = Modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
             .requiredWidth(300.dp)
-            .raiseOnPress(onRaise),
+            .raiseOnPress(onRaise)
+            .transientPopupCard(onDismiss),
     ) {
         Column(Modifier.fillMaxWidth()) {
             Row(
