@@ -668,7 +668,7 @@ class Walk:
         cursor = start
         pending = pending_in                 # (task, what is left of its chunk)
         if head is not None and head[1] < self.minimum[head[0]]:
-            pending = (head[0], self.minimum[head[0]] - head[1])
+            pending = (head[0], self.minimum[head[0]] - head[1], frozenset(self.p))
         steps = 0
         while cursor < end:
             steps += 1
@@ -693,8 +693,19 @@ class Walk:
                 continue
             total = sum(w[n] for n in cand)
             p_local = {n: w[n] / total for n in cand}
-            if pending is not None and pending[0] in cand and pending[1] > 0:
-                name, left = pending
+            if (pending is not None and pending[0] in cand and pending[1] > 0
+                    and not set(cand) > pending[2]):
+                # The run in progress continues -- but only while the field it
+                # was decided against has not WIDENED. A task that started
+                # inside a period only it was allowed in has no claim on the
+                # time after the rivals come back: carrying its minimum out
+                # past the window would not merely use the period, it would
+                # lengthen everybody else's ban (measured in test 12: the ten
+                # privileged tasks took 21 of 32 hours that way, and the ten
+                # ordinary ones 23 minutes). A set that SHRANK, or one that
+                # came back the same after an interval that accepted nobody,
+                # is the atomic block and does resume.
+                name, left = pending[0], pending[1]
             else:
                 name = self._pick(v, cand, last, p_local)
                 left = self._chunk(name, v, cand, p_local,
@@ -713,7 +724,7 @@ class Walk:
             self._relax(v, served, cand)
             last = name
             left -= served
-            pending = (name, left) if left > EPS else None
+            pending = (name, left, frozenset(cand)) if left > EPS else None
             cursor = stop
         return (out, (v, last, pending)) if with_state else out
 
@@ -778,17 +789,23 @@ class Instance:
                               closed_end=self.open_start and offset + length == self.duration))
         return out
 
-    def empty_run(self):
-        """The longest contiguous stretch of this period that accepts nobody --
-        the only part of it that can BE one of the README's stretches, since
-        anywhere a task is still allowed the no-idling rule puts one there."""
+    def stretch_run(self, counts):
+        """The longest contiguous part of this period that COUNTS as one of the
+        recurrence rules' stretches.
+
+        `counts(kind)` says which kinds do. Under the README that is a kind
+        that accepts nobody -- anywhere a task is still allowed the no-idling
+        rule puts one there, so it is not a stretch "without any task". Test 12
+        asks the same question of a wider set (anything that refuses the marked
+        tasks), which is why the predicate is a parameter and not a constant.
+        """
         best = Fraction(0)
         run_start = None
         run_end = None
         cur = Fraction(0)
         start = None
         for offset, length, kind in self.spec.shape():
-            if kind == KIND_NO_TASK:
+            if counts(kind):
                 if start is None:
                     start = offset
                 cur += length
@@ -827,8 +844,9 @@ class DynamicPlanner:
     """
 
     def __init__(self, base_env: Environment, specs, dynamics=DEFAULT_DYNAMICS,
-                 t_start=0, horizon=DAY):
+                 t_start=0, horizon=DAY, stretch_when=None):
         self.base_env = base_env
+        self.specs = tuple(specs)
         self.dynamics = {d.label: d for d in dynamics}
         self.t_start = frac(t_start)
         self.horizon = frac(horizon)
@@ -837,13 +855,22 @@ class DynamicPlanner:
             "5min": BAR_5MIN_AFTER_STRETCH,
             "15min": BAR_15MIN_AFTER_LONG,
         }
+        # What counts as one of the recurrence rules' stretches, asked of a set
+        # of weights so that the same predicate answers for a segment of the
+        # standing environment and for a segment of a dynamic period's shape.
+        self.stretch_when = stretch_when or (lambda w, specs: not any(v > 0 for v in w.values()))
         shares = {s.name: s.priority for s in specs}
         blocked = []
         for a, b in base_env.segments(self.t_start, self.horizon):
-            w = base_env.weights(specs, shares, (a + b) / 2)
-            if not any(x > 0 for x in w.values()):
+            if self.stretch_when(base_env.weights(specs, shares, (a + b) / 2), specs):
                 blocked.append((a, b))
         self.blocked = merge_spans(blocked)
+
+    def kind_counts(self, kind) -> bool:
+        """Does a stretch of this KIND count? -- the same predicate, asked of
+        the weights that kind leaves standing."""
+        w = {s.name: s.priority * s.resilience_for(kind) for s in self.specs}
+        return self.stretch_when(w, self.specs)
 
     # -- bars ----------------------------------------------------------------
 
@@ -870,7 +897,7 @@ class DynamicPlanner:
     def _bar_instance(self, bars, inst: Instance):
         bars["20s"] = max(bars["20s"], inst.end + BAR_20S_AFTER_ANY)
         bars[inst.label] = max(bars[inst.label], inst.end + self.cadence[inst.label])
-        run = inst.empty_run()
+        run = inst.stretch_run(self.kind_counts)
         if run is not None:
             self._bar_stretch(bars, *self._stretch(*run))
 
@@ -1044,15 +1071,20 @@ def coalesce(placements) -> list:
     """Join placements that only a seam separated.
 
     A link boundary of the progressive chain, or the join between the committed
-    past and the continuation, cuts a run in two without changing it. Where the
-    two halves are the same task with the same alternative they are one rule,
-    and reading them as two would make where the links happened to fall visible
-    in the answer.
+    past and the continuation, cuts a run in two without changing it. The two
+    halves are ONE rule, and reading them as two would make where the links
+    happened to fall visible in the answer.
+
+    The alternative kept is the one named at the run's START, which is the
+    answer a single uninterrupted plan would have given: the alternative is a
+    function of the position it is asked at, so the resumed half names a
+    slightly fresher one, and keeping that would let a link boundary show
+    through in the rules even though the schedule is identical.
     """
     out = []
     for pl in placements:
-        if out and out[-1].task == pl.task and out[-1].end == pl.start and out[-1].alt == pl.alt:
-            out[-1] = Placement(pl.task, out[-1].start, pl.end, pl.alt)
+        if out and out[-1].task == pl.task and out[-1].end == pl.start:
+            out[-1] = Placement(pl.task, out[-1].start, pl.end, out[-1].alt)
         else:
             out.append(pl)
     return out
@@ -1095,10 +1127,17 @@ class Scheduler:
     LOOKAHEAD = 6 * HOUR            # how far ahead the rules at the line reach
 
     def __init__(self, states, env=None, dynamics=DEFAULT_DYNAMICS, t_start=0,
-                 horizon=DAY, tau_scale=1, **walk_kw):
+                 horizon=DAY, tau_scale=1, sliding=None, stretch_when=None,
+                 **walk_kw):
         self.states = states if isinstance(states, RuleStates) else RuleStates(states)
         self.base = env or Environment()
         self.dynamics = tuple(dynamics)
+        # A period of the case's own that slides with the line: `sliding(t_p,
+        # mode) -> periods`. Tests 10 and 11 are exactly that, and it is not
+        # the same thing as one of the three dynamic periods -- those are
+        # placed by the recurrence bars, this one IS the position of the line.
+        self.sliding = sliding
+        self.stretch_when = stretch_when
         self.t_start = frac(t_start)
         self.horizon = frac(horizon)
         self.tau_scale = tau_scale
@@ -1134,7 +1173,7 @@ class Scheduler:
         p = self._planners.get(specs)
         if p is None:
             p = DynamicPlanner(self.base, specs, self.dynamics,
-                               self.t_start, self.horizon)
+                               self.t_start, self.horizon, self.stretch_when)
             self._planners[specs] = p
         return p
 
@@ -1143,6 +1182,8 @@ class Scheduler:
         out = self._period_cache.get(key)
         if out is None:
             out = tuple(self.planner_at(t_p).periods(t_p, mode, self.sweep_from))
+            if self.sliding is not None:
+                out += tuple(self.sliding(frac(t_p), mode))
             if len(self._period_cache) > 4096:
                 self._period_cache.clear()
             self._period_cache[key] = out
@@ -1187,10 +1228,10 @@ class Scheduler:
         # nobody. The question ("what do I run instead?") is then about the next
         # thing scheduled, not about the emptiness the line is standing in.
         for pl in future:
-            if pl.task != IDLE and pl.start <= t_p < pl.end:
+            if pl.alt and pl.start <= t_p < pl.end:
                 return pl.alt
         for pl in future:
-            if pl.task != IDLE and pl.end > t_p:
+            if pl.task != IDLE and pl.alt and pl.end > t_p:
                 return pl.alt
         return ""
 
