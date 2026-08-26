@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-scheduler_v2.py
-A second, self-contained implementation of `README.md`, written from the
-specification rather than from `scheduler_logic.py`.
+scheduler.py
+The self-contained implementation of `README.md`, written from the
+specification itself.
 
-Why another one
----------------
-`scheduler_logic.py` is the reference the app is ported from, and it grew
-around the tests in `tests.md`. This file answers the README on its own terms,
-so the two can be read against each other: same spec, independently derived
-answer. Nothing here imports the reference, and nothing here is imported by the
-displayer -- it stands alone, and `--check` is its own verification.
+What it is
+----------
+This file answers the README on its own terms: it was derived from the spec
+rather than grown around the tests in `tests.md`. Nothing here is imported by
+the displayer -- it stands alone, and `--check` is its own verification.
 
 What the README asks for, and where each clause lives
 -----------------------------------------------------
@@ -53,9 +51,9 @@ Units: one unit of time is a MINUTE, carried as a `Fraction` so that a
 20-second period and a 45-minute minimum stay exact against each other.
 
 Run it:
-    uv run scheduler_v2.py --check      every README clause, asserted
-    uv run scheduler_v2.py --demo       a small timeline, drawn as text
-    uv run scheduler_v2.py --rules      the rule list at a position of t_p
+    uv run scheduler.py --check      every README clause, asserted
+    uv run scheduler.py --demo       a small timeline, drawn as text
+    uv run scheduler.py --rules      the rule list at a position of t_p
 """
 
 from __future__ import annotations
@@ -1936,7 +1934,7 @@ def check_teleport_sweeps_nothing():
 def run_checks(only=None) -> int:
     width = max(len(f.__name__) for f in CHECKS)
     failed = []
-    print(f"scheduler_v2 -- {len(CHECKS)} checks against README.md\n")
+    print(f"scheduler -- {len(CHECKS)} checks against README.md\n")
     for fn in CHECKS:
         if only and only not in fn.__name__:
             continue

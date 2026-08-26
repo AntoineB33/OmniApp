@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-tests_displayer_v2.py
-The display for `scheduler_v2`, over the cases in `test_configs_v2.py`.
+tests_displayer.py
+The display for `scheduler`, over the cases in `test_configs.py`.
 
-This is `tests_displayer.py`'s counterpart for the second implementation, and
-it keeps the two rules that shaped the original:
+It keeps the two rules that shaped it:
 
 * NOTHING THAT COSTS MORE THAN A FRAME RUNS ON THE THREAD THAT DRAWS. Tests 12
   to 14 settle their chain on a worker thread which OWNS the scheduler; the
@@ -26,10 +25,10 @@ keeps the line clear of any period that refuses the marked tasks, mode 2 keeps
 it inside one), and COPY -- which puts the test configuration and the resulting
 set of rules on the clipboard, in the readable form `tests.md` asks for.
 
-    uv run tests_displayer_v2.py              the window
-    uv run tests_displayer_v2.py --verify     every check, no window
-    uv run tests_displayer_v2.py --rules      the rule list of each case
-    uv run tests_displayer_v2.py --no-ui      the terminal report
+    uv run tests_displayer.py              the window
+    uv run tests_displayer.py --verify     every check, no window
+    uv run tests_displayer.py --rules      the rule list of each case
+    uv run tests_displayer.py --no-ui      the terminal report
 """
 
 from __future__ import annotations
@@ -45,8 +44,8 @@ try:
 except ImportError:                                     # headless box: CLI only
     tk = None
 
-from scheduler_v2 import DAY, HOUR, IDLE, frac, human, resulting_shares
-from test_configs_v2 import (
+from scheduler import DAY, HOUR, IDLE, frac, human, resulting_shares
+from test_configs import (
     Case,
     build_cases,
     build_moving_cases,
@@ -512,7 +511,7 @@ class Workbench:
 
         bar = tk.Frame(root)
         bar.pack(side="top", fill="x")
-        tk.Label(bar, text="scheduler_v2", font=FONT_B).pack(side="left", padx=(8, 12))
+        tk.Label(bar, text="scheduler", font=FONT_B).pack(side="left", padx=(8, 12))
         self.status = tk.Label(bar, text="building...", font=FONT, fg=DIM)
         self.status.pack(side="left")
         tk.Button(bar, text="copy all", font=FONT, command=self.copy_all).pack(side="right", padx=6)
@@ -780,11 +779,11 @@ def main(argv=None):
     print("  resumes from the link it had reached.")
     print("  Click or drag a bar to move t_p, PLAY sweeps it, mode 1/2 switches the")
     print("  two t_p modes, and copy puts the configuration and the rules on the")
-    print("  clipboard. The checks are `uv run tests_displayer_v2.py --verify`.\n",
+    print("  clipboard. The checks are `uv run tests_displayer.py --verify`.\n",
           flush=True)
 
     root = tk.Tk()
-    root.title("scheduler_v2 -- the tests of tests.md, and the rules they resolve to")
+    root.title("scheduler -- the tests of tests.md, and the rules they resolve to")
     root.geometry(f"{WIDTH + 20}x760")
     bench = Workbench(root, width=WIDTH)
     if args.self_test:

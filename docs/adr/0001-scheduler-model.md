@@ -4,7 +4,7 @@
 
 ## Where the rules live
 
-`side-dev/README.md` is the specification. `side-dev/scheduler_logic.py` is the reference
+`side-dev/README.md` is the specification. `side-dev/scheduler.py` is the reference
 implementation; `SchedulerPlan.kt` (`SchedulerPlanner` + `PlanWalk`) is its Kotlin port, and
 `SchedulerDomain.fillSchedule` is a **driver** over that port which maps OmniApp's world onto the
 reference's two inputs (pre-placed blocks, periods) and materializes panels.
@@ -16,14 +16,14 @@ Supporting files in `side-dev/`:
 
 | File | Role |
 | --- | --- |
-| `scheduler_logic.py` | reference implementation |
+| `scheduler.py` | reference implementation (`uv run scheduler.py --check` — every README clause, asserted) |
 | `test_configs.py` | the cases |
 | `tests_displayer.py` | runner + GUI (`uv run tests_displayer.py --verify`) |
-| `rules_snapshot.py` / `rules_snapshot.txt` | frozen answers |
 
 `verify_moving` only certifies that a rule list is *self-consistent* — a different-but-consistent
-answer passes it silently. The **snapshot** is what makes `--verify` fail with a diff when the
-scheduler's output changes. Bless it deliberately with `uv run tests_displayer.py --update-rules`.
+answer passes it silently. **There is no frozen-answer snapshot** since the reference was rebuilt
+from the README (2026-08-27): the checks say the rules are consistent and hit their targets, not
+that they are still the same rules.
 
 ## 1. The pick and the chunk
 
@@ -369,7 +369,7 @@ the app. **Keep them in step everywhere else.**
 **A chain of re-plans is the SAME schedule as one long plan.** This is the invariant every seeding rule
 above exists to satisfy, asserted directly by
 `SchedulerPlanTest.a_chain_of_re_plans_is_the_same_schedule_as_one_long_plan`, the port of
-`side-dev/test_configs.py`'s `check_resume_contract`.
+`side-dev/scheduler.py`'s `check_resume_contract`.
 
 It matters to OmniApp because the app re-plans at every rule change and materializes its tail by
 extension: a plan resumed at `t` must reproduce the walk that passed through `t`, or the calendar
@@ -394,11 +394,11 @@ breaks silently.**
 
 ## 8. The sliding period, and why it is a display clip
 
-The reference's MOVING period (`MovingWindow` / `Regime` / `Rule` in `scheduler_logic.py`, tests 10–11,
+The reference's MOVING period (`DynamicPlanner` / `Regime` / `RuleSegment` in `scheduler.py`, tests 10–11,
 `--verify`) is ported as ONE regime, not as the general dynamic rule list.
 
-In the reference those regimes are *derived*, not hand-written: `MovingWindow` calls the same
-`Scheduler.plan` every static test calls (the sliding period is an ordinary period whose position is a
+In the reference those regimes are *derived*, not hand-written: `DynamicPlanner` calls the same
+planning walk every static test calls (the sliding period is an ordinary period whose position is a
 parameter, and the frozen past is handed to it as `history`), fits affine rules between the breakpoints
 it finds, and certifies them against the scheduler at positions they were never fitted on. When a
 period slides continuously the rule list becomes `[(range of positions, prefix rules, cycle rules)…]`
@@ -423,7 +423,7 @@ Called with no break config (tests) every break reads as closed end to end — t
 pre-existing answer. Pinned/manual blocks and chores are pre-placed blocks in the reference's sense and
 are never cut.
 
-**Do not read the absence of `MovingWindow` from `SchedulerPlan.kt` as the port being out of date, and
+**Do not read the absence of the reference's dynamic rule list from `SchedulerPlan.kt` as the port being out of date, and
 do NOT answer a sliding period by re-planning per tick.**
 
 Both breaks' period shapes are pinned against the reference in `SchedulerPlanTest`

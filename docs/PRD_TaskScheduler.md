@@ -38,7 +38,7 @@ This is a personal-scale tool that **collects no telemetry**, so there are no ad
 | Promise | Metric | Target |
 | --- | --- | --- |
 | Shares converge | Realized share of time per task over a rolling window vs. its declared absolute priority (§5, §9) | Within a few percent for tasks schedulable throughout; a task must never sit an order of magnitude below its target |
-| The model stays faithful | `side-dev/rules_snapshot.txt` diff under `uv run tests_displayer.py --verify`; `SchedulerPlanTest` replaying the reference cases slot for slot | Zero unexplained diffs — a deliberate change is a *blessed* snapshot, never a silent one |
+| The model stays faithful | `uv run tests_displayer.py --verify` and `uv run scheduler.py --check`; `SchedulerPlanTest` replaying the reference cases slot for slot | Every check green — a change in behaviour is a deliberate one, read against the README |
 | Breaks are honoured | Share of due screen breaks actually served (a look-away conducted, a pose discharged by an observed pause), readable from the taken-break panels on the calendar (§15) | Every due break is either served or still visibly owed; none silently expires |
 | Cues are exact | Boundary crossings fire **exactly once, in order**; count of crossings logged as *swallowed as stale* in `diagnostics.log` | Zero stale-swallows on a device that stayed awake; any swallow must correspond to a real process suspension |
 | Time passing is not a rule change | Schedule fills per hour on an idle account; server writes per day caused by time alone | ≤1 fill/hour (the staleness bound); **0** snapshot pushes |

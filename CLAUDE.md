@@ -77,7 +77,7 @@ re-derives something mark the state dirty or trigger a sync push.
 
 ## Scheduler
 
-→ ADR 0001. The model is `side-dev/README.md`; `side-dev/scheduler_logic.py` is the reference and
+→ ADR 0001. The model is `side-dev/README.md`; `side-dev/scheduler.py` is the reference and
 `SchedulerPlan.kt` its port. `SchedulerDomain.fillSchedule` is a driver over that port.
 
 - **`PlanWalk` is the ONLY copy of the scheduling rules.** `SchedulerPlanner.plan()` and `fillSchedule` are

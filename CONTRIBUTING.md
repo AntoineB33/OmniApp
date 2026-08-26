@@ -53,7 +53,7 @@ When you describe a change as done, name the surface it needs, or say "no deploy
 
 ## The scheduler
 
-The scheduling model has a Python reference implementation in [`side-dev/`](side-dev/), and the Kotlin scheduler is a port of it. If you change scheduling behaviour, change the reference first, run `uv run tests_displayer.py --verify` to see the diff against the frozen expected answers, and keep the two implementations in step. The Kotlin tests replay the reference's own cases slot for slot.
+The scheduling model has a Python reference implementation in [`side-dev/`](side-dev/), and the Kotlin scheduler is a port of it. If you change scheduling behaviour, change the reference first, run `uv run tests_displayer.py --verify` (and `uv run scheduler.py --check`) and keep the two implementations in step. The Kotlin tests replay the reference's own cases slot for slot.
 
 ## Reporting bugs
 

@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-test_configs_v2.py
-The `scheduler_v2` test configurations, and the checks each family owes.
+test_configs.py
+The `scheduler` test configurations, and the checks each family owes.
 
-This is `test_configs.py`'s counterpart for the second implementation: the same
-fourteen cases, stated in `scheduler_v2`'s vocabulary (tasks with a resilience
-per kind of restrictive period, periods with a kind, one `Scheduler` per case),
-and the checks that say whether the answers are the ones `tests.md` and
-`README.md` describe.
+The fourteen cases of `tests.md`, stated in `scheduler`'s vocabulary (tasks
+with a resilience per kind of restrictive period, periods with a kind, one
+`Scheduler` per case), and the checks that say whether the answers are the ones
+`tests.md` and `README.md` describe.
 
 Three families, and the difference between them is what the answer IS:
 
@@ -27,8 +26,8 @@ Three families, and the difference between them is what the answer IS:
   periods, and the resume contract -- a chain of links must be the same
   schedule as one long plan, or a partial answer is not an answer.
 
-Run the checks:  uv run test_configs_v2.py --verify
-The display is `tests_displayer_v2.py`, which draws exactly these cases.
+Run the checks:  uv run test_configs.py --verify
+The display is `tests_displayer.py`, which draws exactly these cases.
 """
 
 from __future__ import annotations
@@ -37,8 +36,8 @@ import time
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
 
-import scheduler_v2 as sv
-from scheduler_v2 import (
+import scheduler
+from scheduler import (
     DAY,
     DEFAULT_DYNAMICS,
     HOUR,
@@ -361,7 +360,7 @@ def nights12(span=TEST12_SPAN):
 #: test 12's dynamic periods have a SHAPE: the last four minutes of the
 #: five-minute one, and the whole of the fifteen-minute one, accept the
 #: privileged tasks. The README's plain form (all three accept nobody) is
-#: `DEFAULT_DYNAMICS`, which tests 10-11 and `scheduler_v2 --check` use.
+#: `DEFAULT_DYNAMICS`, which tests 10-11 and `scheduler --check` use.
 DYNAMICS_12 = (
     DynamicSpec("20s", WINDOW),
     DynamicSpec("5min", frac(5), ((Fraction(0), Fraction(1), KIND_NO_TASK),
@@ -477,12 +476,12 @@ def covers_completely(tl, lo, hi) -> str:
     """A timeline must be a partition of its span: no gap, no overlap."""
     cur = frac(lo)
     for pl in tl:
-        if pl.start < cur - sv.EPS:
+        if pl.start < cur - scheduler.EPS:
             return f"overlap at {human(pl.start)}"
-        if pl.start > cur + sv.EPS:
+        if pl.start > cur + scheduler.EPS:
             return f"gap at {human(cur)}..{human(pl.start)}"
         cur = pl.end
-    if abs(cur - frac(hi)) > sv.EPS:
+    if abs(cur - frac(hi)) > scheduler.EPS:
         return f"stops at {human(cur)}, not at {human(hi)}"
     return ""
 
@@ -744,7 +743,7 @@ def _check_test11(case):
     if any(p.label.startswith("20s") for p in after):
         fails.append("Test 11: the 20s window survived the collision")
     heads = [p for p in after if p.label == "1min: nothing"]
-    if not heads or abs(heads[0].start - (contact + Fraction(1, 100))) > sv.EPS:
+    if not heads or abs(heads[0].start - (contact + Fraction(1, 100))) > scheduler.EPS:
         fails.append(f"Test 11: after contact the stretch starts at "
                      f"{human(heads[0].start) if heads else '(nowhere)'}, not at the line")
     home = [p for p in before if p.label == "1min: nothing"]
@@ -868,15 +867,15 @@ def verify_break_grid(case=None, verbose=True):
             gap = cur.start - prev.end
             run = prev.stretch_run(planner.kind_counts)
             length = (run[1] - run[0]) if run else Fraction(0)
-            if cur.label == "20s" and gap < sv.BAR_20S_AFTER_ANY - sv.EPS:
+            if cur.label == "20s" and gap < scheduler.BAR_20S_AFTER_ANY - scheduler.EPS:
                 fails.append(f"Test 12: a 20s only {human(gap)} after the "
                              f"{prev.label} at {human(prev.start)}")
-            if length >= sv.STRETCH_SHORT and cur.label == "5min" \
-                    and gap < sv.BAR_5MIN_AFTER_STRETCH - sv.EPS:
+            if length >= scheduler.STRETCH_SHORT and cur.label == "5min" \
+                    and gap < scheduler.BAR_5MIN_AFTER_STRETCH - scheduler.EPS:
                 fails.append(f"Test 12: a 5min only {human(gap)} after a "
                              f"{human(length)} stretch")
-            if length >= sv.STRETCH_LONG and cur.label == "15min" \
-                    and gap < sv.BAR_15MIN_AFTER_LONG - sv.EPS:
+            if length >= scheduler.STRETCH_LONG and cur.label == "15min" \
+                    and gap < scheduler.BAR_15MIN_AFTER_LONG - scheduler.EPS:
                 fails.append(f"Test 12: a 15min only {human(gap)} after a "
                              f"{human(length)} stretch")
     # ...and the night arms them: the first period of the first full day sits
@@ -885,7 +884,7 @@ def verify_break_grid(case=None, verbose=True):
     first = min((i for i in inst if i.start >= night_end), key=lambda i: i.start, default=None)
     if first is None:
         fails.append("Test 12: no dynamic period at all after the first night")
-    elif first.start < night_end + sv.BAR_20S_AFTER_ANY - sv.EPS:
+    elif first.start < night_end + scheduler.BAR_20S_AFTER_ANY - scheduler.EPS:
         fails.append(f"Test 12: the first period of the day is at {human(first.start)}, "
                      f"less than its bar after the night")
     if verbose:
@@ -919,7 +918,7 @@ def verify_teleport(case=None, verbose=True):
     # a period is being carried by the line
     # ...and the sweep from there DOES drag -- once it is past the night the
     # line lands in front of, and has reached the first period beyond it
-    sched.advance_to(TEST12_TP_SWEEP + 8 * HOUR + sv.BAR_20S_AFTER_ANY + 1, 1)
+    sched.advance_to(TEST12_TP_SWEEP + 8 * HOUR + scheduler.BAR_20S_AFTER_ANY + 1, 1)
     carried = [i for i in sched.planner_at(sched.t_p).instances(
         sched.t_p, 1, sweep_from=sched.sweep_from) if i.open_start]
     if not carried:
@@ -979,8 +978,8 @@ def verify_readme(verbose=True):
     one command covers both halves."""
     fails = []
     if verbose:
-        print("--- README.md, clause by clause (scheduler_v2's own checks) ---")
-    for fn in sv.CHECKS:
+        print("--- README.md, clause by clause (scheduler's own checks) ---")
+    for fn in scheduler.CHECKS:
         try:
             note = fn()
             if verbose:
