@@ -442,6 +442,54 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun a_freshly_minted_sub_list_is_never_shown_expanded() {
+        // Anomaly: typing into an empty cell and pressing Enter unfolded the new task onto a bare
+        // placeholder. [SchedulerState.expanded] is keyed by CELL id while a sub-list belongs to the TASK, so
+        // a cell that was expanded and then emptied (PRD §4 Deletion takes its task's sub-list with it) kept
+        // its stale entry, and the next task typed into that same cell inherited the expansion.
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId, initialText = "Parent"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Down))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cellId))
+        assertTrue(cellId in s.expanded)
+
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(
+                cellId = cellId,
+                ctrl = false,
+                shift = false,
+                visibleOrder = SchedulerDomain.selectableVisibleOrder(s),
+            ),
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.EmptySelectedCells)
+
+        // Typing a new title into that same, now empty, cell must leave it folded.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId, initialText = "Other"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Down))
+        assertEquals("Other", s.tasks[s.cells[cellId]!!.taskId!!]!!.title)
+        assertFalse(cellId in s.expanded, "a brand-new, empty sub-list must not be shown expanded")
+    }
+
+    @Test
+    fun renaming_a_task_keeps_its_sub_list_expanded() {
+        // The other half of the rule above: a rename does not mint a sub-list, so the expansion must survive
+        // it — otherwise every rename would fold the children away.
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Parent"))
+        val childCell = s.lists[s.tasks[s.cells[cellId]!!.taskId!!]!!.childListId!!]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(childCell, "Child"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cellId))
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Renamed"))
+
+        assertTrue(cellId in s.expanded)
+    }
+
+    @Test
     fun emptying_cell_above_trailing_placeholder_removes_placeholder() {
         var s = SchedulerState.empty()
         val cellId = s.lists[s.rootListId]!!.cellIds.first()

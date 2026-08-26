@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A freshly minted sub-list is never shown expanded (PRD §4) — FIXED 2026-08-26
+
+- **Anomaly**: typing a title into an empty task cell and pressing Enter unfolded the new task onto nothing but
+  its bare placeholder child row.
+- **Cause**: `SchedulerState.expanded` is keyed by **cell** id, while a sub-list belongs to the **task**. A cell
+  that had been expanded and was then emptied (PRD §4 *Deletion*, which takes its task's sub-list with it) kept
+  its stale `expanded` entry — nothing prunes it, because the cell itself is still there and still reachable —
+  so the next task typed into that same cell inherited an expansion the user never asked for. Not the default
+  sub-tree: with the template off, the graft is a no-op and `endEditSession` adds nothing.
+- **Fix**: `applySetCellTitle` drops the cell from `expanded` where it mints the task's sub-list — the one
+  place the entry can go stale is the one place it is cleared. A rename does not mint a sub-list, so it still
+  keeps its children on screen; the default-subtree graft still re-adds the cell in `endEditSession` once it
+  has rows to show, and `AddDefaultSubtree`, Tab-into-child and the arrow are unaffected.
+- `SchedulerReducerTest` pins both halves (the retyped cell stays folded, the renamed one stays open).
+- Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy.
+
 ### "All tasks" — the flat, sortable list of every task in the tree (PRD §7) — SHIPPED 2026-08-26
 
 - **New lateral-menu button, "All tasks"**, opening a floating window (`ui/TaskListWindow.kt`) that lists every

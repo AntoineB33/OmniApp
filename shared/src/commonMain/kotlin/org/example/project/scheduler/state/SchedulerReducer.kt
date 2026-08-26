@@ -3184,9 +3184,14 @@ private fun applySetCellTitle(
     var lists = working.lists.toMutableMap()
     var currentList = lists[cell.parentListId] ?: return state
 
+    // Set when this call gives the cell's task a brand-new (necessarily empty) sub-list — see the
+    // [SchedulerState.expanded] fix-up below.
+    var mintedSubList = false
+
     if (title.isNotEmpty()) {
         val updatedTask = tasks[taskId]!!
         if (updatedTask.childListId == null) {
+            mintedSubList = true
             val subListId = CellListId("${taskId.value}/children")
             val subPlaceholderId = CellId("cell/${subListId.value}/0")
             val subPlaceholder =
@@ -3241,6 +3246,15 @@ private fun applySetCellTitle(
             lists = lists,
             tasks = tasks,
             titleToTaskIds = titleToTaskIds,
+            // A freshly minted sub-list is never shown expanded. [SchedulerState.expanded] is keyed by CELL
+            // id, but a sub-list belongs to the TASK — so a cell that was expanded and then emptied (PRD §4
+            // *Deletion*, which takes its task's sub-list with it) keeps its entry, and the next task typed
+            // into that same cell would unfold onto nothing but its bare placeholder. The entry goes stale
+            // exactly here, where the new sub-list is created, so it is dropped exactly here. The only things
+            // that open a new sub-list are then the ones that mean to: the default-subtree graft (which
+            // re-adds the cell in [endEditSession] once it has rows to show), "add default sub-tree", Tab
+            // into the child, and the user's own click on the arrow.
+            expanded = if (mintedSubList) working.expanded - cellId else working.expanded,
         )
 
     // PRD §4: reassigning this cell to a different task (e.g. typing a new title in Change Task mode spins up
