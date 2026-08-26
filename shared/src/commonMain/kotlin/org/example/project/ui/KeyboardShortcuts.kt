@@ -36,7 +36,8 @@ object KeyboardShortcutCatalog {
         KeyboardShortcutGroup(
             title = "System-wide",
             note = "Claimed from the operating system, so they work while OmniApp is not the focused window. " +
-                "Desktop only.",
+                "Desktop only. Each press posts a \"Shortcut received\" notification naming the chord, so a " +
+                "press that never reached the app is distinguishable from one that did.",
             shortcuts = GlobalShortcut.entries.map { KeyboardShortcut(it.chord, it.action) },
         )
 

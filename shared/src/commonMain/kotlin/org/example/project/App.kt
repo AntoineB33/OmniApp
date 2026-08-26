@@ -265,6 +265,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Android/iOS.
         LaunchedEffect(engine) {
             installGlobalHotkeys { shortcut ->
+                // The receipt FIRST, and unconditionally: the chord is struck with another window in front, so
+                // without it "OmniApp never got the press" and "OmniApp got it and had nothing to do" look
+                // identical from where the user is sitting. It is posted here, at the OS seam, and not inside
+                // the engine seams below — the lateral-menu buttons drive those same seams, and a click the
+                // user just made in a window they are looking at needs no confirming.
+                engine.announceShortcutReceived(shortcut)
                 when (shortcut) {
                     GlobalShortcut.ToggleAway -> engine.setUserAway(!engine.userAway.value)
                     GlobalShortcut.LookAwayNow -> engine.restartLookAway()

@@ -685,6 +685,12 @@ and `Ctrl+Shift+Alt+Z` ("Switch task"), claimed from the OS because each is pres
 - The hook must handle what `RegisterHotKey` handled for us: **auto-repeat** (latch the down transition; swallow
   the up only for a down we swallowed) and **AltGr** (right-Alt arrives as synthetic left-Ctrl + right-Alt, so
   `Shift+AltGr+E` must pass through or the hook eats typed text).
+- **Every press posts a RECEIPT** (`SchedulerEngine.announceShortcutReceived`): a "Shortcut received"
+  notification naming the chord, raised at the `installGlobalHotkeys` seam **before** the action and whatever
+  the action then does. The chord is struck with another window in front, and each one can legitimately do
+  nothing visible — so "the app never got it" and "the app got it and had nothing to do" are otherwise the
+  same experience. It belongs to the hot-key seam, never to the engine seams behind it: the lateral-menu
+  buttons drive those same seams and a click needs no confirming.
 - **`GlobalShortcut` is the only list of chords.** The platform actual registers it and the keyboard-shortcuts
   window prints it; never a second copy. `GlobalHotkeys.claim` says which claim the OS granted, and the window
   shows it — "nothing happened" and "something else happened too" are otherwise undiagnosable.

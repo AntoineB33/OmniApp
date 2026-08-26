@@ -37,6 +37,7 @@ import org.example.project.scheduler.persistence.SleepScanCheckpointStore
 import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.platform.DeviceSleepGap
 import org.example.project.scheduler.platform.Diagnostics
+import org.example.project.scheduler.platform.GlobalShortcut
 import org.example.project.scheduler.platform.deviceLockedIntervals
 import org.example.project.scheduler.platform.currentDeviceKind
 import org.example.project.scheduler.platform.isScreenActive
@@ -104,6 +105,12 @@ private const val LOOK_AWAY_RESUME_POLL_MILLIS: Long = 200
 // its start; the `resume_work` voice cue speaks the same thing.
 private const val RESUME_WORK_TITLE: String = "Screen break over"
 private const val RESUME_WORK_MESSAGE: String = "Resume your work"
+
+// PRD §7/§15: the title every system-wide chord's receipt is posted under (see
+// [SchedulerEngine.announceShortcutReceived]). One shared title, so the receipts group together in the
+// History window's Notifications column and in the OS's own notification list — the chord itself is the
+// message, which is what tells the user WHICH press landed.
+private const val SHORTCUT_RECEIVED_TITLE: String = "Shortcut received"
 
 // PRD §12/§15 device-sleep detection: the *real*-time gap between two advance ticks that means the process was
 // suspended (the device slept). It is the production tick cadence × 3 — a fixed REAL duration that does NOT
@@ -1726,6 +1733,31 @@ class SchedulerEngine(
      */
     fun forceTaskSwitch() {
         vm.dispatch(SchedulerIntent.ForceTaskSwitch(clock.nowMillis()))
+    }
+
+    /**
+     * PRD §7/§15: **the receipt** for a system-wide chord — a notification saying which
+     * `Ctrl+Shift+Alt+<letter>` the app just received, posted the moment the press arrives and before the
+     * action it asks for runs.
+     *
+     * Every one of these chords is struck while OmniApp is *not* the focused window, so the app gives the
+     * user nothing they can see; and each of them can be silently lost in a different way — another
+     * application swallowing the press underneath our hook, Windows dropping a hook that overran
+     * `LowLevelHooksTimeout`, a claim that came back `Unavailable`. "Nothing happened" would otherwise be
+     * indistinguishable from "the app received it and decided there was nothing to do":
+     * [restartLookAway] returns silently when no look-away break exists, [setUserAway] is a no-op on a
+     * same-value call, and [forceTaskSwitch]'s own announcement only comes if the re-plan actually starts a
+     * different task.
+     *
+     * So it is deliberately a receipt for the PRESS and not for the effect: it is posted whatever the
+     * handler then does, and it names the chord as well as the action so a user who struck two chords in
+     * quick succession can tell which one landed.
+     *
+     * It belongs to the hot-key seam, NOT to the actions: the lateral-menu buttons drive exactly the same
+     * engine entry points, and a click needs no receipt — the window is already in front of the user.
+     */
+    fun announceShortcutReceived(shortcut: GlobalShortcut) {
+        notifyUser(SHORTCUT_RECEIVED_TITLE, "${shortcut.chord} — ${shortcut.action}")
     }
 
     // PRD §15 device-sleep gaps: after a sleep is detected, query the OS sleep/wake log off-thread for the

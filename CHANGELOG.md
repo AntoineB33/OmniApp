@@ -11,6 +11,27 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every system-wide chord posts a receipt notification — SHIPPED 2026-08-26
+
+- **The ask:** pressing `Ctrl+Shift+Alt+<letter>` should raise a notification, so the user can tell the app
+  actually received the press.
+- **Why it was needed.** The three chords are struck precisely while OmniApp is *not* the focused window, so
+  the app shows the user nothing; and each of them can legitimately do nothing visible — "Look away now" with
+  no look-away break configured returns silently, "I'm away" is a no-op on a same-value call, "Switch task"
+  only announces if the re-plan starts a different task. That made "the hook never saw the press" (another
+  application swallowing it underneath us, Windows dropping a hook that overran `LowLevelHooksTimeout`, a
+  claim that came back `Unavailable`) indistinguishable from "received, nothing to do".
+- **`SchedulerEngine.announceShortcutReceived(shortcut)`** posts `Shortcut received` / `<chord> — <action>`
+  through the ordinary `notifyUser` path, so it also lands in the Diagnostics timeline and the History
+  window's Notifications column. It names the **chord** so two presses in quick succession are tellable
+  apart.
+- **A receipt for the PRESS, not the effect:** called at the `installGlobalHotkeys` seam in `App.kt`, first
+  and unconditionally, before the `when` that dispatches the action. Deliberately *not* inside the engine
+  seams themselves — the lateral-menu buttons drive those same seams, and a click in a window the user is
+  looking at needs no confirming (`GlobalShortcutReceiptTest` pins both halves).
+- The keyboard-shortcuts window's System-wide note now says the receipt is expected.
+- Desktop-only, like the chords. **Redeploy:** client app rebuild (`account{1,2,3}-*deploy*.bat`).
+
 ### The default sub-tree window IS the task tree (`scheduler/ui/TaskTreeView.kt`) — SHIPPED 2026-08-26
 
 - **Reported anomaly:** right-clicking a row in the "Default sub-tree" window opened no contextual menu. The
