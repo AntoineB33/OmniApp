@@ -20,7 +20,6 @@ import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
-import org.example.project.scheduler.model.DefaultSubtreeNode
 import org.example.project.scheduler.model.ForcedTaskStart
 import org.example.project.scheduler.model.ForcedTaskSwitch
 import org.example.project.scheduler.model.PanelPins
@@ -31,6 +30,7 @@ import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.CellEditMode
@@ -51,6 +51,9 @@ import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.SetSelectionDelta
 import org.example.project.scheduler.state.SleepDelta
+import org.example.project.scheduler.state.DefaultSubtreeDelta
+import org.example.project.scheduler.state.DefaultSubtreeTemplate
+import org.example.project.scheduler.state.defaultSubtreeIsEmpty
 import org.example.project.scheduler.state.TaskTreeDelta
 import org.example.project.scheduler.state.TaskTreeEntry
 import org.example.project.scheduler.state.TaskTreeStateSnapshot
@@ -265,8 +268,19 @@ object SchedulerStateCodec {
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
-            // PRD §4 Default sub-tree: the template and whether it is currently applied.
-            defaultSubtree = defaultSubtree.map { it.toPersisted() },
+            // PRD §4 Default sub-tree: the template — a real tree, in the same shape a task tree is stored
+            // in — and whether the policy is currently applied. The pre-1.6.0 `defaultSubtree` node list is
+            // still READ (below) but never written again.
+            // An empty template is written as *nothing*, so an account that never opened the window keeps a
+            // payload free of it — which is also what makes "written before the feature existed" and "empty"
+            // the same thing on the way back in.
+            defaultSubtreeTree = defaultSubtree.takeIf { !defaultSubtreeIsEmpty }?.tree?.toPersisted(),
+            defaultSubtreeExpanded =
+                if (defaultSubtreeIsEmpty) emptyList()
+                else defaultSubtree.expanded.map(CellId::value).sorted(),
+            defaultSubtreeBoundCells =
+                if (defaultSubtreeIsEmpty) emptyList()
+                else defaultSubtree.boundCells.map(CellId::value).sorted(),
             defaultSubtreeEnabled = defaultSubtreeEnabled,
             // PRD §13: the account's one deep-copy depth, and its three "what does a copy carry" switches.
             deepCopyMaxDepth = deepCopyMaxDepth,
@@ -291,21 +305,98 @@ object SchedulerStateCodec {
                 },
         )
 
-    private fun DefaultSubtreeNode.toPersisted(): PersistedDefaultSubtreeNode =
-        PersistedDefaultSubtreeNode(
-            id = id,
-            title = title,
-            taskId = taskId?.value,
-            children = children.map { it.toPersisted() },
-        )
+    /**
+     * PRD §4 **Default sub-tree**, load-time migration: builds the pre-1.6.0 template — a tree of *titles*
+     * ([PersistedDefaultSubtreeNode]) — into the real tree the app now stores.
+     *
+     * Each node becomes a cell plus a task carrying its title, under the ordinary root every tree has. A node
+     * that was **bound** to an existing task keeps that binding: its cell points straight at the live task id
+     * and joins `boundCells` (the switch, off), so it still mirrors what it always mirrored. Such a node
+     * builds no template task of its own — the title lives on the task it points at — and so its stored
+     * children go, exactly as they were already ignored: a sub-list belongs to the task id, and the old shape
+     * never applied them either.
+     *
+     * Ids are minted from [startTaskCounter] / [startCellCounter], i.e. the account's own counters, so the
+     * migrated template can never be handed an id the live tree already uses. The caller pushes the counters
+     * past what this took.
+     */
+    private fun migrateDefaultSubtreeNodes(
+        nodes: List<PersistedDefaultSubtreeNode>,
+        startTaskCounter: Int,
+        startCellCounter: Int,
+    ): DefaultSubtreeTemplate {
+        val cells = LinkedHashMap<CellId, Cell>()
+        val lists = LinkedHashMap<CellListId, CellList>()
+        val tasks = LinkedHashMap<TaskId, Task>()
+        val bound = LinkedHashSet<CellId>()
+        val expanded = LinkedHashSet<CellId>()
+        var nextTask = startTaskCounter
+        var nextCell = startCellCounter
 
-    private fun PersistedDefaultSubtreeNode.toNode(): DefaultSubtreeNode =
-        DefaultSubtreeNode(
-            id = id,
-            title = title,
-            taskId = taskId?.let(::TaskId),
-            children = children.map { it.toNode() },
+        tasks[WellKnownIds.ROOT_TASK] =
+            Task(id = WellKnownIds.ROOT_TASK, title = "root", childTaskIds = listOf(WellKnownIds.MAIN_TASK))
+        tasks[WellKnownIds.MAIN_TASK] =
+            Task(id = WellKnownIds.MAIN_TASK, title = "main", childListId = WellKnownIds.MAIN_LIST)
+
+        // Returns the ids of the cells it placed, in order, so the caller can wire up its list.
+        fun buildList(listId: CellListId, parentCellId: CellId?, source: List<PersistedDefaultSubtreeNode>) {
+            val placed = mutableListOf<CellId>()
+            for (node in source) {
+                // The blank title is what deletes, here as in the tree: such a node was never grafted.
+                if (node.title.isBlank()) continue
+                val cellId = CellId("cell/${listId.value}/${nextCell++}")
+                val liveTaskId = node.taskId?.let(::TaskId)
+                if (liveTaskId != null) {
+                    cells[cellId] = Cell(id = cellId, parentListId = listId, taskId = liveTaskId)
+                    bound += cellId
+                } else {
+                    val taskId = TaskId("task/user/${nextTask++}")
+                    val childListId = CellListId("${taskId.value}/children")
+                    cells[cellId] = Cell(id = cellId, parentListId = listId, taskId = taskId)
+                    tasks[taskId] =
+                        Task(
+                            id = taskId,
+                            title = node.title,
+                            occurrences = listOf(cellId),
+                            childListId = childListId,
+                        )
+                    expanded += cellId
+                    buildList(childListId, cellId, node.children)
+                }
+                placed += cellId
+            }
+            // Every list ends with the empty placeholder PRD §4 Auto-Expansion keeps.
+            val placeholderId = CellId("cell/${listId.value}/${nextCell++}")
+            cells[placeholderId] = Cell(id = placeholderId, parentListId = listId, taskId = null)
+            placed += placeholderId
+            lists[listId] = CellList(id = listId, parentCellId = parentCellId, cellIds = placed)
+        }
+
+        buildList(WellKnownIds.MAIN_LIST, null, nodes)
+
+        // childTaskIds is denormalized off the cells that were just placed.
+        for ((listId, list) in lists) {
+            val parentTaskId =
+                if (listId == WellKnownIds.MAIN_LIST) WellKnownIds.MAIN_TASK
+                else list.parentCellId?.let { cells[it]?.taskId } ?: continue
+            val childIds = list.cellIds.mapNotNull { cells[it]?.taskId }
+            tasks[parentTaskId]?.let { tasks[parentTaskId] = it.copy(childTaskIds = childIds) }
+        }
+
+        return DefaultSubtreeTemplate(
+            tree =
+                TreeSnapshot(
+                    cells = cells,
+                    lists = lists,
+                    tasks = tasks,
+                    titleToTaskIds = SchedulerDomain.buildTitleIndex(tasks),
+                    nextTaskCounter = nextTask,
+                    nextCellCounter = nextCell,
+                ),
+            expanded = expanded,
+            boundCells = bound,
         )
+    }
 
     private fun SchedulerHistories.toPersisted(): PersistedHistories =
         PersistedHistories(
@@ -361,6 +452,8 @@ object SchedulerStateCodec {
             is SetExpandedDelta ->
                 PersistedDelta.SetExpanded(before.map { it.value }, after.map { it.value })
             is TaskTreeDelta -> PersistedDelta.TaskTrees(before.toPersisted(), after.toPersisted(), label)
+            is DefaultSubtreeDelta ->
+                PersistedDelta.DefaultSubtreeUnit(before.toPersisted(), after.toPersisted(), label)
             is RecordDelta ->
                 PersistedDelta.Record(
                     before.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
@@ -422,6 +515,20 @@ object SchedulerStateCodec {
             expanded = expanded.map(CellId::value),
         )
 
+    private fun DefaultSubtreeTemplate.toPersisted(): PersistedDefaultSubtree =
+        PersistedDefaultSubtree(
+            tree = tree.toPersisted(),
+            expanded = expanded.map(CellId::value).sorted(),
+            boundCells = boundCells.map(CellId::value).sorted(),
+        )
+
+    private fun PersistedDefaultSubtree.toTemplate(): DefaultSubtreeTemplate =
+        DefaultSubtreeTemplate(
+            tree = tree.toSnapshot(),
+            expanded = expanded.map(::CellId).toSet(),
+            boundCells = boundCells.map(::CellId).toSet(),
+        )
+
     private fun TreeSnapshot.toPersisted(): PersistedTreeSnapshot =
         PersistedTreeSnapshot(
             lists =
@@ -458,6 +565,23 @@ object SchedulerStateCodec {
         )
 
     private fun PersistedState.toState(): SchedulerState {
+        val resolvedNextCellCounter =
+            nextCellCounter ?: SchedulerState.deriveNextCellCounter(cells.map { CellId(it.id) })
+        // PRD §4 Default sub-tree — resolved before the state is built because migrating the pre-1.6.0
+        // shape mints ids, which the account's counters then have to be pushed past (below).
+        val migratedDefaultSubtree =
+            defaultSubtreeTree?.let {
+                DefaultSubtreeTemplate(
+                    tree = it.toSnapshot(),
+                    expanded = defaultSubtreeExpanded.map(::CellId).toSet(),
+                    boundCells = defaultSubtreeBoundCells.map(::CellId).toSet(),
+                )
+            }
+                ?: if (defaultSubtree.isEmpty()) {
+                    DefaultSubtreeTemplate.empty()
+                } else {
+                    migrateDefaultSubtreeNodes(defaultSubtree, nextTaskCounter, resolvedNextCellCounter)
+                }
         val tasks =
             tasks.associate { p ->
                 TaskId(p.id) to
@@ -518,10 +642,11 @@ object SchedulerStateCodec {
                     rangeAnchor = selectionRangeAnchor?.let(::CellId),
                     renderVia = selectionRenderVia?.let(::CellId),
                 ),
-            nextTaskCounter = nextTaskCounter,
+            // Ids are handed out from one counter but live in every tree, the template included — so the
+            // counters clear whatever the template holds, or the live tree could re-mint an id it uses.
+            nextTaskCounter = maxOf(nextTaskCounter, migratedDefaultSubtree.tree.nextTaskCounter),
             nextCellCounter =
-                nextCellCounter
-                    ?: SchedulerState.deriveNextCellCounter(cells.keys),
+                maxOf(resolvedNextCellCounter, migratedDefaultSubtree.tree.nextCellCounter),
             editSession = editSession?.toSession(),
             panels =
                 panels.map {
@@ -587,11 +712,12 @@ object SchedulerStateCodec {
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
-            // PRD §4: a payload written before the "Default sub-tree" window existed decodes to no template
-            // and the policy off — exactly the behaviour it had. [normalizeDefaultSubtree] heals a payload an
-            // older/hand-edited build could hold (a blank-titled node, or a binding on one) rather than
-            // letting it reach the graft.
-            defaultSubtree = SchedulerDomain.normalizeDefaultSubtree(defaultSubtree.map { it.toNode() }),
+            // PRD §4: three generations, all readable. A payload written before the "Default sub-tree"
+            // window existed decodes to the empty template and the policy off — exactly the behaviour it
+            // had. One written while the template was a tree of titles is MIGRATED into the real tree the
+            // app now stores (ids minted past the account's own counters). One written since simply
+            // decodes.
+            defaultSubtree = migratedDefaultSubtree,
             defaultSubtreeEnabled = defaultSubtreeEnabled,
             // PRD §13: a payload written before the account-wide deep-copy depth existed decodes to the
             // default the window used to open on, and a hand-edited out-of-range one is healed into range.
@@ -675,6 +801,8 @@ object SchedulerStateCodec {
             is PersistedDelta.SetExpanded ->
                 SetExpandedDelta(before.map { CellId(it) }.toSet(), after.map { CellId(it) }.toSet())
             is PersistedDelta.TaskTrees -> TaskTreeDelta(before.toTaskTreeState(), after.toTaskTreeState(), label)
+            is PersistedDelta.DefaultSubtreeUnit ->
+                DefaultSubtreeDelta(before.toTemplate(), after.toTemplate(), label)
             is PersistedDelta.Record ->
                 RecordDelta(
                     before.mapKeys { TaskId(it.key) }.mapValues { e -> e.value.map { TaskTimeRange(it.start, it.end) } },
@@ -837,8 +965,16 @@ private data class PersistedState(
     // PRD §15: the 20s look-away voice cue; default on (payloads written before the toggle existed get the voice).
     val lookAwayVoiceEnabled: Boolean = true,
     // PRD §4 Default sub-tree: the template grafted under a newly created task, and whether the policy is
-    // applied. Missing values decode to "no template, switch off" — payloads written before the window
+    // applied. Missing values decode to "empty template, switch off" — payloads written before the window
     // existed, for which nothing was ever grafted.
+    //
+    // The template is a real tree, stored exactly as a task tree is. [defaultSubtree] is the **pre-1.6.0**
+    // shape — a tree of titles — kept because a payload outlives a rebuild: it is still read (and migrated
+    // on load, see `migrateDefaultSubtreeNodes`) and never written again. A payload holding
+    // [defaultSubtreeTree] ignores it.
+    val defaultSubtreeTree: PersistedTreeSnapshot? = null,
+    val defaultSubtreeExpanded: List<String> = emptyList(),
+    val defaultSubtreeBoundCells: List<String> = emptyList(),
     val defaultSubtree: List<PersistedDefaultSubtreeNode> = emptyList(),
     val defaultSubtreeEnabled: Boolean = false,
     // PRD §13 deep copy: the account-wide maximum depth. A missing value decodes to the depth the window
@@ -883,9 +1019,10 @@ private data class PersistedState(
 )
 
 /**
- * PRD §4 Default sub-tree: one template node (see [DefaultSubtreeNode]). Recursive, and every field carries a
- * default so a payload written by an older shape decodes cleanly. `taskId == null` is the node's switch in
- * its **on** position ("new id"), which is also what a payload omitting the field says.
+ * PRD §4 Default sub-tree, **pre-1.6.0 only**: one node of the template back when it was a tree of titles.
+ * Read so an older payload still loads (and is migrated by `migrateDefaultSubtreeNodes`); never written.
+ * Recursive, and every field carries a default so a payload written by an older shape decodes cleanly.
+ * `taskId == null` was the node's switch in its **on** position ("new id").
  */
 @Serializable
 private data class PersistedDefaultSubtreeNode(
@@ -1059,6 +1196,14 @@ private sealed interface PersistedDelta {
     data class Sleep(val before: PersistedSleep? = null, val after: PersistedSleep) : PersistedDelta
 
     @Serializable
+    @SerialName("defaultSubtree")
+    data class DefaultSubtreeUnit(
+        val before: PersistedDefaultSubtree,
+        val after: PersistedDefaultSubtree,
+        val label: String,
+    ) : PersistedDelta
+
+    @Serializable
     @SerialName("taskTrees")
     data class TaskTrees(
         val before: PersistedTaskTreeState,
@@ -1126,6 +1271,14 @@ private data class PersistedEditSession(
     val newTaskDraftId: String? = null,
     val treeBefore: PersistedTreeSnapshot,
     val renameTreeBefore: PersistedTreeSnapshot? = null,
+)
+
+/** PRD §4 the default sub-tree template on one side of a history unit (see [DefaultSubtreeTemplate]). */
+@Serializable
+private data class PersistedDefaultSubtree(
+    val tree: PersistedTreeSnapshot,
+    val expanded: List<String> = emptyList(),
+    val boundCells: List<String> = emptyList(),
 )
 
 /** One named alternative task tree (see [org.example.project.scheduler.state.TaskTreeEntry]). */

@@ -394,15 +394,34 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §4 **Default sub-tree**: replace the whole template with [nodes] (rows are edited live in the
-     * "Default sub-tree" window, §7). Blank-titled nodes are dropped with their children — the blank title is
-     * what deletes, here as in the tree — so the stored template holds only what could actually be grafted.
-     * Authoritative — persisted and synced; not undoable, and it never re-plans (the template is not part of
+     * PRD §4 **Default sub-tree**: run [inner] against the *template* instead of the live tree.
+     *
+     * The "Default sub-tree" window (§7) draws the template with the task tree's own component, so it emits
+     * the task tree's own intents — `ClickCell`, `SetCellTitle`, `ToggleExpand`, `Copy`, `Paste`, the lot.
+     * This wrapper is what points them at the template: the reducer projects the template into a state
+     * ([org.example.project.scheduler.state.projectDefaultSubtree]), reduces [inner] there, and folds the
+     * result back. Every live-tree field is left exactly as it was, so nothing done in the window can reach
+     * the real tree.
+     *
+     * The whole thing lands as **one** Main history unit, like a task-tree switch — so one Ctrl+Z undoes one
+     * gesture in the window, not the handful of inner units the reducer would otherwise have recorded.
+     *
+     * Authoritative — persisted and synced; it never re-plans (the template is not part of
      * [org.example.project.scheduler.domain.SchedulerDomain.schedulingSignature]: nothing is scheduled until
      * it is applied to a real cell).
      */
-    data class SetDefaultSubtree(
-        val nodes: List<org.example.project.scheduler.model.DefaultSubtreeNode>,
+    data class InDefaultSubtree(
+        val inner: SchedulerIntent,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §4: flip one template row's switch — on (the row mints a brand new task each graft) or off (every
+     * cell built from the row mirrors the task the row points at). Carried separately from [InDefaultSubtree]
+     * because it edits the template's own metadata rather than its tree.
+     */
+    data class SetDefaultSubtreeCellBound(
+        val cellId: org.example.project.scheduler.model.CellId,
+        val bound: Boolean,
     ) : SchedulerIntent
 
     /**

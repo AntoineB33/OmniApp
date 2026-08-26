@@ -8,7 +8,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.CellId
-import org.example.project.scheduler.model.DefaultSubtreeNode
+import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.EditExitNavigation
@@ -16,6 +17,9 @@ import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.state.defaultSubtreeIsEmpty
+import org.example.project.scheduler.state.defaultSubtreePriorities
+import org.example.project.scheduler.state.projectDefaultSubtree
 
 /**
  * PRD §4/§7 **Default sub-tree**: the template grafted under every task the user creates, and the lateral-menu
@@ -34,8 +38,17 @@ import org.example.project.scheduler.state.SchedulerState
  */
 class DefaultSubtreeTest {
 
-    private fun node(id: String, title: String, taskId: TaskId? = null, children: List<DefaultSubtreeNode> = emptyList()) =
-        DefaultSubtreeNode(id = id, title = title, taskId = taskId, children = children)
+    /**
+     * A template row, for the fixtures below. The template itself is a real tree now, so this is only a
+     * convenient description of one — [withTemplate] builds it by driving the SAME intents the window sends,
+     * which is what makes these fixtures exercise the projection round-trip rather than a hand-built tree.
+     *
+     * [id] is vestigial (the pre-1.6.0 template keyed its rows by a handle of its own); it is ignored.
+     */
+    private data class Row(val title: String, val taskId: TaskId?, val children: List<Row>)
+
+    private fun node(id: String, title: String, taskId: TaskId? = null, children: List<Row> = emptyList()) =
+        Row(title = title, taskId = taskId, children = children)
 
     /** The root list's first (empty) cell of a fresh account. */
     private fun firstCell(state: SchedulerState): CellId = state.lists[state.rootListId]!!.cellIds.first()
@@ -56,11 +69,52 @@ class DefaultSubtreeTest {
         return state.lists[listId]!!.cellIds.filter { state.cells[it]?.taskId != null }
     }
 
-    /** An account with the given template, the policy on. */
-    private fun withTemplate(nodes: List<DefaultSubtreeNode>): SchedulerState {
-        var s = SchedulerState.empty()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(nodes))
-        return SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(true))
+    /**
+     * An account with the given template, the policy on — built through [SchedulerIntent.InDefaultSubtree],
+     * i.e. exactly the intents the "Default sub-tree" window raises when the rows are typed into it.
+     */
+    private fun withTemplate(rows: List<Row>, from: SchedulerState = SchedulerState.empty()): SchedulerState {
+        var s = from
+        fun build(rows: List<Row>, listId: CellListId) {
+            for (row in rows) {
+                // The trailing empty placeholder Auto-Expansion keeps, exactly as the window would type into.
+                val target =
+                    s.defaultSubtree.tree.lists[listId]!!.cellIds
+                        .last { s.defaultSubtree.tree.cells[it]?.taskId == null }
+                if (row.taskId != null) {
+                    s = reduceInTemplate(s, SchedulerIntent.AssignTaskId(target, row.taskId))
+                    s = reduceInTemplate(s, SchedulerIntent.SetDefaultSubtreeCellBound(target, bound = true))
+                }
+                s = reduceInTemplate(s, SchedulerIntent.SetCellTitle(target, row.title))
+                if (row.children.isEmpty()) continue
+                val childListId =
+                    s.defaultSubtree.tree.cells[target]?.taskId
+                        ?.let { s.defaultSubtree.tree.tasks[it]?.childListId } ?: continue
+                build(row.children, childListId)
+            }
+        }
+        build(rows, WellKnownIds.MAIN_LIST)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(true))
+        // Fixture setup, not user actions: hand back the history the caller started with so a test can count
+        // the units ITS OWN gesture recorded.
+        return s.copy(histories = from.histories)
+    }
+
+    /** [SchedulerIntent.SetDefaultSubtreeCellBound] is already about the template; everything else wraps. */
+    private fun reduceInTemplate(state: SchedulerState, intent: SchedulerIntent): SchedulerState =
+        SchedulerReducer.reduce(
+            state,
+            if (intent is SchedulerIntent.SetDefaultSubtreeCellBound) intent
+            else SchedulerIntent.InDefaultSubtree(intent),
+        )
+
+    /** The titles of the template's top-level rows, ignoring the trailing empty placeholder. */
+    private fun templateTitles(state: SchedulerState, listId: CellListId = WellKnownIds.MAIN_LIST): List<String> {
+        val tree = state.defaultSubtree.tree
+        return tree.lists[listId]?.cellIds.orEmpty()
+            .mapNotNull { tree.cells[it]?.taskId }
+            .mapNotNull { tree.tasks[it]?.title }
+            .filter { it.isNotBlank() }
     }
 
     // ---- the graft -----------------------------------------------------------------------------
@@ -173,8 +227,7 @@ class DefaultSubtreeTest {
             SchedulerIntent.SetCellTitle(s.lists[sharedChildList]!!.cellIds.first(), "Inherited"),
         )
 
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Shared", sharedTask))))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(true))
+        s = withTemplate(listOf(node("dst/0", "Shared", sharedTask)), from = s)
 
         val target = s.lists[s.rootListId]!!.cellIds.last()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(target, "Project"))
@@ -201,7 +254,8 @@ class DefaultSubtreeTest {
     @Test
     fun nothing_is_grafted_while_the_policy_switch_is_off() {
         var s = SchedulerState.empty()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        s = withTemplate(listOf(node("dst/0", "Plan")), from = s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(false))
         val cell = firstCell(s)
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cell, "Project"))
 
@@ -291,72 +345,184 @@ class DefaultSubtreeTest {
     // ---- the menu / the switch -----------------------------------------------------------------
 
     @Test
-    fun the_identity_menu_leads_with_new_id_and_offers_exact_title_matches() {
+    fun the_windows_change_task_menu_is_the_trees_own_and_offers_live_tasks() {
+        // PRD §4: pointing a template row at an existing task is the tree's ordinary Change Task menu, not a
+        // menu of its own. That works because the projection merges the live tasks in underneath.
         var s = SchedulerState.empty()
         val cell = firstCell(s)
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cell, "Shared"))
         val shared = s.cells[cell]!!.taskId!!
 
-        val empty = SchedulerDomain.defaultSubtreeTaskMenuEntries(s, "")
-        assertEquals(listOf(SchedulerDomain.DEFAULT_SUBTREE_NEW_ID_LABEL), empty.map { it.label })
-        assertNull(empty.single().taskId)
+        val projected = s.projectDefaultSubtree()
+        val templateCell = projected.lists[projected.rootListId]!!.cellIds.first()
+        val entries = SchedulerDomain.changeTaskMenuEntries(projected, templateCell, "Shared")
 
-        val matched = SchedulerDomain.defaultSubtreeTaskMenuEntries(s, "Shared")
-        assertEquals(2, matched.size)
-        assertNull(matched.first().taskId)
-        assertEquals(shared, matched[1].taskId)
-
-        // A partial match is not an identity (PRD §4: the row appears only on an exact title).
-        assertEquals(1, SchedulerDomain.defaultSubtreeTaskMenuEntries(s, "Sha").size)
+        assertTrue(entries.any { it.taskId == shared }, "a live task must be offerable to a template row")
     }
 
     @Test
-    fun normalization_drops_empty_rows_with_their_children() {
-        // PRD §4: the blank title is what deletes, here as in the tree. The editor keeps a trailing empty row
-        // per list (Auto-Expansion) only while its window is open; nothing stored may hold one.
-        val nodes =
-            listOf(
-                node("dst/0", "Plan", children = listOf(node("dst/1", "Sketch"), node("dst/2", ""))),
-                node("dst/3", "", TaskId("task/user/1")),
-                node("dst/4", "", children = listOf(node("dst/5", "Deep"))),
-            )
-        val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetDefaultSubtree(nodes))
+    fun a_blank_title_deletes_a_template_row_with_its_children() {
+        // PRD §4: the blank title is what deletes, in the template exactly as in the tree — and it is the
+        // tree's own rule doing it, not a normalization step of the template's own.
+        var s = withTemplate(listOf(node("dst/0", "Plan", children = listOf(node("dst/1", "Sketch")))))
+        assertEquals(listOf("Plan"), templateTitles(s))
 
-        assertEquals(listOf("Plan"), s.defaultSubtree.map { it.title })
-        assertEquals(listOf("Sketch"), s.defaultSubtree.single().children.map { it.title })
+        val planCell =
+            s.defaultSubtree.tree.lists[WellKnownIds.MAIN_LIST]!!.cellIds
+                .first { s.defaultSubtree.tree.cells[it]?.taskId != null }
+        s = reduceInTemplate(s, SchedulerIntent.SetCellTitle(planCell, ""))
+
+        assertEquals(emptyList(), templateTitles(s))
+        assertTrue(s.defaultSubtreeIsEmpty, "an emptied template holds nothing to graft")
     }
 
     @Test
-    fun a_bound_row_reads_the_bound_tasks_own_sub_tree_for_the_window_to_draw() {
-        // PRD §4: the window draws a bound row's borrowed sub-tree under it, so what it shows is exactly
-        // what the graft will produce — the bound task's OWN children, not the template node's.
+    fun a_bound_row_shows_the_bound_tasks_own_sub_tree_through_the_projection() {
+        // PRD §4: a bound row draws the task's OWN children, because a sub-list belongs to the task id. The
+        // window needs no special path for that — the projection resolves the live task and the tree draws
+        // its sub-list like any other mirror.
         var s = SchedulerState.empty()
         val sharedCell = firstCell(s)
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(sharedCell, "Shared"))
         val sharedTask = s.cells[sharedCell]!!.taskId!!
         val sharedChildList = s.tasks[sharedTask]!!.childListId!!
-        val childCell = s.lists[sharedChildList]!!.cellIds.first()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(childCell, "Inherited"))
-        val grandChildList = s.tasks[s.cells[childCell]!!.taskId!!]!!.childListId!!
         s = SchedulerReducer.reduce(
             s,
-            SchedulerIntent.SetCellTitle(s.lists[grandChildList]!!.cellIds.first(), "Deeper"),
+            SchedulerIntent.SetCellTitle(s.lists[sharedChildList]!!.cellIds.first(), "Inherited"),
         )
 
-        val outline = SchedulerDomain.taskSubtreeOutline(s, sharedTask)
+        s = withTemplate(listOf(node("dst/0", "Shared", sharedTask)), from = s)
+        val projected = s.projectDefaultSubtree()
+        val boundCell =
+            projected.lists[projected.rootListId]!!.cellIds
+                .first { projected.cells[it]?.taskId == sharedTask }
 
-        // The trailing empty cell of each sub-list is not something the graft produces, so it is not drawn.
-        assertEquals(listOf("Inherited"), outline.map { it.title })
-        assertEquals(listOf("Deeper"), outline.single().children.map { it.title })
-        // A leaf task borrows nothing.
-        assertEquals(emptyList(), SchedulerDomain.taskSubtreeOutline(s, s.cells[childCell]!!.taskId!!)
-            .single().children)
+        // The row resolves the live task, and its sub-list is reachable in the projection.
+        assertEquals("Shared", projected.tasks[sharedTask]!!.title)
+        assertTrue(SchedulerDomain.hasExpandableSubTree(projected, boundCell))
+        assertEquals(
+            listOf("Inherited"),
+            projected.lists[sharedChildList]!!.cellIds
+                .mapNotNull { projected.cells[it]?.taskId }
+                .mapNotNull { projected.tasks[it]?.title }
+                .filter { it.isNotBlank() },
+        )
     }
 
     @Test
-    fun the_switch_is_the_task_binding() {
-        assertTrue(node("dst/0", "Plan").newTaskId)
-        assertFalse(node("dst/0", "Plan", TaskId("task/user/1")).newTaskId)
+    fun the_switch_is_the_rows_binding_and_toggles_both_ways() {
+        // PRD §4: on = a brand new task id at every graft, off = every grafted cell mirrors the row's task.
+        var s = withTemplate(listOf(node("dst/0", "Plan")))
+        val planCell =
+            s.defaultSubtree.tree.lists[WellKnownIds.MAIN_LIST]!!.cellIds
+                .first { s.defaultSubtree.tree.cells[it]?.taskId != null }
+        assertFalse(planCell in s.defaultSubtree.boundCells, "a row starts with its switch ON")
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeCellBound(planCell, bound = true))
+        assertTrue(planCell in s.defaultSubtree.boundCells)
+        // Unlike the old editor's switch, this one turns back on: the row always has a task to point at.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeCellBound(planCell, bound = false))
+        assertFalse(planCell in s.defaultSubtree.boundCells)
+    }
+
+    @Test
+    fun editing_the_template_never_touches_the_live_tree() {
+        // The safety property the projection is built on: intents reduce against a state that MERGES the
+        // live tree in, and the live half is discarded on the way back.
+        var s = SchedulerState.empty()
+        val cell = firstCell(s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cell, "Real work"))
+        val liveTree = s.captureTreeWithRecords()
+
+        s = withTemplate(listOf(node("dst/0", "Plan", children = listOf(node("dst/1", "Sketch")))), from = s)
+
+        val after = s.captureTreeWithRecords()
+        assertEquals(liveTree.cells, after.cells, "the account's own cells must be untouched")
+        assertEquals(liveTree.lists, after.lists, "the account's own lists must be untouched")
+        assertEquals(liveTree.tasks, after.tasks, "the account's own tasks must be untouched")
+        // The id counters are the one thing that DOES move: they are handed out from one counter but live in
+        // every tree, so the live side must not be able to re-mint what the template just took.
+        assertTrue(after.nextTaskCounter >= liveTree.nextTaskCounter)
+        assertEquals(listOf("Plan"), templateTitles(s))
+    }
+
+    @Test
+    fun a_template_edit_is_one_undoable_main_unit() {
+        var s = withTemplate(listOf(node("dst/0", "Plan")))
+        val before = s.defaultSubtree
+        val mainUnits = s.histories.forCategory(HistoryCategory.Main).units.size
+
+        val target =
+            s.defaultSubtree.tree.lists[WellKnownIds.MAIN_LIST]!!.cellIds
+                .last { s.defaultSubtree.tree.cells[it]?.taskId == null }
+        s = reduceInTemplate(s, SchedulerIntent.SetCellTitle(target, "Do"))
+
+        assertEquals(listOf("Plan", "Do"), templateTitles(s))
+        assertEquals(
+            mainUnits + 1,
+            s.histories.forCategory(HistoryCategory.Main).units.size,
+            "one gesture in the window is one Main unit, however many inner reductions it took",
+        )
+        val undone = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertEquals(before, undone.defaultSubtree, "Ctrl+Z takes the whole gesture back")
+    }
+
+    // ---- the §13 contextual menu (the reason the window is the tree) ---------------------------
+
+    @Test
+    fun a_template_row_offers_the_whole_contextual_menu() {
+        // The anomaly this shape was built for: right-clicking a row in the "Default sub-tree" window did
+        // nothing, because the window was a hand-rolled tree with no menu in it. It is the real tree now, so
+        // the menu is present by construction — a template row is a populated, selectable cell holding a real
+        // task, which is the whole of what the tree asks before offering the menu.
+        val s = withTemplate(listOf(node("dst/0", "Plan", children = listOf(node("dst/1", "Sketch")))))
+        val projected = s.projectDefaultSubtree()
+        val planCell =
+            projected.lists[projected.rootListId]!!.cellIds.first { projected.cells[it]?.taskId != null }
+        val planTask = projected.cells[planCell]!!.taskId!!
+
+        // The menu appears at all: a selectable cell pointing at a titled task.
+        assertTrue(SchedulerDomain.isSelectableCell(projected, planCell))
+        assertNotNull(projected.tasks[planTask])
+
+        // "edit" — the §13 window needs a real Task, and a parent shows the text section alone.
+        assertFalse(SchedulerDomain.isLeafTask(projected, planTask), "Plan parents Sketch")
+        val sketchCell =
+            projected.lists[projected.tasks[planTask]!!.childListId!!]!!.cellIds
+                .first { projected.cells[it]?.taskId != null }
+        // "start this task now" — offered on a schedulable leaf, exactly as in the tree.
+        assertTrue(SchedulerDomain.isLeafTask(projected, projected.cells[sketchCell]!!.taskId!!))
+
+        // "copy" / "deep copy" — the block the menu acts on, and text that actually renders.
+        assertEquals(
+            listOf(planCell),
+            SchedulerDomain.contextMenuCopyTargets(projected, projected.selection, planCell),
+        )
+        assertTrue(SchedulerDomain.copyCellsText(projected, listOf(planCell), maxDepth = 2).isNotEmpty())
+
+        // "add default sub-tree" — offered wherever a template exists, and one does here.
+        assertFalse(s.defaultSubtreeIsEmpty)
+    }
+
+    @Test
+    fun the_template_window_shows_its_own_shares_not_the_accounts() {
+        // The percentage column is a readout of the row's share WITHIN the template — computed off the
+        // template's cells alone, or the account's tree would divide them.
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Real work"))
+        s = withTemplate(listOf(node("dst/0", "Plan"), node("dst/1", "Do")), from = s)
+
+        val shares = s.defaultSubtreePriorities()
+        val tree = s.defaultSubtree.tree
+        val rows =
+            tree.lists[WellKnownIds.MAIN_LIST]!!.cellIds
+                .mapNotNull { tree.cells[it]?.taskId }
+                .filter { tree.tasks[it]?.title?.isNotBlank() == true }
+        assertEquals(2, rows.size)
+        // Two equally-weighted rows at the top of the template: half each, and the account's own task is
+        // nowhere in the answer.
+        rows.forEach { assertEquals(0.5, shares[it]!!, 1e-9) }
+        assertTrue(shares.keys.all { id -> tree.tasks[id] != null }, "no live-tree task may appear")
     }
 
     // ---- persistence ---------------------------------------------------------------------------
@@ -369,7 +535,7 @@ class DefaultSubtreeTest {
 
         val decoded = SchedulerStateCodec.decode(before)
         assertNotNull(decoded)
-        assertEquals(emptyList(), decoded.defaultSubtree)
+        assertTrue(decoded.defaultSubtreeIsEmpty)
         assertFalse(decoded.defaultSubtreeEnabled)
     }
 
@@ -383,6 +549,56 @@ class DefaultSubtreeTest {
         assertNotNull(decoded)
         assertEquals(s.defaultSubtree, decoded.defaultSubtree)
         assertTrue(decoded.defaultSubtreeEnabled)
+    }
+
+    @Test
+    fun a_pre_1_6_0_template_of_titles_is_migrated_into_the_real_tree() {
+        // CLAUDE.md persisted-DB compatibility: a payload written by the PREVIOUS shape — the template as a
+        // tree of titles — must still load, migrated. The fixture is that exact shape: an empty account's
+        // payload (which carries no template at all) with the old node array spliced in.
+        val bare = SchedulerStateCodec.encode(SchedulerState.empty())
+        assertFalse(bare.contains("defaultSubtreeTree"), "an empty template is written as nothing")
+        // The old fields, spliced in ahead of everything else (they end with a comma, so it stays valid).
+        val legacyFields = """
+  "defaultSubtree": [
+    { "id": "dst/0", "title": "Plan", "children": [ { "id": "dst/1", "title": "Sketch" } ] },
+    { "id": "dst/2", "title": "Do" }
+  ],
+  "defaultSubtreeEnabled": true,
+"""
+        val legacy = bare.replaceFirst("{", "{" + legacyFields.trimEnd())
+
+        val decoded = SchedulerStateCodec.decode(legacy)
+        assertNotNull(decoded)
+        assertEquals(listOf("Plan", "Do"), templateTitles(decoded))
+        assertTrue(decoded.defaultSubtreeEnabled)
+
+        // It is a real tree now: the rows have tasks, and the nesting survived.
+        val planCell =
+            decoded.defaultSubtree.tree.lists[WellKnownIds.MAIN_LIST]!!.cellIds
+                .first { decoded.defaultSubtree.tree.cells[it]?.taskId != null }
+        val planTask = decoded.defaultSubtree.tree.cells[planCell]!!.taskId!!
+        val planChildren = decoded.defaultSubtree.tree.tasks[planTask]!!.childListId!!
+        assertEquals(listOf("Sketch"), templateTitles(decoded, planChildren))
+
+        // And the account's counters cleared the ids the migration minted, so the live tree cannot re-mint
+        // one the template already uses.
+        assertTrue(decoded.nextTaskCounter > 0)
+        assertTrue(
+            decoded.defaultSubtree.tree.tasks.keys.none { it.value == "task/user/${decoded.nextTaskCounter}" },
+        )
+    }
+
+    @Test
+    fun a_migrated_template_still_grafts() {
+        val s0 = withTemplate(listOf(node("dst/0", "Plan", children = listOf(node("dst/1", "Sketch")))))
+        val reloaded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s0))
+        assertNotNull(reloaded)
+
+        val cell = firstCell(reloaded)
+        val s = SchedulerReducer.reduce(reloaded, SchedulerIntent.SetCellTitle(cell, "Project"))
+        assertEquals(listOf("Plan"), childTitles(s, cell))
+        assertEquals(listOf("Sketch"), childTitles(s, childCells(s, cell).single()))
     }
 
     @Test
@@ -414,8 +630,7 @@ class DefaultSubtreeTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(containerCell, "Container"))
         val containerList = s.tasks[s.cells[containerCell]!!.taskId!!]!!.childListId!!
 
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(true))
+        s = withTemplate(listOf(node("dst/0", "Plan")), from = s)
 
         // Typing "Shared" there defaults the id menu to the existing task (PRD §4 Default selection).
         val reusing = s.lists[containerList]!!.cellIds.first()
@@ -478,8 +693,7 @@ class DefaultSubtreeTest {
         val leafId = s.cells[firstCell(s)]!!.taskId!!
         val text = SchedulerDomain.copyTreeText(select(s, firstCell(s)), select(s, firstCell(s)).selection)
         s = SchedulerReducer.reduce(select(s, firstCell(s)), SchedulerIntent.CutSelection)
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(true))
+        s = withTemplate(listOf(node("dst/0", "Plan")), from = s)
 
         val target = firstCell(s)
         s = paste(s, target, text)
@@ -501,8 +715,7 @@ class DefaultSubtreeTest {
         val boxList = s.tasks[s.cells[boxCell]!!.taskId!!]!!.childListId!!
         val text = SchedulerDomain.copyTreeText(select(s, leafCell), select(s, leafCell).selection)
 
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(true))
+        s = withTemplate(listOf(node("dst/0", "Plan")), from = s)
 
         val target = s.lists[boxList]!!.cellIds.first()
         s = paste(s, target, text)
@@ -522,8 +735,7 @@ class DefaultSubtreeTest {
         val leafId = s.cells[leafCell]!!.taskId!!
         val text = SchedulerDomain.copyTreeText(select(s, leafCell), select(s, leafCell).selection)
 
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(true))
+        s = withTemplate(listOf(node("dst/0", "Plan")), from = s)
 
         // The trailing placeholder of the SAME list, so the copied id would duplicate a sibling.
         val target = s.lists[s.rootListId]!!.cellIds.last()
@@ -539,10 +751,9 @@ class DefaultSubtreeTest {
 
     @Test
     fun add_default_sub_tree_applies_the_template_under_the_cell() {
-        val s0 = withTemplate(listOf(node("dst/0", "Plan"), node("dst/1", "Do")))
-        // Built before the policy went on, so its sub-list starts empty.
+        // Named before the template existed, so its sub-list starts empty.
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetCellTitle(firstCell(SchedulerState.empty()), "Project"))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(s0.defaultSubtree))
+        s = withTemplate(listOf(node("dst/0", "Plan"), node("dst/1", "Do")), from = s)
         val cell = firstCell(s)
         assertEquals(emptyList(), childTitles(s, cell))
 
@@ -557,7 +768,8 @@ class DefaultSubtreeTest {
         // The switch governs the AUTOMATIC graft; asking for the template explicitly is always an answer.
         var s = SchedulerState.empty()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        s = withTemplate(listOf(node("dst/0", "Plan")), from = s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(false))
         assertFalse(s.defaultSubtreeEnabled)
 
         val cell = firstCell(s)
@@ -576,7 +788,8 @@ class DefaultSubtreeTest {
         val childList = s.tasks[s.cells[cell]!!.taskId!!]!!.childListId!!
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[childList]!!.cellIds.first(), "Existing"))
         val existing = s.lists[childList]!!.cellIds.first()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        s = withTemplate(listOf(node("dst/0", "Plan")), from = s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(false))
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell)))
 
@@ -601,7 +814,8 @@ class DefaultSubtreeTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[aList]!!.cellIds.first(), "A1"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[aList]!!.cellIds.last(), "A2"))
         val (cellA1, cellA2) = s.lists[aList]!!.cellIds.take(2)
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        s = withTemplate(listOf(node("dst/0", "Plan")), from = s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(false))
         val tasksBefore = s.tasks.size
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell)))
@@ -637,7 +851,8 @@ class DefaultSubtreeTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.PickTaskFromMenu(shared))
         s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Down))
         assertEquals(shared, s.cells[sharedUnderB]!!.taskId, "both cells point at the one task")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        s = withTemplate(listOf(node("dst/0", "Plan")), from = s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(false))
         val tasksBefore = s.tasks.size
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cellA, cellB)))
@@ -654,7 +869,8 @@ class DefaultSubtreeTest {
         val cellA = firstCell(s)
         val cellB = s.lists[s.rootListId]!!.cellIds.last()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellB, "B"))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtree(listOf(node("dst/0", "Plan"))))
+        s = withTemplate(listOf(node("dst/0", "Plan")), from = s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(false))
         val beforeAdd = s
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cellA, cellB)))
@@ -673,7 +889,7 @@ class DefaultSubtreeTest {
         var s = SchedulerState.empty()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
         val cell = firstCell(s)
-        assertTrue(s.defaultSubtree.isEmpty())
+        assertTrue(s.defaultSubtreeIsEmpty)
 
         assertTrue(s === SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell))))
     }

@@ -125,6 +125,7 @@ import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.state.defaultSubtreeIsEmpty
 import org.example.project.scheduler.state.SelectionNavigate
 import org.example.project.ui.INDENT_STEP_DP
 import org.example.project.ui.PERCENT_COLUMN_WIDTH
@@ -175,7 +176,7 @@ private fun formatWeight(value: Double): String {
  * [cellId] so the blue drop line is shown only on the dragged occurrence and not on mirrored
  * copies of the same cell expanded elsewhere (PRD §3: "the blue line and blur aren't mirrored").
  */
-private data class MoveDropTarget(
+internal data class MoveDropTarget(
     val cellId: CellId,
     val insertBefore: Boolean,
     val renderVia: CellId?,
@@ -189,7 +190,7 @@ private data class MoveDropTarget(
  * Passed down whole rather than as a per-cell map: the ranges are cheap to recompute from a title, and a
  * map would have to be rebuilt on every keystroke for a tree the user is mostly not looking at.
  */
-private data class TreeSearchHighlight(
+internal data class TreeSearchHighlight(
     val query: String,
     val options: TaskTreeSearch.Options,
     val current: TaskTreeSearch.Match?,
@@ -251,120 +252,17 @@ fun TaskSchedulerScreen(
     onSetDeepCopyCell: (CellId?) -> Unit = {},
 ) {
     val state by vm.state.collectAsState()
-    val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
-    val visibleOccurrences = SchedulerDomain.selectableVisibleOccurrences(state)
     // PRD §5: absolute priority percentage per task, displayed at the right of each populated cell.
     val priorities = SchedulerDomain.absoluteTaskPriorities(state)
     val focusRequester = remember { FocusRequester() }
-    var moveDragActive by remember { mutableStateOf(false) }
-    var moveDropTarget by remember { mutableStateOf<MoveDropTarget?>(null) }
-    // PRD §10: the cell whose minimum-time field is currently expanded into an input (clicking its
-    // simple display opens it), or null when every min-time field shows as a plain label.
-    var minTimeEditCellId by remember { mutableStateOf<CellId?>(null) }
-    // PRD §10: the minimum-time value the open input started with, so Escape can restore it (mirroring
-    // how Edit Mode's Escape reverts a cell to its pre-edit text). Null when no input is open.
-    var minTimeEditOriginal by remember { mutableStateOf<Int?>(null) }
+
     // The task-tree selector above the tree: its draft name, edit mode, and whether its field holds focus
-    // (which is what reveals its menus and hands it the keyboard). Hoisted here so the screen's key handler
-    // can commit on Enter and revert on Escape, exactly as it does for the min-time input.
+    // (which is what reveals its menus and hands it the keyboard). Hoisted here so this screen's key
+    // handler can commit on Enter and revert on Escape.
     var treeFieldFocused by remember { mutableStateOf(false) }
     var treeNameDraft by remember { mutableStateOf("") }
     var treeEditMode by remember { mutableStateOf(TaskTreeEditMode.Change) }
     val activeTreeTitle = state.activeTaskTree?.title.orEmpty()
-
-    // PRD §4 Find & replace: the Ctrl+F bar's own state. Compose-only, like the calendar's zoom — a search
-    // is a way of looking at the tree, not a fact about it, so none of this is persisted or synced.
-    var findOpen by remember { mutableStateOf(false) }
-    var findQuery by remember { mutableStateOf(TextFieldValue()) }
-    var findReplacement by remember { mutableStateOf(TextFieldValue()) }
-    var findOptions by remember { mutableStateOf(TaskTreeSearch.Options()) }
-    var findReplaceExpanded by remember { mutableStateOf(false) }
-    var findFieldFocused by remember { mutableStateOf(false) }
-    var findMatchIndex by remember { mutableStateOf(0) }
-    // A query that has not been navigated yet: the first ↓ lands on the FIRST hit, not the second (and the
-    // first ↑ on the last). Typing resets it, which is what makes Ctrl+F, type, Enter behave as expected.
-    var findNavigated by remember { mutableStateOf(false) }
-    // Bumped by Ctrl+F so pressing it again re-focuses the field and re-selects it, even while it is open.
-    var findFocusTick by remember { mutableStateOf(0) }
-    val findFocusRequester = remember { FocusRequester() }
-    // The tree's scroll, hoisted so a revealed match can be brought into view, plus the viewport's own
-    // window band (recorded OUTSIDE the scroll modifier, so it is the viewport and not the scrolled
-    // content) to compare the row's band against.
-    val treeScroll = rememberScrollState()
-    var treeViewport by remember { mutableStateOf<ClosedFloatingPointRange<Float>?>(null) }
-
-    // Only computed while the bar is open: it walks the whole tree, and the tree's state object is replaced
-    // by every advance tick (records live on the tasks), so an always-on memo would re-walk on every tick.
-    val findMatches =
-        remember(findOpen, findQuery.text, findOptions, state.cells, state.lists, state.tasks) {
-            if (!findOpen) emptyList() else TaskTreeSearch.matches(state, findQuery.text, findOptions)
-        }
-    val findCurrentIndex = if (findMatches.isEmpty()) -1 else findMatchIndex.coerceIn(0, findMatches.lastIndex)
-    val findCurrentMatch = findMatches.getOrNull(findCurrentIndex)
-    val searchHighlight =
-        if (findOpen && findQuery.text.isNotEmpty()) {
-            TreeSearchHighlight(findQuery.text, findOptions, findCurrentMatch)
-        } else {
-            null
-        }
-
-    val goToFindMatch: (Int) -> Unit = { index ->
-        if (findMatches.isNotEmpty()) {
-            val size = findMatches.size
-            val wrapped = ((index % size) + size) % size
-            findMatchIndex = wrapped
-            findNavigated = true
-            val match = findMatches[wrapped]
-            vm.dispatch(SchedulerIntent.RevealCell(match.cellId, match.ancestors))
-        }
-    }
-    val findStep: (Int) -> Unit = { delta ->
-        if (findMatches.isNotEmpty()) {
-            val target =
-                if (findNavigated) findMatchIndex + delta
-                else if (delta >= 0) 0 else findMatches.lastIndex
-            goToFindMatch(target)
-        }
-    }
-    // Replace and Replace All both go through ReplaceTaskTitles — one path, one history label. Replace
-    // rewrites the current hit's range alone; Replace All rewrites every hit of every matched TASK, once
-    // per task, because renaming is per task and a mirrored task must not be rewritten once per occurrence.
-    val findReplaceCurrent: () -> Unit = {
-        val match = findCurrentMatch
-        val title = match?.let { state.tasks[it.taskId]?.title }
-        if (match != null && title != null && match.end <= title.length) {
-            vm.dispatch(
-                SchedulerIntent.ReplaceTaskTitles(
-                    mapOf(
-                        match.taskId to
-                            TaskTreeSearch.replaceRange(title, match.start, match.end, findReplacement.text),
-                    ),
-                ),
-            )
-        }
-    }
-    val findReplaceAll: () -> Unit = {
-        val titles =
-            TaskTreeSearch.replaceAllTitles(state, findQuery.text, findOptions, findReplacement.text)
-        if (titles.isNotEmpty()) vm.dispatch(SchedulerIntent.ReplaceTaskTitles(titles))
-    }
-    val closeFind: () -> Unit = {
-        findOpen = false
-        findFieldFocused = false
-        focusRequester.requestFocus()
-    }
-
-    // A new query starts its navigation over. Deliberately does NOT jump to the first hit as the user
-    // types: every jump is a selection history unit, and Alt+← would then have to walk back over one per
-    // keystroke. The tree shades every hit live, so typing still shows where they are.
-    LaunchedEffect(findQuery.text, findOptions) {
-        findMatchIndex = 0
-        findNavigated = false
-    }
-
-    LaunchedEffect(findOpen, findFocusTick) {
-        if (findOpen) findFocusRequester.requestFocus()
-    }
 
     // The field shows the selected tree's name whenever the user is not typing in it — so a switch, a rename,
     // an undo or a remote pull are all reflected without the field ever fighting the user's caret.
@@ -394,297 +292,10 @@ fun TaskSchedulerScreen(
         }
     }
 
-    // PRD §5: the weight-table window closes if any cell enters Edit Mode. (A vanished sub-list — e.g.
-    // via undo — is handled where the window is rendered.)
-    LaunchedEffect(state.editSession) {
-        if (state.editSession != null) {
-            onSetWeightWindow(null)
-            onSetRelativeWindow(null)
-        }
-    }
-
-    // PRD §10: the min-time input reverts to a simple display when another cell is selected or any
-    // cell enters Edit Mode (mirroring the weight table).
-    LaunchedEffect(state.selection.main, state.editSession) {
-        val current = minTimeEditCellId
-        if (current != null && (state.editSession != null || state.selection.main != current)) {
-            minTimeEditCellId = null
-        }
-    }
-
-    // Vertical window bounds of each visible row, reported via onGloballyPositioned. A press-drag
-    // only delivers move events to the row where the pointer went down (Compose retains the hit
-    // path while a button is held), so the originating row resolves the cell under the cursor from
-    // these shared bounds rather than relying on per-cell hover events that never fire mid-drag.
-    // Keyed by occurrence (cellId + renderVia) so a cell mirrored under several expanded parents
-    // keeps a distinct band per row and the resolved drop target carries the target row's own
-    // renderVia — letting the blue line land in any layer of the tree (PRD §3).
-    val rowBounds =
-        remember { mutableStateMapOf<VisibleOccurrence, ClosedFloatingPointRange<Float>>() }
-    val resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>? = resolve@{ windowY ->
-        var last: Pair<VisibleOccurrence, Boolean>? = null
-        for (occurrence in visibleOccurrences) {
-            val bounds = rowBounds[occurrence] ?: continue
-            if (windowY < bounds.start) return@resolve last ?: (occurrence to true)
-            val mid = (bounds.start + bounds.endInclusive) / 2f
-            last = occurrence to (windowY < mid)
-            if (windowY <= bounds.endInclusive) return@resolve last
-        }
-        last
-    }
-
-    // Bring the revealed row into view. The rows of a freshly expanded ancestor are not positioned yet on
-    // the frame the reveal is dispatched, so wait for their bounds to be reported (bounded, so a match on a
-    // row that never lands — an unexpandable ancestor — does not spin).
-    LaunchedEffect(findCurrentMatch, findMatches.size) {
-        val match = findCurrentMatch ?: return@LaunchedEffect
-        val occurrence = VisibleOccurrence(match.cellId, match.renderVia)
-        var bounds = rowBounds[occurrence]
-        var frames = 0
-        while (bounds == null && frames < 10) {
-            withFrameNanos { }
-            bounds = rowBounds[occurrence]
-            frames++
-        }
-        val row = bounds ?: return@LaunchedEffect
-        val viewport = treeViewport ?: return@LaunchedEffect
-        val margin = 24f
-        val delta =
-            when {
-                row.start < viewport.start + margin -> row.start - viewport.start - margin
-                row.endInclusive > viewport.endInclusive - margin ->
-                    row.endInclusive - viewport.endInclusive + margin
-                else -> 0f
-            }
-        if (delta != 0f) {
-            treeScroll.animateScrollTo((treeScroll.value + delta).roundToInt().coerceAtLeast(0))
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
-    LaunchedEffect(state.editSession, state.selection.main) {
-        // PRD §10: don't pull focus to the tree root while a min-time input is open — that field
-        // auto-focuses itself, and grabbing focus here would steal its caret. Same for the task-tree
-        // selector's field, whose menus close the moment it loses focus.
-        // ... nor while the find bar holds it: a match navigation moves selection.main, which is exactly
-        // what re-runs this effect.
-        if (state.editSession == null && minTimeEditCellId == null && !treeFieldFocused &&
-            !findFieldFocused
-        ) {
-            focusRequester.requestFocus()
-        }
-    }
-
-    Box(modifier = modifier.fillMaxSize()) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface)
-            .focusRequester(focusRequester)
-            .focusable()
-            .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                val mod = event.isCtrlPressed || event.isMetaPressed
-                if (mod && event.key == Key.Z) {
-                    vm.dispatch(SchedulerIntent.Undo)
-                    return@onPreviewKeyEvent true
-                }
-                if (mod && event.key == Key.Y) {
-                    vm.dispatch(SchedulerIntent.Redo)
-                    return@onPreviewKeyEvent true
-                }
-                // PRD §4 Find & replace. Above the Edit-Mode and min-time gates on purpose: Ctrl+F opens
-                // the bar from wherever the tree's keyboard is. Pressed again while open, it re-focuses
-                // the field and selects what is in it, so a new query simply overtypes the old one.
-                if (mod && event.key == Key.F) {
-                    findOpen = true
-                    findQuery = findQuery.copy(selection = TextRange(0, findQuery.text.length))
-                    findFocusTick++
-                    return@onPreviewKeyEvent true
-                }
-                // PRD §5: selection history is undone/redone independently from content history.
-                if (event.isAltPressed && event.key == Key.DirectionLeft) {
-                    vm.dispatch(SchedulerIntent.UndoSelection)
-                    return@onPreviewKeyEvent true
-                }
-                if (event.isAltPressed && event.key == Key.DirectionRight) {
-                    vm.dispatch(SchedulerIntent.RedoSelection)
-                    return@onPreviewKeyEvent true
-                }
-                // While the task-tree selector's field holds focus it owns the keyboard — the tree must not
-                // turn a letter into a cell Edit Mode, nor Ctrl+A into "select every cell". Enter commits the
-                // typed name and Escape restores the selected tree's name, both then handing focus back to
-                // the tree; everything else (arrows, Backspace, the field's own Ctrl+A/C/V) reaches the
-                // field. Global Ctrl+Z/Y and Alt+arrow above still apply.
-                if (treeFieldFocused) {
-                    when (event.key) {
-                        Key.Escape -> {
-                            treeNameDraft = activeTreeTitle
-                            focusRequester.requestFocus()
-                            return@onPreviewKeyEvent true
-                        }
-                        Key.Enter -> {
-                            commitTaskTreeName()
-                            focusRequester.requestFocus()
-                            return@onPreviewKeyEvent true
-                        }
-                        else -> return@onPreviewKeyEvent false
-                    }
-                }
-                if (state.editSession != null) {
-                    // PRD §4 Cancel: Escape abandons the session, reverting affected cells to their
-                    // pre-edit text. Everything else — including Delete (forward-delete) and Ctrl+C/V/A
-                    // (the field's usual copy/paste/select-all, PRD §4) — falls through to the edit field.
-                    if (event.key == Key.Escape) {
-                        vm.dispatch(SchedulerIntent.CancelEdit)
-                        return@onPreviewKeyEvent true
-                    }
-                    return@onPreviewKeyEvent false
-                }
-                // PRD §10: while a min-time input is open it owns the keyboard. Enter/Tab/Escape act the
-                // same as in a cell's Edit Mode (commit + navigate, or cancel); everything else — arrow
-                // keys, Home/End, Backspace/Delete, digit entry and the field's own Ctrl+A/C/V — reaches
-                // the focused BasicTextField. (Global Ctrl+Z/Y and Alt+arrow selection history above
-                // still apply.)
-                val minTimeCell = minTimeEditCellId
-                if (minTimeCell != null) {
-                    when {
-                        event.key == Key.Escape -> {
-                            // Cancel: restore the value the field opened with, then refocus the tree.
-                            val taskId = state.cells[minTimeCell]?.taskId
-                            val original = minTimeEditOriginal
-                            if (taskId != null && original != null) {
-                                vm.dispatch(SchedulerIntent.SetTaskMinimumTime(taskId, original))
-                            }
-                            minTimeEditCellId = null
-                            focusRequester.requestFocus()
-                            return@onPreviewKeyEvent true
-                        }
-                        // Enter / Shift+Tab — commit (the value is already applied live) and move up;
-                        // Enter alone moves down; Tab moves into the first child (expanding it if needed).
-                        event.key == Key.Enter && event.isShiftPressed -> {
-                            minTimeEditCellId = null
-                            vm.dispatch(SchedulerIntent.NavigateSelection(SelectionNavigate.Previous, shift = false))
-                            return@onPreviewKeyEvent true
-                        }
-                        event.key == Key.Enter -> {
-                            minTimeEditCellId = null
-                            vm.dispatch(SchedulerIntent.NavigateSelection(SelectionNavigate.Next, shift = false))
-                            return@onPreviewKeyEvent true
-                        }
-                        event.key == Key.Tab && event.isShiftPressed -> {
-                            minTimeEditCellId = null
-                            vm.dispatch(SchedulerIntent.NavigateSelection(SelectionNavigate.Previous, shift = false))
-                            return@onPreviewKeyEvent true
-                        }
-                        event.key == Key.Tab -> {
-                            minTimeEditCellId = null
-                            vm.dispatch(SchedulerIntent.SelectFirstChild)
-                            return@onPreviewKeyEvent true
-                        }
-                    }
-                    return@onPreviewKeyEvent false
-                }
-                // PRD §3/§4 (not in Edit Mode): select-all and tree copy/paste.
-                if (mod && event.key == Key.A) {
-                    vm.dispatch(SchedulerIntent.SelectAllVisibleCells)
-                    return@onPreviewKeyEvent true
-                }
-                // PRD §4: Ctrl+C copies the ENTIRE sub-tree under the selection and asks nothing — the
-                // account's deep-copy depth belongs to the window, not to the chord. What each task
-                // carries is still the window's three switches. Ctrl+X copies the same text and then
-                // empties those very cells.
-                if (mod && (event.key == Key.C || event.key == Key.X)) {
-                    val text = SchedulerDomain.copyTreeText(state, state.selection)
-                    if (text.isNotEmpty()) {
-                        vm.dispatch(
-                            if (event.key == Key.X) SchedulerIntent.CutSelection
-                            else SchedulerIntent.CopySelection,
-                        )
-                        writeSystemClipboardText(text)
-                    }
-                    return@onPreviewKeyEvent true
-                }
-                if (mod && event.key == Key.V) {
-                    val text = readSystemClipboardText() ?: return@onPreviewKeyEvent false
-                    vm.dispatch(SchedulerIntent.PasteTree(text))
-                    return@onPreviewKeyEvent true
-                }
-                when (event.key) {
-                    Key.DirectionUp, Key.DirectionLeft -> {
-                        vm.dispatch(
-                            SchedulerIntent.NavigateSelection(
-                                direction = SelectionNavigate.Previous,
-                                shift = event.isShiftPressed,
-                            ),
-                        )
-                        return@onPreviewKeyEvent true
-                    }
-                    Key.DirectionDown, Key.DirectionRight -> {
-                        vm.dispatch(
-                            SchedulerIntent.NavigateSelection(
-                                direction = SelectionNavigate.Next,
-                                shift = event.isShiftPressed,
-                            ),
-                        )
-                        return@onPreviewKeyEvent true
-                    }
-                    // PRD §4: Backspace or Delete empties the selected cells when not editing.
-                    Key.Delete, Key.Backspace -> {
-                        vm.dispatch(SchedulerIntent.EmptySelectedCells)
-                        return@onPreviewKeyEvent true
-                    }
-                    Key.Enter -> {
-                        val multi = state.selection.selected.size > 1
-                        if (multi) {
-                            vm.dispatch(
-                                SchedulerIntent.CycleMainSelection(forward = !event.isShiftPressed),
-                            )
-                        } else {
-                            val main = state.selection.main
-                            if (main != null && SchedulerDomain.isSelectableCell(state, main)) {
-                                vm.dispatch(SchedulerIntent.BeginEdit(main))
-                            }
-                        }
-                        return@onPreviewKeyEvent true
-                    }
-                    Key.Tab -> {
-                        val multi = state.selection.selected.size > 1
-                        if (multi) {
-                            vm.dispatch(
-                                SchedulerIntent.CycleMainSelection(forward = !event.isShiftPressed),
-                            )
-                        } else if (event.isShiftPressed) {
-                            vm.dispatch(SchedulerIntent.NavigateSelection(SelectionNavigate.Previous))
-                        } else {
-                            vm.dispatch(SchedulerIntent.SelectFirstChild)
-                        }
-                        return@onPreviewKeyEvent true
-                    }
-                    else -> Unit
-                }
-                if (event.key.isModifierKey()) return@onPreviewKeyEvent true
-                val main = state.selection.main ?: return@onPreviewKeyEvent false
-                if (!SchedulerDomain.isSelectableCell(state, main)) return@onPreviewKeyEvent false
-                // A dead key (^, ¨, ~ …) carries no character of its own — the composed letter is
-                // only delivered to a focused field. So open Edit Mode immediately with empty text;
-                // the cell becomes the focused field and the following letter composes into it (e.g.
-                // ^ then e → ê), instead of the bare letter being swallowed into a fresh edit.
-                val typed =
-                    if (event.isDeadKey()) {
-                        ""
-                    } else {
-                        event.printableChar() ?: return@onPreviewKeyEvent false
-                    }
-                // PRD §7/§8 focus: while a floating window is focused, the tree must not hijack letter
-                // typing into Edit Mode — the focused window owns the keyboard then.
-                if (state.focusedWindow != AppWindow.Tree) return@onPreviewKeyEvent false
-                vm.dispatch(SchedulerIntent.BeginEdit(main, typed))
-                true
-            }
             .padding(12.dp),
     ) {
         Text(
@@ -720,154 +331,50 @@ fun TaskSchedulerScreen(
 
         Spacer(Modifier.height(8.dp))
 
-        Column(
-            modifier = Modifier
-                // Before verticalScroll, so these are the VIEWPORT's bounds and not the scrolled content's
-                // — the band a revealed match is scrolled into.
-                .onGloballyPositioned { coords ->
-                    val top = coords.positionInWindow().y
-                    treeViewport = top..(top + coords.size.height)
-                }
-                .verticalScroll(treeScroll)
-                // The tree keeps its natural width and scrolls horizontally when the content is wider than
-                // the viewport — it does NOT stretch to fill (or shrink to) the app's width, mirroring the
-                // vertical scroll above. width(IntrinsicSize.Max) sizes the column to its widest row so the
-                // rows' fillMaxWidth resolves against that natural width instead of the (infinite) scroll
-                // constraint, and every cell border stays aligned to the same right edge.
-                .horizontalScroll(rememberScrollState())
-                .width(IntrinsicSize.Max)
-                .pointerInput(Unit) {
-                    detectTapGestures {
-                        vm.dispatch(SchedulerIntent.ClearSelection)
-                    }
-                },
-        ) {
-            CellListSection(
-                state = state,
-                listId = state.rootListId,
-                renderVia = null,
-                depth = 0,
-                visibleOrder = visibleOrder,
-                priorities = priorities,
-                searchHighlight = searchHighlight,
-                onTogglePriorityWeights = { listId ->
-                    // PRD §5: clicking a percentage opens that sub-list's window. Closing is by clicking
-                    // anywhere else (the app's outside-press interceptor), not by re-clicking here — so
-                    // this is deterministic regardless of when the interceptor runs during the gesture.
-                    onSetRelativeWindow(null)
-                    onSetWeightWindow(listId)
-                },
-                // PRD §5: the percentage's right-click menu opens the relative-priority window instead.
-                // The two windows share the top layer, so opening one closes the other.
-                onOpenRelativePriority = { clickedCellId ->
-                    onSetWeightWindow(null)
-                    onSetRelativeWindow(clickedCellId)
-                },
-                minTimeEditCellId = minTimeEditCellId,
-                onToggleMinTimeEdit = { cellId ->
-                    if (minTimeEditCellId == cellId) {
-                        minTimeEditCellId = null
-                    } else {
-                        // Snapshot the value the field opens with so Escape can revert to it (PRD §10).
-                        minTimeEditOriginal =
-                            state.cells[cellId]?.taskId?.let { state.tasks[it]?.minimumMinutes } ?: 0
-                        minTimeEditCellId = cellId
-                    }
-                },
-                onOpenTaskEdit = { taskId -> onSetEditTask(taskId) },
-                // PRD §13 "copy": the cell's own task, with no children, in the same readable format
-                // Ctrl+V pastes back. Right-clicking inside a multi-selection copies the whole block, so
-                // the menu and Ctrl+C never disagree about what "the cell" means.
-                onCopyCell = { cellId ->
-                    val targets = SchedulerDomain.contextMenuCopyTargets(state, state.selection, cellId)
-                    val text = SchedulerDomain.copyCellsText(state, targets, maxDepth = 1)
-                    if (text.isNotEmpty()) writeSystemClipboardText(text)
-                },
-                // PRD §13 "deep copy": asks for the maximum depth first — the copy happens from its window.
-                onDeepCopyCell = { cellId -> onSetDeepCopyCell(cellId) },
-                moveDragActive = moveDragActive,
-                moveDropTarget = moveDropTarget,
-                resolveRowAt = resolveRowAt,
-                onRowBounds = { occurrence, top, bottom -> rowBounds[occurrence] = top..bottom },
-                onMoveDragStart = { moveDragActive = true },
-                onMoveDropHover = { target, insertBefore, via ->
-                    moveDropTarget = MoveDropTarget(target, insertBefore, via)
-                },
-                onMoveDragEnd = {
-                    val target = moveDropTarget
-                    if (moveDragActive && target != null) {
-                        vm.dispatch(
-                            SchedulerIntent.MoveSelectedCells(
-                                targetCellId = target.cellId,
-                                insertBefore = target.insertBefore,
-                            ),
-                        )
-                    }
-                    moveDragActive = false
-                    moveDropTarget = null
-                },
-                onIntent = { intent ->
-                    // PRD §8 focus: a click into the tree hands focus back from the calendar, so typing
-                    // resumes entering Edit Mode — even on an already-selected cell (whose selection
-                    // doesn't change, so the selection-keyed refocus effect wouldn't fire) and even
-                    // while the calendar window stays open.
-                    if (intent is SchedulerIntent.ClickCell) {
-                        // PRD §10: but when the click lands on the cell whose min-time input is open, the
-                        // BasicTextField needs to keep the focus it just took — yanking it back to the root
-                        // focusable here is what made the caret vanish right after clicking the field.
-                        if (intent.cellId != minTimeEditCellId) {
+        TaskTreeView(
+            state = state,
+            priorities = priorities,
+            onIntent = { intent -> vm.dispatch(intent) },
+            // PRD §7/§8: the tree only owns the keyboard while it is the focused surface AND the selector's
+            // name field above it does not hold it — that field's menus close the moment it loses focus, so
+            // the tree's refocus effect must not pull focus back out of it.
+            keyboardActive = state.focusedWindow == AppWindow.Tree && !treeFieldFocused,
+            refocusWindow = AppWindow.Tree,
+            modifier = Modifier.fillMaxSize(),
+            onSetWeightWindow = onSetWeightWindow,
+            onSetRelativeWindow = onSetRelativeWindow,
+            onSetEditTask = onSetEditTask,
+            onSetDeepCopyCell = onSetDeepCopyCell,
+            focusRequester = focusRequester,
+            // While the selector's field holds focus it owns the keyboard: Enter commits the typed name and
+            // Escape restores the selected tree's, both handing focus back to the tree; everything else
+            // (arrows, Backspace, its own Ctrl+A/C/V) reaches the field.
+            aboveTreeKeyHandler = { event ->
+                if (!treeFieldFocused) {
+                    null
+                } else {
+                    when (event.key) {
+                        Key.Escape -> {
+                            treeNameDraft = activeTreeTitle
                             focusRequester.requestFocus()
+                            true
                         }
-                        // PRD §7: clicking into the tree returns focus to it from whichever window held it.
-                        if (state.focusedWindow != AppWindow.Tree) {
-                            vm.dispatch(SchedulerIntent.FocusWindow(AppWindow.Tree))
+                        Key.Enter -> {
+                            commitTaskTreeName()
+                            focusRequester.requestFocus()
+                            true
                         }
+                        else -> false
                     }
-                    vm.dispatch(intent)
-                },
-            )
-        }
-    }
-
-        // PRD §4: the find & replace bar, in the tree's top-right corner (VS Code's placement). A sibling
-        // of the tree rather than a child, so the tree's own key handler never sees what is typed in it.
-        if (findOpen) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 8.dp, end = 16.dp),
-            ) {
-                TaskTreeFindBar(
-                    query = findQuery,
-                    replacement = findReplacement,
-                    options = findOptions,
-                    replaceExpanded = findReplaceExpanded,
-                    matchCount = findMatches.size,
-                    currentIndex = findCurrentIndex,
-                    focusRequester = findFocusRequester,
-                    onQueryChange = { findQuery = it },
-                    onReplacementChange = { findReplacement = it },
-                    onOptionsChange = { findOptions = it },
-                    onToggleReplace = { findReplaceExpanded = !findReplaceExpanded },
-                    onFindNext = { findStep(1) },
-                    onFindPrevious = { findStep(-1) },
-                    onReplace = findReplaceCurrent,
-                    onReplaceAll = findReplaceAll,
-                    onClose = closeFind,
-                    onFocusChange = { findFieldFocused = it },
-                )
-            }
-        }
-
-
-        // PRD §5: the priority-weight window is drawn by the app (App.kt) on the top floating-window
-        // layer, above the calendar — not here — so it sits over every other window and dismisses on a
-        // click anywhere else (which still does its normal job).
+                }
+            },
+        )
     }
 }
 
+
 @Composable
-private fun CellListSection(
+internal fun CellListSection(
     state: SchedulerState,
     listId: CellListId,
     renderVia: CellId?,
@@ -891,6 +398,8 @@ private fun CellListSection(
     onMoveDropHover: (CellId, Boolean, CellId?) -> Unit,
     onMoveDragEnd: () -> Unit,
     onIntent: (SchedulerIntent) -> Unit,
+    /** PRD §4: one extra cell at the end of every row — the default sub-tree's switch. Null in the tree. */
+    rowTrailing: (@Composable (CellId) -> Unit)? = null,
 ) {
     val list = state.lists[listId] ?: return
 
@@ -991,7 +500,7 @@ private fun CellListSection(
                             // PRD §7/§13: the template on demand. Like "copy", it acts on the whole block
                             // when the right-click lands inside a multi-selection.
                             onAddDefaultSubtree =
-                                if (state.defaultSubtree.isEmpty()) {
+                                if (state.defaultSubtreeIsEmpty) {
                                     null
                                 } else {
                                     {
@@ -1086,6 +595,7 @@ private fun CellListSection(
                 } else {
                     null
                 },
+            rowTrailing = rowTrailing,
         )
 
         if (expanded && hasChildren) {
@@ -1113,6 +623,7 @@ private fun CellListSection(
                 onMoveDropHover = onMoveDropHover,
                 onMoveDragEnd = onMoveDragEnd,
                 onIntent = onIntent,
+                rowTrailing = rowTrailing,
             )
         }
     }
@@ -1122,7 +633,7 @@ private fun CellListSection(
  * The two edit modes of the task-tree selector, mirroring a cell's Edit Mode (PRD §4): [Change] picks
  * *which* task tree the app shows (the tree menu is shown), [Rename] renames the selected one in place.
  */
-private enum class TaskTreeEditMode { Change, Rename }
+internal enum class TaskTreeEditMode { Change, Rename }
 
 /**
  * The **task tree selector** sitting right above the task tree: a name field that says which of the
@@ -1264,7 +775,7 @@ private fun TaskTreeSelector(
 }
 
 @Composable
-private fun EditModeMenus(
+internal fun EditModeMenus(
     state: SchedulerState,
     cellId: CellId,
     draftText: String,
@@ -2201,7 +1712,7 @@ private fun PriorityChart(
 }
 
 @Composable
-private fun TaskRow(
+internal fun TaskRow(
     depth: Int,
     cellId: CellId,
     renderVia: CellId?,
@@ -2246,6 +1757,8 @@ private fun TaskRow(
     onExitEdit: (EditExitNavigation) -> Unit,
     onToggleExpand: () -> Unit,
     editMenus: (@Composable () -> Unit)?,
+    /** PRD §4: one extra cell at the end of the row — the default sub-tree's switch. Null in the tree. */
+    rowTrailing: (@Composable (CellId) -> Unit)? = null,
 ) {
     val editFocusRequester = remember { FocusRequester() }
     // Whether this cell's right-click contextual menu ("edit" / "copy" / "deep copy" / "add default
@@ -2698,6 +2211,9 @@ private fun TaskRow(
                         MinTimeDisplayCell(minutes = minMinutes, onClick = onActivateMinTime)
                     }
                 }
+                // PRD §4: the default sub-tree's switch, in its own column after the minimum time so both
+                // trees line up down every column they share. Nothing in the account's own tree.
+                rowTrailing?.invoke(cellId)
                 Spacer(Modifier.weight(1f))
             }
         }
@@ -2737,7 +2253,7 @@ private fun TaskRow(
  * percentage's (children are dispatched to first, so the inner menu wins that column).
  */
 @OptIn(ExperimentalComposeUiApi::class)
-private fun contextMenuModifier(
+internal fun contextMenuModifier(
     enabled: Boolean,
     onOpen: () -> Unit,
 ): Modifier {
@@ -2769,7 +2285,7 @@ private fun contextMenuModifier(
  * not a schedulable leaf — the two entries that come and go: an account that never defined a default sub-tree
  * is not offered it, and a parent task is a grouping the scheduler never places, so there is nothing to start.
  */
-private class TaskCellMenuActions(
+internal class TaskCellMenuActions(
     val onStartNow: (() -> Unit)?,
     val onEdit: () -> Unit,
     val onCopy: () -> Unit,

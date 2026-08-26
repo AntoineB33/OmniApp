@@ -70,6 +70,8 @@ import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.state.defaultSubtreePriorities
+import org.example.project.scheduler.state.projectDefaultSubtree
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.ui.PriorityWeightWindow
 import org.example.project.scheduler.ui.RelativePriorityWindow
@@ -339,6 +341,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // under whichever one happens to be stacked over the tree.
         var editTaskId by remember { mutableStateOf<TaskId?>(null) }
         var deepCopyCellId by remember { mutableStateOf<CellId?>(null) }
+        // PRD §4/§13: the four sort-2 pop-ups the tree hoists up here are opened by BOTH trees — the
+        // account's and the default sub-tree's. They name a cell/task/list id, and the same id means
+        // different things in the two trees, so this records which tree asked. It decides both the state
+        // they read and where their intents are sent.
+        var popupFromDefaultSubtree by remember { mutableStateOf(false) }
         // PRD §5: the window closes when any cell enters Edit Mode (its sub-list typing context is gone).
         LaunchedEffect(schedulerState.editSession) {
             if (schedulerState.editSession != null) {
@@ -1034,6 +1041,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     },
                 )
 
+                // PRD §4: a pop-up opened from the default-sub-tree window reads the TEMPLATE and writes
+                // back into it; one opened from the tree reads and writes the live state as it always did.
+                val popupState =
+                    if (popupFromDefaultSubtree) schedulerState.projectDefaultSubtree() else schedulerState
+                val popupDispatch: (SchedulerIntent) -> Unit =
+                    if (popupFromDefaultSubtree) {
+                        { intent -> vm.dispatch(SchedulerIntent.InDefaultSubtree(intent)) }
+                    } else {
+                        { intent -> vm.dispatch(intent) }
+                    }
+
                 // The content area is clipped so the floating calendar window can overlap the tree
                 // but never spill onto the lateral menu (PRD §7).
                 Box(
@@ -1048,24 +1066,40 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 modifier = Modifier.fillMaxSize(),
                                 store = store,
                                 vm = vm,
-                                onSetWeightWindow = { weightWindowListId = it },
-                                onSetRelativeWindow = { relativeWindowCellId = it },
-                                onSetEditTask = { editTaskId = it },
-                                onSetDeepCopyCell = { deepCopyCellId = it },
+                                onSetWeightWindow = {
+                                    popupFromDefaultSubtree = false
+                                    weightWindowListId = it
+                                },
+                                onSetRelativeWindow = {
+                                    popupFromDefaultSubtree = false
+                                    relativeWindowCellId = it
+                                },
+                                onSetEditTask = {
+                                    popupFromDefaultSubtree = false
+                                    editTaskId = it
+                                },
+                                onSetDeepCopyCell = {
+                                    popupFromDefaultSubtree = false
+                                    deepCopyCellId = it
+                                },
                             )
                     }
 
                     // PRD §5: the priority-weight window — a sort-2 pop-up, so it opens above the managed
                     // windows' 0..n stack and the host closes it on the first press landing elsewhere.
                     weightWindowListId?.let { listId ->
-                        if (schedulerState.lists[listId] == null) {
+                        if (popupState.lists[listId] == null) {
                             weightWindowListId = null
                         } else {
                             PriorityWeightWindow(
-                                state = schedulerState,
+                                state = popupState,
                                 listId = listId,
-                                priorities = SchedulerDomain.absoluteTaskPriorities(schedulerState),
-                                onIntent = { vm.dispatch(it) },
+                                // The template's shares are its own (defaultSubtreePriorities), so the chart
+                                // beside the table reads the tree the window was opened from.
+                                priorities =
+                                    if (popupFromDefaultSubtree) schedulerState.defaultSubtreePriorities()
+                                    else SchedulerDomain.absoluteTaskPriorities(schedulerState),
+                                onIntent = popupDispatch,
                                 onDismiss = { weightWindowListId = null },
                                 modifier = Modifier.align(Alignment.Center).zIndex(100f),
                             )
@@ -1075,13 +1109,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // PRD §5: the relative-priority window, the same sort on the same layer. Opened from the
                     // percentage's right-click menu; also cleared when the cell goes away under it (an undo).
                     relativeWindowCellId?.let { cellId ->
-                        if (schedulerState.cells[cellId]?.taskId == null) {
+                        if (popupState.cells[cellId]?.taskId == null) {
                             relativeWindowCellId = null
                         } else {
                             RelativePriorityWindow(
-                                state = schedulerState,
+                                state = popupState,
                                 cellId = cellId,
-                                onIntent = { vm.dispatch(it) },
+                                onIntent = popupDispatch,
                                 onDismiss = { relativeWindowCellId = null },
                                 modifier = Modifier.align(Alignment.Center).zIndex(100f),
                             )
@@ -1092,7 +1126,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // top layer like every other sort-2 pop-up — inside the tree it drew UNDER any floating
                     // window stacked over it.
                     editTaskId?.let { taskId ->
-                        val task = schedulerState.tasks[taskId]
+                        val task = popupState.tasks[taskId]
                         if (task == null) {
                             editTaskId = null
                         } else {
@@ -1102,14 +1136,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     // PRD §13: the screen switch and the schedule unit only exist for a
                                     // schedulable leaf task — a parent is a grouping and is never placed,
                                     // so its window is text only.
-                                    isLeaf = SchedulerDomain.isLeafTask(schedulerState, taskId),
+                                    isLeaf = SchedulerDomain.isLeafTask(popupState, taskId),
                                     onSave = { noScreenDoable, entries, text ->
                                         // One intent per section, and only for the sections that actually
                                         // changed — so Save on an untouched window adds nothing to the
                                         // Undo/Redo history (PRD §6).
                                         val onScreen = !noScreenDoable
                                         if (onScreen != task.onScreen) {
-                                            vm.dispatch(
+                                            popupDispatch(
                                                 SchedulerIntent.SetTaskScreenFlags(
                                                     taskId = taskId,
                                                     onScreen = onScreen,
@@ -1118,10 +1152,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                             )
                                         }
                                         if (entries != task.scheduleUnit) {
-                                            vm.dispatch(SchedulerIntent.SetScheduleUnit(taskId, entries))
+                                            popupDispatch(SchedulerIntent.SetScheduleUnit(taskId, entries))
                                         }
                                         if (text != task.text) {
-                                            vm.dispatch(SchedulerIntent.SetTaskText(taskId, text))
+                                            popupDispatch(SchedulerIntent.SetTaskText(taskId, text))
                                         }
                                         editTaskId = null
                                     },
@@ -1134,18 +1168,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // PRD §13: "deep copy" asks for its maximum depth here, then copies (DeepCopyWindow).
                     // Raised for the same reason as the edit window above.
                     deepCopyCellId?.let { cellId ->
-                        if (schedulerState.cells[cellId] == null) {
+                        if (popupState.cells[cellId] == null) {
                             deepCopyCellId = null
                         } else {
                             Box(Modifier.fillMaxSize().zIndex(100f)) {
                                 DeepCopyWindow(
-                                    state = schedulerState,
+                                    state = popupState,
                                     // The same block "copy" takes — a deep copy of a multi-selection is
                                     // every selected cell down to the chosen depth, not just the one under
                                     // the cursor.
                                     cellIds = SchedulerDomain.contextMenuCopyTargets(
-                                        schedulerState,
-                                        schedulerState.selection,
+                                        popupState,
+                                        popupState.selection,
                                         cellId,
                                     ),
                                     onCopy = { targets, maxDepth, options ->
@@ -1158,7 +1192,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                         // Explicit options: the dispatches above have not reached this
                                         // composition's state.
                                         val text = SchedulerDomain.copyCellsText(
-                                            schedulerState,
+                                            popupState,
                                             targets,
                                             maxDepth,
                                             options,
@@ -1544,19 +1578,36 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         )
                     }
 
-                    // PRD §4 Default sub-tree: the template grafted under every task the user creates. The
-                    // template and the switch beside its menu button are authoritative synced state; the
-                    // menus it shows are the ordinary §4 naming menus, read off the live tree.
+                    // PRD §4 Default sub-tree: the template grafted under every task the user creates. It
+                    // draws the SAME task-tree component the account's own tree does, over the state
+                    // projectDefaultSubtree() makes of the template — so it has the §13 contextual menu and
+                    // every tree gesture, with one switch per row added. The template and the switch beside
+                    // its menu button are authoritative synced state.
                     if (defaultSubtreeWindowOpen) {
                         DefaultSubtreeWindow(
-                            nodes = schedulerState.defaultSubtree,
+                            state = schedulerState,
                             enabled = schedulerState.defaultSubtreeEnabled,
-                            onChange = { vm.dispatch(SchedulerIntent.SetDefaultSubtree(it)) },
-                            taskMenuEntries = {
-                                SchedulerDomain.defaultSubtreeTaskMenuEntries(schedulerState, it)
+                            onIntent = { vm.dispatch(it) },
+                            // The tree inside owns the keyboard only while this window is the front one.
+                            focused = focusedWindow() == FloatingWindow.DefaultSubtree,
+                            // PRD §5/§13: the same four sort-2 pop-ups the account's tree opens, drawn by
+                            // the app on the top layer — a template row's "edit" is the ordinary §13 window.
+                            onSetWeightWindow = {
+                                popupFromDefaultSubtree = true
+                                weightWindowListId = it
                             },
-                            titleSuggestions = { SchedulerDomain.titleSuggestions(schedulerState, it) },
-                            boundSubtree = { SchedulerDomain.taskSubtreeOutline(schedulerState, it) },
+                            onSetRelativeWindow = {
+                                popupFromDefaultSubtree = true
+                                relativeWindowCellId = it
+                            },
+                            onSetEditTask = {
+                                popupFromDefaultSubtree = true
+                                editTaskId = it
+                            },
+                            onSetDeepCopyCell = {
+                                popupFromDefaultSubtree = true
+                                deepCopyCellId = it
+                            },
                             onDismiss = { defaultSubtreeWindowOpen = false },
                             initialOffset = defaultSubtreeOffset,
                             onOffsetChange = {

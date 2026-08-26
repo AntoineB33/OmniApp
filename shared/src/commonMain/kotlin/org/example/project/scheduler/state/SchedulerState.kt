@@ -223,6 +223,88 @@ data class TaskTreeStateSnapshot(
     val expanded: Set<CellId>,
 )
 
+/**
+ * PRD §4/§7 **Default sub-tree**: the template grafted under every task the user creates.
+ *
+ * It is a **real task tree**, in exactly the shape a [TaskTreeEntry] stores — its own cells, lists and tasks,
+ * rooted at the same well-known ids every tree uses ([org.example.project.scheduler.model.WellKnownIds]).
+ * That is the whole point: the "Default sub-tree" window renders it with the *same* component the task tree
+ * is drawn by, so it has the same chrome, the same gestures, the same §13 contextual menu and the same Edit
+ * Mode, with no second copy of any of it. A template row is therefore a real [Task] — which is what lets the
+ * menu's "edit" write a screen switch, a schedule unit and a text onto it, and lets the graft carry the
+ * row's minimum time and its sub-list's weight table across.
+ *
+ * The window projects this into a [SchedulerState] to draw it (see `DefaultSubtreeProjection.kt`); the live
+ * tree is never touched by that projection.
+ *
+ * **[boundCells] is the switch**, one entry per cell whose switch is **off**:
+ *  - **on** (the default — the cell is *not* in the set): the graft mints a **brand new task** each time,
+ *    copying this template task's title and fields, so every cell built from the row is its own task;
+ *  - **off** (the cell is in the set): the graft points the new cell at **this cell's own `taskId`**, so
+ *    every cell built from the row *mirrors* that one task. Where that task belongs to the live tree — the
+ *    row was pointed at it through the ordinary Change Task menu — this is the PRD's "points at one existing
+ *    task", unchanged.
+ *
+ * A cell that leaves the tree takes its entry with it; the set is filtered against [tree] on capture, so it
+ * can never name a cell the template no longer holds.
+ */
+data class DefaultSubtreeTemplate(
+    val tree: TreeSnapshot,
+    val expanded: Set<CellId> = emptySet(),
+    val boundCells: Set<CellId> = emptySet(),
+) {
+    companion object {
+        /**
+         * The template an account starts with, and what a payload written before this shape decodes to: one
+         * empty placeholder row under the usual root, i.e. the same tree [SchedulerState.empty] begins with.
+         *
+         * Built here rather than by calling [SchedulerState.empty] because that would recurse — the empty
+         * state's own `defaultSubtree` field defaults to this very value.
+         */
+        fun empty(): DefaultSubtreeTemplate = DefaultSubtreeTemplate(tree = emptyTree())
+
+        /** The bare tree of [empty], reused by the codec when it migrates an older template shape. */
+        fun emptyTree(): TreeSnapshot {
+            val placeholderId = CellId("cell/main/0")
+            val tasks =
+                mapOf(
+                    WellKnownIds.ROOT_TASK to
+                        Task(
+                            id = WellKnownIds.ROOT_TASK,
+                            title = "root",
+                            childTaskIds = listOf(WellKnownIds.MAIN_TASK),
+                        ),
+                    WellKnownIds.MAIN_TASK to
+                        Task(
+                            id = WellKnownIds.MAIN_TASK,
+                            title = "main",
+                            childListId = WellKnownIds.MAIN_LIST,
+                        ),
+                )
+            return TreeSnapshot(
+                cells =
+                    mapOf(
+                        placeholderId to
+                            Cell(id = placeholderId, parentListId = WellKnownIds.MAIN_LIST, taskId = null),
+                    ),
+                lists =
+                    mapOf(
+                        WellKnownIds.MAIN_LIST to
+                            CellList(
+                                id = WellKnownIds.MAIN_LIST,
+                                parentCellId = null,
+                                cellIds = listOf(placeholderId),
+                            ),
+                    ),
+                tasks = tasks,
+                titleToTaskIds = SchedulerDomain.buildTitleIndex(tasks),
+                nextTaskCounter = 0,
+                nextCellCounter = 1,
+            )
+        }
+    }
+}
+
 data class SchedulerState(
     val rootListId: CellListId,
     val lists: Map<CellListId, CellList>,
@@ -353,7 +435,18 @@ data class SchedulerState(
      * it): persisted **and** synced, like the alarms. Empty by default, and a payload written before the
      * window existed decodes to empty, which is also what [defaultSubtreeEnabled] = false means in practice.
      */
-    val defaultSubtree: List<org.example.project.scheduler.model.DefaultSubtreeNode> = emptyList(),
+    val defaultSubtree: DefaultSubtreeTemplate = DefaultSubtreeTemplate.empty(),
+    /**
+     * The "Default sub-tree" window's own selection and in-flight Edit Mode session. They key cells of
+     * [defaultSubtree]'s tree, not of the live one, so they cannot share the live tree's fields.
+     *
+     * **Deliberately not persisted and not synced** — a selection is local view state (CLAUDE.md), and the
+     * template window opening with nothing selected is exactly right. Keeping them out of the payload also
+     * keeps them out of the sync fingerprint for free, so moving the caret in the template can never enqueue
+     * a push.
+     */
+    val defaultSubtreeSelection: SchedulerSelection = SchedulerSelection(),
+    val defaultSubtreeEditSession: SchedulerEditSession? = null,
     /**
      * PRD §4/§7: whether the [defaultSubtree] policy is **currently applied** — the switch left of the
      * "Default sub-tree" button in the lateral menu. Off by default (and for every payload written before the

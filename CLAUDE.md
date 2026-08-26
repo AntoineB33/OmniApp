@@ -471,22 +471,41 @@ PRD §4/§7: one per account, grafted under every task the user **creates**. Off
 (`defaultSubtreeEnabled`), authoritative, and outside `schedulingSignature` — a template schedules nothing
 until it is applied to a real cell.
 
-- **A node's `taskId` IS its switch.** `null` ⇒ "New id" ⇒ the switch is on. There is deliberately no second
-  boolean, which is what makes "the switch can't be off while New id is selected" true by construction rather
-  than by a rule someone has to enforce.
-- **A node bound to an existing task contributes that task's OWN sub-tree** — a sub-list belongs to the task
-  id — so its template children are kept but never applied. Do not "fix" this by writing into the bound task's
-  sub-list. The window **draws** that borrowed sub-tree under the row, greyed and uneditable.
-- **The window IS the task tree, plus one little switch per non-empty cell.** Same chrome, same indentation and
-  guide-lines, same expand arrows, same gestures (click to select, double-click **the title column** or
-  type to edit — a double-click anywhere else in the row (the percentage, the minimum time, the expand
-  arrow, the empty tail) still selects and still drag-moves, but never opens Edit Mode,
-  Enter/Shift+Enter/Tab, Backspace/Delete empties). That look lives in **one** place — `ui/TaskSheetChrome.kt`
-  (`SheetColors`, `INDENT_STEP_DP`, `taskSheetGuideLines`, `TaskSheetExpandArrow`, `TaskSheetTitleBounds`) — which both trees import. A
-  second palette or a second indent step is how the two silently drift apart.
-- **Only the percentage and the minimum-time columns are dropped**, because a template is in no tree and has no
-  real task yet. The switch takes the percentage's column at the same width, so the two trees line up. Do not
-  add a bin button back: **the blank title is what deletes**, here as in the tree.
+- **The template IS a real task tree** (`DefaultSubtreeTemplate`: a `TreeSnapshot` in the same shape a
+  `TaskTreeEntry` stores, rooted at the same `WellKnownIds`). Do not turn it back into a tree of titles — a
+  template row must be a real `Task`, or four of the five §13 menu entries have nothing to act on and "edit"
+  has nowhere to write.
+- **The window IS the task tree — the same code, not the same look.** `scheduler/ui/TaskTreeView.kt` is the
+  ONE tree, drawn twice: once by `TaskSchedulerScreen` over the account's state, once by
+  `ui/DefaultSubtreeWindow.kt` over `projectDefaultSubtree()`. So it has every gesture, Ctrl+F included, and
+  the **full five-entry §13 menu**. A second implementation is what shipped before, and it silently lacked the
+  menu entirely. Add a tree feature in `TaskTreeView` and both get it.
+- **Nothing is dropped but the switch is added**: the percentage (the row's share **within the template**) and
+  the minimum time are both shown and both meaningful, and the switch is one more column after them. Do not
+  add a bin button: **the blank title is what deletes**, here as in the tree.
+- **Two projections, and the split is the point** (`state/DefaultSubtreeProjection.kt`):
+  `projectDefaultSubtree()` merges the live tree UNDER the template so a bound row resolves and the ordinary
+  Change Task menu can offer live tasks; `defaultSubtreePriorities()` uses the template's cells/lists **alone**
+  because `absoluteTaskPriorities` iterates every cell it is given and would otherwise divide the template's
+  shares by the whole account. Ids cannot collide (child lists are `{taskId}/children`, cells come off a shared
+  counter) except at the root, which the template shadows.
+- **The fold back keeps only what is reachable from the template's root**, stopping at a task the live tree
+  owns — a mirror belongs to the live tree, and copying it in would start it going stale. The live half of the
+  projection is **discarded**, which is what makes it impossible for anything dispatched in that window
+  (`purgeOrphanTasks` included) to damage the real tree. The id **counters** are the one thing written back to
+  both sides.
+- **Every intent the window raises is wrapped in `InDefaultSubtree`** — except Undo/Redo, which belong to the
+  app's stacks where the window's own `DefaultSubtreeDelta` units are waiting. One gesture is **one** Main
+  unit; the inner reductions' units evaporate with the projection.
+- **`defaultSubtreeIsEmpty` lives on the STATE, not on the template.** A bound row's title lives on the *live*
+  task it points at, so asking the template alone calls it untitled and skips a template that is anything but
+  empty.
+- **A node's switch is `boundCells`.** Off ⇒ every grafted cell mirrors the row's own `taskId`; on (the
+  default) ⇒ a fresh task per graft, carrying the row's title, fields, minimum time and weight row.
+- **A row pointing at an existing task shows that task's OWN sub-tree** — a sub-list belongs to the task id —
+  drawn by the tree as the ordinary mirror it is. Do not "fix" this by writing into the bound task's sub-list.
+- The chrome still lives in **one** place — `ui/TaskSheetChrome.kt` (`SheetColors`, `INDENT_STEP_DP`,
+  `taskSheetGuideLines`, `TaskSheetExpandArrow`, `TaskSheetTitleBounds`).
 - **It fires once, at `endEditSession`**, and only when the session **created** the task (`taskId !in
   session.treeBefore.tasks`). Not per keystroke (each one re-runs the naming), and not when the session reused
   an existing task (its sub-tree already came with the id). A sub-list that already holds a cell is never
@@ -499,8 +518,8 @@ until it is applied to a real cell.
 - **A seeded row must never seed in turn** — that is an unbounded cascade, not a deeper template. The graft
   calls those primitives *directly*, never the `SetCellTitle` intent, so it descends only through the
   template's own children and stops at its leaves. Never route it through the reducer's intent path.
-- A binding the live tree cannot honour (deleted, another task tree, or `canAssignTaskId` says no) falls back
-  to a new task.
+- A binding the live tree cannot honour (a task only the template knows, deleted, another task tree, or
+  `canAssignTaskId` says no) falls back to a new task.
 - **Only a paste of FOREIGN text seeds** — the gate is the clipboard's **id**, not `PasteIdentity`. An id
   means the app wrote that text, so what is landing is a task's own content: a copied sub-tree comes back as
   itself whether it lands as a Mirror, a Restore, or a Fresh clone (`canAssignTaskId` refused the id here).

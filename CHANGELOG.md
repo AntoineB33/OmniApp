@@ -11,6 +11,45 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The default sub-tree window IS the task tree (`scheduler/ui/TaskTreeView.kt`) — SHIPPED 2026-08-26
+
+- **Reported anomaly:** right-clicking a row in the "Default sub-tree" window opened no contextual menu. The
+  cause was not a broken handler but the absence of one: the window was a **hand-rolled re-implementation** of
+  the task tree (its own row composable, its own title field, its own selection/edit/collapse state), and the
+  tree's `contextMenuModifier` + `DropdownMenu` had never been copied into it. The same gap silently cost it
+  multi-selection, drag-move, Ctrl+C/X/V, Ctrl+F and the min-time field.
+- **The tree is now ONE composable, drawn twice.** `CellListSection` / `TaskRow` / `contextMenuModifier` /
+  `EditModeMenus` moved out of `TaskSchedulerScreen.kt` into `TaskTreeView.kt`, which both the account's tree
+  and the template window call. The window gets the **full five-entry §13 menu** — *start this task now*,
+  *edit*, *copy*, *deep copy*, *add default sub-tree* — and every other tree gesture, by construction.
+- **What made that possible: the template became a real tree.**
+  `SchedulerState.defaultSubtree` changed from `List<DefaultSubtreeNode>` (a tree of *titles*) to
+  `DefaultSubtreeTemplate` — a `TreeSnapshot` in the same shape a `TaskTreeEntry` stores, plus its expansion
+  and the per-cell switch set. Four of the five menu entries need a real `Task` to act on, and "edit" writes a
+  screen switch / schedule unit / text that the old node type had nowhere to put.
+- **`state/DefaultSubtreeProjection.kt` is the seam.** `projectDefaultSubtree()` hands the tree component a
+  state whose tree IS the template, with the live tree merged underneath so a bound row resolves and the
+  ordinary Change Task menu can offer live tasks. `defaultSubtreePriorities()` deliberately computes the
+  percentages on the template's cells **alone** — `absoluteTaskPriorities` iterates every cell it is given.
+  `withDefaultSubtreeCapturedFrom()` folds the reduced projection back, keeping only what is reachable from
+  the template's root and **discarding the live half**, so nothing dispatched in that window can reach the
+  real tree.
+- **New intents:** `InDefaultSubtree(inner)` wraps every tree intent the window raises (Undo/Redo excepted —
+  they belong to the app's stacks) and lands as **one** `DefaultSubtreeDelta` Main history unit;
+  `SetDefaultSubtreeCellBound` flips a row's switch. `SetDefaultSubtree` is gone.
+- **Visible changes.** The percentage and minimum-time columns, previously suppressed as meaningless, are now
+  shown and meaningful: the percentage is the row's share *within the template*, and the graft carries the
+  minimum time, the task fields and each sub-list's weight table across. The switch takes a column of its own
+  after them and now toggles **both** ways (a row always has a task to point at). A bound row's borrowed
+  sub-tree is drawn by the tree as the ordinary mirror it is, rather than by a bespoke greyed renderer.
+- **Migration.** A payload holding the pre-1.6.0 `defaultSubtree` node array is built into the real tree on
+  decode (`migrateDefaultSubtreeNodes`), minting ids past the account's own counters; a bound node keeps its
+  binding and joins `boundCells`. That shape is still read and never written again. An **empty** template is
+  written as nothing at all, so "written before the feature existed" and "empty" decode the same way.
+  `SnapshotMerge` still resolves the template as one whole value.
+- Known consequence, and it is the tree's own rule: a bound row's title lives on the task it points at, so
+  deleting that task empties the row — and the blank title then deletes it, exactly as it would in the tree.
+
 ### Two sorts of pop-up window (`ui/PopupWindows.kt`) — SHIPPED 2026-08-26
 
 - **The sort of a pop-up is no longer a per-call-site decision.** Sort 1 opens on the top layer and then lets

@@ -13,7 +13,6 @@ import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
-import org.example.project.scheduler.model.DefaultSubtreeNode
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ForcedTaskStart
 import org.example.project.scheduler.model.ForcedTaskSwitch
@@ -4047,50 +4046,6 @@ object SchedulerDomain {
             }
         }
     }
-
-    /**
-     * PRD §4 **Default sub-tree** (the lateral-menu window, §7): the identity menu of one template node.
-     *
-     * A leading **"New id"** row — the node mints a brand-new task every time the template is applied — then
-     * every existing user task whose title is exactly [draftText] and that still lives in the tree. It is the
-     * calendar's menu shape ([calendarTaskMenuEntries]) rather than the cell's: a template node has no cell,
-     * so there is no sibling list and no ancestor path to forbid; and unlike the calendar it does NOT require
-     * a leaf, because binding to a parent is exactly how a node brings a whole existing sub-tree along.
-     * Tombstones (tasks kept alive only by their records/panels) are excluded, like everywhere else.
-     *
-     * Picking a row here is what turns the node's switch **off**; picking "New id" turns it back on — see
-     * [org.example.project.scheduler.model.DefaultSubtreeNode].
-     */
-    fun defaultSubtreeTaskMenuEntries(
-        state: SchedulerState,
-        draftText: String,
-    ): List<ChangeTaskMenuEntry> {
-        val matching = matchingUserTaskIds(state, draftText).filter { taskHasCells(state, it) }
-        return buildList {
-            add(ChangeTaskMenuEntry(taskId = null, label = DEFAULT_SUBTREE_NEW_ID_LABEL))
-            for (taskId in matching) {
-                add(ChangeTaskMenuEntry(taskId = taskId, label = changeTaskMenuLabel(state, taskId)))
-            }
-        }
-    }
-
-    /** The label of the "new id" row of a default-sub-tree node's identity menu (PRD §4). */
-    const val DEFAULT_SUBTREE_NEW_ID_LABEL: String = "New id"
-
-    /**
-     * PRD §4: the template with everything that could never be grafted removed — **the blank title is what
-     * deletes**, here as in the tree itself, so a blank-titled node goes and takes its children with it (they
-     * have no cell to hang under). The editor keeps a trailing empty row per list only while its window is
-     * open, exactly as the tree keeps the bottom cell of a sub-list; nothing else may hold one.
-     *
-     * Applied by the reducer on [org.example.project.scheduler.state.SchedulerIntent.SetDefaultSubtree] and
-     * again on decode, so what is stored, synced, and grafted is always this form. It is safe against a title
-     * being retyped through empty: the editor pushes its own copy back on the next keystroke.
-     */
-    fun normalizeDefaultSubtree(nodes: List<DefaultSubtreeNode>): List<DefaultSubtreeNode> =
-        nodes.mapNotNull { node ->
-            if (node.title.isBlank()) null else node.copy(children = normalizeDefaultSubtree(node.children))
-        }
 
     /**
      * One row of a read-only rendering of a task's sub-tree: its title and the same for its children.

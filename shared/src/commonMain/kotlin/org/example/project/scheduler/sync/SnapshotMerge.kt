@@ -116,10 +116,10 @@ object SnapshotMerge {
                 chores = chores,
                 alarms = alarms,
                 automaticSchedule = pick(base.automaticSchedule, local.automaticSchedule, remote.automaticSchedule),
-                // PRD §4 Default sub-tree: the template resolves as ONE value, like a task tree — its nodes
-                // are a shape the user drew, not independent rows to interleave (two devices each inserting a
-                // node would otherwise produce a template neither of them authored). The switch is an
-                // ordinary scalar beside it.
+                // PRD §4 Default sub-tree: the template resolves as ONE value, like a task tree — and it IS
+                // a tree, a shape the user drew, not independent rows to interleave (two devices each
+                // inserting a row would otherwise produce a template neither of them authored). The switch
+                // is an ordinary scalar beside it.
                 defaultSubtree = pick(base.defaultSubtree, local.defaultSubtree, remote.defaultSubtree),
                 defaultSubtreeEnabled =
                     pick(base.defaultSubtreeEnabled, local.defaultSubtreeEnabled, remote.defaultSubtreeEnabled),
