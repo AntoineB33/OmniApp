@@ -89,6 +89,13 @@ re-derives something mark the state dirty or trigger a sync push.
 - **A chunk's scale is one ROUND**, `c = p·m_rival/(1 − p)`, floored at the task's minimum. The lift (boost)
   and the cap (round) are asked **separately**.
 - **`last` is never picked twice in a row** unless it is the only candidate.
+- **PRD §7 "Switch task" IS that same `last`, not a ban.** The button (and `Ctrl+Shift+Alt+Z`) records a
+  `ForcedTaskSwitch(task, at)` and the fill hands it to `walk.setLast`, so the refused task keeps its clock and
+  its share and is an ordinary candidate again from the second slot — and a task nothing can replace still
+  runs. Do not give it a rule of its own, and do not put it in `schedulingSignature`: the press re-plans inside
+  its own reducer, or dropping the spent marker would fire a second, un-refused re-plan. It stays live until
+  **another task has actually been served past `at`** (`liveForcedSwitchTask`, read off the recorded past, so
+  the resume contract holds); the advance tick drops it then.
 - **The clock replay walks the past EDGE BY EDGE**, applying `relax` where the walk applies it. Its window is
   two `minPeriod`s measured in **schedulable** time, never wall time.
 - **Only obstacles still AHEAD build the influence field.** The boost is capped (`maxBoost` = 6) and decays to
@@ -586,9 +593,9 @@ cross-device presence.
 
 ## System-wide keyboard shortcuts
 
-→ ADR 0011. Two chords, `Ctrl+Shift+Alt+A` ("I'm away" / "I'm back") and `Ctrl+Shift+Alt+E` ("Look away now"),
-claimed from the OS because each is pressed precisely when OmniApp is **not** the focused window. Never a
-Compose key handler.
+→ ADR 0011. Three chords, `Ctrl+Shift+Alt+A` ("I'm away" / "I'm back"), `Ctrl+Shift+Alt+E` ("Look away now")
+and `Ctrl+Shift+Alt+Z` ("Switch task"), claimed from the OS because each is pressed precisely when OmniApp is
+**not** the focused window. Never a Compose key handler.
 
 - **The chord must be SWALLOWED, not merely observed.** `RegisterHotKey` is not first-come, first-served: an
   application with its own low-level hook is called before the hot-key table, so one press fired two actions

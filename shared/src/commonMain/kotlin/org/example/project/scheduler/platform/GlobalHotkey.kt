@@ -5,12 +5,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * PRD §15: the app's **system-wide** chords — the ones that must fire while OmniApp is *not* the focused
+ * PRD §7/§15: the app's **system-wide** chords — the ones that must fire while OmniApp is *not* the focused
  * window, because the moment each of them is wanted is a moment the user is looking at some other
  * application.
  *
- * Both are `Ctrl+Shift+Alt+<letter>`: a three-modifier chord is deliberately awkward, so it is unlikely to
- * be sitting under the user's fingers by accident, and it is the shape Windows lets a background process
+ * Every one is `Ctrl+Shift+Alt+<letter>`: a three-modifier chord is deliberately awkward, so it is unlikely
+ * to be sitting under the user's fingers by accident, and it is the shape Windows lets a background process
  * claim without a driver.
  */
 enum class GlobalShortcut(
@@ -24,6 +24,13 @@ enum class GlobalShortcut(
 
     /** Takes the 20-second look-away now, superseding any look-away still sounding or pending. */
     LookAwayNow("Ctrl+Shift+Alt+E", "Look away now"),
+
+    /**
+     * PRD §7: refuses the task the now-line is on, so the plan starts a different one from now. Struck from
+     * inside whatever the user is working in — which is precisely where they realise they want to be doing
+     * something else — so it is system-wide like the other two.
+     */
+    SwitchTask("Ctrl+Shift+Alt+Z", "Switch task"),
 }
 
 /**
@@ -66,7 +73,7 @@ object GlobalHotkeys {
 }
 
 /**
- * PRD §15: register every [GlobalShortcut] with the OS — not as a Compose key handler — and poke
+ * PRD §7/§15: register every [GlobalShortcut] with the OS — not as a Compose key handler — and poke
  * [onShortcut] each time one is struck.
  *
  * Registered with the OS because these chords are used at exactly the moment the app is *not* the focused

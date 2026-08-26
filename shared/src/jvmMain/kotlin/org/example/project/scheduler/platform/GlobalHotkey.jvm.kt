@@ -31,6 +31,7 @@ private const val WM_SYSKEYUP = 0x0105
 // Virtual-key codes (winuser.h leaves the letter keys at their ASCII values).
 private const val VK_A = 0x41
 private const val VK_E = 0x45
+private const val VK_Z = 0x5A
 private const val VK_LSHIFT = 0xA0
 private const val VK_RSHIFT = 0xA1
 private const val VK_LCONTROL = 0xA2
@@ -49,10 +50,11 @@ private class Chord(val shortcut: GlobalShortcut, val vk: Int, val hotkeyId: Int
 private val CHORDS = listOf(
     Chord(GlobalShortcut.ToggleAway, vk = VK_A, hotkeyId = 1),
     Chord(GlobalShortcut.LookAwayNow, vk = VK_E, hotkeyId = 2),
+    Chord(GlobalShortcut.SwitchTask, vk = VK_Z, hotkeyId = 3),
 )
 
 /**
- * PRD §15: the OS-level `Ctrl+Shift+Alt+A` / `Ctrl+Shift+Alt+E` claim behind [installGlobalHotkeys], built
+ * PRD §7/§15: the OS-level `Ctrl+Shift+Alt+A` / `+E` / `+Z` claim behind [installGlobalHotkeys], built
  * like [DesktopSessionTracker] — a dedicated daemon thread owning a Win32 message loop.
  *
  * The thread is not incidental. Both claims below are delivered to the **thread that made them**: a

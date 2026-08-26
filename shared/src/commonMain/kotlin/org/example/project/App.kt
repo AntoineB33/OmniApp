@@ -250,11 +250,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // re-samples presence the moment it flips, instead of at the next minute beat. No-op on Android (the
         // service wires it directly) and iOS/web (no such signal).
         LaunchedEffect(engine) { installPlatformActivityListener { engine.onPlatformActivityChanged() } }
-        // PRD §15: the system-wide chords (Ctrl+Shift+Alt+A "I'm away", Ctrl+Shift+Alt+E "Look away now"),
-        // driving exactly the same engine seams the left-menu buttons do. Claimed from the OS rather than
-        // handled in Compose because they are pressed precisely when OmniApp is NOT the focused window — the
-        // user is walking away from, or resting their eyes in the middle of, whatever they were working in —
-        // and a focus-scoped handler would only ever fire when the button is already one click away. The
+        // PRD §7/§15: the system-wide chords (Ctrl+Shift+Alt+A "I'm away", Ctrl+Shift+Alt+E "Look away now",
+        // Ctrl+Shift+Alt+Z "Switch task"), driving exactly the same engine seams the left-menu buttons do.
+        // Claimed from the OS rather than handled in Compose because they are pressed precisely when OmniApp
+        // is NOT the focused window — the user is walking away from, resting their eyes in the middle of, or
+        // deciding they want off the current task inside whatever they were working in — and a focus-scoped
+        // handler would only ever fire when the button is already one click away. The
         // claim swallows the chord so no other application acts on the same press. Desktop-only; inert on
         // Android/iOS.
         LaunchedEffect(engine) {
@@ -262,6 +263,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 when (shortcut) {
                     GlobalShortcut.ToggleAway -> engine.setUserAway(!engine.userAway.value)
                     GlobalShortcut.LookAwayNow -> engine.restartLookAway()
+                    GlobalShortcut.SwitchTask -> engine.forceTaskSwitch()
                 }
             }
         }
@@ -959,6 +961,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     lookAwayVoiceEnabled = schedulerState.lookAwayVoiceEnabled,
                     onToggleLookAwayVoice = { vm.dispatch(SchedulerIntent.SetLookAwayVoice(it)) },
                     onLookAwayNow = { engine.restartLookAway() },
+                    onSwitchTask = { engine.forceTaskSwitch() },
                     sleepWindowOpen = sleepWindowOpen,
                     onToggleSleep = { onMenuWindowClicked(FloatingWindow.Sleep) { sleepWindowOpen = it } },
                     alarmWindowOpen = alarmWindowOpen,

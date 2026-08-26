@@ -6,6 +6,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
+import org.example.project.scheduler.model.ForcedTaskSwitch
 import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskPanel
@@ -392,6 +393,14 @@ data class SchedulerState(
      * cell that no longer exists is simply ignored, so a tree edit never has to prune this.
      */
     val relativePriorityPins: Map<RelativePriorityPinKey, Set<CellId>> = emptyMap(),
+    /**
+     * PRD §7 **"Switch task"**: the standing refusal the lateral-menu button (and its `Ctrl+Shift+Alt+Z`
+     * chord) records — "the now-line is on this task; start something else here". See [ForcedTaskSwitch]
+     * for why it is stated as the walk's `last` rather than as a ban, and for when it stops being live.
+     * Authoritative: persisted **and** synced (the plan is the account's, not this device's); not undoable.
+     * A payload written before the button existed decodes to null, i.e. no refusal outstanding.
+     */
+    val forcedSwitch: ForcedTaskSwitch? = null,
     /**
      * A bounded, local-only diagnostic log of the notification text the app has posted, shown as the
      * History Manager's **Notifications** column. Capped at [MAX_NOTIFICATION_LOG] — the earliest that

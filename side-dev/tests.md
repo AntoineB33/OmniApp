@@ -1,7 +1,15 @@
 
 ### Test Cases
 
-The following tests define the expected behavior of the scheduler under various constraints. In the testing display, the "resulting share" is calculated as the percentage of a task's presence across the drawn timeline, excluding periods where no tasks are allowed.
+The following tests define the expected behavior of the scheduler under various constraints.
+
+In the testing display, the "resulting share" is calculated as the percentage of a task's presence across the drawn timeline, excluding periods where no tasks are allowed.
+
+One instance of the same scheduler per test.
+
+The tests that take a long time to be done are in the set of tests that appear as the first test in the display window when selected in the top menu. When selected the scheduler runs from a saved progression if it has been selected before but couldn't finish. When not selected the scheduler doesn't run.
+
+A button allows to copy the test configuration and the resulting set of rules to the clipboard in a readable format. The test configuration is all the rule states and the starting timeline (including pre-placed tasks and restrictive periods that are not the three dynamic periods).
 
 
 * **User Control:** The user can click anywhere on the schedule to move $t_p$ to that point. Dragging the cursor updates $t_p$ continuously. The system defaults to a paused state.

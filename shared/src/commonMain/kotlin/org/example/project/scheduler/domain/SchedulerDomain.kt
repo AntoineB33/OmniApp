@@ -15,6 +15,7 @@ import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.DefaultSubtreeNode
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
+import org.example.project.scheduler.model.ForcedTaskSwitch
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.ScreenBreakPeriod
@@ -2681,6 +2682,43 @@ object SchedulerDomain {
     fun currentPanel(state: SchedulerState, nowMillis: Long): TaskPanel? =
         panelAt(state.panels, nowMillis)
 
+    /**
+     * PRD §7 **"Switch task"**: the task the now-line is actually **on** — the panel covering [nowMillis]
+     * that stands for real work, or null when there is none.
+     *
+     * Everything else the calendar draws across the now-line is not a task and so is nothing to switch away
+     * from: a screen break, a sleep band, a grey inactivity or a no-screen period (all of which carry no
+     * [TaskPanel.taskId] anyway) and a zero-duration §14 reminder tag. Unlike [currentPanel] this is not "the
+     * first panel here" but "the task here", so a task panel drawn under one of those overlays is still found.
+     */
+    fun taskAtNowLine(state: SchedulerState, nowMillis: Long): TaskId? =
+        state.panels.firstOrNull {
+            it.taskId != null && !it.chore && !it.screenBreak && !it.sleep && !it.noScreen && !it.inactivity &&
+                it.startEpochMillis <= nowMillis && nowMillis < it.endEpochMillis
+        }?.taskId
+
+    /**
+     * PRD §7 **"Switch task"**: [switch] if the refusal it records is still **outstanding** at [nowMillis],
+     * else null — the value [fillSchedule] hands the walk as its `last`, so the refused task is not the one
+     * that starts here.
+     *
+     * A refusal is outstanding until some **other** task has actually been served past the instant it was made.
+     * That is what granting it means, and reading it off [past] (the same recorded history the virtual clocks
+     * are seeded from) is what keeps CLAUDE.md's resume contract: a chain of re-plans over the refusal reaches
+     * the same schedule as one long plan, because each of them asks the history the same question rather than
+     * carrying a flag the next one cannot reconstruct. A marker stamped in the future (a peer's clock ahead of
+     * ours) is not yet live.
+     */
+    internal fun liveForcedSwitchTask(
+        switch: ForcedTaskSwitch?,
+        past: List<PlanBlock>,
+        nowMillis: Long,
+    ): TaskId? {
+        if (switch == null || switch.atMillis > nowMillis) return null
+        val granted = past.any { it.taskId != null && it.taskId != switch.taskId && it.endMillis > switch.atMillis }
+        return if (granted) null else switch.taskId
+    }
+
     // ----- §13 Schedule Unit ------------------------------------------------------------------
 
     /** PRD §13: total spanning time (minutes) of a schedule unit's entries. */
@@ -3055,7 +3093,17 @@ object SchedulerDomain {
         val walk = planner.walk(planner.replayClocks(pastBlocks, windows, nowMillis, replayStart))
         // `_last_run`, NOT `_head`: a task that stopped and was not replaced never took a second turn, so the
         // walk must not refuse the very task the timeline left off with (see [SchedulerPlanner.lastRun]).
-        walk.setLast(planner.lastRun(pastBlocks, nowMillis))
+        //
+        // PRD §7 "Switch task": an outstanding refusal ([liveForcedSwitchTask]) takes that seat instead. The
+        // user asked for something else to start here, and "the task the timeline just left off with" is
+        // already the walk's word for a task it must not pick now — so the refusal needs no rule of its own,
+        // and inherits the right escape: a task nothing can replace still runs rather than the period being
+        // left empty. It costs the refused task nothing else — its clock is untouched, and from the second
+        // slot on it is an ordinary candidate again.
+        walk.setLast(
+            liveForcedSwitchTask(state.forcedSwitch, pastBlocks, nowMillis)
+                ?: planner.lastRun(pastBlocks, nowMillis),
+        )
 
         val generated = mutableListOf<TaskPanel>()
         var cursor = nowMillis

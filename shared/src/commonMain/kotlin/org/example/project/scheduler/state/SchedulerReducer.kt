@@ -8,6 +8,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.DefaultSubtreeNode
+import org.example.project.scheduler.model.ForcedTaskSwitch
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.SleepSchedule
@@ -160,6 +161,7 @@ object SchedulerReducer {
             is SchedulerIntent.ExtendSchedule -> reduceExtendSchedule(state, intent.nowMillis)
             is SchedulerIntent.AdvanceSchedule ->
                 commitRecordChanges(state, advanceSchedule(state, intent.nowMillis, noScreenEvidence()))
+            is SchedulerIntent.ForceTaskSwitch -> reduceForceTaskSwitch(state, intent.nowMillis)
             is SchedulerIntent.SetAutomaticSchedule ->
                 if (state.automaticSchedule == intent.enabled) state
                 else state.copy(automaticSchedule = intent.enabled)
@@ -1599,6 +1601,23 @@ object SchedulerReducer {
     }
 
     /**
+     * PRD §7 **"Switch task"** ([SchedulerIntent.ForceTaskSwitch]): record the user's refusal of the task the
+     * now-line is on, then re-plan so something else starts here.
+     *
+     * The refusal is [org.example.project.scheduler.model.ForcedTaskSwitch] — a fact about the past, read by
+     * the fill as the walk's `last` — not an edit to any rule, which is why it re-plans from inside this
+     * reducer instead of riding [SchedulerDomain.schedulingSignature]: were it in the signature, the tick that
+     * later drops the spent marker would fire a second re-plan with the refusal gone and could hand the very
+     * task back. A now-line on no task at all (a screen break, a grey period, an empty stretch) is nothing to
+     * switch away from, so the press is a no-op. The marker is stored even while §7 auto-scheduling is off:
+     * the plan is not being computed at all then, and the refusal is honoured by the fill that resumes it.
+     */
+    private fun reduceForceTaskSwitch(state: SchedulerState, nowMillis: Long): SchedulerState {
+        val taskId = SchedulerDomain.taskAtNowLine(state, nowMillis) ?: return state
+        return reduceRefreshSchedule(state.copy(forcedSwitch = ForcedTaskSwitch(taskId, nowMillis)), nowMillis)
+    }
+
+    /**
      * PRD §9 rolling horizon ([SchedulerIntent.ExtendSchedule]): advance, then materialize the plan further
      * WITHOUT re-planning it. Everything already laid down ahead of the now-line is kept and fed to the
      * scheduling walk as committed service, so the tail continues the same plan rather than replacing it — a horizon that
@@ -2480,7 +2499,16 @@ private fun advanceSchedule(
     // no-screen panel stays on the calendar; the task is still owed that work).
     val noScreenRanges = noScreenRangesFor(state, noScreenEvidence)
     val coveredPieces = ArrayList<TaskTimeRange>()
+    // PRD §7 "Switch task": the standing refusal is SPENT as soon as some other task's work is actually
+    // banked past the instant it was made — that is what "the plan started something else" means, and it is
+    // exactly the predicate [SchedulerDomain.liveForcedSwitchTask] reads off the past, applied incrementally
+    // here so the marker cannot linger in the persisted payload once it has been honoured.
+    val switch = state.forcedSwitch
+    var switchSpent = false
     fun bank(taskId: TaskId?, startMillis: Long, endMillis: Long) {
+        if (switch != null && taskId != null && taskId != switch.taskId && endMillis > switch.atMillis) {
+            switchSpent = true
+        }
         coveredPieces += noScreenCoveredPieces(tasks, noScreenRanges, taskId, startMillis, endMillis)
         tasks = appendRecordOutsideNoScreen(tasks, noScreenRanges, taskId, startMillis, endMillis)
     }
@@ -2522,8 +2550,14 @@ private fun advanceSchedule(
             }
         }
     }
-    if (!changed) return state
-    return materializePastInactivity(state.copy(tasks = tasks, panels = remaining), coveredPieces)
+    if (!changed && !switchSpent) return state
+    val advanced =
+        state.copy(
+            tasks = tasks,
+            panels = remaining,
+            forcedSwitch = if (switchSpent) null else state.forcedSwitch,
+        )
+    return materializePastInactivity(advanced, coveredPieces)
 }
 
 /**

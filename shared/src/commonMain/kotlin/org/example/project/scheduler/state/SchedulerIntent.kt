@@ -338,6 +338,21 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §7 **"Switch task"** — the lateral-menu button and its system-wide `Ctrl+Shift+Alt+Z` chord: the
+     * task the now-line sits on at [nowMillis] is refused there, so the plan starts a *different* one from
+     * [nowMillis] on.
+     *
+     * Records the refusal ([org.example.project.scheduler.model.ForcedTaskSwitch]) and re-plans on the spot,
+     * rather than leaving it to [org.example.project.scheduler.domain.SchedulerDomain.schedulingSignature]:
+     * the press IS the calculation event (the same reason `RemoveRecordPeriod` refills inside its own
+     * reducer), and a marker in the signature would fire a second, *un*-refused re-plan the moment the marker
+     * was spent. A no-op when the now-line is on no task at all. Persisted + synced; not undoable.
+     */
+    data class ForceTaskSwitch(
+        val nowMillis: Long,
+    ) : SchedulerIntent
+
+    /**
      * PRD §15 Screen breaks: show/hide the screen breaks on the calendar (a cosmetic display preference). Hiding
      * does not touch the schedule or notifications. Persisted; not undoable.
      */

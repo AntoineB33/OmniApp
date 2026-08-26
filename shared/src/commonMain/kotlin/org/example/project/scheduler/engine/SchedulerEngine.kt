@@ -1716,6 +1716,18 @@ class SchedulerEngine(
         }
     }
 
+    /**
+     * PRD §7 **"Switch task"** — the lateral-menu button and the system-wide `Ctrl+Shift+Alt+Z` chord: refuse
+     * the task the now-line is on, so the plan starts a different one from now.
+     *
+     * The whole of it is the intent: the reducer records the refusal and re-plans in one step (the press IS
+     * the calculation event), and the §11 task-switch sweep announces whatever the new plan starts — which is
+     * the feedback the chord needs, since it is struck with some other window in front.
+     */
+    fun forceTaskSwitch() {
+        vm.dispatch(SchedulerIntent.ForceTaskSwitch(clock.nowMillis()))
+    }
+
     // PRD §15 device-sleep gaps: after a sleep is detected, query the OS sleep/wake log off-thread for the
     // EXACT interval(s) of the pause that was just missed and record them into the LOCAL gaps store. No
     // remote push here — the recorded gaps ride the next sync moment ([pushOwnRecentSleepGaps]). Best-effort:

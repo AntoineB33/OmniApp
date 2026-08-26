@@ -146,9 +146,9 @@ Launch the desktop app. It opens on the **Task Scheduler** page with an empty tr
 
 ### Live in it
 
-Once the tree is set up the app runs itself: it notifies you when it is time to switch tasks, when a screen break comes due and when to stop work before bed, and it records what you actually did. The **"Look away now"** button in the lateral menu takes a 20-second break on demand.
+Once the tree is set up the app runs itself: it notifies you when it is time to switch tasks, when a screen break comes due and when to stop work before bed, and it records what you actually did. The **"Look away now"** button in the lateral menu takes a 20-second break on demand, and **"Switch task"** refuses whatever you are on right now so the schedule starts something else — without costing that task any of its share, so it comes back around as usual.
 
-Two of the lateral menu's buttons also answer to a **system-wide chord**, so they work while you are in another application — which is the only moment either is wanted: `Ctrl+Shift+Alt+E` takes the 20-second look-away, and `Ctrl+Shift+Alt+A` toggles **"I'm away" / "I'm back"** as you leave the machine and come back. Both are claimed exclusively where Windows allows it, so the application in front never sees the keystroke. The **Keyboard shortcuts** button at the bottom of the menu lists every shortcut in the app, and says which claim those two chords actually got.
+Three of the lateral menu's buttons also answer to a **system-wide chord**, so they work while you are in another application — which is the only moment any of them is wanted: `Ctrl+Shift+Alt+E` takes the 20-second look-away, `Ctrl+Shift+Alt+Z` switches you off the current task, and `Ctrl+Shift+Alt+A` toggles **"I'm away" / "I'm back"** as you leave the machine and come back. All are claimed exclusively where Windows allows it, so the application in front never sees the keystroke. The **Keyboard shortcuts** button at the bottom of the menu lists every shortcut in the app, and says which claim those chords actually got.
 
 Other lateral-menu windows: **Reminders**, **Alarms**, **Sleep** (wake time, goal wake time, total sleep), **History** (every recorded change), and **All task trees** (named alternative arrangements of your tree; give them dates and the scheduler interpolates smoothly from one to the next).
 

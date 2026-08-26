@@ -2,15 +2,16 @@
 
 **Status:** active. **Invariant summary:** see `CLAUDE.md` → *System-wide keyboard shortcuts*.
 
-Two of the app's actions are wanted at a moment when OmniApp is, by definition, **not** the focused window:
+Three of the app's actions are wanted at a moment when OmniApp is, by definition, **not** the focused window:
 
 | Chord | Action | Why the app is not in front |
 | --- | --- | --- |
 | `Ctrl+Shift+Alt+A` | "I'm away" / "I'm back" (`SchedulerEngine.setUserAway`) | the user is walking away from whatever they were working in |
 | `Ctrl+Shift+Alt+E` | "Look away now" (`SchedulerEngine.restartLookAway`) | the user decides mid-task to rest their eyes |
+| `Ctrl+Shift+Alt+Z` | "Switch task" (`SchedulerEngine.forceTaskSwitch`) | the user is inside the work they have decided to get off |
 
-So neither can be a Compose `onPreviewKeyEvent` handler: a focus-scoped chord fires only in the one situation
-where the lateral-menu button is already one click away. Both are claimed from the OS in
+So none of them can be a Compose `onPreviewKeyEvent` handler: a focus-scoped chord fires only in the one
+situation where the lateral-menu button is already one click away. All are claimed from the OS in
 `scheduler/platform/GlobalHotkey.kt` (`installGlobalHotkeys`), whose only Kotlin caller is one `LaunchedEffect`
 in `App.kt`. The chords themselves live in **one** place, the `GlobalShortcut` enum, which is both what the
 platform actual registers and what the keyboard-shortcuts window prints.
@@ -72,7 +73,7 @@ Two details the hook has to handle that `RegisterHotKey` did for us:
   `Ctrl+Shift+Alt+E`. That pattern (right Alt, no left Alt, left Ctrl, no right Ctrl) is passed through, so the
   hook cannot eat text the user meant to type. The price: the chord must be struck with the **left** Alt.
 
-Alt is part of both chords, so the letter arrives as `WM_SYSKEYDOWN`/`WM_SYSKEYUP`, not the plain spellings —
+Alt is part of every chord, so the letter arrives as `WM_SYSKEYDOWN`/`WM_SYSKEYUP`, not the plain spellings —
 both have to be recognised.
 
 ## Rejected

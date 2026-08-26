@@ -872,6 +872,7 @@ fun LateralMenu(
      * moment, so its availability must not depend on what the last past screen break happened to be.
      */
     onLookAwayNow: () -> Unit = {},
+    onSwitchTask: () -> Unit = {},
     /** Whether any floating window is open — gates the "close all windows" button + the callback to do so. */
     anyWindowOpen: Boolean = false,
     onCloseAllWindows: () -> Unit = {},
@@ -953,6 +954,12 @@ fun LateralMenu(
         // PRD §15 (20s look-away): take the 20s pause now. ALWAYS present — the user may choose to look away
         // at any moment, so this is never gated on the cadence's current state.
         MenuButton(label = "Look away now", active = false, onClick = onLookAwayNow)
+
+        // PRD §7 "Switch task": refuse the task the now-line is on, so a DIFFERENT one starts from now. Like
+        // "Look away now" it is always present — wanting off the current task is a thing the user may decide
+        // at any moment — and it is the same action the system-wide Ctrl+Shift+Alt+Z chord fires, since it is
+        // usually wanted with some other application in front.
+        MenuButton(label = "Switch task", active = false, onClick = onSwitchTask)
 
         // PRD §7 Reminders: toggles the floating reminders window over the tree.
         MenuButton(

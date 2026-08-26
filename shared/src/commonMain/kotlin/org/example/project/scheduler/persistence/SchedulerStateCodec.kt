@@ -21,6 +21,7 @@ import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.DefaultSubtreeNode
+import org.example.project.scheduler.model.ForcedTaskSwitch
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.ScheduleUnitEntry
@@ -276,6 +277,9 @@ object SchedulerStateCodec {
             sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
             sleepingUntilMillis = sleepingUntilMillis,
             sleepingSinceMillis = sleepingSinceMillis,
+            // PRD §7 "Switch task": the outstanding refusal, flattened to its two scalars.
+            forcedSwitchTaskId = forcedSwitch?.taskId?.value,
+            forcedSwitchAtMillis = forcedSwitch?.atMillis,
             notificationLog = notificationLog.map { PersistedNotificationEntry(it.timeMillis, it.title, it.message) },
             supabaseUsageLog =
                 supabaseUsageLog.map {
@@ -596,6 +600,12 @@ object SchedulerStateCodec {
             sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
             sleepingUntilMillis = sleepingUntilMillis,
             sleepingSinceMillis = sleepingSinceMillis,
+            // PRD §7 "Switch task": both halves are needed for a refusal to mean anything, so a payload
+            // written before the button existed — or a half-written one — decodes to "nothing outstanding".
+            forcedSwitch =
+                forcedSwitchTaskId?.let { id ->
+                    forcedSwitchAtMillis?.let { at -> ForcedTaskSwitch(TaskId(id), at) }
+                },
             notificationLog = notificationLog.map { NotificationLogEntry(it.timeMillis, it.title, it.message) },
             supabaseUsageLog =
                 supabaseUsageLog.map {
@@ -845,6 +855,11 @@ private data class PersistedState(
     // The instant the current sleep session began (see [SchedulerState.sleepingSinceMillis]); a missing value
     // decodes to null (payloads written before past-sleep materialization existed decode with no live band).
     val sleepingSinceMillis: Long? = null,
+    // PRD §7 "Switch task" (see [org.example.project.scheduler.model.ForcedTaskSwitch]): the task the user
+    // refused and the instant they refused it. Missing values decode to no outstanding refusal — which is
+    // what every payload written before the button existed says.
+    val forcedSwitchTaskId: String? = null,
+    val forcedSwitchAtMillis: Long? = null,
     // The local-only diagnostic notification log; a missing value decodes to empty (payloads written before
     // the History Manager's Notifications column existed). Local-only — stripped from the sync fingerprint.
     val notificationLog: List<PersistedNotificationEntry> = emptyList(),

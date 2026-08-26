@@ -2,46 +2,50 @@
 
 ### System Overview
 
-The scheduler allocates tasks along an infinite timeline, starting from $t_{now}$. Its primary goal is to distribute tasks according to their assigned **priority percentages** while adapting dynamically to environmental constraints, user interactions, and time-based rules. 
-
-To handle an infinite timeline, the scheduler outputs a **finite list of parameterized rules** (e.g., prefixes and repeating cycles) rather than an endless sequence. This allows downstream systems to compute the schedule for any timeframe with $O(1)$ complexity.
+The scheduler returns a set of rules that define the task schedule for a given timeline to satisfy constraints and two optimization criteria.
 
 ### Core Constraints & Task Allocation
 
-#### 1. Priority & Granularity
-Each task has a **target priority percentage**. The scheduler must match these percentages across the smallest possible time window, avoiding unnecessarily large monolithic blocks (e.g., alternating two 50% tasks in 10-minute intervals rather than 1-hour intervals).
+#### Priority & Granularity
+Each task has a **target priority percentage**. One optimization goal is to match these percentages across the smallest possible time window, avoiding unnecessarily large monolithic blocks (e.g., alternating two 50% tasks in 10-minute intervals rather than 1-hour intervals). The time windows must be as small as possible while still allowing for the task's minimum execution time to be respected (e.g., task A 30min 33%, task B 15min 33%, task C 15min 33% => task A 30min, task B 15min, task C 15min, task B 15min, task C 15min...).
 
-#### 2. Soft Minimum Execution Time
-Each task has a defined minimum execution time, which acts as a heavily weighted tendency rather than a strict atomic lock. 
-* **Completion Pull:** When a task begins, there is a very strong algorithmic tendency to continue scheduling it until its minimum time is reached. This tendency weakens as the task approaches its minimum time.
-* **Interruption Decay:** If a task is cut short before reaching its minimum time (e.g., due to a restrictive period), the tendency to resume this specific task decays progressively as $t$ increases.
+#### Soft Minimum Execution Time
+Each task has a defined minimum execution time. Another optimization goal is to reach the minimum execution time for any task appearing in the timeline. The ideal situation is that each task panels spans at least its minimum execution time without interruption.
 
-#### 3. Restrictive Periods
-Periods are predefined time windows that forbid specific sets of tasks.
-* Periods can overlap. The restrictions of overlapping periods are additive (if Period A forbids Task 1, and Period B forbids Task 2, their overlap forbids both).
-* Uncovered instants forbid nothing.
-* Instants that forbid *all* tasks do not create priority deficits, as all tasks are deprived equally.
+#### Restrictive Period
+Restrictive periods are objects with a start and end time, and a kind.
+* Each task has a resilience value for each kind of restrictive period from 0 to 1. It is a multiplier for the task's priority percentage during that restrictive period. A resilience of 0 means the task is forbidden during that restrictive period, while a resilience of 1 means the task is unaffected.
+* Multiple restrictive periods can appear at a given time t.
 
-#### 4. Compensation via Exponential Decay
+#### Compensation via Exponential Decay
 Pre-placed tasks or restrictive periods inevitably create priority deficits for excluded tasks. The scheduler compensates for this by scheduling deprived tasks immediately before or after a blockage. To prevent massive, disruptive overcompensation, this mechanism uses an **exponential decay** model. The influence of the debt repayment decays over distance from the blockage.
-
-### Interaction & Performance Requirements
-
-* **The Playhead ($t_p$):** $t_p$ represents the current evaluation cursor. **Everything at $t < t_p$ is frozen and immutable.**
 
 ### Rule state evolution
 
 * **Rule State Definition:** A rule state is the set of tasks and their associated priority percentages and minimum execution time at a given moment in time.
 * **Rule State Evolution:** When there is one defined rule state, it stays the same forever. When multiple rule states are defined for specific moments in time, that means that between two consecutive rule states, the rule state transforms evenly from the first state to the second one.
 
-### Dynamic Period
 
-Includes the 20-second and 5-minute periods from Test 11, plus a new 15-minute period. The final 4 minutes of the 5-minute period, and the entirety of the 15-minute period, only allow Privileged tasks.
-* After a $\ge 15$-minute stretch of *Privileged only*, the next 20-second period is delayed by **20 minutes**.
-* After a $\ge 5$-minute stretch of *Privileged only*, the next 5-minute period is delayed by **1 hour**.
-* After a $\ge 15$-minute stretch of *Privileged only*, the next 15-minute period is delayed by **2 hours**.
+### $t_p$ and 3 Dynamic Restrictive Period
 
+* **$t_p$:** Some of the rules returned by the scheduler are parameterized by a variable $t_p$ (the present) that can change value anytime during the test. $t_p$ >= $t_pstart$, where $t_pstart$ is a constant. Every t such that $t_pstart$ <= t <= $t_p$ are the previous values of the $t_p$ variable. This means that the $t_p$ moves continuously forward in time.
+* **frozen past:** The schedule at t < $t_p$ never changes as $t_p$ increases.
+* **3 Dynamic Restrictive Period:** They are named the 20s, 5min and 15min periods, and have the kind "no one allowed". A period that is completely covered by a mix of *Privileged only* and "no one allowed" is called "not privileged not allowed". The placement of those three dynamic restrictive periods are parametrized by $t_p$ to place them anywhere in the timeline that doesn't violate the following rules:
+    * They can't overlap with another dynamic restrictive period.
+    * After a 20s or 5min period, no 20s period in the next **20 minutes**.
+    * After a $\ge 5$-minute stretch of "Privileged only" without any task, no 5min period in the next **1 hour**.
+    * After a $\ge 15$-minute stretch of "Privileged only" without any task, no 20s restrictive period in the next **20 minutes**, and no 15min period in the next **2 hours**.
+    * if the end of a 20s period touches a 5min or 15min period, they now starts at the start of the 20s period, and the 20s period is removed. Same thing for a 5min period touching a 15min period.
+* **$t_p$ 2 modes:** There are two "$t_p$ modes". In the tests, the switch between modes is done with a button.
+    * **Mode 1:** at $t_p$ there must be no "Privileged only" or "no one allowed" period. This means that if it reaches one of those periods, the passing of the $t_p$ line creates task panels.
+    * **Mode 2:** at $t_p$ there must be a "Privileged only" or "no one allowed" period.
+* **dragged period:** One of the consequences of those rules is that if a 20s period is placed at t, that $t_p$ is in mode 1 and is reaching t, it would continuously delay 20s period (while creating task panels in its passing).
 
+### Starting timeline
+The starting timeline can have pre-placed tasks and restrictive periods. They never change except for dynamic restrictive periods or the two modes of $t_p$.
+
+### Alternative Schedules:
+The returned set of rules must also give for every $t_p$ the task that must be scheduled if the task scheduled by the scheduler can't be scheduled now. When it happens, a program would simply read the rules, set this new task starting at $t_p$, and run the scheduler again with this new schedule.
 
 ### Progressive Calculation:
-The scheduler doesn't need to calculate the right schedule for the entire timeline, but if the definitive schedule is found for t < $t_1$, then 10 seconds later the definitive schedule must be found for t < $t_1$ + 10 minutes. As time passes, the scheduler returns one set of rule after the other to satisfy this pace. If exact schedules cannot be found in time, approved approximation strategies must be used. When the definitive schedule is found at a given time t, that means that up to t the definitive choice for the task panels has been made, as well as for when the 
+The scheduler doesn't need to calculate the right schedule for the entire timeline, but if the definitive schedule is found for t < $t_1$, then 10 seconds later the definitive schedule must be found for t < $t_1$ + 10 minutes. As time passes, the scheduler returns one set of rule after the other to satisfy this pace. If exact schedules cannot be found in time, approved approximation strategies must be used. When the definitive schedule is found at a given time t, that means that up to t the definitive choice for the task panels (parameterized by $t_p$) has been made, as well as the alternative schedule.

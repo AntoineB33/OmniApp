@@ -11,6 +11,33 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Switch task" — the button that refuses the task the now-line is on (PRD §7, ADR 0011) — SHIPPED 2026-08-26
+
+- **New lateral-menu button, "Switch task", with the system-wide chord `Ctrl+Shift+Alt+Z`.** It refuses the
+  task the now-line is sitting on, so the plan starts a different one from that instant. The chord is claimed
+  the same way the other two are (`GlobalShortcut.SwitchTask`, one more `Chord` row in the Windows actual, one
+  more branch in `App.kt`'s `installGlobalHotkeys`) — it is wanted precisely while the user is inside the work
+  they have decided to get off, which is when OmniApp is not the focused window.
+- **It is expressed as the walk's `last`, not as a ban.** `SchedulerState.forcedSwitch`
+  (`ForcedTaskSwitch(taskId, atMillis)`) is handed to `PlanWalk.setLast` by `fillSchedule`. Reusing the
+  never-twice-in-a-row rule is what keeps the refusal cheap and correct: the refused task's virtual clock is
+  untouched (so it loses none of its share and returns at the second slot), and it inherits the rule's own
+  escape — a task nothing else can replace still runs rather than the period being left empty. A now-line on
+  no task at all is a no-op.
+- **It is honoured until it is granted, and read off the recorded past.**
+  `SchedulerDomain.liveForcedSwitchTask` keeps the refusal live until some *other* task has actually been
+  served past `atMillis`, so the re-plans that happen in between (a rule change, the hourly staleness bound, a
+  pulled snapshot) cannot quietly hand the same task back, and a chain of re-plans still equals one long plan.
+  `advanceSchedule` drops the marker at the tick that banks that other task's work.
+- **Deliberately NOT in `schedulingSignature`.** `SchedulerIntent.ForceTaskSwitch` re-plans inside its own
+  reducer (the press *is* the calculation event, like `RemoveRecordPeriod`). In the signature, the tick that
+  drops the spent marker would fire a second, un-refused re-plan.
+- Authoritative: persisted (two flat scalars in the codec, absent ⇒ no refusal) and synced (whole-value
+  `pickNullable` in `SnapshotMerge` — never a task from one device paired with an instant from the other);
+  not an Undo/Redo unit. `ForcedTaskSwitchTest` pins the pick, the sole-candidate escape, the no-op, how long
+  the refusal lives, the advance-tick GC and the codec compatibility.
+- Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy.
+
 ### The period editor, and what a grey period clears (PRD §8, ADR 0002) — SHIPPED 2026-08-24
 
 - **"Add a no-screen period" / "add an inactivity period" open an editor instead of laying a fixed hour.**

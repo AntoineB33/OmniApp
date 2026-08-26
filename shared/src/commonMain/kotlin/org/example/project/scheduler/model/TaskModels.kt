@@ -459,6 +459,32 @@ data class TaskPanel(
 )
 
 /**
+ * PRD §7 **"Switch task"** (the lateral-menu button and its `Ctrl+Shift+Alt+Z` chord): the user, looking at
+ * the now-line sitting on [taskId] at [atMillis], asked for *something else* to start there.
+ *
+ * It is expressed as a fact about the PAST rather than as a ban on the future, because that is the shape the
+ * scheduling model already has: the walk never picks the same task twice in a row
+ * ([org.example.project.scheduler.domain.PlanWalk.setLast]), so "the task the timeline just left off with" is
+ * exactly the lever this needs, and the refusal costs the plan nothing else — [taskId] is free again from the
+ * second slot on, with its virtual clock untouched. The one escape is the model's own: a task nobody can
+ * replace (the sole candidate in the period) still runs, since the alternative is leaving the timeline empty.
+ *
+ * **Live only while it is still outstanding.** The refusal is honoured by every re-plan until some *other*
+ * task has actually been served past [atMillis] — that is what "the request was granted" means, and it is
+ * read off the recorded past, so a chain of re-plans reaches the same schedule as one long plan (CLAUDE.md's
+ * resume contract). The reducer's advance tick drops the spent marker so it cannot linger in the payload.
+ *
+ * Authoritative user intent — nothing re-derives it — so it is persisted **and** synced, like the alarms;
+ * it is not an Undo/Redo unit (pressing the button changes no rule, exactly like the §7 switches).
+ */
+data class ForcedTaskSwitch(
+    /** The task the now-line was on when the user pressed the button — the one refused at [atMillis]. */
+    val taskId: TaskId,
+    /** The instant the refusal was made; the plan must start something else here. */
+    val atMillis: Long,
+)
+
+/**
  * A UI cell that points to a [taskId] (or null for placeholders/empty cells).
  * Multiple cells can point to the same [taskId] across different parents/lists.
  */
