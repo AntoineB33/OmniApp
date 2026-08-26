@@ -1,1460 +1,1056 @@
 #!/usr/bin/env python3
 """
-test_configs.py
-The scheduler test configurations, and the checks the moving-period cases owe.
+test_configs_v2.py
+The `scheduler_v2` test configurations, and the checks each family owes.
 
-Tests 1-9 are static: one call to the scheduler, one rule list.
-Tests 10 and 11 have a period that *slides*, and the displayer moves it. The
-rules for them come from the same scheduler as every other test -- `MovingWindow`
-derives a rule list that is affine in the period's position t_p, so the display
-substitutes into it instead of scheduling again.
-Test 12 is three days long, with 21 tasks, a night every 24h and a grid of
-breaks the line reaches one at a time -- dragging each one, as test 11 drags
-its 20s window, until a long enough stretch of privileged-only time discharges
-it. No single prefix+cycle describes that, so `ProgressiveWindow` derives a
-CHAIN of rules and settles it link by link from t=0 outward, fast enough that
-the definitive part of the schedule grows by far more than the ten minutes per
-ten seconds the requirement asks for -- and the rules at the line itself are
-fitted affine in t_p, one regime at a time, so following it is arithmetic. The
-line waits at the origin while that happens, over a schedule being planned
-whole, and teleports to t=24h the moment the first day of it is definitive; the
-sweep runs from there.
-Test 13 is test 12 with the PERCENTAGES sliding as well, from one arrangement
-at t_p=24h to another at t_p=48h -- the two states the window draws under its
-task table, and outside which the nearer one is held: the same environment, the
-same kind of answer, each link (and the rules at the line) made to satisfy the
-percentages of exactly the position it is made from.
-Test 14 is the same environment stripped to the bone, over EIGHT days: test 12's
-tasks -- A of 45 minutes at 50%, and twenty others of 45 minutes sharing the
-other 50% -- and nothing in the way but the nights. Nothing slides, so the chain
-is all that is left of test 12's machinery, and what is left of the answer is the
-arrangement alone: 50/50 between A and the twenty over a CYCLE, at the
-granularity the README asks for -- A every other slot with the twenty taking
-turns in between, not one block of A as long as all twenty of theirs together --
-each morning resuming the run the night interrupted. It is the case that caught
-the pick reading the virtual clock as a plain time: `served/p` said that every
-one of the twenty outranked A the moment A had taken one slot, so the twenty
-took twenty slots in a row and A held 5% of the first day. What a task is owed is
-counted in ITS OWN slots (`Scheduler._claims`), and the twenty interleave with A
-from the first morning. Eight days is what makes that a MEASUREMENT rather than
-a shape: a cycle here is 1800 minutes of schedulable time, two working days, so
-three days were a cycle and a half and the cold start at the head of them was
-most of what the percentages saw. Four whole cycles leave the opening turn
-where it belongs, a rounding error.
+This is `test_configs.py`'s counterpart for the second implementation: the same
+fourteen cases, stated in `scheduler_v2`'s vocabulary (tasks with a resilience
+per kind of restrictive period, periods with a kind, one `Scheduler` per case),
+and the checks that say whether the answers are the ones `tests.md` and
+`README.md` describe.
+
+Three families, and the difference between them is what the answer IS:
+
+* Tests 1-9b are STATIC: one environment, one walk, one timeline. What they owe
+  is the two optimisation criteria (percentages, granularity), the minimums,
+  no idling, and an alternative named at every rule.
+* Tests 10 and 11 SLIDE: a period of the case's own moves with t_p
+  (`Scheduler(sliding=...)`), so the answer is a rule list parameterised by the
+  line's position. What they owe on top is the frozen past, and -- test 11 --
+  the collision rule: the moment the sliding 20s window's right edge touches
+  the waiting five-minute stretch, the window is gone for good and the stretch
+  is what slides, having teleported one window-width to the left.
+* Tests 12-14 are PROGRESSIVE: three days (eight, for test 14) that no single
+  pass answers in one go, so the schedule is settled link by link with a front
+  moving along it. What they owe on top is the pace (ten minutes of definitive
+  schedule per ten seconds of work), the recurrence bars of the three dynamic
+  periods, and the resume contract -- a chain of links must be the same
+  schedule as one long plan, or a partial answer is not an answer.
+
+Run the checks:  uv run test_configs_v2.py --verify
+The display is `tests_displayer_v2.py`, which draws exactly these cases.
 """
 
-import functools
-import itertools
-import time
-from fractions import Fraction
-from math import inf
+from __future__ import annotations
 
-from scheduler_logic import (
+import time
+from dataclasses import dataclass, field, replace
+from fractions import Fraction
+
+import scheduler_v2 as sv
+from scheduler_v2 import (
+    DAY,
+    DEFAULT_DYNAMICS,
+    HOUR,
     IDLE,
-    ProgressiveWindow,
-    MAX_RULES,
-    MovingWindow,
-    Placement,
+    KIND_NO_S,
+    KIND_NO_TASK,
+    SECOND,
+    DynamicSpec,
+    Environment,
     Scheduler,
-    Task,
-    as_blocks,
+    block,
+    clip,
+    coalesce,
     frac,
     human,
-    human_s,
+    period,
     resulting_shares,
-    stamp,
-    truncate,
+    same_timeline,
+    state,
+    task,
 )
 
-WINDOW = Fraction(1, 3)          # the 20 s period both moving cases carry
+WINDOW = 20 * SECOND             # the 20 s period both sliding cases carry
+
+
+# --------------------------------------------------------------------------- #
+#  the shape of a case
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class Case:
+    """One test: what it is, the scheduler that answers it, and how it moves.
+
+    `sweep` is how many seconds a full pass of t_p takes in the display; a
+    static case has none. `tp_start` / `tp_sweep` are test 12's two positions:
+    the line waits at the first while the chain settles and teleports to the
+    second when the day under it is definitive.
+    """
+    number: str
+    title: str
+    note: str
+    sched: Scheduler
+    span: Fraction
+    kind: str = "static"                 # static | moving | progressive
+    sweep: float = 0.0
+    tp_start: Fraction = Fraction(0)
+    tp_sweep: Fraction | None = None
+    targets: dict = field(default_factory=dict)
+
+    @property
+    def name(self):
+        return f"Test {self.number}"
+
+    @property
+    def heading(self):
+        return f"{self.name}: {self.title}"
+
+    def fresh(self):
+        """A case is one scheduler instance (`tests.md`: "one instance of the
+        same scheduler per test"), so a check that needs a clean line asks for
+        the case to be built again rather than reaching into this one."""
+        return CASES_BY_NUMBER[self.number]()
+
+
+# --------------------------------------------------------------------------- #
+#  building blocks
+# --------------------------------------------------------------------------- #
+
+def banned(specs, kind, names, value=0):
+    """The same tasks, with `names` given a resilience of `value` to `kind`.
+
+    A "period that forbids C" is, in this model, a period of a kind C has no
+    resilience to -- so a case states its bans by naming a kind and handing it
+    to the tasks it bites.
+    """
+    out = []
+    for spec in specs:
+        if spec.name in names:
+            res = dict(spec.resilience)
+            res[kind] = frac(value)
+            out.append(replace(spec, resilience=tuple(sorted(res.items()))))
+        else:
+            out.append(spec)
+    return tuple(out)
 
 
 def AB():
-    return [Task("A", priority=50, min_time=10, color="#FF9999"),
-            Task("B", priority=50, min_time=10, color="#99CCFF")]
+    return (task("A", 50, 10, s=True, color="#FF9999"),
+            task("B", 50, 10, s=True, color="#99CCFF"))
 
 
-# Every builder takes the field's decay constant as a MULTIPLE of the case's own
-# default tau (its minimal period), so one knob means the same thing to a
-# 60-minute case and to a three-day one. A scale of 1 is the default in every
-# sense: the options are left exactly as they were, so nothing on record moves.
-
-def _tau_kw(tau_scale):
-    return {} if frac(tau_scale) == 1 else {'tau_scale': tau_scale}
-
-def _scaled(case, tau_scale):
-    """One static case, with the scale folded into its scheduler options."""
-    case = list(case) + [{}] * max(0, 6 - len(case))
-    case[5] = dict(case[5] or {}, **_tau_kw(tau_scale))
-    return tuple(case)
-
-def build_cases(tau_scale=1):
-    cases = [
-        (
-            ("Test 1: Normal 50/50 Split (10min each)\n-> Pure periodic cycle, no prefix."),
-            AB(), 180, [], []
-        ),
-        (
-            ("Test 2: Pre-placed event owned by nobody\n-> MAINTENANCE excludes everybody equally, so it creates no field: they simply resume alternating."),
-            AB(), 240, [{'name': 'MAINTENANCE', 'start': 40, 'duration': 60, 'color': '#CCCCCC'}], []
-        ),
-        (
-            ("Test 3: Periods constraint\n-> C is banned from t=105 on, forever: it is abundantly present just before the door closes, then A and B share the timeline."),
-            [Task("A", priority=40, min_time=10, color="#FF9999"), Task("B", priority=40, min_time=10, color="#99CCFF"), Task("C", priority=20, min_time=10, color="#99FF99")],
-            300, [], [{'start': 105, 'end': inf, 'forbidden': ['C']}]
-        ),
-        (
-            ("Test 4: Three tasks (A: 50% 20m, B: 30% 10m, C: 20% 15m)\n-> Minimums force a 75min period; shares are exact."),
-            [Task("A", priority=50, min_time=20, color="#FF9999"), Task("B", priority=30, min_time=10, color="#99CCFF"), Task("C", priority=20, min_time=15, color="#99FF99")],
-            400, [], []
-        ),
-        (
-            ("Test 5: Lopsided priorities (A 90% / B 10%) + a B block at the start\n-> A gets a denser, bounded catch-up around it, not the full 396min it is owed."),
-            [Task("A", priority=90, min_time=10, color="#FF9999"), Task("B", priority=10, min_time=10, color="#99CCFF")],
-            600, [{'name': 'B', 'start': 0, 'duration': 40, 'color': "#99CCFF"}], []
-        ),
-        (
-            ("Test 6: 1h block of A at t=100 (tau = 20min)\n-> B's slots swell as the block approaches and shrink back after it: exponential decay of the influence, both sides."),
-            AB(), 400, [{'name': 'A', 'start': 100, 'duration': 60, 'color': "#FF9999"}], []
-        ),
-        (
-            ("Test 7: 10h block of A at t=100 - 10x longer than test 6\n-> B's presence around it is wider and denser, but only a few times bigger: log, not proportional."),
-            AB(), 1000, [{'name': 'A', 'start': 100, 'duration': 600, 'color': "#FF9999"}], [], {}, 2
-        ),
-        (
-            ("Test 8: B banned from t=100 to t=400 - a window, not a block\n-> same field, same ramps: B swells before the ban and right after it re-opens, then decays back to the cycle."),
-            AB(), 700, [], [{'start': 100, 'end': 400, 'forbidden': ['B']}], {}, 2
-        ),
-        (
-            ("Test 9: same 300min ban, but split into ten consecutive windows\n-> merged into one exclusion: ten short bans in a row are one long ban, not ten small ones."),
-            AB(), 700, [], [{'start': 100 + 30 * i, 'end': 130 + 30 * i, 'forbidden': ['B']} for i in range(10)], {}, 2
-        ),
-        (
-            ("Test 9b: two OVERLAPPING periods, on a timeline they do not cover\n-> what an instant refuses is the SUM of the periods over it: C is out from 100, B joins it at 200, and where the two overlap A holds the timeline alone."),
-            [Task("A", priority=40, min_time=10, color="#FF9999"), Task("B", priority=30, min_time=10, color="#99CCFF"), Task("C", priority=30, min_time=10, color="#99FF99")],
-            700, [], [{'start': 100, 'end': 300, 'forbidden': ['C']},
-                      {'start': 200, 'end': 400, 'forbidden': ['B']}], {}, 2
-        )
-    ]
-    if frac(tau_scale) == 1: return cases
-    return [_scaled(c, tau_scale) for c in cases]
-
-
-def get_schedule_rules(tasks, pre_placed=None, periods=None, t_now=0, **kw):
-    """One static case -> its rule list: (prefix blocks, cycle blocks, plan)."""
-    timeline = [Placement(p['name'], frac(p['start']), frac(p['start']) + frac(p['duration']),
-                          p.get('color', '#CCCCCC'))
-                for p in (pre_placed or [])]
-    plan = Scheduler(tasks, **kw).plan(timeline=timeline, periods=periods or [],
-                                       t_now=t_now, max_rules=MAX_RULES)
-    return as_blocks(plan.prefix), as_blocks(plan.cycle), plan
-
-def case_parts(case):
-    """A case tuple -> (title, tasks, total duration, pre-placed, periods, options)."""
-    options = case[5] if len(case) > 5 else {}
-    return case[0], case[1], case[2], case[3], case[4], options
+def _static(number, title, note, tasks, span, blocks=(), periods=(), **kw):
+    sched = Scheduler([state(0, tasks)],
+                      Environment(periods=periods, blocks=blocks),
+                      dynamics=(), horizon=frac(span), **kw)
+    return Case(number, title, note, sched, frac(span))
 
 
 # --------------------------------------------------------------------------- #
-#  Test 10: one 20 s period, accepting only A, sliding right
+#  Tests 1-9b: static
 # --------------------------------------------------------------------------- #
 
-TEST10_SPAN = 60
+def case1():
+    return _static("1", "normal 50/50 split, 10min minimums",
+                   "a pure alternation at the smallest granularity the minimums allow: "
+                   "10min each, never one 90-minute block apiece",
+                   AB(), 180)
 
-def test10_moving(tp):
-    return [{'start': tp, 'end': tp + WINDOW, 'forbidden': ['B'],
-             'label': f"{human_s(20)}: only A"}]
 
-TEST10_TITLE = (
-    f"Test 10 (dynamic rule list): a {human_s(20)} period accepting only A slides right from t_p\n"
-    "-> while it fits inside a slot of A nothing moves; once it reaches B, A stretches over it,\n"
-    "   and once it is inside B, B is suspended and resumes on the far side."
-)
+def case2():
+    return _static("2", "a pre-placed hour owned by nobody",
+                   "MAINTENANCE excludes everybody equally, so it deprives nobody "
+                   "relative to anybody and creates no field: A and B resume alternating",
+                   AB(), 240, blocks=[block("MAINTENANCE", 40, 60)])
+
+
+def case3():
+    tasks = banned((task("A", 40, 10, s=True, color="#FF9999"),
+                    task("B", 40, 10, s=True, color="#99CCFF"),
+                    task("C", 20, 10, s=True, color="#99FF99")), "no C", ["C"])
+    return _static("3", "C is banned from t=105 on, for good",
+                   "C is abundantly present just before the door closes -- the field "
+                   "reaches ahead of a blockage as well as behind it -- then A and B share the rest",
+                   tasks, 300, periods=[period(105, 300, "no C", "no C")])
+
+
+def case4():
+    tasks = (task("A", 50, 20, s=True, color="#FF9999"),
+             task("B", 30, 10, s=True, color="#99CCFF"),
+             task("C", 20, 15, s=True, color="#99FF99"))
+    return _static("4", "three tasks: A 50%/20min, B 30%/10min, C 20%/15min",
+                   "the minimums force a 75-minute period and the shares come out exact",
+                   tasks, 400)
+
+
+def case5():
+    tasks = (task("A", 90, 10, s=True, color="#FF9999"),
+             task("B", 10, 10, s=True, color="#99CCFF"))
+    return _static("5", "lopsided 90/10, with 40 minutes of B pre-placed at the start",
+                   "A gets a denser, BOUNDED catch-up around the block -- not the "
+                   "396 minutes a full repayment would owe it",
+                   tasks, 600, blocks=[block("B", 0, 40)])
+
+
+def case6():
+    return _static("6", "an hour of A pre-placed at t=100",
+                   "B's slots swell as the block approaches and shrink back after it: "
+                   "the influence decays exponentially on both sides",
+                   AB(), 400, blocks=[block("A", 100, 60)])
+
+
+def case7():
+    return _static("7", "ten hours of A at t=100 -- ten times test 6",
+                   "B's presence around it is wider and denser, but only a few times "
+                   "bigger: the amplitude is logarithmic in the length, not proportional",
+                   AB(), 1000, blocks=[block("A", 100, 600)], tau_scale=2)
+
+
+def case8():
+    tasks = banned(AB(), "no B", ["B"])
+    return _static("8", "B banned from t=100 to t=400 -- a window, not a block",
+                   "same field, same ramps: B swells before the ban and again as soon "
+                   "as it re-opens, then decays back into the cycle",
+                   tasks, 700, periods=[period(100, 400, "no B", "no B")], tau_scale=2)
+
+
+def case9():
+    tasks = banned(AB(), "no B", ["B"])
+    windows = [period(100 + 30 * i, 130 + 30 * i, "no B", "no B") for i in range(10)]
+    return _static("9", "the same 300-minute ban, split into ten consecutive windows",
+                   "ten short bans in a row are ONE long ban: they merge into a single "
+                   "exclusion rather than ten small ones",
+                   tasks, 700, periods=windows, tau_scale=2)
+
+
+def case9b():
+    tasks = (task("A", 40, 10, s=True, color="#FF9999"),
+             task("B", 30, 10, s=True, color="#99CCFF"),
+             task("C", 30, 10, s=True, color="#99FF99"))
+    tasks = banned(banned(tasks, "no C", ["C"]), "no B", ["B"])
+    return _static("9b", "two OVERLAPPING periods, on a timeline they do not cover",
+                   "what an instant refuses is the SUM of the periods over it: C is out "
+                   "from 100, B joins it at 200, and where they overlap A holds the timeline alone",
+                   tasks, 700,
+                   periods=[period(100, 300, "no C", "no C"),
+                            period(200, 400, "no B", "no B")], tau_scale=2)
 
 
 # --------------------------------------------------------------------------- #
-#  Test 11: the same, in a crowded timeline -- and a second period the sliding
-#  one drags along with it
+#  Test 10: one 20 s period accepting only A, sliding right with the line
 # --------------------------------------------------------------------------- #
 
-TEST11_SPAN = 60
+TEST10_SPAN = frac(60)
+
+
+def test10_sliding(t_p, _mode):
+    return [period(t_p, t_p + WINDOW, "no B", "20s: only A")]
+
+
+def case10():
+    tasks = banned(AB(), "no B", ["B"])
+    sched = Scheduler([state(0, tasks)], Environment(), dynamics=(),
+                      sliding=test10_sliding, horizon=TEST10_SPAN)
+    return Case("10", "a 20s period accepting only A slides right from t_p",
+                "while it fits inside a slot of A nothing moves; once it reaches B, A "
+                "stretches over it; once it is inside B, B is suspended and resumes on the far side",
+                sched, TEST10_SPAN, kind="moving", sweep=25.0)
+
+
+# --------------------------------------------------------------------------- #
+#  Test 11: the same window, accepting NOTHING, in a crowded timeline -- and a
+#  five-minute stretch it drags off its home the moment it touches it
+# --------------------------------------------------------------------------- #
+
+TEST11_SPAN = frac(60)
 STRETCH_HOME = frac(45)          # where the five-minute stretch waits
 STRETCH_HEAD = frac(1)           # its first minute accepts nobody
 STRETCH_LEN = frac(5)
 
-def tasks11():
-    return [Task("A", priority=40, min_time=4, color="#FF9999"),
-            Task("B", priority=20, min_time=5, color="#99CCFF"),
-            Task("C", priority=20, min_time=5, color="#99FF99"),
-            Task("D", priority=20, min_time=5, color="#FFCC66")]
 
-TEST11_PRE = [{'name': 'MAINTENANCE', 'start': 18, 'duration': 6, 'color': '#CCCCCC'},
-              {'name': 'A', 'start': 40, 'duration': 4, 'color': '#FF9999'}]
-
-TEST11_PERIODS = [{'start': 8, 'end': 12, 'forbidden': ['C', 'D']},
-                  {'start': 30, 'end': 34, 'forbidden': ['A', 'B', 'C', 'D']},
-                  {'start': 52, 'end': 56, 'forbidden': ['B', 'D']}]
-
-def reached_stretch(tp):
-    """Has the sliding window reached the waiting five-minute stretch?
+def reached_stretch(t_p) -> bool:
+    """Has the sliding window reached the waiting stretch?
 
     Contact is the instant the window's right edge touches STRETCH_HOME, so the
     window is still whole at that position and gone from the next one on."""
-    return frac(tp) + WINDOW > STRETCH_HOME
-
-def stretch_start(tp):
-    """Where the five-minute stretch sits when the window starts at tp.
-
-    It waits at STRETCH_HOME until the sliding period reaches it, and from then
-    on it starts at t_p -- so at the instant of contact it teleports one window
-    width (20 s) to the left, and is dragged from there on."""
-    return frac(tp) if reached_stretch(tp) else STRETCH_HOME
-
-def test11_moving(tp):
-    """The sliding periods at position tp.
-
-    The 20s window exists only until it reaches the stretch: from contact on it
-    is gone forever, and what slides is the stretch it dragged off its home."""
-    s = stretch_start(tp)
-    everyone = ['A', 'B', 'C', 'D']
-    window = [] if reached_stretch(tp) else [
-        {'start': frac(tp), 'end': frac(tp) + WINDOW, 'forbidden': everyone,
-         'label': f"{human_s(20)}: nothing"}]
-    return window + [
-        {'start': s, 'end': s + STRETCH_HEAD, 'forbidden': everyone,
-         'label': "1min: nothing"},
-        {'start': s + STRETCH_HEAD, 'end': s + STRETCH_LEN, 'forbidden': ['B', 'C', 'D'],
-         'label': "4min: only A"}]
-
-TEST11_TITLE = (
-    "Test 11: the same sliding 20s period accepting NOTHING, in a crowded timeline\n"
-    "-> pre-placed blocks, three static periods, four tasks; plus a 1min-nothing + 4min-A-only\n"
-    f"   stretch waiting at {stamp(STRETCH_HOME)}: once the window reaches it the stretch starts at t_p (a 20s\n"
-    "   teleport left) and the 20s window is gone forever -- from then on the stretch is what slides."
-)
+    return frac(t_p) + WINDOW > STRETCH_HOME
 
 
-def build_moving_cases(tau_scale=1):
-    """The cases whose rule list is *dynamic*: instead of constant durations it
-    carries durations affine in the sliding period's position, plus the range of
-    positions each rule list is valid for."""
-    kw = _tau_kw(tau_scale)
-    return [
-        (TEST10_TITLE,
-         MovingWindow(AB(), span=TEST10_SPAN, moving=test10_moving, **kw),
-         25),
-        (TEST11_TITLE,
-         MovingWindow(tasks11(), span=TEST11_SPAN, moving=test11_moving,
-                      pre_placed=TEST11_PRE, periods=TEST11_PERIODS,
-                      breaks=[STRETCH_HOME - WINDOW], **kw),
-         35),
-    ]
+def stretch_start(t_p) -> Fraction:
+    """Where the stretch sits when the window starts at t_p: at home until the
+    window reaches it, and at the line from then on -- so at the instant of
+    contact it teleports one window-width (20 s) to the left."""
+    return frac(t_p) if reached_stretch(t_p) else STRETCH_HOME
+
+
+def test11_sliding(t_p, _mode):
+    s = stretch_start(t_p)
+    out = []
+    if not reached_stretch(t_p):
+        out.append(period(t_p, t_p + WINDOW, KIND_NO_TASK, "20s: nothing"))
+    out.append(period(s, s + STRETCH_HEAD, KIND_NO_TASK, "1min: nothing"))
+    out.append(period(s + STRETCH_HEAD, s + STRETCH_LEN, "only A", "4min: only A"))
+    return out
+
+
+def case11():
+    tasks = (task("A", 40, 4, s=True, color="#FF9999"),
+             task("B", 20, 5, s=True, color="#99CCFF"),
+             task("C", 20, 5, s=True, color="#99FF99"),
+             task("D", 20, 5, s=True, color="#FFCC66"))
+    tasks = banned(tasks, "only A", ["B", "C", "D"])
+    tasks = banned(tasks, "no CD", ["C", "D"])
+    tasks = banned(tasks, "no BD", ["B", "D"])
+    env = Environment(
+        periods=[period(8, 12, "no CD", "no C, D"),
+                 period(30, 34, KIND_NO_TASK, "nothing"),
+                 period(52, 56, "no BD", "no B, D")],
+        blocks=[block("MAINTENANCE", 18, 6), block("A", 40, 4)])
+    sched = Scheduler([state(0, tasks)], env, dynamics=(),
+                      sliding=test11_sliding, horizon=TEST11_SPAN)
+    return Case("11", "the sliding 20s period accepts NOTHING, in a crowded timeline",
+                "pre-placed blocks, three static periods, four tasks, and a "
+                f"1min-nothing + 4min-only-A stretch waiting at {human(STRETCH_HOME)}: the moment "
+                "the window touches it the window is gone for good and the stretch is what slides",
+                sched, TEST11_SPAN, kind="moving", sweep=35.0)
 
 
 # --------------------------------------------------------------------------- #
-#  Test 12: three days, 21 tasks, a night every 24h, and a whole GRID of breaks
-#  the sliding line consumes one by one
+#  Tests 12-14: progressive
 # --------------------------------------------------------------------------- #
-
-HOUR = frac(60)
-DAY = 24 * HOUR
-TEST12_SPAN = 3 * DAY
-# The line starts at the ORIGIN: the scheduler is handed the three days whole
-# and the chain settles them from t=0, which is what the display opens on. The
-# moment the definitive part reaches the end of the first day the line teleports
-# onto it (`ProgressiveWindow.tp_home`) and the sweep begins there -- so the
-# first day's breaks are never reached by the line, and are the ones still
-# standing when it has swiped every other one.
-TEST12_TP_START = frac(0)        # where the line waits while the chain settles
-TEST12_TP_SWEEP = DAY            # ...and where it teleports to, and sweeps from
 
 PRIVILEGED = [f"P{i}" for i in range(1, 11)]
 ORDINARY = [f"N{i}" for i in range(1, 11)]
-TEST12_TASKS = ["A"] + PRIVILEGED + ORDINARY
-UNPRIVILEGED = ["A"] + ORDINARY  # everybody the privileged-only periods refuse
+
+# The privileged-only periods refuse everybody else, and "everybody else" is
+# what the README marks "s" -- so KIND_NO_S IS "privileged only" here, and the
+# three dynamic periods need no kind of their own.
+TEST12_SPAN = 3 * DAY
+TEST12_TP_START = Fraction(0)    # where the line waits while the chain settles
+TEST12_TP_SWEEP = DAY            # ...and where it teleports to, and sweeps from
+TEST14_SPAN = 8 * DAY
+
 
 def _shade(base, i, n):
-    """One family of colours, so a glance tells the three groups apart."""
     r, g, b = base
     k = 0.72 + 0.28 * (i / max(n - 1, 1))
     return "#%02X%02X%02X" % tuple(min(255, int(c * k)) for c in (r, g, b))
 
-def tasks12():
-    """Task A at 50%, and twenty tasks sharing the other 50% -- half of them
-    privileged. Every one of them needs 45 minutes at a time, which is what
-    makes the break grid interesting: the gap between two breaks is 20min."""
-    out = [Task("A", priority=50, min_time=45, color="#FF7B7B")]
-    out += [Task(n, priority=2.5, min_time=45, color=_shade((110, 170, 255), i, 10))
+
+def tasks12(main_share=50, privileged_share=Fraction(5, 2)):
+    """A at 50%, twenty others sharing the rest, half of them privileged.
+
+    Everybody needs 45 minutes at a time, which is what makes the break grid
+    interesting: the gap between two 20-second periods is twenty minutes.
+    """
+    ordinary_share = (frac(100) - main_share - 10 * privileged_share) / 10
+    out = [task("A", main_share, 45, s=True, color="#FF7B7B")]
+    out += [task(n, privileged_share, 45, s=False, color=_shade((110, 170, 255), i, 10))
             for i, n in enumerate(PRIVILEGED)]
-    out += [Task(n, priority=2.5, min_time=45, color=_shade((255, 190, 90), i, 10))
+    out += [task(n, ordinary_share, 45, s=True, color=_shade((255, 190, 90), i, 10))
             for i, n in enumerate(ORDINARY)]
-    return out
+    return tuple(out)
 
-# ---- the environment that repeats every day -------------------------------- #
 
-def test12_nights(span=TEST12_SPAN):
-    """23h-8h: only the privileged may run -- and inside it 0h-8h: nobody.
+def nights12(span=TEST12_SPAN):
+    """23h-8h: only the privileged may run -- and inside it, 0h-8h: nobody.
 
-    They overlap, and overlapping periods add up, so what the night really says
-    is "privileged only from 23h, nobody from midnight". The stretch before t=0
-    is there too: the timeline does not begin with a blank slate."""
-    out = [{'start': -HOUR, 'end': frac(0), 'forbidden': set(UNPRIVILEGED),
-            'label': "23h-24h: privileged only"},
-           {'start': -DAY, 'end': frac(0), 'forbidden': set(TEST12_TASKS),
-            'label': "t<0: nothing"}]
-    for d in range(4):
+    They overlap, and overlapping periods multiply, so what the night says is
+    "privileged only from 23h, nobody from midnight"."""
+    out = []
+    for d in range(int(span / DAY) + 2):
         s = d * DAY
-        if s - HOUR < span and s > 0:
-            out.append({'start': s - HOUR, 'end': s, 'forbidden': set(UNPRIVILEGED),
-                        'label': "23h-24h: privileged only"})
+        if 0 < s <= span:
+            out.append(period(s - HOUR, s, KIND_NO_S, "23h-24h: privileged only"))
         if s < span:
-            out.append({'start': s, 'end': s + 8 * HOUR, 'forbidden': set(TEST12_TASKS),
-                        'label': "0h-8h: nothing"})
-    return [w for w in out if w['start'] < span]
+            out.append(period(s, s + 8 * HOUR, KIND_NO_TASK, "0h-8h: nothing"))
+    return [p for p in out if p.start < span]
 
-# ---- the three breaks, and where the rules put them ------------------------ #
 
-BREAK_LEN = {'20s': WINDOW, '5min': frac(5), '15min': frac(15)}
-# after a stretch that discharges it, when the next one of that kind is due
-BREAK_GAP = {'20s': frac(20), '5min': frac(60), '15min': frac(120)}
-# how long a privileged-only stretch must be to discharge each kind ('20s' is
-# discharged by any of the three periods as well, which is what makes it recur)
-BREAK_NEEDS = {'20s': frac(15), '5min': frac(5), '15min': frac(15)}
-
-def privileged_only_stretches(periods):
-    """The maximal intervals where no ordinary task may run.
-
-    "Only tasks from privileges" and "no task at all" are the same thing here:
-    an instant that allows nobody allows, a fortiori, only privileged tasks. It
-    is what makes the night one nine-hour stretch rather than two, and what
-    makes the five-minute break (one minute of nothing, then four of privileged
-    only) one five-minute stretch."""
-    edges = sorted({frac(b) for w in periods for b in (w['start'], w['end'])
-                    if b is not None and b != inf})
-    out = []
-    for lo, hi in itertools.pairwise(edges):
-        mid = (lo + hi) / 2
-        banned = set()
-        for w in periods:
-            if frac(w['start']) <= mid < frac(w['end']): banned |= set(w['forbidden'])
-        if not all(n in banned for n in ORDINARY + ["A"]): continue
-        if out and out[-1][1] == lo: out[-1] = (out[-1][0], hi)
-        else: out.append((lo, hi))
-    return out
-
-def test12_grid(span=TEST12_SPAN):
-    """Where the three periods fall -- the rules of the requirement, applied.
-
-    Each kind is due a fixed time after the last stretch that discharged it:
-    the 20s one 20min after any of the three periods or any quarter-hour of
-    privileged-only time, the 5min one an hour after five privileged-only
-    minutes, the 15min one two hours after fifteen. A break is itself such a
-    stretch, so placing one re-arms the others; the grid that comes out is what
-    the timeline must satisfy, at every t_p."""
-    nights = privileged_only_stretches(test12_nights(span))
-    out = []
-    for i, (_lo, night_end) in enumerate(nights):
-        due = {k: night_end + BREAK_GAP[k] for k in BREAK_LEN}
-        stop = nights[i + 1][0] if i + 1 < len(nights) else span
-        while True:
-            # when two fall due together the longer one governs: resting fifteen
-            # minutes has already discharged the five-minute one
-            kind = min(due, key=lambda k: (due[k], -BREAK_LEN[k]))
-            start, end = due[kind], due[kind] + BREAK_LEN[kind]
-            if end > stop or start >= span: break
-            out.append((start, end, kind))
-            for k in BREAK_LEN:
-                if BREAK_LEN[kind] >= BREAK_NEEDS[k] or k == '20s':
-                    due[k] = end + BREAK_GAP[k]
-                else:
-                    due[k] = max(due[k], end)
-    return sorted(out)
-
-def test12_break_periods(entries):
-    """One grid entry -> the periods it is made of.
-
-    The 20s one accepts nobody. The 5min one is test 11's stretch: a minute of
-    nothing, then four minutes the privileged may work in. The 15min one is
-    fifteen minutes of privileged-only."""
-    out = []
-    for s, e, kind in entries:
-        if kind == '20s':
-            out.append({'start': s, 'end': e, 'forbidden': set(TEST12_TASKS),
-                        'label': f"{human_s(20)}: nothing"})
-        elif kind == '5min':
-            out.append({'start': s, 'end': s + 1, 'forbidden': set(TEST12_TASKS),
-                        'label': "1min: nothing"})
-            out.append({'start': s + 1, 'end': e, 'forbidden': set(UNPRIVILEGED),
-                        'label': "4min: privileged only"})
-        else:
-            out.append({'start': s, 'end': e, 'forbidden': set(UNPRIVILEGED),
-                        'label': "15min: privileged only"})
-    return out
-
-TEST12_GRID = test12_grid()
-
-def test12_static():
-    """The part of the environment the sliding line never reaches: the nights,
-    and the first day's breaks (the line teleports over that day rather than
-    sweeping it, so nothing in it is ever dragged)."""
-    return test12_nights() + test12_break_periods(
-        [g for g in TEST12_GRID if g[0] < TEST12_TP_SWEEP])
-
-TEST12_SWEPT = [g for g in TEST12_GRID if g[0] >= TEST12_TP_SWEEP]
-
-def test12_swept(_tp):
-    """The environment the line leaves BEHIND it: nothing but the standing one.
-
-    A break the line has reached is owed, and an owed break is at the line --
-    never behind it. So the timeline the past is read off holds no break after
-    the first day at all, which is what "the t_p line swiped them all" means and
-    what keeps a break from existing twice at once."""
-    return []
-
-def test12_moving(tp):
-    """The environment STANDING ahead of the line: the grid, whole.
-
-    This is what the far end of the timeline is drawn from -- out there no break
-    has been reached, so each one sits exactly where the recurrence rules put
-    it. What the line itself sees is `test12_at_line`."""
-    tp = frac(tp)
-    return test12_break_periods([g for g in TEST12_SWEPT if g[1] > tp])
-
-# ---- the break the line drags, and what discharges it ---------------------- #
-
-def test12_discharges(kind):
-    """The instants at which the line stops owing a break of `kind`.
-
-    A stretch of privileged-only time discharges a break when it lasts at least
-    what that kind asks for, and the next one of that kind is due its own gap
-    afterwards -- so the instant that ends the owing and the instant the next
-    one is measured from are THE SAME, per kind, and the grid and the drag can
-    never disagree about when a timer started (`check_break_rules` holds the
-    grid to exactly these)."""
-    return [e for s, e in privileged_only_stretches(test12_nights())
-            if e - s >= BREAK_NEEDS[kind]]
-
-TEST12_DISCHARGES = {k: test12_discharges(k) for k in BREAK_LEN}
-
-@functools.lru_cache(maxsize=4096)
-def test12_owed(tp):
-    """The breaks the line has REACHED and nothing has served, and how far the
-    longest of them reaches -- test 11's rule, with three kinds of break and a
-    whole grid of them instead of one window and one stretch.
-
-    Reaching one is not taking it. The line freezes what is behind it, so a
-    break it has reached never actually elapses: it is OWED, and an owed break
-    is at the line and slides with it. What ends that is a stretch of
-    privileged-only time long enough to discharge that kind -- here the nights.
-
-    Contact is edge to edge, as in test 11: a break is reached when the one
-    being dragged REACHES it, not when the line does -- which is what makes the
-    five-minute stretch teleport 20 seconds to the left the moment the dragged
-    20s window touches it. So the reach is a fixed point: absorbing a longer
-    break lengthens the drag, which may bring a further one into contact."""
-    tp = frac(tp)
-    reach = frac(0)
-    while True:
-        got = []
-        for s, e, k in TEST12_SWEPT:
-            if s > tp + reach: continue
-            served = [d for d in TEST12_DISCHARGES[k] if s < d <= tp]
-            if not served: got.append((s, e, k))
-        nxt = max([BREAK_LEN[k] for _s, _e, k in got], default=frac(0))
-        if nxt == reach: return got, reach
-        reach = nxt
-
-def test12_pinned(tp):
-    """Every owed break, at the line -- their exclusion lists ADDED, not one of
-    them chosen.
-
-    Overlapping periods sum, so absorbing is not swallowing: a fifteen-minute
-    privileged-only break that has taken in a five-minute one still owes that
-    one's first minute of absolute silence, and a 20s window inside either of
-    them keeps its own. What "the longest governs" really names is the shape
-    that comes out of the sum -- one stop, as long as the longest, whose head is
-    as closed as the strictest of them asks."""
-    got, _reach = test12_owed(tp)
-    kinds = sorted({k for _s, _e, k in got}, key=lambda k: BREAK_LEN[k])
-    tp = frac(tp)
-    out = test12_break_periods([(tp, tp + BREAK_LEN[k], k) for k in kinds])
-    for w in out: w['label'], w['pinned'] = w['label'] + " (owed, at the line)", True
-    return out
-
-def test12_at_line(tp):
-    """The environment AT THE LINE: the grid it has not reached yet, plus every
-    break it is dragging. This is what the scheduler is handed -- the drag is an
-    ordinary period, not a transform applied to a plan made without it."""
-    tp = frac(tp)
-    _got, reach = test12_owed(tp)
-    return test12_break_periods([g for g in TEST12_SWEPT if g[0] > tp + reach]) \
-        + test12_pinned(tp)
-
-TEST12_TITLE = (
-    "Test 12 (progressive rule list): three days, 21 tasks of 45min, a night every 24h,\n"
-    "-> and a grid of 20s / 5min / 15min breaks the line reaches one by one, DRAGS as test 11\n"
-    "   drags its 20s window, and merges into the longest one it touches. No single prefix+cycle\n"
-    "   describes this, so the rules are a CHAIN of links settled from t=0 outward: the\n"
-    "   definitive part grows while the rest still changes."
+#: test 12's dynamic periods have a SHAPE: the last four minutes of the
+#: five-minute one, and the whole of the fifteen-minute one, accept the
+#: privileged tasks. The README's plain form (all three accept nobody) is
+#: `DEFAULT_DYNAMICS`, which tests 10-11 and `scheduler_v2 --check` use.
+DYNAMICS_12 = (
+    DynamicSpec("20s", WINDOW),
+    DynamicSpec("5min", frac(5), ((Fraction(0), Fraction(1), KIND_NO_TASK),
+                                  (Fraction(1), Fraction(4), KIND_NO_S))),
+    DynamicSpec("15min", frac(15), ((Fraction(0), Fraction(15), KIND_NO_S),)),
 )
 
 
-# --------------------------------------------------------------------------- #
-#  Test 13: test 12 again, with the PERCENTAGES THEMSELVES sliding
-# --------------------------------------------------------------------------- #
+def privileged_only(weights, specs) -> bool:
+    """Test 12's reading of a "stretch": one where no unprivileged task may
+    run, whether or not a privileged one is running in it.
 
-# The two ends the requirement names: the first state is the one in force at
-# t=24h -- where the line lands and the sweep begins (`TEST12_TP_SWEEP`) -- and
-# the second the one it reaches half a sweep later. Before the first and after
-# the second the nearer state stands, so the first day (settled while the line
-# waits at the origin) and the last day are each planned under one arrangement.
-TEST13_BLEND_START = TEST12_TP_SWEEP   # the state the sweep starts on
-TEST13_BLEND_END = 2 * DAY       # the second state is reached at t_p = 48h
-TEST13_BLEND_ENDS = (TEST13_BLEND_START, TEST13_BLEND_END)
-
-# Task A hands half of its share to the ten privileged tasks over the day the line
-# crosses first. The ten ordinary ones keep theirs, which is what holds the minimal
-# period -- max(m_i/p_i), and so the field's decay constant tau -- still at the
-# 45min/2.5% of test 12 at every position: the blend changes who the timeline
-# is for, not the scale the compensation works at.
-TEST13_FROM = {"A": frac(50), **{n: frac(2.5) for n in PRIVILEGED + ORDINARY}}
-TEST13_TO = {"A": frac(25), **{n: frac(5) for n in PRIVILEGED},
-             **{n: frac(2.5) for n in ORDINARY}}
-
-def test13_priorities(tp):
-    """The percentages at position tp: affine from the first state at t_p=24h
-    to the second at t_p=48h, and held at whichever end is nearer outside that.
-
-    Held rather than extrapolated, at BOTH ends: a percentage is a share of a
-    hundred, and a line drawn past a state it was fitted to would take one of
-    them negative on the third day and above its own start before the first. The
-    blend is a transition between two arrangements, so outside it the nearer
-    arrangement stands -- which is what makes the schedule continuous at 24h and
-    at 48h rather than kinked into nonsense at either."""
-    width = TEST13_BLEND_END - TEST13_BLEND_START
-    x = min(max(frac(tp) - TEST13_BLEND_START, frac(0)), width) / width
-    return {n: TEST13_FROM[n] + (TEST13_TO[n] - TEST13_FROM[n]) * x for n in TEST13_FROM}
-
-def tasks13(tp):
-    """Test 12's tasks, with the percentages of exactly position tp.
-
-    This is what `blend` hands the scheduler: a plan made from tp is made to
-    satisfy the priorities AT tp, constant across its own reach. A rule list is
-    a statement about the schedule from tp -- not about how the targets go on
-    moving after it -- and the next position of the line makes its own."""
-    p = test13_priorities(tp)
-    return [Task(t.name, p[t.name], t.min_time, t.color) for t in tasks12()]
-
-TEST13_TITLE = (
-    "Test 13 (progressive rule list, SLIDING PERCENTAGES): test 12's three days, nights,\n"
-    "-> tasks and grid of breaks -- but the priorities themselves slide, task A handing half\n"
-    "   its share to the ten privileged ones between t_p=24h and t_p=48h -- the two end\n"
-    "   states the window draws under its task table. The answer is the same\n"
-    "   kind of object: one chain of rules, each link (and the rules at the line) made to\n"
-    "   satisfy the percentages of exactly the position it is made from."
-)
+    The README's own reading is stricter (nobody at all runs there) and is the
+    default in `DynamicPlanner`; this is the variant `tests.md` states, and the
+    two differ exactly on a privileged-only stretch.
+    """
+    return all(weights[s.name] == 0 for s in specs if s.s)
 
 
-def progressive_window(tasks, blend=None, tau_scale=1, blend_ends=None):
-    """Tests 12 and 13's window -- one environment, and the percentages either
-    fixed (12) or sliding with the position they are planned from (13).
+def case12():
+    sched = Scheduler([state(0, tasks12())], Environment(periods=nights12()),
+                      dynamics=DYNAMICS_12, horizon=TEST12_SPAN,
+                      stretch_when=privileged_only)
+    targets = {"A": Fraction(1, 2), "privileged": Fraction(1, 4), "ordinary": Fraction(1, 4)}
+    return Case("12", "three days, 21 tasks, a night a day, and the three dynamic periods",
+                "the line waits at the origin while the chain settles the three days from "
+                "t=0, teleports to 24h the moment the first day is definitive, and sweeps "
+                "from there -- so the first day's periods are the ones still standing when "
+                "the line has dragged away every other one",
+                sched, TEST12_SPAN, kind="progressive", sweep=60.0,
+                tp_start=TEST12_TP_START, tp_sweep=TEST12_TP_SWEEP, targets=targets)
 
-    One constructor for both, so that the only difference between the two cases
-    is the thing the requirement names: `blend`. It is also what lets a check
-    build a window of its own without touching the ones on display.
 
-    `blend_ends` are the two positions the sliding percentages are pinned at --
-    what the window has to SHOW, since a table read at t_p alone says what the
-    priorities are here and nothing about what they are sliding between."""
-    return ProgressiveWindow(tasks, span=TEST12_SPAN, moving=test12_moving,
-                             sliding=test12_at_line, swept=test12_swept,
-                             tp_start=TEST12_TP_START, tp_teleport=TEST12_TP_SWEEP,
-                             periods=test12_static(),
-                             marks=[g[1] for g in TEST12_SWEPT],
-                             max_rules=29, local_rules=12, blend=blend,
-                             blend_ends=blend_ends, **_tau_kw(tau_scale))
+def case13():
+    first = tasks12(50, Fraction(5, 2))
+    second = tasks12(25, Fraction(5))
+    sched = Scheduler([state(DAY, first), state(2 * DAY, second)],
+                      Environment(periods=nights12()), dynamics=DYNAMICS_12,
+                      horizon=TEST12_SPAN, stretch_when=privileged_only)
+    return Case("13", "test 12 with the PERCENTAGES sliding as well",
+                "A hands half its share to the ten privileged tasks between t_p=24h and "
+                "t_p=48h; outside that span the nearer state is held, and the plan at the "
+                "line satisfies the percentages of exactly the position it is made from",
+                sched, TEST12_SPAN, kind="progressive", sweep=60.0,
+                tp_start=TEST12_TP_START, tp_sweep=TEST12_TP_SWEEP)
 
-# --------------------------------------------------------------------------- #
-#  Test 14: eight days, 21 tasks, and nothing in the way but the nights
-# --------------------------------------------------------------------------- #
-
-TEST14_SPAN = 8 * DAY
-TEST14_NIGHT_FROM = 23 * HOUR    # each night closes the timeline at 23h...
-TEST14_NIGHT_TO = 8 * HOUR       # ...and opens it again at 8h the next morning
-TEST14_OTHERS = [f"B{i}" for i in range(1, 21)]
-TEST14_TASKS = ["A"] + TEST14_OTHERS
 
 def tasks14():
-    """Test 12's arrangement, with nothing in the way but the nights: task A at
-    50%, and twenty tasks sharing the other 50% -- 2.5% each. Every one of them
-    needs 45 minutes at a time.
+    out = [task("A", 50, 45, s=True, color="#FF7B7B")]
+    out += [task(f"T{i:02d}", Fraction(5, 2), 45, s=True,
+                 color=_shade((255, 190, 90), i, 20)) for i in range(20)]
+    return tuple(out)
 
-    So the answer is no longer an alternation, and the percentages are no longer
-    the whole of what it owes. Half the timeline for A and 2.5% each for the
-    twenty is satisfied by an even alternation of A with one of them (A every
-    other slot, each of the twenty once per twenty of A's) and equally by
-    handing A one block as long as all twenty of theirs put together -- the
-    README's own headline distinction, "A 10min, B 10min" against "A 1h, B 1h",
-    at the scale a 45-minute minimum and a twentyfold priority ratio put it.
-    This is the smallest case that asks it of a REAL ratio rather than of two
-    equal tasks, with nothing in the way but the nights to blame an answer on.
 
-    And it asks the nights the same question twice over: a granularity that
-    coarse makes the RESUME the case's second subject, since a block that long
-    is one the evening suspends and the morning has to carry on with -- eight
-    times over, now, rather than twice.
-
-    Nothing else in the suite asks it: every case whose tasks share one period
-    `m/p` is ordered identically by the raw clock and by the slot claim, and a
-    twentyfold priority ratio at one minimum is the smallest arrangement where
-    the two part company."""
-    return [Task("A", priority=50, min_time=45, color="#FF7B7B")] + [
-        Task(n, priority=2.5, min_time=45, color=_shade((110, 170, 255), i, 20))
-        for i, n in enumerate(TEST14_OTHERS)]
-
-def test14_nights(span=TEST14_SPAN):
-    """23h to 8h, every day: no task at all.
-
-    One period per night, crossing midnight -- so the timeline opens INSIDE one
-    (the night that began the day before t=0: the timeline does not begin with a
-    blank slate) and the working day is the 15 hours between them.
-
-    A night refuses everybody. By the README that deprives nobody relative to
-    anybody, so it builds no compensation field of its own: what it does to the
-    schedule is not a boost around it but simply an interruption -- the evening's
-    run is suspended and the morning resumes it."""
+def nights14(span=TEST14_SPAN):
     out = []
-    for d in range(-1, span // DAY + 1):
-        s = d * DAY + TEST14_NIGHT_FROM
-        if s >= span: break
-        out.append({'start': s, 'end': (d + 1) * DAY + TEST14_NIGHT_TO,
-                    'forbidden': set(TEST14_TASKS), 'label': "23h-8h: nothing"})
+    for d in range(int(span / DAY) + 1):
+        s = d * DAY + 23 * HOUR
+        if s < span:
+            out.append(period(s, min(s + 9 * HOUR, span), KIND_NO_TASK, "23h-8h: nothing"))
     return out
 
-TEST14_TITLE = (
-    "Test 14 (progressive rule list): EIGHT days, task A of 45min at 50% and twenty other\n"
-    "-> tasks of 45min sharing the other 50% (2.5% each), and nothing in the way but the\n"
-    "   nights -- no task at all from 23h to 8h. Far too long for one prefix+cycle (the\n"
-    "   environment changes twice a day), so the answer is test 12's chain over test 12's own\n"
-    "   tasks, with the breaks and the privileged-only periods taken away. 50/50 between A and\n"
-    "   the twenty over a cycle is only half of what it owes: a twentyfold ratio at a 45min\n"
-    "   minimum is the scale at which the README's OWN headline distinction bites -- A every\n"
-    "   other slot, each of the twenty once per twenty of A's, rather than one block of A as\n"
-    "   long as all twenty of theirs together -- and each morning resuming the run the night\n"
-    "   suspended. Stripped on purpose: with nothing in the way but the nights, a coarse answer\n"
-    "   or a chain that fails to resume shows here as a block anyone can point at, not as a\n"
-    "   percentage nobody can trace. It is the case that caught the pick reading the virtual\n"
-    "   clock as a plain time: the twenty then took twenty slots in a row and A held 5% of the\n"
-    "   first day. What a task is owed is counted in its OWN slots. The span is EIGHT days\n"
-    "   because a cycle here is 1800 minutes of schedulable time -- two working days -- so\n"
-    "   three days were a cycle and a half and the opening turn was most of what the\n"
-    "   percentages saw; four whole cycles make the measurement the statement. One long plan\n"
-    "   gives A 49.4%, one slot short of the target, and that slot is the cold start. The CHAIN\n"
-    "   gives 47.5%: at 109h15 it resolves a tie among the twenty differently from the long\n"
-    "   walk, and from day 5 on it is three slots down -- a resume divergence three days were\n"
-    "   too short to reach, and the reason the span is what it is."
-)
 
-def progressive_window14(tau_scale=1):
-    """Test 14's window: the same chain machinery as test 12, over an environment
-    with nothing sliding in it.
-
-    `moving` is what STANDS ahead of the line, and here the whole environment
-    stands still -- the nights are static periods and there is no break for the
-    line to reach, drag or sweep. So the standing grid is empty, `sliding`
-    defaults to it, and `swept` is left out: with nothing ever dragged, the past
-    the line leaves behind it is the chain's own timeline."""
-    return ProgressiveWindow(tasks14(), span=TEST14_SPAN, moving=lambda _tp: [],
-                             periods=test14_nights(), tp_start=frac(0),
-                             max_rules=29, local_rules=12, **_tau_kw(tau_scale))
+def case14():
+    sched = Scheduler([state(0, tasks14())], Environment(periods=nights14()),
+                      dynamics=(), horizon=TEST14_SPAN)
+    targets = {"A": Fraction(1, 2), "others": Fraction(1, 2)}
+    return Case("14", "eight days, 21 tasks, nothing in the way but the nights",
+                "nothing slides, so what is left is the ARRANGEMENT: A every other slot "
+                "with the twenty taking turns in between -- not one block of A as long as "
+                "all twenty of theirs together -- each morning resuming the run the night "
+                "interrupted. Eight days is four whole cycles, so the percentages are a "
+                "measurement and not a cold start",
+                sched, TEST14_SPAN, kind="progressive", sweep=90.0, targets=targets)
 
 
-def build_progressive_cases(tau_scale=1):
-    """The cases whose rule list is derived a link at a time, while it is shown."""
-    return [
-        (TEST12_TITLE, progressive_window(tasks12(), tau_scale=tau_scale), 45),
-        (TEST13_TITLE, progressive_window(tasks13(TEST13_BLEND_START), blend=tasks13,
-                                          tau_scale=tau_scale,
-                                          blend_ends=TEST13_BLEND_ENDS), 45),
-        (TEST14_TITLE, progressive_window14(tau_scale=tau_scale), 45),
-    ]
+BUILDERS = [case1, case2, case3, case4, case5, case6, case7, case8, case9, case9b,
+            case10, case11, case12, case13, case14]
+CASES_BY_NUMBER = {b().number if False else n: b for n, b in
+                   zip(["1", "2", "3", "4", "5", "6", "7", "8", "9", "9b",
+                        "10", "11", "12", "13", "14"], BUILDERS)}
+
+
+def build_cases():
+    """Tests 1-9b: one environment, one walk, one timeline."""
+    return [b() for b in BUILDERS[:10]]
+
+
+def build_moving_cases():
+    """Tests 10 and 11: a period of the case's own slides with the line."""
+    return [case10(), case11()]
+
+
+def build_progressive_cases():
+    """Tests 12-14: settled link by link, with a front moving along them."""
+    return [case12(), case13(), case14()]
+
+
+def build_all():
+    return build_cases() + build_moving_cases() + build_progressive_cases()
 
 
 # --------------------------------------------------------------------------- #
-#  drawing the timeline a rule list describes
+#  reading a timeline
 # --------------------------------------------------------------------------- #
 
-def timeline_of(mw, tp, horizon=None):
-    """What the display shows at position tp: the frozen past, then the rules.
+def timeline_of(case, t_p=None, mode=1, upto=None):
+    t_p = case.tp_start if t_p is None else frac(t_p)
+    return case.sched.timeline(t_p, mode, upto=upto)
 
-    Nothing here schedules -- `blocks_at` is a binary search over the regimes
-    and some arithmetic. This is the whole point of the dynamic rule list."""
-    horizon = mw.span if horizon is None else frac(horizon)
-    tp = frac(tp)
-    out = [(p.start, p.end, p.task) for p in mw.history_at(tp) if p.end > p.start]
-    prefix, cycle = mw.blocks_at(tp)
-    t = tp
-    for blk in prefix:
-        if t >= horizon: return out
-        out.append((t, t + blk['duration'], blk['name']))
-        t += blk['duration']
-    if not cycle: return out
-    while t < horizon:
-        for blk in cycle:
-            if t >= horizon: break
-            out.append((t, t + blk['duration'], blk['name']))
-            t += blk['duration']
-    return out
 
-def occupant(tl, t):
-    for s, e, n in tl:
-        if s <= t < e: return n
-    return None
+def covers_completely(tl, lo, hi) -> str:
+    """A timeline must be a partition of its span: no gap, no overlap."""
+    cur = frac(lo)
+    for pl in tl:
+        if pl.start < cur - sv.EPS:
+            return f"overlap at {human(pl.start)}"
+        if pl.start > cur + sv.EPS:
+            return f"gap at {human(cur)}..{human(pl.start)}"
+        cur = pl.end
+    if abs(cur - frac(hi)) > sv.EPS:
+        return f"stops at {human(cur)}, not at {human(hi)}"
+    return ""
 
-def past_shape(tl, cut):
-    """The occupancy strictly before `cut`, coalesced.
 
-    Two timelines describe the same past when the same task is running at every
-    instant of it -- where a block happens to be CUT is not part of that, and
-    the break the line drags cuts the block it stands in the middle of. So the
-    comparison is made on this shape rather than on the block list."""
+def idle_where_allowed(case, tl, t_p, mode):
+    """Every idle stretch, if any, that some task was allowed in."""
+    env = case.sched.environment(t_p, mode)
+    specs = case.sched.specs_at(t_p)
+    shares = case.sched.walk_at(t_p).p
     out = []
-    for s, e, n in tl:
-        if s >= cut: break
-        e = min(e, cut)
-        if e <= s: continue
-        if out and out[-1][2] == n and out[-1][1] == s: out[-1] = (out[-1][0], e, n)
-        else: out.append((s, e, n))
+    for pl in tl:
+        if pl.task != IDLE:
+            continue
+        mid = (pl.start + pl.end) / 2
+        w = env.weights(specs, shares, mid)
+        free = [n for n, v in w.items() if v > 0]
+        if free:
+            out.append(f"idle at {human(mid)} where {', '.join(sorted(free)[:3])} could run")
     return out
 
-def first_disagreement(t1, t2, cut, tol):
-    pts = sorted({p for s, e, _ in t1 + t2 for p in (s, e) if 0 <= p <= cut} | {frac(0), cut})
-    for lo, hi in itertools.pairwise(pts):
-        if hi - lo <= tol: continue
-        mid = (lo + hi) / 2
-        if occupant(t1, mid) != occupant(t2, mid): return mid
-    return None
 
-def blocked_at(mw, tp, name, t):
-    """Is `name` refused the instant t -- by a period, or by somebody's block?
+def short_placements(case, tl, t_p):
+    """Placements below their task's minimum that no edge and no horizon
+    explains -- the minimum is soft, but it is only ever given up to the
+    environment."""
+    walk = case.sched.walk_at(t_p)
+    edges = set(case.sched.environment(t_p, 1).bounds) | {case.span, case.sched.t_start}
+    out = []
+    for pl in tl:
+        if pl.task not in walk.minimum:
+            continue
+        if pl.duration >= walk.minimum[pl.task]:
+            continue
+        if pl.start in edges or pl.end in edges:
+            continue
+        out.append(f"{pl.task} for {human(pl.duration)} at {human(pl.start)} "
+                   f"(minimum {human(walk.minimum[pl.task])})")
+    return out
 
-    A run may legitimately be shorter than its minimum only when something it
-    cannot pass ends it. Everything else that shortens one is a bug.
 
-    Periods overlap, so every one covering t has a say: the first one found
-    saying nothing about `name` does not mean `name` is welcome there."""
-    for p in mw.pre:
-        if p.task != name and p.start <= t < p.end: return True
-    for w in list(mw.sliding(frac(tp))) + list(mw.periods):
-        end = w.get('end')
-        if frac(w['start']) <= t and (end is None or end == inf or t < frac(end)):
-            if name in w['forbidden']: return True
-    return False
+def group_shares(tl, groups):
+    got = resulting_shares(tl)
+    out = {}
+    for label, names in groups.items():
+        out[label] = sum((got.get(n, Fraction(0)) for n in names), Fraction(0))
+    return out
 
-def service_runs(tl, tasks):
-    """Consecutive service of one task.
 
-    An interruption nobody runs in -- idling, or a block owned by nobody --
-    suspends a run instead of ending it, so it is skipped here exactly as the
-    scheduler's own `run_served` skips it."""
-    runs = []
-    for s, e, n in tl:
-        if n not in tasks: continue
-        if runs and runs[-1][0] == n:
-            runs[-1][1] += e - s
-        else:
-            runs.append([n, e - s, e])
-        runs[-1][2] = e
-    return runs
+def shares_line(tl, limit=6) -> str:
+    got = resulting_shares(tl)
+    items = sorted(got.items(), key=lambda kv: (-kv[1], kv[0]))
+    head = ", ".join(f"{n} {float(v) * 100:.1f}%" for n, v in items[:limit])
+    return head + (f", +{len(items) - limit} more" if len(items) > limit else "")
 
 
 # --------------------------------------------------------------------------- #
-#  the checks
+#  what a case IS, and what it answered -- in a form a person can read
 # --------------------------------------------------------------------------- #
 
-def check_atomic_block(verbose=True):
-    """The README's own example, verbatim.
+def state_text(rule_state) -> str:
+    total = sum((t.priority for t in rule_state.tasks), Fraction(0)) or Fraction(1)
+    rows = [f"{t.name} {float(t.priority / total) * 100:g}% min {human(t.min_time)}"
+            + ("" if t.s else " (not marked s)")
+            for t in rule_state.tasks]
+    return f"  at t = {human(rule_state.at)}:\n" + "".join(f"    - {r}\n" for r in rows)
 
-    "if task B is scheduled at t=0 and a period p that only allows task A is at
-    t=1, and task B has a minimum time of 2, then the whole period p is
-    scheduled with nothing."
 
-    It is the one rule a sliding period runs into constantly, so it is worth
-    stating on its own rather than only inside test 10's regimes."""
-    tasks = [Task("A", priority=50, min_time=2, color="#FF9999"),
-             Task("B", priority=50, min_time=2, color="#99CCFF")]
-    plan = Scheduler(tasks).plan(
-        periods=[{'start': 1, 'end': 3, 'forbidden': ['B']}], t_now=1,
-        history=[Placement("B", frac(0), frac(1), "#99CCFF")])
-    got = [(s.task, s.duration) for s in plan.prefix]
-    # the whole period empty, and B resuming afterwards with at least the minute
-    # of its minimum it still owes (it may get more: the ban is as long as B's
-    # own minimum, so it also earns B some compensation around itself)
-    ok = (got[:1] == [(IDLE, frac(2))]
-          and len(got) > 1 and got[1][0] == "B" and got[1][1] >= frac(1))
+def configuration_text(case) -> str:
+    """The test configuration: every rule state and the starting timeline.
+
+    `tests.md` asks the copy button for exactly this -- the pre-placed tasks and
+    the restrictive periods that are NOT the three dynamic ones, since those are
+    the scheduler's own answer and not part of the question.
+    """
+    out = [f"{case.heading}", f"  ({case.note})", "",
+           f"span: {human(case.sched.t_start)} .. {human(case.span)}",
+           f"line starts at: {human(case.tp_start)}"
+           + (f", teleports to {human(case.tp_sweep)}" if case.tp_sweep else ""),
+           "", "rule states:"]
+    for st in case.sched.states.states:
+        out.append(state_text(st).rstrip("\n"))
+    out += ["", "starting timeline:"]
+    if case.sched.base.blocks:
+        for b in case.sched.base.blocks:
+            out.append(f"  - pre-placed {b.task}: {human(b.start)} .. {human(b.end)}")
+    if case.sched.base.periods:
+        for p in case.sched.base.periods:
+            label = p.label or p.kind
+            out.append(f"  - period {label}: {human(p.start)} .. {human(p.end)}  [{p.kind}]")
+    if not case.sched.base.blocks and not case.sched.base.periods:
+        out.append("  - nothing pre-placed")
+    if case.sched.dynamics:
+        names = ", ".join(f"{d.label} ({human(d.duration)})" for d in case.sched.dynamics)
+        out.append(f"  + the three dynamic periods, placed by the scheduler: {names}")
+    if case.sched.sliding is not None:
+        out.append("  + one period of the case's own, sliding with t_p")
+    return "\n".join(out)
+
+
+def rules_text(case, t_p=None, mode=1, max_rules=60) -> str:
+    """The set of rules the scheduler returns at this position of the line."""
+    sched = case.sched
+    t_p = sched.t_p if t_p is None else frac(t_p)
+    reg = sched.rules(t_p, mode)
+    lines = reg.lines()
+    head, rules = lines[0], lines[1:]
+    out = [f"rules at t_p = {human(t_p)} (mode {mode}):", "  " + head]
+    out += rules[:max_rules]
+    if len(rules) > max_rules:
+        out.append(f"  ... {len(rules) - max_rules} more")
+    alt = sched.alternative_at(t_p, mode)
+    out.append(f"  alternative schedule at the line: {alt or '(nothing else may run)'}")
+    return "\n".join(out)
+
+
+def report_text(case, t_p=None, mode=1) -> str:
+    """Configuration + rules + what the schedule measured: the whole of what
+    the display's copy button puts on the clipboard."""
+    sched = case.sched
+    t_p = sched.t_p if t_p is None else frac(t_p)
+    tl = sched.timeline(t_p, mode)
+    parts = [configuration_text(case), "", rules_text(case, t_p, mode), "",
+             f"resulting shares (excluding what no task was allowed in): {shares_line(tl, 24)}"]
+    if case.kind == "progressive":
+        parts.append(f"definitive up to: {human(sched.front)} of {human(case.span)}")
+    return "\n".join(parts)
+
+
+# --------------------------------------------------------------------------- #
+#  the checks the static cases owe
+# --------------------------------------------------------------------------- #
+
+def verify_static(cases=None, verbose=True):
+    cases = build_cases() if cases is None else cases
+    fails = []
     if verbose:
-        print("--- the atomic block (the README's example) ---")
-        print("  B runs [0,1) of its 2min minimum, then a period accepts only A:")
-        print("  " + " | ".join(f"{n} {human(d)}" for n, d in got[:3]))
-        print("  PASS: the period is scheduled with nothing, and B resumes after it"
-              if ok else "  FAIL: expected the whole period empty, then B")
-        print()
-    return [] if ok else ["the atomic block example: the period was not left empty"]
-
-def positions(mw, samples):
-    """Every regime edge, both sides of it, plus an even sweep."""
-    grid = {mw.span * Fraction(i, samples) for i in range(samples)}
-    for r in mw.regimes:
-        for d in (Fraction(0), Fraction(-1, 6000), Fraction(1, 6000)):
-            v = r.lo + d
-            if 0 <= v < mw.span: grid.add(v)
-    return sorted(grid)
-
-def verify_moving(cases=None, samples=240, verbose=True, max_report=6):
-    cases = cases if cases is not None else build_moving_cases()
-    failures = check_atomic_block(verbose)
-    for title, mw, _sweep in cases:
-        fail = lambda m, title=title: failures.append(f"{title.splitlines()[0]}: {m}")
-        grid = positions(mw, samples)
-        worst = Fraction(0)
-
-        # 1. the rules ARE the scheduler. Fitted on a few positions, checked here
-        #    on positions they were never fitted on: without this the rule list
-        #    is a guess.
-        for tp in grid:
-            pre, cyc = mw.rules_of(tp)
-            want_pre, want_cyc = mw.blocks_at(tp)
-            if ([s.task for s in pre], [s.task for s in cyc]) != \
-               ([b['name'] for b in want_pre], [b['name'] for b in want_cyc]):
-                fail(f"t_p={stamp(tp)}: the rules give a different sequence than the scheduler")
-                continue
-            for got, want in ((pre, want_pre), (cyc, want_cyc)):
-                for x, y in zip(got, want):
-                    worst = max(worst, abs(x.duration - y['duration']))
-        if worst > mw.tol:
-            fail(f"rules deviate from the scheduler by {human(worst)}, over the {human(mw.tol)} epsilon")
-
-        # 2. everything at t < t_p stays frozen
-        prev_tp, prev_tl = None, None
-        for tp in grid:
-            tl = timeline_of(mw, tp)
-            if prev_tl is not None:
-                bad = first_disagreement(prev_tl, tl, prev_tp, mw.sliver)
-                if bad is not None:
-                    fail(f"frozen past broken at t={stamp(bad)} between t_p={stamp(prev_tp)} "
-                         f"and t_p={stamp(tp)} ({occupant(prev_tl, bad)} -> {occupant(tl, bad)})")
-            prev_tp, prev_tl = tp, tl
-
-        # 3. contiguity, and 4. minimum execution times
-        for tp in grid:
-            tl = timeline_of(mw, tp)
-            for (s1, e1, _), (s2, _e2, _) in itertools.pairwise(tl):
-                if e1 != s2 or e1 < s1:
-                    fail(f"t_p={stamp(tp)}: the timeline is not contiguous at {stamp(e1)}")
-                    break
-            # drawn past the span, so that a run the display simply cuts off is
-            # not mistaken for one the scheduler cut short
-            for name, served, end in service_runs(timeline_of(mw, tp, mw.span * 2), mw.minimum):
-                if end > mw.span: continue
-                if served < mw.minimum[name] - mw.sliver and not blocked_at(mw, tp, name, end):
-                    fail(f"t_p={stamp(tp)}: {name} served {human(served)} < its minimum "
-                         f"{human(mw.minimum[name])} and nothing stopped it (ends {stamp(end)})")
-                    break
-
-        # 5. the cycle every regime settles into matches the target percentages
-        for r in mw.regimes:
-            total = sum((x.a for x in r.cycle), Fraction(0))
-            if not total: continue
-            got = {}
-            for x in r.cycle:
-                got[x.task] = got.get(x.task, Fraction(0)) + x.a / total
-            for n, p in mw.p.items():
-                if abs(got.get(n, Fraction(0)) - p) > Fraction(1, 1000):
-                    fail(f"regime {r.label}: {n} takes {float(got.get(n, 0)) * 100:.3f}% "
-                         f"of the cycle, target {float(p) * 100:.3f}%")
-                    break
-
-        # 6. the rule list is finite, and 7. reading it is arithmetic
-        if mw.rule_count() > MAX_RULES:
-            fail(f"a regime carries {mw.rule_count()} rules, over the {MAX_RULES} cap")
-        t0 = time.perf_counter()
-        for tp in grid:
-            timeline_of(mw, tp, horizon=frac(tp) + 10)
-        draw = (time.perf_counter() - t0) / len(grid)
-        if draw > 10.0:
-            fail(f"reading the next 10 minutes off the rules takes {draw:.3f}s, over 10s")
-
+        print("--- tests 1-9b: one environment, one walk ---")
+    for case in cases:
+        tl = timeline_of(case)
+        bad = covers_completely(tl, case.sched.t_start, case.span)
+        if bad:
+            fails.append(f"{case.name}: the timeline is not a partition -- {bad}")
+        for line in idle_where_allowed(case, tl, case.tp_start, 1):
+            fails.append(f"{case.name}: {line}")
+        for line in short_placements(case, tl, case.tp_start)[:3]:
+            fails.append(f"{case.name}: {line}")
+        # Every rule the SCHEDULER made names an alternative -- where there is
+        # one to name. Two exemptions, and both are the absence of a choice
+        # rather than a missing answer: a pre-placed block is a fact of the
+        # starting timeline and not a pick, and a stretch only one task is
+        # allowed in has nothing to run instead.
+        env = case.sched.environment(case.tp_start, 1)
+        specs, shares = case.sched.specs_at(0), case.sched.walk_at(0).p
+        if len(shares) > 1:
+            for pl in tl:
+                if pl.task == IDLE or pl.alt:
+                    continue
+                mid = (pl.start + pl.end) / 2
+                if case.sched.base.block_at(mid) is not None:
+                    continue
+                if sum(1 for v in env.weights(specs, shares, mid).values() if v > 0) < 2:
+                    continue
+                fails.append(f"{case.name}: the rule at {human(pl.start)} names no alternative")
+                break
+        # the same case built twice is the same answer: a rule list is a
+        # function of the configuration and of nothing else
+        if not same_timeline(tl, timeline_of(case.fresh())):
+            fails.append(f"{case.name}: two builds of the same case disagree")
         if verbose:
-            print(f"--- {title.splitlines()[0]} ---")
-            print(f"  {len(mw.regimes)} regimes over [0, {stamp(mw.span)}], "
-                  f"at most {mw.rule_count()} rules each (cap {MAX_RULES})")
-            print(f"  checked at {len(grid)} positions of t_p; worst deviation from the "
-                  f"scheduler {human(worst)} (epsilon {human(mw.tol)})")
-            print(f"  the next 10 minutes read off the rules in {draw * 1000:.3f} ms "
-                  f"(budget 10s)")
-            mine = [f for f in failures if f.startswith(title.splitlines()[0])]
-            if mine:
-                print(f"  FAIL ({len(mine)}):")
-                for f in mine[:max_report]: print(f"    - {f.split(': ', 1)[1]}")
-            else:
-                print("  PASS: rules reproduce the scheduler, frozen past, contiguity, "
-                      "minimum times, exact cycle shares, O(1) rules")
-            print()
-    return failures
+            print(f"  {case.name:<8} {shares_line(tl)}")
+    if verbose:
+        _report(fails)
+    return fails
 
 
 # --------------------------------------------------------------------------- #
-#  the checks the progressive case owes
+#  the checks the sliding cases owe
+# --------------------------------------------------------------------------- #
+
+def positions(case, samples):
+    lo, hi = case.sched.t_start, case.span
+    return [lo + (hi - lo) * Fraction(i, samples) for i in range(samples + 1)]
+
+
+def verify_moving(cases=None, samples=90, verbose=True):
+    """The frozen past, the sliding rule of the case, and the rule list.
+
+    The line is walked forward across the whole span, committing as it goes --
+    which is what makes the past a fact rather than an intention -- and every
+    position owes a complete timeline, no idling where a task was allowed, and
+    agreement with everything the earlier positions committed.
+    """
+    cases = build_moving_cases() if cases is None else cases
+    fails = []
+    if verbose:
+        print("--- tests 10-11: the sliding period, and the frozen past ---")
+    for case in cases:
+        seen = []
+        line = case.sched
+        for t_p in positions(case, samples):
+            line.advance_to(t_p, 1)
+            tl = line.timeline()
+            bad = covers_completely(tl, line.t_start, case.span)
+            if bad:
+                fails.append(f"{case.name} at t_p={human(t_p)}: {bad}")
+            for text in idle_where_allowed(case, tl, t_p, 1)[:1]:
+                fails.append(f"{case.name} at t_p={human(t_p)}: {text}")
+            for pos, older in seen[-4:]:
+                if not same_timeline(clip(older, line.t_start, pos), clip(tl, line.t_start, pos)):
+                    fails.append(f"{case.name}: the schedule below {human(pos)} changed "
+                                 f"once the line reached {human(t_p)}")
+                    break
+            seen.append((t_p, tl))
+        fails += _check_case_specific(case)
+        if verbose:
+            tl = case.fresh().sched.timeline(case.span / 2, 1)
+            print(f"  {case.name:<8} {samples + 1} positions swept, "
+                  f"shares at mid-sweep: {shares_line(tl)}")
+    if verbose:
+        _report(fails)
+    return fails
+
+
+def _check_case_specific(case):
+    """What a sliding case owes beyond the family's rules."""
+    if case.number == "10":
+        return _check_test10(case.fresh())
+    if case.number == "11":
+        return _check_test11(case.fresh())
+    return []
+
+
+def _check_test10(case):
+    """The window accepts only A, so B is never inside it -- and A is never cut
+    by it, since the window forbids A nothing."""
+    fails = []
+    for t_p in positions(case, 60):
+        tl = case.sched.timeline(t_p, 1)
+        for pl in tl:
+            if pl.task != "B":
+                continue
+            if pl.start < t_p + WINDOW and pl.end > t_p:
+                fails.append(f"Test 10: B runs at {human(pl.start)} inside the "
+                             f"only-A window at {human(t_p)}")
+                break
+    return fails
+
+
+def _check_test11(case):
+    """`tests.md`'s own sentence: as soon as the moving 20-second period
+    collides with the start of the five-minute stretch at t_p, the 20-second
+    period disappears permanently and the stretch shifts 20 seconds left."""
+    fails = []
+    contact = STRETCH_HOME - WINDOW
+    before = case.sched.dynamic_periods(contact - Fraction(1, 100), 1)
+    after = case.sched.dynamic_periods(contact + Fraction(1, 100), 1)
+    if not any(p.label.startswith("20s") for p in before):
+        fails.append("Test 11: the 20s window is already gone before contact")
+    if any(p.label.startswith("20s") for p in after):
+        fails.append("Test 11: the 20s window survived the collision")
+    heads = [p for p in after if p.label == "1min: nothing"]
+    if not heads or abs(heads[0].start - (contact + Fraction(1, 100))) > sv.EPS:
+        fails.append(f"Test 11: after contact the stretch starts at "
+                     f"{human(heads[0].start) if heads else '(nowhere)'}, not at the line")
+    home = [p for p in before if p.label == "1min: nothing"]
+    if not home or home[0].start != STRETCH_HOME:
+        fails.append("Test 11: before contact the stretch is not at home")
+    # ...and the 20 seconds the stretch vacated are filled with tasks, not left
+    # empty: the gap at its far end is scheduled like anywhere else
+    tl = case.sched.timeline(contact + Fraction(1, 100), 1)
+    tail = [p for p in clip(tl, contact + STRETCH_LEN, STRETCH_HOME + STRETCH_LEN)
+            if p.task != IDLE]
+    if not tail:
+        fails.append("Test 11: the 20s the stretch vacated was left empty")
+    return fails
+
+
+def verify_rules(cases=None, verbose=True):
+    """The rule list itself: at a position the line is standing at, the rules
+    must hold over a RANGE of positions and reproduce the scheduler at
+    positions they were never fitted on."""
+    cases = build_moving_cases() if cases is None else cases
+    fails = []
+    if verbose:
+        print("--- the rule list at the line is affine in t_p ---")
+    for case in cases:
+        line = case.fresh().sched
+        t_p = case.span / 3
+        line.advance_to(t_p, 1)
+        reg = line.rules(span=frac(2))
+        end = min(line.horizon, reg.lo + line.LOOKAHEAD)
+        if reg.hi <= reg.lo:
+            fails.append(f"{case.name}: no range of positions could be claimed at "
+                         f"t_p={human(t_p)}")
+        for k in (1, 3, 5, 7):
+            if reg.hi <= reg.lo:
+                break
+            x = reg.lo + (reg.hi - reg.lo) * Fraction(k, 8)
+            drawn = clip(reg.draw(x), x, end)
+            actual = clip(line.timeline(x, 1, upto=end), x, end)
+            if not same_timeline(drawn, actual):
+                fails.append(f"{case.name}: the rules disagree with the scheduler at "
+                             f"t_p={human(x)}")
+                break
+        if verbose:
+            moving = sum(1 for s in reg.segments if s.start_slope or s.end_slope)
+            print(f"  {case.name:<8} one regime over {human(reg.hi - reg.lo)} of t_p, "
+                  f"{len(reg.segments)} rules, {moving} moving with the line")
+    if verbose:
+        _report(fails)
+    return fails
+
+
+# --------------------------------------------------------------------------- #
+#  the checks the progressive cases owe
 # --------------------------------------------------------------------------- #
 
 PACE_SECONDS = 10.0              # "the right schedule for the next 10 minutes
 PACE_MINUTES = frac(10)          #  must not take more than 10 seconds"
 
-_STRETCH_CACHE = {}
 
-def all_periods12():
-    """The whole environment, breaks included -- what the timeline is judged on.
-
-    The line consumes the breaks it passes, so at a given t_p the ones behind
-    it are gone; the recurrence rules are about where they are PUT, so they are
-    checked here against the grid entire, from t=0 to the end."""
-    return test12_static() + test12_break_periods(
-        [g for g in TEST12_GRID if g[0] >= TEST12_TP_SWEEP])
-
-def stretches12(periods):
-    """The privileged-only stretches of a fixed environment, computed once: the
-    checks ask for them per break and per kind, and the answer never moves."""
-    key = id(periods)
-    if key not in _STRETCH_CACHE:
-        _STRETCH_CACHE[key] = privileged_only_stretches(periods)
-    return _STRETCH_CACHE[key]
-
-def discharging_ends(kind, periods, grid):
-    """The instants after which a break of `kind` is due `BREAK_GAP[kind]` later.
-
-    A stretch of privileged-only time discharges a break if it lasts at least
-    what that kind asks for -- and the 20s one is discharged by any of the
-    three periods as well, however short."""
-    out = {e for s, e in stretches12(periods) if e - s >= BREAK_NEEDS[kind]}
-    if kind == '20s':
-        out |= {e for _s, e, _k in grid}
-    return sorted(out)
-
-def next_night(t, periods):
-    """Where the next stretch of privileged-only time begins after t -- a break
-    that would not fit before it is simply not placed."""
-    out = [s for s, _e in stretches12(periods) if s > t]
-    return min(out) if out else None
-
-def check_break_rules(grid=None, periods=None, verbose=True):
-    """The three recurrence rules of the requirement, both ways round:
-    every break sits exactly its own gap after the last stretch that
-    discharged it, and every such stretch is followed by one."""
-    grid = TEST12_GRID if grid is None else grid
-    periods = all_periods12() if periods is None else periods
+def verify_progressive(cases=None, verbose=True, settle_seconds=2.0):
+    cases = build_progressive_cases() if cases is None else cases
     fails = []
-    for kind in BREAK_LEN:
-        ends = discharging_ends(kind, periods, grid)
-        mine = [(s, e) for s, e, k in grid if k == kind]
-        for s, _e in mine:
-            before = [x for x in ends if x <= s]
-            if not before:
-                fails.append(f"the {kind} period at {stamp(s)} follows nothing that could put it there")
-                continue
-            want = before[-1] + BREAK_GAP[kind]
-            if abs(s - want) > Fraction(1, 6000):
-                fails.append(f"the {kind} period at {stamp(s)} should be at {stamp(want)} "
-                             f"-- {human(BREAK_GAP[kind])} after {stamp(before[-1])}")
-        starts = {s for s, _e in mine}
-        for e in ends:
-            due = e + BREAK_GAP[kind]
-            if any(e < x <= due for x in ends): continue      # a later stretch governs
-            night = next_night(e, periods)
-            if night is not None and due + BREAK_LEN[kind] > night: continue
-            if due + BREAK_LEN[kind] > TEST12_SPAN: continue
-            if not any(abs(s - due) <= Fraction(1, 6000) for s in starts):
-                fails.append(f"no {kind} period at {stamp(due)}, "
-                             f"{human(BREAK_GAP[kind])} after the stretch ending {stamp(e)}")
     if verbose:
-        print("--- the three periods recur where the rules put them ---")
-        counts = {k: sum(1 for _s, _e, x in grid if x == k) for k in BREAK_LEN}
-        print("  over three days: " + ", ".join(f"{n} x {k}" for k, n in counts.items()))
-        print("  PASS: every one of them sits exactly its own gap after the stretch "
-              "that discharged it" if not fails else f"  FAIL ({len(fails)}):")
-        for f in fails[:6]: print("    - " + f)
-        print()
-    return fails
-
-def check_drag_and_merge(samples=4096, verbose=True):
-    """Test 11's rule, in test 12: a break the line reaches is DRAGGED, and the
-    longest one the drag touches absorbs the others.
-
-    Four things are asserted, at every position of a fine sweep:
-      * a break is drawn either where the grid put it (ahead of the line) or ON
-        the line -- never behind it and never in between;
-      * once the line has reached one, one is always drawn at the line: an owed
-        break does not disappear until something discharges it;
-      * the drag only ever gets longer while it lasts, i.e. a break never
-        shrinks back into a shorter one it had already swallowed; and
-      * the contact is edge to edge -- the moment the dragged 20s window
-        touches the next five-minute break, that break is what is drawn at the
-        line, 20 seconds to the left of where the grid had put it."""
-    fails, merges = [], []
-    # from the origin, where the line waits, and not merely from where it lands:
-    # the positions it can be scrubbed to before the teleport owe the same rule
-    # (nothing is reached there, so nothing may be drawn at the line)
-    span, start = TEST12_SPAN, TEST12_TP_START
-    grid = [start + (span - start) * Fraction(i, samples) for i in range(samples + 1)]
-    prev_len, prev_tp = None, None
-    for tp in grid:
-        shown = test12_at_line(tp)
-        pinned = [w for w in shown if w.get('pinned')]
-        for w in shown:
-            if w.get('pinned'):
-                if frac(w['start']) < tp:
-                    fails.append(f"t_p={stamp(tp)}: the dragged break is drawn behind the line")
-                    break
-            elif frac(w['start']) <= tp:
-                fails.append(f"t_p={stamp(tp)}: a break the line has reached is still "
-                             f"drawn at {stamp(w['start'])}")
-                break
-        owed = any(not any(s < d <= tp for d in TEST12_DISCHARGES[k])
-                   for s, _e, k in TEST12_SWEPT if s <= tp)
-        if owed and not pinned:
-            fails.append(f"t_p={stamp(tp)}: a break is owed and none is drawn at the line")
-        if pinned and not owed:
-            fails.append(f"t_p={stamp(tp)}: a break is drawn at the line and none is owed")
-        length = max((frac(w['end']) for w in pinned), default=None)
-        length = None if length is None else length - tp
-        if prev_len is not None and length is not None and length < prev_len:
-            fails.append(f"t_p={stamp(tp)}: the dragged break shrank from "
-                         f"{human(prev_len)} to {human(length)} without being discharged")
-        if prev_len is not None and length is not None and length > prev_len:
-            merges.append((prev_tp, prev_len, length))
-        prev_len, prev_tp = length, tp
-
-    # the merge test 11 shows, verbatim: 20s -> 5min, and the five-minute break
-    # is then drawn one window width left of where the grid had put it
-    first = next(((s, e) for s, e, k in TEST12_SWEPT if k == '5min'), None)
-    if first is not None:
-        contact = first[0] - WINDOW
-        before, after = test12_at_line(contact - Fraction(1, 600)), test12_at_line(contact)
-        was = [w for w in before if w.get('pinned')]
-        now = [w for w in after if w.get('pinned')]
-        if not (was and max(frac(w['end']) for w in was)
-                - min(frac(w['start']) for w in was) == WINDOW):
-            fails.append(f"no 20s break is being dragged just before {stamp(contact)}")
-        if not (now and frac(now[0]['start']) == contact
-                and max(frac(w['end']) for w in now) - contact == BREAK_LEN['5min']):
-            fails.append(f"the {human(BREAK_LEN['5min'])} break does not start at the line "
-                         f"at {stamp(contact)}, {human_s(20)} left of {stamp(first[0])}")
-    if verbose:
-        print("--- the line drags a break, and the longest one absorbs the others ---")
-        print(f"  {len(merges)} merges over the sweep" + ("" if first is None else
-              f"; the first five-minute break is reached at {stamp(first[0] - WINDOW)} "
-              f"and drawn there, {human_s(20)} left of the {stamp(first[0])} the grid gave it"))
-        print("  PASS: reached breaks are dragged, never drawn behind the line, and the "
-              "longest owed one governs" if not fails else f"  FAIL ({len(fails)}):")
-        for f in fails[:6]: print("    - " + f)
-        print()
-    return fails
-
-def forbidden_at(periods, t):
-    out = set()
-    for w in periods:
-        end = w.get('end')
-        if frac(w['start']) <= t and (end is None or end == inf or t < frac(end)):
-            out |= set(w['forbidden'])
-    return out
-
-def pace_failures(pw, seconds=PACE_SECONDS, minutes=PACE_MINUTES):
-    """Over any `seconds` of work, at least `minutes` of timeline must be settled.
-
-    The requirement is a rate, not a per-link budget: a link that settles twenty
-    seconds of timeline in a quarter of a second is not a breach as long as the
-    ones around it keep the front moving."""
-    out = []
-    steps = pw.steps
-    for i in range(len(steps)):
-        spent, got = 0.0, Fraction(0)
-        for s, d in steps[i:]:
-            spent += s
-            got += d
-            if spent >= seconds: break
-        if spent < seconds: break            # the tail: the derivation finished
-        if got < minutes:
-            out.append(f"only {human(got)} of timeline settled in {spent:.1f}s of work "
-                       f"(needs {human(minutes)} per {seconds:.0f}s)")
-            break
-    return out
-
-def check_resume_contract(pw, samples=24, verbose=True, max_report=6):
-    """A chain of re-plans is the SAME schedule as one long plan.
-
-    The chain settles a link at a time, and every link is a fresh call to the
-    scheduler -- so the rules at the line, which walk straight through those
-    instants from wherever t_p stands, can only agree with what is drawn if
-    resuming at t reproduces the walk that passed through t. Everything the
-    walk carries and the seeding has to rebuild from the history is a way for
-    that to fail, and each one has failed in turn: `last` read off `_head`, the
-    lookback measured in wall time, and the forgetting itself (`_replay_clocks`
-    -- the anomaly this check was written for: the panel an hour to the right
-    of the line changed the moment the rules there were derived, at a position
-    where the line was dragging nothing at all).
-
-    So it is asserted directly, and with the ENVIRONMENT HELD FIXED: both plans
-    are shown the same periods and the same lookahead, because the drag is
-    supposed to change the answer and would hide what this is looking for. Where
-    the percentages themselves slide (test 13) they are held fixed for the same
-    reason -- both plans are made with the ones at g0. What is left over is the
-    resumption, and nothing else.
-
-    The pairs are CONSECUTIVE links, and that is not a detail. Over one link the
-    committed timeline is the long plan's own output, so the two really are the
-    same walk cut in two; over several the chain has re-planned in between, and
-    the plan resumed at the far end is seeded from a past the long plan never
-    drew. Sampling therefore thins the PAIRS, never the marks between them."""
-    pw.settle()
-    starts = [s.start for s in pw.segments if pw.tp_start < s.start < pw.span - 2 * 60]
-    pairs = list(itertools.pairwise(starts))
-    step = max(1, len(pairs) // samples)
-    fails, checked = [], 0
-    for g0, g1 in pairs[::step]:
-        periods = list(pw.periods) + [w for w in pw.moving(g0)
-                                      if frac(w['start']) <= g0 + pw.lookahead]
-        sched = pw._sched_at(g0)
-        long = sched.plan(timeline=[p for p in pw.pre if p.end > g0], periods=periods,
-                          t_now=g0, history=truncate(pw.base, g0), max_rules=MAX_RULES)
-        acc, walked = g0, None
-        for s in long.prefix:
-            if acc <= g1 < acc + s.duration: walked = s.task; break
-            acc += s.duration
-        if walked is None: continue        # the long plan does not reach g1: nothing to hold
-        again = sched.plan(timeline=[p for p in pw.pre if p.end > g1], periods=periods,
-                           t_now=g1, history=truncate(pw.base, g1), max_rules=MAX_RULES)
-        got = again.prefix[0].task if again.prefix else None
-        checked += 1
-        if got != walked:
-            fails.append(f"walking from {stamp(g0)} gives {walked} at {stamp(g1)}, "
-                         f"but a plan resumed there gives {got}")
-    if verbose:
-        print("--- a chain of re-plans is the same schedule as one long plan ---")
-        print(f"  {checked} resumptions checked, the environment held fixed across each")
-        print("  PASS: resuming at an instant reproduces the walk that passed through it"
-              if not fails else f"  FAIL ({len(fails)}):")
-        for f in fails[:max_report]: print("    - " + f)
-        print()
-    return fails
-
-def blend_shape_failures(prio=None, start=None, end=None):
-    """The blend itself: the two states, reached where they are supposed to be.
-
-    Checked against the two arrangements rather than against the function's own
-    output at another position -- an interpolation that quietly rescaled, or
-    that went on extrapolating past either state, would agree with itself
-    everywhere and with the requirement nowhere. Both ends are held, so the
-    check is symmetric: a blend still anchored at t_p=0 would pass at 48h and
-    fail here at 24h, which is exactly the change the requirement made."""
-    prio = test13_priorities if prio is None else prio
-    start = TEST13_BLEND_START if start is None else start
-    end = TEST13_BLEND_END if end is None else end
-    out = []
-    def same(got, want, where):
-        if any(abs(got[n] - want[n]) > Fraction(1, 10 ** 6) for n in want):
-            out.append(f"the percentages at {where} are not the ones the state asks for")
-    same(prio(start), TEST13_FROM, "t_p=" + stamp(start))
-    same(prio(end), TEST13_TO, "t_p=" + stamp(end))
-    for f in (Fraction(1, 4), Fraction(1, 2), Fraction(7, 8)):
-        at = start + (end - start) * f
-        want = {n: TEST13_FROM[n] + (TEST13_TO[n] - TEST13_FROM[n]) * f for n in TEST13_FROM}
-        same(prio(at), want, f"t_p={stamp(at)} (the blend is affine)")
-    same(prio(frac(0)), TEST13_FROM, "t_p=0 (held before the first state)")
-    same(prio(start / 2), TEST13_FROM,
-         f"t_p={stamp(start / 2)} (held before the first state)")
-    same(prio(end + DAY), TEST13_TO, f"t_p={stamp(end + DAY)} (held past the second state)")
-    for t in (frac(0), start, (start + end) / 3, end, end + DAY):
-        if sum(prio(t).values()) != frac(100):
-            out.append(f"the percentages at {stamp(t)} do not add up to 100")
-    return out
-
-def check_blend_transparency(steps=12, verbose=True, max_report=6):
-    """A blend that does not move is not there at all.
-
-    The sliding percentages enter through one seam -- the scheduler a plan is
-    made with is built from the tasks at that position -- and a seam like that
-    can be wrong in a way no comparison against ITSELF would show: rebuilding
-    the tasks per position re-derives the normalised shares, the minimal period
-    and so the decay constant, and reorders nothing only as long as it really
-    is the same list. So a window whose blend returns test 12's own tasks at
-    every position is stepped beside test 12's, and the two chains must agree
-    link for link and block for block.
-
-    Fresh windows, not the ones on display: a check may not settle the very
-    object the panel is there to derive live.
-    """
-    plain = progressive_window(tasks12())
-    flat = progressive_window(tasks12(), blend=lambda _t: tasks12())
-    for _ in range(steps):
-        plain.step()
-        flat.step()
-    shape = lambda pw: [(s.start, s.end, [(x.task, x.duration) for x in s.prefix + s.cycle])
-                        for s in pw.segments]
-    fails = []
-    if shape(plain) != shape(flat):
-        fails.append("a blend that returns the same tasks everywhere gives a different "
-                     "chain than no blend at all")
-    if plain.base != flat.base:
-        fails.append("a blend that returns the same tasks everywhere draws a different "
-                     "timeline than no blend at all")
-    if verbose:
-        print("--- the sliding percentages are a seam, and a flat one changes nothing ---")
-        print(f"  {len(plain.segments)} links compared, over the first {stamp(plain.front)} "
-              f"of the timeline")
-        print("  PASS: a blend that does not move gives test 12 back, link for link"
-              if not fails else f"  FAIL ({len(fails)}):")
-        for f in fails[:max_report]: print("    - " + f)
-        print()
-    return fails
-
-def check_priority_blend(pw, tasks_at=None, samples=8, verbose=True, max_report=6):
-    """The percentages the plan at the line is made with are the ones at the line.
-
-    Three things, because "the priorities slide" is a claim that can be honoured
-    on paper and ignored where it counts:
-
-      * the blend itself (`blend_shape_failures`);
-      * the plan at the line is the plan those percentages give -- rebuilt at
-        each sampled position from a scheduler constructed here, out of
-        `tasks_at(t_p)` alone, and compared slot for slot. It is not enough to
-        ask the window twice: that would agree with itself whatever it used;
-      * and it is NOT the plan the starting percentages give. A blend the
-        scheduler never actually reads would pass the first two checks and
-        change no schedule at all, so the check would be vacuous without a
-        position where the two answers really differ.
-    """
-    tasks_at = pw.tasks_at if tasks_at is None else tasks_at
-    fails = blend_shape_failures()
-    grid = [pw.tp_start + (pw.span - pw.tp_start) * Fraction(i, samples)
-            for i in range(samples + 1)]
-
-    def plan_with(tasks, tp):
-        return Scheduler(tasks, **pw.kw).plan(
-            timeline=[p for p in pw.pre if p.end > tp],
-            periods=[w for w in pw.sliding(tp)
-                     if frac(w['start']) <= tp + pw.lookahead] + pw.periods,
-            t_now=tp, history=pw.history_at(tp), max_rules=pw.local_rules)
-
-    shape = lambda plan: [(s.task, s.duration) for s in list(plan.prefix) + list(plan.cycle)]
-    moved = 0
-    for tp in grid:
-        mine = shape(pw.plan_at(tp))
-        if shape(plan_with(tasks_at(tp), tp)) != mine:
-            fails.append(f"t_p={stamp(tp)}: the plan at the line is not the plan the "
-                         f"percentages at {stamp(tp)} give")
-        if shape(plan_with(tasks_at(pw.tp_start), tp)) != mine:
-            moved += 1
-    if not moved:
-        fails.append("the sliding percentages change no plan anywhere on the sweep: "
-                     "the scheduler is not reading them")
-    if verbose:
-        print("--- the percentages slide, and the plan at the line is made with them ---")
-        first, last = test13_priorities(TEST13_BLEND_START), test13_priorities(TEST13_BLEND_END)
-        print(f"  A {float(first['A']):g}% -> {float(last['A']):g}%, each privileged "
-              f"{float(first['P1']):g}% -> {float(last['P1']):g}%, each other "
-              f"{float(first['N1']):g}% -> {float(last['N1']):g}%, "
-              f"between t_p={stamp(TEST13_BLEND_START)} and {stamp(TEST13_BLEND_END)}, "
-              f"held outside")
-        print(f"  {moved} of the {len(grid)} sampled positions plan differently than the "
-              f"first state's percentages would")
-        print("  PASS: at every sampled position the plan is the one the percentages "
-              "of exactly that position give" if not fails else f"  FAIL ({len(fails)}):")
-        for f in fails[:max_report]: print("    - " + f)
-        print()
-    return fails
-
-def verify_progressive(cases=None, verbose=True, samples=24, max_report=6):
-    cases = cases if cases is not None else build_progressive_cases()
-    failures = (check_break_rules(verbose=verbose) + check_drag_and_merge(verbose=verbose)
-                + check_blend_transparency(verbose=verbose))
-    for title, pw, _sweep in cases:
-        fail = lambda m, title=title: failures.append(f"{title.splitlines()[0]}: {m}")
-        pw.settle()
-        failures += check_resume_contract(pw, verbose=verbose)
-        if pw.blend is not None:
-            failures += check_priority_blend(pw, verbose=verbose)
-        settled, worked = pw.pace()
-
-        # 1. the pace it owes: 10 minutes of timeline per 10 seconds of work
-        for m in pace_failures(pw): fail(m)
-
-        grid_tp = [pw.tp_start + (pw.span - pw.tp_start) * Fraction(i, samples)
-                   for i in range(samples + 1)]
-        prev_tp, prev_tl = None, None
-        worst = Fraction(0)
-        for tp in grid_tp:
-            # 2. the rules AT THE LINE are the scheduler's own answer. Fitted at
-            #    a few positions, checked here at positions they were never
-            #    fitted on: without this the affine rule list is a guess -- and
-            #    it is what makes the dragged break a real re-plan, with the
-            #    compensation field the scheduler builds around it, rather than
-            #    a plan made without it and patched afterwards.
-            pre, cyc = pw.rules_of(tp)
-            want_pre, want_cyc = pw.blocks_at(tp)
-            if ([s.task for s in pre], [s.task for s in cyc]) != \
-               ([b['name'] for b in want_pre], [b['name'] for b in want_cyc]):
-                fail(f"t_p={stamp(tp)}: the rules give a different sequence than the scheduler")
-            else:
-                for got_, want in ((pre, want_pre), (cyc, want_cyc)):
-                    for x, y in zip(got_, want):
-                        worst = max(worst, abs(x.duration - y['duration']))
-
-            got = pw.timeline(tp)
-            here = pw.sliding(tp) + pw.periods
-
-            # 3. contiguity
-            for (s1, e1, _), (s2, _e2, _) in itertools.pairwise(got):
-                if e1 != s2 or e1 < s1:
-                    fail(f"t_p={stamp(tp)}: the timeline is not contiguous at {stamp(e1)}")
-                    break
-
-            # 4. nothing is drawn where a period refuses it -- the break the
-            #    line is dragging included, since it is a period like any other
-            for s, e, n in got:
-                if n not in pw.minimum or e <= tp: continue
-                mid = (s + e) / 2
-                if n in forbidden_at(here, mid):
-                    fail(f"t_p={stamp(tp)}: {n} is drawn at {stamp(mid)}, where it is forbidden")
-                    break
-
-            # 5. minimum execution times, ahead of the line: a run may be cut
-            #    short only by something that refuses it. Read over the whole
-            #    drawn timeline, not only the part ahead of the line: a run the
-            #    night suspended resumes owing just the rest of its minimum, and
-            #    cutting the timeline at t_p would hide the half it already had.
-            for name, served, end in service_runs(got, pw.minimum):
-                if end <= tp or end >= pw.local_end(tp) or end >= pw.span: continue
-                if served < pw.minimum[name] - pw.sliver and not blocked_at(pw, tp, name, end):
-                    fail(f"t_p={stamp(tp)}: {name} served {human(served)} < its minimum "
-                         f"{human(pw.minimum[name])} and nothing stopped it (ends {stamp(end)})")
-                    break
-
-            # 6. everything at t < t_p stays frozen. Compared by OCCUPANT, not
-            #    block by block: where a block is cut is not what frozen means.
-            if prev_tl is not None and past_shape(prev_tl, prev_tp) != past_shape(got, prev_tp):
-                fail(f"the past moved between t_p={stamp(prev_tp)} and t_p={stamp(tp)}")
-            prev_tp, prev_tl = tp, got
-
-        if worst > pw.tol:
-            fail(f"the rules deviate from the scheduler by {human(worst)}, "
-                 f"over the {human(pw.tol)} epsilon")
-
-        # 7. the rule list is finite, and 8. reading it is arithmetic: a regime
-        #    is derived once and inside it the display only substitutes
-        if pw.rule_count() > MAX_RULES:
-            fail(f"a link carries {pw.rule_count()} rules, over the {MAX_RULES} cap")
-        slow = max((s for s, _d in pw.fits), default=0.0)
-        if slow > PACE_SECONDS:
-            fail(f"deriving the rules at one position of the line took {slow:.1f}s, over "
-                 f"the {PACE_SECONDS:.0f}s budget")
+        print("--- tests 12-14: the pace, the bars, and the resume contract ---")
+    for case in cases:
+        sched = case.sched
+        # 1. the pace
         t0 = time.perf_counter()
-        for tp in grid_tp:
-            pw.timeline(tp, horizon=frac(tp) + 10)
-        draw = (time.perf_counter() - t0) / len(grid_tp)
-        if draw > PACE_SECONDS:
-            fail(f"reading the next 10 minutes off the rules takes {draw:.3f}s, over 10s")
-
+        start = sched.front
+        sched.settle(budget_seconds=settle_seconds)
+        elapsed = time.perf_counter() - t0
+        gained = sched.front - start
+        rate = float(gained) / max(elapsed, 1e-9)
+        if rate < float(PACE_MINUTES) / PACE_SECONDS:
+            fails.append(f"{case.name}: {float(gained):.0f} timeline-minutes in "
+                         f"{elapsed:.1f}s -- the pace asks for one a second")
+        # 2. the chain IS the plan
+        chain = coalesce(clip(sched.committed + sched._chain, sched.t_start, sched.front))
+        whole = clip(case.fresh().sched.timeline(case.tp_start, 1, upto=sched.front),
+                     sched.t_start, sched.front)
+        if not same_timeline(chain, whole):
+            diff = next((human(x.start) for x, y in zip(whole, chain) if x.task != y.task),
+                        "(a boundary)")
+            fails.append(f"{case.name}: the settled chain is not the single plan "
+                         f"-- first at {diff}")
+        # 3. what it owes as a schedule
+        bad = covers_completely(chain, sched.t_start, sched.front)
+        if bad:
+            fails.append(f"{case.name}: the settled part is not a partition -- {bad}")
+        for text in idle_where_allowed(case, chain, case.tp_start, 1)[:1]:
+            fails.append(f"{case.name}: {text}")
         if verbose:
-            tl = pw.timeline(pw.span)      # what the line leaves behind it
-            print(f"--- {title.splitlines()[0]} ---")
-            # the swept chain only where there is one: a case with nothing to
-            # drag (test 14) leaves the same timeline behind the line as ahead
-            # of it, and reads its past off the one chain it has
-            swept = (f" + {len(pw.past.segments)} swept" if pw.past is not None else "")
-            print(f"  {len(pw.segments)}{swept} links over "
-                  f"[0, {stamp(pw.span)}], at most {pw.rule_count()} rules each "
-                  f"(cap {MAX_RULES})")
-            print(f"  settled in {worked:.1f}s of work: "
-                  f"{float(settled) / max(worked, 1e-9):.0f} min of "
-                  f"timeline per second of work (needs "
-                  f"{float(PACE_MINUTES) / PACE_SECONDS:.0f})")
-            print(f"  {len(pw.regimes)} regimes of affine rules derived at the line, "
-                  f"worst {slow:.1f}s (budget {PACE_SECONDS:.0f}s); worst deviation from "
-                  f"the scheduler {human(worst)} (epsilon {human(pw.tol)})")
-            print(f"  the next 10 minutes read off the rules in {draw * 1000:.3f} ms "
-                  f"(budget {PACE_SECONDS:.0f}s)")
-            print("  " + shares_line(tl, pw))
-            mine = [f for f in failures if f.startswith(title.splitlines()[0])]
-            if mine:
-                print(f"  FAIL ({len(mine)}):")
-                for f in mine[:max_report]: print(f"    - {f.split(': ', 1)[1]}")
-            else:
-                print("  PASS: the rules reproduce the scheduler, the periods are respected, "
-                      "the past stays frozen, minimum times hold and the pace is met")
-            print()
-    return failures
+            print(f"  {case.name:<8} settled {human(gained)} in {elapsed:.1f}s "
+                  f"({rate:.0f} timeline-minutes per second), "
+                  f"chain == plan over {human(sched.front - sched.t_start)}")
+    fails += verify_break_grid(verbose=verbose)
+    fails += verify_teleport(verbose=verbose)
+    fails += verify_targets(cases, verbose=verbose)
+    if verbose:
+        _report(fails)
+    return fails
 
-def shares_line(tl, pw, tp=None):
-    """What the three days actually gave each task -- reported, not asserted.
 
-    By GROUP where the case has groups (test 12's A, its ten privileged tasks
-    and its ten others; test 14's A and its twenty others), and task by task
-    where it has none.
+def verify_break_grid(case=None, verbose=True):
+    """The three recurrence rules, read off the grid test 12 actually places.
 
-    The same measure the window draws: a share of the time some task was allowed
-    to run in, so the nine-hour nights that refuse everybody are not counted as
-    a share anyone lost. What is missing from the sum is time that WAS offered
-    and left empty -- with 21 tasks of 45 minutes each, a gap too short for any
-    minimum has no taker.
+    Both directions: every period sits at least its own bar after everything
+    that bars it, and a stretch long enough to arm one is followed by one
+    before the next night swallows it.
+    """
+    case = case12() if case is None else case
+    planner = case.sched.planner_at(0)
+    inst = planner.instances(TEST12_TP_START, 1)
+    fails = []
+    for i, cur in enumerate(inst):
+        for prev in inst[:i]:
+            if prev.end > cur.start:
+                fails.append(f"Test 12: {prev.label} at {human(prev.start)} overlaps "
+                             f"{cur.label} at {human(cur.start)}")
+                continue
+            gap = cur.start - prev.end
+            run = prev.stretch_run(planner.kind_counts)
+            length = (run[1] - run[0]) if run else Fraction(0)
+            if cur.label == "20s" and gap < sv.BAR_20S_AFTER_ANY - sv.EPS:
+                fails.append(f"Test 12: a 20s only {human(gap)} after the "
+                             f"{prev.label} at {human(prev.start)}")
+            if length >= sv.STRETCH_SHORT and cur.label == "5min" \
+                    and gap < sv.BAR_5MIN_AFTER_STRETCH - sv.EPS:
+                fails.append(f"Test 12: a 5min only {human(gap)} after a "
+                             f"{human(length)} stretch")
+            if length >= sv.STRETCH_LONG and cur.label == "15min" \
+                    and gap < sv.BAR_15MIN_AFTER_LONG - sv.EPS:
+                fails.append(f"Test 12: a 15min only {human(gap)} after a "
+                             f"{human(length)} stretch")
+    # ...and the night arms them: the first period of the first full day sits
+    # its own bar after the night that precedes it
+    night_end = 8 * HOUR
+    first = min((i for i in inst if i.start >= night_end), key=lambda i: i.start, default=None)
+    if first is None:
+        fails.append("Test 12: no dynamic period at all after the first night")
+    elif first.start < night_end + sv.BAR_20S_AFTER_ANY - sv.EPS:
+        fails.append(f"Test 12: the first period of the day is at {human(first.start)}, "
+                     f"less than its bar after the night")
+    if verbose:
+        counts = {}
+        for i in inst:
+            counts[i.label] = counts.get(i.label, 0) + 1
+        print("  Test 12  the grid over three days: "
+              + ", ".join(f"{n} x {k}" for k, n in sorted(counts.items())))
+    return fails
 
-    A lands a little under its 50% here, and what is missing is accounted for
-    rather than lost. Two things take it, both structural. The empty time: a
-    privileged-only period is scheduled with NOTHING wherever starting a
-    privileged task in it would run past the instant A comes back and leave A
-    a gap too short for its 45 minutes -- the run would not use the period, it
-    would lengthen A's ban (`Scheduler._clears`). And the privileged surplus:
-    where a privileged task is ALREADY running when such a period arrives, its
-    run carries straight through, so the ten of them collect those nineteen
-    minutes out of every hundred and thirty-five that A is barred from."""
-    periods = list(pw.periods) + list(pw.sliding(pw.span if tp is None else tp))
-    got, open_total = resulting_shares(tl, periods, list(pw.minimum),
-                                       lo=frac(0), hi=pw.span)
-    if not open_total: return "nothing was schedulable"
-    priv = sum(v for n, v in got.items() if n in PRIVILEGED)
-    mine = sum(v for n, v in got.items() if n in pw.minimum)
-    # ...and a case whose groups are not test 12's is reported by ITS groups:
-    # test 14 has A and twenty others, none of them privileged, so naming the
-    # ten privileged there would report a 0% nobody was aiming at, and listing
-    # all twenty-one one by one would bury the two numbers the case is about.
-    if not all(n in pw.minimum for n in PRIVILEGED):
-        others = [n for n in TEST14_OTHERS if n in pw.minimum]
-        if len(others) == len(TEST14_OTHERS) and "A" in pw.minimum:
-            rest = sum(got.get(n, 0) for n in others)
-            return (f"of the {human(open_total)} some task is allowed in: A "
-                    f"{float(got.get('A', 0)) * 100:.1f}% "
-                    f"(target {target_text(pw, ['A'])}), the twenty others "
-                    f"{float(rest) * 100:.1f}% (target {target_text(pw, others)}), "
-                    f"offered and left empty {float(1 - mine) * 100:.1f}%")
-        each = ", ".join(f"{n} {float(got.get(n, 0)) * 100:.1f}% "
-                         f"(target {target_text(pw, [n])})" for n in sorted(pw.minimum))
-        return (f"of the {human(open_total)} some task is allowed in: {each}, "
-                f"offered and left empty {float(1 - mine) * 100:.1f}%")
-    return (f"of the {human(open_total)} some task is allowed in: A "
-            f"{float(got.get('A', 0)) * 100:.1f}% (target {target_text(pw, ['A'])}), "
-            f"the ten privileged {float(priv) * 100:.1f}% "
-            f"(target {target_text(pw, PRIVILEGED)}), the ten others "
-            f"{float(mine - priv - got.get('A', 0)) * 100:.1f}%, "
-            f"offered and left empty {float(1 - mine) * 100:.1f}%")
 
-def target_text(pw, names):
-    """What a group of tasks is aiming at -- one number, or the two ends of the
-    slide where the percentages themselves move (test 13).
+def verify_teleport(case=None, verbose=True):
+    """The line waits at the origin and JUMPS to 24h. A jump sweeps nothing:
+    every period below it is where the bars put it, none dragged."""
+    case = case12() if case is None else case
+    sched = case.sched
+    fails = []
+    before = sched.planner_at(0).instances(TEST12_TP_SWEEP, 1, sweep_from=TEST12_TP_SWEEP)
+    sched.settle(budget_seconds=1.0)
+    sched.teleport_to(TEST12_TP_SWEEP, 1)
+    after = sched.planner_at(TEST12_TP_SWEEP).instances(
+        TEST12_TP_SWEEP, 1, sweep_from=sched.sweep_from)
+    below = [i for i in after if i.end <= TEST12_TP_SWEEP]
+    if not below:
+        fails.append("Test 12: the swept-over day holds no dynamic period at all")
+    if any(i.open_start for i in below):
+        fails.append("Test 12: the jump dragged a period")
+    if len(before) != len(after):
+        fails.append("Test 12: the jump changed where the periods are")
+    # ...and the sweep from there DOES drag: one step past the landing point,
+    # a period is being carried by the line
+    # ...and the sweep from there DOES drag -- once it is past the night the
+    # line lands in front of, and has reached the first period beyond it
+    sched.advance_to(TEST12_TP_SWEEP + 8 * HOUR + sv.BAR_20S_AFTER_ANY + 1, 1)
+    carried = [i for i in sched.planner_at(sched.t_p).instances(
+        sched.t_p, 1, sweep_from=sched.sweep_from) if i.open_start]
+    if not carried:
+        fails.append("Test 12: the line swept past a period without dragging it")
+    if verbose:
+        print(f"  Test 12  {len(below)} periods still standing in the swept-over day, "
+              f"{len(carried)} dragged once the sweep begins")
+    return fails
 
-    Read off the window's own `tasks_at`, so the number quoted next to a
-    measured share is the target that share was actually scheduled against."""
-    def share(t):
-        tasks = pw.tasks_at(t)
-        total = sum((x.priority for x in tasks), frac(0)) or frac(1)
-        return sum(x.priority for x in tasks if x.name in names) / total * 100
-    first, last = share(frac(0)), share(pw.span)
-    if abs(first - last) <= Fraction(1, 1000): return f"{float(first):g}%"
-    return f"{float(first):g}% -> {float(last):g}%"
+
+def verify_targets(cases=None, verbose=True, span=None):
+    """The first optimisation criterion, measured: what each group of tasks
+    actually took, against what it was aiming at."""
+    cases = build_progressive_cases() if cases is None else cases
+    fails = []
+    for case in cases:
+        if not case.targets:
+            continue
+        sched = case.fresh().sched
+        upto = frac(span) if span else min(case.span, 4 * DAY)
+        tl = sched.timeline(case.tp_start, 1, upto=upto)
+        if case.number == "12":
+            groups = {"A": ["A"], "privileged": PRIVILEGED, "ordinary": ORDINARY}
+        else:
+            groups = {"A": ["A"], "others": [f"T{i:02d}" for i in range(20)]}
+        got = group_shares(tl, groups)
+        for label, want in case.targets.items():
+            if abs(got[label] - want) > Fraction(12, 100):
+                fails.append(f"{case.name}: {label} took {float(got[label]) * 100:.1f}%, "
+                             f"aiming at {float(want) * 100:.0f}%")
+        if verbose:
+            print(f"  {case.name:<8} over {human(upto)}: "
+                  + ", ".join(f"{k} {float(v) * 100:.1f}% "
+                              f"(target {float(case.targets[k]) * 100:.0f}%)"
+                              for k, v in got.items()))
+    return fails
+
+
+# --------------------------------------------------------------------------- #
+#  running them
+# --------------------------------------------------------------------------- #
+
+def _report(fails):
+    if fails:
+        print(f"  FAIL ({len(fails)}):")
+        for f in fails[:8]:
+            print("    - " + f)
+        if len(fails) > 8:
+            print(f"    ... and {len(fails) - 8} more")
+    else:
+        print("  PASS")
+    print()
+
+
+def verify_readme(verbose=True):
+    """The engine's own clause-by-clause checks against README.md, run here so
+    one command covers both halves."""
+    fails = []
+    if verbose:
+        print("--- README.md, clause by clause (scheduler_v2's own checks) ---")
+    for fn in sv.CHECKS:
+        try:
+            note = fn()
+            if verbose:
+                print(f"  {fn.__name__[6:]:<32} {note}")
+        except Exception as exc:                        # noqa: BLE001 - reported
+            fails.append(f"{fn.__name__}: {exc}")
+    if verbose:
+        _report(fails)
+    return fails
+
+
+def verify_reports(cases=None, verbose=True):
+    """What the display's copy button puts on the clipboard.
+
+    `tests.md` asks for the configuration AND the resulting rules, in a form a
+    person can read, so the text is checked for both halves -- a copy button
+    that quietly copied an empty rule list would look exactly like one that
+    worked.
+    """
+    cases = build_all() if cases is None else cases
+    fails = []
+    if verbose:
+        print("--- the copy button's text: configuration + rules ---")
+    for case in cases:
+        text = report_text(case, case.tp_start, 1)
+        for wanted in ("rule states:", "starting timeline:", "rules at t_p",
+                       "alternative schedule", "resulting shares"):
+            if wanted not in text:
+                fails.append(f"{case.name}: the report has no \"{wanted}\" section")
+        rules = [ln for ln in text.splitlines() if ln.startswith("  ") and "->" in ln]
+        if not rules:
+            fails.append(f"{case.name}: the report names no rule at all")
+        for st in case.sched.states.states:
+            if human(st.at) not in text:
+                fails.append(f"{case.name}: the rule state at {human(st.at)} is not in the report")
+    if verbose:
+        widest = max(len(report_text(c, c.tp_start, 1).splitlines()) for c in cases)
+        print(f"  {len(cases)} cases, every report complete, longest {widest} lines")
+        _report(fails)
+    return fails
+
+
+def verify_all(verbose=True):
+    t0 = time.perf_counter()
+    fails = verify_readme(verbose)
+    fails += verify_static(verbose=verbose)
+    fails += verify_moving(verbose=verbose)
+    fails += verify_rules(verbose=verbose)
+    fails += verify_progressive(verbose=verbose)
+    fails += verify_reports(verbose=verbose)
+    if verbose:
+        print(f"{'FAILED: ' + str(len(fails)) if fails else 'all checks pass'} "
+              f"({time.perf_counter() - t0:.1f}s)")
+    return fails
+
+
+def main(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    ap.add_argument("--verify", action="store_true", help="run every check")
+    ap.add_argument("--list", action="store_true", help="list the cases")
+    ap.add_argument("--quiet", action="store_true")
+    args = ap.parse_args(argv)
+    if args.list:
+        for case in build_all():
+            print(f"{case.name:<9} [{case.kind:<11}] {case.title}")
+        return 0
+    fails = verify_all(verbose=not args.quiet)
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
