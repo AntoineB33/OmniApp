@@ -39,7 +39,6 @@ from fractions import Fraction
 import scheduler
 from scheduler import (
     DAY,
-    DEFAULT_DYNAMICS,
     HOUR,
     IDLE,
     KIND_NO_S,
@@ -324,7 +323,7 @@ TEST14_SPAN = 8 * DAY
 def _shade(base, i, n):
     r, g, b = base
     k = 0.72 + 0.28 * (i / max(n - 1, 1))
-    return "#%02X%02X%02X" % tuple(min(255, int(c * k)) for c in (r, g, b))
+    return "#" + "".join(f"{min(255, int(c * k)):02X}" for c in (r, g, b))
 
 
 def tasks12(main_share=50, privileged_share=Fraction(5, 2)):
@@ -1038,7 +1037,7 @@ def verify_all(verbose=True):
 
 def main(argv=None):
     import argparse
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[1])
     ap.add_argument("--verify", action="store_true", help="run every check")
     ap.add_argument("--list", action="store_true", help="list the cases")
     ap.add_argument("--quiet", action="store_true")

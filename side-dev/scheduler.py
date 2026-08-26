@@ -60,10 +60,13 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import itertools
 import math
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from fractions import Fraction
+from typing import Literal, overload
 
 # --------------------------------------------------------------------------- #
 # units, helpers
@@ -216,6 +219,16 @@ class Placement:
         return self.end - self.start
 
 
+# What a paused walk carries from link to link: the virtual clocks, the task
+# placed last, and the chunk still in progress (task, what is left of it, and
+# the candidate set it was decided against).
+WalkState = tuple[
+    dict[str, Fraction],
+    str | None,
+    tuple[str, Fraction, frozenset[str]] | None,
+]
+
+
 @dataclass(frozen=True)
 class RuleState:
     """The README's rule state: tasks + percentages + minimums, pinned at `at`."""
@@ -238,7 +251,7 @@ class RuleStates:
     trees), and its minimum is taken from the side that has it.
     """
 
-    def __init__(self, states):
+    def __init__(self, states: Iterable[RuleState]):
         st = sorted(states, key=lambda s: s.at)
         if not st:
             raise ValueError("at least one rule state is required")
@@ -265,6 +278,7 @@ class RuleStates:
         for name in sorted(set(left) | set(right)):
             x, y = left.get(name), right.get(name)
             ref = x or y
+            assert ref is not None          # `name` came from one side or the other
             px = x.priority if x else Fraction(0)
             py = y.priority if y else Fraction(0)
             mx = x.min_time if x else ref.min_time
@@ -297,7 +311,7 @@ class Environment:
         self.bounds = sorted(bounds)
         self._kinds = None
 
-    def with_periods(self, more) -> "Environment":
+    def with_periods(self, more) -> Environment:
         return Environment(self.periods + tuple(more), self.blocks)
 
     def next_bound(self, t, cap):
@@ -631,8 +645,16 @@ class Walk:
         else:
             out.append(Placement(name, start, end, alt))
 
+    @overload
+    def run(self, env: Environment, start, end, history=..., resume=...,
+            with_state: Literal[False] = ...) -> list[Placement]: ...
+
+    @overload
+    def run(self, env: Environment, start, end, history=..., resume=...,
+            *, with_state: Literal[True]) -> tuple[list[Placement], WalkState]: ...
+
     def run(self, env: Environment, start, end, history=(), resume=None,
-            with_state=False):
+            with_state=False) -> list[Placement] | tuple[list[Placement], WalkState]:
         """Walk [start, end) once and return what is placed there.
 
         Two rules of the README are structural here rather than checked
@@ -811,7 +833,7 @@ class Instance:
                     best, run_start, run_end = cur, start, offset + length
             else:
                 cur, start = Fraction(0), None
-        if run_start is None:
+        if run_start is None or run_end is None:
             return None
         return self.start + run_start, self.start + run_end
 
@@ -842,7 +864,8 @@ class DynamicPlanner:
     """
 
     def __init__(self, base_env: Environment, specs, dynamics=DEFAULT_DYNAMICS,
-                 t_start=0, horizon=DAY, stretch_when=None):
+                 t_start: Fraction | int = 0, horizon: Fraction | int = DAY,
+                 stretch_when=None):
         self.base_env = base_env
         self.specs = tuple(specs)
         self.dynamics = {d.label: d for d in dynamics}
@@ -1545,7 +1568,7 @@ def check_alternation():
     require(len(tl) >= 17, f"only {len(tl)} slots over three hours")
     require(all(p.duration == 10 for p in tl[:-1]),
             f"slot sizes: {sorted({human(p.duration) for p in tl[:-1]})}")
-    require(all(x.task != y.task for x, y in zip(tl, tl[1:])),
+    require(all(x.task != y.task for x, y in itertools.pairwise(tl)),
             "a task ran twice in a row with a rival waiting")
     return f"{len(tl)} slots, all {human(tl[0].duration)}, strictly alternating"
 
@@ -1723,7 +1746,7 @@ def check_dynamic_recurrence():
             if prev.duration >= STRETCH_LONG and cur.label == "15min":
                 require(gap >= BAR_15MIN_AFTER_LONG - EPS,
                         f"a 15min only {human(gap)} after a {human(prev.duration)} stretch")
-    require(not any(a.end > b.start for a, b in zip(inst, inst[1:])),
+    require(not any(a.end > b.start for a, b in itertools.pairwise(inst)),
             "two dynamic periods overlap")
     kinds = {i.label for i in inst}
     return f"{len(inst)} periods ({', '.join(sorted(kinds))}), every bar respected"
@@ -1958,7 +1981,7 @@ def run_checks(only=None) -> int:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[1])
     ap.add_argument("--check", nargs="?", const="", metavar="NAME",
                     help="run the checks (optionally only those matching NAME)")
     ap.add_argument("--demo", nargs="?", const="dynamics", metavar="CASE",

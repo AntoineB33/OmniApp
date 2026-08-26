@@ -38,11 +38,18 @@ import queue
 import threading
 import time
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
-try:
+if TYPE_CHECKING:
     import tkinter as tk
-except ImportError:                                     # headless box: CLI only
-    tk = None
+    HAVE_TK = True
+else:
+    try:
+        import tkinter as tk
+        HAVE_TK = True
+    except ImportError:                                 # headless box: CLI only
+        tk = None
+        HAVE_TK = False
 
 from scheduler import DAY, HOUR, IDLE, frac, human, resulting_shares
 from test_configs import (
@@ -121,7 +128,7 @@ def task_rows(case, tl):
 # --------------------------------------------------------------------------- #
 
 class Snapshot:
-    __slots__ = ("t_p", "mode", "front", "placements", "periods", "note")
+    __slots__ = ("front", "mode", "note", "periods", "placements", "t_p")
 
     def __init__(self, t_p, mode, front, placements, periods, note=""):
         self.t_p, self.mode, self.front = t_p, mode, front
@@ -302,7 +309,7 @@ class Panel:
 
     # -- the parts a snapshot redraws ----------------------------------------
 
-    def redraw(self, snap: Snapshot = None):
+    def redraw(self, snap: Snapshot | None = None):
         if snap is not None:
             self.snapshot = snap
         c = self.canvas
@@ -752,7 +759,7 @@ def print_rules(cases=None, max_rules=24):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[1])
     ap.add_argument("--verify", action="store_true", help="run every check, no window")
     ap.add_argument("--rules", action="store_true", help="print the rule list of each case")
     ap.add_argument("--no-ui", action="store_true", help="the terminal report only")
@@ -765,8 +772,8 @@ def main(argv=None):
     if args.rules:
         print_rules()
         return 0
-    if args.no_ui or tk is None:
-        if tk is None and not args.no_ui:
+    if args.no_ui or not HAVE_TK:
+        if not HAVE_TK and not args.no_ui:
             print("tkinter is not available: printing the terminal report instead.\n")
         print_terminal_results()
         return 0
