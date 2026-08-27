@@ -83,8 +83,10 @@ from test_configs import (
     configuration_lines,
     load_config,
     parse_percent,
+    parse_resilience,
     parse_time,
     show_percent,
+    show_resilience,
 )
 
 MODES = (1, 2)                   # every check is owed in both
@@ -433,20 +435,21 @@ def verify_timelines(case, verbose=True):
 def mode_rule_at_line(case, t_p, mode):
     """The two t_p modes, at the line.
 
-    Mode 1: no period the SCHEDULER placed refuses "s" at t_p -- a pre-placed
-    period is a fact of the starting timeline and never moves, so it is the
-    dynamic ones the mode governs. Mode 2: there IS a period refusing "s" at
-    the line, and the scheduler must have made one if the timeline had none.
+    Mode 1: no period the SCHEDULER placed covers t_p with "no on-screen
+    task" -- a pre-placed period is a fact of the starting timeline and never
+    moves, so it is the dynamic ones the mode governs. Mode 2: t_p IS covered
+    by one, and the scheduler must have made one if the timeline had none.
     """
     sched = case.sched
     if mode == 1:
         covering = [p for p in sched.dynamic_periods(t_p, 1)
-                    if p.covers(t_p) and p.kind in (scheduler.KIND_NO_TASK, scheduler.KIND_NO_S)]
+                    if p.covers(t_p)
+                    and p.kind in (scheduler.KIND_NO_TASK, scheduler.KIND_NO_SCREEN)]
         if covering:
             return [f"mode 1 left {covering[0].label or covering[0].kind} over the line "
                     f"at {human(t_p)}"]
         return []
-    if not sched.environment(t_p, 2).forbids_s_at(t_p):
+    if not sched.environment(t_p, 2).no_screen_at(t_p):
         return [f"mode 2 left the line uncovered at {human(t_p)}"]
     return []
 
@@ -475,9 +478,9 @@ def verify_frozen_past(case, verbose=True):
                 fails.append(f"{where}: {bad}")
             # ...AHEAD of the line only. The no-idling clause is owed
             # against the environment in force where the stretch was
-            # placed, and mode 2 deliberately covers the line with a period
-            # refusing "s" -- so a line swept in mode 2 leaves a trail of
-            # legitimate emptiness behind it wherever every task is marked.
+            # placed, and mode 2 deliberately covers the line with "no
+            # on-screen task" -- so a line swept in mode 2 leaves a trail of
+            # legitimate emptiness behind it wherever every task is on-screen.
             for text in idle_where_allowed(case, clip(tl, t_p, case.span), t_p, mode)[:1]:
                 fails.append(f"{where}: {text}")
             for pos, older in seen[-3:]:
@@ -523,40 +526,73 @@ def verify_jump_sweeps_nothing(case, verbose=True):
     return fails
 
 
+def rest_stretches(planner, inst):
+    """Every stretch the recurrence rules bar from, over the whole test.
+
+    The README's own list: "whether caused by dynamic periods, pre-placed
+    restrictive periods, or a combination" -- so the pre-placed rest the
+    planner found and the counting part of each dynamic period go into one
+    pot, and abutting ones are MERGED. A 20s laid against the end of a night
+    is not a 20-second stretch and a 15-minute one: it is one stretch, which
+    is why the merge is the last step and not a special case.
+    """
+    spans = list(planner.rested)
+    for i in inst:
+        run = i.stretch_run(planner.kind_counts)
+        if run is not None:
+            spans.append(run)
+    return scheduler.merge_spans(spans)
+
+
 def verify_bars(case, verbose=True):
     """The three recurrence rules, read off the grid the test actually places:
     every period sits at least its own bar after everything that bars it, and
-    no two of them overlap."""
+    no two of them overlap.
+
+    Read off the STRETCHES rather than off the periods, because that is what
+    the README bars from -- a pre-placed night bars exactly as a 15-minute
+    dynamic period does. A stretch that reaches past the period being judged
+    is the one it is standing in, and bars nothing.
+    """
     fails = []
     if verbose:
         print("--- the recurrence bars of the three dynamic periods ---")
     planner = case.sched.planner_at(0)
     inst = planner.instances(case.sched.t_start, 1)
+    stretches = rest_stretches(planner, inst)
     for i, cur in enumerate(inst):
         for prev in inst[:i]:
             if prev.end > cur.start:
                 fails.append(f"{prev.label} at {clock(prev.start)} "
                              f"overlaps {cur.label} at {clock(cur.start)}")
                 continue
-            gap = cur.start - prev.end
-            run = prev.stretch_run(planner.kind_counts)
-            length = (run[1] - run[0]) if run else Fraction(0)
-            if cur.label == "20s" and gap < scheduler.BAR_20S_AFTER_ANY - EPS:
-                fails.append(f"a 20s only {human(gap)} after the "
+            if cur.label == "20s" and cur.start - prev.end < scheduler.BAR_20S_AFTER_ANY - EPS:
+                fails.append(f"a 20s only {human(cur.start - prev.end)} after the "
                              f"{prev.label} at {clock(prev.start)}")
+        for a, b in stretches:
+            if b > cur.start:
+                continue                      # the stretch this one is inside
+            gap, length = cur.start - b, b - a
             if length >= scheduler.STRETCH_SHORT and cur.label == "5min" \
                     and gap < scheduler.BAR_5MIN_AFTER_STRETCH - EPS:
-                fails.append(f"a 5min only {human(gap)} after a {human(length)} stretch")
+                fails.append(f"a 5min at {clock(cur.start)}, only {human(gap)} "
+                             f"after a {human(length)} stretch")
+            if length >= scheduler.STRETCH_LONG and cur.label == "20s" \
+                    and gap < scheduler.BAR_20S_AFTER_LONG - EPS:
+                fails.append(f"a 20s at {clock(cur.start)}, only {human(gap)} "
+                             f"after a {human(length)} stretch")
             if length >= scheduler.STRETCH_LONG and cur.label == "15min" \
                     and gap < scheduler.BAR_15MIN_AFTER_LONG - EPS:
-                fails.append(f"a 15min only {human(gap)} after a {human(length)} stretch")
+                fails.append(f"a 15min at {clock(cur.start)}, only {human(gap)} "
+                             f"after a {human(length)} stretch")
     if verbose:
         counts = {}
         for i in inst:
             counts[i.label] = counts.get(i.label, 0) + 1
         print(f"  over {human(case.span)}: "
               + (", ".join(f"{n} x {k}" for k, n in sorted(counts.items()))
-                 or "no dynamic period fits"))
+                 or "no dynamic period fits")
+              + f", barred from {len(stretches)} stretch(es)")
         _report(fails)
     return fails
 
@@ -1163,19 +1199,19 @@ class Editor:
             grid = tk.Frame(parent, bg=EDITOR_BG)
             grid.grid(column=0, row=row, sticky="w")
             row += 1
-            for c, text in enumerate(("task", "%", "min time", "s")):
+            for c, text in enumerate(("task", "%", "min time", "screen")):
                 _head(grid, text, col=c, row=0)
             tasks = []
             for j, t in enumerate(st.tasks):
-                mark = tk.BooleanVar(value=t.s)
                 cells = {"name": _entry(grid, t.name, 10),
                          "percent": _entry(grid, show_percent(t.percent), 6),
                          "min": _entry(grid, human(t.min_time), 9),
-                         "s": mark, "color": t.color}
+                         "screen": _entry(grid, show_resilience(t.screen), 6),
+                         "color": t.color}
                 cells["name"].grid(column=0, row=j + 1, padx=1, pady=1)
                 cells["percent"].grid(column=1, row=j + 1, padx=1)
                 cells["min"].grid(column=2, row=j + 1, padx=1)
-                tk.Checkbutton(grid, variable=mark, bg=EDITOR_BG).grid(column=3, row=j + 1)
+                cells["screen"].grid(column=3, row=j + 1, padx=1)
                 tk.Label(grid, text="  ", bg=t.color, relief="solid",
                          borderwidth=1).grid(column=4, row=j + 1, padx=3)
                 tk.Button(grid, text="x", font=FONT, width=2,
@@ -1185,6 +1221,12 @@ class Editor:
             tk.Button(grid, text="+ task", font=FONT,
                       command=lambda i=i: self._add_task(i)).grid(
                           column=0, row=len(st.tasks) + 1, sticky="w", pady=2)
+            # The one resilience typed on the TASK, because it is the one kind
+            # the README's own rules name: 0 is an on-screen task.
+            tk.Label(grid, font=FONT, fg=DIM, bg=EDITOR_BG, justify="left",
+                     text=('"screen" = resilience % to "no on-screen task" '
+                           "(0 = an on-screen task)")).grid(
+                column=0, row=len(st.tasks) + 2, columnspan=6, sticky="w")
             self.w_states.append({"at": at, "tasks": tasks})
         tk.Button(parent, text="+ rule state", font=FONT,
                   command=self._add_state).grid(column=0, row=row, sticky="w", pady=4)
@@ -1227,7 +1269,7 @@ class Editor:
         tk.Button(parent, text="+ period", font=FONT, command=self._add_period).grid(
             column=0, row=len(self.model.periods) + 2, sticky="w", pady=2)
         tk.Label(parent, font=FONT, fg=DIM, bg=EDITOR_BG, justify="left",
-                 text=("\"everybody\", \"s\" (the marked ones), or the tasks it turns\n"
+                 text=("\"everybody\", \"on-screen\", or the tasks it turns\n"
                        "away: \"B\", \"B, C\", \"B:50%\" for a resilience it keeps")).grid(
             column=0, row=len(self.model.periods) + 3, columnspan=4, sticky="w")
 
@@ -1251,7 +1293,9 @@ class Editor:
                     cells["name"].get().strip() or was.name,
                     self._percent(cells["percent"], was.percent, f"{was.name}'s percentage"),
                     self._time(cells["min"], was.min_time, f"{was.name}'s minimum time"),
-                    bool(cells["s"].get()), cells["color"]))
+                    self._resilience(cells["screen"], was.screen,
+                                     f"{was.name}'s screen resilience"),
+                    cells["color"]))
             states.append(StateLine(self._time(w["at"], old.at, "a rule state's instant"),
                                     tuple(tasks)))
         blocks = []
@@ -1288,6 +1332,15 @@ class Editor:
                                f"kept {show_percent(fallback)}")
             return fallback
 
+    def _resilience(self, entry, fallback, what):
+        try:
+            return parse_resilience(entry.get())
+        except (ValueError, ZeroDivisionError):
+            self.errors.append(f"{what}: {entry.get()!r} is not a resilience "
+                               f"between 0% and 100%, kept "
+                               f"{show_resilience(fallback)}%")
+            return fallback
+
     # -- the structural buttons ---------------------------------------------
 
     def _mutate(self, fn):
@@ -1315,7 +1368,8 @@ class Editor:
         def fn(config):
             name = self._next_name(config)
             n = len(config.states[i].tasks)
-            row = TaskLine(name, Fraction(10), Fraction(10), True, PALETTE[n % len(PALETTE)])
+            row = TaskLine(name, Fraction(10), Fraction(10), Fraction(0),
+                           PALETTE[n % len(PALETTE)])
             states = list(config.states)
             states[i] = StateLine(states[i].at, states[i].tasks + (row,))
             return replace(config, states=tuple(states))

@@ -80,7 +80,12 @@ DAY = Fraction(1440)
 IDLE = "IDLE"
 
 KIND_NO_TASK = "no task allowed"
-KIND_NO_S = "no task s allowed"
+KIND_NO_SCREEN = "no on-screen task"
+
+#: The resilience map of an ON-SCREEN task: the README has no mark on the task
+#: any more, so "on screen" is not a flag -- it is exactly a resilience of 0 to
+#: the kind "no on-screen task", read like every other resilience.
+ON_SCREEN = {KIND_NO_SCREEN: Fraction(0)}
 
 EPS = Fraction(1, 10 ** 6)
 
@@ -129,15 +134,16 @@ def merge_spans(spans):
 class TaskSpec:
     """A task in one rule state.
 
-    `s` is the README's mark. `resilience` is the multiplier applied to the
-    priority percentage inside a restrictive period of a given kind: 0 forbids
-    the task there, 1 leaves it untouched, and anything between scales its
-    share for as long as the period lasts.
+    `resilience` is the multiplier applied to the priority percentage inside a
+    restrictive period of a given kind: 0 forbids the task there, 1 leaves it
+    untouched, and anything between scales its share for as long as the period
+    lasts. There is NO other way a task relates to a period -- "on screen" is
+    a resilience of 0 to the kind "no on-screen task" (`ON_SCREEN`), and the
+    rest of the file asks for it through `resilience_for` like any other kind.
     """
     name: str
     priority: Fraction
     min_time: Fraction
-    s: bool = False
     resilience: tuple = ()          # ((kind, value), ...)
     color: str = "#DDDDDD"
 
@@ -146,15 +152,13 @@ class TaskSpec:
             if k == kind:
                 return value
         if kind == KIND_NO_TASK:
-            return Fraction(0)
-        if kind == KIND_NO_S:
-            return Fraction(0) if self.s else Fraction(1)
+            return Fraction(0)      # the kind that, by its name, accepts nobody
         return Fraction(1)          # a kind this task was never told about
 
 
-def task(name, priority, min_time, s=False, resilience=None, color="#DDDDDD") -> TaskSpec:
+def task(name, priority, min_time, resilience=None, color="#DDDDDD") -> TaskSpec:
     items = tuple(sorted((str(k), frac(v)) for k, v in (resilience or {}).items()))
-    return TaskSpec(str(name), frac(priority), frac(min_time), bool(s), items, color)
+    return TaskSpec(str(name), frac(priority), frac(min_time), items, color)
 
 
 @dataclass(frozen=True)
@@ -340,7 +344,7 @@ class Environment:
         Asking every period about every instant is quadratic, and three days of
         20-second breaks run the period list into the hundreds -- so the sweep
         is done once, and a query is a binary search. Only MIDPOINT queries go
-        through it; the exact-instant questions (`forbids_s_at`) still ask the
+        through it; the exact-instant questions (`no_screen_at`) still ask the
         periods themselves, since that is where open and closed ends live.
         """
         if self._kinds is None:
@@ -377,9 +381,21 @@ class Environment:
             out[spec.name] = shares[spec.name] * self.multiplier(spec, t)
         return out
 
-    def forbids_s_at(self, t) -> bool:
+    def no_screen_at(self, t) -> bool:
+        """Is the instant COVERED BY the README's period "no on-screen task"?
+
+        The two modes of t_p and the recurrence bars are both written in terms
+        of that one phrase, so it is answered in one place. A period of the
+        kind itself covers it; so does "no task allowed", which turns away the
+        on-screen tasks a fortiori -- which is why the three dynamic periods,
+        whose kind is "no task allowed", are the ones the modes govern.
+
+        Asked at an exact instant rather than at a midpoint, because it is the
+        question the dragged 20 seconds -- the half-open (t_p, t_p + 20s] --
+        exists to answer.
+        """
         for p in self.periods:
-            if p.covers(t) and p.kind in (KIND_NO_TASK, KIND_NO_S):
+            if p.covers(t) and p.kind in (KIND_NO_TASK, KIND_NO_SCREEN):
                 return True
         return False
 
@@ -776,10 +792,10 @@ STRETCH_LONG = Fraction(15)
 
 @dataclass(frozen=True)
 class DynamicSpec:
-    """One of the three. `segments` lets a period have a SHAPE -- the tests
-    give the 5-minute one a minute of nothing followed by four minutes that
-    only accept some tasks -- while the README's plain form is one segment of
-    "no task allowed" over the whole duration."""
+    """One of the three. `segments` lets a period have a SHAPE -- a minute of
+    "no task allowed" followed by four minutes of "no on-screen task", say --
+    while the README's plain form is one segment of "no task allowed" over the
+    whole duration."""
     label: str
     duration: Fraction
     segments: tuple = ()      # ((offset, length, kind), ...)
@@ -827,8 +843,9 @@ class Instance:
         recurrence rules' stretches.
 
         `counts(kind)` says which kinds do: under the README, a kind that
-        accepts nobody -- anywhere a task is still allowed the no-idling rule
-        puts one there, so it is not a stretch "without any task".
+        covers the instant with "no on-screen task" AND leaves nobody able to
+        run -- anywhere a task is still allowed the no-idling rule puts one
+        there, so it is not a stretch "without any task".
         """
         best = Fraction(0)
         run_start = None
@@ -856,16 +873,31 @@ class DynamicPlanner:
     order, each placement barring what it has to bar:
 
     * after ANY dynamic period, no 20s for 20 minutes;
-    * after a >= 5-minute stretch where "s" is forbidden and nothing else is
-      scheduled, no 5min for an hour;
+    * after a >= 5-minute stretch covered by "no on-screen task" without any
+      task, no 5min for an hour;
     * after a >= 15-minute one, no 20s for 20 minutes and no 15min for two
       hours.
 
-    A stretch is not the same thing as a period: two periods that abut, or a
-    dynamic period landing against a pre-placed one, make ONE stretch, and a
-    period that still accepts somebody makes none at all (no idling -- a task
-    is placed there, so it is not a stretch "without any task"). `_stretch`
-    is where that is worked out.
+    A REST STRETCH is the README's phrase read literally, and it takes all
+    three of its clauses (`_is_rest_at`):
+
+    * COVERED BY "no on-screen task" -- a period of that kind, or "no task
+      allowed", which refuses the on-screen tasks a fortiori. An emptiness of
+      some other kind ("no B, C", a period nobody happens to be resilient to)
+      is not one: the README names the kind, and only that kind rests eyes.
+    * WITHOUT ANY TASK -- so a period that still accepts somebody makes none
+      at all (no idling puts a task there), and neither does a pre-placed
+      block: a pre-placed task IS a task, even one owned by nobody
+      schedulable.
+    * and it is a STRETCH, not a period: two periods that abut, or a dynamic
+      period landing against a pre-placed one, make ONE (`_stretch`).
+
+    `blocked` and `rested` are deliberately two different sets. Everywhere
+    nothing can be placed, a dynamic period is pointless and is pushed past
+    (`blocked`); only the part of that which is a rest stretch bars what comes
+    after it (`rested`). Counting a pre-placed hour of MAINTENANCE as a rest
+    was the one bug the README's new wording exposes: the user was at the
+    screen the whole time.
 
     The timeline is taken to START rested: the first 20s may fall one bar
     after t_pstart, the first 5min one hour after it, the first 15min two
@@ -886,40 +918,52 @@ class DynamicPlanner:
             "5min": BAR_5MIN_AFTER_STRETCH,
             "15min": BAR_15MIN_AFTER_LONG,
         }
-        shares = {s.name: s.priority for s in specs}
-        blocked = []
+        self.shares = {s.name: s.priority for s in specs}
+        blocked, rested = [], []
         for a, b in base_env.segments(self.t_start, self.horizon):
-            if self._is_stretch(base_env.weights(specs, shares, (a + b) / 2)):
-                blocked.append((a, b))
+            mid = (a + b) / 2
+            if not self._is_empty(base_env.weights(specs, self.shares, mid)):
+                continue
+            blocked.append((a, b))
+            if self._is_rest_at(base_env, mid):
+                rested.append((a, b))
         self.blocked = merge_spans(blocked)
+        self.rested = merge_spans(rested)
 
     @staticmethod
-    def _is_stretch(weights) -> bool:
-        """What counts as one of the recurrence rules' stretches.
-
-        The README's own reading, and the only one: a stretch is one where
-        task "s" is forbidden AND NO OTHER TASK IS SCHEDULED -- anywhere a task
-        is still allowed the no-idling rule puts one there, so it is not a
-        stretch "without any task". Asked of a set of weights, so the same
-        answer serves a segment of the standing environment and a segment of a
-        dynamic period's shape.
-        """
+    def _is_empty(weights) -> bool:
+        """The README's "without any task" clause: nobody may run here, so
+        the no-idling rule puts nobody here either. Asked of a set of weights, so the same answer
+        serves a segment of the standing environment and a segment of a
+        dynamic period's shape."""
         return not any(v > 0 for v in weights.values())
 
+    def _is_rest_at(self, env: Environment, t) -> bool:
+        """The README's stretch, at one instant: covered by "no on-screen
+        task", and no task there -- a pre-placed block included, since a
+        pre-placed task is a task."""
+        return (env.block_at(t) is None
+                and env.no_screen_at(t)
+                and self._is_empty(env.weights(self.specs, self.shares, t)))
+
     def kind_counts(self, kind) -> bool:
-        """Does a stretch of this KIND count? -- the same predicate, asked of
-        the weights that kind leaves standing."""
-        return self._is_stretch({s.name: s.priority * s.resilience_for(kind)
-                                 for s in self.specs})
+        """Does a stretch of this KIND count? -- the same two clauses, asked of
+        one kind on its own: does it cover the instant with "no on-screen
+        task", and does it leave anybody able to run?"""
+        return (kind in (KIND_NO_TASK, KIND_NO_SCREEN)
+                and self._is_empty({s.name: s.priority * s.resilience_for(kind)
+                                    for s in self.specs}))
 
     # -- bars ----------------------------------------------------------------
 
     def _stretch(self, a, b):
-        """Grow [a, b) through whatever pre-placed emptiness it touches."""
+        """Grow [a, b) through whatever pre-placed REST it touches -- an
+        abutting night makes one long stretch with it, an abutting pre-placed
+        block does not."""
         changed = True
         while changed:
             changed = False
-            for x, y in self.blocked:
+            for x, y in self.rested:
                 if x <= a <= y and x < a:
                     a, changed = x, True
                 if x <= b <= y and y > b:
@@ -969,25 +1013,27 @@ class DynamicPlanner:
             start = bars[label]
             if start >= self.horizon:
                 break
-            # A stretch that already refuses everybody bars what comes AFTER it
-            # and absorbs what would fall inside it -- and it does so in
+            # A rest stretch bars what comes AFTER it, and any emptiness at
+            # all absorbs what would fall inside it -- there is nothing for a
+            # break to interrupt where nothing is placed. Both are applied in
             # chronological order: a night on the third day cannot delay a
             # break on the first. (Applying every stretch up front is what
             # pushed a whole day's periods past the last night of the case.)
             moved = False
+            for a, b in self.rested:
+                if b <= start or a <= start < b:
+                    before = dict(bars)
+                    self._bar_stretch(bars, a, b)
+                    if bars != before:
+                        moved = True
             for a, b in self.blocked:
-                before = dict(bars)
-                if b <= start:
-                    self._bar_stretch(bars, a, b)
-                elif a <= start < b:
-                    self._bar_stretch(bars, a, b)
-                    bars[label] = max(bars[label], b)
-                if bars != before:
+                if a <= start < b and bars[label] < b:
+                    bars[label] = b
                     moved = True
             if moved:
                 continue
             open_start = False
-            # Mode 1: at t_p there may be no period that refuses "s". A period
+            # Mode 1: t_p may not be covered by "no on-screen task". A period
             # the line has swept up to is therefore pushed ahead of it, and
             # becomes the half-open (t_p, t_p + duration] -- the line goes on
             # delaying it, placing tasks where it stood.
@@ -1024,15 +1070,17 @@ class DynamicPlanner:
         out = [p for i in inst for p in i.to_periods()]
         if mode == 2:
             env = self.base_env.with_periods(out)
-            if not env.forbids_s_at(t_p):
-                # Mode 2 wants a period refusing "s" AT the line. The one that
-                # just ended is the one the line came out of, so it is extended
-                # to reach t_p -- as "no task s allowed", so the stretch is not
-                # empty: the tasks that are not marked "s" are placed in it.
+            if not env.no_screen_at(t_p):
+                # Mode 2 wants t_p COVERED BY "no on-screen task". The period
+                # that just ended is the one the line came out of, so it is
+                # extended to reach t_p -- as "no on-screen task" rather than
+                # "no task allowed", which is what the README's own example
+                # asks for: the gap is filled with the tasks that have a
+                # non-zero resilience to that kind, and so does not idle.
                 ends = [p.end for p in list(out) + list(self.base_env.periods)
-                        if p.kind in (KIND_NO_TASK, KIND_NO_S) and p.end <= t_p]
+                        if p.kind in (KIND_NO_TASK, KIND_NO_SCREEN) and p.end <= t_p]
                 start = max(ends) if ends else t_p
-                out.append(Period(start, t_p, KIND_NO_S, "mode2", closed_end=True))
+                out.append(Period(start, t_p, KIND_NO_SCREEN, "mode2", closed_end=True))
         return out
 
 
@@ -1438,22 +1486,25 @@ class Scheduler:
 def case_alternation(horizon=3 * HOUR) -> Scheduler:
     """The README's granularity example, two tasks: 50/50 with a 10-minute
     minimum has to alternate in 10-minute slots, not in hour-long blocks."""
-    tasks = (task("A", 50, 10, s=True, color="#FF9999"),
-             task("B", 50, 10, s=True, color="#99CCFF"))
+    tasks = (task("A", 50, 10, resilience=ON_SCREEN, color="#FF9999"),
+             task("B", 50, 10, resilience=ON_SCREEN, color="#99CCFF"))
     return Scheduler([state(0, tasks)], dynamics=(), horizon=horizon)
 
 
 def case_granularity(horizon=6 * HOUR) -> Scheduler:
     """The README's three-task example: A 30min 33%, B 15min 33%, C 15min 33%
     -> A 30, B 15, C 15, B 15, C 15, ..."""
-    tasks = (task("A", 1, 30, s=True), task("B", 1, 15, s=True), task("C", 1, 15, s=True))
+    tasks = (task("A", 1, 30, resilience=ON_SCREEN),
+             task("B", 1, 15, resilience=ON_SCREEN),
+             task("C", 1, 15, resilience=ON_SCREEN))
     return Scheduler([state(0, tasks)], dynamics=(), horizon=horizon)
 
 
 def case_block(horizon=10 * HOUR) -> Scheduler:
     """A pre-placed hour of A: B is deprived, and is compensated around the
     blockage with an influence that decays exponentially away from it."""
-    tasks = (task("A", 50, 10, s=True), task("B", 50, 10, s=True))
+    tasks = (task("A", 50, 10, resilience=ON_SCREEN),
+             task("B", 50, 10, resilience=ON_SCREEN))
     env = Environment(blocks=[block("A", 100, 60)])
     return Scheduler([state(0, tasks)], env, dynamics=(), horizon=horizon)
 
@@ -1461,26 +1512,30 @@ def case_block(horizon=10 * HOUR) -> Scheduler:
 def case_resilience(horizon=12 * HOUR) -> Scheduler:
     """A restrictive period B is only half-resilient to: inside it B keeps
     half of its percentage, so it runs there -- just less."""
-    tasks = (task("A", 50, 10, s=True),
-             task("B", 50, 10, s=True, resilience={"noisy": Fraction(1, 2)}))
+    tasks = (task("A", 50, 10, resilience=ON_SCREEN),
+             task("B", 50, 10, resilience={**ON_SCREEN, "noisy": Fraction(1, 2)}))
     env = Environment(periods=[period(200, 500, "noisy", "noisy")])
     return Scheduler([state(0, tasks)], env, dynamics=(), horizon=horizon)
 
 
 def case_dynamics(horizon=6 * HOUR) -> Scheduler:
     """The three dynamic periods over a plain rule state, with one task that
-    is NOT marked "s" -- so a "no task s allowed" stretch is not empty."""
-    tasks = (task("A", 40, 10, s=True, color="#FF9999"),
-             task("B", 40, 10, s=True, color="#99CCFF"),
-             task("C", 20, 10, s=False, color="#99FF99"))
+    is NOT on-screen -- so a "no on-screen task" stretch is not empty: C is
+    placed in it, and only C."""
+    tasks = (task("A", 40, 10, resilience=ON_SCREEN, color="#FF9999"),
+             task("B", 40, 10, resilience=ON_SCREEN, color="#99CCFF"),
+             task("C", 20, 10, color="#99FF99"))
     return Scheduler([state(0, tasks)], horizon=horizon)
 
 
 def _many_tasks(main_share=50):
     rest = Fraction(100 - main_share, 20)
-    tasks = [task("A", main_share, 45, s=True, color="#FF9999")]
+    tasks = [task("A", main_share, 45, resilience=ON_SCREEN, color="#FF9999")]
     for i in range(20):
-        tasks.append(task(f"T{i:02d}", rest, 45, s=(i >= 10)))
+        # half of them on-screen, half of them not: the "evening" periods below
+        # are "no on-screen task", so the other ten still run inside them.
+        tasks.append(task(f"T{i:02d}", rest, 45,
+                          resilience=ON_SCREEN if i >= 10 else None))
     return tuple(tasks)
 
 
@@ -1492,7 +1547,7 @@ def case_three_days() -> Scheduler:
     for day in range(4):
         base = day * DAY
         nights.append(period(base, base + 8 * HOUR, KIND_NO_TASK, "night"))
-        nights.append(period(base + 23 * HOUR, base + DAY, KIND_NO_S, "evening"))
+        nights.append(period(base + 23 * HOUR, base + DAY, KIND_NO_SCREEN, "evening"))
     return Scheduler([state(0, tasks)], Environment(periods=nights), horizon=3 * DAY)
 
 
@@ -1661,8 +1716,8 @@ def check_resilience_multiplier():
 @check
 def check_resilience_zero_forbids():
     """A resilience of 0 is exactly the forbidding period."""
-    tasks = (task("A", 50, 10, s=True),
-             task("B", 50, 10, s=True, resilience={"noisy": Fraction(0)}))
+    tasks = (task("A", 50, 10, resilience=ON_SCREEN),
+             task("B", 50, 10, resilience={**ON_SCREEN, "noisy": Fraction(0)}))
     env = Environment(periods=[period(200, 500, "noisy", "noisy")])
     s = Scheduler([state(0, tasks)], env, dynamics=(), horizon=10 * HOUR)
     tl = s.timeline(0, 1)
@@ -1765,15 +1820,15 @@ def check_dynamic_recurrence():
 
 @check
 def check_mode1_keeps_the_line_clear():
-    """Mode 1: no period refusing "s" covers t_p, at any position -- and the
-    period the line is dragging is the half-open (t_p, t_p + 20s]."""
+    """Mode 1: no period covers t_p with "no on-screen task", at any position
+    -- and the period the line is dragging is the half-open (t_p, t_p + 20s]."""
     s = case_dynamics(horizon=3 * HOUR)
     dragged = 0
     x = Fraction(0)
     while x < 100:
         env = s.environment(x, 1)
-        require(not env.forbids_s_at(x),
-                f"mode 1 left a refusing period over the line at {human(x)}")
+        require(not env.no_screen_at(x),
+                f"mode 1 left the line covered by \"no on-screen task\" at {human(x)}")
         for inst in s.planner_at(x).instances(x, 1):
             if inst.open_start:
                 dragged += 1
@@ -1798,30 +1853,117 @@ def check_chain_absorbs():
     require(not any(i.label == "20s" and i.start == t_p for i in inst),
             "the 20s survived the merge")
     env = s.environment(t_p, 1)
-    require(not env.forbids_s_at(t_p), "the merged period swallowed the line")
-    require(env.forbids_s_at(t_p + 1), "the merged period is not where the 5min was")
+    require(not env.no_screen_at(t_p), "the merged period swallowed the line")
+    require(env.no_screen_at(t_p + 1), "the merged period is not where the 5min was")
     return f"20s absorbed, the 5min now runs ({human(t_p)}, {human(t_p + 5)}]"
 
 
 @check
 def check_mode2_covers_the_line():
-    """Mode 2: there IS a period refusing "s" at t_p, and the gap between the
-    period that just ended and the line is covered as "no task s allowed" --
-    so the tasks that are not marked "s" are placed in it, and nothing idles."""
+    """Mode 2: t_p IS covered by "no on-screen task", and the gap between the
+    period that just ended and the line is covered by one -- so the tasks with
+    a non-zero resilience to that kind are placed in it, and nothing idles."""
     s = case_dynamics(horizon=3 * HOUR)
     inst = s.planner_at(0).instances(0, 1)
     fifteen = next(i for i in inst if i.label == "15min")
     t_p = fifteen.end + 4
     env = s.environment(t_p, 2)
-    require(env.forbids_s_at(t_p), "mode 2 left the line uncovered")
-    gap = [p for p in env.periods if p.kind == KIND_NO_S and p.label == "mode2"]
+    require(env.no_screen_at(t_p), "mode 2 left the line uncovered")
+    gap = [p for p in env.periods if p.kind == KIND_NO_SCREEN and p.label == "mode2"]
     require(gap and gap[0].start == fifteen.end and gap[0].end == t_p,
             f"the covering period is {[(human(p.start), human(p.end)) for p in gap]}")
     tl = clip(s.timeline(t_p, 2), fifteen.end, t_p)
     require(tl, "the gap was left empty")
     require(all(p.task == "C" for p in tl),
-            f"a task marked s ran inside the gap: {[p.task for p in tl]}")
+            f"an on-screen task ran inside the gap: {[p.task for p in tl]}")
     return f"gap {human(fifteen.end)}..{human(t_p)} covered, filled with C alone"
+
+
+@check
+def check_rest_is_the_no_screen_stretch():
+    """The README's stretch, in all three of its clauses.
+
+    "a >= 5 / >= 15-minute stretch covered by the period 'no on-screen task'
+    without any task" -- so an hour of that kind rests only when nobody is
+    left to run in it, and an emptiness of some OTHER kind is not a rest at
+    all, however empty it is.
+    """
+    hour = (2 * HOUR, 3 * HOUR)
+
+    def planner(tasks, kind):
+        env = Environment(periods=[period(*hour, kind, "the hour")])
+        return Scheduler([state(0, tasks)], env, horizon=8 * HOUR).planner_at(0)
+
+    on_screen = (task("A", 50, 10, resilience=ON_SCREEN),
+                 task("B", 50, 10, resilience=ON_SCREEN))
+    with_off = on_screen + (task("C", 50, 10),)
+
+    # (1) covered by the kind, and nobody may run: a rest stretch, and the
+    #     three bars are owed from its END.
+    rests = planner(on_screen, KIND_NO_SCREEN)
+    require(rests.rested == [hour],
+            f"an empty 'no on-screen task' hour is not a rest: {rests.rested}")
+    end = hour[1]
+    for inst in rests.instances(0, 1):
+        gap = inst.start - end
+        if gap < 0:
+            continue
+        bar = {"20s": BAR_20S_AFTER_LONG, "5min": BAR_5MIN_AFTER_STRETCH,
+               "15min": BAR_15MIN_AFTER_LONG}[inst.label]
+        require(gap >= bar - EPS,
+                f"a {inst.label} only {human(gap)} after the hour (bar {human(bar)})")
+
+    # (2) covered by the kind, but C runs there: no idling, so no stretch --
+    #     and nothing about the placement changes.
+    busy = planner(with_off, KIND_NO_SCREEN)
+    require(busy.rested == [],
+            f"an hour C runs in was counted as a rest: {busy.rested}")
+    plain = Scheduler([state(0, with_off)], horizon=8 * HOUR).planner_at(0)
+    require([(i.label, i.start) for i in busy.instances(0, 1)]
+            == [(i.label, i.start) for i in plain.instances(0, 1)],
+            "a 'no on-screen task' hour somebody runs in moved the periods")
+
+    # (3) empty, but of another kind: not the README's stretch. It still
+    #     absorbs (nothing can be placed there), it just bars nothing after.
+    deaf = tuple(task(s.name, s.priority, s.min_time,
+                      resilience={**ON_SCREEN, "noisy": Fraction(0)})
+                 for s in on_screen)
+    other = planner(deaf, "noisy")
+    require(other.blocked == [hour],
+            f"an hour nobody may run in is not blocked: {other.blocked}")
+    require(other.rested == [],
+            f"an empty hour of another kind was counted as a rest: {other.rested}")
+    first = min((i.start for i in other.instances(0, 1) if i.start >= end),
+                default=None)
+    require(first is not None and first - end < BAR_20S_AFTER_LONG,
+            f"the 'noisy' hour barred what came after it (next at {human(first)})")
+    return ("the hour rests when it is that kind and empty, and only then "
+            f"(next period after the 'noisy' one: {human(first - end)} later)")
+
+
+@check
+def check_pre_placed_task_is_not_a_rest():
+    """A pre-placed task is a TASK: an hour of it is not a stretch "without
+    any task", however little the scheduler had to say about it. Nothing is
+    placed inside it either -- there is no room."""
+    tasks = (task("A", 50, 10, resilience=ON_SCREEN),
+             task("B", 50, 10, resilience=ON_SCREEN))
+    env = Environment(blocks=[block("MAINTENANCE", HOUR, 60)])
+    pl = Scheduler([state(0, tasks)], env, horizon=8 * HOUR).planner_at(0)
+    require(pl.rested == [],
+            f"a pre-placed hour was counted as a rest: {pl.rested}")
+    require(pl.blocked == [(HOUR, 2 * HOUR)],
+            f"a pre-placed hour nobody schedulable owns is not blocked: {pl.blocked}")
+    inst = pl.instances(0, 1)
+    inside = [i for i in inst if i.start < 2 * HOUR and i.end > HOUR]
+    require(not inside,
+            f"a dynamic period landed inside the block: "
+            f"{[(i.label, human(i.start)) for i in inside]}")
+    after = min(i.start for i in inst if i.start >= 2 * HOUR)
+    require(after - 2 * HOUR < BAR_20S_AFTER_LONG,
+            f"the block barred what came after it (next at {human(after)})")
+    return (f"the hour bars nothing, holds nothing, and the next period is "
+            f"{human(after - 2 * HOUR)} after it")
 
 
 @check
@@ -1912,9 +2054,11 @@ def check_resume_contract():
 def check_shares_match_targets():
     """The first optimisation criterion, over three days: a task's presence is
     its percentage."""
-    tasks = (task("A", 50, 45, s=True),
-             task("B", Fraction(25, 2), 45, s=True), task("C", Fraction(25, 2), 45, s=True),
-             task("D", Fraction(25, 2), 45, s=True), task("E", Fraction(25, 2), 45, s=True))
+    tasks = (task("A", 50, 45, resilience=ON_SCREEN),
+             task("B", Fraction(25, 2), 45, resilience=ON_SCREEN),
+             task("C", Fraction(25, 2), 45, resilience=ON_SCREEN),
+             task("D", Fraction(25, 2), 45, resilience=ON_SCREEN),
+             task("E", Fraction(25, 2), 45, resilience=ON_SCREEN))
     s = Scheduler([state(0, tasks)], dynamics=(), horizon=3 * DAY)
     sh = resulting_shares(s.timeline(0, 1))
     target = {"A": Fraction(1, 2), "B": Fraction(1, 8), "C": Fraction(1, 8),

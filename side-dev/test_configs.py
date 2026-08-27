@@ -8,9 +8,10 @@ test window does. What lives here is the SHAPE a configuration has, so that a
 person can edit it with a mouse and the scheduler can be asked about it:
 
     span            how far the question reaches
-    rule states     the tasks, their percentages and their minimums, pinned at
-                    an instant -- one state stands forever, several are
-                    keyframes the scheduler blends linearly between
+    rule states     the tasks, their percentages, their minimums and their
+                    resilience to "no on-screen task", pinned at an instant --
+                    one state stands forever, several are keyframes the
+                    scheduler blends linearly between
     blocks          stretches already on the timeline before the scheduler is
                     asked anything
     periods         what the timeline REFUSES, and to whom
@@ -45,7 +46,7 @@ from pathlib import Path
 from scheduler import (
     DAY,
     HOUR,
-    KIND_NO_S,
+    KIND_NO_SCREEN,
     KIND_NO_TASK,
     MINUTE,
     SECOND,
@@ -125,6 +126,20 @@ def show_percent(value) -> str:
     return f"{float(Fraction(value)):g}"
 
 
+def parse_resilience(text) -> Fraction:
+    """A resilience, typed as a percentage: 0 forbids the task in a period of
+    that kind, 100 leaves it untouched, and anything between scales its share
+    for as long as the period lasts."""
+    value = parse_percent(text) / 100
+    if not 0 <= value <= 1:
+        raise ValueError("a resilience must be between 0% and 100%")
+    return value
+
+
+def show_resilience(value) -> str:
+    return show_percent(Fraction(value) * 100)
+
+
 # --------------------------------------------------------------------------- #
 #  what a period refuses
 # --------------------------------------------------------------------------- #
@@ -139,22 +154,26 @@ def show_percent(value) -> str:
 #  windows one long ban rather than ten small ones.
 
 EVERYBODY = ("", "everybody", "everyone", "all", "nobody", "nothing")
-S_MARKED = ("s", "marked s", "tasks marked s", "the s tasks")
+ON_SCREEN_TASKS = ("screen", "on screen", "on-screen", "on screen tasks",
+                   "on-screen tasks", "no on-screen task", "the on-screen tasks")
 
 
 def refusal(refuses: str):
     """`(kind, {task: resilience})` for what a period's "refuses" column says.
 
-    "everybody" and "s" are the README's own two kinds; anything else is a
-    list of task names, each optionally with the resilience it keeps
-    ("B:0.5", "B:50%") rather than the 0 that forbids it outright.
+    "everybody" ("no task allowed") and "on-screen" ("no on-screen task") are
+    the README's own two kinds -- and neither carries per-task resiliences,
+    because a task's resilience to "no on-screen task" is a fact of the TASK
+    and is typed in its own row. Anything else is a list of task names, each
+    optionally with the resilience it keeps ("B:0.5", "B:50%") rather than the
+    0 that forbids it outright.
     """
     text = str(refuses).strip()
     low = text.lower()
     if low in EVERYBODY:
         return KIND_NO_TASK, {}
-    if low in S_MARKED:
-        return KIND_NO_S, {}
+    if low in ON_SCREEN_TASKS:
+        return KIND_NO_SCREEN, {}
     out = {}
     for item in text.split(","):
         item = item.strip()
@@ -178,8 +197,8 @@ def refusal_label(refuses: str) -> str:
     low = str(refuses).strip().lower()
     if low in EVERYBODY:
         return "nothing may run"
-    if low in S_MARKED:
-        return "only tasks not marked s"
+    if low in ON_SCREEN_TASKS:
+        return "no on-screen task"
     return "no " + ", ".join(part.strip() for part in str(refuses).split(",")
                              if part.strip())
 
@@ -201,23 +220,34 @@ class TaskLine:
     `percent` is the target PERCENTAGE (the README's first optimisation
     criterion), read against the sum of them all -- so "50, 50" and
     "40, 40, 20" mean what they say. `min_time` is the smallest stretch the
-    task may be given in one go. `s` is the README's "s" mark: it is what a
-    period refusing "s" selects, and nothing else reads it.
+    task may be given in one go.
+
+    `screen` is the task's RESILIENCE to the kind "no on-screen task", the one
+    kind the README names in its own rules: 0 is an on-screen task -- turned
+    away by such a period, and by the three dynamic ones -- and 1 is a task
+    such a period leaves alone. It is typed here rather than on the period
+    because the README puts every resilience on the task; a period of that
+    kind says nothing about who it turns away, it IS the kind.
     """
     name: str
     percent: Fraction
     min_time: Fraction
-    s: bool = True
+    screen: Fraction = Fraction(0)
     color: str = PALETTE[0]
 
     def as_json(self):
         return {"name": self.name, "percent": show_percent(self.percent),
-                "min": human(self.min_time), "s": self.s, "color": self.color}
+                "min": human(self.min_time), "screen": show_resilience(self.screen),
+                "color": self.color}
 
     @staticmethod
     def from_json(d) -> TaskLine:
+        # "s" is what this column was called while the README had a mark on the
+        # task: the marked ones are exactly the on-screen ones, resilience 0.
+        screen = (d["screen"] if "screen" in d
+                  else ("0" if bool(d.get("s", True)) else "100"))
         return TaskLine(str(d["name"]), parse_percent(d["percent"]),
-                        parse_time(d["min"]), bool(d.get("s", True)),
+                        parse_time(d["min"]), parse_resilience(screen),
                         str(d.get("color", PALETTE[0])))
 
 
@@ -342,6 +372,9 @@ class Config:
                     out.append(f"{t.name}'s percentage is negative")
                 if t.min_time <= 0:
                     out.append(f"{t.name}'s minimum time must be more than nothing")
+                if not 0 <= t.screen <= 1:
+                    out.append(f"{t.name}'s resilience to \"no on-screen task\" "
+                               f"must be between 0% and 100%")
             if sum((t.percent for t in st.tasks), Fraction(0)) <= 0:
                 out.append(f"the rule state at {human(st.at)} gives every task 0%")
         known = {t.name for t in self.tasks}
@@ -373,7 +406,10 @@ class Config:
 
         The refusals are collected FIRST, because a resilience belongs to the
         TASK: every rule state's copy of a task must carry the same one, or a
-        blend between two keyframes would quietly lift a ban half-way.
+        blend between two keyframes would quietly lift a ban half-way. The
+        one resilience a task carries in its own right -- the one to "no
+        on-screen task" -- is added to that same map, so the scheduler is
+        handed exactly one kind of thing.
         """
         bans, periods = {}, []
         for p in self.periods:
@@ -382,8 +418,10 @@ class Config:
                 bans.setdefault(name, {})[kind] = value
             periods.append(period(p.start, p.end, kind, refusal_label(p.refuses)))
         states = tuple(
-            state(st.at, tuple(task(t.name, t.percent, t.min_time, s=t.s,
-                                    resilience=bans.get(t.name), color=t.color)
+            state(st.at, tuple(task(t.name, t.percent, t.min_time,
+                                    resilience={**bans.get(t.name, {}),
+                                                KIND_NO_SCREEN: t.screen},
+                                    color=t.color)
                                for t in st.tasks))
             for st in self.states)
         blocks = tuple(block(b.task, b.start, b.duration) for b in self.blocks)
@@ -467,9 +505,9 @@ DEFAULT_CONFIG = Config(
     title="three tasks, half an hour owned by nobody, and an hour C is refused",
     span=6 * HOUR,
     states=(StateLine(Fraction(0), (
-        TaskLine("A", Fraction(50), Fraction(10), s=True, color=PALETTE[0]),
-        TaskLine("B", Fraction(30), Fraction(10), s=True, color=PALETTE[1]),
-        TaskLine("C", Fraction(20), Fraction(15), s=False, color=PALETTE[2]),
+        TaskLine("A", Fraction(50), Fraction(10), Fraction(0), PALETTE[0]),
+        TaskLine("B", Fraction(30), Fraction(10), Fraction(0), PALETTE[1]),
+        TaskLine("C", Fraction(20), Fraction(15), Fraction(1), PALETTE[2]),
     )),),
     blocks=(BlockLine("MAINTENANCE", HOUR, Fraction(30)),),
     periods=(PeriodLine(3 * HOUR, 4 * HOUR, "C"),),
@@ -502,8 +540,10 @@ def configuration_lines(config: Config) -> list:
         out.append(f"  at t = {human(st.at)}:")
         for t in st.tasks:
             out.append(f"    - {t.name} {float(t.percent / total) * 100:g}% "
-                       f"min {human(t.min_time)}"
-                       + ("" if t.s else " (not marked s)"))
+                       f"min {human(t.min_time)}, "
+                       f"{show_resilience(t.screen)}% resilient to "
+                       f"\"no on-screen task\""
+                       + (" (an on-screen task)" if t.screen == 0 else ""))
     out += ["", f"starting timeline (span {human(config.span)}):"]
     if not config.blocks and not config.periods:
         out.append("  (empty: no pre-placed task, no pre-placed period)")
