@@ -207,6 +207,15 @@ crossing can be silently clipped by a clock jump.
   screen; **grey** says whether anything is scheduled.
 - **A layer is read from the DEVICE'S OS HISTORY** (`deviceLockedIntervals`), never from the app's own
   sessions or from banked panels. Both of those were shipped and both were wrong.
+- **`WindowsPowerLog` is the ONLY reading of that history** — the ids, the debounce, the pairing, the query.
+  All three `SleepHistory` actuals go through it; a second copy is how the layer and the record bank start
+  disagreeing about whether the user was there. Three rules it exists to hold: **a shut-down machine logs no
+  sleep event** (so the boot/shutdown ids are in the set, or a power-off overnight reads as time at the
+  desk); **an id means nothing without its provider** (`1` is Kernel-Power "resumed" *and* Kernel-General
+  "the system time has changed" — each provider is asked for its own ids, and the sets are disjoint); and **a
+  flip shorter than a minute is jitter**, cancelling the transition it undid, so the timeline strictly
+  alternates. Both window edges are handled: an open absence clips to `until`, and the state the window
+  *opens* in comes from events fetched BEFORE it.
 - **A device that cannot be asked was LOCKED** (`null` ⇒ the layer hatches the whole asked past; an empty
   list ⇒ nothing drawn — the same default as `derivePauses`, and `null` and an empty list stay different
   answers). "Not asked yet" is a third state: the own layer draws nothing until its first scan lands.

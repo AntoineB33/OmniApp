@@ -39,9 +39,38 @@ On Windows the fallback is forced:
 - `Microsoft-Windows-Winlogon/Operational` only logs which notification SUBSCRIBER ran (811/812).
 - The TerminalServices log records logon/logoff/disconnect but not lock.
 
-So the jvm actual reads the same non-elevated **Kernel-Power 42/506 → 1/131/507** timeline the rest of
-that file uses. On a Modern-Standby machine that is closer to lock/unlock than it sounds — 506 fires at
-screen-off.
+So the jvm actual reads the non-elevated **power history** of the System event log. On a Modern-Standby
+machine that is closer to lock/unlock than it sounds — 506 fires at screen-off.
+
+### What "away" is made of — 2026-08-27
+
+`WindowsPowerLog` is the one place that says which events mean the device went away, and all three
+`SleepHistory` actuals read it (the layer, the record-bank evidence, the screen-break seed, the exact
+pause recorder). Three things it has to get right, each of which was wrong while the query watched only
+Kernel-Power's sleep pair:
+
+- **A machine that is SHUT DOWN logs no sleep event at all.** `42`/`506` never fire; the clean shutdown
+  is `109`/`13`/`6006` and the boot is `12`/`6005`, across two other providers. A query watching only the
+  sleep pair reports an overnight power-off as time the user was present — which draws no hatch, and,
+  worse, leaves `observedNoScreenRegions` with no evidence, so on-screen tasks bank records straight
+  through hours the machine was off. That is the failure this ADR's evidence union exists to prevent,
+  reached by another door. `6008` (power loss) is stamped at the NEXT BOOT, so the query substitutes the
+  crash time out of the record's own properties.
+- **An id means nothing without its provider.** `1` is Kernel-Power's "the system has resumed" and ALSO
+  Kernel-General's "the system time has changed", which Windows writes a second after almost every sleep.
+  Asking three providers for one flat id list therefore turns every clock resync into a wake: on the
+  author's own log a sleep at 01:19:44 paired with the time-change at 01:19:45 into a one-second absence,
+  the genuine resume eight hours later had nothing left to close, and the night read as time at the desk.
+  Each provider is asked for **its own** ids; the three sets are disjoint, which is what lets the query's
+  output stay one `millis,id` line per event.
+- **Jitter is not a state change.** A flip shorter than a minute cancels the transition it undid, and a
+  repeat of the state already held is dropped, so the timeline strictly alternates. Without it a `506`/
+  `507` bounce becomes a real three-second "locked" interval. The price is that a genuine sub-minute lock
+  is invisible — the same scale the derived grey bands already drop as remnants.
+
+The window's two edges are asymmetric and both are handled: an absence still open at `untilMillis` is
+clipped to it, and the state the window OPENS in comes from a few events fetched from BEFORE it — without
+them a window beginning mid-absence drops its unmatched wake and reports the whole lead-in as present.
 
 Ahead of the now-line nothing is observed, so only the ASSERTED regions hatch (`layerAsserted` in
 `App.kt`: §17 sleep windows, §15 screen breaks, the user's own no-screen periods), and those hold for

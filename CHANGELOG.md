@@ -11,6 +11,39 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Windows lock-history query reads the whole power history (`WindowsPowerLog`) — FIXED 2026-08-27
+
+- **The ask:** is the app's detection of the Windows lock/unlock history as good as
+  `computer/Get-SleepCycles.ps1`? It was not. Same technique — non-elevated `Get-WinEvent`, one merged
+  timeline, pair down→up — but on a strict subset of the events, with no debouncing and one unhandled
+  window edge. All three `SleepHistory.jvm.kt` actuals now share `WindowsPowerLog`, so the layer, the
+  record-bank evidence, the screen-break seed and the exact pause recorder can no longer disagree about
+  whether the user was there.
+- **Shutdown and boot are now absences.** The old query watched Kernel-Power `42`/`506` → `1`/`131`/`507`
+  and nothing else, so a machine switched OFF overnight — which writes `109`/`13`/`6006` and `12`/`6005`,
+  on two other providers — produced no pair at all and read as time at the desk. `6008` (power loss) is
+  stamped at the next boot, so its real instant is taken from the record's own properties.
+- **Each provider is asked for its OWN ids**, because `1` is Kernel-Power's "resumed" *and*
+  Kernel-General's "the system time has changed". Verified against the author's own log: with a flat id
+  list a sleep at 01:19:44 pairs with the 01:19:45 clock resync into a one-second absence and the genuine
+  09:18 resume has nothing left to close — the eight-hour night vanishes. `Get-SleepCycles.ps1` has this
+  bug; the app now does not. The reference script's `6008` correction is also inert, as it reads
+  `ReplacementStrings` (a `Get-EventLog` property) off a `Get-WinEvent` record.
+- **A 60-second debounce**, as in the reference script: a flip that did not hold cancels the transition it
+  undid, a repeat of the state already held is dropped, and the timeline strictly alternates. Kills the
+  three-second "locked" slivers a standby bounce used to emit. Sub-minute locks become invisible —
+  accepted, being the scale the derived grey bands already drop.
+- **The window's opening state is asked for.** `StartTime`/`EndTime` still bound the query (ADR 0009), but
+  `PRIOR_EVENTS` events from before it now establish what state it opens in; a window beginning
+  mid-absence used to drop its unmatched wake and report the whole lead-in as present. The trailing edge
+  was already clipped.
+- **The `OK` sentinel got stricter**: printed only when every error was `NoMatchingEventsFound`, so a log
+  this process may not read now answers "cannot tell" (`null`) instead of "never locked". That
+  distinction is load-bearing — a failed query must never become evidence in the record bank.
+- Measured on a 7-day window: 740 ms for six queries. `WindowsPowerLogTest` pins the vocabulary, the
+  debounce, both window edges, the sentinel and the provider partition. **No deploy surface but the client
+  apps** — rebuild via `account{1,2,3}-*deploy*.bat`.
+
 ### The keyboard-shortcuts window can rebind the system-wide chords — SHIPPED 2026-08-26
 
 - **The ask:** make the keyboard-shortcuts window able to customize the shortcuts.
