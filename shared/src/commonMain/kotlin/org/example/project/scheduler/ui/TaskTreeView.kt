@@ -57,6 +57,7 @@ import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.SelectionNavigate
+import org.example.project.ui.TaskPalette
 import org.example.project.ui.TaskTreeFindBar
 import org.example.project.ui.isModifierKey
 import org.example.project.ui.printableChar
@@ -107,6 +108,13 @@ internal fun TaskTreeView(
 ) {
     val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
     val visibleOccurrences = SchedulerDomain.selectableVisibleOccurrences(state)
+    // Each task's own colour (see [org.example.project.scheduler.domain.TaskColorSpace]). Derived here
+    // rather than passed in, so BOTH trees this composable draws are coloured by the one rule over the very
+    // state they are showing — the account's tree over the live state, the PRD §4 template over the
+    // projection whose root list is the template's own. Remembered against the three maps the partition
+    // reads: the advance tick replaces the state object every second (records live on the tasks) and
+    // re-walking the whole tree on each one is exactly the O(everything)-per-tick cost ADR 0009 forbids.
+    val taskColors = remember(state.cells, state.lists, state.tasks) { TaskPalette.sheetColors(state) }
     var moveDragActive by remember { mutableStateOf(false) }
     var moveDropTarget by remember { mutableStateOf<MoveDropTarget?>(null) }
     // PRD §10: the cell whose minimum-time field is currently expanded into an input (clicking its
@@ -517,6 +525,7 @@ internal fun TaskTreeView(
                 depth = 0,
                 visibleOrder = visibleOrder,
                 priorities = priorities,
+                taskColors = taskColors,
                 searchHighlight = searchHighlight,
                 onTogglePriorityWeights = { listId ->
                     // PRD §5: clicking a percentage opens that sub-list's window. Closing is by clicking

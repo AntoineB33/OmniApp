@@ -21,6 +21,11 @@ never read off a field the configuration could have set differently:
 
 * the test has a t_p line and both t_p modes (the line is drawn on the bar,
   PLAY sweeps it, MODE 1/2 flips the mode);
+* the bar is READ OUT beside it -- every task and every idling in order, with
+  the time written between one and the next -- and copy puts that list, and
+  the parameters it was answered under, on the clipboard;
+* hovering the bar names what is under the cursor: the panel, its start and
+  its end, and the periods at that instant, the three dynamic ones included;
 * the test is answered progressively, by a worker that owns its scheduler;
 * the test owes every check -- the partition, no idling, the minimums, the
   alternative schedule, the frozen past, the recurrence bars, the rule list,
@@ -355,13 +360,92 @@ def rules_text(case, t_p=None, mode=1, max_rules=60) -> str:
     return "\n".join(out)
 
 
+def element_at(tl, t):
+    """The drawn stretch `t` falls in -- a task, or the idling between two.
+
+    The last one owns its own end, so the bubble does not go blank at the very
+    right of the bar, where a half-open [start, end) would name nothing.
+    """
+    t = frac(t)
+    for pl in tl:
+        if pl.start <= t < pl.end:
+            return pl
+    return tl[-1] if tl and t >= tl[-1].end else None
+
+
+def element_name(task) -> str:
+    """What a drawn stretch is CALLED in a list a person reads: a task by its
+    name, and the stretch no task was allowed in as idling."""
+    return "idling" if task == IDLE else task
+
+
+def periods_at(case, snap, t) -> list:
+    """Every period covering `t`, the three dynamic ones included.
+
+    The pre-placed ones are the test's own and never move; the dynamic ones
+    are wherever the line has just put them, which is why they are read off
+    the SNAPSHOT and not off the case.
+    """
+    here = [p for p in case.periods if p.covers(t)]
+    here += [p for p in snap.periods if p.covers(t)]
+    return sorted(here, key=lambda p: (p.start, p.end))
+
+
+def period_line(p) -> str:
+    """A period as one line: what it is, and where it runs."""
+    kind = f" [{p.kind}]" if p.label and p.kind != p.label else ""
+    return f"{p.label or p.kind}{kind}  {clock(p.start)} .. {clock(p.end)}"
+
+
+def schedule_lines(case, tl, t_p=None, limit=None) -> list:
+    """The whole drawn timeline as a list, in order, with the time written
+    between one element and the next.
+
+    This is the schedule as it is scheduled RIGHT NOW -- the answer for the
+    position the line is at, in the mode it is in -- so it is read off a
+    timeline that has already been drawn and never re-derived here.
+    """
+    if not tl:
+        return ["  (nothing is scheduled)"]
+    shown = tl if limit is None or len(tl) <= limit else tl[:limit]
+    out = []
+    for pl in shown:
+        out.append(f"  {clock(pl.start)}")
+        here = "   <- t_p" if t_p is not None and pl.start <= frac(t_p) < pl.end else ""
+        out.append(f"      {element_name(pl.task):<12} {human(pl.duration):>10}{here}")
+    if len(shown) < len(tl):
+        out.append(f"  ... and {len(tl) - len(shown)} more elements, down to "
+                   f"{clock(tl[-1].end)}")
+    else:
+        out.append(f"  {clock(tl[-1].end)}")
+    return out
+
+
+def parameters_text(t_p, mode) -> str:
+    """The two things about a test that are NOT in its configuration, because
+    they are the README's own variables rather than the timeline's: where the
+    line is, and which of the two modes it is in."""
+    return f"t_p = {clock(t_p)}   (t_p mode {mode})"
+
+
 def report_text(case, t_p=None, mode=1) -> str:
-    """What the copy button puts on the clipboard: the configuration AND the
-    resulting set of rules, in a form a person can read."""
+    """What the copy button puts on the clipboard: the schedule as a list, and
+    the parameters it was answered under -- t_p, the t_p mode, the task rules,
+    the pre-placed tasks and the pre-placed periods.
+
+    The three dynamic periods are deliberately NOT among the parameters: they
+    are placed by the scheduler and move with the line, so they are part of
+    the ANSWER and not of the question. Where they landed is readable off the
+    list anyway -- they are what the idling in it is made of.
+    """
     sched = case.sched
     t_p = sched.t_p if t_p is None else frac(t_p)
     tl = sched.timeline(t_p, mode)
-    parts = [configuration_text(case), "", rules_text(case, t_p, mode), "",
+    parts = [configuration_text(case), "",
+             parameters_text(t_p, mode), "",
+             "the schedule now, in order:",
+             *schedule_lines(case, tl, t_p), "",
+             rules_text(case, t_p, mode), "",
              f"resulting shares: {shares_line(tl, 24)}"]
     return "\n".join(parts)
 
@@ -771,25 +855,103 @@ def verify_percentages(case, verbose=True):
     return fails
 
 
-def verify_reports(case, verbose=True):
-    """What the copy button puts on the clipboard: the configuration AND the
-    resulting rules, in a form a person can read -- a copy button that quietly
-    copied an empty rule list would look exactly like one that worked."""
+def verify_bubble(case, verbose=True):
+    """What hovering the bar says: the element under the cursor, and the
+    periods at that instant.
+
+    The bubble is the one place the display ANSWERS A QUESTION about a single
+    instant, so it owes the same two things everywhere: a stretch to name --
+    the timeline is a partition, so there is one at every position of the
+    cursor -- and the periods the scheduler itself reads there, the three
+    dynamic ones included. A bubble naming the pre-placed periods only would
+    be silent exactly where the line has just put a break.
+    """
     fails = []
     if verbose:
-        print("--- the copy button's text: configuration + rules ---")
-    text = report_text(case, case.sched.t_start, 1)
-    for wanted in ("rule states:", "starting timeline", "rules at t_p",
+        print("--- the hover bubble: the element, and the periods at the cursor ---")
+    named = 0
+    for mode in MODES:
+        c = case.fresh()
+        t_p = c.sched.t_start
+        snap = snapshot_of(c, t_p, mode)
+        env = c.sched.environment(t_p, mode)
+        tl = snap.placements
+        for t in positions(c, sample_count(c)):
+            if element_at(tl, t) is None:
+                fails.append(f"mode {mode}: nothing is named at {human(t)}")
+                break
+        for a, b in env.segments(c.sched.t_start, c.span):
+            mid = (a + b) / 2
+            here = periods_at(c, snap, mid)
+            said = sorted(p.kind for p in here)
+            read = sorted(env.kinds_at(mid))
+            if said != read:
+                fails.append(f"mode {mode}: the bubble names {said or 'no period'} "
+                             f"at {human(mid)} where the scheduler reads {read}")
+                break
+            named += len(here)
+        for dyn in snap.periods:
+            mid = (dyn.start + dyn.end) / 2
+            if dyn.duration > 0 and not any(p.label == dyn.label
+                                            for p in periods_at(c, snap, mid)):
+                fails.append(f"mode {mode}: the {dyn.label} period is not named "
+                             f"inside itself")
+                break
+    if verbose:
+        print(f"  every position names an element; {named} period readings agree "
+              f"with the scheduler's")
+        _report(fails)
+    return fails
+
+
+def verify_reports(case, verbose=True):
+    """What the copy button puts on the clipboard: the schedule as a LIST, and
+    the parameters it was answered under -- a copy button that quietly copied
+    an empty list would look exactly like one that worked.
+
+    The list is checked against the timeline it claims to be reading: it owes
+    one entry per drawn stretch, in the same order, and the times between the
+    entries are the drawn bounds themselves.
+    """
+    fails = []
+    if verbose:
+        print("--- the copy button's text: the list, the parameters, the rules ---")
+    t_p, mode = case.sched.t_start, 1
+    text = report_text(case, t_p, mode)
+    for wanted in ("rule states:", "starting timeline", "t_p = ", "t_p mode 1",
+                   "the schedule now, in order:", "rules at t_p",
                    "alternative schedule", "resulting shares"):
         if wanted not in text:
             fails.append(f"the report has no \"{wanted}\" section")
+    tl = case.sched.timeline(t_p, mode)
+    lines = schedule_lines(case, tl, t_p)
+    if len(lines) != 2 * len(tl) + 1:
+        fails.append(f"the list has {len(lines)} lines for {len(tl)} elements: "
+                     "every element owes a time before it and the last one owes "
+                     "the time it ends at")
+    for i, pl in enumerate(tl):
+        if lines[2 * i].strip() != clock(pl.start):
+            fails.append(f"the list writes {lines[2 * i].strip()} where the "
+                         f"element starting at {clock(pl.start)} does")
+            break
+        if element_name(pl.task) not in lines[2 * i + 1]:
+            fails.append(f"the list does not name {element_name(pl.task)} at "
+                         f"{clock(pl.start)}")
+            break
+    if tl and lines[-1].strip() != clock(tl[-1].end):
+        fails.append("the list does not end at the time the timeline does")
+    for line in lines:
+        if line not in text:
+            fails.append("the copied text is not the list that is on screen")
+            break
     if not [ln for ln in text.splitlines() if ln.startswith("  ") and "->" in ln]:
         fails.append("the report names no rule at all")
     for st in case.sched.states.states:
         if human(st.at) not in text:
             fails.append(f"the rule state at {human(st.at)} is not in the report")
     if verbose:
-        print(f"  the report is complete, {len(text.splitlines())} lines")
+        print(f"  the report is complete, {len(text.splitlines())} lines, "
+              f"listing {len(tl)} elements")
         _report(fails)
     return fails
 
@@ -814,6 +976,7 @@ def verify_all(case=None, verbose=True):
     fails += verify_rules(case, verbose)
     fails += verify_progressive(case, verbose)
     fails += verify_percentages(case, verbose)
+    fails += verify_bubble(case, verbose)
     fails += verify_reports(case, verbose)
     if verbose:
         print(f"{'FAILED: ' + str(len(fails)) if fails else 'all checks pass'} "
@@ -1027,7 +1190,8 @@ class Panel:
             self.items.append(c.create_rectangle(a, y + 1, max(b, a + 0.8), y + h - 1,
                                                  fill=color, outline=""))
             if b - a > 26:
-                self.items.append(c.create_text((a + b) / 2, y + h / 2, text=pl.task,
+                self.items.append(c.create_text((a + b) / 2, y + h / 2,
+                                                text=element_name(pl.task),
                                                 font=FONT, fill="#333333"))
         step = tick_step(self.case.span - self.case.sched.t_start)
         t = self.case.sched.t_start
@@ -1062,6 +1226,50 @@ class Panel:
             if pl.alt and pl.end > snap.t_p:
                 return pl.alt + " (next)"
         return "(none)"
+
+    # -- what is true at one instant, for the bubble -------------------------
+
+    def bubble_lines(self, t):
+        """What the cursor is over: the panel it is in, and every period at
+        that instant -- the pre-placed ones and the three dynamic ones alike,
+        since what refuses a task there is the sum of them."""
+        pl = element_at(self.snapshot.placements, t)
+        out = [f"at {clock(t)}"]
+        if pl is None:
+            out.append("nothing is drawn here")
+        else:
+            placed = self.case.sched.base.block_at((pl.start + pl.end) / 2)
+            name = element_name(pl.task)
+            out.append(f"{name}{'  (pre-placed)' if placed is not None else ''}")
+            out.append(f"{clock(pl.start)} .. {clock(pl.end)}   ({human(pl.duration)})")
+            if pl.alt:
+                out.append(f"else {pl.alt}")
+        here = periods_at(self.case, self.snapshot, t)
+        out.append(f"periods here: {len(here) or 'none'}")
+        out += [f"  {period_line(p)}" for p in here]
+        return out
+
+    def draw_bubble(self, x, y):
+        """The bubble, on the cursor. It is drawn on the canvas rather than in
+        a window of its own so that it follows the pointer within the frame,
+        and it is tagged apart from `self.items` so a redraw of the bar
+        neither deletes it nor has to know about it."""
+        c = self.canvas
+        c.delete("bubble")
+        text = chr(10).join(self.bubble_lines(self.t_of(x)))
+        item = c.create_text(x + 16, y + 14, anchor="nw", text=text, font=FONT_M,
+                             fill=TEXT, tags="bubble")
+        x0, y0, x1, y1 = c.bbox(item)
+        dx = min(self.width - 8 - x1, 0)
+        bottom = c.canvasy(c.winfo_height()) - 6
+        dy = min(bottom - y1, 0)
+        if dy:                               # no room below: sit above the cursor
+            dy = -(y1 - y0) - 28
+        c.move(item, dx, dy)
+        x0, y0, x1, y1 = c.bbox(item)
+        c.create_rectangle(x0 - 6, y0 - 4, x1 + 6, y1 + 4, fill="#FFFFE0",
+                           outline="#999999", tags="bubble")
+        c.tag_raise(item)
 
     # -- interaction ---------------------------------------------------------
 
@@ -1522,6 +1730,14 @@ class Editor:
 
 CANVAS_H = 300
 
+#: The list beside the bar: how wide, how tall, and how much of a long answer
+#: it prints. The cap is the LIST's alone -- the copy button copies the whole
+#: schedule, however long it is.
+LIST_W = 33
+LIST_ROWS = 18
+LIST_LIMIT = 400
+LIST_PX = 300
+
 
 class Workbench:
     """The whole display: ONE test, the editor that writes it, and the bar it
@@ -1547,6 +1763,9 @@ class Workbench:
         self._check_queue = queue.Queue()
         self._dragging = None
         self._checker = None
+        self._hover = None                   # where the bubble is, if it is up
+        self._list_key = None                # what the list last printed
+        self._list_tags = set()
 
         bar = tk.Frame(root)
         bar.pack(side="top", fill="x")
@@ -1572,12 +1791,15 @@ class Workbench:
                                 highlightthickness=0)
         sb = tk.Scrollbar(frame, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=sb.set)
+        self._build_listing(frame)
         sb.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
         self.canvas.bind("<Button-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._drag)
         self.canvas.bind("<ButtonRelease-1>", self._release)
         self.canvas.bind("<MouseWheel>", self._wheel)
+        self.canvas.bind("<Motion>", self._motion)
+        self.canvas.bind("<Leave>", self._leave)
         root.protocol("WM_DELETE_WINDOW", self.close)
 
         self.editor = Editor(root, self.config, self.apply_config, self.set_status)
@@ -1588,10 +1810,89 @@ class Workbench:
         root.after(20, self._build_panel)
         root.after(40, self._tick)
 
+    # -- the schedule as a list ----------------------------------------------
+
+    def _build_listing(self, parent):
+        """The bar, read out: every task and every idling in order, with the
+        time written between one and the next.
+
+        It is the same answer the bar draws and not a second derivation of it
+        -- both are read off the snapshot the worker published -- so the list
+        can never disagree with the colours beside it.
+        """
+        side = tk.Frame(parent)
+        side.pack(side="right", fill="y")
+        head = tk.Frame(side)
+        head.pack(side="top", fill="x", padx=4, pady=(4, 0))
+        tk.Label(head, text="scheduled now", font=FONT_B).pack(side="left")
+        tk.Button(head, text="copy", font=FONT, width=5,
+                  command=self.copy).pack(side="right")
+        body = tk.Frame(side)
+        body.pack(side="top", fill="both", expand=True, padx=4, pady=(2, 4))
+        self.listing = tk.Text(body, width=LIST_W, height=LIST_ROWS, font=FONT_M,
+                               bg="white", fg=TEXT, wrap="none", relief="solid",
+                               borderwidth=1, highlightthickness=0, spacing1=1,
+                               cursor="arrow")
+        lsb = tk.Scrollbar(body, orient="vertical", command=self.listing.yview)
+        self.listing.configure(yscrollcommand=lsb.set, state="disabled")
+        lsb.pack(side="right", fill="y")
+        self.listing.pack(side="left", fill="both", expand=True)
+        self.listing.tag_config("time", foreground=DIM)
+        self.listing.tag_config("here", foreground=LINE_COLOR)
+        self.listing.tag_config("more", foreground=DIM)
+
+    def _listing_tag(self, task) -> str:
+        """One tag per task, coloured as the bar colours it."""
+        name = f"task:{task}"
+        if name not in self._list_tags:
+            self.listing.tag_config(name, background=task_color(self.panel.case, task))
+            self._list_tags.add(name)
+        return name
+
+    def refresh_listing(self):
+        """Redraw the list, and only when what it says has changed.
+
+        A rebuild is cheap but not free, and the worker publishes a snapshot
+        every settling step: rebuilding one that reads the same would make the
+        list flicker and would cost a frame for nothing.
+        """
+        if not self.panel:
+            return
+        snap = self.panel.snapshot
+        rows = list(snap.placements)[:LIST_LIMIT]
+        key = (snap.t_p, len(snap.placements),
+               tuple((pl.task, pl.start, pl.end) for pl in rows))
+        if key == self._list_key:
+            return
+        self._list_key = key
+        txt = self.listing
+        txt.config(state="normal")
+        txt.delete("1.0", "end")
+        at_line = None
+        for pl in rows:
+            txt.insert("end", f"{clock(pl.start)}\n", "time")
+            here = pl.start <= snap.t_p < pl.end
+            if here:
+                at_line = txt.index("end-1c")
+            txt.insert("end", f"  {element_name(pl.task):<10}", self._listing_tag(pl.task))
+            txt.insert("end", f" {human(pl.duration):>9}")
+            txt.insert("end", "  <- t_p\n" if here else "\n", "here" if here else "")
+        if len(rows) < len(snap.placements):
+            txt.insert("end", f"... {len(snap.placements) - len(rows)} more, down to "
+                              f"{clock(snap.placements[-1].end)}\n", "more")
+        elif rows:
+            txt.insert("end", f"{clock(rows[-1].end)}\n", "time")
+        txt.config(state="disabled")
+        if at_line is not None:
+            txt.see(at_line)
+
     # -- the test on screen --------------------------------------------------
 
     def _build_panel(self):
         self.panel = Panel(self, self.config.build(), 0)
+        self._list_key = None
+        self._list_tags = set()
+        self.refresh_listing()
         # the bar takes the room the test needs and no more: what is left over
         # belongs to the editor, which is what grows when a task is added
         room = self.panel.height + 12        # the status line sits under the bar
@@ -1615,6 +1916,7 @@ class Workbench:
         if self.panel is not None:
             self.panel.stop()
             self.panel = None
+        self._hover = None
         self.canvas.delete("all")
         self.set_status(f"building: {config.summary}")
         self.root.after(10, self._build_panel)
@@ -1667,6 +1969,22 @@ class Workbench:
 
     def _release(self, _event):
         self._dragging = None
+
+    def _motion(self, event):
+        """Hovering the bar names what is under the cursor. Anywhere else --
+        the heading, the task legend, the ticks -- there is no panel to name,
+        so the bubble goes away rather than following an empty pointer."""
+        x, y = self._canvas_xy(event)
+        panel = self._panel_at(x, y)
+        self._hover = (x, y) if panel is not None else None
+        if panel is None:
+            self.canvas.delete("bubble")
+        else:
+            panel.draw_bubble(x, y)
+
+    def _leave(self, _event):
+        self._hover = None
+        self.canvas.delete("bubble")
 
     def _wheel(self, event):
         self.canvas.yview_scroll(int(-event.delta / 60), "units")
@@ -1728,6 +2046,9 @@ class Workbench:
             pass
         if self.panel:
             self.panel.tick()
+            self.refresh_listing()
+            if self._hover is not None:      # a redraw of the bar covered it
+                self.panel.draw_bubble(*self._hover)
         self.root.after(50, self._tick)
 
     def report(self):
@@ -1736,10 +2057,14 @@ class Workbench:
         if not self.panel:
             return "  (nothing on screen)"
         snap = self.panel.snapshot
+        listed = int(self.listing.index("end-1c").split(".")[0])
+        bubble = len(self.canvas.find_withtag("bubble"))
         return (f"  {self.config.summary}\n"
                 f"  {len(snap.placements)} placements, {len(self.panel.items)} canvas "
                 f"items, t_p={clock(snap.t_p)}, mode {snap.mode}, "
-                f"definitive to {clock(snap.front)}")
+                f"definitive to {clock(snap.front)}\n"
+                f"  the list beside it: {listed} lines; "
+                f"the bubble: {bubble} items")
 
     def close(self):
         if self.panel:
@@ -1757,7 +2082,11 @@ def print_terminal_results(case=None, settle_seconds=1.0):
     case.sched.settle(budget_seconds=settle_seconds)
     print(f"\n  settled to {human(case.sched.front)} in {settle_seconds}s")
     tl = case.sched.timeline(case.sched.t_start, 1)
-    print(f"resulting shares: {shares_line(tl, 24)}")
+    print(f"\n{parameters_text(case.sched.t_start, 1)}")
+    print("\nthe schedule now, in order:")
+    for line in schedule_lines(case, tl, case.sched.t_start, limit=LIST_LIMIT):
+        print(line)
+    print(f"\nresulting shares: {shares_line(tl, 24)}")
 
 
 def print_rules(case=None, max_rules=24):
@@ -1832,12 +2161,18 @@ def main(argv=None):
     print("  The bar is the answer: CLICK it to jump the line there (a jump sweeps")
     print("  nothing), DRAG to sweep it (a sweep drags the dynamic period the line")
     print("  reaches), PLAY sweeps it for you, mode 1/2 flips the two t_p modes,")
-    print("  copy puts the configuration and the rules on the clipboard, and check")
-    print("  runs every README check against the test on screen.\n", flush=True)
+    print("  and HOVER it to name what is under the cursor: the panel, its start")
+    print("  and its end, and the periods at that instant. Beside the bar the same")
+    print("  answer is read out as a list -- every task and every idling in order,")
+    print("  with the time between them -- and either copy button puts that list,")
+    print("  the parameters it was answered under and the rules on the clipboard;")
+    print("  check runs every README check against the test on screen.\n", flush=True)
 
     root = tk.Tk()
     root.title("scheduler -- the test, and the rules it resolves to")
-    root.geometry(f"{WIDTH + 20}x820")
+    # the bar keeps its width and the list sits beside it, so the window is
+    # wider than the bar by exactly the room the read-out asks for
+    root.geometry(f"{WIDTH + 20 + LIST_PX}x820")
     bench = Workbench(root, width=WIDTH, config=config)
     if args.self_test:
         bench.saving = False                 # a self-test must not rewrite the test
@@ -1863,11 +2198,30 @@ def main(argv=None):
             bench.editor.apply()
             bench.sync_buttons()
 
+        def hover():
+            # the pointer over the bar. It is put over an IDLING stretch where
+            # there is one, since naming the period that caused it is the whole
+            # point of the bubble
+            panel = bench.panel
+            if not panel:
+                return
+            tl = panel.snapshot.placements
+            gap = next((pl for pl in tl if pl.task == IDLE), None)
+            t = (gap.start + gap.end) / 2 if gap else panel.case.span / 3
+            bench._hover = (panel.x_of(t), panel.bar_y + BAR_H / 2)
+            panel.draw_bubble(*bench._hover)
+            print(f"--- the bubble at {clock(t)} ---")
+            for line in panel.bubble_lines(t):
+                print(f"  {line}")
+
         def finish():
             print("--- what the window drew ---")
             print(bench.report(), flush=True)
             bench.close()
         root.after(300, sweep)
+        # hovering the test it opened on, and again the test it was edited into
+        root.after(max(int(args.self_test * 350), 700), hover)
+        root.after(max(int(args.self_test * 800), 1100), hover)
         root.after(max(int(args.self_test * 500), 800), exercise)
         root.after(int(args.self_test * 1000), finish)
     root.mainloop()

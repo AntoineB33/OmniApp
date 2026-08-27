@@ -1,5 +1,5 @@
 {
-  "title": "three tasks, half an hour owned by nobody, and an hour C is refused",
+  "title": "three tasks and an empty timeline -- nothing is pre-placed and nothing is refused but the three dynamic periods",
   "span": "6h",
   "states": [
     {
@@ -29,18 +29,6 @@
       ]
     }
   ],
-  "blocks": [
-    {
-      "task": "MAINTENANCE",
-      "start": "1h",
-      "duration": "30min"
-    }
-  ],
-  "periods": [
-    {
-      "start": "3h",
-      "end": "4h",
-      "refuses": "C"
-    }
-  ]
+  "blocks": [],
+  "periods": []
 }

@@ -381,6 +381,12 @@ internal fun CellListSection(
     depth: Int,
     visibleOrder: List<CellId>,
     priorities: Map<TaskId, Double>,
+    /**
+     * Each task's own colour — its share of the colour space its sub-list divides
+     * ([org.example.project.scheduler.domain.TaskColorSpace]). Keyed by task, not by cell, so every
+     * occurrence of a mirrored task is painted the same.
+     */
+    taskColors: Map<TaskId, Color>,
     /** PRD §4 Find & replace: what the Ctrl+F bar wants shaded, or null while the bar is closed. */
     searchHighlight: TreeSearchHighlight?,
     onTogglePriorityWeights: (CellListId) -> Unit,
@@ -468,6 +474,7 @@ internal fun CellListSection(
             isBeingMoved = isBeingMoved,
             priorityLabel = priorityLabel,
             priorityColumnWidth = priorityColumnWidth,
+            taskColor = cell.taskId?.let { taskColors[it] },
             // The hits are shaded on the DISPLAYED title, so a cell being edited shows none: its draft is
             // not what was searched, and the caret is the user's business.
             searchRanges = if (isEditing) emptyList() else searchRangesIn(title, searchHighlight),
@@ -607,6 +614,7 @@ internal fun CellListSection(
                 depth = depth + 1,
                 visibleOrder = visibleOrder,
                 priorities = priorities,
+                taskColors = taskColors,
                 searchHighlight = searchHighlight,
                 onTogglePriorityWeights = onTogglePriorityWeights,
                 onOpenRelativePriority = onOpenRelativePriority,
@@ -1729,6 +1737,8 @@ internal fun TaskRow(
     isBeingMoved: Boolean,
     priorityLabel: String?,
     priorityColumnWidth: Dp,
+    /** This row's task's own colour, or null for a cell holding no coloured task (an empty placeholder). */
+    taskColor: Color?,
     /** PRD §4 Find & replace: the hits of the current query inside this row's title. */
     searchRanges: List<IntRange>,
     /** The one hit the find bar is sitting on, when it is in this row. */
@@ -1785,6 +1795,11 @@ internal fun TaskRow(
             isBeingMoved -> SheetColors.moveDragFill
             isInSelectionRange || isEditing -> SheetColors.selectionFill
             !selectable -> SheetColors.nonSelectableFill
+            // The task's own colour is the row's RESTING background only: the three states above are the
+            // ones the user is being told about, and a tint under each of them would be one more thing to
+            // read them against. Falling back to plain white is itself the strongest possible marker on a
+            // coloured tree, so nothing is lost by letting them win outright.
+            taskColor != null -> taskColor
             else -> SheetColors.cellBackground
         }
     val cellBorder =

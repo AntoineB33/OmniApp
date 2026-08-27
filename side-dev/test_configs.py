@@ -594,13 +594,12 @@ def _twenty_one(share_a, share_p, share_n) -> tuple:
 PRESETS = {
 
     "the default": Config(
-        title="three tasks, half an hour owned by nobody, and an hour C is refused",
+        title="three tasks and an empty timeline -- nothing is pre-placed and "
+              "nothing is refused but the three dynamic periods",
         span=6 * HOUR,
         states=(StateLine(Fraction(0), _rows(
             (("A", 50, "10min"), ("B", 30, "10min"), ("C", 20, "15min")),
             screen=("C",))),),
-        blocks=(BlockLine("MAINTENANCE", HOUR, Fraction(30)),),
-        periods=(PeriodLine(3 * HOUR, 4 * HOUR, "C"),),
     ),
 
     "1: 50/50, ten minutes each": Config(

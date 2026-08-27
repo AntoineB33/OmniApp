@@ -459,6 +459,37 @@ the calendar's zoom — a search is a way of looking at the tree, never a fact a
 - The bar is a **sibling** of the tree, not a child, so the tree's `onPreviewKeyEvent` never sees what is
   typed in it — and the tree's selection-keyed refocus effect must skip while the bar holds the keyboard.
 
+### Task colours
+
+`TaskColorSpace` is the whole of the rule; `TaskPalette` is the only place a hue becomes something to paint
+with. Both the tree's cell and the calendar's panel read the **same** hue for a task — a second derivation is
+how the two surfaces start disagreeing about what colour a task is.
+
+- **One colour space is handed down the tree.** The root list owns the whole hue circle; a list's arc is split
+  between its cells **in proportion to the childless tasks each one's sub-tree holds** (not equally); a cell's
+  colour is the **average** of its own arc, and that arc is the space its sub-list divides. So a branch is a
+  contiguous family of shades and every leaf ends up with about the same slice of the circle.
+- **The walk visits each LIST once and a colour belongs to the TASK** — a sub-list belongs to the task id, so
+  re-walking a mirror per occurrence is exponential *and* would leave the calendar panel, which knows only the
+  task, with several colours to pick from. The **first** occurrence reached colours the task and its sub-tree;
+  a later one still **consumes its share** of its own parent's arc (its siblings' widths must stay
+  proportional) without re-dividing it. The coloured set doubles as the cycle guard.
+- **Only populated cells take part** — an empty placeholder neither takes a colour nor consumes the arc.
+- **A hue does not tell every pair of tasks apart, and cannot.** A parent's colour is the average of the arc
+  its children divide, so a child sitting in the middle of it has the very same average (`Book` and `Draft` in
+  `TaskColorSpaceTest`). Siblings never collide, so the pairs a hue cannot separate are exactly the
+  ancestor/descendant ones — which is why `TaskHue` carries the **depth** and the palette spends it on
+  lightness. Do not "fix" the collision by perturbing the hue: the partition is the rule.
+- **The tree's tint is the row's RESTING background only.** Drag-move, selection and non-selectable still win
+  outright — a tint under each of them would be one more thing to read them against, and plain white is the
+  strongest possible marker on a coloured tree.
+- **The uniform §8 event blue survives as the fallback**, for a panel whose task the tree gives no colour. A
+  no-screen / inactivity period takes no task colour at all: it is not a task.
+- **Colours are DERIVED, never persisted or synced** — recomputed from the tree, like the percentages. And the
+  derivation is remembered against `cells`/`lists`/`tasks` alone: the advance tick replaces the state object
+  every second (records live on the tasks), and re-walking the tree on each one is the per-tick cost ADR 0009
+  forbids.
+
 ### The "All tasks" list
 
 → PRD §7. `SchedulerDomain.taskListEntries` is the whole of it; `ui/TaskListWindow.kt` only draws it.

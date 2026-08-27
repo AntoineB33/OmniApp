@@ -2296,6 +2296,12 @@ fun CalendarFloatingWindow(
     modifier: Modifier = Modifier,
     records: List<CalendarRecord> = emptyList(),
     /**
+     * PRD §8: each task's own colour — its share of the colour space its sub-list divides
+     * ([org.example.project.scheduler.domain.TaskColorSpace]). A task panel is drawn in its task's colour
+     * instead of the single `CalColors.event` blue; a task the tree gives no colour keeps that blue.
+     */
+    taskColors: Map<TaskId, Color> = emptyMap(),
+    /**
      * PRD §9/§17: true while the work plan for a focused future week beyond the near horizon is still being
      * computed off the UI thread. Surfaces a "Calculating…" hint so the (necessarily slower) distant-week
      * fill reads as "loading", never as a frozen calendar.
@@ -2557,6 +2563,7 @@ fun CalendarFloatingWindow(
                     today = today,
                     nowMillis = nowMillis,
                     records = records,
+                    taskColors = taskColors,
                     zoomActions = zoomActions,
                     ctrlHeld = ctrlHeld,
                     onAddTaskAt = onAddTaskAt,
@@ -2814,6 +2821,12 @@ private fun WeekView(
     today: LocalDate,
     nowMillis: Long,
     records: List<CalendarRecord>,
+    /**
+     * PRD §8: each task's own colour — its share of the colour space its sub-list divides
+     * ([org.example.project.scheduler.domain.TaskColorSpace]). A task panel is drawn in its task's colour
+     * instead of the single `CalColors.event` blue; a task the tree gives no colour keeps that blue.
+     */
+    taskColors: Map<TaskId, Color>,
     zoomActions: CalendarZoomActions,
     ctrlHeld: Boolean,
     onAddTaskAt: (Long) -> Unit,
@@ -3329,6 +3342,7 @@ private fun WeekView(
                                     hourHeight = hourHeight,
                                     now = if (day == today) now else null,
                                     records = recordsPerDay[day].orEmpty(),
+                                    taskColors = taskColors,
                                     visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
                                     onAddTaskAt = onAddTaskAt,
                                     onAddReminderAt = onAddReminderAt,
@@ -3455,6 +3469,12 @@ private fun DayColumn(
     hourHeight: Dp,
     now: LocalTime?,
     records: List<PlacedRecord>,
+    /**
+     * PRD §8: each task's own colour — its share of the colour space its sub-list divides
+     * ([org.example.project.scheduler.domain.TaskColorSpace]). A task panel is drawn in its task's colour
+     * instead of the single `CalColors.event` blue; a task the tree gives no colour keeps that blue.
+     */
+    taskColors: Map<TaskId, Color>,
     onAddTaskAt: (Long) -> Unit,
     onAddReminderAt: (Long) -> Unit,
     onAddNoScreenAt: (Long) -> Unit,
@@ -3937,6 +3957,7 @@ private fun DayColumn(
                 hourHeight = hourHeight,
                 // Every other block — everything but itself — so a non-overlap drag/resize snaps around them.
                 others = allBlocks.filter { it.first != key }.map { it.second },
+                taskColor = record.taskId?.let { taskColors[it] },
                 sleepHourRanges = sleepHourRanges,
                 contextOverlays = contextOverlays,
                 overlapArmed = overlapArmed,
@@ -4026,7 +4047,13 @@ private fun DayColumn(
                         ) {
                             // Transient drag preview: left untinted; the resting block greys its sleep
                             // sub-range on release (see [CalendarBlock]'s sleepHourRanges overlay).
-                            CalendarBlockBody(CalColors.event, rec.title, showTitle = idx == 0)
+                            val previewColor = rec.taskId?.let { taskColors[it] } ?: CalColors.event
+                            CalendarBlockBody(
+                                previewColor,
+                                rec.title,
+                                showTitle = idx == 0,
+                                titleColor = previewColor,
+                            )
                         }
                     }
                 }
@@ -4657,6 +4684,8 @@ private fun CalendarBlock(
     slices: List<PanelSlice>,
     hourHeight: Dp,
     others: List<TaskTimeRange>,
+    /** PRD §8: this block's task's own colour, or null for a panel that keeps the default event blue. */
+    taskColor: Color?,
     /**
      * PRD §17: this day's sleep windows as hour-of-day ranges. Where a block overlaps one, only that
      * sub-range is greyed (as if under the "Sleep" band) — so a block spanning day + a sleep sliver isn't
@@ -4716,9 +4745,16 @@ private fun CalendarBlock(
         }
     }
 
-    // PRD §8: no-screen / inactivity periods are decorative-patterned, muted blocks; every real task
-    // period keeps the single uniform event colour.
-    val color = if (record.noScreen || record.inactivity) CalColors.muted else CalColors.event
+    // PRD §8: no-screen / inactivity periods are decorative-patterned, muted blocks — they are not a task,
+    // so they take no task's colour. A real task period is drawn in ITS OWN colour (the share of the colour
+    // space its sub-list divides, see [org.example.project.scheduler.domain.TaskColorSpace]); the uniform
+    // event blue survives as the colour of a period whose task the tree gives no colour — a manual panel on
+    // a task no cell points at any more, and every block drawn before the tree has been read.
+    val color =
+        when {
+            record.noScreen || record.inactivity -> CalColors.muted
+            else -> taskColor ?: CalColors.event
+        }
 
     // PRD §8 Overlap Mode: a transparent full-column layer (no pointer handler of its own, so it never
     // steals clicks) that positions this block's horizontal slices absolutely. A non-overlapping block
@@ -4836,7 +4872,13 @@ private fun CalendarBlock(
                 val hoverZones = deviceHoverZones(record.deviceSegments, slice.topHour, slice.bottomHour)
                 Box(Modifier.fillMaxSize()) {
                     // The title is written only on the topmost slice so a stepped block reads as one.
-                    CalendarBlockBody(color, record.title, showTitle = isFirst, hatched = record.noScreen)
+                    CalendarBlockBody(
+                        color,
+                        record.title,
+                        showTitle = isFirst,
+                        hatched = record.noScreen,
+                        titleColor = taskColor ?: CalColors.event,
+                    )
                     // PRD §17: grey the sub-range of this slice that falls inside a sleep window (the fill now
                     // projects the plan through the night). A plain overlay Box with no pointer handler, so
                     // the block underneath stays clickable/moveable — the block reads "as if under the band".
@@ -4982,7 +5024,18 @@ private fun Modifier.obliqueHatch(color: Color, reversed: Boolean): Modifier =
 
 /** PRD §8: the coloured body + title of a calendar block (or one of its overlap slices). */
 @Composable
-private fun CalendarBlockBody(color: Color, title: String, showTitle: Boolean, hatched: Boolean = false) {
+private fun CalendarBlockBody(
+    color: Color,
+    title: String,
+    showTitle: Boolean,
+    hatched: Boolean = false,
+    /**
+     * PRD §8: the colour of the title written on the block. Its own [color] for a task panel — so the words
+     * match the border around them — but NOT for a grey period, whose muted [color] would leave the label
+     * unreadable on its own fill; those keep the event blue they have always been written in.
+     */
+    titleColor: Color = CalColors.event,
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -4998,7 +5051,7 @@ private fun CalendarBlockBody(color: Color, title: String, showTitle: Boolean, h
             Text(
                 text = title.ifEmpty { "(untitled)" },
                 style = MaterialTheme.typography.labelSmall,
-                color = if (hatched) CalColors.muted else CalColors.event,
+                color = if (hatched) CalColors.muted else titleColor,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()

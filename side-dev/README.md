@@ -40,7 +40,7 @@ Pre-placed tasks or restrictive periods inevitably create priority deficits for 
 * **consequence examples:** Here are direct consequences of the rules:
     * If a 20s period is placed at t, that $t_p$ is in mode 1 and is reaching t, it would continuously delay 20s period (while creating task panels in its passing). The 20s period is the half-open interval $(t_p, t_p + 20\text{s}]$.
     * When the $t_p$ is in mode 1 reached a 20s period and dragged it to make its end touch a 5min period, the 5min period teleports 20s backward (without including $t_p$) which absorbs the 20s period, and the 20-second gap created at the end of the 5min period is filled with task panels given the set of rules parameterized by $t_p$ and $t_p$ mode and returned by the scheduler.
-    * If $t_p$ is in mode 2 and reaches the end of a 15min period, the gap between the end of the 15min period and $t_p$ is covered by a period "no on-screen task", filled with tasks that have a non-zero resilience to the kind "no on-screen task".
+    * If $t_p$ is in mode 2 and reaches the end of a 15min period, the gap between the end of the 15min period and $t_p$ is covered by a period "no on-screen task", filled with tasks that have a non-zero resilience to the kind "no on-screen task", or no task if none have such resilience.
 
 ### Starting timeline
 The starting timeline can have pre-placed tasks and restrictive periods. They never change except for dynamic restrictive periods or the two modes of $t_p$.

@@ -104,6 +104,7 @@ import org.example.project.ui.ShortcutsWindow
 import org.example.project.ui.SleepWindow
 import org.example.project.ui.DefaultSubtreeWindow
 import org.example.project.ui.TaskListWindow
+import org.example.project.ui.TaskPalette
 import org.example.project.ui.TaskTreesWindow
 import org.example.project.ui.TimeSimPanel
 import org.example.project.ui.LocalTransientPopupHost
@@ -937,6 +938,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     alarm = true,
                 )
             }
+        // PRD §8: each task's own colour, so a task panel is drawn in the same colour as the task tree's
+        // cell for that task. Remembered against the three maps the partition reads and nothing else — the
+        // advance tick replaces the state object every second (records live on the tasks), and re-walking
+        // the tree on each of those is exactly the per-tick cost ADR 0009's display hot path forbids.
+        val taskPanelColors =
+            remember(schedulerState.cells, schedulerState.lists, schedulerState.tasks) {
+                TaskPalette.accentColors(schedulerState)
+            }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
         var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
         // PRD §8 Manual add: a not-yet-committed default panel shown in the edit window with a Save
@@ -1224,6 +1233,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 .align(Alignment.Center)
                                 .zIndex(windowZ(FloatingWindow.Calendar)),
                             records = calendarRecords,
+                            taskColors = taskPanelColors,
                             // PRD §9/§17: a future week beyond the near horizon is still computing its plan
                             // off the UI thread — surface a "Calculating…" hint instead of a frozen window.
                             calculating = farWeekCalculating,
