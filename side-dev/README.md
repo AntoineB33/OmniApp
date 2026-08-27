@@ -29,18 +29,18 @@ Pre-placed tasks or restrictive periods inevitably create priority deficits for 
 
 * **$t_p$:** Some of the rules returned by the scheduler are parameterized by two variables that can unpredictably change value anytime during the test: $t_p$ (the present) and the $t_p$ mode. $t_p$ >= $t_pstart$, where $t_pstart$ is a constant. Every t such that $t_pstart$ <= t <= $t_p$ are the previous values of the $t_p$ variable. This means that the $t_p$ moves continuously forward in time.
 * **frozen past:** The schedule at t < $t_p$ never changes as $t_p$ increases.
-* **3 Dynamic Restrictive Period:** They are named the 20s, 5min and 15min periods, with the respective corresponding durations, and have the kind "no task allowed". Some task are marked "s". The placement of those three dynamic restrictive periods are parametrized by $t_p$ to place them anywhere in the timeline that doesn't violate the following rules:
+* **3 Dynamic Restrictive Period:** They are named the 20s, 5min and 15min periods, with the respective corresponding durations, and have the kind "no task allowed". The placement of those three dynamic restrictive periods are parametrized by $t_p$ to place them anywhere in the timeline that doesn't violate the following rules:
     * After any dynamic restrictive period, no 20s period in the next **20 minutes**.
-    * After any $\ge 5$-minute stretch where task "s" is forbidden and no other tasks are scheduled (whether caused by dynamic periods, pre-placed restrictive periods, or a combination), no 5min period in the next 1 hour.
-    * After a $\ge 15$-minute stretch of a period that doesn't allow task "s" without any task, no 20s restrictive period in the next **20 minutes**, and no 15min period in the next **2 hours**.
+    * After any $\ge 5$-minute stretch covered by the period "no on-screen task" without any task (whether caused by dynamic periods, pre-placed restrictive periods, or a combination), no 5min period in the next 1 hour.
+    * After a $\ge 15$-minute stretch covered by the period "no on-screen task" without any task, no 20s restrictive period in the next **20 minutes**, and no 15min period in the next **2 hours**.
     * If the rules above make dynamic restrictive periods overlapping, the whole chain is replaced by the longest period of the chain starting at the earliest point, and the others are removed. The rules above prevent any situation where two dynamic restrictive periods of the same length are overlapping.
 * **$t_p$ 2 modes:** There are two "$t_p$ modes". In the tests, the switch between modes is done with a button.
-    * **Mode 1:** at $t_p$ there must be no period that doesn't allow task "s". This means that if it reaches one of those periods, the passing of the $t_p$ line creates task panels.
-    * **Mode 2:** at $t_p$ there must be a a period that doesn't allow task "s".
+    * **Mode 1:** $t_p$ must not be covered by the period "no on-screen task". This means that if it reaches one of those periods, the passing of the $t_p$ line creates task panels not covered by the period.
+    * **Mode 2:** $t_p$ must be covered by the period "no on-screen task".
 * **consequence examples:** Here are direct consequences of the rules:
     * If a 20s period is placed at t, that $t_p$ is in mode 1 and is reaching t, it would continuously delay 20s period (while creating task panels in its passing). The 20s period is the half-open interval $(t_p, t_p + 20\text{s}]$.
     * When the $t_p$ is in mode 1 reached a 20s period and dragged it to make its end touch a 5min period, the 5min period teleports 20s backward (without including $t_p$) which absorbs the 20s period, and the 20-second gap created at the end of the 5min period is filled with task panels given the set of rules parameterized by $t_p$ and $t_p$ mode and returned by the scheduler.
-    * If $t_p$ is in mode 2 and reaches the end of a 15min period, the gap between the end of the 15min period and $t_p$ is covered by a period "no task $s$ allowed", with task panels that are not marked "s".
+    * If $t_p$ is in mode 2 and reaches the end of a 15min period, the gap between the end of the 15min period and $t_p$ is covered by a period "no on-screen task", filled with tasks that have a non-zero resilience to the kind "no on-screen task".
 
 ### Starting timeline
 The starting timeline can have pre-placed tasks and restrictive periods. They never change except for dynamic restrictive periods or the two modes of $t_p$.

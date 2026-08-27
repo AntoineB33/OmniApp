@@ -646,14 +646,14 @@ class Walk:
             out.append(Placement(name, start, end, alt))
 
     @overload
-    def run(self, env: Environment, start, end, history=..., resume=...,
+    def run(self, env: Environment, start, end, history=..., resume=..., field_span=...,
             with_state: Literal[False] = ...) -> list[Placement]: ...
 
     @overload
-    def run(self, env: Environment, start, end, history=..., resume=...,
+    def run(self, env: Environment, start, end, history=..., resume=..., field_span=...,
             *, with_state: Literal[True]) -> tuple[list[Placement], WalkState]: ...
 
-    def run(self, env: Environment, start, end, history=(), resume=None,
+    def run(self, env: Environment, start, end, history=(), resume=None, field_span=None,
             with_state=False) -> list[Placement] | tuple[list[Placement], WalkState]:
         """Walk [start, end) once and return what is placed there.
 
@@ -683,7 +683,20 @@ class Walk:
         # link of a progressive chain must not have its compensation cut off at
         # its own edge -- that would make where the links happen to fall visible
         # in the schedule.
-        field = self._build_field(env, start - self.max_reach, end + self.max_reach)
+        #
+        # `field_span` is what makes that true rather than nearly true. A link
+        # is asked for four hours, but it is a slice of a walk that runs from
+        # the commit point to the HORIZON, and the obstacles it must compensate
+        # for are the ones THAT walk can see -- not the ones inside its own
+        # slice. Reading the window off the slice truncated the field at both
+        # ends: the first link could not see an exclusion whose far edge lay
+        # beyond it, and the last link could not see the one it had already
+        # passed, whose tail still decays into it. Either way the chain parted
+        # company with the single plan it is supposed to BE (measured on a
+        # 300-minute ban: a boundary nearly four minutes out of place).
+        near, far = (start, end) if field_span is None else field_span
+        near, far = min(frac(near), start), max(frac(far), end)
+        field = self._build_field(env, near - self.max_reach, far + self.max_reach)
         out = []
         cursor = start
         pending = pending_in                 # (task, what is left of its chunk)
@@ -813,11 +826,9 @@ class Instance:
         """The longest contiguous part of this period that COUNTS as one of the
         recurrence rules' stretches.
 
-        `counts(kind)` says which kinds do. Under the README that is a kind
-        that accepts nobody -- anywhere a task is still allowed the no-idling
-        rule puts one there, so it is not a stretch "without any task". Test 12
-        asks the same question of a wider set (anything that refuses the marked
-        tasks), which is why the predicate is a parameter and not a constant.
+        `counts(kind)` says which kinds do: under the README, a kind that
+        accepts nobody -- anywhere a task is still allowed the no-idling rule
+        puts one there, so it is not a stretch "without any task".
         """
         best = Fraction(0)
         run_start = None
@@ -864,8 +875,7 @@ class DynamicPlanner:
     """
 
     def __init__(self, base_env: Environment, specs, dynamics=DEFAULT_DYNAMICS,
-                 t_start: Fraction | int = 0, horizon: Fraction | int = DAY,
-                 stretch_when=None):
+                 t_start: Fraction | int = 0, horizon: Fraction | int = DAY):
         self.base_env = base_env
         self.specs = tuple(specs)
         self.dynamics = {d.label: d for d in dynamics}
@@ -876,22 +886,31 @@ class DynamicPlanner:
             "5min": BAR_5MIN_AFTER_STRETCH,
             "15min": BAR_15MIN_AFTER_LONG,
         }
-        # What counts as one of the recurrence rules' stretches, asked of a set
-        # of weights so that the same predicate answers for a segment of the
-        # standing environment and for a segment of a dynamic period's shape.
-        self.stretch_when = stretch_when or (lambda w, specs: not any(v > 0 for v in w.values()))
         shares = {s.name: s.priority for s in specs}
         blocked = []
         for a, b in base_env.segments(self.t_start, self.horizon):
-            if self.stretch_when(base_env.weights(specs, shares, (a + b) / 2), specs):
+            if self._is_stretch(base_env.weights(specs, shares, (a + b) / 2)):
                 blocked.append((a, b))
         self.blocked = merge_spans(blocked)
+
+    @staticmethod
+    def _is_stretch(weights) -> bool:
+        """What counts as one of the recurrence rules' stretches.
+
+        The README's own reading, and the only one: a stretch is one where
+        task "s" is forbidden AND NO OTHER TASK IS SCHEDULED -- anywhere a task
+        is still allowed the no-idling rule puts one there, so it is not a
+        stretch "without any task". Asked of a set of weights, so the same
+        answer serves a segment of the standing environment and a segment of a
+        dynamic period's shape.
+        """
+        return not any(v > 0 for v in weights.values())
 
     def kind_counts(self, kind) -> bool:
         """Does a stretch of this KIND count? -- the same predicate, asked of
         the weights that kind leaves standing."""
-        w = {s.name: s.priority * s.resilience_for(kind) for s in self.specs}
-        return self.stretch_when(w, self.specs)
+        return self._is_stretch({s.name: s.priority * s.resilience_for(kind)
+                                 for s in self.specs})
 
     # -- bars ----------------------------------------------------------------
 
@@ -1148,17 +1167,10 @@ class Scheduler:
     LOOKAHEAD = 6 * HOUR            # how far ahead the rules at the line reach
 
     def __init__(self, states, env=None, dynamics=DEFAULT_DYNAMICS, t_start=0,
-                 horizon=DAY, tau_scale=1, sliding=None, stretch_when=None,
-                 **walk_kw):
+                 horizon=DAY, tau_scale=1, **walk_kw):
         self.states = states if isinstance(states, RuleStates) else RuleStates(states)
         self.base = env or Environment()
         self.dynamics = tuple(dynamics)
-        # A period of the case's own that slides with the line: `sliding(t_p,
-        # mode) -> periods`. Tests 10 and 11 are exactly that, and it is not
-        # the same thing as one of the three dynamic periods -- those are
-        # placed by the recurrence bars, this one IS the position of the line.
-        self.sliding = sliding
-        self.stretch_when = stretch_when
         self.t_start = frac(t_start)
         self.horizon = frac(horizon)
         self.tau_scale = tau_scale
@@ -1194,7 +1206,7 @@ class Scheduler:
         p = self._planners.get(specs)
         if p is None:
             p = DynamicPlanner(self.base, specs, self.dynamics,
-                               self.t_start, self.horizon, self.stretch_when)
+                               self.t_start, self.horizon)
             self._planners[specs] = p
         return p
 
@@ -1203,8 +1215,6 @@ class Scheduler:
         out = self._period_cache.get(key)
         if out is None:
             out = tuple(self.planner_at(t_p).periods(t_p, mode, self.sweep_from))
-            if self.sliding is not None:
-                out += tuple(self.sliding(frac(t_p), mode))
             if len(self._period_cache) > 4096:
                 self._period_cache.clear()
             self._period_cache[key] = out
@@ -1321,6 +1331,7 @@ class Scheduler:
             link, self._chain_state = walk.run(env, self.front, end,
                                                history=self.committed + self._chain,
                                                resume=self._chain_state,
+                                               field_span=(self.commit_point, self.horizon),
                                                with_state=True)
             self._chain.extend(link)
             self.front = end

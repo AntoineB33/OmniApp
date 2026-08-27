@@ -1,0 +1,46 @@
+{
+  "title": "three tasks, half an hour owned by nobody, and an hour C is refused",
+  "span": "6h",
+  "states": [
+    {
+      "at": "0s",
+      "tasks": [
+        {
+          "name": "A",
+          "percent": "50",
+          "min": "10min",
+          "s": true,
+          "color": "#FF9999"
+        },
+        {
+          "name": "B",
+          "percent": "30",
+          "min": "10min",
+          "s": true,
+          "color": "#99CCFF"
+        },
+        {
+          "name": "C",
+          "percent": "20",
+          "min": "15min",
+          "s": false,
+          "color": "#99FF99"
+        }
+      ]
+    }
+  ],
+  "blocks": [
+    {
+      "task": "MAINTENANCE",
+      "start": "1h",
+      "duration": "30min"
+    }
+  ],
+  "periods": [
+    {
+      "start": "3h",
+      "end": "4h",
+      "refuses": "C"
+    }
+  ]
+}

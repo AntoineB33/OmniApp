@@ -17,8 +17,8 @@ Supporting files in `side-dev/`:
 | File | Role |
 | --- | --- |
 | `scheduler.py` | reference implementation (`uv run scheduler.py --check` — every README clause, asserted) |
-| `test_configs.py` | the cases |
-| `tests_displayer.py` | runner + GUI (`uv run tests_displayer.py --verify`) |
+| `test_configs.py` | the shape of the ONE test, its default, and `test_config.json` (the test as last edited) |
+| `tests_displayer.py` | runner + GUI (`uv run tests_displayer.py --verify`); the window's editor is where the test is written |
 
 `verify_moving` only certifies that a rule list is *self-consistent* — a different-but-consistent
 answer passes it silently. **There is no frozen-answer snapshot** since the reference was rebuilt
