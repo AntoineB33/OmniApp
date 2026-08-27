@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
 test_configs.py
-THE test -- its shape, its default, and the file it is remembered in.
+THE test -- its shape, the tests already configured, and the file the custom
+one is remembered in.
 
-There is exactly ONE test, and this file does not decide what is in it: the
-test window does. What lives here is the SHAPE a configuration has, so that a
-person can edit it with a mouse and the scheduler can be asked about it:
+There is exactly ONE test and it is CUSTOM: the test window is where it is
+written, and `test_config.json` is where it is remembered between runs. What
+lives here is the SHAPE a configuration has, so that a person can edit it with
+a mouse and the scheduler can be asked about it:
 
     span            how far the question reaches
     rule states     the tasks, their percentages, their minimums and their
@@ -31,8 +33,16 @@ test a test of something the README does not describe. That is why a
 configuration says what the timeline IS, and never how the scheduler must
 behave on it.
 
+The other half of this file is `PRESETS`: the tests that are ALREADY
+configured, which the window offers in a drop-down and applies to the custom
+test the moment one is chosen. A preset is an ordinary `Config` -- so choosing
+one leaves every field editable, and editing any of them makes the test custom
+again.
+
     uv run tests_displayer.py              the window: the test, and its editor
     uv run test_configs.py --list          the current configuration, as text
+    uv run test_configs.py --presets       the tests already configured
+    uv run test_configs.py --use NAME      make one of them the test
     uv run test_configs.py --reset         forget the customisation
 """
 
@@ -498,20 +508,255 @@ class Case:
 
 
 # --------------------------------------------------------------------------- #
+#  the already-configured tests
+# --------------------------------------------------------------------------- #
+#
+#  The test is CUSTOM -- the window's editor is where it is written, and
+#  `test_config.json` is where it is remembered. What is written down HERE is
+#  the other half: the tests that are already configured, offered in the
+#  window's drop-down and applied to the custom test the moment one is chosen.
+#
+#  A preset is an ordinary `Config` and nothing else. It says what the timeline
+#  IS, exactly as an edited one does, so choosing one leaves every field
+#  editable and no configuration here can ask for anything a hand could not
+#  have typed into the editor. In particular none of them says a word about the
+#  three dynamic periods, t_p, its modes or the pace: those are the README's,
+#  `scheduler.py` answers for them, and a knob switching one of them off would
+#  make the test a test of something the README does not describe.
+#
+#  The numbers in the names are the ones these tests have always been called by.
+
+CUSTOM = "custom"
+
+
+def _rows(rows, screen=()) -> tuple:
+    """`(name, percentage, minimum)` triples as task lines, coloured in turn.
+
+    `screen` names the tasks a period of the kind "no on-screen task" leaves
+    alone (resilience 100%); everybody else is an on-screen task, which is what
+    every task of the numbered tests below has always been.
+    """
+    return tuple(TaskLine(name, parse_percent(percent), parse_time(minimum),
+                          Fraction(1) if name in screen else Fraction(0),
+                          PALETTE[i % len(PALETTE)])
+                 for i, (name, percent, minimum) in enumerate(rows))
+
+
+def _shade(base, i, n) -> str:
+    """One family of colours, so a glance tells one group of tasks from another."""
+    k = 0.72 + 0.28 * (i / max(n - 1, 1))
+    return "#%02X%02X%02X" % tuple(min(255, int(c * k)) for c in base)
+
+
+def _family(names, percent, minimum, base, screen=False) -> tuple:
+    """One group of tasks sharing a percentage, a minimum and a family of colour."""
+    return tuple(TaskLine(name, parse_percent(percent), parse_time(minimum),
+                          Fraction(1) if screen else Fraction(0),
+                          _shade(base, i, len(names)))
+                 for i, name in enumerate(names))
+
+
+def _nights(span) -> tuple:
+    """A night every 24 hours: nobody at all from midnight to 8h, and from 23h
+    on only the tasks "no on-screen task" leaves alone.
+
+    The two overlap on purpose -- overlapping periods add up, so what the night
+    really says is "the off-screen tasks only from 23h, nobody from midnight".
+    """
+    out, day = [], 0
+    while day * DAY - HOUR < span:
+        start = day * DAY
+        if 0 < start - HOUR < span:
+            out.append(PeriodLine(start - HOUR, min(start, span), "on-screen"))
+        if start < span:
+            out.append(PeriodLine(start, min(start + 8 * HOUR, span), "everybody"))
+        day += 1
+    return tuple(out)
+
+
+#: The two tasks half the numbered tests are written in terms of.
+AB = (("A", 50, "10min"), ("B", 50, "10min"))
+
+#: Test 12's twenty-one tasks: A at 50%, and twenty sharing the other 50% --
+#: half of them off-screen, so a period of the kind "no on-screen task" (the
+#: night's first hour, and the two longer dynamic ones) leaves them alone.
+PRIVILEGED = tuple(f"P{i}" for i in range(1, 11))
+ORDINARY = tuple(f"N{i}" for i in range(1, 11))
+
+
+def _twenty_one(share_a, share_p, share_n) -> tuple:
+    return ((TaskLine("A", parse_percent(share_a), parse_time("45min"),
+                      Fraction(0), "#FF7B7B"),)
+            + _family(PRIVILEGED, share_p, "45min", (110, 170, 255), screen=True)
+            + _family(ORDINARY, share_n, "45min", (255, 190, 90)))
+
+
+PRESETS = {
+
+    "the default": Config(
+        title="three tasks, half an hour owned by nobody, and an hour C is refused",
+        span=6 * HOUR,
+        states=(StateLine(Fraction(0), _rows(
+            (("A", 50, "10min"), ("B", 30, "10min"), ("C", 20, "15min")),
+            screen=("C",))),),
+        blocks=(BlockLine("MAINTENANCE", HOUR, Fraction(30)),),
+        periods=(PeriodLine(3 * HOUR, 4 * HOUR, "C"),),
+    ),
+
+    "1: 50/50, ten minutes each": Config(
+        title="50/50, ten minutes each -- a pure cycle, and nothing in its way",
+        span=3 * HOUR,
+        states=(StateLine(Fraction(0), _rows(AB)),),
+    ),
+
+    "2: a block owned by nobody": Config(
+        title="an hour owned by nobody -- it displaces everybody equally, so it "
+              "deprives nobody: they simply resume alternating",
+        span=4 * HOUR,
+        states=(StateLine(Fraction(0), _rows(AB)),),
+        blocks=(BlockLine("MAINTENANCE", Fraction(40), HOUR),),
+    ),
+
+    "3: C refused for good": Config(
+        title="C is refused from t = 1h45 on, for the rest of the timeline -- so "
+              "it is abundantly present just before the door closes",
+        span=5 * HOUR,
+        states=(StateLine(Fraction(0), _rows(
+            (("A", 40, "10min"), ("B", 40, "10min"), ("C", 20, "10min")))),),
+        periods=(PeriodLine(Fraction(105), 5 * HOUR, "C"),),
+    ),
+
+    "4: three tasks, three minimums": Config(
+        title="A 50% at 20min, B 30% at 10min, C 20% at 15min -- the minimums "
+              "force the window, and the shares are exact inside it",
+        span=Fraction(400),
+        states=(StateLine(Fraction(0), _rows(
+            (("A", 50, "20min"), ("B", 30, "10min"), ("C", 20, "15min")))),),
+    ),
+
+    "5: 90/10, B pre-placed": Config(
+        title="90/10, with forty minutes of B at the start -- A gets a denser, "
+              "bounded catch-up around it, never everything it is owed",
+        span=10 * HOUR,
+        states=(StateLine(Fraction(0), _rows(
+            (("A", 90, "10min"), ("B", 10, "10min")))),),
+        blocks=(BlockLine("B", Fraction(0), Fraction(40)),),
+    ),
+
+    "6: an hour of A": Config(
+        title="an hour of A pre-placed at t = 1h40 -- B's slots swell as it "
+              "approaches and shrink back after it: the decay, on both sides",
+        span=Fraction(400),
+        states=(StateLine(Fraction(0), _rows(AB)),),
+        blocks=(BlockLine("A", Fraction(100), HOUR),),
+    ),
+
+    "7: ten hours of A": Config(
+        title="ten hours of A, ten times longer than the hour -- B's presence "
+              "around it is wider and denser, but only a few times bigger",
+        span=Fraction(1000),
+        states=(StateLine(Fraction(0), _rows(AB)),),
+        blocks=(BlockLine("A", Fraction(100), 10 * HOUR),),
+    ),
+
+    "8: B banned for five hours": Config(
+        title="B is banned from t = 1h40 to t = 6h40 -- a window, not a block: B "
+              "swells before the ban and right after it re-opens",
+        span=Fraction(700),
+        states=(StateLine(Fraction(0), _rows(AB)),),
+        periods=(PeriodLine(Fraction(100), Fraction(400), "B"),),
+    ),
+
+    "9: the same ban, in ten windows": Config(
+        title="the same five-hour ban on B, cut into ten consecutive windows -- "
+              "ten short bans in a row are ONE long ban, not ten small ones",
+        span=Fraction(700),
+        states=(StateLine(Fraction(0), _rows(AB)),),
+        periods=tuple(PeriodLine(Fraction(100 + 30 * i), Fraction(130 + 30 * i), "B")
+                      for i in range(10)),
+    ),
+
+    "9b: two overlapping bans": Config(
+        title="two overlapping bans, on a timeline they do not cover -- what an "
+              "instant refuses is the SUM of the periods over it, so where the "
+              "two overlap A holds the timeline alone",
+        span=Fraction(700),
+        states=(StateLine(Fraction(0), _rows(
+            (("A", 40, "10min"), ("B", 30, "10min"), ("C", 30, "10min")))),),
+        periods=(PeriodLine(Fraction(100), Fraction(300), "C"),
+                 PeriodLine(Fraction(200), Fraction(400), "B")),
+    ),
+
+    "12: three days, 21 tasks, nights": Config(
+        title="three days, twenty-one tasks of 45 minutes and a night every 24h -- "
+              "A at 50%, twenty sharing the rest, ten of them off-screen",
+        span=3 * DAY,
+        states=(StateLine(Fraction(0), _twenty_one(50, "2.5", "2.5")),),
+        periods=_nights(3 * DAY),
+    ),
+
+    "13: 12, with the percentages sliding": Config(
+        title="the three days again, with the PERCENTAGES sliding -- one "
+              "arrangement pinned at 24h, another at 48h, and the nearer one "
+              "held outside the pair",
+        span=3 * DAY,
+        states=(StateLine(DAY, _twenty_one(50, "2.5", "2.5")),
+                StateLine(2 * DAY, _twenty_one(10, 6, 3))),
+        periods=_nights(3 * DAY),
+    ),
+
+    "14: two tasks, three days, nights": Config(
+        title="the three days stripped to the bone: two tasks of 45 minutes at "
+              "50% each, and nothing in the way but the nights",
+        span=3 * DAY,
+        states=(StateLine(Fraction(0), _rows(
+            (("A", 50, "45min"), ("B", 50, "45min")))),),
+        periods=_nights(3 * DAY),
+    ),
+
+}
+
+
+def preset_names() -> tuple:
+    """The already-configured tests, in the order the drop-down offers them."""
+    return tuple(PRESETS)
+
+
+def preset(name):
+    """One already-configured test, by name or by a unique prefix of it -- so
+    "14" and "9b" are enough to ask for one at a prompt, and "1" (which four of
+    them start with) is not enough and asks for nothing.
+
+    The matching lives here, once, because the names do: a second copy of it in
+    the window or in the terminal is how two ways of asking for the same test
+    start disagreeing about which one that is.
+    """
+    text = str(name).strip()
+    if text in PRESETS:
+        return PRESETS[text]
+    hits = [c for n, c in PRESETS.items() if n.lower().startswith(text.lower())]
+    return hits[0] if len(hits) == 1 else None
+
+
+def preset_name_of(config) -> str:
+    """The name of the already-configured test this configuration IS, or
+    `CUSTOM`.
+
+    A configuration is the test it is EQUAL to and nothing else, so a preset
+    edited in any field is custom again and one edited back is that test
+    again -- which is the whole of what the drop-down has to remember.
+    """
+    for name, other in PRESETS.items():
+        if other == config:
+            return name
+    return CUSTOM
+
+
+# --------------------------------------------------------------------------- #
 #  the default: what the window opens on before anybody has edited anything
 # --------------------------------------------------------------------------- #
 
-DEFAULT_CONFIG = Config(
-    title="three tasks, half an hour owned by nobody, and an hour C is refused",
-    span=6 * HOUR,
-    states=(StateLine(Fraction(0), (
-        TaskLine("A", Fraction(50), Fraction(10), Fraction(0), PALETTE[0]),
-        TaskLine("B", Fraction(30), Fraction(10), Fraction(0), PALETTE[1]),
-        TaskLine("C", Fraction(20), Fraction(15), Fraction(1), PALETTE[2]),
-    )),),
-    blocks=(BlockLine("MAINTENANCE", HOUR, Fraction(30)),),
-    periods=(PeriodLine(3 * HOUR, 4 * HOUR, "C"),),
-)
+DEFAULT_CONFIG = PRESETS["the default"]
 
 
 def load_config(path=CONFIG_PATH, default=None) -> Config:
@@ -560,13 +805,32 @@ def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(description="the one test's configuration")
     ap.add_argument("--list", action="store_true", help="print the configuration")
+    ap.add_argument("--presets", action="store_true",
+                    help="name the tests that are already configured")
+    ap.add_argument("--use", metavar="NAME",
+                    help="make one of those tests the test (a unique prefix of "
+                         "its name will do)")
     ap.add_argument("--reset", action="store_true",
                     help="forget the customisation and go back to the default")
     args = ap.parse_args(argv)
-    if args.reset:
+    if args.presets:
+        print("the tests already configured:")
+        for name in preset_names():
+            print(f"  {name:42s} {PRESETS[name].summary}")
+        print()
+    if args.use:
+        chosen = preset(args.use)
+        if chosen is None:
+            print(f"no test is called {args.use!r}; --presets names them all")
+            return 1
+        chosen.save()
+        print(f"{preset_name_of(chosen)} is now the test, "
+              f"in {CONFIG_PATH.name}\n")
+    elif args.reset:
         DEFAULT_CONFIG.save()
         print(f"the default is back in {CONFIG_PATH.name}\n")
     config = load_config()
+    print(f"[{preset_name_of(config)}]")
     print("\n".join(configuration_lines(config)))
     for bad in config.problems():
         print(f"  PROBLEM: {bad}")

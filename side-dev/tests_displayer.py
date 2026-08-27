@@ -3,11 +3,17 @@
 tests_displayer.py
 The display for `scheduler`, and the checks that hold it to `README.md`.
 
-There is ONE test, and the window is where it is written: the editor under the
-bar holds its span, its rule states, its tasks, its pre-placed blocks and its
-restrictive periods, and Apply hands the scheduler the test it now is. The
+There is ONE test and it is CUSTOM: the editor under the bar is where it is
+written -- its span, its rule states, its tasks, its pre-placed blocks and its
+restrictive periods -- and Apply hands the scheduler the test it now is. The
 configuration is remembered between runs (`test_config.json`), so the window,
 `--verify` and `--rules` are all asking about the same test.
+
+The drop-down beside it offers the tests that are ALREADY configured
+(`test_configs.PRESETS`), and choosing one applies it to the custom test. A
+preset is an ordinary configuration, so it lands in the same editable fields:
+editing any of them makes the test custom again, and choosing "custom" puts
+back the test that was typed before a preset was tried.
 
 A configuration says only what the timeline IS -- the tasks, the blocks, the
 periods, the span -- so everything the README asks for is asked HERE, and
@@ -31,6 +37,7 @@ Two rules shaped the window:
   reaches; CLICKING somewhere ahead is a JUMP, which sweeps nothing.
 
     uv run tests_displayer.py              the window, and the test's editor
+    uv run tests_displayer.py --preset 14  open on a test already configured
     uv run tests_displayer.py --verify     every check, no window
     uv run tests_displayer.py --rules      the rule list at the line
     uv run tests_displayer.py --no-ui      the terminal report
@@ -71,6 +78,7 @@ from scheduler import (
     same_timeline,
 )
 from test_configs import (
+    CUSTOM,
     DEFAULT_CONFIG,
     PALETTE,
     BlockLine,
@@ -85,6 +93,9 @@ from test_configs import (
     parse_percent,
     parse_resilience,
     parse_time,
+    preset,
+    preset_name_of,
+    preset_names,
     show_percent,
     show_resilience,
 )
@@ -1139,10 +1150,17 @@ class Editor:
     and named in the status line, and Apply refuses a configuration with any
     problem in it (`Config.problems`) rather than handing the scheduler a test
     it cannot answer.
+
+    The drop-down is a READOUT of the model and not a state of its own: the
+    test is whichever already-configured test it is EQUAL to (`preset_name_of`)
+    and "custom" when it is equal to none of them, so it can never claim a
+    preset a field has since been edited away from.
     """
 
     def __init__(self, parent, config, on_apply, on_status):
         self.model = config
+        # the custom test, kept aside while a configured one is being looked at
+        self.custom = config if preset_name_of(config) == CUSTOM else None
         self.on_apply = on_apply
         self.on_status = on_status
         self.errors = []
@@ -1159,6 +1177,21 @@ class Editor:
                   command=self.apply).pack(side="left", padx=(12, 4))
         tk.Button(top, text="Reset", font=FONT, width=6,
                   command=self.reset).pack(side="left")
+
+        pick = tk.Frame(self.frame, bg=EDITOR_BG)
+        pick.pack(side="top", fill="x", padx=6, pady=(0, 2))
+        tk.Label(pick, text="already configured:", font=FONT, fg=DIM,
+                 bg=EDITOR_BG).pack(side="left")
+        self.w_preset = tk.StringVar(value=preset_name_of(config))
+        self.preset_menu = tk.OptionMenu(pick, self.w_preset,
+                                         *((CUSTOM,) + preset_names()),
+                                         command=self._choose)
+        self.preset_menu.config(font=FONT, bg=EDITOR_BG, highlightthickness=0,
+                                anchor="w", width=36)
+        self.preset_menu.pack(side="left", padx=6)
+        tk.Label(pick, font=FONT, fg=DIM, bg=EDITOR_BG,
+                 text=("choosing one applies it; editing any field makes the "
+                       "test custom again")).pack(side="left")
 
         columns = tk.Frame(self.frame, bg=EDITOR_BG)
         columns.pack(side="top", fill="both", expand=True, padx=6, pady=2)
@@ -1179,6 +1212,7 @@ class Editor:
         self.w_title.insert(0, self.model.title)
         self.w_span.delete(0, "end")
         self.w_span.insert(0, human(self.model.span))
+        self.w_preset.set(preset_name_of(self.model))
         self.w_states, self.w_blocks, self.w_periods = [], [], []
         self._states()
         self._blocks()
@@ -1428,6 +1462,41 @@ class Editor:
             del periods[j]
             return replace(config, periods=tuple(periods))
         self._mutate(fn)
+
+    # -- the tests already configured ---------------------------------------
+
+    def _choose(self, name):
+        """An already-configured test was chosen: it BECOMES the test.
+
+        What was typed before is not thrown away by the choice -- a custom test
+        is kept aside and "custom" puts it back, so a configured test can be
+        looked at and left. A chosen test is applied at once: a drop-down that
+        only filled the fields in would leave the bar showing another test than
+        the one it names.
+        """
+        if name == CUSTOM:
+            chosen = self.custom
+            if chosen is None:
+                self.w_preset.set(preset_name_of(self.model))
+                self.on_status("nothing custom has been typed yet -- edit any "
+                               "field and the test is custom")
+                return
+        else:
+            chosen = preset(name)
+            if chosen is None:                  # a menu offers nothing else
+                return
+            typed = self.harvest()
+            if preset_name_of(typed) == CUSTOM:
+                self.custom = typed
+        self.model = chosen
+        self.rebuild()
+        problems = chosen.problems()
+        if problems:
+            self.on_status("cannot answer this test: " + "; ".join(problems[:3]),
+                           bad=True)
+            return
+        self.on_status(f"{self.w_preset.get()}: {chosen.summary}")
+        self.on_apply(chosen)
 
     # -- Apply ---------------------------------------------------------------
 
@@ -1715,14 +1784,26 @@ def main(argv=None):
     ap.add_argument("--no-ui", action="store_true", help="the terminal report only")
     ap.add_argument("--default", action="store_true",
                     help="the default test, ignoring the saved customisation")
+    ap.add_argument("--preset", metavar="NAME",
+                    help="one of the tests already configured, by name or by a "
+                         "unique prefix of it (uv run test_configs.py --presets "
+                         "names them all)")
     ap.add_argument("--self-test", type=float, default=0.0, metavar="SECONDS",
                     help="open the window, exercise it, then close it")
     args = ap.parse_args(argv)
 
-    config = DEFAULT_CONFIG if args.default else load_config()
+    if args.preset:
+        config = preset(args.preset)
+        if config is None:
+            print(f"no test is called {args.preset!r}. The ones there are:")
+            for name in preset_names():
+                print(f"  {name}")
+            return 1
+    else:
+        config = DEFAULT_CONFIG if args.default else load_config()
     bad = config.problems()
     if bad:
-        print("the saved test cannot be answered:")
+        print("the test cannot be answered:")
         for line in bad:
             print(f"  - {line}")
         print("  (uv run test_configs.py --reset puts the default back)")
@@ -1745,6 +1826,9 @@ def main(argv=None):
     print("  timeline and the periods that refuse them. Apply builds the test and")
     print("  writes it to test_config.json, so the window opens where you left it")
     print("  and --verify asks about the same test; Reset puts the default back.")
+    print("  The drop-down offers the tests already configured (test_configs.py):")
+    print("  choosing one applies it, editing any field makes the test custom")
+    print("  again, and choosing custom puts the test you had typed back.")
     print("  The bar is the answer: CLICK it to jump the line there (a jump sweeps")
     print("  nothing), DRAG to sweep it (a sweep drags the dynamic period the line")
     print("  reaches), PLAY sweeps it for you, mode 1/2 flips the two t_p modes,")
@@ -1771,6 +1855,8 @@ def main(argv=None):
                 panel.set_mode(2)
                 panel.jump(panel.case.span / 2)
                 panel.copy()
+            bench.editor._choose(preset_names()[1])
+            bench.editor._choose(CUSTOM)
             bench.editor._add_task(0)
             bench.editor.w_span.delete(0, "end")
             bench.editor.w_span.insert(0, "2h")
