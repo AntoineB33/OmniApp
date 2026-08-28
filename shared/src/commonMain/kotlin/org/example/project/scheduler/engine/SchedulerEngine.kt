@@ -46,6 +46,7 @@ import org.example.project.scheduler.platform.GlobalShortcutBindings
 import org.example.project.scheduler.platform.deviceLockedIntervals
 import org.example.project.scheduler.platform.currentDeviceKind
 import org.example.project.scheduler.platform.isScreenActive
+import org.example.project.scheduler.platform.cancelSystemNotifications
 import org.example.project.scheduler.platform.sendSystemNotification
 import org.example.project.scheduler.platform.recentSleepGaps as platformRecentSleepGaps
 import org.example.project.scheduler.platform.VoiceCue
@@ -115,6 +116,12 @@ private const val RESUME_WORK_MESSAGE: String = "Resume your work"
 // History window's Notifications column and in the OS's own notification list — the chord itself is the
 // message, which is what tells the user WHICH press landed.
 private const val SHORTCUT_RECEIVED_TITLE: String = "Shortcut received"
+
+// PRD §11: what turning notifications back ON announces (see [SchedulerEngine.setNotificationsEnabled]). The
+// only notification the mute cannot hide, because it is posted from the far side of the flip — which is what
+// makes the un-mute chord's own (still-muted, hence swallowed) receipt visible after all.
+private const val NOTIFICATIONS_ON_TITLE: String = "Notifications on"
+private const val NOTIFICATIONS_ON_MESSAGE: String = "OmniApp will notify you again"
 
 // PRD §12/§15 device-sleep detection: the *real*-time gap between two advance ticks that means the process was
 // suspended (the device slept). It is the production tick cadence × 3 — a fixed REAL duration that does NOT
@@ -267,6 +274,11 @@ class SchedulerEngine(
     // PRD §15: the voice sink (defaults to the platform player of the bundled shared cue audio); injectable so
     // cues are assertable in tests.
     private val playCue: (VoiceCue) -> Unit = ::platformPlayVoiceCue,
+    // PRD §11: the notification sink and the "withdraw what is already showing" seam (default to the platform
+    // notifier); injectable for the same reason [playCue] is — what the app POSTED is otherwise unassertable,
+    // and the mute below is precisely a rule about that call and not about the log beside it.
+    private val postNotification: (String, String) -> Unit = ::sendSystemNotification,
+    private val clearNotifications: () -> Unit = ::cancelSystemNotifications,
     // PRD §15 device-sleep gaps: LOCAL-ONLY store for the exact pause intervals read from the OS sleep log;
     // null disables gap recording. These feed this device's own rest-pose seeding / Inactivity bands only —
     // they are NEVER synced any more (the cross-device sleep-gap channel is retired; see CLAUDE.md).
@@ -845,6 +857,31 @@ class SchedulerEngine(
     }
 
     /**
+     * PRD §11: the left-menu **Notifications** switch and the `Ctrl+Shift+Alt+N` chord — the same lever from
+     * two places, exactly as "I'm away" is.
+     *
+     * Switching off does both halves of "cancel every notification": [notifyUser] stops handing anything to
+     * the OS, and [clearNotifications] withdraws what it has already shown (Android's shade / iOS's
+     * Notification Centre keep a notification until it is dismissed; a desktop tray balloon cannot be recalled,
+     * and that actual is a documented no-op). The History window's Notifications column is untouched either
+     * way, and so are the voice cues — they have their own switch.
+     *
+     * Switching back **on** posts one notification saying so, and that is deliberate rather than chatty. The
+     * chord is struck with another window in front, and its ordinary receipt ([announceShortcutReceived]) is
+     * raised *before* this runs — so on the un-mute press that receipt is still muted and swallowed, which
+     * would leave the one press whose whole subject is notifications as the only one the user cannot see
+     * landing. This is that press's receipt, posted from the far side of the flip where the app may speak
+     * again; it doubles as proof the OS channel still works. A same-value call is a no-op, so nothing is
+     * announced and nothing is cleared.
+     */
+    fun setNotificationsEnabled(enabled: Boolean) {
+        if (vm.state.value.notificationsEnabled == enabled) return
+        vm.dispatch(SchedulerIntent.SetNotificationsEnabled(enabled))
+        if (enabled) notifyUser(NOTIFICATIONS_ON_TITLE, NOTIFICATIONS_ON_MESSAGE)
+        else runCatching { clearNotifications() }
+    }
+
+    /**
      * PRD §15: sample the RAW platform lock signal and clear "I'm away" on a **lock→unlock edge**.
      *
      * Unlocking this device is the user coming back to it — the one unambiguous "I'm back" the app can read
@@ -881,13 +918,21 @@ class SchedulerEngine(
     // through that break" is answerable from scripts/collect-diagnostics.bat instead of a live repro.
     private fun notifyUser(title: String, message: String) {
         val now = clock.nowMillis()
+        // PRD §11: the account's Notifications switch, read HERE and nowhere else — this is the one funnel
+        // every notification the app posts goes through (a break's start and end, "task to do now", the
+        // wind-down, an alarm, a chord's own receipt), so gating it is what makes "cancel every notification"
+        // mean every one of them rather than the handful somebody remembered to guard.
+        val muted = !vm.state.value.notificationsEnabled
         Diagnostics.log(
             "notification [$title] ${message.replace('\n', ' ')} " +
-                "(sim now=${Diagnostics.formatInstant(now)})",
+                "(sim now=${Diagnostics.formatInstant(now)})" +
+                (if (muted) " [suppressed: notifications off]" else ""),
         )
-        // Append to the History Manager's local-only Notifications column (capped, non-syncing).
+        // Append to the History Manager's local-only Notifications column (capped, non-syncing). Written
+        // whether or not the OS is told: the switch silences the interruption, never the record, so the
+        // column still answers "what did the app decide to say while I had it muted".
         vm.dispatch(SchedulerIntent.RecordNotification(title, message, now))
-        sendSystemNotification(title, message)
+        if (!muted) postNotification(title, message)
     }
 
     private fun speakCue(cue: VoiceCue) {

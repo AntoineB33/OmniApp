@@ -69,7 +69,7 @@ import org.example.project.scheduler.platform.setGlobalHotkeyCapture
  *  * It carries one extra line the rest do not need: **what claim the OS actually granted** ([claim]). Those
  *    are the only chords another application can take, and when that happens the symptom the user sees —
  *    nothing happens, or something else happens as well — says nothing about the cause. This line does.
- *  * Its three chords are **rebindable**, because they are the ones that collide: a system-wide claim is
+ *  * Its chords are **rebindable**, because they are the ones that collide: a system-wide claim is
  *    first come, first served, so a chord some other application already owns is unusable here until the
  *    user can move it. Everything below is a Compose key handler scoped to a surface — no collisions to
  *    resolve, and nothing to read the handlers back off (see [KeyboardShortcutCatalog]).

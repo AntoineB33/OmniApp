@@ -45,17 +45,34 @@ class KeyboardShortcutsCatalogTest {
         )
     }
 
-    /** The three chords the app ships with — spelled out here so a silent change of default fails the build. */
+    /** The chords the app ships with — spelled out here so a silent change of default fails the build. */
     @Test
     fun theGlobalChordsAreTheDocumentedOnes() {
         assertEquals("Ctrl+Shift+Alt+A", GlobalShortcut.ToggleAway.defaultChord)
         assertEquals("Ctrl+Shift+Alt+E", GlobalShortcut.LookAwayNow.defaultChord)
         assertEquals("Ctrl+Shift+Alt+Z", GlobalShortcut.SwitchTask.defaultChord)
+        assertEquals("Ctrl+Shift+Alt+N", GlobalShortcut.ToggleNotifications.defaultChord)
+    }
+
+    /**
+     * Every shipped default must satisfy the rules the reducer enforces on a REBINDING — two modifiers at
+     * least, and no two shortcuts on one chord. A default that broke either would ship a chord the window
+     * refuses to let the user set, and (for a collision) two actions racing for one press.
+     */
+    @Test
+    fun theShippedDefaultsObeyTheBindingRules() {
+        GlobalShortcut.entries.forEach { shortcut ->
+            assertEquals(
+                null,
+                GlobalShortcutBindings.rejection(emptyMap(), shortcut, shortcut.defaultBinding),
+                "the shipped chord for \"${shortcut.action}\" is one the app would refuse",
+            )
+        }
     }
 
     /**
      * PRD §7 hover bubble: a control that duplicates a chord names it on hover, and the window lists the same
-     * chord a few lines below. For the three system-wide ones both sides go through
+     * chord a few lines below. For the system-wide ones both sides go through
      * [GlobalShortcutBindings.chordOf], so a rebinding cannot leave one of them printing the shipped chord.
      */
     @Test

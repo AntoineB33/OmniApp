@@ -11,6 +11,34 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A Notifications switch, and a chord to silence them — SHIPPED 2026-08-28
+
+→ PRD §7/§11. `shared` only (`scheduler/platform/GlobalHotkey.kt`, `scheduler/platform/SystemNotifier*.kt`,
+`scheduler/engine/SchedulerEngine.kt`, `scheduler/state/*`, `scheduler/persistence/SchedulerStateCodec.kt`,
+`scheduler/sync/SnapshotMerge.kt`, `ui/CalendarUi.kt`, `App.kt`); new `NotificationMuteTest`, two new
+`KeyboardShortcutsCatalogTest` cases. Client rebuild to see it — no Supabase deploy.
+
+- **The lateral menu has a "Notifications" switch, and `Ctrl+Shift+Alt+N` is the same lever from the
+  keyboard.** Off silences every notification the app posts — a break's start and end, "task to do now", the
+  wind-down, an alarm, and the system-wide chords' own receipts. There is no exempt caller: they all funnel
+  through `SchedulerEngine.notifyUser`, which is the one place the switch is read, and a mute that let one
+  class through would not be a mute.
+- **It silences the interruption, never the record.** The notification log is appended before the platform
+  call, so the History window's Notifications column still lists everything the app decided to say while it
+  was muted (which is also why that column was never proof of delivery).
+- **Switching off also withdraws what the OS is already showing** (`cancelSystemNotifications`) — Android's
+  shade and iOS's Notification Centre hold a notification until it is dismissed, so "cancel every
+  notification" has to answer the pile already on screen as well as the ones still to come. The desktop
+  actual is a deliberate no-op: a tray balloon cannot be recalled once shown.
+- **Switching back ON posts one notification saying so.** The chord's ordinary receipt is raised *before* the
+  action, so on the un-mute press it is still muted and swallowed — which would leave the one press whose
+  whole subject is notifications as the only one the user cannot see landing. This is that press's receipt,
+  posted from the far side of the flip.
+- The switch is the fourth **rebindable** system-wide chord and the first *switch* to name a chord on hover;
+  it is persisted + synced (an account preference, like the look-away voice switch beside it) and is not an
+  Undo/Redo unit. It says nothing about the voice cues, and nothing about the schedule: a break still starts
+  and ends where it did, silently.
+
 ### An unlock turns "I'm away" off — SHIPPED 2026-08-28
 
 → PRD §15, ARCHITECTURE.md §8. `shared` only (`scheduler/engine/SchedulerEngine.kt`); new

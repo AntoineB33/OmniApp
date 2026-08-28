@@ -31,13 +31,13 @@ private val HINT_GAP = 6.dp
  * same action**.
  *
  * A shortcut is invisible from where the user is sitting: the lateral menu's "Look away now" says nothing
- * about `Ctrl+Shift+Alt+E`, and the three system-wide chords are rebindable, so even a user who once read the
+ * about `Ctrl+Shift+Alt+E`, and the system-wide chords are rebindable, so even a user who once read the
  * keyboard-shortcuts window may be looking at a button whose chord has since moved. The bubble is that
  * window's answer brought next to the control.
  *
  * Two rules, and both are what keeps it from becoming a second source of truth:
  *
- *  * **[chord] is always a live lookup, never a constant spelling of a rebindable chord.** For the three
+ *  * **[chord] is always a live lookup, never a constant spelling of a rebindable chord.** For the
  *    system-wide shortcuts that is `GlobalShortcutBindings.chordOf(state.shortcutBindings, …)` — the one
  *    lookup the window, the receipt notification and the diagnostics all go through. Printing
  *    `GlobalShortcut.defaultChord` here would advertise a chord the app is not listening for.

@@ -120,6 +120,18 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
   - [ ] On an AZERTY layout, `Shift+AltGr+E` still types its character (the hook must pass AltGr through).
   - [ ] `diagnostics.log` shows `global hotkeys: claim=Exclusive` at startup and one `global hotkey pressed`
         line per press (`scripts\collect-diagnostics.bat`).
+- [ ] **The Notifications switch cancels every notification (PRD §11).** With the lateral menu's
+      **Notifications** switch on, hover it → the bubble names the live chord (`Ctrl+Shift+Alt+N` unless
+      rebound). Then:
+  - [ ] Switch it **off** → any OmniApp notification still on screen disappears (Android/iOS; a desktop tray
+        balloon fades on its own and is expected to stay).
+  - [ ] With it off, strike `Ctrl+Shift+Alt+E` from another application → **no** notification appears (not the
+        break's, not the "Shortcut received" receipt) — but the History window's **Notifications** column
+        lists both, and `diagnostics.log` marks each `[suppressed: notifications off]`.
+  - [ ] With another application focused, strike `Ctrl+Shift+Alt+N` → a **"Notifications on"** notification
+        appears (that is the un-mute press's own receipt) and notifications resume.
+  - [ ] The switch and the chord are one lever: flipping either moves the other, and the setting survives a
+        relaunch and reaches a second device signed in to the same account.
 - [ ] **"I'm away" is turned off by an unlock (PRD §15).** Press **I'm away** (the button reads *I'm back*),
       then lock the session (`Win+L`) — it must still read *I'm back* — and log back in: the button must be
       back to **I'm away** within a moment, with no click, and `diagnostics.log` must show

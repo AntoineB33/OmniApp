@@ -23,3 +23,14 @@ actual fun sendSystemNotification(title: String, message: String) {
     val request = UNNotificationRequest.requestWithIdentifier(id, content, null)
     UNUserNotificationCenter.currentNotificationCenter().addNotificationRequest(request, null)
 }
+
+/**
+ * PRD §11 (iOS): drop what has been delivered to Notification Centre *and* anything still pending, so muting
+ * clears the list rather than only stopping the next post. Not the pause-cue alarm, which is scheduled
+ * through its own local-cue seam ([scheduleLocalPauseCuePlatform]) and is a spoken cue, not a notification.
+ */
+actual fun cancelSystemNotifications() {
+    val center = UNUserNotificationCenter.currentNotificationCenter()
+    center.removeAllDeliveredNotifications()
+    center.removeAllPendingNotificationRequests()
+}

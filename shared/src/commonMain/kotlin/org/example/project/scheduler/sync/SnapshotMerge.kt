@@ -147,6 +147,10 @@ object SnapshotMerge {
                     ) { bb, ll, rr -> pick(bb, ll, rr) },
                 lookAwayVoiceEnabled =
                     pick(base.lookAwayVoiceEnabled, local.lookAwayVoiceEnabled, remote.lookAwayVoiceEnabled),
+                // PRD §11: the notifications switch is the account's, and an ordinary scalar beside the voice
+                // one — the notification LOG it governs is per-device and stays local either way.
+                notificationsEnabled =
+                    pick(base.notificationsEnabled, local.notificationsEnabled, remote.notificationsEnabled),
                 // The sleep schedule's four fields drift together (a wake time implies its bedtime), so it is
                 // resolved as one value rather than field by field.
                 sleep = pickNullable(base.sleep, local.sleep, remote.sleep),

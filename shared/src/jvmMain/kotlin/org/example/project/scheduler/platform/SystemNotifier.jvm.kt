@@ -33,3 +33,10 @@ actual fun sendSystemNotification(title: String, message: String) {
         trayIcon?.displayMessage(title, message, TrayIcon.MessageType.INFO)
     }
 }
+
+/**
+ * PRD §11 (desktop): a **no-op**, and the one platform where that is the whole truth. A tray balloon is fire
+ * and forget — AWT hands it to the shell and keeps no handle to withdraw it — so there is nothing left for
+ * the app to clear once it has been shown; the balloon fades on its own. Muting still stops the next one.
+ */
+actual fun cancelSystemNotifications() = Unit

@@ -45,3 +45,15 @@ actual fun sendSystemNotification(title: String, message: String) {
         NotificationManagerCompat.from(context).notify(nextNotificationId.getAndIncrement(), notification)
     }
 }
+
+/**
+ * PRD §11 (Android): withdraw every notification this app has posted — they persist in the shade until
+ * dismissed, so muting has to clear them as well as stop posting new ones. `cancelAll` needs no permission
+ * (unlike `notify`), and cancelling when nothing is showing is a no-op.
+ */
+actual fun cancelSystemNotifications() {
+    runCatching {
+        val context = AndroidSchedulerStoreHolder.context ?: return
+        NotificationManagerCompat.from(context).cancelAll()
+    }
+}

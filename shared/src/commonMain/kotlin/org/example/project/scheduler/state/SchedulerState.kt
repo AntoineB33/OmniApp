@@ -405,6 +405,23 @@ data class SchedulerState(
      */
     val lookAwayVoiceEnabled: Boolean = true,
     /**
+     * PRD §11 Notifications: whether the app posts system notifications at all — the lateral menu's
+     * **Notifications** switch and the system-wide `Ctrl+Shift+Alt+N` chord
+     * ([org.example.project.scheduler.platform.GlobalShortcut.ToggleNotifications]).
+     *
+     * Off silences **every** notification the app would post, the system-wide chords' own receipts included:
+     * they all funnel through `SchedulerEngine.notifyUser`, and a mute that let one class of them through
+     * would not be a mute. It says nothing about the voice cues ([lookAwayVoiceEnabled] is their switch) and
+     * nothing about the schedule — a break still starts and ends where it did, silently.
+     *
+     * It never suppresses the **record**: [notificationLog] is appended before the platform call, so the
+     * History window's Notifications column lists what the app decided to say whether or not the OS was told
+     * to show it (which is also why that column was never proof of delivery). On by default, so a payload
+     * written before the switch existed keeps exactly the behaviour it had. Persisted + synced (an
+     * account-wide preference, like the voice switch beside it); not undoable.
+     */
+    val notificationsEnabled: Boolean = true,
+    /**
      * The user's sleep schedule (a nightly window the §9 task fill and the §15 screen-break projection must
      * leave empty; see [org.example.project.scheduler.domain.SchedulerDomain.sleepPanels]). **Null by
      * default** so the scheduler tests that assert exact schedules see no sleep window unless they opt in;

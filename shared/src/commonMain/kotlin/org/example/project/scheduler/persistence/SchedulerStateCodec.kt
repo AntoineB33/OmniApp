@@ -277,6 +277,7 @@ object SchedulerStateCodec {
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
+            notificationsEnabled = notificationsEnabled,
             // PRD §4 Default sub-tree: the template — a real tree, in the same shape a task tree is stored
             // in — and whether the policy is currently applied. The pre-1.6.0 `defaultSubtree` node list is
             // still READ (below) but never written again.
@@ -726,6 +727,7 @@ object SchedulerStateCodec {
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
+            notificationsEnabled = notificationsEnabled,
             // PRD §4: three generations, all readable. A payload written before the "Default sub-tree"
             // window existed decodes to the empty template and the policy off — exactly the behaviour it
             // had. One written while the template was a tree of titles is MIGRATED into the real tree the
@@ -986,6 +988,11 @@ private data class PersistedState(
     val showReminders: Boolean = true,
     // PRD §15: the 20s look-away voice cue; default on (payloads written before the toggle existed get the voice).
     val lookAwayVoiceEnabled: Boolean = true,
+    // PRD §11: whether the app posts system notifications at all (the lateral menu's Notifications switch /
+    // Ctrl+Shift+Alt+N). Default on, so a payload written before the switch existed decodes to exactly the
+    // behaviour it had. The notification LOG is a separate, local-only field: muting never removed an entry
+    // from it, so a payload written while muted still carries the whole History column.
+    val notificationsEnabled: Boolean = true,
     // PRD §4 Default sub-tree: the template grafted under a newly created task, and whether the policy is
     // applied. Missing values decode to "empty template, switch off" — payloads written before the window
     // existed, for which nothing was ever grafted.

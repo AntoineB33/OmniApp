@@ -274,6 +274,29 @@ Staleness is judged only by the crossing's REAL age (`BoundarySweep`, 2-s budget
 scan-window position. Consecutive scans must tile the timeline with no gaps (`scanFloorMillis`), so no
 crossing can be silently clipped by a clock jump.
 
+### The Notifications switch silences the OUTPUT, never the record
+
+The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
+(`SchedulerState.notificationsEnabled`, persisted + synced, not an Undo/Redo unit).
+
+- **`SchedulerEngine.notifyUser` is the ONE funnel and the ONE place the switch is read.** Every notification
+  the app posts goes through it — a break's start and end, "task to do now", the wind-down, an alarm, a
+  chord's own receipt — so there is no exempt caller and no second gate. A mute with a list of exceptions is
+  not a mute; never add the check anywhere else, and never post around it.
+- **The log is written BEFORE the platform call, muted or not.** The History window's Notifications column
+  answers "what did the app decide to say", which is why it was never proof of delivery — and why the switch
+  can silence the interruption without touching the record.
+- **Switching off also withdraws what the OS is still showing** (`cancelSystemNotifications`): a notification
+  sits in Android's shade / iOS's Notification Centre until dismissed, so "cancel every notification" has to
+  answer the pile already on screen too. The desktop actual is a deliberate no-op — a tray balloon cannot be
+  recalled.
+- **Switching back on posts one notification saying so, and that is load-bearing.** The chord's receipt is
+  raised before the action, so on the un-mute press it is still muted and swallowed; this is that press's
+  receipt, posted from the far side of the flip. Turning them *off* announces nothing extra — the receipt for
+  that press goes out normally, just before the mute takes hold.
+- It says nothing about the **voice cues** (`lookAwayVoiceEnabled` is their switch) and nothing about the
+  **schedule**: a break still starts and ends where it did, silently.
+
 ---
 
 ## Calendar
@@ -856,9 +879,9 @@ cross-device presence.
 
 ## System-wide keyboard shortcuts
 
-→ ADR 0011. Three chords — "I'm away" / "I'm back", "Look away now", "Switch task" — shipping as
-`Ctrl+Shift+Alt+A` / `+E` / `+Z` and claimed from the OS because each is pressed precisely when OmniApp is
-**not** the focused window. Never a Compose key handler.
+→ ADR 0011. Four chords — "I'm away" / "I'm back", "Look away now", "Switch task", "Notifications on / off" —
+shipping as `Ctrl+Shift+Alt+A` / `+E` / `+Z` / `+N` and claimed from the OS because each is pressed precisely
+when OmniApp is **not** the focused window. Never a Compose key handler.
 
 - **The chord must be SWALLOWED, not merely observed.** `RegisterHotKey` is not first-come, first-served: an
   application with its own low-level hook is called before the hot-key table, so one press fired two actions
@@ -872,7 +895,8 @@ cross-device presence.
   `Shift+AltGr+E` must pass through or the hook eats typed text).
 - **Every press posts a RECEIPT** (`SchedulerEngine.announceShortcutReceived`): a "Shortcut received"
   notification naming the chord, raised at the `installGlobalHotkeys` seam **before** the action and whatever
-  the action then does. The chord is struck with another window in front, and each one can legitimately do
+  the action then does. It is a notification like any other, so the Notifications switch silences it too —
+  which is why turning notifications back **on** announces itself from the far side of the flip (below). The chord is struck with another window in front, and each one can legitimately do
   nothing visible — so "the app never got it" and "the app got it and had nothing to do" are otherwise the
   same experience. It belongs to the hot-key seam, never to the engine seams behind it: the lateral-menu
   buttons drive those same seams and a click needs no confirming.
@@ -880,7 +904,7 @@ cross-device presence.
   window prints it; never a second copy. `GlobalHotkeys.claim` says which claim the OS granted, and the window
   shows it — "nothing happened" and "something else happened too" are otherwise undiagnosable.
 
-### Rebinding the three (and only the three)
+### Rebinding the four (and only those four)
 
 - **These are the ONLY rebindable shortcuts in the app**, because they are the only ones that can collide with
   anything outside it — a system-wide claim is first come, first served. Every other chord is a Compose handler
@@ -917,10 +941,10 @@ cross-device presence.
 
 **Every control that duplicates a keyboard shortcut shows that chord in an info bubble while the pointer rests
 on it** — `ShortcutHint` is the one place a bubble is drawn, and a control with no chord passes `null` and gets
-a plain `Box`. Today: the lateral menu's "Look away now" / "Switch task" / "I'm away", the find bar's ↑ / ↓ /
-✕ / Replace, and the deep-copy window's "copy".
+a plain `Box`. Today: the lateral menu's "Look away now" / "Switch task" / "I'm away" / **"Notifications"**
+(the one *switch* that has a chord), the find bar's ↑ / ↓ / ✕ / Replace, and the deep-copy window's "copy".
 
-- **The chord is always a LIVE lookup, never a constant, for the three that can be rebound.** The buttons read
+- **The chord is always a LIVE lookup, never a constant, for the four that can be rebound.** The buttons read
   `GlobalShortcutBindings.chordOf(state.shortcutBindings, …)` — the same lookup the window, the receipt and the
   diagnostics go through — so a rebinding reaches the bubble at once. A bubble printing
   `GlobalShortcut.defaultChord` would advertise a chord the app is not listening for, which is exactly what

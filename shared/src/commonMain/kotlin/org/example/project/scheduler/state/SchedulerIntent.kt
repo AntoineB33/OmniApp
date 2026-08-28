@@ -433,6 +433,19 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §11 Notifications: turn the app's system notifications on/off — the lateral menu's **Notifications**
+     * switch and the `Ctrl+Shift+Alt+N` chord, which are the same lever from two places.
+     *
+     * Silences what the app *posts* and nothing else: the notification log keeps every entry (so the History
+     * window's Notifications column is unchanged), the voice cues have their own switch, and the schedule is
+     * untouched. See [org.example.project.scheduler.state.SchedulerState.notificationsEnabled]. Persisted +
+     * synced; not undoable.
+     */
+    data class SetNotificationsEnabled(
+        val enabled: Boolean,
+    ) : SchedulerIntent
+
+    /**
      * PRD §4 **Default sub-tree**: run [inner] against the *template* instead of the live tree.
      *
      * The "Default sub-tree" window (§7) draws the template with the task tree's own component, so it emits

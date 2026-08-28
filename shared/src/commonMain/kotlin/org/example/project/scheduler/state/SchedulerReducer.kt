@@ -190,6 +190,9 @@ object SchedulerReducer {
             is SchedulerIntent.SetLookAwayVoice ->
                 if (state.lookAwayVoiceEnabled == intent.enabled) state
                 else state.copy(lookAwayVoiceEnabled = intent.enabled)
+            is SchedulerIntent.SetNotificationsEnabled ->
+                if (state.notificationsEnabled == intent.enabled) state
+                else state.copy(notificationsEnabled = intent.enabled)
             is SchedulerIntent.InDefaultSubtree -> reduceInDefaultSubtree(state, intent.inner)
             is SchedulerIntent.SetDefaultSubtreeCellBound ->
                 reduceSetDefaultSubtreeCellBound(state, intent.cellId, intent.bound)

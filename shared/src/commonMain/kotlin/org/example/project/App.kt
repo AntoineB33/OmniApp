@@ -283,6 +283,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     GlobalShortcut.ToggleAway -> engine.setUserAway(!engine.userAway.value)
                     GlobalShortcut.LookAwayNow -> engine.restartLookAway()
                     GlobalShortcut.SwitchTask -> engine.forceTaskSwitch()
+                    // PRD §11: the same lever as the lateral menu's Notifications switch. Struck from
+                    // whatever window the notification just interrupted, which is why it is system-wide.
+                    GlobalShortcut.ToggleNotifications ->
+                        engine.setNotificationsEnabled(!vm.state.value.notificationsEnabled)
                 }
             }
         }
@@ -1060,9 +1064,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleHistoryManager = { onMenuWindowClicked(FloatingWindow.History) { historyManagerOpen = it } },
                     lookAwayVoiceEnabled = schedulerState.lookAwayVoiceEnabled,
                     onToggleLookAwayVoice = { vm.dispatch(SchedulerIntent.SetLookAwayVoice(it)) },
+                    // PRD §11: the Notifications switch. Driven through the ENGINE, not straight to the
+                    // reducer like the display switches above it, because switching off also withdraws the
+                    // notifications the OS is already showing — see [SchedulerEngine.setNotificationsEnabled].
+                    notificationsEnabled = schedulerState.notificationsEnabled,
+                    onToggleNotifications = { engine.setNotificationsEnabled(it) },
                     onLookAwayNow = { engine.restartLookAway() },
                     onSwitchTask = { engine.forceTaskSwitch() },
-                    // PRD §7: so the three buttons that duplicate a system-wide chord can name it on hover,
+                    // PRD §7: so the four controls that duplicate a system-wide chord can name it on hover,
                     // at whatever chord the ACCOUNT has it bound to (the same map installGlobalHotkeys above
                     // is claiming).
                     shortcutBindings = schedulerState.shortcutBindings,
@@ -1751,7 +1760,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     }
 
                     // PRD §7 Keyboard shortcuts: the reference list of every chord, plus what claim the OS
-                    // granted the three system-wide ones (the only shortcuts another application can take —
+                    // granted the system-wide ones (the only shortcuts another application can take —
                     // and so the only ones the window lets the user rebind).
                     if (shortcutsWindowOpen) {
                         ShortcutsWindow(

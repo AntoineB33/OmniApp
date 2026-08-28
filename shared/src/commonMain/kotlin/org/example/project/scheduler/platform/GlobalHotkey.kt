@@ -100,6 +100,15 @@ enum class GlobalShortcut(
      * something else — so it is system-wide like the other two.
      */
     SwitchTask(ShortcutBinding(ShortcutKey.Z), "Switch task"),
+
+    /**
+     * PRD §11 Notifications: silences every notification the app posts, and clears the ones already sitting in
+     * the OS's own list ([cancelSystemNotifications]) — pressed at the moment a notification has just
+     * interrupted something, which is by definition a moment OmniApp is not the focused window. Nothing is
+     * lost: the History window's Notifications column still lists everything the app decided to say, muted or
+     * not, so this silences the *interruption* and never the record.
+     */
+    ToggleNotifications(ShortcutBinding(ShortcutKey.N), "Notifications on / off"),
     ;
 
     /** The chord this shortcut ships with, spelled out. Never the live one — see [defaultBinding]. */

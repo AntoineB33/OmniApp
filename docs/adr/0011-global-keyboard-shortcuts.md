@@ -2,13 +2,14 @@
 
 **Status:** active. **Invariant summary:** see `CLAUDE.md` → *System-wide keyboard shortcuts*.
 
-Three of the app's actions are wanted at a moment when OmniApp is, by definition, **not** the focused window:
+Four of the app's actions are wanted at a moment when OmniApp is, by definition, **not** the focused window:
 
 | Default chord | Action | Why the app is not in front |
 | --- | --- | --- |
 | `Ctrl+Shift+Alt+A` | "I'm away" / "I'm back" (`SchedulerEngine.setUserAway`) | the user is walking away from whatever they were working in |
 | `Ctrl+Shift+Alt+E` | "Look away now" (`SchedulerEngine.restartLookAway`) | the user decides mid-task to rest their eyes |
 | `Ctrl+Shift+Alt+Z` | "Switch task" (`SchedulerEngine.forceTaskSwitch`) | the user is inside the work they have decided to get off |
+| `Ctrl+Shift+Alt+N` | "Notifications on / off" (`SchedulerEngine.setNotificationsEnabled`) | the notification being cancelled has just interrupted some other window |
 
 Those are the chords the app *ships* with; since 1.6.0 each of them is **rebindable** - see *Rebinding*, below.
 
@@ -111,7 +112,7 @@ same change.
 ## A button that has a chord names it on hover (1.6.0)
 
 A shortcut is invisible from where the user is sitting. The lateral menu's "Look away now" button says nothing
-about `Ctrl+Shift+Alt+E`, and since the three are rebindable, even a user who once read the keyboard-shortcuts
+about `Ctrl+Shift+Alt+E`, and since they are rebindable, even a user who once read the keyboard-shortcuts
 window may be looking at a button whose chord has *moved* since. So **every control that duplicates a chord
 shows it in an info bubble while the pointer rests on it** — the window's answer, brought next to the control
 that fires the same action.
@@ -128,7 +129,8 @@ have one today:
 
 Two rules keep the bubble from becoming a second source of truth:
 
-- **A rebindable chord is a live lookup, never a constant.** The three menu buttons go through
+- **A rebindable chord is a live lookup, never a constant.** The menu controls that duplicate one (three
+  buttons and the Notifications switch) go through
   `GlobalShortcutBindings.chordOf(state.shortcutBindings, …)`, the same lookup the window, the receipt
   notification and the diagnostics use — `App.kt` hands `LateralMenu` the very map it is handing
   `installGlobalHotkeys`. Printing `GlobalShortcut.defaultChord` there would advertise a chord the app is not
@@ -163,9 +165,9 @@ and iOS report `Unsupported` for the system-wide chords anyway, and have no keyb
 
 ## Rebinding (1.6.0)
 
-**Only the system-wide three can be rebound**, and that is not an arbitrary line. A system-wide claim is first
+**Only the system-wide chords can be rebound**, and that is not an arbitrary line. A system-wide claim is first
 come, first served, so a chord another application already owns is *unusable* until the user can move it —
-these three are the only shortcuts in the app that can collide with anything outside it. Everything else in the
+these are the only shortcuts in the app that can collide with anything outside it. Everything else in the
 window is a Compose handler scoped to a surface: nothing to collide with, and (per the paragraph above) nothing
 to read the handlers back off, so a rebindable per-surface chord would mean re-routing ~40 hardcoded branches
 through a lookup for no failure it fixes.

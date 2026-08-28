@@ -842,6 +842,15 @@ fun LateralMenu(
     lookAwayVoiceEnabled: Boolean = true,
     onToggleLookAwayVoice: (Boolean) -> Unit = {},
     /**
+     * PRD §11 Notifications: whether the app posts system notifications at all. Off silences every one of
+     * them — a break's start and end, "task to do now", the wind-down, an alarm, a chord's own receipt — and
+     * clears the ones the OS is still showing; the History window's Notifications column keeps the record
+     * either way. The same lever as the system-wide `Ctrl+Shift+Alt+N` chord, which is why this switch names
+     * that chord on hover like the buttons below.
+     */
+    notificationsEnabled: Boolean = true,
+    onToggleNotifications: (Boolean) -> Unit = {},
+    /**
      * PRD §15 (20s look-away): re-runs the 20s pause now (superseding any look-away still sounding/pending).
      * The button is **always** in the menu — a look-away is something the user may decide to take at any
      * moment, so its availability must not depend on what the last past screen break happened to be.
@@ -931,6 +940,29 @@ fun LateralMenu(
                 checked = lookAwayVoiceEnabled,
                 onCheckedChange = onToggleLookAwayVoice,
             )
+        }
+
+        // PRD §11 Notifications: silence every notification the app posts (and clear what the OS is still
+        // showing). The one switch here that duplicates a system-wide chord, so — like the buttons that do —
+        // it names it on hover, read live off the account's own bindings.
+        ShortcutHint(
+            chord = GlobalShortcutBindings.chordOf(shortcutBindings, GlobalShortcut.ToggleNotifications),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Notifications",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = notificationsEnabled,
+                    onCheckedChange = onToggleNotifications,
+                )
+            }
         }
 
         // PRD §15 (20s look-away): take the 20s pause now. ALWAYS present — the user may choose to look away
@@ -1036,7 +1068,7 @@ fun LateralMenu(
         }
 
         // PRD §7 Keyboard shortcuts: the reference list of every chord the app answers to, and the only place
-        // the three system-wide ones can be rebound. The buttons that duplicate a chord name it on hover
+        // the system-wide ones can be rebound. The controls that duplicate a chord name it on hover
         // (ShortcutHint); this window is where the rest of them are written down.
         MenuButton(
             label = "Keyboard shortcuts",
@@ -2136,7 +2168,7 @@ fun IconMenuButton(label: String, onClick: () -> Unit, modifier: Modifier = Modi
 /**
  * One lateral-menu button. [chord] is the keyboard shortcut that fires the **same** action, or null where the
  * button is the only way to it — hovering a button that has one shows it in an info bubble ([ShortcutHint]).
- * For the three system-wide chords it must be read live off the account's bindings, never off
+ * For the system-wide chords it must be read live off the account's bindings, never off
  * `GlobalShortcut.defaultChord`.
  */
 @Composable

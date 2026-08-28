@@ -36,7 +36,7 @@ data class KeyboardShortcutGroup(
  * The chord spellings a **control** duplicates: the find bar's arrows and ✕, the deep-copy window's accept.
  * Each of those buttons names its chord in a hover bubble ([ShortcutHint]), and the keyboard-shortcuts window
  * lists the same chord a few lines below — so the spelling exists once and both read it, exactly as the
- * system-wide block reads its three off [GlobalShortcutBindings].
+ * system-wide block reads its own off [GlobalShortcutBindings].
  *
  * Only the fixed, per-surface chords belong here. A rebindable one must never be a constant: what the app is
  * listening for is the account's binding, not what it ships with.
@@ -55,7 +55,7 @@ object KeyboardShortcutCatalog {
     /**
      * The system-wide chords, listed straight off [GlobalShortcut] so the two can never disagree — at
      * whatever chord the account has each of them bound to ([bindings], the user's overrides). It is a
-     * function and not a `val` for exactly that reason: these three are the only entries in the whole window
+     * function and not a `val` for exactly that reason: the system-wide ones are the only entries in the window
      * that are not a constant, and a stored list would print the shipped chord next to a claim on a different
      * one.
      */
@@ -64,7 +64,7 @@ object KeyboardShortcutCatalog {
             title = "System-wide",
             note = "Claimed from the operating system, so they work while OmniApp is not the focused window. " +
                 "Desktop only. Each press posts a \"Shortcut received\" notification naming the chord, so a " +
-                "press that never reached the app is distinguishable from one that did. These three can be " +
+                "press that never reached the app is distinguishable from one that did. These can be " +
                 "rebound below; the rest of this window is fixed.",
             shortcuts =
                 GlobalShortcut.entries.map {
