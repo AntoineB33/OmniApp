@@ -1,5 +1,6 @@
 package org.example.project
 
+import org.example.project.scheduler.domain.PeriodKinds
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -53,7 +54,7 @@ class BreaksAndSlidingPrioritiesTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(ids.getValue("Stretch"), 3))
         s = SchedulerReducer.reduce(
             s,
-            SchedulerIntent.SetTaskScreenFlags(ids.getValue("Stretch"), onScreen = false, doableDuringBreak = true),
+            SchedulerIntent.SetTaskResilience(ids.getValue("Stretch"), PeriodKinds.NO_SCREEN, 1.0),
         )
         // The "before" arrangement: Focus 3, Admin 1, Stretch 1 (60/20/20).
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cells[0], 0, 3.0))
@@ -72,9 +73,12 @@ class BreaksAndSlidingPrioritiesTest {
         return s.copy(screenBreaks = breaksAnchoredAt(T0))
     }
 
-    /** The three production screen breaks, each anchored (last served) at [at] so the grid starts there. */
-    private fun breaksAnchoredAt(at: Long): List<ScreenBreak> =
-        SchedulerDomain.DEFAULT_SCREEN_BREAKS.map { it.copy(lastRestMillis = at) }
+    /**
+     * The three production screen breaks. There is nothing to anchor any more: `side-dev/README.md`'s
+     * recurrence bars read the rest stretches out of the timeline the placement is asked about.
+     */
+    private fun breaksAnchoredAt(@Suppress("UNUSED_PARAMETER") at: Long): List<ScreenBreak> =
+        SchedulerDomain.DEFAULT_SCREEN_BREAKS
 
     private fun taskId(state: SchedulerState, title: String): TaskId =
         state.tasks.entries.firstOrNull { it.value.title == title }?.key
@@ -158,17 +162,16 @@ class BreaksAndSlidingPrioritiesTest {
                 "a task needing a screen was placed inside a break: ${p.title} at ${p.startEpochMillis}",
             )
         }
-        // The off-screen task has no no-screen period to run in, so the breaks are the only place it can be —
-        // and inside one it may only start where that break stops accepting nobody (the hollow part).
+        // `side-dev/README.md`: a task's resilience is what decides where it may run, and this one declares
+        // none to "no task allowed" — so it is kept out of every break exactly like the others, and runs
+        // freely everywhere else. (It used to be CONFINED to the breaks and the no-screen periods; a period
+        // can only multiply what it covers, so the model has no way to say that any more.)
         val stretchPanels = work.filter { it.taskId == stretch }
-        assertTrue(stretchPanels.isNotEmpty(), "the off-screen task must get the breaks' open periods")
+        assertTrue(stretchPanels.isNotEmpty(), "the task must still be scheduled")
         for (p in stretchPanels) {
-            val band = bands.firstOrNull { overlaps(p, it) }
-            assertTrue(band != null, "off-screen work outside every break at ${p.startEpochMillis}")
-            val opens = SchedulerDomain.screenBreakOpenStartMillis(s.screenBreaks, band)
             assertTrue(
-                opens != null && p.startEpochMillis >= opens && p.endEpochMillis <= band.endEpochMillis,
-                "off-screen work outside ${band.title}'s open period (opens $opens)",
+                bands.none { overlaps(p, it) },
+                "no task without a resilience to \"no task allowed\" may be inside a break",
             )
         }
     }

@@ -52,8 +52,8 @@ re-derives something mark the state dirty or trigger a sync push.
 
 | Class | Contents | Rule |
 | --- | --- | --- |
-| **Authoritative** | task tree, named task trees, the default sub-tree + its switch, user-authored/pinned panels, chores/reminders, sleep schedule, alarms, settings, the system-wide chord bindings, Undo/Redo history units, manual record edits | persist + sync |
-| **Derived** | auto/screen-break/sleep panels, records the advance banks | persisted locally, **stripped from the wire**, never trigger a push on their own |
+| **Authoritative** | task tree (task **resilience** included), the account's **period kinds**, named task trees, the default sub-tree + its switch, user-authored/pinned panels and the periods the app conducted, chores/reminders, sleep schedule, alarms, settings, the system-wide chord bindings, Undo/Redo history units, manual record edits | persist + sync |
+| **Derived** | auto/screen-break/sleep panels, task colours, the dynamic periods' placement (the recurrence bars read their anchors out of the timeline), records the advance banks | persisted locally, **stripped from the wire**, never trigger a push on their own |
 | **Local-only view state** | focused window, tree selection, `showScreenBreaks`/`showReminders`, WindowNav/Selection history, window placement, OS-sleep scan checkpoint | persist locally, **never sync** |
 
 - Local view state is stripped from the fingerprint by `withLocalViewStateNeutralized()` and carried across a
@@ -121,30 +121,67 @@ re-derives something mark the state dirty or trigger a sync push.
 ### What reaches the scheduler
 
 Only two things: **pre-placed blocks** (pinned/manual panels ahead of `now`, the kept head on an extension,
-the served past) and **periods** (§9 screen zones, §15 screen breaks). Nothing else, by any other route.
+the served past) and **restrictive periods**. Nothing else, by any other route.
 
-| Region | Accepts |
-| --- | --- |
-| Grey (inactivity period, §17 sleep window) | nobody |
-| No-screen period | only tasks needing no screen |
-| Everywhere else | only tasks needing a screen |
-| 20-s look-away | nobody, end to end |
-| 5-min pose | closed first minute, then `!onScreen && doableDuringBreak` |
-| 15-min pose | every `!onScreen` task, from its first second |
+### Resilience is the whole of "where may this task run"
 
-- `doableDuringBreak` **implies** `!onScreen` — enforced in the reducer, healed on decode.
-- **Do not re-unify the two poses.** They are deliberately different shapes.
-- Both readings of a shape go through `SchedulerDomain.screenBreakOpenStartMillis` — closed parts draw solid,
-  open parts draw **hollow**.
+→ `side-dev/README.md` § *Restrictive Period*, `PeriodKinds`.
+
+**A restrictive period is a start, an end and a KIND, and each task has a resilience to each kind: a
+multiplier in `[0, 1]` on its priority percentage for as long as a period of that kind lasts.** `0` forbids
+it there, `1` leaves it untouched, and anything between scales its share. Overlapping periods **multiply**,
+so the strictest still forbids. There is no other mechanism, and adding a second one is the mistake this
+model exists to prevent.
+
+- **`Task.resilience` holds OVERRIDES ONLY.** An absent kind takes `PeriodKinds.defaultResilience`, which is
+  `1` for every kind except `no task allowed` (the kind that, by its name, accepts nobody). Two things follow,
+  and both are load-bearing: **a kind the user has just defined restricts nobody** (that is what "a new period
+  gives the default resilience 1 to every task" means, and it is why defining one writes nothing to any
+  task), and **"on screen" is not a flag** — it is exactly a `0` against `no on-screen task`, read through the
+  derived `Task.onScreen`. `doableDuringBreak` is gone: all three dynamic periods are `no task allowed` end to
+  end, so there is nothing there to be resilient to.
+- **A task a period leaves at `1` is UNAFFECTED by it, not confined to it.** The app used to confine an
+  off-screen task to no-screen periods; a period can only multiply what it covers and says nothing about the
+  timeline it does not, so the model cannot express that and no longer does.
+- **`Task.DEFAULT_RESILIENCE` (a new task is on screen) is a default for a TASK; `defaultResilience` is a
+  default for a KIND.** They are different questions. The clipboard writes the difference between the two,
+  which is why an ordinary task's copy says nothing about a screen (ADR 0012).
+- **The account's own kinds are `SchedulerState.periodKinds`**, defined in the task edit window's resilience
+  section. The two built-ins are never in that list; `state.allPeriodKinds` is the one reading of "every kind
+  a task can be resilient to". Removing a kind takes every task's override and every panel laid with it.
+- **A panel's kind is `TaskPanel.restrictiveKind`**, the single reading of `periodKind` and the legacy
+  `noScreen`/`inactivity`/`sleep`/`screenBreak` flags. A payload written before kinds existed is healed from
+  those flags on decode.
+- The walk reads **`weightsAt`** — each task's percentage after resilience — and races on `localSharesOf`,
+  those weights renormalized over whoever may run. Service is charged against the **effective** weight
+  (`serveWeighted`, the reference's `v += served / w[name]`), which is what makes a multiplier mean "half the
+  percentage for as long as the period lasts" and not "the same alternation, one boundary later".
+- The influence field is **fractional**: a resilience of `0.4` deprives a task of `0.6` of its share there,
+  and the compensation owed is that fraction of a flat refusal's (`deprivationsOf`).
+- The **steady cycle inherits the effective shares** of the window it is attached to. Built on the nominal
+  ones it would answer 50/50 under a standing period that halves one side.
 - A gap too short for any minimum is left **empty**, never filled with a sub-minimum sliver (PRD §10).
-- A screen break and every grey period **suspend** a chunk rather than cutting it, and do not count against
+- A dynamic period and every grey period **suspend** a chunk rather than cutting it, and do not count against
   "does the minimum fit?" (PRD §15/§17). A screen-zone edge is the other kind — it cuts.
 
-### `fillSchedule` deliberately does NOT adopt the atomic block's `pending` rule
+### `plan()` is the reference; `fillSchedule` is the app
 
-PRD §15/§9 want the break's own accepted set to fill a period an on-screen chunk is suspended across.
-Applying the atomic block there would leave every break and every no-screen zone permanently empty.
-`plan()` is the reference-conformance surface; `fillSchedule` is the app.
+`SchedulerPlanner.plan()`'s phase 1 is a **literal port of `side-dev/scheduler.py`'s `Walk.run`** and is
+checked slot-for-slot against it (`SchedulerPlanTest`). Where the two must differ, the difference is named:
+
+- **Zero-priority tasks stay last-resort candidates** (`permittedAt` / `candidatesAt`). The reference raises
+  when nothing has a positive priority; the app must still fill the calendar for an all-zero tree, and a
+  period may accept *only* a zero-priority task.
+- **`Fraction` → `Double` millis.** The reference keeps exact rationals; KMP has no rational type.
+- **`fillSchedule` keeps its own suspension rule for the app's dynamic periods** — a chunk suspends across a
+  break and resumes with its minimum intact, where the reference simply cuts a chunk at the next environment
+  edge. That is PRD §15, and it is the one place the driver is deliberately not the walk.
+
+The resume contract is what the reference actually guarantees, and no more: a chain of links carrying the
+walk's own state is the single plan, placement for placement. Re-seeding from the DRAWN past (`_seed`, which
+is what the app must do — it re-plans from records, not from a live walk object) is an approximation, and the
+reference's own misses at the first slot after a period that admitted a strict subset re-opens. Do not assert
+more than that.
 
 ### When the plan is recomputed
 
@@ -162,29 +199,47 @@ Applying the atomic block there would leave every break and every no-screen zone
 
 ---
 
-## Screen breaks
+## Screen breaks — the three dynamic restrictive periods
 
-→ ADR 0003. The three are the 20-s look-away, the 5-min pose, the 15-min pose.
-Terminology: **"screen breaks"** everywhere — UI, docs, code identifiers, persisted keys.
+→ ADR 0003, `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive Period*. The three are the 20-s
+look-away, the 5-min pose, the 15-min pose. Terminology: **"screen breaks"** everywhere — UI, docs, code
+identifiers, persisted keys.
 
-- **The boundary a trigger keys on must be a fixed instant derived from the rules** — never a position the
-  placement/projection recomputes every frame.
-- **Every break slides**: `screenBreakNextStart = maxOf(lastRest + interval, now)`. An untaken break is
-  *owed*, not "assumed done".
-- **Consequently no break has a drawn start anything may key on.** All cues key on the stable due
-  `lastRest + interval`, a level test `now >= due` deduped on `due`
-  (`reachedScreenBreakDueByTitle`). Never on the panel start, never on "the now-line is inside a drawn panel".
-- Two shadows: the longest reached pose absorbs the shorter (5↔15 merge); a look-away is dropped when its due
-  is at or after the earliest reached pose's due. A look-away due strictly *before* still fires, in order.
-- **Three events serve a break** — a look-away the app conducted (poses excluded), a pose that happened
-  (serves every shorter break), or a real pause ≥ 15 min. Nothing else; never assume a break was taken.
-- **Every break recurs an interval after it ENDS.**
-- **Only a break the app CONDUCTED is drawn in the past — so only the 20-s look-away**, read off the ANCHORS
-  and never off the projection grid, chaining backward a cycle at a time. A **5-/15-min pose draws nothing in
-  the past**: it is never conducted, only recognized from a pause the calendar already draws as itself.
-- **A look-away that started but did not finish is erased.** The anchor is an END, so it moves only on
-  completion — the manual "Look away now" supersedes the run in progress and is itself drawn only once its own
-  20 s are up. Never move the anchor at a break's start.
+- **All three have the kind `no task allowed`, end to end.** There is no shape to read any more: no closed
+  head, no "off-screen only" tail, no *doable during a screen break* switch. A task works through one exactly
+  when it has been given a non-zero resilience to that kind — the same sentence, and the same code path, as
+  any other kind. `ScreenBreakPeriod` is gone; do not reintroduce a per-break accepted set.
+- **Where they fall is `DynamicPeriods`, and nothing else.** Three recurrence bars, verbatim from the README:
+  after **any** dynamic period no 20 s for **20 min**; after a **≥ 5-min** rest stretch no 5 min for **1 h**;
+  after a **≥ 15-min** one no 20 s for **20 min** and no 15 min for **2 h**. Where they would overlap, the
+  chain collapses to its **longest member starting at the chain's earliest point**.
+- **A rest stretch takes all three of its clauses**: *covered by* "no on-screen task" (or `no task allowed`,
+  which refuses the on-screen tasks a fortiori), *without any task* (a period that still accepts somebody
+  makes none, and a **pre-placed task IS a task** — an hour of maintenance is not a rest), and it is a
+  **stretch**, not a period: two that abut make one. `blocked` and `rested` are deliberately different sets —
+  any emptiness absorbs a period that would fall inside it; only the part of it that is a rest bars what
+  follows.
+- **The anchors are DERIVED, not stored.** There is no `lastRest`-driven grid, no 5↔15 merge, no
+  "a pause re-anchors shorter pauses", no decoupled-pose special case. Every one of those said "a rest bars
+  the breaks that follow it", which the bars say once — and the rests are read out of the timeline itself, so
+  a live pause reaches the placement as the period it is (`liveRestPeriod`) rather than as an anchor overlay.
+- **Nothing slides.** A break's start is a fixed instant derived from the rules, so it IS a crossable
+  boundary — which is why the cue may key on it (below). The older rule ("no break has a drawn start anything
+  may key on") existed *because* breaks slid to the now-line while owed.
+- **The placement's origin is anchored on the NOW-LINE, quantized to the day**
+  (`dynamicPlacementOriginMillis`), never on the query window's own left edge. The bars are a walk from the
+  origin, so the grid is a function of it: the fill asks from `now`, the cue sweep from its scan floor and the
+  calendar from the visible span, and quantizing each separately puts them in different days whenever one
+  straddles a midnight — which is exactly when the two grids would part company.
+- **A materialized break is never an input to its own placement.** `restrictivePeriodsOf` drops
+  `screenBreak` panels for that reason; feeding last fill's output back in makes each break a blocked stretch
+  that absorbs the next, and the grid walks away from itself.
+- **The two `t_p` modes land on the "I'm away" toggle.** At the screen (mode 1) the now-line may not be
+  covered by "no on-screen task", so a period it has reached is pushed ahead of it as the half-open
+  `(t_p, t_p + duration]`; away (mode 2) it must be covered, so the gap back to the last period's end is
+  covered as `no on-screen task` — which the resilient tasks may still fill.
+- **A break the app CONDUCTED is recorded as a period** (`RecordConductedBreak`), so the past is a fact and
+  not a reconstruction. Only on completion: a manual "Look away now" that was superseded leaves no trace.
 - The **end** of a break is a notification, not only a voice cue.
 - A screen-break panel has **no Edit** (no editable object behind it). A sleep band's menu leads with Edit.
 
@@ -192,6 +247,12 @@ Terminology: **"screen breaks"** everywhere — UI, docs, code identifiers, pers
 
 Must be **mathematically accurate** — a pure function of which boundary instants the clock crossed (each
 fires exactly once, in order), never of how a sweep/heartbeat happens to align with the calendar.
+
+**Every break cue keys on the START of its placed period** (`cueCrossings` → `screenBreakOccurrencesBetween`),
+so what is announced and what is drawn are one instant by construction rather than two derivations kept in
+step. The sweep must therefore be handed the **same environment the fill was** (the standing periods and the
+tasks) and the same now-line anchor; asked without them the bars answer a different timeline. The sweep's
+self-delay reads the next placed start too — read off an anchor it found no next boundary at all and stopped.
 
 Staleness is judged only by the crossing's REAL age (`BoundarySweep`, 2-s budget), never by sim distance or
 scan-window position. Consecutive scans must tile the timeline with no gaps (`scanFloorMillis`), so no
@@ -230,9 +291,11 @@ crossing can be silently clipped by a clock jump.
   `orderedBubbleSections`, applied in the one funnel `Modifier.calendarTitleHover` — never at a call site.
 - **Hover is TILED, never nested**: two reporters at one position race (the parent's Move wins). Cut the
   element at every covering section's boundary (`bubbleHoverZones`) and give each tile one reporter.
-- **GREY = the scheduler places nothing here** — inactivity period, sleep window, the look-away end to end,
-  the pose's closed head. It is not a screen classification: it refuses off-screen tasks too. A pose's open
-  tail and the 15-min pose are **not** grey.
+- **GREY = the scheduler places nothing here** — inactivity period, sleep window, and **all three screen
+  breaks end to end** (they are `no task allowed`; there is no closed head and no hollow tail any more). It is
+  not a screen classification: it refuses off-screen tasks too. "Refuses" means the task's resilience to the
+  covering kind is `0`, so a task given a non-zero one may work through a break — the only thing that is ever
+  placed there.
 - **Grey refuses everybody on the calendar too, not only in the fill.** A hand-added inactivity period
   overrides **every** task panel it covers (a no-screen period only the on-screen ones — §9 lets an
   off-screen task run inside one), and any task panel overrides it in turn.
@@ -671,8 +734,11 @@ permanently unprotected.
 - **Idleness is judged account-wide** (`max(beat_at)`), never per row.
 - `device_break` is **account-keyed, holds only the two due instants, and is written only on change**
   (retried with backoff). The break LENGTH is the server's (`break_config.length_ms`).
-- **`break_due_ms` is the fixed due `lastRest + interval`**, never the drawn start. An already-due pose
-  publishes the constant `ALREADY_DUE_MILLIS`; an unanchored pose (`lastRestMillis == 0`) is not published.
+- **`break_due_ms` is the pose's next placed START** (`nextScreenBreakStartMillis`) — a fixed instant the
+  recurrence bars derive, so it moves only when the rules or the environment do and can still be written
+  event-driven. It used to be the anchored due `lastRest + interval` precisely because the drawn start rode
+  the now-line; nothing slides any more, so the server and the client key on one instant. An already-due pose
+  publishes the constant `ALREADY_DUE_MILLIS`.
 - A device belongs to exactly **one** account — every per-device table needs a server-side eviction trigger
   **paired with** a client re-assertion when the row is written event-driven.
 - The Sleep/Work toggle writes `account_state` immediately, which suppresses the cue.

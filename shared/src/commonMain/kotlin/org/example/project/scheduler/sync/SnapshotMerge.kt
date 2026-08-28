@@ -194,9 +194,33 @@ object SnapshotMerge {
             record = mergeRecords(base?.record, local.record, remote.record),
             scheduleUnit = pick(base?.scheduleUnit, local.scheduleUnit, remote.scheduleUnit),
             text = pick(base?.text, local.text, remote.text),
-            onScreen = pick(base?.onScreen, local.onScreen, remote.onScreen),
-            doableDuringBreak = pick(base?.doableDuringBreak, local.doableDuringBreak, remote.doableDuringBreak),
+            // `side-dev/README.md`: the resilience map is one value PER KIND, so it merges per kind for the
+            // same reason the shortcut bindings do — lowering a task's resilience to "no on-screen task" on
+            // the phone while giving it one to a kind the desktop just defined must keep both. A kind absent
+            // from a side is the DEFAULT there, not "unchanged", so a removal on one side is a real edit.
+            resilience = mergeResilience(base?.resilience, local.resilience, remote.resilience),
         )
+
+    /**
+     * Per-kind three-way merge of [Task.resilience]. Added on one side is kept, removed on one side and
+     * untouched on the other is removed, and where both moved the same kind the remote wins — the same policy
+     * every other field follows, applied one kind at a time.
+     */
+    private fun mergeResilience(
+        base: Map<String, Double>?,
+        local: Map<String, Double>,
+        remote: Map<String, Double>,
+    ): Map<String, Double> {
+        val out = HashMap<String, Double>()
+        for (kind in local.keys + remote.keys + (base?.keys ?: emptySet())) {
+            val b = base?.get(kind)
+            val l = local[kind]
+            val r = remote[kind]
+            val winner = if (r != b) r else l
+            if (winner != null) out[kind] = winner
+        }
+        return out
+    }
 
     private fun mergeCell(base: Cell?, local: Cell, remote: Cell): Cell =
         local.copy(

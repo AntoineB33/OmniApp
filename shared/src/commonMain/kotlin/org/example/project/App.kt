@@ -34,6 +34,9 @@ import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.AlarmDomain
+import org.example.project.scheduler.domain.PeriodKinds
+import org.example.project.scheduler.domain.DynamicPeriods
+import org.example.project.scheduler.domain.RestrictivePeriod
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.engine.AppSchedulerHost
 import org.example.project.scheduler.engine.SchedulerEngine
@@ -619,30 +622,52 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 visibleSpanStartMillis,
                 minOf(nowMillis - 1, visibleSpanEndMillis),
             )
+        // `side-dev/README.md` § *3 Dynamic Restrictive Period*: the three are placed by the recurrence bars
+        // over the environment they interrupt, so the display hands the placement that environment — the
+        // standing restrictive periods (the user's own and the §17 sleep windows) and the tasks, which is
+        // what decides whether a stretch is a REST (nobody can run there) or merely a period somebody is
+        // resilient to.
+        val displayDynamicBase =
+            SchedulerDomain.restrictivePeriodsOf(schedulerState.panels) +
+                // The live pause reaches the recurrence bars as the rest stretch it is (see
+                // [SchedulerDomain.liveRestPeriod]), so the grid moves with a user who has walked away.
+                listOfNotNull(
+                    SchedulerDomain.liveRestPeriod(
+                        SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
+                    ),
+                ) +
+                SchedulerDomain.sleepRegions(
+                    schedulerState.sleep,
+                    visibleSpanStartMillis - SchedulerDomain.DYNAMIC_PLACEMENT_LOOKBACK_MILLIS,
+                    visibleSpanEndMillis,
+                    tz,
+                ).map {
+                    RestrictivePeriod(
+                        it.startEpochMillis, it.endEpochMillis, PeriodKinds.NO_TASK, SchedulerDomain.SLEEP_PANEL_TITLE,
+                    )
+                }
+        val displayDynamicTasks = SchedulerDomain.planTasksOf(schedulerState, nowMillis)
         val displaySidePanels =
             if (visibleSpanStartMillis <= nowMillis) {
                 displayPastSidePanels +
                     SchedulerDomain.screenBreakPanels(
-                        SchedulerDomain.screenBreaksForPlacement(
-                            schedulerState.screenBreaks,
-                            SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
-                        ),
-                        nowMillis,
-                        visibleSpanEndMillis,
-                        // A decoupled 5-min pose (account1 fast-break) appears an interval after each qualifying
-                        // pause; the future ones are the scheduled sleep windows (PRD §15).
-                        qualifyingPauseWindows = SchedulerDomain.sleepRegions(
-                            schedulerState.sleep, nowMillis, visibleSpanEndMillis, tz,
-                        ),
+                        screenBreaks = schedulerState.screenBreaks,
+                        nowMillis = nowMillis,
+                        horizonMillis = visibleSpanEndMillis,
+                        basePeriods = displayDynamicBase,
+                        tasks = displayDynamicTasks,
+                        // The README's `t_p` mode, on the control the app already has: away means the
+                        // now-line must be covered by "no on-screen task".
+                        mode = if (schedulerState.sleepingUntilMillis != null) DynamicPeriods.MODE_AWAY
+                        else DynamicPeriods.MODE_AT_SCREEN,
                     )
             } else {
                 SchedulerDomain.screenBreakPanelsInWindow(
-                    schedulerState.screenBreaks,
-                    visibleSpanStartMillis,
-                    visibleSpanEndMillis,
-                    qualifyingPauseWindows = SchedulerDomain.sleepRegions(
-                        schedulerState.sleep, visibleSpanStartMillis, visibleSpanEndMillis, tz,
-                    ),
+                    screenBreaks = schedulerState.screenBreaks,
+                    fromMillis = visibleSpanStartMillis,
+                    toMillis = visibleSpanEndMillis,
+                    basePeriods = displayDynamicBase,
+                    tasks = displayDynamicTasks,
                 )
             }
 
@@ -1154,19 +1179,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     // schedulable leaf task — a parent is a grouping and is never placed,
                                     // so its window is text only.
                                     isLeaf = SchedulerDomain.isLeafTask(popupState, taskId),
-                                    onSave = { noScreenDoable, entries, text ->
-                                        // One intent per section, and only for the sections that actually
-                                        // changed — so Save on an untouched window adds nothing to the
-                                        // Undo/Redo history (PRD §6).
-                                        val onScreen = !noScreenDoable
-                                        if (onScreen != task.onScreen) {
-                                            popupDispatch(
-                                                SchedulerIntent.SetTaskScreenFlags(
-                                                    taskId = taskId,
-                                                    onScreen = onScreen,
-                                                    doableDuringBreak = task.doableDuringBreak,
-                                                ),
-                                            )
+                                    periodKinds = popupState.allPeriodKinds,
+                                    onAddPeriodKind = { popupDispatch(SchedulerIntent.AddPeriodKind(it)) },
+                                    onRemovePeriodKind = { popupDispatch(SchedulerIntent.RemovePeriodKind(it)) },
+                                    onSave = { resilience, entries, text ->
+                                        // One intent per section, and only for what actually changed — so
+                                        // Save on an untouched window adds nothing to the Undo/Redo history
+                                        // (PRD §6). The resilience map goes one KIND at a time, because that
+                                        // is the grain the intent (and the history unit) has.
+                                        for (kind in popupState.allPeriodKinds) {
+                                            val next = PeriodKinds.resilienceFor(resilience, kind)
+                                            if (next != task.resilienceFor(kind)) {
+                                                popupDispatch(SchedulerIntent.SetTaskResilience(taskId, kind, next))
+                                            }
                                         }
                                         if (entries != task.scheduleUnit) {
                                             popupDispatch(SchedulerIntent.SetScheduleUnit(taskId, entries))
@@ -1355,11 +1380,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 taskIdForTitle = { SchedulerDomain.calendarTaskIdForTitle(schedulerState, it) },
                                 titleForTaskId = { schedulerState.tasks[it]?.title },
                                 initialPins = block.pins,
-                                screenFlagsForTaskId = { id ->
-                                    schedulerState.tasks[id]?.let { it.onScreen to it.doableDuringBreak }
+                                noScreenResilienceForTaskId = { id ->
+                                    schedulerState.tasks[id]?.resilienceFor(PeriodKinds.NO_SCREEN)
                                 },
                                 onDismiss = { editingBlock = null; addingBlock = null },
-                                onSave = { taskId, title, startMillis, endMillis, pins, onScreen, doableDuringBreak ->
+                                onSave = { taskId, title, startMillis, endMillis, pins, noScreenResilience ->
                                     val intent =
                                         if (isNew) {
                                             SchedulerIntent.AddTaskPanel(taskId, title, startMillis, endMillis, pins)
@@ -1367,11 +1392,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                             commitBoundsIntent(block, taskId, title, startMillis, endMillis, pins)
                                         }
                                     intent?.let(vm::dispatch)
-                                    // PRD §8 screen switches: task-level flags saved alongside the panel;
-                                    // only dispatched when they actually changed (no no-op history unit).
+                                    // `side-dev/README.md`: the task's resilience to "no on-screen task",
+                                    // saved alongside the panel — the one thing the old pair of switches
+                                    // really said. Only dispatched when it actually changed (no no-op unit).
                                     val task = taskId?.let { schedulerState.tasks[it] }
-                                    if (task != null && (task.onScreen != onScreen || task.doableDuringBreak != doableDuringBreak)) {
-                                        vm.dispatch(SchedulerIntent.SetTaskScreenFlags(taskId, onScreen, doableDuringBreak))
+                                    if (task != null && task.resilienceFor(PeriodKinds.NO_SCREEN) != noScreenResilience) {
+                                        vm.dispatch(
+                                            SchedulerIntent.SetTaskResilience(
+                                                taskId, PeriodKinds.NO_SCREEN, noScreenResilience,
+                                            ),
+                                        )
                                     }
                                     editingBlock = null
                                     addingBlock = null
@@ -1877,7 +1907,7 @@ private fun mergePanelsForDisplay(
     showReminders: Boolean,
     // PRD §15: the break definitions the [sidePanels] were projected from — what each band's SHAPE is, so the
     // calendar can draw the part of a 5-/15-min break that accepts off-screen tasks hollow rather than
-    // covering it with a solid band (see [SchedulerDomain.screenBreakOpenStartMillis]).
+    // covering it with a solid band.
     screenBreaks: List<ScreenBreak> = emptyList(),
     // PRD §15/§17: intervals the device/account was ACTIVE — the visible "Sleep" bands are carved here so a
     // window the user worked through shows a gap. Bridging still uses the UNCARVED sleep windows (below), so
@@ -1925,9 +1955,6 @@ private fun mergePanelsForDisplay(
                     entryId = side.id,
                     entryIds = listOf(side.id),
                     screenBreak = true,
-                    // PRD §15: where this break stops accepting nobody — the hollow part of the band.
-                    screenBreakOpenFromMillis =
-                        SchedulerDomain.screenBreakOpenStartMillis(screenBreaks, side),
                 )
             }
         }

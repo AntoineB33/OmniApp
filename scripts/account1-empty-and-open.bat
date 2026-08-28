@@ -105,21 +105,17 @@ REM Optional debug fast-break overrides (set by the *-fast-break.bat wrappers): 
 REM gradle launch so the opened app shows the SAME retimed screen breaks as the phone deploy. Empty/inert on
 REM the normal path where none are defined.
 REM  - The first trio is the 5-min-pose-only spelling the Android wrappers use.
-REM  - The nine that follow retime ANY of the three screen breaks independently
+REM  - The six that follow retime ANY of the three screen breaks independently
 REM    (account1-empty-open-fast-break.bat); the app leaves every unset rule at its production value.
 set "BREAK_PROPS="
 if defined OMNIAPP_BREAK_DURATION_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.breakDurationMs=!OMNIAPP_BREAK_DURATION_MS!"
 if defined OMNIAPP_BREAK_INTERVAL_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.breakIntervalMs=!OMNIAPP_BREAK_INTERVAL_MS!"
-if defined OMNIAPP_BREAK_PAUSE_THRESHOLD_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.breakPauseThresholdMs=!OMNIAPP_BREAK_PAUSE_THRESHOLD_MS!"
 if defined OMNIAPP_LOOKAWAY_DURATION_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.break.lookAway.durationMs=!OMNIAPP_LOOKAWAY_DURATION_MS!"
 if defined OMNIAPP_LOOKAWAY_INTERVAL_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.break.lookAway.intervalMs=!OMNIAPP_LOOKAWAY_INTERVAL_MS!"
-if defined OMNIAPP_LOOKAWAY_PAUSE_THRESHOLD_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.break.lookAway.pauseThresholdMs=!OMNIAPP_LOOKAWAY_PAUSE_THRESHOLD_MS!"
 if defined OMNIAPP_POSE5_DURATION_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.break.pose5.durationMs=!OMNIAPP_POSE5_DURATION_MS!"
 if defined OMNIAPP_POSE5_INTERVAL_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.break.pose5.intervalMs=!OMNIAPP_POSE5_INTERVAL_MS!"
-if defined OMNIAPP_POSE5_PAUSE_THRESHOLD_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.break.pose5.pauseThresholdMs=!OMNIAPP_POSE5_PAUSE_THRESHOLD_MS!"
 if defined OMNIAPP_POSE15_DURATION_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.break.pose15.durationMs=!OMNIAPP_POSE15_DURATION_MS!"
 if defined OMNIAPP_POSE15_INTERVAL_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.break.pose15.intervalMs=!OMNIAPP_POSE15_INTERVAL_MS!"
-if defined OMNIAPP_POSE15_PAUSE_THRESHOLD_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.break.pose15.pauseThresholdMs=!OMNIAPP_POSE15_PAUSE_THRESHOLD_MS!"
 
 REM ---- [5/5] Launch the desktop app logged in as account 1 -----------
 echo [5/5] Launching the desktop app logged in as "%ACC1_USER%" (state dir %STATE_DIR%)...

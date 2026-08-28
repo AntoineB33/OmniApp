@@ -1,5 +1,6 @@
 package org.example.project
 
+import org.example.project.scheduler.domain.PeriodKinds
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -62,7 +63,7 @@ class CalendarPeriodEditTest {
         val away = s.tasks.keys.first { s.tasks[it]!!.title == "Away" }
         s = SchedulerReducer.reduce(
             s,
-            SchedulerIntent.SetTaskScreenFlags(away, onScreen = false, doableDuringBreak = false),
+            SchedulerIntent.SetTaskResilience(away, PeriodKinds.NO_SCREEN, 1.0),
         )
         return Triple(s, screen, away)
     }

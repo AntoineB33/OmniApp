@@ -8,8 +8,9 @@ and `SchedulerReducer.reducePasteTree` is the only consumer of the parse.
 
 ## What a copy carries
 
-Everything the cell's **edit window** holds — the screen switch (`onScreen`), the schedule unit, the task text —
-plus the cell's minimum time (§10) and its priority-weight row and the weight columns of the sub-list it parents.
+Everything the cell's **edit window** holds — its **resilience** to every kind of restrictive period (which is
+where the screen switch went, ADR 0001), the schedule unit, the task text — plus the cell's minimum time (§10)
+and its priority-weight row and the weight columns of the sub-list it parents.
 A paste has to be able to rebuild the task, not just its title; a copy that dropped the edit window's fields left
 the user re-typing them at the destination, which is what the round-trip test
 (`TaskCellCopyTest.deep_copy_pasted_back_restores_every_edit_window_field`) pins.
@@ -34,7 +35,7 @@ The clipboard's other reader is the **user**. So the format is now prose:
 ```
 Deep work
 	- minimum time: 45 min
-	- can be done during a no-screen period: yes
+	- resilience to no on-screen task: 100 %
 	- schedule unit:
 		- warm up: 5 min
 		- run: 25 min
@@ -61,6 +62,33 @@ Consequences that are load-bearing:
 - **A text block is bounded by indentation, never by a sentinel.** Its lines sit one level deeper than the `-
   text:` marker, and a child task sits one level *shallower* — so a text can hold anything, including something
   that looks like a title, without a delimiter to collide with.
+
+### Resilience is written as the difference from a FRESH task
+
+`- resilience to <kind>: <n> %`, one line per kind whose value differs from `Task.DEFAULT_RESILIENCE` — what a
+task the user has just created carries, which is `0 %` to `no on-screen task` and nothing else. Two defaults meet
+here and they are different questions (`CLAUDE.md` → *Resilience is the whole of "where may this task run"*):
+`PeriodKinds.defaultResilience` is a default for a **kind** (`1`, except `no task allowed`), and
+`Task.DEFAULT_RESILIENCE` is a default for a **task**. The copy writes the difference between the two, which is
+why an ordinary on-screen task's copy says nothing about a screen — exactly as its edit window reads — while the
+example above, an off-screen task, says the one thing that is unusual about it.
+
+Three consequences:
+
+- **The kind is part of the attribute NAME**, so this is the one attribute matched by *prefix* rather than by
+  equality. It is normalized (`PeriodKinds.normalize`) on both sides, so "Deep  Focus" and "Deep Focus" are one
+  kind across the round trip.
+- **A kind the destination account has never heard of is harmless.** The paste starts from the same defaults, so
+  an unknown kind simply becomes an override that no period currently exercises — and it comes back if the user
+  later defines that kind. Nothing is written to `SchedulerState.periodKinds` by a paste: defining a kind is a
+  deliberate act in the edit window, not a side effect of pasting somebody's task.
+- **A value equal to the kind's own default is dropped, not stored**, on both the write and the read, because
+  `Task.resilience` holds overrides only.
+
+The **pre-resilience attribute is still read**: `- can be done during a no-screen period: yes` is exactly a
+resilience of `100 %` to `no on-screen task` (i.e. no override at all, since `1` is that kind's default) and `no`
+is the `0 %` an on-screen task carries. A clipboard outlives a rebuild, so it is read and never written — the
+same rule as the pre-1.6.0 form-feed shape below.
 
 ### Paste must still be a no-op for foreign text
 

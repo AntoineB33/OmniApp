@@ -13,15 +13,10 @@ data class ScreenBreakOverride(
     val durationMillis: Long? = null,
     /** How long after the previous qualifying pause the break comes due, in millis. */
     val intervalMillis: Long? = null,
-    /**
-     * The minimum real pause that ANCHORS the break, in millis — decoupling it from [durationMillis] (a short
-     * break placed only after a long pause). See [org.example.project.scheduler.model.ScreenBreak.pauseThresholdMillis].
-     */
-    val pauseThresholdMillis: Long? = null,
 ) {
     /** True when this override changes nothing — the break keeps every production timing. */
     val isEmpty: Boolean
-        get() = durationMillis == null && intervalMillis == null && pauseThresholdMillis == null
+        get() = durationMillis == null && intervalMillis == null
 }
 
 /**
@@ -42,7 +37,7 @@ object DebugFlags {
      * production rule. Empty = production everywhere, which is what a release always runs.
      *
      * Set at startup from the platform entry point and never changed afterwards: on desktop from the
-     * `omniapp.break.<lookAway|pose5|pose15>.<durationMs|intervalMs|pauseThresholdMs>` system properties (the
+     * `omniapp.break.<lookAway|pose5|pose15>.<durationMs|intervalMs>` system properties (the
      * `/scripts` fast-break launchers pass them as `-P` properties); on Android only the 5-min pose is wired,
      * through the legacy [breakDurationMillisOverride] trio below.
      */
@@ -63,7 +58,6 @@ object DebugFlags {
         val merged = ScreenBreakOverride(
             durationMillis = override.durationMillis ?: current.durationMillis,
             intervalMillis = override.intervalMillis ?: current.intervalMillis,
-            pauseThresholdMillis = override.pauseThresholdMillis ?: current.pauseThresholdMillis,
         )
         screenBreakOverrides =
             if (merged.isEmpty) screenBreakOverrides - key else screenBreakOverrides + (key to merged)
@@ -115,36 +109,18 @@ object DebugFlags {
      * [breakDurationMillisOverride]; set both to a few seconds so the now-line reaches a 5-min break almost
      * immediately (then put the machine to sleep and wait `duration` for the phone cue).
      *
-     * This trio retimes only the 5-min pose; the other two breaks are retimed through [screenBreakOverrides]
-     * (desktop only). Whether short 5-min breaks recur depends on [breakPauseThresholdMillisOverride]: with no
-     * threshold (the real-time `account2-open-fast-break.bat` shape, qualifying pause == the 5 s drawn length)
-     * the pose grid-recurs and the dense cap holds it to one at a time; with a threshold (the
-     * `account1-…-fast-break.bat` shape, e.g. 2 h) the pose is *decoupled* and does NOT grid-recur — it appears
-     * exactly `interval` after each qualifying pause, i.e. one break 5 s after each scheduled sleep window
-     * (`SchedulerDomain.decoupledPoseOccurrences`), so the calendar shows one 5-min break per day rather than a
-     * 5-second flood. The screen-break projection is O(n), so even a seconds interval over the fill horizon
-     * stays linear rather than freezing. Startup-only (`omniapp.breakIntervalMs` / `omniapp_break_interval_ms`),
-     * remembered per install on Android debug builds like [breakDurationMillisOverride], off in release.
+     * This pair retimes only the 5-min pose; the other two breaks are retimed through [screenBreakOverrides]
+     * (desktop only). The interval IS the pose's recurrence bar (`side-dev/README.md`), so a seconds-long one
+     * simply places the pose that often — bounded, as ever, by the rest stretches the bars find: a break the
+     * user actually takes bars the next for its own bar's length. The retired "qualifying pause threshold"
+     * knob is gone with the anchor engine it decoupled (ADR 0003). Startup-only (`omniapp.breakIntervalMs` /
+     * `omniapp_break_interval_ms`), remembered per install on Android debug builds like
+     * [breakDurationMillisOverride], off in release.
      */
     var breakIntervalMillisOverride: Long?
         get() = screenBreakOverride(SchedulerDomain.FIVE_MIN_BREAK_KEY).intervalMillis
         set(value) = setScreenBreakField(
             SchedulerDomain.FIVE_MIN_BREAK_KEY, { copy(intervalMillis = it) }, value,
-        )
-
-    /**
-     * Debug-only override of the **5-min screen break**'s qualifying-PAUSE THRESHOLD, in milliseconds — the
-     * minimum real pause length that anchors the pose, decoupled from its drawn length. `null` = production
-     * behavior (the threshold equals the break's [breakDurationMillisOverride]/duration). Set it to place a
-     * short break only after a long pause — e.g. `account1-empty-and-open-fast-break.bat` runs under the
-     * accelerated time-sim with duration 5 s, interval 5 s, and this threshold at 2 h, so the pose fires 5 s
-     * after a ≥2-h pause and lasts 5 s. Companion of the other two; startup-only (`omniapp.breakPauseThresholdMs`
-     * / `omniapp_break_pause_threshold_ms`), remembered per install on Android debug builds, off in release.
-     */
-    var breakPauseThresholdMillisOverride: Long?
-        get() = screenBreakOverride(SchedulerDomain.FIVE_MIN_BREAK_KEY).pauseThresholdMillis
-        set(value) = setScreenBreakField(
-            SchedulerDomain.FIVE_MIN_BREAK_KEY, { copy(pauseThresholdMillis = it) }, value,
         )
 
     /** True when ANY screen break is retimed — the debug fast-break test mode is active. */

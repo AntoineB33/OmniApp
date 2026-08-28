@@ -102,7 +102,7 @@ class NoScreenEvidenceTest {
     fun observed_evidence_does_not_stop_an_off_screen_task_recording() {
         val (s0, solo) = oneTask()
         // PRD §9: an off-screen task is ALLOWED to run in a no-screen period, so its record over one is true.
-        val offScreen = s0.copy(tasks = s0.tasks + (solo to s0.tasks[solo]!!.copy(onScreen = false)))
+        val offScreen = s0.copy(tasks = s0.tasks + (solo to s0.tasks[solo]!!.copy(resilience = emptyMap())))
         val s = elapsedPanel(offScreen, solo)
         withEvidence(TaskTimeRange(NOW - 2 * HOUR, NOW - HOUR))
         val advanced = SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(NOW))
@@ -170,7 +170,7 @@ class NoScreenEvidenceTest {
     @Test
     fun strip_leaves_an_off_screen_task_alone() {
         val (s0, solo) = bankedRecord(TaskTimeRange(NOW - 3 * HOUR, NOW))
-        val s = s0.copy(tasks = s0.tasks + (solo to s0.tasks[solo]!!.copy(onScreen = false)))
+        val s = s0.copy(tasks = s0.tasks + (solo to s0.tasks[solo]!!.copy(resilience = emptyMap())))
         val stripped = SchedulerReducer.reduce(
             s,
             SchedulerIntent.StripNoScreenRecords(listOf(TaskTimeRange(NOW - 2 * HOUR, NOW - HOUR))),

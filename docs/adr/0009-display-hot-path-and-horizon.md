@@ -123,7 +123,7 @@ The result is **never stored in `state.panels`** — only swapped in as the `mer
 that render. So scrolling back to a near day just uses the near panels again and the far fill is dropped; the
 "erase far weeks" behaviour falls out for free, with no retained multi-week memory.
 
-The placement itself is O(n) (`simulateScreenBreaks` tracks open pauses instead of scanning all placed panels), and
+The placement itself is O(n) (`DynamicPeriods.instances` walks the bars forward, never rescanning what it already placed), and
 `MAX_SCHEDULE_PANELS` scales with the horizon span (~1 chunk / 30 s) so the far weeks aren't clipped.
 
 **Limitation:** an authoritative edit while sitting on a far span doesn't refresh the far fill until the scroll

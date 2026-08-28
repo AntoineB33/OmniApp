@@ -25,11 +25,12 @@ data class PresenceState(val deviceId: String)
  * `device_break` row, written **only when the app (re)calculates them into a different pair** (migrations
  * 20260726000000 + 20260728000000). A device sitting at its desk publishes nothing.
  *
- * Both instants are the poses' mathematical DUE times (`lastRest + interval`) on the REAL wall clock, **not**
- * their drawn starts. That distinction is what makes an event-driven write possible at all: an overdue pose's
- * drawn start is clamped to the now-line and so changes at every sample, whereas the due instant moves only when
- * the pose is served or reconfigured. The server's overdue gate reads them as "was this break already due at the
- * last moment we saw this account?" and lets the longest overdue one govern.
+ * Both instants are the poses' next PLACED STARTS on the REAL wall clock — the same instants the calendar
+ * draws and the local cue sweep fires on. They were the anchored dues `lastRest + interval` until 2026-08-28,
+ * because an overdue pose's drawn start was clamped to the now-line and so changed at every sample, which no
+ * event-driven write can follow; the recurrence bars pin every break now (ADR 0003), so one derivation serves
+ * both sides. The server's overdue gate reads them as "was this break already due at the last moment we saw
+ * this account?" and lets the longest overdue one govern.
  *
  * The row is account-keyed, not device-keyed: both instants derive from the synced screen-break config, so every
  * device of the account computes the same pair. Null means "no such pose configured, or none anchored yet" — an

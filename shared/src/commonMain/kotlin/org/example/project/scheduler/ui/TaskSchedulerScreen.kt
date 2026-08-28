@@ -104,6 +104,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import org.example.project.scheduler.domain.RelativePriorityDomain
+import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
 import org.example.project.scheduler.domain.TaskTreeSearch
@@ -2318,15 +2319,60 @@ internal class TaskCellMenuActions(
  * The Save button is disabled while the summed spanning times exceed the task's minimum time
  * ([SchedulerDomain.canSaveScheduleUnit]).
  */
+/**
+ * `side-dev/README.md`'s resilience, as a field: a multiplier in `[0, 1]` typed as a **percentage**, which
+ * is what it means — 0 % forbids the task inside a period of that kind, 100 % leaves it untouched.
+ *
+ * The text is local while it is being typed so a half-typed "1" does not snap to 1 %, and only a value that
+ * parses is reported; anything else leaves the stored multiplier where it was.
+ */
+@Composable
+private fun PercentField(value: Double, onValueChange: (Double) -> Unit) {
+    var text by remember(value) { mutableStateOf(formatPercent(value)) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { raw ->
+            text = raw
+            raw.trim().removeSuffix("%").trim().replace(',', '.').toDoubleOrNull()?.let {
+                onValueChange(PeriodKinds.clamp(it / 100.0))
+            }
+        },
+        singleLine = true,
+        suffix = { Text("%") },
+        modifier = Modifier.width(88.dp),
+    )
+}
+
+/** A multiplier as a percentage with no trailing zeros — `0`, `50`, `12.5`. */
+private fun formatPercent(value: Double): String {
+    val pct = value * 100.0
+    val rounded = kotlin.math.round(pct * 10.0) / 10.0
+    return if (rounded == kotlin.math.floor(rounded)) rounded.toInt().toString() else rounded.toString()
+}
+
 @Composable
 internal fun TaskEditWindow(
     task: Task,
     isLeaf: Boolean,
-    onSave: (noScreenDoable: Boolean, entries: List<ScheduleUnitEntry>, text: String) -> Unit,
+    /**
+     * `side-dev/README.md` § *Restrictive Period*: every kind of restrictive period the account knows —
+     * the two the README names plus the ones the user has defined
+     * ([org.example.project.scheduler.state.SchedulerState.periodKinds]). Every one of them gets a row, and
+     * a task says something about all of them, because a resilience is defined *"for each kind"*.
+     */
+    periodKinds: List<String>,
+    /** Define a new kind here and now; it gives every task the default resilience 1 until one is changed. */
+    onAddPeriodKind: (String) -> Unit,
+    /** Drop a user-defined kind, with every task's value for it. Never offered for the two built-in kinds. */
+    onRemovePeriodKind: (String) -> Unit,
+    onSave: (resilience: Map<String, Double>, entries: List<ScheduleUnitEntry>, text: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val minimumMinutes = task.minimumMinutes
-    var noScreenDoable by remember(task.id) { mutableStateOf(!task.onScreen) }
+    // The whole resilience map is edited here, kind by kind, and handed back on Save — one intent per kind
+    // that actually moved, so an untouched window records nothing (PRD §6).
+    var resilience by remember(task.id) { mutableStateOf(task.resilience) }
+    var newKind by remember(task.id) { mutableStateOf("") }
     var entries by remember(task.id) { mutableStateOf(task.scheduleUnit) }
     var text by remember(task.id) { mutableStateOf(task.text) }
     val sum = SchedulerDomain.scheduleUnitSumMinutes(entries)
@@ -2349,23 +2395,75 @@ internal fun TaskEditWindow(
             ) {
                 Text(task.title.ifBlank { "Task" }, style = MaterialTheme.typography.titleSmall)
 
-                // Section 1 (leaf only): the screen switch. "On" means the task is done away from a
-                // screen, so the §9 fill may only place it inside a no-screen period.
+                // Section 1 (leaf only): `side-dev/README.md` § *Restrictive Period* — this task's
+                // RESILIENCE to each kind of restrictive period, and the place new kinds are defined.
+                //
+                // One row per kind, showing the multiplier as a percentage because that is what it means:
+                // 0 % forbids the task inside such a period, 100 % leaves it untouched, and anything between
+                // scales its priority percentage for as long as the period lasts. A kind the task has never
+                // been given a value for shows its default (100 %, or 0 % for "no task allowed"), which is
+                // exactly what the absent override means — nothing is written until the user moves it.
+                //
+                // The old pair of switches is gone: "on screen" is a 0 % against "no on-screen task", and
+                // "doable during a screen break" has nothing left to say now that all three dynamic periods
+                // are "no task allowed" end to end.
                 if (isLeaf) {
                     HorizontalDivider()
+                    Text("Resilience to restrictive periods", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        "A multiplier on this task\u2019s priority inside a period of that kind: " +
+                            "0 % forbids it there, 100 % leaves it untouched.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    for (kind in periodKinds) {
+                        val current = PeriodKinds.resilienceFor(resilience, kind)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                text = kind,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            PercentField(
+                                value = current,
+                                onValueChange = { next ->
+                                    // Written as an OVERRIDE only while it differs from the kind\u2019s own
+                                    // default, so an untouched kind stays absent and a changed default reaches
+                                    // every task that never moved it.
+                                    resilience =
+                                        if (next == PeriodKinds.defaultResilience(kind)) resilience - kind
+                                        else resilience + (kind to next)
+                                },
+                            )
+                            if (PeriodKinds.isUserDefined(kind)) {
+                                TextButton(onClick = { onRemovePeriodKind(kind) }) { Text("\u00d7") }
+                            }
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Text(
-                            text = "Can be done during a no-screen period",
-                            style = MaterialTheme.typography.bodySmall,
+                        OutlinedTextField(
+                            value = newKind,
+                            onValueChange = { newKind = it },
+                            singleLine = true,
+                            label = { Text("New kind of period") },
                             modifier = Modifier.weight(1f),
                         )
-                        Switch(
-                            checked = noScreenDoable,
-                            onCheckedChange = { noScreenDoable = it },
-                        )
+                        TextButton(
+                            enabled = PeriodKinds.isUserDefined(PeriodKinds.normalize(newKind)) &&
+                                periodKinds.none { it.equals(PeriodKinds.normalize(newKind), ignoreCase = true) },
+                            onClick = {
+                                onAddPeriodKind(newKind)
+                                newKind = ""
+                            },
+                        ) { Text("Add") }
                     }
                 }
 
@@ -2457,7 +2555,7 @@ internal fun TaskEditWindow(
                     // PRD §13: Save is not clickable while the spans exceed the task's minimum time.
                     TextButton(
                         enabled = canSave,
-                        onClick = { onSave(noScreenDoable, entries, text) },
+                        onClick = { onSave(resilience, entries, text) },
                     ) { Text("Save") }
                 }
             }

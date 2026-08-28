@@ -121,17 +121,15 @@ A deploy launch is authoritative and CLEARS the remembered values when it passes
 ### `account1-empty-open-and-deploy-android-fast-break.bat`
 
 Chains `account1-empty-and-open.bat` then `account1-deploy-android.bat` with the 5-min break retimed via
-`OMNIAPP_BREAK_DURATION_MS=5000` / `OMNIAPP_BREAK_INTERVAL_MS=5000` /
-`OMNIAPP_BREAK_PAUSE_THRESHOLD_MS=7200000`, and also sets `break_config.length_ms` for `5min_break` server-side
-(without that the pushed cue would still wait the default 5 minutes).
+`OMNIAPP_BREAK_DURATION_MS=5000` / `OMNIAPP_BREAK_INTERVAL_MS=5000`, and also sets `break_config.length_ms`
+for `5min_break` server-side (without that the pushed cue would still wait the default 5 minutes).
 
 `account1-empty-and-deploy-android-fast-break.bat` is the same without opening the desktop app.
 
-**The distinguishing knob is the pause threshold.** Unlike the account2 flavour, the drawn break (5 s) is
-**decoupled** from the qualifying pause (2 h) via `ScreenBreak.pauseThresholdMillis` → `qualifyingPauseMillis`.
-The rule this enforces: *the 5-min pose appears exactly `interval` (5 s) after each ≥2 h pause, and nowhere else.*
-On a freshly-emptied account that is one break per day, 5 s after each night's wake, plus one at the now-line
-today.
+**There are two knobs, not three.** `OMNIAPP_BREAK_PAUSE_THRESHOLD_MS` — which decoupled a break from the
+pause that *anchored* it — is gone with the anchor engine (ADR 0003). The interval IS the break's recurrence
+bar now, so a 5 s interval simply places the pose that often, bounded by the rest stretches the bars find on
+the timeline: a break the user actually takes bars the next one for its own bar's length.
 
 **Note:** account1's desktop launch defaults `omniapp.timeSim=true` (gradle `run`), so its now-line is
 sim-accelerated — the phone (the pause-cue target) runs real time.

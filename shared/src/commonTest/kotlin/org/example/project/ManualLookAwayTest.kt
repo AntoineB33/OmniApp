@@ -19,7 +19,7 @@ import org.example.project.time.AppClock
  * on the calendar is decided by the ANCHOR, and the anchor is an END — so it may only move when a break
  * really finished.
  *
- * The bug this pins: the press stamped `lastRestMillis = now`, i.e. an END at the break's START. That drew a
+ * The bug this pins: the press stamped `i.e. an END at the break's START. That drew a
  * 20-s break over the 20 s BEFORE the manual one (the run it had just interrupted, offset by however late the
  * press came), and the manual break itself — the one that actually happened — was never drawn at all, since
  * nothing moved the anchor when it finished.
@@ -53,23 +53,25 @@ class ManualLookAwayTest {
                         title = "look 20 feet away",
                         intervalMillis = 20 * MIN,
                         durationMillis = 20 * SEC,
-                        lastRestMillis = anchor0,
                     ),
                 ),
             ),
         )
-        fun anchor(): Long = vm.state.value.screenBreaks.single().lastRestMillis
-        fun taken() =
-            SchedulerDomain.takenScreenBreakPanels(vm.state.value.screenBreaks, origin - MIN, clock.nowMillis() - 1)
+        // A conducted look-away is recorded as what it is: a restrictive period the app placed, 20 seconds
+        // of "no task allowed" ending where the break ended. The recurrence bars then read it out of the
+        // timeline like any other rest stretch.
+        fun conducted() =
+            vm.state.value.panels.filter {
+                // A period the APP placed — not one the recurrence bars projected (those carry `screenBreak`).
+                it.inactivity && it.endEpochMillis - it.startEpochMillis == 20 * SEC
+            }
         fun messages() = vm.state.value.notificationLog.map { it.message }
 
-        // The press announces the break — and moves nothing. The anchor is the end of the last rest that was
-        // TAKEN, and this one has not been taken yet.
+        // The press announces the break — and records nothing. A break that just started has not happened.
         engine.restartLookAway()
         runCurrent()
         assertEquals(listOf("look 20 feet away"), messages())
-        assertEquals(anchor0, anchor(), "the anchor is an END: a break that just started has not happened")
-        assertTrue(taken().isEmpty(), "and nothing is written into the past on the press")
+        assertTrue(conducted().isEmpty(), "nothing is written into the past on the press")
 
         // 8 s in, press again: the run in progress is superseded and never finishes.
         advanceTimeBy(8 * SEC)
@@ -83,26 +85,30 @@ class ManualLookAwayTest {
         // half-drawn, and it did not announce "resume your work" either.
         advanceTimeBy(13 * SEC)
         runCurrent()
-        assertEquals(anchor0, anchor(), "an interrupted look-away leaves no trace")
-        assertTrue(taken().isEmpty())
+        assertTrue(conducted().isEmpty(), "an interrupted look-away leaves no trace")
         assertTrue(messages().none { it == "Resume your work" })
 
-        // The second one runs its full 20 s. NOW the anchor moves — to its END — and the calendar keeps it,
-        // drawn exactly where it happened.
+        // The second one runs its full 20 s. NOW it is recorded, exactly where it happened.
         advanceTimeBy(8 * SEC)
         runCurrent()
-        assertEquals(manualStart + 20 * SEC, anchor(), "a break that finished is served at its end")
         assertEquals("Resume your work", messages().last())
-        val drawn = taken().single()
-        assertTrue(drawn.screenBreak)
-        assertEquals(manualStart, drawn.startEpochMillis)
-        assertEquals(manualStart + 20 * SEC, drawn.endEpochMillis)
+        assertTrue(
+            conducted().any { it.startEpochMillis == manualStart && it.endEpochMillis == manualStart + 20 * SEC },
+            "the conducted break is recorded where it happened: ${conducted().map { it.startEpochMillis }}",
+        )
         // Not the interrupted run, and not the 20 s before the press (the old anchor-at-the-start bug).
-        assertTrue(drawn.startEpochMillis != origin && drawn.startEpochMillis != manualStart - 20 * SEC)
-        // And the next occurrence recurs an interval after it ENDED.
-        assertEquals(
-            manualStart + 20 * SEC + 20 * MIN,
-            SchedulerDomain.screenBreakNextStart(vm.state.value.screenBreaks.single(), clock.nowMillis()),
+        assertTrue(conducted().none { it.startEpochMillis == origin })
+        assertTrue(conducted().none { it.startEpochMillis == manualStart - 20 * SEC })
+        // And it bars the next 20 s period for twenty minutes, by the README's own rule — no anchor needed.
+        val next = SchedulerDomain.nextScreenBreakStartMillis(
+            vm.state.value.screenBreaks,
+            "look 20 feet away",
+            clock.nowMillis(),
+            basePeriods = SchedulerDomain.restrictivePeriodsOf(vm.state.value.panels),
+        )
+        assertTrue(
+            next != null && next >= manualStart + 20 * SEC + 20 * MIN,
+            "the conducted break must bar the next one for twenty minutes; got $next",
         )
     }
 }

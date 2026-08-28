@@ -23,6 +23,9 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.DebugFlags
 import org.example.project.scheduler.domain.AlarmDomain
+import org.example.project.scheduler.domain.PlanBlock
+import org.example.project.scheduler.domain.PlanTask
+import org.example.project.scheduler.domain.RestrictivePeriod
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.ScreenBreak
@@ -43,7 +46,6 @@ import org.example.project.scheduler.platform.deviceLockedIntervals
 import org.example.project.scheduler.platform.currentDeviceKind
 import org.example.project.scheduler.platform.isScreenActive
 import org.example.project.scheduler.platform.sendSystemNotification
-import org.example.project.scheduler.platform.lastWakeAfterLongSleepMillis
 import org.example.project.scheduler.platform.recentSleepGaps as platformRecentSleepGaps
 import org.example.project.scheduler.platform.VoiceCue
 import org.example.project.scheduler.platform.playVoiceCue as platformPlayVoiceCue
@@ -439,10 +441,10 @@ class SchedulerEngine(
     private var announcedStarts = setOf<Long>()
     private var pendingEnds = setOf<Long>()
     private var announcedWindDowns = setOf<Long>()
-    // PRD §15 (5/15-min rest-pose notification): the DUE instant (`lastRest + interval`) already notified per
-    // rest-pose title, so a break fires once when the now-line reaches it and stays silent as its panel drags
-    // along the now-line — the next cue comes only after `due` steps forward (the break is served). See
-    // [launchCueSweep].
+    // PRD §15 (5/15-min rest-pose notification): the placed START already announced per rest-pose title, so a
+    // break fires once when the now-line reaches it and never again. The key is stable because the recurrence
+    // bars pin the start (ADR 0003) — it was an anchored due precisely because an owed pose used to drag along
+    // the now-line and had no stable drawn start to key on. See [launchCueSweep].
     private var sidePoseNotifiedDue = mapOf<String, Long>()
     private var manualLookAwayJob: Job? = null
 
@@ -473,13 +475,11 @@ class SchedulerEngine(
         pauseCue?.let { gateway ->
             realtimePresence = DeviceHeartbeatPublisher(scope = scope, gateway = gateway).also { it.start() }
         }
-        // PRD §15: every reducer refill folds this device's live ongoing/held pause into screen-break
-        // PLACEMENT (SchedulerDomain.screenBreaksForPlacement), so screen-break panels slide with a pause the
-        // derives haven't banked yet — the now-line can no longer cross a stale look-away slot and fire a
-        // spurious cue mid-pause, and a rest pose re-places itself the moment the pause has lasted its
-        // duration (fluid under an accelerated leap; no post-leap snap when the derive lands). Placement-
-        // only: the stored lastRestMillis still advances only via the derives' forward-only seeding
-        // ([applySeededScreenBreaks]).
+        // `side-dev/README.md`: the recurrence bars read the rest stretches out of the TIMELINE, so this
+        // device's live ongoing pause reaches every placement as the period it is
+        // ([SchedulerDomain.liveRestPeriod] off [SchedulerReducer.liveRestGap]) rather than as an overlay on
+        // a stored anchor. There is no stored anchor: nothing seeds, serves or advances a `lastRest` any
+        // more (ADR 0003).
         // PRD §9/§12: what the DEVICES observed about whether anyone was at a screen, feeding §9's "assume
         // nothing happened" rule. Cached, because reading it is a process launch; refreshed on a coarse bucket
         // by [launchNoScreenEvidenceScan] below and read here synchronously by every banking reducer path.
@@ -493,7 +493,6 @@ class SchedulerEngine(
         launchNoScreenEvidenceScan()
         launchRetroactiveNoScreenStrip()
         launchAdvanceTick()
-        launchScreenBreakSeeding()
         launchRuleChangeReschedule()
         launchStaleReschedule()
         launchTaskTreeBlendReschedule()
@@ -774,11 +773,9 @@ class SchedulerEngine(
         // the sleep session as a past "Sleep" panel (reduceSetSleepMode) and stop suppressing the pause cue.
         current.sleepingUntilMillis?.let { until -> if (now >= until) vm.setSleepMode(null) }
         maybeMaterializePastSleep(now)
-        // PRD §15: a look-away break the app CONDUCTED (announced, waited its length, said "resume your work")
-        // has happened, so it serves the look-away and the next one comes an interval later. Without this the
-        // anchor only ever moved on a detected pause — and nothing detects a look-away — so the cue fired once
-        // per session and the break stayed owed forever (see [SchedulerDomain.serveElapsedScreenBreaks]).
-        applySeededScreenBreaks(SchedulerDomain.serveElapsedScreenBreaks(current.screenBreaks, now))
+        // PRD §15: a look-away the app CONDUCTED is written into the past where it happened, by
+        // [SchedulerIntent.RecordConductedBreak] at the moment it finishes ([restartLookAway]) — the bars
+        // then read it out of the timeline as the rest stretch it is. The tick has nothing to serve.
     }
 
     // PRD §9/§17 past sleep: as `now` advances, record any scheduled sleep window that has fully elapsed and
@@ -922,35 +919,6 @@ class SchedulerEngine(
         }
     }
 
-    // PRD §15: at launch, seed each screen break's last-rest time from the last qualifying pause — this device's
-    // OS sleep log (Windows) AND every device's synced sleep gaps already in the local store. The gap seeding is
-    // what a phone (no readable OS sleep log) relies on to inherit the account's rests instead of showing a rest
-    // pose pinned to the now-line the desktop doesn't have. Screen-break config is recomputed, never persisted.
-    private fun launchScreenBreakSeeding() = scope.launch {
-        val before = vm.state.value.screenBreaks
-        val restedTasks = withContext(Dispatchers.Default) {
-            val fromOsLog = before.map { side ->
-                if (side.durationMillis <= 0) {
-                    side
-                } else {
-                    val lastRest = lastWakeAfterLongSleepMillis(side.durationMillis)
-                    if (lastRest != null) side.copy(lastRestMillis = lastRest) else side
-                }
-            }
-            SchedulerDomain.seedScreenBreaksFromGaps(fromOsLog, loadStoredGaps())
-        }
-        applySeededScreenBreaks(restedTasks)
-    }
-
-    // PRD §15: after a pull brings in another device's exact sleep gaps, re-seed the rest poses from every gap now
-    // in the local store — advancing `lastRestMillis` only (no work records / panel carving; see
-    // [SchedulerDomain.seedScreenBreaksFromGaps]). This is the account-wide-pause signal reaching a device that never
-    // slept, so its derived 5/15-min poses line up with the peer that recorded the sleep.
-    private fun reseedScreenBreaksFromGaps() {
-        val before = vm.state.value.screenBreaks
-        applySeededScreenBreaks(SchedulerDomain.seedScreenBreaksFromGaps(before, loadStoredGaps()))
-    }
-
     private fun loadStoredGaps(): List<TaskTimeRange> =
         sleepGapStore?.loadSleepGaps()?.map { TaskTimeRange(it.startMillis, it.endMillis) } ?: emptyList()
 
@@ -1053,12 +1021,19 @@ class SchedulerEngine(
         presence.setPresence(if (active) PresenceState(gateway.deviceId) else null)
         if (!active) return
 
-        // Compute the due instants LIVE from the screen-break config, NOT from the (possibly stale) stored
-        // `state.panels`. Reading stored panels dropped the short (fast-break) now-line break as soon as its
-        // window elapsed and substituted a far-future sleep-anchored occurrence, so the cue aimed hours out.
-        // See RestPosePresenceWindowTest.
+        // Ask the RECURRENCE BARS where each pose next falls, over the same environment the fill and the cue
+        // sweep are handed — never the stored `state.panels`, whose forward projection is a frozen snapshot
+        // (the short fast-break now-line break vanished from it the moment its window elapsed and was replaced
+        // by a far-future sleep-anchored occurrence, so the cue aimed hours out; see
+        // RestPosePresenceWindowTest).
         val now = clock.nowMillis()
-        val dues = restPoseDueMillisByKey(vm.state.value.screenBreaks)
+        val st = vm.state.value
+        val dues = restPoseDueMillisByKey(
+            screenBreaks = st.screenBreaks,
+            nowMillis = now,
+            basePeriods = SchedulerDomain.restrictivePeriodsOf(st.panels),
+            tasks = SchedulerDomain.planTasksOf(st, now),
+        )
         presence.setNextBreak(
             NextBreakState(
                 fiveMinDueMillis = dues[SchedulerDomain.FIVE_MIN_BREAK_KEY]?.let { publishableDueMillis(it, now) },
@@ -1124,7 +1099,7 @@ class SchedulerEngine(
      * PRD §15: refresh the calendar's "Inactivity" bands from the stored active sessions — this device's own
      * rows plus the peers' rows the last reconcile pulled, so a pause is account-wide ("no device
      * was active") with reconcile-bounded staleness. A purely LOCAL derivation (no server RPC; the derived pauses
-     * are never stored). The freshly derived pauses also seed the §15 rest poses (advancing `lastRestMillis`
+     * are never stored). The freshly derived pauses reach the §15 recurrence bars as the rest stretches they
      * only). Public for the debug "simulate pause + leap" control so the bands / rest poses reflect the
      * just-simulated pause at once.
      */
@@ -1156,16 +1131,9 @@ class SchedulerEngine(
         // "Inactivity" tail once a session is open again. While still inactive the tail stays, so the band
         // keeps growing between derives.
         activeSessionMutex.withLock { if (currentSession != null) _inactiveSince.value = null }
-        val before = vm.state.value.screenBreaks
-        // PRD §15: a pause long enough to be the rest pose the now-line was DRAGGING when it began *is* that
-        // break (the 15-min one when both were owed and merged). Recognized against the anchors as they stand
-        // BEFORE the pause is folded in — [seedScreenBreaksFromGaps] moves them to its end — and it serves every
-        // shorter break, which is how a 5-min pose discharges the look-away's clock though 5 minutes is under
-        // the look-away's own 15-minute pause threshold.
-        val pastBreaks = SchedulerDomain.pastScreenBreaksFromPauses(before, pauses)
-        applySeededScreenBreaks(
-            SchedulerDomain.serveShorterBreaks(SchedulerDomain.seedScreenBreaksFromGaps(before, pauses), pastBreaks),
-        )
+        // `side-dev/README.md`: a pause is a REST STRETCH the recurrence bars read straight off the
+        // timeline, so a derive has nothing to fold into a break's configuration — the periods it reveals
+        // bar what follows them by the ordinary rule, wherever they are asked about.
         // PRD §17: a fresh derive (startup, sync-pull) may reveal a scheduled sleep window was inactive — record
         // the observed part as a past "Sleep" panel now, not only on the next schedule advance.
         maybeMaterializePastSleep(until)
@@ -1192,23 +1160,6 @@ class SchedulerEngine(
         val records = activeSessionStore?.loadActiveSessions() ?: return emptyList()
         _activeSessions.value = records
         return SchedulerDomain.derivePauses(records.map { TaskTimeRange(it.startMillis, it.endMillis) }, since, until)
-    }
-
-    // PRD §15: install freshly-seeded rest times. Rest evidence only ever reveals a MORE-RECENT rest, so this
-    // is **monotonic** — it folds [rested] into the LIVE screen breaks and never moves a pose's `lastRestMillis`
-    // backward. This is essential because the two seeders run concurrently and off-thread against a snapshot
-    // captured when they started: the slow OS-log query ([launchScreenBreakSeeding], an up-to-8s PowerShell call
-    // built from the startup state where `lastRestMillis == 0`) can land AFTER [refreshDerivedPauses] has
-    // already advanced the poses to `now` (the leading account-wide pause on a freshly-opened account ends at
-    // the now-line). A wholesale overwrite would then drag `lastRestMillis` back to the morning wake and
-    // re-pin the 5-/15-min pose to the now-line — the reported empty-account anomaly. Merging forward makes
-    // the apply order irrelevant.
-    private fun applySeededScreenBreaks(rested: List<ScreenBreak>) {
-        val live = vm.state.value.screenBreaks
-        val merged = SchedulerDomain.advanceRestsForward(live, rested)
-        // The screen-break anchors are a scheduling input ([SchedulerDomain.schedulingSignature]), so the
-        // debounced rule-change watcher picks this up and refills — no explicit dispatch here.
-        if (merged != live) vm.dispatch(SchedulerIntent.SetScreenBreaks(merged))
     }
 
     /**
@@ -1510,6 +1461,12 @@ class SchedulerEngine(
                     val windDownInstants = st.panels
                         .filter { it.sleep }
                         .map { it.startEpochMillis - SchedulerDomain.NO_TASK_BEFORE_BED_MILLIS }
+                    // `side-dev/README.md`: the cue's boundaries are the STARTS of the placed dynamic
+                    // periods, so the sweep has to be handed the same environment the fill was — the standing
+                    // restrictive periods (the user's own and the §17 sleep windows, both already materialized
+                    // in `st.panels`) and the tasks. Asked without them the bars would answer a different
+                    // timeline, and the app would announce a break at an instant the calendar does not draw
+                    // one at, which is the very drift this change exists to remove.
                     val crossings = SchedulerDomain.cueCrossings(
                         screenBreaks = st.screenBreaks,
                         windDownInstants = windDownInstants,
@@ -1517,6 +1474,8 @@ class SchedulerEngine(
                         alreadyNotifiedPoseDues = sidePoseNotifiedDue,
                         fromMillis = scanFloor,
                         toMillis = simNow,
+                        basePeriods = SchedulerDomain.restrictivePeriodsOf(st.panels),
+                        tasks = SchedulerDomain.planTasksOf(st, simNow),
                     )
 
                     // Each fire as (instant, tie, action); executed in boundary order below. `tie` only
@@ -1653,20 +1612,28 @@ class SchedulerEngine(
 
                     // Self-delay to the next boundary across every cue kind, so a cue fires at its instant and
                     // not up to a tick late (the outer collectLatest also re-keys each tick). EVERY screen
-                    // break's next boundary is now the same arithmetic — its fixed due `lastRest + interval` —
-                    // because the look-away slides to the now-line while owed exactly as a pose does, so its
-                    // drawn panel start is no longer a boundary anything can key on (see
-                    // SchedulerDomain.reachedScreenBreakDueByTitle). The pose dues are gated on the §7 switch;
-                    // the look-away's cue is not (it has never been).
+                    // break's next boundary is the START of its next placed period — one derivation, the same
+                    // one the calendar draws and the sweep above announces. The pose starts are gated on the §7
+                    // switch; the look-away's cue is not (it has never been).
                     val nextEnd = pendingEnds.filter { it > simNow }.minOrNull()
                     val nextWind = windDownInstants.filter { it > simNow && it !in announcedWindDowns }.minOrNull()
-                    val nextBreak = st.screenBreaks
-                        .filter {
-                            it.intervalMillis > 0 && it.durationMillis > 0 && it.title.isNotBlank() &&
-                                (st.automaticSchedule || !it.restBreak)
-                        }
-                        .map { it.lastRestMillis + it.intervalMillis }
-                        .filter { it > simNow && it !in announcedStarts }.minOrNull()
+                    // `side-dev/README.md`: the next boundary is the START of the next placed dynamic period
+                    // — the same placement the sweep announces and the calendar draws. Read off an anchor
+                    // instead, this went looking for `lastRest + interval`, which the bars no longer put
+                    // anything at: the sweep found no next boundary at all and stopped.
+                    val eligible = st.screenBreaks.filter { st.automaticSchedule || !it.restBreak }
+                    val nextBreak =
+                        SchedulerDomain.screenBreakOccurrencesBetween(
+                            screenBreaks = eligible,
+                            fromMillis = simNow,
+                            toMillis = simNow + SchedulerDomain.NEXT_BREAK_SEARCH_MILLIS,
+                            basePeriods = SchedulerDomain.restrictivePeriodsOf(st.panels),
+                            tasks = SchedulerDomain.planTasksOf(st, simNow),
+                            anchorMillis = simNow,
+                        )
+                            .map { it.startEpochMillis }
+                            .filter { it > simNow && it !in announcedStarts }
+                            .minOrNull()
                     val next = listOfNotNull(nextBreak, nextEnd, nextWind).minOrNull() ?: break
                     if (speed <= 0.0) break
                     delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
@@ -1678,17 +1645,15 @@ class SchedulerEngine(
      * PRD §15 (20s look-away) manual redo: re-run the 20s pause now, superseding any look-away cue still
      * sounding or pending. Mirrors the old `restartLookAway` in App.kt (the cue scope is now [scope]).
      *
-     * **The anchor moves when the break ENDS, not here.** The look-away is the one break the app conducts, and
-     * the calendar's past side is read off that anchor ([SchedulerDomain.takenScreenBreakPanels]), so stamping
-     * it at the press would write a break into the past before it happened — and the wrong one: `lastRestMillis`
-     * is an END, so an anchor set to `now` drew the 20 s BEFORE this break, i.e. the run this very press just
-     * interrupted. Advancing it only on completion is what makes both §15 rules true: a run that did not finish
-     * (this press superseding the previous one, the app stopping) leaves no trace at all, and the one that did
-     * finish stays drawn where it happened. Forward-only, since a pause may have served the break while it ran.
+     * **The period is written when the break ENDS, not here** ([SchedulerIntent.RecordConductedBreak]). The
+     * look-away is the one break the app conducts, so a press that writes at once would put a break into the
+     * past before it happened. Recording only on completion is what makes both §15 rules true: a run that did
+     * not finish (this press superseding the previous one, the app stopping) leaves no trace at all, and the
+     * one that did finish stays drawn exactly where it happened.
      *
-     * While it runs, the automatic occurrence it stands in for must not announce itself as well — its due is
-     * still a crossable boundary until the anchor moves — so [launchCueSweep] swallows look-away starts for as
-     * long as [manualLookAwayJob] is active.
+     * While it runs, the automatic occurrence it stands in for must not announce itself as well — the placed
+     * period is still a crossable boundary — so [launchCueSweep] swallows look-away starts for as long as
+     * [manualLookAwayJob] is active.
      */
     fun restartLookAway() {
         val st = vm.state.value
@@ -1709,14 +1674,18 @@ class SchedulerEngine(
                     if (speed > 0.0) ((resumeAt - clock.nowMillis()).toDouble() / speed).toLong() else Long.MAX_VALUE
                 delay(remainingReal.coerceIn(1L, LOOK_AWAY_RESUME_POLL_MILLIS))
             }
-            // It happened, wholly. Serve the break at its END — the same anchor arithmetic every other rest
-            // uses, so the drawn grid and the cue's due cannot drift (CLAUDE.md: every break recurs an interval
-            // after it ENDS). Re-read the state: 20 s is long enough for a pull or a pause to have moved it.
+            // It happened, wholly — so it is recorded as what it was: a **restrictive period the user placed**
+            // (`side-dev/README.md`'s pre-placed restrictive period), 20 seconds of "no task allowed" ending
+            // here. Nothing else is needed and nothing else is written: the recurrence bars read rest
+            // stretches out of the timeline, so this one bars the next 20 s period for twenty minutes by the
+            // ordinary rule, and the calendar draws it because it is a real panel. A run that was interrupted
+            // never reaches here, so it leaves no trace at all — the same asymmetry as before, now by
+            // construction rather than by an anchor that only moves on completion.
             vm.dispatch(
-                SchedulerIntent.SetScreenBreaks(
-                    vm.state.value.screenBreaks.map {
-                        if (!it.restBreak) it.copy(lastRestMillis = maxOf(it.lastRestMillis, resumeAt)) else it
-                    },
+                SchedulerIntent.RecordConductedBreak(
+                    lookAway.title,
+                    resumeAt - lookAway.durationMillis,
+                    resumeAt,
                 ),
             )
             requestReschedule(clock.nowMillis())
@@ -1818,7 +1787,6 @@ class SchedulerEngine(
             val recordedAt = SystemAppClock.nowMillis()
             val records = gaps.map { SleepGapRecord(activeSessionDeviceId, it.startMillis, it.endMillis, recordedAt) }
             store.saveSleepGaps(records)
-            reseedScreenBreaksFromGaps()
         }
     }
 
@@ -1910,44 +1878,58 @@ class SchedulerEngine(
 
     companion object {
         /**
-         * PRD §15 (server-side break computation): **when each of the two screen breaks next comes due**, keyed
-         * by [ScreenBreak.key] (`"5min_break"` / `"15min_break"`) and computed LIVE from the [screenBreaks]
-         * config — the whole content of the account's `device_break` row, from which the server decides whether
-         * the account went idle with a break owed and times the cue as `idleInstant + length`. A key is absent
-         * when that pose is not configured, or is configured but not yet anchored (see the gate below).
+         * PRD §15 (server-side break computation): **where each of the two poses' next period is PLACED** —
+         * the whole content of the account's `device_break` row, from which the server decides whether the
+         * account went idle with a break owed and times the cue as `idleInstant + length`. Keyed by
+         * [ScreenBreak.key] (`"5min_break"` / `"15min_break"`); a key is absent when that pose is not
+         * configured, or when the recurrence bars place no occurrence of it inside
+         * [SchedulerDomain.NEXT_BREAK_SEARCH_MILLIS] (a night, an open-ended inactivity period — a pose the
+         * environment has suspended indefinitely has no next instant to name).
          *
-         * **The value is the pose's mathematical due instant `lastRest + interval`, NOT its drawn start.** The
-         * drawn start is [SchedulerDomain.screenBreakNextStart] = `maxOf(due, now)`, which for an overdue pose
-         * rides the now-line and therefore changes at every sample — publishing that is what forced the window
-         * onto the `t_a` beat in the first place (migration 20260726000000). The due instant moves only when the
-         * pose is served or reconfigured, so it can be written event-driven; it is also the same instant the
-         * client's own rest-pose cue keys on (`SchedulerDomain.reachedRestPoseDueByTitle`), so client and server
-         * agree on one boundary. "Overdue" is `due <= now` either way.
+         * **The value is the pose's next placed START** ([SchedulerDomain.nextScreenBreakStartMillis]), and
+         * that is the whole of the 1.6.0 change here. It used to be the anchored due `lastRest + interval`,
+         * *because* the drawn start rode the now-line: an owed break slid right with it and changed at every
+         * sample, so it could not be written event-driven and the published instant had to be a separate
+         * derivation. Nothing slides any more (ADR 0003) — a break's start is a fixed instant the bars derive,
+         * moving only when the rules or the environment do — so the server and the client key on ONE instant,
+         * the same one the calendar draws and the local cue sweep fires on.
          *
-         * **Both dues are published; the SELECTION moved to the server** (migration 20260728000000). The rule is
-         * unchanged in meaning — among the breaks already due at the last beat, the LONGEST governs, because
-         * resting the 15-min pose also discharges a 5-min one due at the same instant — but the server can now
-         * apply it directly to the pair instead of each client pre-collapsing it. Deliberately NOT derived from
-         * `state.panels`: that frozen snapshot's short (fast-break) now-line break expires within seconds and is
-         * then replaced there by a far-future sleep-anchored occurrence, which the server would mistime the cue
-         * to (hours out). See RestPosePresenceWindowTest.
+         * It must therefore be asked with the **same environment the fill was** ([basePeriods], [tasks]): the
+         * bars walked over a different timeline answer a different grid, and the server would then time the
+         * cue to a break the user never sees.
          *
-         * **Gated on `lastRestMillis > 0`, the same rule the local rest-pose cue follows.** A pose that has
-         * never been anchored carries the 1970 sentinel, so its "due" instant is `interval` after the epoch —
-         * permanently in the past. Published, it would tell the server the account walked away with a break
-         * already owed, and a freshly emptied account that locked its phone would be spoken a pause-end cue it
-         * never earned. An unanchored pose simply has no due instant yet.
+         * **Both dues are published; the SELECTION is the server's** (migration 20260728000000). Among the
+         * breaks already due at the last beat the LONGEST governs, because resting the 15-min pose also
+         * discharges a 5-min one due at the same instant.
          */
-        internal fun restPoseDueMillisByKey(screenBreaks: List<ScreenBreak>): Map<String, Long> =
-            screenBreaks.asSequence()
-                .filter {
-                    it.restBreak && it.intervalMillis > 0 && it.durationMillis > 0 &&
-                        it.title.isNotBlank() && it.key.isNotBlank() && it.lastRestMillis > 0
-                }
+        internal fun restPoseDueMillisByKey(
+            screenBreaks: List<ScreenBreak>,
+            nowMillis: Long,
+            basePeriods: List<RestrictivePeriod> = emptyList(),
+            blocks: List<PlanBlock> = emptyList(),
+            tasks: List<PlanTask> = emptyList(),
+        ): Map<String, Long> {
+            val poses = screenBreaks.filter {
+                it.restBreak && it.intervalMillis > 0 && it.durationMillis > 0 &&
+                    it.title.isNotBlank() && it.key.isNotBlank()
+            }
+            if (poses.isEmpty()) return emptyMap()
+            val out = HashMap<String, Long>()
+            for (pose in poses) {
+                val start = SchedulerDomain.nextScreenBreakStartMillis(
+                    screenBreaks = screenBreaks,
+                    title = pose.title,
+                    nowMillis = nowMillis,
+                    basePeriods = basePeriods,
+                    blocks = blocks,
+                    tasks = tasks,
+                ) ?: continue
                 // Several configs sharing one key would be one break as far as the server is concerned; the
-                // soonest due is the one the user reaches first.
-                .groupingBy { it.key }
-                .fold(Long.MAX_VALUE) { soonest, pose -> minOf(soonest, pose.lastRestMillis + pose.intervalMillis) }
+                // soonest is the one the user reaches first.
+                out[pose.key] = minOf(out[pose.key] ?: Long.MAX_VALUE, start)
+            }
+            return out
+        }
 
         /**
          * The `break_due_ms` a device publishes for a pose that is ALREADY due (PRD §15, migration

@@ -40,7 +40,6 @@ REM that pause. account1-deploy-android.bat reads these env vars and forwards
 REM them to the phone as am-start extras.
 set "OMNIAPP_BREAK_DURATION_MS=20000"
 set "OMNIAPP_BREAK_INTERVAL_MS=5000"
-set "OMNIAPP_BREAK_PAUSE_THRESHOLD_MS=7200000"
 
 set "SCRIPT_DIR=%~dp0"
 

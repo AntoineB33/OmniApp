@@ -72,11 +72,9 @@ class MainActivity : ComponentActivity() {
     /**
      * Debug fast-break override for testing the pause-cue voice message on real phones: the deploy script
      * passes `--es omniapp_break_duration_ms 5000` (the 5-min break's length) and/or
-     * `--es omniapp_break_interval_ms 5000` (how long after the previous pause it comes due) so a break — and
-     * the cron's server→phone cue — arrives in seconds. `--es omniapp_break_pause_threshold_ms` decouples
-     * the qualifying-pause length from the drawn length (place a short break only after a long pause). Must be
-     * applied BEFORE [SchedulerHolder.ensure] builds the VM (which seeds the screen breaks). Absent extras
-     * leave production timings.
+     * `--es omniapp_break_interval_ms 5000` (its recurrence bar) so a break — and the cron's server→phone
+     * cue — arrives in seconds. Must be applied BEFORE [SchedulerHolder.ensure] builds the VM (which seeds
+     * the screen breaks). Absent extras leave production timings.
      *
      * [AndroidDebugFlagStore] also REMEMBERS them for the install, so a reboot (which restarts the engine
      * through the service with no Activity and no extras) keeps the same 5-min-break rules the server-side

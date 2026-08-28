@@ -126,9 +126,10 @@ it lands (nothing else re-sends it, unlike a beat).
 
 ### Why account-keyed, and why no length / kind / device
 
-Both dues are `lastRest + interval` over the screen-break config, and both inputs are *synced* authoritative
-state, so **every device computes the same pair**. A per-device row stored N copies of one account-level
-fact and made the server redo, across rows, a selection each client had already done.
+Both dues are the poses' next PLACED starts over one environment (the screen-break config, the standing
+restrictive periods and the tasks — all *synced* authoritative state), so **every device computes the same
+pair**. A per-device row stored N copies of one account-level fact and made the server redo, across rows, a
+selection each client had already done.
 
 The kind is implied by which column the due sits in. `kind` / `device_id` were read by nothing on this path
 (the calendar's device bubble reads `device_active_session.kind`). And the **length is the server's**
@@ -144,22 +145,29 @@ active is exactly the state the user walked away in, which is what the cue is ju
 > clean screen-off path hit **by construction**, since it calls e1 with no final beat. (It is not a bandwidth
 > saving either: Supabase meters **egress**, and the break fields rode the request *body*.)
 
-### `break_due_ms` is the pose's FIXED due instant
+### `break_due_ms` is the pose's next PLACED START
 
-`lastRest + interval`, never its drawn start. This is what makes the event-driven write possible at all — the
-drawn start is `maxOf(due, now)`, so an overdue pose's start rides the now-line and changes at every sample.
-It also puts the server on the same boundary the client's own rest-pose cue keys on (ADR 0003).
+`SchedulerDomain.nextScreenBreakStartMillis` — the same instant the calendar draws the band at and the local
+cue sweep fires on (ADR 0003).
 
-`SchedulerEngine.restPoseDueMillisByKey` returns the dues keyed by `ScreenBreak.key`.
+**It used to be the anchored due `lastRest + interval`, and it had to be.** A pose SLID: while it was owed its
+drawn start was `maxOf(due, now)`, which rides the now-line and changes at every sample, so the drawn start
+could not be written event-driven and the published instant had to be a second derivation kept in step with
+it. Nothing slides since the recurrence bars pinned every break to a fixed instant, so the two derivations
+collapsed into one — which is also why the gate on a "never anchored" pose is gone: there is no anchor to be
+missing, and a pose the environment suspends indefinitely (a night, an open-ended inactivity period) simply
+has no placed occurrence inside the search window and is not published at all.
+
+`SchedulerEngine.restPoseDueMillisByKey` returns the starts keyed by `ScreenBreak.key`. It must be asked with
+the **same environment the fill was**, or the bars answer a different timeline and the server times the cue to
+a break the user never sees.
 
 - An **already-due** pose publishes the constant `SchedulerEngine.ALREADY_DUE_MILLIS` (0) — the server only
   ever asks `due <= beat_at`, so any past value answers it, and only a constant one avoids re-triggering a
-  write as the now-line moves.
+  write as the now-line moves. (A placed start is never behind the now-line, so this is now a floor rather
+  than the common case.)
 - A still-upcoming due is converted to the REAL instant it is reached at (`realInstantFor`) so an accelerated
   debug clock never reports a sim-ahead instant against real wall-clock beats.
-- A pose that was **never anchored** (`lastRestMillis == 0`) is not published at all — the same gate the local
-  cue uses; its due sits in 1970 and would read as permanently overdue, earning a freshly emptied account a
-  cue it never took a break for.
 
 The 20-s look-away is `restBreak=false` and is never published — it has its own local cue.
 

@@ -1,5 +1,6 @@
 package org.example.project
 
+import org.example.project.scheduler.domain.PeriodKinds
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -34,7 +35,7 @@ class TaskCellCopyTest {
 
         s = SchedulerReducer.reduce(
             s,
-            SchedulerIntent.SetTaskScreenFlags(taskId = pTask, onScreen = false, doableDuringBreak = false),
+            SchedulerIntent.SetTaskResilience(pTask, PeriodKinds.NO_SCREEN, 1.0),
         )
         s = SchedulerReducer.reduce(
             s,
@@ -73,7 +74,7 @@ class TaskCellCopyTest {
             "P\n" +
                 "\t- id: $idP\n" +
                 "\t- minimum time: 45 min\n" +
-                "\t- can be done during a no-screen period: yes\n" +
+                "\t- resilience to no on-screen task: 100 %\n" +
                 "\t- schedule unit:\n" +
                 "\t\t- warm up: 5 min\n" +
                 "\t\t- run: 25 min\n" +
@@ -171,10 +172,12 @@ class TaskCellCopyTest {
     }
 
     @Test
-    fun copy_carries_the_no_screen_switch_the_schedule_unit_and_the_text() {
+    fun copy_carries_the_resilience_map_the_schedule_unit_and_the_text() {
         val (s, cP) = stateWithParentAndChild()
         val node = SchedulerDomain.parseTreeText(SchedulerDomain.copyCellsText(s, listOf(cP), maxDepth = 20))!!.single()
-        assertTrue(node.noScreenDoable)
+        // `side-dev/README.md`: what travels is the resilience MAP, one `- resilience to <kind>: <n> %` line
+        // per override — so a task that needs no screen comes back needing no screen.
+        assertEquals(emptyMap(), node.resilience)
         assertEquals(listOf(ScheduleUnitEntry("warm up", 5), ScheduleUnitEntry("run", 25)), node.scheduleUnit)
         // The text is escaped onto one appendix line, so its newline must survive the round-trip.
         assertEquals("line one\nline two", node.text)
@@ -227,7 +230,10 @@ class TaskCellCopyTest {
         assertEquals(30, p.minMinutes)
         assertEquals(90, p.children.single().minMinutes)
         // The fields the payload says nothing about land on their defaults.
-        assertTrue(!p.noScreenDoable && p.scheduleUnit.isEmpty() && p.text.isEmpty())
+        // A pre-1.6.0 payload says nothing about resilience, so the node carries the fresh-task default:
+        // on screen, i.e. a 0 against "no on-screen task".
+        assertEquals(mapOf(PeriodKinds.NO_SCREEN to 0.0), p.resilience)
+        assertTrue(p.scheduleUnit.isEmpty() && p.text.isEmpty())
 
         val (dst, target) = pasteIntoFreshTree(old)
         val task = dst.tasks[dst.cells[target]!!.taskId!!]!!
@@ -455,7 +461,7 @@ class TaskCellCopyTest {
         assertTrue(!text.contains("- id:"), text)
         assertTrue(!text.contains("- text:"), text)
         // Everything else the edit window holds still travels.
-        assertTrue(text.contains("- can be done during a no-screen period: yes"), text)
+        assertTrue(text.contains("- resilience to no on-screen task: 100 %"), text)
         assertTrue(text.contains("- schedule unit:"), text)
 
         val node = SchedulerDomain.parseTreeText(text)!!.single()

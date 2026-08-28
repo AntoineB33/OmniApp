@@ -2,6 +2,7 @@ package org.example.project.scheduler.model
 
 import kotlin.jvm.JvmInline
 import kotlinx.datetime.DayOfWeek
+import org.example.project.scheduler.domain.PeriodKinds
 
 /** PRD §10: a task's minimum time defaults to 45 minutes. */
 const val DEFAULT_MINIMUM_MINUTES: Int = 45
@@ -41,28 +42,64 @@ data class Task(
      */
     val text: String = "",
     /**
-     * PRD §8 "On screen" switch (calendar edit window): whether this task is done at a screen. An
-     * on-screen task may only be placed on screen periods; an off-screen task only on no-screen
-     * periods. Defaults to on-screen (the pre-switch behaviour — everything scheduled was screen work).
+     * `side-dev/README.md` § *Restrictive Period*: **this task's resilience to each kind of restrictive
+     * period** — a multiplier in `[0, 1]` on its priority percentage for as long as a period of that kind
+     * lasts. `0` forbids the task there, `1` leaves it untouched, and anything between scales its share.
+     *
+     * It is stored as **overrides only**: a kind absent from the map takes
+     * [org.example.project.scheduler.domain.PeriodKinds.defaultResilience], which is `1` for every kind
+     * except [org.example.project.scheduler.domain.PeriodKinds.NO_TASK]. Two things follow, and they are the
+     * whole reason for that shape:
+     * - **a kind the user has only just defined restricts nobody** — every task's resilience to it is the
+     *   default `1` until somebody is given a value below one, which is exactly what "a new period gives the
+     *   default resilience value (1) to every task" asks for;
+     * - **there is no "on screen" flag any more.** An on-screen task is one with a `0` against
+     *   [org.example.project.scheduler.domain.PeriodKinds.NO_SCREEN] — read through [onScreen], which is a
+     *   *derivation*, never a second piece of state. The old *doable during a screen break* switch is gone
+     *   with it: the three dynamic periods are "no task allowed" end to end (`side-dev/README.md` § *3
+     *   Dynamic Restrictive Period*), so there is nothing there to be resilient to.
+     *
+     * Authoritative — nothing re-derives it — so it is persisted and synced with the rest of the task.
      */
-    val onScreen: Boolean = true,
+    val resilience: Map<String, Double> = DEFAULT_RESILIENCE,
+) {
+    /** This task's multiplier inside a period of [kind]; see [PeriodKinds.resilienceFor]. */
+    fun resilienceFor(kind: String): Double = PeriodKinds.resilienceFor(resilience, kind)
+
     /**
-     * PRD §8 "Doable during a screen break" switch: whether this task may be scheduled inside the
-     * **5-minute** pose (§15), past its closed first minute
-     * ([org.example.project.scheduler.domain.SchedulerDomain.SCREEN_BREAK_CLOSED_HEAD_MILLIS]). Even when
-     * on, a task whose minimum time exceeds what is left of the break never fits there. Defaults off.
-     *
-     * It is **not** what opens the 15-minute pose: that one is [ScreenBreakPeriod.OffScreenOnly] and accepts
-     * every task with [onScreen] off, this flag or not. So the switch is exactly "short-break work".
-     *
-     * **Invariant: this implies `!`[onScreen]** — a screen break is time away from the screen, so only a
-     * task that needs no screen can be done in one. It is enforced where the flag is written
-     * (`SchedulerReducer.applySetTaskScreenFlags`, and the edit window only offers the switch while "On
-     * screen" is off) and healed on decode, so a payload written before the invariant cannot resurrect an
-     * on-screen break-doable task.
+     * Whether this task needs a screen — a **derived** reading of [resilience], never stored beside it: a
+     * task is on-screen exactly when it is forbidden inside a "no on-screen task" period.
      */
-    val doableDuringBreak: Boolean = false,
-)
+    val onScreen: Boolean get() = resilienceFor(PeriodKinds.NO_SCREEN) <= 0.0
+
+    /**
+     * This task with its resilience to [kind] set to [value] — or with the override **removed** where
+     * [value] is the kind's own default, so an untouched kind stays absent and a changed default reaches
+     * every task that never overrode it. That is the same rule the shortcut bindings keep, for the same
+     * reason.
+     */
+    companion object {
+        /**
+         * What a task the user has just created carries: a `0` against
+         * [org.example.project.scheduler.domain.PeriodKinds.NO_SCREEN] — i.e. **on screen**, the app's
+         * pre-resilience behaviour and the only sensible default for work in an app one sits in front of.
+         *
+         * It is a default for a *task*, not for a *kind*, and the two are deliberately different questions:
+         * a kind's default ([PeriodKinds.defaultResilience]) says what an unmentioned kind means, while this
+         * says what a new task is. The clipboard writes the difference between the two, which is why an
+         * ordinary task's copy says nothing about a screen.
+         */
+        val DEFAULT_RESILIENCE: Map<String, Double> = mapOf(PeriodKinds.NO_SCREEN to 0.0)
+    }
+
+    fun withResilience(kind: String, value: Double): Task {
+        val clamped = PeriodKinds.clamp(value)
+        val next =
+            if (clamped == PeriodKinds.defaultResilience(kind)) resilience - kind
+            else resilience + (kind to clamped)
+        return copy(resilience = next)
+    }
+}
 
 /**
  * PRD §13 Schedule Unit element: one sequential sub-step of a task, with a [title] and a [spanMinutes]
@@ -166,39 +203,6 @@ enum class ChoreRecurrenceUnit(val label: String) {
 }
 
 /**
- * PRD §15: **which periods a screen break is**, in the sense of `side-dev/README.md` — a period is a window of
- * the timeline together with the set of tasks it accepts, and that is the whole of what a break is to the §9
- * scheduler. The three shapes are the three breaks, and they are exactly the periods of `side-dev`'s **test
- * 11**: a window accepting nothing, and a "1 minute accepting nothing, then a tail accepting one restricted
- * set" stretch.
- */
-enum class ScreenBreakPeriod {
-    /**
-     * One period accepting **nobody**, end to end — the 20-second look-away (test 11's sliding 20 s window).
-     * Because it excludes everyone equally it creates no influence field, which is why a look-away recurring
-     * every 20 minutes forever does not distort the plan around each of its occurrences.
-     */
-    Closed,
-
-    /**
-     * Two periods: a closed **first minute**
-     * ([org.example.project.scheduler.domain.SchedulerDomain.SCREEN_BREAK_CLOSED_HEAD_MILLIS], clamped to the
-     * break's own length) accepting nobody, then a tail accepting the tasks that need no screen **and** are
-     * marked *doable during a screen break* (PRD §8). The 5-minute pose — test 11's "1min: nothing" +
-     * "4min: only A" stretch, verbatim.
-     */
-    ClosedMinuteThenBreakDoable,
-
-    /**
-     * One period, open end to end, accepting **every task that needs no screen** (`onScreen == false`,
-     * whatever its *doable during a break* flag) — the 15-minute pose. Long enough that getting off the
-     * screen is not a separate step and broad enough to be genuine off-screen work time, so unlike the
-     * 5-minute pose it has no closed head and does not restrict itself to the break-doable subset.
-     */
-    OffScreenOnly,
-}
-
-/**
  * PRD §15 Screen break: a task to do periodically, placed on the calendar with a **real spanning time** (a
  * [TaskPanel] with `screenBreak = true`). It recurs every [intervalMillis] for [durationMillis]. The
  * distinguishing rule (vs a simple task): when the §9 auto scheduler splits a task panel around a side
@@ -210,29 +214,15 @@ data class ScreenBreak(
     val intervalMillis: Long,
     val durationMillis: Long,
     /**
-     * PRD §15: when true this is a **rest pose** (the 5/15-min poses) eligible for the merge — when the
-     * shorter pose's next window overlaps the longer's, the shorter becomes a longer-length pause and the
-     * longer's occurrence is pushed back (see
-     * [org.example.project.scheduler.domain.SchedulerDomain.screenBreakPanels]). The look-away (false) never
-     * merges. All screen breaks — rest poses and the look-away alike — are otherwise scheduled the same way
-     * (next occurrence at `lastRestMillis + intervalMillis`).
+     * PRD §15: when true this is a **rest pose** (the 5/15-min poses) rather than the 20-second look-away.
+     *
+     * It is no longer a scheduling rule — `side-dev/README.md`'s recurrence bars place all three the same
+     * way, off their own [durationMillis]/[intervalMillis] and the rest stretches they find on the timeline
+     * (see [org.example.project.scheduler.domain.DynamicPeriods]). What still reads it is the pause-cue
+     * publish, which names the two poses to the server and never the look-away (the look-away's cue is
+     * local), and the "automatic schedule off" gate, which keeps announcing the look-away.
      */
     val restBreak: Boolean = false,
-    /**
-     * PRD §15: epoch millis of the most recent qualifying pause (a device sleep ≥ [durationMillis], from the
-     * OS sleep history), or 0 when none is known. The next occurrence is due at `lastRestMillis + intervalMillis`
-     * — clamped forward to the now-line once that has passed without the pause being taken (0 ⇒ due now). See
-     * [org.example.project.scheduler.domain.SchedulerDomain.screenBreakNextStart].
-     */
-    val lastRestMillis: Long = 0L,
-    /**
-     * PRD §15: the minimum length a pause must reach to *anchor* this pose (a "qualifying pause"), in millis.
-     * `0` (the default) means "use [durationMillis]" — the production rule, where a pose is triggered by a
-     * pause at least as long as the break itself. Setting it **decouples** the qualifying-pause length from
-     * the drawn break length, used by the debug fast-break override to place a short (5-second) break only
-     * after a long (e.g. ≥2-hour) real pause. Read everywhere through [qualifyingPauseMillis], never directly.
-     */
-    val pauseThresholdMillis: Long = 0L,
     /**
      * PRD §15: the STABLE identifier of this break type — `"look_away"` / `"5min_break"` / `"15min_break"`.
      * The [title] is display text and the durations move under the debug fast-break knobs, so neither can name
@@ -241,27 +231,7 @@ data class ScreenBreak(
      * migration 20260724000000). Blank on an ad-hoc break, which simply has no server-side configuration.
      */
     val key: String = "",
-    /**
-     * PRD §15: the **period(s) this break is** to the §9 scheduler — see [ScreenBreakPeriod].
-     *
-     * The default reproduces the pre-1.6.0 rule from [restBreak] alone (a rest pose is a closed minute then a
-     * break-doable tail, anything else is closed end to end), so an ad-hoc break that does not state a shape
-     * keeps behaving exactly as it did. The three production breaks state theirs explicitly
-     * ([org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SCREEN_BREAKS]) — in particular the
-     * 15-minute pose is [ScreenBreakPeriod.OffScreenOnly], not a second copy of the 5-minute one. Note `copy()`
-     * does not re-evaluate this default, so the debug fast-break knobs (which only retime) never move a shape.
-     */
-    val shape: ScreenBreakPeriod =
-        if (restBreak) ScreenBreakPeriod.ClosedMinuteThenBreakDoable else ScreenBreakPeriod.Closed,
-) {
-    /**
-     * The minimum pause length that anchors this pose (sets [lastRestMillis]). It is [pauseThresholdMillis]
-     * when that is set (> 0), else [durationMillis] — so production breaks (which leave it 0) keep the
-     * "a pause at least as long as the break" rule unchanged.
-     */
-    val qualifyingPauseMillis: Long
-        get() = if (pauseThresholdMillis > 0L) pauseThresholdMillis else durationMillis
-}
+)
 
 /**
  * An **alarm** (PRD §18): a wall-clock time of day at which every phone signed in to the account rings.
@@ -456,7 +426,38 @@ data class TaskPanel(
     val layoutWeight: Double = 1.0,
     /** PRD §8 pin switches: the four independent pin dimensions (see [PanelPins]); drives [pinned]. */
     val pins: PanelPins = PanelPins(),
-)
+    /**
+     * `side-dev/README.md` § *Restrictive Period*: **the KIND of restrictive period this panel is**, or blank
+     * when the panel is not one (a task panel, a reminder tag).
+     *
+     * The README's period is a start, an end and a kind, and every task's behaviour inside it is its
+     * resilience to that kind ([Task.resilience]) — so this one field replaces asking *which boolean* a
+     * period panel carries. The built-in kinds are [PeriodKinds.NO_SCREEN] (what [noScreen] used to say on
+     * its own) and [PeriodKinds.NO_TASK] (what [inactivity] and [sleep] say); anything else is **a kind the
+     * user defined**, and a task says nothing about it until it is given a resilience below one.
+     *
+     * [noScreen] / [inactivity] are kept beside it because the calendar, the record bank and the merge all
+     * ask the two familiar questions; [restrictiveKind] is the single reading that reconciles them, and a
+     * payload written before this field existed is healed on decode from those flags.
+     */
+    val periodKind: String = "",
+) {
+    /**
+     * The README kind this panel restricts the timeline with, or blank when it restricts nothing. The ONE
+     * reading of a panel's kind: [periodKind] when it has one, else the kind its legacy flag stands for.
+     */
+    val restrictiveKind: String
+        get() =
+            when {
+                periodKind.isNotBlank() -> periodKind
+                noScreen -> PeriodKinds.NO_SCREEN
+                inactivity || sleep || screenBreak -> PeriodKinds.NO_TASK
+                else -> ""
+            }
+
+    /** Whether this panel is a restrictive period at all (rather than a task panel or a reminder tag). */
+    val isRestrictivePeriod: Boolean get() = restrictiveKind.isNotBlank()
+}
 
 /**
  * PRD §7 **"Switch task"** (the lateral-menu button and its `Ctrl+Shift+Alt+Z` chord): the user, looking at

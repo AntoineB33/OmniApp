@@ -191,15 +191,54 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §8 calendar edit window switches: set a task's screen-placement flags — [onScreen] (done at a
-     * screen, so placeable only on screen periods) and [doableDuringBreak] (may be scheduled inside a
-     * 5/15-minute screen break). Recorded as a content delta (part of the tree Undo/Redo history).
+     * `side-dev/README.md` § *Restrictive Period*: set [taskId]'s **resilience** to one [kind] of restrictive
+     * period — the multiplier in `[0, 1]` on its priority percentage inside such a period. `0` forbids it
+     * there, `1` leaves it untouched. Replaces the old pair of screen switches: "on screen" is exactly a `0`
+     * against [org.example.project.scheduler.domain.PeriodKinds.NO_SCREEN].
+     *
+     * Recorded as a content delta (part of the tree Undo/Redo history).
      */
-    data class SetTaskScreenFlags(
+    data class SetTaskResilience(
         val taskId: TaskId,
-        val onScreen: Boolean,
-        val doableDuringBreak: Boolean,
+        val kind: String,
+        val value: Double,
     ) : SchedulerIntent
+
+    /**
+     * `side-dev/README.md`: **define a new kind of restrictive period.** Raised by the task edit window's
+     * resilience section, which is where the user meets the kinds in the first place. The new kind gives
+     * *every* task the default resilience `1` — that is not written anywhere, it is what an absent override
+     * means ([org.example.project.scheduler.model.Task.resilience]) — so adding one restricts nobody until a
+     * task is given a value below one. A blank or built-in name is a no-op.
+     */
+    /**
+     * PRD §15 "Look away now" (the lateral-menu button and `Ctrl+Shift+Alt+E`): **a dynamic period the app
+     * actually conducted**, recorded where it happened.
+     *
+     * `side-dev/README.md` calls this a pre-placed restrictive period, and that is exactly what it is: a span
+     * of [org.example.project.scheduler.domain.PeriodKinds.NO_TASK] the user really took, standing on the
+     * timeline for the recurrence bars to read as the rest stretch it is. So it needs no anchor and no rule
+     * of its own — the next 20 s period is barred for twenty minutes after it by the ordinary bar.
+     *
+     * Recorded only when the break RAN TO ITS END. One that was interrupted (the user pressed again, or the
+     * app stopped) never reaches this intent and leaves no trace, which is the asymmetry §15 asks for.
+     *
+     * A recorded fact about the past, like a task record: authoritative, persisted and synced, and — like
+     * every other write to the record — outside the Undo/Redo history.
+     */
+    data class RecordConductedBreak(
+        val title: String,
+        val startEpochMillis: Long,
+        val endEpochMillis: Long,
+    ) : SchedulerIntent
+
+    data class AddPeriodKind(val kind: String) : SchedulerIntent
+
+    /**
+     * Remove a user-defined kind, with every task's override for it and every panel laid with it. The two
+     * built-in kinds cannot be removed.
+     */
+    data class RemovePeriodKind(val kind: String) : SchedulerIntent
 
     /**
      * PRD §13 Schedule Unit "Save": replace a task's schedule unit with [entries] (empty clears it).
@@ -285,7 +324,7 @@ sealed interface SchedulerIntent {
 
     /**
      * PRD §15 Screen breaks: replace the screen-break list — used at launch to seed each screen break's
-     * `lastRestMillis` from the OS sleep history (the last device rest ≥ its duration). Session state,
+     * the screen-break list (durations/intervals, debug overrides included). Session state,
      * not undoable.
      */
     data class SetScreenBreaks(

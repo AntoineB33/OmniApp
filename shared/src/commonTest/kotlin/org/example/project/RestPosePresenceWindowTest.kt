@@ -3,125 +3,142 @@ package org.example.project
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.PeriodKinds
+import org.example.project.scheduler.domain.RestrictivePeriod
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.ScreenBreak
 
 /**
- * PRD §15: **when each of the two screen breaks next comes due** — the whole content of the account's
+ * PRD §15: **where each of the two poses' next period is placed** — the whole content of the account's
  * `device_break` row, from which the server decides whether the account went idle with a break owed and times
  * the phone's pause-end cue as `idleInstant + length`.
  *
- * Since migration 20260726000000 the published instant is the pose's mathematical **due** time
- * (`lastRest + interval`), not its drawn start (`maxOf(due, now)`). That is what lets the row be written
- * event-driven — an overdue pose's drawn start rides the now-line and changes at every sample — and it puts the
- * server on the same boundary the client's own rest-pose cue keys on. Migration 20260728000000 then made the row
- * account-keyed and published BOTH dues, moving the "longest overdue governs" selection to the server.
+ * The published instant used to be the pose's anchored due `lastRest + interval`, and it had to be: an owed
+ * break *slid* along the now-line, so its drawn start changed at every sample and could not be written
+ * event-driven. Nothing slides now (ADR 0003) — the recurrence bars pin every break to a fixed instant — so
+ * the server and the client key on ONE instant, [SchedulerDomain.nextScreenBreakStartMillis], which is also
+ * the instant the calendar draws and the local cue sweep fires on.
  *
- * Regression: the dues MUST come from the live [ScreenBreak] config. They were previously derived from the
- * engine's stored `state.panels`, where the short fast-break now-line break expires within seconds and is
- * replaced by a far-future sleep-anchored occurrence; the cue was then aimed hours out and the phone stayed
- * silent. [SchedulerEngine.restPoseDueMillisByKey] never sees a placed panel, so that cannot recur.
+ * Regression this still guards: the dues must come from the bars over the LIVE environment, never from the
+ * engine's stored `state.panels` (a frozen snapshot whose short fast-break now-line break expires within
+ * seconds and is replaced by a far-future occurrence, aiming the cue hours out).
  */
 class RestPosePresenceWindowTest {
     private val MIN = 60_000L
     private val SEC = 1_000L
     private val HOUR = 60 * MIN
+    private val NOW = 1_000_000_000_000L
 
-    private fun pose5(lastRest: Long, interval: Long = 60 * MIN, duration: Long = 5 * MIN) = ScreenBreak(
+    private fun pose5(interval: Long = 60 * MIN, duration: Long = 5 * MIN) = ScreenBreak(
         title = "take a 5min pose", intervalMillis = interval, durationMillis = duration,
-        restBreak = true, lastRestMillis = lastRest, key = SchedulerDomain.FIVE_MIN_BREAK_KEY,
+        restBreak = true, key = SchedulerDomain.FIVE_MIN_BREAK_KEY,
     )
 
-    private fun pose15(lastRest: Long, interval: Long = 3 * HOUR) = ScreenBreak(
+    private fun pose15(interval: Long = 2 * HOUR) = ScreenBreak(
         title = "take a 15min pose", intervalMillis = interval, durationMillis = 15 * MIN,
-        restBreak = true, lastRestMillis = lastRest, key = SchedulerDomain.FIFTEEN_MIN_BREAK_KEY,
+        restBreak = true, key = SchedulerDomain.FIFTEEN_MIN_BREAK_KEY,
     )
 
     @Test
-    fun both_screen_breaks_are_published_each_under_its_own_key() {
-        // The spec's row: the account plus the scheduled time of apparition of BOTH breaks. No selection is made
-        // client-side any more — the server picks the longest one that was already overdue at the last beat.
-        val now = 1_000_000_000L
-        val dues = SchedulerEngine.restPoseDueMillisByKey(
-            listOf(pose5(lastRest = now - 10 * MIN), pose15(lastRest = now - 10 * MIN)),
-        )
+    fun both_poses_are_published_each_under_its_own_key() {
+        // The spec's row: the account plus the scheduled time of apparition of BOTH breaks. No selection is
+        // made client-side — the server picks the longest one that was already overdue at the last beat.
+        val breaks = listOf(pose5(), pose15())
+        val dues = SchedulerEngine.restPoseDueMillisByKey(breaks, NOW)
         assertEquals(
-            mapOf(
-                SchedulerDomain.FIVE_MIN_BREAK_KEY to now + 50 * MIN,
-                SchedulerDomain.FIFTEEN_MIN_BREAK_KEY to now + 2 * HOUR + 50 * MIN,
-            ),
-            dues,
+            setOf(SchedulerDomain.FIVE_MIN_BREAK_KEY, SchedulerDomain.FIFTEEN_MIN_BREAK_KEY),
+            dues.keys,
         )
+        assertTrue(dues.values.all { it >= NOW }, "a placed start is never behind the now-line: $dues")
     }
 
     @Test
-    fun overdue_decoupled_pose_reports_its_past_due_instant_not_a_future_sleep_break() {
-        // account1 fast-break: a decoupled 5 s pose (2 h qualifying pause) whose last pause was 60 s ago, so it
-        // is overdue — it came due 55 s ago and has been waiting ever since.
-        val now = 1_000_000_000L
-        val pose = pose5(lastRest = now - 60 * SEC, interval = 5 * SEC, duration = 5 * SEC)
-            .copy(pauseThresholdMillis = 2 * HOUR)
-        val dues = SchedulerEngine.restPoseDueMillisByKey(listOf(pose))
-        // The DUE instant, in the past — NOT the now-line and NOT `now + interval-after-a-future-sleep`.
-        assertEquals(now - 55 * SEC, dues[SchedulerDomain.FIVE_MIN_BREAK_KEY])
+    fun the_published_instant_is_the_one_the_calendar_draws() {
+        // The whole point of the change: one instant, derived once. What the server is told and what the user
+        // sees are the same number by construction, not two derivations kept in step.
+        val breaks = listOf(pose5(), pose15())
+        val dues = SchedulerEngine.restPoseDueMillisByKey(breaks, NOW)
+        val drawn = SchedulerDomain.screenBreakPanels(breaks, NOW, NOW + 12 * HOUR)
+        for (side in breaks) {
+            // The first occurrence the line has NOT already entered: a break in progress is one the user is
+            // taking, not one they are owed, so what the server is told about is the one after it.
+            val next = drawn.firstOrNull { it.title == side.title && it.startEpochMillis >= NOW } ?: continue
+            assertEquals(
+                next.startEpochMillis,
+                dues[side.key],
+                "${side.title}: the published due must be the next placed occurrence",
+            )
+        }
     }
 
     @Test
-    fun an_overdue_poses_due_instant_does_not_move_as_the_now_line_advances() {
-        // The property the event-driven `device_break` write rests on: while the pose is unchanged the published
-        // value is CONSTANT, so a device sitting at its desk makes no requests. The drawn start (`maxOf(due,
-        // now)`) would instead advance with every sample, which is why it used to have to ride the `t_a` beat.
-        // The function does not even take `now` — the published value cannot depend on when it is sampled.
-        val now = 1_000_000_000L
-        val pose = pose5(lastRest = now - 2 * HOUR) // due 1 h ago
-        assertEquals(now - 1 * HOUR, SchedulerEngine.restPoseDueMillisByKey(listOf(pose))[SchedulerDomain.FIVE_MIN_BREAK_KEY])
+    fun the_bars_are_walked_over_the_environment_they_are_given() {
+        // Asked without the standing periods the bars answer a different timeline — which is exactly how the
+        // server ends up timing the cue to a break the user never sees. A long "no task allowed" period ahead
+        // of the now-line is a rest stretch, so it bars the poses that follow it and pushes the next one out.
+        val breaks = listOf(pose5())
+        val bare = SchedulerEngine.restPoseDueMillisByKey(breaks, NOW)[SchedulerDomain.FIVE_MIN_BREAK_KEY]
+        val withRest = SchedulerEngine.restPoseDueMillisByKey(
+            breaks,
+            NOW,
+            basePeriods = listOf(
+                RestrictivePeriod(NOW, NOW + 30 * MIN, PeriodKinds.NO_TASK, "away"),
+            ),
+        )[SchedulerDomain.FIVE_MIN_BREAK_KEY]
+        assertNotNull(bare)
+        assertNotNull(withRest)
+        assertTrue(
+            withRest > bare,
+            "a 30-minute rest stretch must push the next 5-min pose out (bare=$bare, withRest=$withRest)",
+        )
     }
 
     @Test
     fun look_aways_and_unkeyed_ad_hoc_breaks_are_never_published() {
         // The 20 s look-away has its own local cue and is not a rest break; an ad-hoc pose with no key has no
         // `break_config` entry the server could resolve a length or a vocal message from.
-        val now = 1_000_000_000L
         val lookAway = ScreenBreak(
             "look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20 * SEC,
-            lastRestMillis = now - 10 * MIN, key = SchedulerDomain.LOOK_AWAY_KEY,
+            key = SchedulerDomain.LOOK_AWAY_KEY,
         )
         val adHoc = ScreenBreak(
-            "custom pose", intervalMillis = 30 * MIN, durationMillis = 3 * MIN,
-            restBreak = true, lastRestMillis = now - 10 * MIN,
+            "custom pose", intervalMillis = 30 * MIN, durationMillis = 3 * MIN, restBreak = true,
         )
-        assertEquals(emptyMap<String, Long>(), SchedulerEngine.restPoseDueMillisByKey(listOf(lookAway, adHoc)))
+        assertEquals(
+            emptyMap<String, Long>(),
+            SchedulerEngine.restPoseDueMillisByKey(listOf(lookAway, adHoc), NOW),
+        )
     }
 
     @Test
-    fun an_unanchored_pose_is_not_published_so_a_fresh_account_is_never_owed_a_cue() {
-        // A pose that has never been anchored carries `lastRestMillis == 0`, so `lastRest + interval` is an
-        // instant in 1970 — permanently "overdue". Publishing it would tell the server the account walked away
-        // with a break already owed, and a freshly emptied account that locked its phone would be spoken a
-        // pause-end cue it never earned. Same gate the local cue uses (`reachedRestPoseDueByTitle`).
-        val defaults = SchedulerDomain.DEFAULT_SCREEN_BREAKS
-        assertTrue(defaults.any { it.restBreak }, "the defaults do configure rest poses")
-        assertTrue(defaults.all { it.lastRestMillis == 0L }, "…and they load unanchored")
-        assertEquals(emptyMap<String, Long>(), SchedulerEngine.restPoseDueMillisByKey(defaults))
-
-        // Once the startup derive anchors one, that one — and only that one — is published.
-        val now = 1_000_000_000L
-        val anchored = defaults.map {
-            if (it.key == SchedulerDomain.FIVE_MIN_BREAK_KEY) it.copy(lastRestMillis = now - 3 * HOUR) else it
-        }
-        val dues = SchedulerEngine.restPoseDueMillisByKey(anchored)
-        assertEquals(setOf(SchedulerDomain.FIVE_MIN_BREAK_KEY), dues.keys)
-        assertFalse(SchedulerDomain.FIFTEEN_MIN_BREAK_KEY in dues)
+    fun a_pose_the_environment_suspends_indefinitely_has_no_next_instant_to_name() {
+        // An open-ended "no task allowed" period — a night, a hand-drawn inactivity period with no end —
+        // places nothing inside the search window, and a key with no placed occurrence is simply absent rather
+        // than published at some invented instant.
+        val dues = SchedulerEngine.restPoseDueMillisByKey(
+            listOf(pose5()),
+            NOW,
+            basePeriods = listOf(
+                RestrictivePeriod(
+                    NOW - HOUR,
+                    NOW + SchedulerDomain.NEXT_BREAK_SEARCH_MILLIS + HOUR,
+                    PeriodKinds.NO_TASK,
+                    "asleep",
+                ),
+            ),
+        )
+        assertFalse(SchedulerDomain.FIVE_MIN_BREAK_KEY in dues, "nothing placed ⇒ nothing published: $dues")
     }
 
     @Test
     fun no_rest_pose_configured_publishes_nothing() {
         val lookAway = ScreenBreak(
             "look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20 * SEC,
-            lastRestMillis = 1L, key = SchedulerDomain.LOOK_AWAY_KEY,
+            key = SchedulerDomain.LOOK_AWAY_KEY,
         )
-        assertEquals(emptyMap<String, Long>(), SchedulerEngine.restPoseDueMillisByKey(listOf(lookAway)))
+        assertEquals(emptyMap<String, Long>(), SchedulerEngine.restPoseDueMillisByKey(listOf(lookAway), NOW))
     }
 }

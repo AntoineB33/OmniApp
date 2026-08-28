@@ -6,7 +6,9 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.example.project.scheduler.engine.SchedulerEngine
+import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ScreenBreak
+import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.platform.VoiceCue
 import org.example.project.scheduler.state.NotificationLogEntry
@@ -78,21 +80,32 @@ class NotificationLogTest {
             screenActive = { true },
             playCue = {},
         )
-        // Anchored a minute before its 20-min interval is up, so the due lands 60 s into the run — after the
-        // first sweep (which has no previous sweep and would swallow anything already crossed).
+        // `side-dev/README.md`: where the break falls is the recurrence bars' answer, not an anchor's — so
+        // the instant to cross is read off the placement itself, which is exactly what the cue keys on.
         val lookAway = ScreenBreak(
             title = "look 20 feet away",
             intervalMillis = 20 * 60_000L,
             durationMillis = 20_000L,
-            lastRestMillis = start - 19 * 60_000L,
         )
         vm.dispatch(SchedulerIntent.SetScreenBreaks(listOf(lookAway)))
+        // No sleep window: a night is a rest stretch and would bar the first break for hours, putting the
+        // instant to cross far outside the sweep's freshness budget. The rule itself is tested in
+        // [DynamicPeriodsTest]; what this drives is the engine's two boundaries.
+        vm.dispatch(SchedulerIntent.SetSleepSchedule(SleepSchedule(sleepDurationMinutes = 0), todayEpochDay = 5L))
         engine.start()
         runCurrent()
         assertTrue(vm.state.value.notificationLog.isEmpty(), "nothing is announced before the break is due")
-
-        advanceTimeBy(60_001) // cross the due
-        runCurrent()
+        // The instant to cross is the one the calendar DRAWS the break at — the cue and the fill read one
+        // placement, so the test can read it off the state exactly as the user would off the screen.
+        val firstStart = vm.state.value.panels.filter { it.screenBreak }.minOfOrNull { it.startEpochMillis }
+        assertNotNull(firstStart)
+        assertTrue(firstStart > start, "the first break must be ahead of the line for the sweep to cross it")
+        // Advanced in seconds rather than in one leap: the sweep judges a crossing by its REAL age, and a
+        // single 200-second jump would read as slept-through and be swallowed by design.
+        repeat(((firstStart - start) / 1000 + 2).toInt()) {
+            advanceTimeBy(1000)
+            runCurrent()
+        }
         assertEquals(
             listOf("look 20 feet away"),
             vm.state.value.notificationLog.map { it.message },

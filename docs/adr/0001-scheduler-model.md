@@ -7,7 +7,7 @@
 `side-dev/README.md` is the specification. `side-dev/scheduler.py` is the reference
 implementation; `SchedulerPlan.kt` (`SchedulerPlanner` + `PlanWalk`) is its Kotlin port, and
 `SchedulerDomain.fillSchedule` is a **driver** over that port which maps OmniApp's world onto the
-reference's two inputs (pre-placed blocks, periods) and materializes panels.
+reference's two inputs (**pre-placed blocks** and **restrictive periods**, §4) and materializes panels.
 
 `PlanWalk` is the **only** copy of the scheduling rules. `SchedulerPlanner.plan()` (the rule-list
 form) and `fillSchedule` are both thin drivers over it, so the two can never disagree.
@@ -157,9 +157,12 @@ the maximum however small its priority.
 > back due once per wall-clock window and spent most of the usable time on its 45-min minimum.
 
 Faithful to the reference, it counts **periods only** — a stretch occupied by a block owned by nobody
-(OmniApp's scheduled sleep) is *not* stepped over, in either implementation. Consequence for OmniApp:
-the app's only all-refusing periods are the closed heads of screen breaks (20 s / 1 min), so the
-schedulable-time correction there is currently sub-minute. The *replay* is not inert at all — it is
+(OmniApp's scheduled sleep) is *not* stepped over, in either implementation.
+
+Consequence for OmniApp, and it grew with the resilience model: every `no task allowed` period is now
+all-refusing, and all three screen breaks are that kind **end to end** (ADR 0003), as are inactivity
+periods and hand-drawn grey. So the correction is worth minutes per hour rather than the sub-minute it
+was worth when only a pose's closed head refused everybody. The *replay* is not inert either — it is
 what caps what a long past block buys.
 
 Test: `SchedulerPlanTest.the_clock_replay_window_is_measured_in_schedulable_time_not_wall_time`.
@@ -182,9 +185,15 @@ of the test-12/13 break grid.
 
 ## 3. The influence field (`tau`) — how deprivation is compensated
 
-A fixed block owned by ANOTHER task and a period that does not accept a task are **the same event** —
-an *exclusion* — and are reduced to one object (`SchedulerPlanner.exclusionsOf` / `Scheduler._sources`;
+A fixed block owned by ANOTHER task and a period that scales a task's share down are **the same event** —
+a *deprivation* — and are reduced to one object (`SchedulerPlanner.deprivationsOf` / `Scheduler._sources`;
 touching/overlapping ones merge, so ten short bans in a row are one long ban).
+
+**It is fractional, because a resilience is** (§4). What a stretch costs a task is
+`Σ (1 − mult)·length`, where `mult` is its multiplier there: a resilience of `0.4` deprives it of `0.6`
+of its share, and buys `0.6` of the compensation a flat refusal would. A binary reading would be two
+mistakes at once — a `0.4` either bought a full refusal's compensation or bought nothing, and the
+README's own sentence ("a multiplier on the priority percentage") has no such cliff in it.
 
 It is computed **per INSTANT, not per period**: edges are cut first and what an instant refuses is the
 UNION of everything covering it — the only reading under which overlapping periods mean anything.
@@ -232,9 +241,12 @@ credit cap wins — it is the load-bearing half. Test:
 
 ### What creates NO field
 
-- An interval that excludes **everybody** (a block owned by nobody, a window allowing nothing) —
-  no relative distortion.
-- An exclusion **shorter than the deprived task's own minimum** — it cannot have cost that task a
+- An interval that deprives **everybody** — a block owned by nobody, a period nobody is resilient to.
+  Nobody is served there, so nobody is deprived *relative to* anybody, and a wait no rival profits from
+  is a pure delay the virtual clock already repays exactly. (This is why a look-away recurring every
+  20 min forever does not distort the plan around each occurrence, and it is now the answer for the
+  poses too, which used to have an accepting tail that did distort.)
+- A deprivation **shorter than the deprived task's own minimum** — it cannot have cost that task a
   slot, only delayed it, and a delay is already repaid exactly by the virtual clock the moment the ban
   lifts. Compensating it here would pay the same debt twice and leave a 20-s ban swelling its
   neighbours forever after
@@ -242,64 +254,101 @@ credit cap wins — it is the load-bearing half. Test:
 
 `tau` defaults to the minimal period `max(mᵢ/pᵢ)`; there is no separate half-life constant any more.
 
-## 4. OmniApp's mapping onto the reference
+## 4. OmniApp's mapping onto the reference: resilience is the whole of it
 
 **Pre-placed blocks** = pinned/manual panels ahead of `now` + the kept head on an extension + the
 already-served past.
 
-**Periods** = the §9 screen zones and the §15 screen breaks. **Nothing reaches the scheduler any other
-way.**
+**Restrictive periods** = every panel `TaskPanel.restrictiveKind` names one for. **Nothing reaches the
+scheduler any other way.**
 
-| Region | Accepts |
+### A period is a start, an end and a KIND; a task has a resilience to each kind
+
+`side-dev/README.md` § *Restrictive Period*. A resilience is a **multiplier in `[0, 1]` on the task's
+priority percentage for as long as a period of that kind lasts**: `0` forbids it there, `1` leaves it
+untouched, anything between scales its share. Overlapping periods **multiply**, so the strictest still
+forbids and the model needs no precedence rule.
+
+`PeriodKinds` is the one reading of a resilience map, and the app carries **two built-in kinds**:
+
+| Kind | Default resilience | What it is |
+| --- | --- | --- |
+| `no task allowed` | **0** | the kind that, by its name, accepts nobody: sleep windows, inactivity periods, hand-drawn grey, and all three screen breaks end to end |
+| `no on-screen task` | 1 | the §9 screen zone: a no-screen period, and the gap mode 2 covers behind the now-line |
+| anything the user defines | 1 | `SchedulerState.periodKinds`, defined in the task edit window |
+
+**`Task.resilience` holds OVERRIDES ONLY**, and that single decision carries two of the README's
+sentences:
+
+- **A kind the user has just defined restricts nobody.** "A new period gives the default resilience 1
+  to every task" is not a migration that stamps a `1` onto every task — it is the *absence* of an
+  override, so defining a kind writes nothing to any task at all and removing one takes only the
+  overrides that named it.
+- **"On screen" is not a flag.** It is exactly a `0` against `no on-screen task`, read through the
+  derived `Task.onScreen`. `Task.DEFAULT_RESILIENCE` (a task the user has just created is on screen) is
+  a default for a **task**; `PeriodKinds.defaultResilience` is a default for a **kind**. They are
+  different questions, and the clipboard writes the difference between the two (ADR 0012).
+
+### What this replaced
+
+| Was | Is |
 | --- | --- |
-| Grey (inactivity) period — hand-added panel or §17 sleep window (`blockedRegions`) | nobody |
-| No-screen period | only tasks needing no screen |
-| Everywhere else | only tasks that need a screen |
-| 20-s look-away (`Closed`) | nobody, end to end |
-| 5-min pose (`ClosedMinuteThenBreakDoable`) | closed first minute, then `!onScreen && doableDuringBreak` |
-| 15-min pose (`OffScreenOnly`) | every `!onScreen` task, from its first second |
+| grey period: accepts nobody | a period of kind `no task allowed` |
+| no-screen period: only tasks needing no screen | a period of kind `no on-screen task`, which multiplies an on-screen task by its `0` |
+| everywhere else: only tasks that need a screen | **nothing** — a task no period covers is unaffected |
+| 20-s look-away: nobody, end to end | `no task allowed`, end to end |
+| 5-min pose: a closed minute, then `!onScreen && doableDuringBreak` | `no task allowed`, end to end |
+| 15-min pose: every `!onScreen` task from its first second | `no task allowed`, end to end |
 
-The three screen-break shapes are `side-dev` **test 11**'s periods. Each break declares which it is
-via `ScreenBreak.shape` (a `ScreenBreakPeriod`).
+Three retirements are worth naming, because each was a rule and is now a consequence:
 
-- The 5-min pose's closed head is `SCREEN_BREAK_CLOSED_HEAD_MILLIS`, clamped to the break's own length
-  so a debug-retimed break is closed end to end.
-- `doableDuringBreak` *implies* `!onScreen` (enforced in `SchedulerReducer.applySetTaskScreenFlags`,
-  offered in the edit window only while "On screen" is off, healed on decode).
-- The 15-min pose has **no** closed head and **no** break-doable gate (2026-08-09 spec: "a 15 minute
-  period that only allows tasks that don't need screen").
-- **Do not re-unify the two poses.** They are deliberately different shapes, and `doableDuringBreak`
-  now means *short*-break work only.
+1. **`ScreenBreakPeriod` and `screenBreakOpenStartMillis` are gone.** A break has no *shape* to read any
+   more (ADR 0003), so the calendar no longer draws a solid head and a hollow tail — there is one span
+   of one kind. A task works through a break exactly when it has been given a non-zero resilience to
+   `no task allowed`, which is the same sentence and the same code path as any other kind.
+2. **`doableDuringBreak` is gone**, with nothing left for it to gate.
+3. **An off-screen task is no longer CONFINED to no-screen periods.** A period can only multiply what it
+   covers and says nothing about the timeline it does not, so "only tasks that need a screen may run
+   everywhere else" is not expressible in this model — and it should not be: the README describes where
+   a task is *restricted*, never where it is *required*. This is a real behaviour change and the one the
+   user is most likely to notice.
 
-**Both readings of a shape go through one function**, `SchedulerDomain.screenBreakOpenStartMillis` —
-where the closed head ends and the open period begins — because the calendar draws it too. The closed
-part of a band is solid (a stop); the OPEN part is drawn **hollow** (a tinted outline the work beneath
-shows through), so a 15-min pose is hollow end to end and a 5-min pose is one solid minute then four
-hollow ones. A solid band over a period the scheduler is filling was the bug that motivated it.
-(`CalendarRecord.screenBreakOpenFromMillis` → `PlacedRecord.screenBreakOpenFromHour` →
-`ScreenBreakSegment`; tests `ScreenBreakHollowTest`.)
+### How a multiplier reaches the walk
 
-The shape is a constructor default derived from `restBreak` for an ad-hoc/test break, and `copy()`
-does not re-evaluate defaults, so the debug fast-break knobs (which only retime) can never move one.
+Three functions, and the split between them is the model:
 
-Consequences worth knowing:
+- **`weightsAt(blocks, windows, millis)`** — every task's percentage **after** resilience at that
+  instant: `share × Π multiplier` over every window covering it. Blocks are folded in here too (inside a
+  pre-placed block, only its own task has a weight).
+- **`localSharesOf(weights, candidates)`** — those weights renormalized over whoever may actually run,
+  which is what the race is decided on.
+- **`serveWeighted(id, duration, weight)`** — service charged against the **effective** weight, the
+  reference's `v += served / w[name]`.
+
+The third is what makes a multiplier mean what the README says. Charged against the *nominal* share, a
+resilience of `0.5` would produce the same alternation one boundary later rather than half the
+percentage for as long as the period lasts. For the same reason the **steady cycle inherits the
+effective shares** of the window it is attached to (`periodOf` / `steadyCycle` / `coarseCycle` all take
+them as a parameter): built on the nominal ones, a standing period halving one side still answered a
+flat 50/50.
+
+`PlanWindow` carries `multipliers` (per task) plus a **`defaultMultiplier`** for everybody it does not
+name. That is what lets a kind-built window say "I turn nobody away by default" without a roster of
+every task in the account, and it is also how the reference's binary form is expressed —
+`PlanWindow.accepting(...)` is a `defaultMultiplier` of `0` with the accepted set at `1`.
+
+### Consequences worth knowing
 
 - A gap too short for any minimum is left **empty** (or absorbed by the previous slot, the reference's
-  `free_tail`) rather than filled with a sub-minimum sliver — PRD §10 says a panel can never be
-  shorter than its minimum.
-- A period accepting nobody excludes everyone equally and so creates **no field**, which is exactly
-  why a look-away recurring every 20 min forever does not distort the plan around each occurrence. (A
-  pose's open tail does, and should.)
-- A screen break — like every grey period (`suspendRegions` / `suspendStarts`) — is a boundary that
-  does NOT count against "does the minimum fit?", because PRD §15 (and §17 for sleep, in the same
-  words) suspends the chunk and resumes it on the far side. Load-bearing: without it the 20-min
-  look-away cadence would make the default 45-min minimum permanently unschedulable.
-
-For the **closed** parts that is the reference's own rule — `_fits_from` steps over every interval
-belonging to NOBODY. What `fillSchedule` still does differently is step over a pose's **open tail** as
-well, which belongs to somebody: the reference would refuse to start a run that cannot finish before
-the tail's own tasks come back (`_clears`), whereas PRD §15 wants the on-screen chunk suspended and the
-tail filled by the off-screen tasks. Same deliberate split as the atomic block (§6).
+  `free_tail`) rather than filled with a sub-minimum sliver — PRD §10 says a panel can never be shorter
+  than its minimum.
+- A period that refuses everybody deprives everyone equally and so creates **no field** (§3).
+- A dynamic period — like every grey period (`suspendRegions` / `suspendStarts`) — is a boundary that
+  does NOT count against "does the minimum fit?", because PRD §15 (and §17 for sleep, in the same words)
+  suspends the chunk and resumes it on the far side. Load-bearing: without it the 20-min look-away
+  cadence would make the default 45-min minimum permanently unschedulable. That is the reference's own
+  rule for a period belonging to NOBODY (`_fits_from`), which all three breaks now are — so the
+  divergence §6 used to record here has narrowed to the suspension itself.
 
 ## 5. A window bounds only the tasks it turns away
 
@@ -333,9 +382,12 @@ The cycle is attached in the phase the walk would have gone on with (`phaseCycle
 and `fillSchedule`'s phase 2), because a cycle built from a blank slate always opens with the same
 task and opening there after a prefix that starved another one hands the first task two slots in a row.
 
-In `fillSchedule` these collapse to what the driver already did — OmniApp's periods partition the
-timeline into complementary accepted sets, so every boundary turns away everyone — except at a screen
-break, where the PRD §15 suspend/resume exception applies.
+In `fillSchedule` these no longer collapse to anything simpler, and that is the resilience model's
+doing: a period used to partition the timeline into complementary accepted sets (on-screen here,
+off-screen there), so every boundary turned everybody away and "the next change" and "the next instant
+this task is refused" were the same instant. A period that merely *scales* a share turns nobody away at
+all, so the two questions have genuinely come apart and both are asked. The PRD §15 suspend/resume
+exception still applies on top, at a dynamic period.
 
 Ported 2026-08-05 with the reference's own rewrite and brought back in step 2026-08-20.
 `SchedulerPlanTest` replays all ten reference cases against it — including **test 9b**, two OVERLAPPING
@@ -356,13 +408,36 @@ to run in; a pre-placed block is **walked edge by edge** — where a period refu
 the block is suspended and resumes on the far side instead of running through it (`side-dev` commit
 `48a8a69`; `a_pre_placed_block_is_suspended_where_a_period_refuses_its_own_task`).
 
-**`fillSchedule` does NOT adopt the pending rule, and that is not drift.** PRD §15/§9 say a screen
-break suspends the crossing chunk *while still letting the break's own accepted set fill it*, and a
-no-screen period is for the off-screen tasks even when an on-screen chunk was mid-minimum. Applying
-the atomic block there would leave every break and every no-screen zone permanently empty.
+### Where `plan()` and `fillSchedule` still differ, and where they no longer do
 
 `plan()` is the reference-conformance surface (nothing outside the tests calls it); `fillSchedule` is
-the app. **Keep them in step everywhere else.**
+the app. **Keep them in step everywhere else.** The complete list of sanctioned differences:
+
+1. **Zero-priority tasks stay last-resort candidates** (`permittedAt` / `candidatesAt`). The reference
+   raises when nothing has a positive priority; the app must still fill the calendar for an all-zero
+   tree, and a period may legitimately accept *only* a zero-priority task.
+2. **`Fraction` → `Double` millis.** The reference keeps exact rationals; KMP has no rational type, so
+   every equality in the port is an epsilon comparison (`CHUNK_EPSILON_MILLIS`).
+3. **`fillSchedule` keeps its own suspension rule for the app's dynamic periods** — a chunk suspends
+   across a break and resumes with its minimum intact, where the reference simply cuts a chunk at the
+   next environment edge. That is PRD §15, and it is the one place the driver is deliberately not the
+   walk.
+
+Item 3 is what the **atomic block** divergence has narrowed to. It used to be stated the other way
+round — "`fillSchedule` does not adopt the pending rule, because PRD §15/§9 want the break's own
+accepted set to fill a period an on-screen chunk is suspended across, and the atomic block would leave
+every break and every no-screen zone permanently empty". Half of that reasoning is gone with the shapes:
+a break no longer *has* an accepted set to fill it with, so "the period is scheduled with nothing" is
+simply the right answer there. What remains is the chunk's own minimum. `fillSchedule` keeps a `pending`
+of its own — the task whose chunk a dynamic period interrupted, and what it still owes — so it resumes
+on the far side instead of being re-picked mid-chunk, where the reference would have ended the run at
+that edge.
+
+The rule the two now share, and which the resilience model is what made shareable: **who may run in a
+period is its kind and the task's resilience to it, and nothing else.** `fillSchedule` used to exclude
+the suspended task from its own break — sensible while a break's accepted set was a shape the task was
+in for the wrong reason ("off-screen work only"), and wrong now that being in it at all *means* the user
+gave that task a non-zero resilience to `no task allowed`.
 
 ## 7. The resume contract
 
@@ -405,37 +480,40 @@ period slides continuously the rule list becomes `[(range of positions, prefix r
 with each duration *affine* in the position, so a display can follow the period in real time without
 re-scheduling.
 
-OmniApp's sliding period is always a **screen break, pinned to the plan's own origin** (the now-line —
-a break slides precisely because it is owed *now*), which is that construction's simplest regime: the
-disturbed slot is the one the cursor is in and nothing else changes shape.
+OmniApp's case was always that construction's simplest regime: one screen break sitting on the now-line, so
+the disturbed slot is the one the cursor is in and nothing else changes shape. (It was literally a *sliding*
+period until 2026-08-28, because an owed break was pinned to the now-line; the recurrence bars fix every
+break's start now, so what remains is the drift of the now-line across a plan the last fill materialized.)
 
 So the app needs no affine machinery, only `SchedulerDomain.clipPlanForPinnedScreenBreak` — a
 **display** transform in `App.kt` that cuts the regenerable panels out of what a break covering the
-now-line **refuses** (its closed head, plus its open period for a task that period does not accept),
-keeping a straddling panel's elapsed head and resuming it past the refusal.
+now-line **refuses**, keeping a straddling panel's elapsed head and resuming it past the refusal.
 
 That is what keeps "a period that accepts no task" true *between* fills, since the fill itself runs
 only on a rule change and the marker drifts over it as `now` advances. **"Refuses", not "covers", is
-the load-bearing word:** only the look-away accepts nobody, so cutting a pose's OPEN period as well
-would state on screen that the scheduler may not use a period it is in fact filling.
+still the load-bearing word**, though the resilience model has simplified what it asks: the question is
+now just "is this task's multiplier zero inside this band?" (`periodAccepts`), where it used to be a
+per-shape reading of a closed head and an open tail. A task with a non-zero resilience to
+`no task allowed` keeps its panel through a break, and cutting it would state on screen that the
+scheduler may not use a period it is in fact filling.
 
-Called with no break config (tests) every break reads as closed end to end — the conservative
-pre-existing answer. Pinned/manual blocks and chores are pre-placed blocks in the reference's sense and
-are never cut.
+Pinned/manual blocks and chores are pre-placed blocks in the reference's sense and are never cut.
 
 **Do not read the absence of the reference's dynamic rule list from `SchedulerPlan.kt` as the port being out of date, and
 do NOT answer a sliding period by re-planning per tick.**
 
-Both breaks' period shapes are pinned against the reference in `SchedulerPlanTest`
-(`a_20s_look_away_at_the_now_line_is_a_period_that_accepts_no_task`,
-`a_5min_pose_at_the_now_line_is_a_closed_first_minute_then_an_off_screen_only_tail`).
+**Nothing slides any more** (ADR 0003): the recurrence bars pin every break to a fixed instant, so the
+clip's remaining job is the drift *between* fills rather than a period that moves with the now-line. The
+cue keys on the drawn start for the same reason.
 
 ## 9. When the plan is recomputed
 
 ### The trigger
 
 `SchedulerDomain.schedulingSignature(state)` is *everything the plan is a function of except `now`* —
-tree/priorities/minima/screen flags, non-regenerated panels, sleep, screen breaks, the §7 switch.
+tree/priorities/minima/**resilience maps**, non-regenerated panels and their kinds, sleep, screen
+breaks, the §7 switch. (The resilience map is hashed whole: it replaced the two screen booleans, and a
+period kind the user defines changes no task's map, so defining one correctly re-plans nothing.)
 
 `SchedulerEngine.launchRuleChangeReschedule` watches it, debounced 1 s
 (`RESCHEDULE_DEBOUNCE_MILLIS`), and is the only *rule-watching* dispatcher of `RefreshSchedule`. A
@@ -488,4 +566,4 @@ inside its own reducer.
 
 Removed with this: the per-tick `screenBreakDue → RefreshSchedule` in `dispatchScheduleAdvance` (it
 churned the whole plan continuously while the user was away — `App.kt` projects the break markers for
-display itself, and the cue sweep keys on the poses' fixed dues).
+display itself, and the cue sweep keys on the **placed** period starts, which the recurrence bars fix).

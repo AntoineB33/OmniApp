@@ -2,6 +2,7 @@ package org.example.project.scheduler.state
 
 import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.RelativePriorityDomain
+import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
@@ -46,12 +47,11 @@ object SchedulerReducer {
     /**
      * The device's live ongoing/held pause ([SchedulerDomain.liveRestGap]), folded into screen-break
      * placement by every [SchedulerDomain.fillSchedule] call site via
-     * [SchedulerDomain.screenBreaksForPlacement] — so the projected screen-break grid moves with a pause the
-     * derives haven't banked yet instead of letting the now-line cross a stale slot (spurious cue) or
-     * freezing every occurrence downstream of a not-yet-served pose. The engine injects a live provider
-     * over its inactiveSince/activeSince flows; defaults to `{ null }` (production shells without an
-     * engine / tests) = no overlay. Placement-only: the stored
-     * [org.example.project.scheduler.model.ScreenBreak.lastRestMillis] is never advanced here.
+     * [SchedulerDomain.liveRestPeriod] — so the placed screen-break grid moves with a pause the
+     * derives haven't banked yet instead of letting the now-line cross a stale slot (spurious cue). The
+     * engine injects a live provider over its inactiveSince/activeSince flows; defaults to `{ null }`
+     * (production shells without an engine / tests) = no live period. Nothing is stored: the screen-break
+     * configuration is never written here, and the pause reaches the bars as the period it is.
      */
     var liveRestGap: () -> SchedulerDomain.LiveRest? = { null }
 
@@ -140,15 +140,26 @@ object SchedulerReducer {
             }
             is SchedulerIntent.SetTaskMinimumTime ->
                 commitDelta(state, priorityTreeDelta(state, "Minimum time") { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
-            is SchedulerIntent.SetTaskScreenFlags -> {
-                // PRD §8/§15 invariant: a task doable during a screen break must also need no screen, so
-                // turning "On screen" back on clears the break flag rather than storing the impossible pair.
-                val breakDoable = intent.doableDuringBreak && !intent.onScreen
-                // Unchanged flags are a no-op — no empty "Screen flags" history unit.
+            is SchedulerIntent.SetTaskResilience -> {
+                // Unchanged resilience is a no-op — no empty history unit for a slider put back where it was.
                 val task = state.tasks[intent.taskId]
-                if (task == null || (task.onScreen == intent.onScreen && task.doableDuringBreak == breakDoable)) state
-                else commitDelta(state, priorityTreeDelta(state, "Screen flags") { applySetTaskScreenFlags(it, intent.taskId, intent.onScreen, breakDoable) })
+                val kind = PeriodKinds.normalize(intent.kind)
+                if (task == null || kind.isEmpty() ||
+                    task.resilienceFor(kind) == PeriodKinds.clamp(intent.value)
+                ) {
+                    state
+                } else {
+                    commitDelta(
+                        state,
+                        priorityTreeDelta(state, "Resilience") {
+                            applySetTaskResilience(it, intent.taskId, kind, intent.value)
+                        },
+                    )
+                }
             }
+            is SchedulerIntent.RecordConductedBreak -> reduceRecordConductedBreak(state, intent)
+            is SchedulerIntent.AddPeriodKind -> reduceAddPeriodKind(state, intent.kind)
+            is SchedulerIntent.RemovePeriodKind -> reduceRemovePeriodKind(state, intent.kind)
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state, "Schedule unit") { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.SetTaskText ->
@@ -1420,6 +1431,7 @@ object SchedulerReducer {
                 startEpochMillis = intent.startEpochMillis,
                 endEpochMillis = end,
                 noScreen = true,
+                periodKind = PeriodKinds.NO_SCREEN,
             )
         val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
         return stripRecordsUnderPeriod(commitPanels(resolved, resolvedPanels, label = "Add no-screen period"), panel)
@@ -1446,6 +1458,7 @@ object SchedulerReducer {
                 startEpochMillis = intent.startEpochMillis,
                 endEpochMillis = end,
                 inactivity = true,
+                periodKind = PeriodKinds.NO_TASK,
             )
         val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
         return stripRecordsUnderPeriod(
@@ -2289,7 +2302,7 @@ private fun pasteNodeInto(
             tasks = working.tasks + (
                 taskId to t.copy(
                     minimumMinutes = node.minMinutes?.coerceAtLeast(0) ?: t.minimumMinutes,
-                    onScreen = !node.noScreenDoable,
+                    resilience = node.resilience,
                     scheduleUnit = node.scheduleUnit,
                     text = node.text,
                 )
@@ -2832,6 +2845,7 @@ private fun materializePastInactivity(
                 startEpochMillis = piece.startEpochMillis,
                 endEpochMillis = piece.endEpochMillis,
                 inactivity = true,
+                periodKind = PeriodKinds.NO_TASK,
             )
     }
     return out.copy(panels = out.panels + added)
@@ -2856,9 +2870,8 @@ private fun appendRecordMap(
  * dropped so the wake-time [reduceRefreshSchedule] starts a fresh schedule after the sleep. Pinned and
  * user-authored panels are untouched.
  *
- * PRD §15: a device sleep is the user taking a pause — it counts as taking every screen break whose duration
- * it covers (a long sleep satisfies the shorter pauses too), recording [sleepEnd] as their last rest so the
- * next occurrence of each is scheduled an interval later.
+ * PRD §15: a device sleep is the user taking a pause, and that is all it has to be — the recurrence bars read
+ * the rest stretch straight off the timeline, so nothing is recorded into the screen-break configuration.
  */
 private fun reduceReportDeviceSleep(
     state: SchedulerState,
@@ -2866,20 +2879,7 @@ private fun reduceReportDeviceSleep(
     sleepEnd: Long,
     noScreenEvidence: List<TaskTimeRange>,
 ): SchedulerState {
-    val sleepLength = sleepEnd - sleepStart
-    // §15: a device sleep counts as taking every screen break whose duration it covers (a long sleep satisfies
-    // the shorter pauses too), so record [sleepEnd] as their last rest — scheduling the next one an interval on.
-    val restedScreenBreaks =
-        state.screenBreaks.map { side ->
-            if (side.qualifyingPauseMillis in 1..sleepLength && side.lastRestMillis < sleepEnd) {
-                side.copy(lastRestMillis = sleepEnd)
-            } else {
-                side
-            }
-        }
-    val base =
-        if (restedScreenBreaks == state.screenBreaks) state
-        else state.copy(screenBreaks = restedScreenBreaks)
+    val base = state
     val current =
         base.panels.firstOrNull {
             it.auto && !it.pinned &&
@@ -2906,18 +2906,97 @@ private fun applySetTaskMinimumTime(
     return state.copy(tasks = state.tasks + (taskId to task.copy(minimumMinutes = clamped)))
 }
 
-private fun applySetTaskScreenFlags(
+/**
+ * `side-dev/README.md` § *Restrictive Period*: set [taskId]'s resilience to [kind]. The value is clamped into
+ * `[0, 1]` and an override equal to the kind's own default is REMOVED rather than written
+ * ([Task.withResilience]) — so an untouched kind stays absent and a task never carries a value the rules
+ * would refuse.
+ */
+private fun applySetTaskResilience(
     state: SchedulerState,
     taskId: TaskId,
-    onScreen: Boolean,
-    doableDuringBreak: Boolean,
+    kind: String,
+    value: Double,
 ): SchedulerState {
     val task = state.tasks[taskId] ?: return state
-    // PRD §8/§15 invariant: doable-during-a-screen-break implies not-on-screen. Re-applied here (and not
-    // only at the intent) because this is what the Undo/Redo delta replays.
-    val breakDoable = doableDuringBreak && !onScreen
-    if (task.onScreen == onScreen && task.doableDuringBreak == breakDoable) return state
-    return state.copy(tasks = state.tasks + (taskId to task.copy(onScreen = onScreen, doableDuringBreak = breakDoable)))
+    val normalized = PeriodKinds.normalize(kind)
+    if (normalized.isEmpty()) return state
+    val next = task.withResilience(normalized, value)
+    if (next == task) return state
+    return state.copy(tasks = state.tasks + (taskId to next))
+}
+
+/**
+ * PRD §15: record a dynamic period the app CONDUCTED, exactly where it happened.
+ *
+ * It is a period of [PeriodKinds.NO_TASK] like any other, so the recurrence bars read it as the rest stretch
+ * it is and bar what follows by the ordinary rule — no anchor, no cadence arithmetic, no special case. Its
+ * exact span is kept (a 20-second look-away is 20 seconds, not the minute a hand-drawn entry is rounded up
+ * to): this is a recorded fact, not something the user is drawing.
+ *
+ * Outside the Undo/Redo history, like every write to the record; idempotent, so a replayed dispatch cannot
+ * stack two periods over one break.
+ */
+private fun reduceRecordConductedBreak(
+    state: SchedulerState,
+    intent: SchedulerIntent.RecordConductedBreak,
+): SchedulerState {
+    if (intent.endEpochMillis <= intent.startEpochMillis) return state
+    val already =
+        state.panels.any {
+            it.inactivity &&
+                it.startEpochMillis == intent.startEpochMillis &&
+                it.endEpochMillis == intent.endEpochMillis
+        }
+    if (already) return state
+    val (panelId, allocated) = state.allocatePanelId()
+    return allocated.copy(
+        panels = allocated.panels + TaskPanel(
+            id = panelId,
+            taskId = null,
+            title = intent.title,
+            startEpochMillis = intent.startEpochMillis,
+            endEpochMillis = intent.endEpochMillis,
+            inactivity = true,
+            periodKind = PeriodKinds.NO_TASK,
+        ),
+    )
+}
+
+/**
+ * `side-dev/README.md`: **the user defines a new kind of restrictive period.** Adding one is deliberately
+ * cheap and total — a kind no task was ever told about gives *every* task the default resilience `1`
+ * ([PeriodKinds.defaultResilience]), so nothing is written to a single task here and the new kind restricts
+ * nobody until somebody is given a value below one. That is why the account holds only the LIST of kinds.
+ *
+ * Authoritative + synced, and **not** an Undo/Redo unit — the same shape as the account's other settings
+ * (`deepCopyMaxDepth`, the copy options). What *is* undoable is the resilience a task is then given, which
+ * is an ordinary tree edit; defining the kind changes no schedule on its own, so there is nothing for Ctrl+Z
+ * to put back. The two built-in kinds are always present and are never added to the list.
+ */
+private fun reduceAddPeriodKind(state: SchedulerState, kindRaw: String): SchedulerState {
+    val kind = PeriodKinds.normalize(kindRaw)
+    if (!PeriodKinds.isUserDefined(kind)) return state
+    if (state.periodKinds.any { it.equals(kind, ignoreCase = true) }) return state
+    return state.copy(periodKinds = state.periodKinds + kind)
+}
+
+/**
+ * Remove a user-defined kind. Every task's override for it goes with it — a resilience to a kind that no
+ * longer exists is unreachable state, and leaving it behind would silently resurrect the old value if the
+ * kind were ever re-added under the same name. A panel laid with that kind loses its restriction with it,
+ * rather than becoming a period of a kind nothing can be resilient to. The two built-in kinds cannot be
+ * removed.
+ */
+private fun reduceRemovePeriodKind(state: SchedulerState, kindRaw: String): SchedulerState {
+    val kind = PeriodKinds.normalize(kindRaw)
+    if (!PeriodKinds.isUserDefined(kind)) return state
+    if (state.periodKinds.none { it == kind }) return state
+    return state.copy(
+        periodKinds = state.periodKinds.filterNot { it == kind },
+        tasks = state.tasks.mapValues { (_, t) -> if (kind in t.resilience) t.copy(resilience = t.resilience - kind) else t },
+        panels = state.panels.filterNot { it.periodKind == kind },
+    )
 }
 
 private fun applySetScheduleUnit(
@@ -3272,8 +3351,7 @@ private fun applyDefaultSubtreeTemplate(
                                 newTaskId to
                                     placed.copy(
                                         minimumMinutes = templateTask.minimumMinutes,
-                                        onScreen = templateTask.onScreen,
-                                        doableDuringBreak = templateTask.doableDuringBreak,
+                                        resilience = templateTask.resilience,
                                         scheduleUnit = templateTask.scheduleUnit,
                                         text = templateTask.text,
                                     )

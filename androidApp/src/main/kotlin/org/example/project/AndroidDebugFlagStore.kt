@@ -13,7 +13,7 @@ import android.content.pm.ApplicationInfo
  * `BootReceiver` → [SchedulerService] → [SchedulerHolder.ensure], and so do the FCM / alarm receivers. Without
  * this store such a start rebuilt the screen breaks at their PRODUCTION timings while the account's
  * server-side `break_config.length_ms` was still the shrunk one the deploy script upserted, so the phone
- * published production due instants (`lastRest + 1 h`) against a 5-second server cue — the two halves of the
+ * published production due instants (an hour out) against a 5-second server cue — the two halves of the
  * 5-min break disagreeing. Persisting the overrides keeps a fast-break deploy in force until the next deploy
  * says otherwise.
  *
@@ -26,11 +26,9 @@ object AndroidDebugFlagStore {
 
     private const val KEY_DURATION = "break_duration_ms"
     private const val KEY_INTERVAL = "break_interval_ms"
-    private const val KEY_PAUSE_THRESHOLD = "break_pause_threshold_ms"
 
     private const val EXTRA_DURATION = "omniapp_break_duration_ms"
     private const val EXTRA_INTERVAL = "omniapp_break_interval_ms"
-    private const val EXTRA_PAUSE_THRESHOLD = "omniapp_break_pause_threshold_ms"
 
     /** The deploy scripts always pass the login extras — their presence is what marks a script launch. */
     private const val EXTRA_LOGIN_USER = "omniapp_login_user"
@@ -50,20 +48,17 @@ object AndroidDebugFlagStore {
         if (!isDebuggable(context)) return
         val duration = intent.longExtra(EXTRA_DURATION)
         val interval = intent.longExtra(EXTRA_INTERVAL)
-        val pauseThreshold = intent.longExtra(EXTRA_PAUSE_THRESHOLD)
-        val carriesBreakExtras = duration != null || interval != null || pauseThreshold != null
+        val carriesBreakExtras = duration != null || interval != null
         val isDeployLaunch = !intent?.getStringExtra(EXTRA_LOGIN_USER).isNullOrBlank()
         if (!carriesBreakExtras && !isDeployLaunch) return
 
         context.prefs().edit().apply {
             putOrRemove(KEY_DURATION, duration)
             putOrRemove(KEY_INTERVAL, interval)
-            putOrRemove(KEY_PAUSE_THRESHOLD, pauseThreshold)
         }.apply()
 
         DebugFlags.breakDurationMillisOverride = duration
         DebugFlags.breakIntervalMillisOverride = interval
-        DebugFlags.breakPauseThresholdMillisOverride = pauseThreshold
     }
 
     /**
@@ -80,7 +75,6 @@ object AndroidDebugFlagStore {
         val prefs = context.prefs()
         DebugFlags.breakDurationMillisOverride = prefs.longOrNull(KEY_DURATION)
         DebugFlags.breakIntervalMillisOverride = prefs.longOrNull(KEY_INTERVAL)
-        DebugFlags.breakPauseThresholdMillisOverride = prefs.longOrNull(KEY_PAUSE_THRESHOLD)
     }
 
     private fun Context.prefs() = applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

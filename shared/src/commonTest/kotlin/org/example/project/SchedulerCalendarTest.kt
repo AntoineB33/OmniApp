@@ -813,9 +813,11 @@ class SchedulerCalendarTest {
     }
 
     @Test
-    fun a_device_sleep_counts_as_taking_every_screen_break_it_covers() {
-        // PRD §15: a device sleep is the user resting — it satisfies every screen break whose duration it
-        // covers (a long sleep clears the shorter pauses too), recording the wake as their last rest.
+    fun a_device_sleep_writes_nothing_into_the_screen_break_configuration() {
+        // PRD §15: a device sleep is the user resting — and under `side-dev/README.md` that is ALL it is. The
+        // recurrence bars read the rest stretch straight off the timeline wherever a placement is asked for,
+        // so the reducer has nothing to record. It used to stamp the wake instant as every covered break's
+        // "last rest" and re-derive the grid from there; that anchor is gone (ADR 0003).
         val (s0, _, _) = stateWithTwoTasks()
         val sides = listOf(
             org.example.project.scheduler.model.ScreenBreak("5min", 60 * MIN, 5 * MIN, restBreak = true),
@@ -824,22 +826,18 @@ class SchedulerCalendarTest {
         val start = 1_000_000_000_000L
         val s = s0.copy(screenBreaks = sides)
 
-        // A 10-min sleep covers the 5-min pause but not the 15-min one.
         val short = SchedulerReducer.reduce(s, SchedulerIntent.ReportDeviceSleep(start, start + 10 * MIN))
-        assertEquals(start + 10 * MIN, short.screenBreaks[0].lastRestMillis) // 5-min pause satisfied
-        assertEquals(0L, short.screenBreaks[1].lastRestMillis) // 15-min pause not (sleep too short)
-
-        // A 20-min sleep covers both.
+        assertEquals(sides, short.screenBreaks)
         val long = SchedulerReducer.reduce(s, SchedulerIntent.ReportDeviceSleep(start, start + 20 * MIN))
-        assertEquals(start + 20 * MIN, long.screenBreaks[0].lastRestMillis)
-        assertEquals(start + 20 * MIN, long.screenBreaks[1].lastRestMillis)
+        assertEquals(sides, long.screenBreaks)
     }
 
     @Test
-    fun an_overdue_rest_pause_tracks_the_now_line_on_refill_without_overlapping_the_task() {
-        // PRD §15: an overdue rest pause must follow `now` (so an accelerated clock can't strand it) — this
-        // happens on each refill (the §15 keep-up tick refills while a pause is due). Crucially the task is
-        // re-split around the pause's NEW position, so the pause never overlaps the task fill.
+    fun a_dynamic_period_sits_where_the_bars_put_it_and_the_fill_leaves_it_alone() {
+        // `side-dev/README.md`: a dynamic period no longer tracks the now-line — it is placed at a fixed
+        // instant by the recurrence bars, and a refill at a later `now` does not move the ones ahead of it.
+        // What survives from the old rule is the part that mattered: the fill leaves the period a clean
+        // place, so no task panel ever overlaps one.
         val (s0, _, _) = stateWithTwoTasks()
         val start = 1_000_000_000_000L
         val s = s0.copy(
@@ -847,33 +845,28 @@ class SchedulerCalendarTest {
         )
 
         val t1 = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(start))
-        val pause1 = t1.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
-        assertEquals(start, pause1.startEpochMillis)
-        assertEquals(start + 5 * MIN, pause1.endEpochMillis)
+        val first = t1.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
+        assertEquals(5 * MIN, first.endEpochMillis - first.startEpochMillis)
+        assertTrue(first.startEpochMillis >= start, "the period is ahead of the line, not on it")
 
-        // The clock jumps forward 12 min: a refill re-places the pause at the new now and re-splits the task.
+        // A refill twelve minutes later leaves every period the line has not reached exactly where it was.
         val t2 = SchedulerReducer.reduce(t1, SchedulerIntent.RefreshSchedule(start + 12 * MIN))
-        val pause2 = t2.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
-        assertEquals(start + 12 * MIN, pause2.startEpochMillis)
-        assertEquals(start + 17 * MIN, pause2.endEpochMillis)
-        // No task panel overlaps the pause's region — the fill leaves it a clean place (PRD §15).
-        assertTrue(
-            t2.panels.none {
-                !it.screenBreak && it.taskId != null &&
-                    it.startEpochMillis < pause2.endEpochMillis && pause2.startEpochMillis < it.endEpochMillis
-            },
-        )
+        val ahead1 = t1.panels.filter { it.screenBreak && it.startEpochMillis > start + 12 * MIN }
+            .map { it.startEpochMillis }.sorted()
+        val ahead2 = t2.panels.filter { it.screenBreak && it.startEpochMillis > start + 12 * MIN }
+            .map { it.startEpochMillis }.sorted()
+        assertEquals(ahead1, ahead2, "a period the line has not reached does not move when the clock does")
 
-        // Once the user rests it away (recent enough), the next refill shows it ahead at its due time, not at now.
-        val rested = t2.copy(
-            screenBreaks = listOf(
-                org.example.project.scheduler.model.ScreenBreak(
-                    "5min", 60 * MIN, 5 * MIN, restBreak = true, lastRestMillis = start + 12 * MIN,
-                ),
-            ),
-        )
-        val t3 = SchedulerReducer.reduce(rested, SchedulerIntent.RefreshSchedule(start + 13 * MIN))
-        val pause3 = t3.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
-        assertEquals(start + 12 * MIN + 60 * MIN, pause3.startEpochMillis) // lastRest + interval, in the future
+        // And no task panel overlaps one — the fill leaves it a clean place (PRD §15).
+        for (band in t2.panels.filter { it.screenBreak }) {
+            assertTrue(
+                t2.panels.none {
+                    !it.screenBreak && it.taskId != null &&
+                        it.startEpochMillis < band.endEpochMillis && band.startEpochMillis < it.endEpochMillis
+                },
+                "a task panel overlaps the period at ${band.startEpochMillis}",
+            )
+        }
     }
+
 }

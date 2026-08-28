@@ -26,6 +26,7 @@ import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.SleepSchedule
+import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
@@ -211,8 +212,11 @@ object SchedulerStateCodec {
                         record = it.record.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
                         scheduleUnit = it.scheduleUnit.map { e -> PersistedScheduleUnitEntry(e.title, e.spanMinutes) },
                         text = it.text,
+                        // Written for an OLDER build's benefit: it has no `resilience` field, so the derived
+                        // on-screen reading is the only thing that still tells it where the task may run.
                         onScreen = it.onScreen,
-                        doableDuringBreak = it.doableDuringBreak,
+                        doableDuringBreak = false,
+                        resilience = it.resilience,
                     )
                 },
             expanded = expanded.map(CellId::value),
@@ -295,6 +299,8 @@ object SchedulerStateCodec {
             // PRD §7 Keyboard shortcuts: the account's system-wide chord OVERRIDES, sorted by shortcut so
             // one binding table has exactly one encoding (the fingerprint is this payload, byte for byte).
             shortcutBindings = shortcutBindings.toPersistedRows(),
+            // `side-dev/README.md`: the kinds of restrictive period this account has defined.
+            periodKinds = periodKinds,
             focusedWindow = focusedWindow.name,
             histories = histories.toPersisted(),
             sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
@@ -566,8 +572,11 @@ object SchedulerStateCodec {
                         record = it.record.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
                         scheduleUnit = it.scheduleUnit.map { e -> PersistedScheduleUnitEntry(e.title, e.spanMinutes) },
                         text = it.text,
+                        // Written for an OLDER build's benefit: it has no `resilience` field, so the derived
+                        // on-screen reading is the only thing that still tells it where the task may run.
                         onScreen = it.onScreen,
-                        doableDuringBreak = it.doableDuringBreak,
+                        doableDuringBreak = false,
+                        resilience = it.resilience,
                     )
                 },
             nextTaskCounter = nextTaskCounter,
@@ -605,12 +614,7 @@ object SchedulerStateCodec {
                         record = p.record.map { TaskTimeRange(it.start, it.end) },
                         scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
                         text = p.text,
-                        onScreen = p.onScreen,
-                        // PRD §8/§15 invariant: doable-during-a-screen-break implies not-on-screen. A
-                        // payload written before the invariant existed can hold the impossible pair, and a
-                        // stale on-screen break-doable task would be scheduled inside every screen break;
-                        // heal it on load rather than surfacing it (CLAUDE.md persisted-DB rule).
-                        doableDuringBreak = p.doableDuringBreak && !p.onScreen,
+                        resilience = decodeResilience(p),
                     )
             }
         val cells =
@@ -741,6 +745,11 @@ object SchedulerStateCodec {
             // falls back to its default), and so is one the rules would refuse — decode heals what an older
             // or hand-edited payload holds, it never hands the claim a chord the app would not accept.
             shortcutBindings = shortcutBindings.toShortcutBindings(),
+            // A blank or built-in name is not a kind; duplicates collapse. A payload written
+            // before kinds existed decodes to the two built-ins alone, which is right — a kind
+            // nobody defined restricts nobody.
+            periodKinds =
+                periodKinds.map(PeriodKinds::normalize).filter(PeriodKinds::isUserDefined).distinct(),
             focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),
             histories = histories?.toHistories() ?: SchedulerHistories(),
             sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
@@ -886,12 +895,7 @@ object SchedulerStateCodec {
                         record = p.record.map { TaskTimeRange(it.start, it.end) },
                         scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
                         text = p.text,
-                        onScreen = p.onScreen,
-                        // PRD §8/§15 invariant: doable-during-a-screen-break implies not-on-screen. A
-                        // payload written before the invariant existed can hold the impossible pair, and a
-                        // stale on-screen break-doable task would be scheduled inside every screen break;
-                        // heal it on load rather than surfacing it (CLAUDE.md persisted-DB rule).
-                        doableDuringBreak = p.doableDuringBreak && !p.onScreen,
+                        resilience = decodeResilience(p),
                     )
             }
         val cells =
@@ -1007,6 +1011,8 @@ private data class PersistedState(
     // i.e. every chord is the one it ships with — which is what every payload written before the window could
     // rebind anything behaved as.
     val shortcutBindings: List<PersistedShortcutBinding> = emptyList(),
+    // `side-dev/README.md` § Restrictive Period: the account's own period kinds; absent ⇒ none.
+    val periodKinds: List<String> = emptyList(),
     // PRD §7: the focused window; a missing value decodes to the task tree (payloads written before window
     // focus was persisted).
     val focusedWindow: String = "Tree",
@@ -1410,6 +1416,33 @@ private data class PersistedCell(
     val priorityWeights: List<Double> = listOf(1.0),
 )
 
+/**
+ * `side-dev/README.md` § *Restrictive Period*: the task's resilience map as loaded — its own if the payload
+ * has one, else **migrated from the pre-resilience screen switches**.
+ *
+ * The migration is the identity the new model is built on: an on-screen task is exactly one forbidden inside
+ * a "no on-screen task" period, so `onScreen = true` becomes a `0` against [PeriodKinds.NO_SCREEN] and
+ * `onScreen = false` becomes no override at all (the default `1`). `doableDuringBreak` has no image here and
+ * is deliberately dropped: the three dynamic periods are "no task allowed" end to end under the README, so
+ * there is nothing left for the switch to open.
+ *
+ * Values are healed into `[0, 1]` on the way in ([PeriodKinds.clamp]) and an override equal to its kind's own
+ * default is dropped, so a hand-edited or older payload cannot leave a task carrying a resilience the current
+ * invariants forbid.
+ */
+private fun decodeResilience(p: PersistedTask): Map<String, Double> {
+    val raw = p.resilience ?: return if (p.onScreen) mapOf(PeriodKinds.NO_SCREEN to 0.0) else emptyMap()
+    val out = HashMap<String, Double>(raw.size)
+    for ((kindRaw, value) in raw) {
+        val kind = PeriodKinds.normalize(kindRaw)
+        if (kind.isEmpty()) continue
+        val clamped = PeriodKinds.clamp(value)
+        if (clamped == PeriodKinds.defaultResilience(kind)) continue
+        out[kind] = clamped
+    }
+    return out
+}
+
 @Serializable
 private data class PersistedTask(
     val id: String,
@@ -1425,10 +1458,14 @@ private data class PersistedTask(
     val scheduleUnit: List<PersistedScheduleUnitEntry> = emptyList(),
     // PRD §13 Edit window: a missing text document decodes to empty (a task with no notes).
     val text: String = "",
-    // PRD §8 screen switches: payloads written before these fields existed decode to the pre-switch
-    // behaviour — every task on-screen, none doable during a screen break.
+    // PRD §8 screen switches — the PRE-RESILIENCE shape, kept for one reason: a payload written by an older
+    // build carries them and nothing else, and `resilience` below is migrated FROM them on load. Still
+    // written, so an older build reading a newer payload keeps scheduling on-screen tasks correctly.
     val onScreen: Boolean = true,
     val doableDuringBreak: Boolean = false,
+    // `side-dev/README.md` § Restrictive Period: the task's resilience per period KIND, overrides only.
+    // Absent (every payload written before kinds existed) ⇒ migrated from [onScreen] on load.
+    val resilience: Map<String, Double>? = null,
 )
 
 @Serializable

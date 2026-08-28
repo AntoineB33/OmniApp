@@ -92,7 +92,7 @@ class ScheduleHorizonTest {
         // Regression: `fillSchedule` used to project the screen breaks with their own DEFAULT horizon
         // (now + 168h) whatever horizon it was itself filling, so a one-day fill still carried a week of
         // break panels — and a far-week DISPLAY fill stopped its breaks dead at 168h.
-        val breaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS.map { it.copy(lastRestMillis = NOW) }
+        val breaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS
         val s = SchedulerState.empty().copy(screenBreaks = breaks)
         val horizon = NOW + DAY
 
@@ -161,7 +161,7 @@ class ScheduleHorizonTest {
         // Bounding the projection must not move any occurrence — the same breaks land at the same instants,
         // there are simply fewer of them. (The grid is a fixed function of the anchors, PRD §15.)
         val breaks = listOf(
-            ScreenBreak("look 20 feet away", intervalMillis = 20 * 60_000, durationMillis = 20_000, lastRestMillis = NOW),
+            ScreenBreak("look 20 feet away", intervalMillis = 20 * 60_000, durationMillis = 20_000),
         )
         val short = SchedulerDomain.screenBreakPanels(breaks, NOW, NOW + 6 * HOUR).map { it.startEpochMillis }
         val long = SchedulerDomain.screenBreakPanels(breaks, NOW, NOW + WEEK)

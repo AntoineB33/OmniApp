@@ -11,6 +11,77 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The scheduler and the calendar are rebuilt on `side-dev/README.md`'s RESILIENCE model — 2026-08-28
+
+The README says a restrictive period is a start, an end and a **kind**, and that each task has a **resilience**
+to each kind: a multiplier in `[0, 1]` on its priority percentage for as long as a period of that kind lasts.
+The app had a boolean world instead — an on-screen flag, a *doable during a break* flag, a per-break accepted
+set — and this replaces all of it. → ADR 0001 §4, ADR 0003, ADR 0012.
+
+- **`Task.resilience` (overrides only) replaces `onScreen` / `doableDuringBreak`.** An absent kind takes
+  `PeriodKinds.defaultResilience` — `1` for every kind except `no task allowed`. Two README sentences fall out
+  of that: a kind the user has just defined restricts nobody (defining one writes nothing to any task), and
+  "on screen" is exactly a `0` against `no on-screen task`. `Task.onScreen` survives as a derived reading.
+  A payload written by an older build is migrated on decode from its `onScreen` flag; encode still writes that
+  flag, so an older build reads the new payload.
+- **The user defines period kinds in the task edit window** (`SchedulerState.periodKinds`, authoritative +
+  synced). The two built-ins are never in that list; `state.allPeriodKinds` is the one reading of "every kind a
+  task can be resilient to". Removing a kind takes every task's override and every panel laid with it.
+- **`weightsAt` / `localSharesOf` / `serveWeighted`.** The walk races on the effective weights and charges
+  service against them (the reference's `v += served / w[name]`), which is what makes a multiplier mean "half
+  the percentage for as long as the period lasts". The steady cycle inherits those effective shares; built on
+  the nominal ones a standing period halving one side still answered a flat 50/50. The influence field became
+  fractional to match (`deprivationsOf`: `Σ (1 − mult)·length`).
+- **A behaviour change worth knowing: an off-screen task is no longer CONFINED to no-screen periods.** A period
+  multiplies what it covers and says nothing about the timeline it does not, so "only tasks that need a screen
+  may run everywhere else" is not expressible in this model — and the README never asks for it.
+- **`SchedulerPlanner.plan()` phase 1 is now a literal port of `scheduler.py`'s `Walk.run`**, checked
+  slot-for-slot. The sanctioned divergences are named in ADR 0001 §6: zero-priority tasks stay last-resort
+  candidates, `Fraction` → `Double` millis, and `fillSchedule` keeps PRD §15's suspension. The atomic block is
+  no longer one of them.
+
+### Screen breaks: three recurrence bars replace the `lastRest` anchor engine — 2026-08-28
+
+`side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive Period*, ported as `DynamicPeriods`. → ADR 0003.
+
+- **All three breaks are `no task allowed`, end to end.** `ScreenBreakPeriod`, `ScreenBreak.shape`,
+  `screenBreakOpenStartMillis`, `SCREEN_BREAK_CLOSED_HEAD_MILLIS` and the calendar's **hollow** band are gone
+  with the shapes; a break draws as one grey span. A task works through one exactly when it has a non-zero
+  resilience to that kind.
+- **Where they fall is the three bars**: after any dynamic period no 20 s for 20 min; after a ≥ 5-min rest
+  stretch no 5 min for 1 h; after a ≥ 15-min one no 20 s for 20 min and no 15 min for 2 h. Overlapping ones
+  collapse to the chain's longest member at its earliest point.
+- **The anchors are DERIVED.** `ScreenBreak.lastRestMillis` is deleted, and with it `seedScreenBreaksFromGaps`,
+  `serveElapsedScreenBreaks`, `serveShorterBreaks`, `pastScreenBreaksFromPauses`, `advanceRestsForward`,
+  `screenBreakNextStart`, `isScreenBreakOverdue`, `reachedRestPoseDueByTitle`, `simulateScreenBreaks`, the
+  decoupled-pose case, the dense-projection cap, the engine's two seeders and `reduceReportDeviceSleep`'s
+  anchor advance. Rest stretches are read out of the timeline itself; a live pause reaches the placement as
+  the period it is (`liveRestPeriod`).
+- **Nothing slides, so every cue keys on the DRAWN start** (`cueCrossings` → `screenBreakOccurrencesBetween`).
+  What is announced and what is drawn are one instant by construction. The sweep must be handed the same
+  environment the fill was, and its self-delay reads the next placed start.
+- **The placement origin is anchored on the now-line, quantized to the day** (`dynamicPlacementOriginMillis`),
+  never on each query window's own left edge — otherwise the fill, the cue sweep and the calendar walk
+  different grids whenever one straddles a midnight.
+- **A materialized break is never an input to its own placement**: `restrictivePeriodsOf` drops `screenBreak`
+  panels, or each break becomes a blocked stretch absorbing the next.
+- **A conducted break is recorded as a period** (`SchedulerIntent.RecordConductedBreak`), at its exact span —
+  not through `AddInactivityPeriod`, which rounds up to a minute. Only on completion.
+- **`device_break.break_due_ms` is now the pose's next placed START** (`nextScreenBreakStartMillis`) instead of
+  the anchored due `lastRest + interval`. The anchored form existed *because* the drawn start rode the now-line
+  and could not be written event-driven; the bars pin it, so server and client key on one instant. No Supabase
+  change: the column's meaning is unchanged ("when does this break next come due"), only the client's
+  derivation of it.
+- **The debug fast-break knobs lose `pauseThresholdMs`** (`ScreenBreak.pauseThresholdMillis` /
+  `qualifyingPauseMillis` / `DebugFlags.breakPauseThresholdMillisOverride`, the `OMNIAPP_*_PAUSE_THRESHOLD_MS`
+  script variables and the `omniapp_break_pause_threshold_ms` Android extra). It decoupled a break from the
+  pause that *anchored* it, and nothing is anchored any more. Duration and interval remain.
+- **Tests:** `DynamicPeriodsTest` and `TaskResilienceTest` are new; `ScreenBreakHollowTest` →
+  `ScreenBreakKindTest` and `RestPoseNotificationRuleTest` → `ScreenBreakCueRuleTest` (same rules, new
+  mechanism); `SchedulerScreenFlagsTest` and `LiveRestPlacementTest` are deleted with what they pinned.
+
+**Deploy:** client rebuild only (`account{1,2,3}-*deploy*.bat`). No migration, no Edge Function change.
+
 ### The Windows lock-history query reads the whole power history (`WindowsPowerLog`) — FIXED 2026-08-27
 
 - **The ask:** is the app's detection of the Windows lock/unlock history as good as

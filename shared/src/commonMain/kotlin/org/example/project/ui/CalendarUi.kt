@@ -205,16 +205,6 @@ data class CalendarRecord(
     /** PRD §15 Screen breaks: a periodic screen break, drawn as a time-positioned band spanning its real duration. */
     val screenBreak: Boolean = false,
     /**
-     * PRD §15: for a [screenBreak] band, the instant its **closed head** ends and its open period begins —
-     * the part of the break that accepts the tasks needing no screen (the 5-minute pose's last four minutes,
-     * the 15-minute pose end to end). That part is drawn **hollow** so the off-screen work the break accepts
-     * shows through it instead of being covered by a solid band. Null when the break accepts nobody over its
-     * whole length (the 20-second look-away), which draws solid throughout.
-     * Computed by [SchedulerDomain.screenBreakOpenStartMillis] — the same reading of the break's shape the §9
-     * fill schedules from, so what is drawn hollow is exactly what is open to a task.
-     */
-    val screenBreakOpenFromMillis: Long? = null,
-    /**
      * PRD §18 Alarms: one ring of an alarm, drawn as a zero-duration marker at its instant (like a reminder
      * tag, but not checkable — an alarm is not a task, it just goes off). One record per occurrence, so an
      * everyday alarm draws on each day of the week the calendar shows.
@@ -476,12 +466,6 @@ data class PlacedRecord(
     val checkedAtMillis: Long? = null,
     /** PRD §15 Screen breaks: a periodic screen break rendered as a time-positioned band over [startHour, endHour]. */
     val screenBreak: Boolean = false,
-    /**
-     * PRD §15: hour-of-day at which this screen break's open (hollow) part begins — see
-     * [CalendarRecord.screenBreakOpenFromMillis], clipped to this day. Null when the break is closed end to
-     * end here, so the whole band draws solid.
-     */
-    val screenBreakOpenFromHour: Float? = null,
     /** PRD §18 Alarms: one ring, rendered as a fixed-height marker at [startHour]. See [CalendarRecord.alarm]. */
     val alarm: Boolean = false,
     /** The user's sleep window, rendered as a labeled greyed band over [startHour, endHour]. */
@@ -547,22 +531,8 @@ fun recordsForDay(
                 val eh = if (e.date > day) 24f else e.hour + e.minute / 60f + e.second / 3600f
                 if (eh <= sh) null else PlacedDeviceSegment(sh.coerceIn(0f, 24f), eh.coerceIn(0f, 24f), seg.devices)
             }
-        // PRD §15: where the break's open (hollow) part begins, in this day's hour space. Clipped like the
-        // band itself — a break straddling midnight whose head ended yesterday is open from the day's top —
-        // and dropped when nothing of the open part falls on this day.
         val dayStartHour = startHour.coerceIn(0f, 24f)
         val dayEndHour = endHour.coerceIn(0f, 24f)
-        val openFromHour =
-            record.screenBreakOpenFromMillis?.let { millis ->
-                val opens = Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz)
-                val raw =
-                    when {
-                        opens.date < day -> 0f
-                        opens.date > day -> 24f
-                        else -> opens.hour + opens.minute / 60f + opens.second / 3600f
-                    }
-                raw.coerceIn(dayStartHour, dayEndHour)
-            }?.takeIf { it < dayEndHour }
         PlacedRecord(
             title = record.title,
             startHour = dayStartHour,
@@ -579,7 +549,6 @@ fun recordsForDay(
             checked = record.checked,
             checkedAtMillis = record.checkedAtMillis,
             screenBreak = record.screenBreak,
-            screenBreakOpenFromHour = openFromHour,
             alarm = record.alarm,
             sleep = record.sleep,
             inactivity = record.inactivity,
@@ -4216,16 +4185,14 @@ private val SCREEN_BREAK_MIN_HEIGHT = 3.dp
 private val SCREEN_BREAK_LABEL_MIN_HEIGHT = 13.dp
 
 /**
- * PRD §15: tint of the HOLLOW half of a screen-break band — the part that accepts the tasks needing no
- * screen. Light enough that a task block scheduled inside the break reads through it, strong enough that the
- * region still reads as part of the break.
- */
-private const val SCREEN_BREAK_OPEN_ALPHA = 0.12f
-
-/**
- * PRD §8/§15: fill of the CLOSED head of a screen-break band — the 20-second look-away end to end, and the
- * 5-minute pose's opening minute. That head is an inactivity period (the scheduler places nothing in it), so
- * it is grey like the §17 sleep band, drawn inside the break's blue outline rather than as a solid blue slab.
+ * PRD §8/§15: fill of a screen-break band. All three breaks are periods of kind `no task allowed` **end to
+ * end** (ADR 0003), which is precisely an inactivity period — so a band is grey like the §17 sleep band,
+ * drawn inside the break's blue outline rather than as a solid blue slab, over its whole length.
+ *
+ * There is no hollow half any more. A break used to be read as a *shape* — a closed head and a tail accepting
+ * the off-screen work — and the tail was drawn as a tinted outline so the work beneath showed through. A break
+ * has no shape now, so a band that was part solid and part hollow would state a distinction the scheduler no
+ * longer makes.
  */
 private const val SCREEN_BREAK_CLOSED_ALPHA = 0.34f
 
@@ -4249,39 +4216,17 @@ private fun ScreenBreakBand(
 ) {
     val height = (hourHeight * (slice.bottomHour - slice.topHour)).coerceAtLeast(SCREEN_BREAK_MIN_HEIGHT)
     val timeRange = "${formatHm(marker.fullStartMillis, tz)} – ${formatHm(marker.fullEndMillis, tz)}"
-    // PRD §15: the break is split where its CLOSED head ends and its open period begins — the part that
-    // accepts the tasks needing no screen (a 5-min pose's last four minutes; a 15-min pose end to end). The
-    // closed part is a solid band, the open one is drawn HOLLOW — a tinted outline the blocks beneath show
-    // through — because it is not a stop at all for an off-screen task, it is a period reserved for one.
-    val closedHeight =
-        height * screenBreakClosedFraction(marker.screenBreakOpenFromHour, slice.topHour, slice.bottomHour)
-    val openHeight = height - closedHeight
-    // The title is drawn once, in whichever half can hold it — the closed one by preference, since a solid
-    // band carries small white text best.
-    val labelInClosed = closedHeight >= SCREEN_BREAK_LABEL_MIN_HEIGHT
-    val labelInOpen = !labelInClosed && openHeight >= SCREEN_BREAK_LABEL_MIN_HEIGHT
     Box(
         modifier = Modifier
             .offset(x = colWidth * slice.xFraction, y = hourHeight * slice.topHour)
             .width(colWidth * slice.widthFraction)
             .height(height),
     ) {
-        if (closedHeight > 0.dp) {
-            ScreenBreakSegment(
-                title = marker.title,
-                showLabel = labelInClosed,
-                hollow = false,
-                modifier = Modifier.fillMaxWidth().height(closedHeight),
-            )
-        }
-        if (openHeight > 0.dp) {
-            ScreenBreakSegment(
-                title = marker.title,
-                showLabel = labelInOpen,
-                hollow = true,
-                modifier = Modifier.offset(y = closedHeight).fillMaxWidth().height(openHeight),
-            )
-        }
+        ScreenBreakSegment(
+            title = marker.title,
+            showLabel = height >= SCREEN_BREAK_LABEL_MIN_HEIGHT,
+            modifier = Modifier.fillMaxWidth().height(height),
+        )
         // PRD §8: tiled by whatever else covers each sub-range (see [bubbleHoverZones]), so the bubble
         // stacks those sections below this screen break's own. The zones are mapped onto the RENDERED
         // [height] (not the break's true span): a sub-minute look-away draws at the coerced
@@ -4310,51 +4255,21 @@ private fun ScreenBreakBand(
 }
 
 /**
- * PRD §15: how much of a screen-break band's height is its CLOSED head — the part that accepts no task and is
- * drawn solid; the rest is the open period, drawn hollow. [openFromHour] is where the band stops accepting
- * nobody (null = never: closed end to end), and the band is the slice `[topHour, bottomHour]` of it.
- *
- * A fraction rather than an hour because a band is drawn at a MINIMUM height (a 20-second look-away is a
- * hairline, far taller than its true span), so the split has to be mapped onto the rendered height. A
- * zero-length slice — a sub-second break, or one clipped to a day boundary — has no room for a head: it draws
- * as whatever it mostly is, which for a band with an open part is the open part.
- */
-fun screenBreakClosedFraction(openFromHour: Float?, topHour: Float, bottomHour: Float): Float {
-    if (openFromHour == null) return 1f
-    val span = bottomHour - topHour
-    if (span <= 0f) return 0f
-    return ((openFromHour - topHour) / span).coerceIn(0f, 1f)
-}
-
-/**
- * PRD §15: one half of a [ScreenBreakBand] — its closed head or its open period.
- *
- * [hollow] is the whole difference, and it is what the break's period MEANS: a closed stretch accepts no task
- * at all and is painted solid, while the open one accepts every task that needs no screen (the 5-minute pose's
- * break-doable tail, the 15-minute pose end to end) and is painted as a tinted outline the work beneath shows
- * through — the same "decorative, not occupied" idiom the no-screen panels use.
+ * PRD §15: the body of a [ScreenBreakBand] — one span, of one kind, painted one way.
  */
 @Composable
 private fun ScreenBreakSegment(
     title: String,
     showLabel: Boolean,
-    hollow: Boolean,
     modifier: Modifier,
 ) {
     Row(
         modifier = modifier
             .padding(horizontal = 1.dp)
             .clip(RoundedCornerShape(4.dp))
-            // PRD §8/§15: the CLOSED head accepts no task at all, which is precisely an inactivity period —
-            // so it is painted GREY like every other one, inside the screen break's own blue outline. The
-            // open period keeps the blue tint: it is not a stop, it is time reserved for the off-screen work.
-            .background(
-                if (hollow) {
-                    CalColors.accent.copy(alpha = SCREEN_BREAK_OPEN_ALPHA)
-                } else {
-                    CalColors.muted.copy(alpha = SCREEN_BREAK_CLOSED_ALPHA)
-                },
-            )
+            // PRD §8/§15: a break accepts no task at all, which is precisely an inactivity period — so it
+            // is painted GREY like every other one, inside the screen break's own blue outline.
+            .background(CalColors.muted.copy(alpha = SCREEN_BREAK_CLOSED_ALPHA))
             .border(1.dp, CalColors.accent, RoundedCornerShape(4.dp))
             .then(if (showLabel) Modifier.padding(horizontal = 4.dp) else Modifier),
         verticalAlignment = Alignment.CenterVertically,
@@ -5148,16 +5063,20 @@ fun ManualEntryEditWindow(
     titleSuggestions: (String) -> List<String>,
     taskIdForTitle: (String) -> TaskId?,
     titleForTaskId: (TaskId) -> String?,
-    onSave: (taskId: TaskId?, title: String, startMillis: Long, endMillis: Long, pins: PanelPins, onScreen: Boolean, doableDuringBreak: Boolean) -> Unit,
+    onSave: (taskId: TaskId?, title: String, startMillis: Long, endMillis: Long, pins: PanelPins, noScreenResilience: Double) -> Unit,
     onDismiss: () -> Unit,
     /** PRD §8: the panel's current four pin dimensions, toggled by the switches in this window. */
     initialPins: PanelPins = PanelPins(),
     /**
-     * PRD §8 screen switches: the current (onScreen, doableDuringBreak) flags of a task, or null when
-     * unknown. Seeds the two switches whenever the effective task changes; a calendar-only "New task"
-     * (null taskId) has no task object to carry the flags, so the switches are hidden for it.
+     * `side-dev/README.md` § *Restrictive Period*: the task's current **resilience to "no on-screen task"**
+     * — the one thing the old pair of screen switches really said, now a multiplier in `[0, 1]`. Null when
+     * unknown; a calendar-only "New task" has no task object to carry it, so the row is hidden for it.
+     *
+     * Only this one kind is offered here. The calendar edit window is about a panel; the *whole* resilience
+     * table — every kind, and where new kinds are defined — belongs to the task's own edit window, which is
+     * where the README's "for each kind" lives.
      */
-    screenFlagsForTaskId: (TaskId) -> Pair<Boolean, Boolean>? = { null },
+    noScreenResilienceForTaskId: (TaskId) -> Double? = { null },
 ) {
     var title by remember { mutableStateOf(initialTitle) }
     // The explicitly-picked existing task, if any. PRD §8: unlike the tree, the calendar does NOT
@@ -5269,19 +5188,27 @@ fun ManualEntryEditWindow(
                 PinSwitchRow("Spanning", pins.spanning) { pins = pins.copy(spanning = it) }
                 PinSwitchRow("Distance", pins.distance) { pins = pins.copy(distance = it) }
 
-                // PRD §8 screen switches: task-level flags (not per-panel), re-seeded whenever the
-                // effective task changes. Hidden for a calendar-only "New task" (no task object yet).
-                var screenFlags by remember(effectiveTaskId) {
-                    mutableStateOf(effectiveTaskId?.let(screenFlagsForTaskId) ?: (true to false))
+                // `side-dev/README.md`: the task's resilience to "no on-screen task" — task-level, not
+                // per-panel, re-seeded whenever the effective task changes. Hidden for a calendar-only
+                // "New task" (no task object yet).
+                //
+                // A switch, because that is the question this window asks: "on screen" is a resilience of 0,
+                // "can be done away from a screen" is the default 1. A value in between is a real answer the
+                // model allows, and it is set in the task's own edit window, where every kind has a field —
+                // so the switch shows it rather than silently rounding it away.
+                var noScreenResilience by remember(effectiveTaskId) {
+                    mutableStateOf(effectiveTaskId?.let(noScreenResilienceForTaskId) ?: 0.0)
                 }
                 if (effectiveTaskId != null) {
                     EditMenuSectionLabel("Screen")
-                    // PRD §8/§15 invariant: doable-during-a-screen-break implies not-on-screen (a screen
-                    // break is time away from the screen), so turning "On screen" on clears the break
-                    // switch, and the break switch is offered only while "On screen" is off.
-                    PinSwitchRow("On screen", screenFlags.first) { on -> screenFlags = on to (screenFlags.second && !on) }
-                    if (!screenFlags.first) {
-                        PinSwitchRow("Doable during a screen break", screenFlags.second) { screenFlags = screenFlags.first to it }
+                    PinSwitchRow("On screen", noScreenResilience <= 0.0) { on ->
+                        noScreenResilience = if (on) 0.0 else 1.0
+                    }
+                    if (noScreenResilience > 0.0 && noScreenResilience < 1.0) {
+                        EditMenuSectionLabel(
+                            "Partly resilient to a no-screen period (" +
+                                "${kotlin.math.round(noScreenResilience * 1000.0) / 10.0} %)",
+                        )
                     }
                 }
 
@@ -5295,7 +5222,7 @@ fun ManualEntryEditWindow(
                         onClick = {
                             val start = parseHmOnDateOf(startText, startMillis, tz) ?: startMillis
                             val end = parseHmOnDateOf(endText, endMillis, tz) ?: endMillis
-                            onSave(effectiveTaskId, title, start, end, pins, screenFlags.first, screenFlags.second)
+                            onSave(effectiveTaskId, title, start, end, pins, noScreenResilience)
                         },
                     ) { Text("Save") }
                 }

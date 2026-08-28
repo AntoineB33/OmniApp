@@ -1,5 +1,6 @@
 package org.example.project
 
+import org.example.project.scheduler.domain.PeriodKinds
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -8,7 +9,6 @@ import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.ScreenBreak
-import org.example.project.scheduler.model.ScreenBreakPeriod
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.persistence.SchedulerStateCodec
@@ -175,7 +175,7 @@ class NoScreenInactivityPanelTest {
         val (s0, solo) = stateWithOneTask()
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW, NOW + 2 * HOUR))
         s = SchedulerReducer.reduce(
@@ -218,19 +218,65 @@ class NoScreenInactivityPanelTest {
     }
 
     @Test
-    fun fill_places_an_off_screen_task_only_inside_no_screen_periods() {
+    fun a_task_resilient_to_no_screen_is_unaffected_by_a_no_screen_period() {
+        // `side-dev/README.md` § *Restrictive Period*: a resilience is a MULTIPLIER on the task's priority
+        // inside a period of that kind, and 1 means "unaffected". So a task fully resilient to "no on-screen
+        // task" runs inside such a period and outside it alike.
+        //
+        // This is a deliberate change of behaviour. The app used to CONFINE an off-screen task to no-screen
+        // periods — a two-way classification the README's model cannot express, since a period can only ever
+        // multiply what it covers and says nothing about the timeline it does not. "I can do this without a
+        // screen" is not "I must only do this away from a screen".
         val (s0, solo) = stateWithOneTask()
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 2 * HOUR))
         val panels = SchedulerDomain.fillSchedule(s, NOW)
         val taskPanels = panels.filter { it.taskId == solo && it.auto }
-        assertTrue(taskPanels.isNotEmpty(), "the off-screen task must fill the no-screen period")
+        assertTrue(taskPanels.isNotEmpty(), "the resilient task must be scheduled")
         assertTrue(
-            taskPanels.all { it.startEpochMillis >= NOW + HOUR && it.endEpochMillis <= NOW + 2 * HOUR },
-            "off-screen chunks must all lie inside the no-screen period",
+            taskPanels.any { it.startEpochMillis < NOW + HOUR },
+            "a resilience of 1 leaves the task free of the period, so it runs before it too",
+        )
+        assertTrue(
+            taskPanels.any { it.startEpochMillis < NOW + 2 * HOUR && it.endEpochMillis > NOW + HOUR },
+            "and inside it",
+        )
+    }
+
+    @Test
+    fun a_half_resilient_task_keeps_half_its_percentage_inside_the_period() {
+        // The middle of the range, which the old pair of booleans could not say at all: inside a period it is
+        // 0.5-resilient to, a task carries half its percentage — so it still runs there, just less. Measured
+        // against a rival that is unaffected.
+        val (s0, solo) = stateWithOneTask(minMinutes = 10)
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddPeriodKind("noisy"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(solo, "noisy", 0.5))
+        val cells = s.lists[s.rootListId]!!.cellIds
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cells[1], "Rival"))
+        val rival = s.tasks.keys.first { s.tasks[it]!!.title == "Rival" }
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(rival, 10))
+        s = s.copy(
+            panels = s.panels + TaskPanel(
+                id = "period/noisy",
+                taskId = null,
+                title = "noisy",
+                startEpochMillis = NOW,
+                endEpochMillis = NOW + 6 * HOUR,
+                periodKind = "noisy",
+            ),
+        )
+        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 6 * HOUR)
+        fun served(id: org.example.project.scheduler.model.TaskId) =
+            panels.filter { it.taskId == id && it.auto }.sumOf { it.endEpochMillis - it.startEpochMillis }
+        val mine = served(solo)
+        val theirs = served(rival)
+        assertTrue(mine > 0, "a half-resilient task still runs inside the period")
+        assertTrue(
+            mine < theirs,
+            "but less than the unaffected rival: $mine vs $theirs",
         )
     }
 
@@ -282,33 +328,34 @@ class NoScreenInactivityPanelTest {
     }
 
     @Test
-    fun an_inactivity_period_refuses_an_off_screen_task_too() {
-        // Grey excludes EVERYBODY — it is not a screen classification. An off-screen task, which a no-screen
-        // period would welcome, is turned away by an inactivity period exactly like an on-screen one.
+    fun an_inactivity_period_refuses_a_task_a_no_screen_period_would_welcome() {
+        // "No task allowed" is the one kind whose DEFAULT resilience is 0, so a grey period turns away even a
+        // task fully resilient to "no on-screen task" — grey is not a screen classification.
         val (s0, solo) = stateWithOneTask()
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 3 * HOUR))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddInactivityPeriod(NOW + HOUR, NOW + 2 * HOUR))
         val taskPanels = SchedulerDomain.fillSchedule(s, NOW).filter { it.taskId == solo && it.auto }
-        assertTrue(taskPanels.isNotEmpty(), "the off-screen task must still fill the uncovered half")
+        assertTrue(taskPanels.isNotEmpty(), "the task must still fill the timeline around the grey period")
         assertTrue(
-            taskPanels.all { it.startEpochMillis >= NOW + 2 * HOUR },
-            "the inactivity period must refuse the off-screen task the no-screen period accepts",
+            taskPanels.none { it.startEpochMillis < NOW + 2 * HOUR && it.endEpochMillis > NOW + HOUR },
+            "the inactivity period must refuse it",
         )
     }
 
     @Test
-    fun fill_schedules_nothing_for_an_off_screen_task_without_a_no_screen_period() {
+    fun a_task_resilient_to_no_screen_needs_no_period_to_run_in() {
+        // The other half of the change above: with no no-screen period anywhere, a task fully resilient to
+        // that kind is an ordinary task and fills the timeline.
         val (s0, solo) = stateWithOneTask()
         val s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
         val panels = SchedulerDomain.fillSchedule(s, NOW)
-        assertTrue(panels.none { it.taskId == solo && it.auto })
+        assertTrue(panels.any { it.taskId == solo && it.auto })
     }
 
     /** A state whose only screen break is a 15-min rest pose due at `NOW + 1h`. */
@@ -320,34 +367,30 @@ class NoScreenInactivityPanelTest {
                     intervalMillis = HOUR,
                     durationMillis = 15 * MIN,
                     restBreak = true,
-                    lastRestMillis = NOW,
                 ),
             ),
         )
 
     @Test
-    fun break_doable_task_fills_a_rest_break_only_after_its_closed_first_minute() {
-        // PRD §15: the pose's first minute accepts nobody; what is left of it accepts the tasks that need
-        // no screen and are marked doable during a break. A 5-min minimum fits the remaining 14 min.
+    fun a_task_resilient_to_no_task_allowed_may_work_inside_a_dynamic_period() {
+        // `side-dev/README.md`: all three dynamic periods are "no task allowed", and a resilience to THAT
+        // kind is the only thing that opens one. It replaces the old "doable during a screen break" switch,
+        // and unlike it there is no closed head and no restriction to the shorter pose: a break is a period
+        // of a kind like any other, and a task that declares itself resilient to it works straight through.
         val (s0, solo) = stateWithOneTask(minMinutes = 5)
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = true),
+            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_TASK, 1.0),
         )
         s = withRestPose(s)
-        val panels = SchedulerDomain.fillSchedule(s, NOW)
+        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 4 * HOUR)
         val breakRange = panels.first { it.screenBreak }
-        val opens = breakRange.startEpochMillis + SchedulerDomain.SCREEN_BREAK_CLOSED_HEAD_MILLIS
         val inBreak = panels.filter {
             it.taskId == solo && it.auto &&
                 it.startEpochMillis < breakRange.endEpochMillis &&
                 it.endEpochMillis > breakRange.startEpochMillis
         }
-        assertTrue(inBreak.isNotEmpty(), "the break-doable off-screen task must fill the rest pose's tail")
-        assertTrue(
-            inBreak.all { it.startEpochMillis >= opens && it.endEpochMillis <= breakRange.endEpochMillis },
-            "nothing may be scheduled in the pose's closed first minute, nor past its end",
-        )
+        assertTrue(inBreak.isNotEmpty(), "a task resilient to \"no task allowed\" must fill the break")
     }
 
     @Test
@@ -356,7 +399,7 @@ class NoScreenInactivityPanelTest {
         val (s0, solo) = stateWithOneTask(minMinutes = 30)
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = true),
+            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
         s = withRestPose(s)
         val panels = SchedulerDomain.fillSchedule(s, NOW)
@@ -372,25 +415,26 @@ class NoScreenInactivityPanelTest {
     }
 
     @Test
-    fun a_break_doable_task_still_needs_a_no_screen_period_outside_the_break() {
-        // The break is the ONLY extra place the flag opens up: with no no-screen period, the off-screen
-        // break-doable task is scheduled inside the pose and nowhere else.
+    fun a_task_with_no_resilience_to_no_task_allowed_is_kept_out_of_every_dynamic_period() {
+        // The default for that kind is 0, so an ordinary task — whatever it says about a screen — is kept out
+        // of all three dynamic periods without anybody having to state it.
         val (s0, solo) = stateWithOneTask(minMinutes = 5)
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = true),
+            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
         s = withRestPose(s)
-        val panels = SchedulerDomain.fillSchedule(s, NOW)
+        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 4 * HOUR)
         val breaks = panels.filter { it.screenBreak }
-        val mine = panels.filter { it.taskId == solo && it.auto }
-        assertTrue(mine.isNotEmpty())
-        // The pose recurs across the horizon, so the task fills every occurrence — but nothing else.
+        assertTrue(breaks.isNotEmpty(), "the case needs a break to be about")
         assertTrue(
-            mine.all { p ->
-                breaks.any { p.startEpochMillis >= it.startEpochMillis && p.endEpochMillis <= it.endEpochMillis }
+            panels.none { p ->
+                p.taskId == solo && p.auto &&
+                    breaks.any {
+                        p.startEpochMillis < it.endEpochMillis && p.endEpochMillis > it.startEpochMillis
+                    }
             },
-            "an off-screen task may only run inside a no-screen period or a screen break",
+            "nothing may run inside a \"no task allowed\" period without a resilience to that kind",
         )
     }
 
@@ -401,7 +445,7 @@ class NoScreenInactivityPanelTest {
         val (s0, solo) = stateWithOneTask(minMinutes = 0)
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = true),
+            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
         s = s.copy(
             screenBreaks = listOf(
@@ -410,7 +454,6 @@ class NoScreenInactivityPanelTest {
                     intervalMillis = 20 * MIN,
                     durationMillis = 20_000L,
                     restBreak = false,
-                    lastRestMillis = NOW,
                 ),
             ),
         )
@@ -435,49 +478,44 @@ class NoScreenInactivityPanelTest {
                     intervalMillis = HOUR,
                     durationMillis = 15 * MIN,
                     restBreak = true,
-                    lastRestMillis = NOW,
-                    shape = ScreenBreakPeriod.OffScreenOnly,
                 ),
             ),
         )
 
     @Test
-    fun the_15min_pose_accepts_every_off_screen_task_from_its_very_first_second() {
-        // PRD §15: the 15-minute pose is NOT a longer copy of the 5-minute one. It is a plain 15-minute
-        // period accepting the tasks that need no screen — no closed first minute, and no *doable during a
-        // break* gate, so this task (off-screen, break-doable OFF) fills it, starting at its very first second.
+    fun a_dynamic_period_has_no_shape_left_to_read() {
+        // The 15-minute period is not a longer copy of the 5-minute one, and neither has a closed head any
+        // more: `side-dev/README.md` gives all three the single kind "no task allowed", end to end. So a task
+        // resilient to that kind fills one from its very FIRST second, and there is no opening minute to wait
+        // through.
         val (s0, solo) = stateWithOneTask(minMinutes = 5)
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_TASK, 1.0),
         )
         s = with15MinPose(s)
-        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 2 * HOUR)
+        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 4 * HOUR)
         val pose = panels.first { it.screenBreak }
         val inPose = panels.filter {
             it.taskId == solo && it.auto &&
                 it.startEpochMillis < pose.endEpochMillis && it.endEpochMillis > pose.startEpochMillis
         }
-        assertTrue(inPose.isNotEmpty(), "an off-screen task must fill the 15-min pose")
-        assertEquals(
-            pose.startEpochMillis,
-            inPose.minOf { it.startEpochMillis },
-            "the 15-min pose has no closed first minute",
-        )
+        assertTrue(inPose.isNotEmpty(), "a resilient task must fill the period")
         assertTrue(
-            inPose.all { it.endEpochMillis <= pose.endEpochMillis },
-            "nothing may run past the pose's end: outside it this task has no screen zone to run in",
+            inPose.any { it.startEpochMillis <= pose.startEpochMillis },
+            "there is no closed first minute to wait through",
         )
     }
 
     @Test
-    fun the_5min_pose_still_refuses_an_off_screen_task_that_is_not_break_doable() {
-        // The counterpart of the test above, and what keeps the two shapes distinct: the 5-minute pose is
-        // `side-dev` test 11's "1min: nothing" + "4min: only A" stretch, and "only A" is the break-doable set.
+    fun the_shorter_dynamic_period_is_the_same_kind_as_the_longer_one() {
+        // The two poses used to be different shapes with different accepted sets. They are the same object
+        // now — one span of "no task allowed" — so the same task is refused by both, and admitted by both the
+        // moment it declares a resilience to that kind.
         val (s0, solo) = stateWithOneTask(minMinutes = 1)
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
         s = s.copy(
             screenBreaks = listOf(
@@ -486,22 +524,34 @@ class NoScreenInactivityPanelTest {
                     intervalMillis = HOUR,
                     durationMillis = 5 * MIN,
                     restBreak = true,
-                    lastRestMillis = NOW,
-                    shape = ScreenBreakPeriod.ClosedMinuteThenBreakDoable,
                 ),
             ),
         )
-        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 2 * HOUR)
-        assertTrue(panels.none { it.taskId == solo && it.auto }, "only a break-doable task may fill a 5-min pose")
+        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 4 * HOUR)
+        val breaks = panels.filter { it.screenBreak }
+        assertTrue(breaks.isNotEmpty())
+        assertTrue(
+            panels.none { p ->
+                p.taskId == solo && p.auto &&
+                    breaks.any {
+                        p.startEpochMillis < it.endEpochMillis && p.endEpochMillis > it.startEpochMillis
+                    }
+            },
+            "the shorter period refuses exactly what the longer one refuses",
+        )
     }
 
     @Test
     fun an_on_screen_task_is_never_placed_in_a_screen_break() {
-        // The invariant makes "on screen + doable during a break" unrepresentable; the fill must also
-        // refuse it outright, so a payload that predates the invariant cannot slip through.
+        // `side-dev/README.md`: all three dynamic periods are "no task allowed", whose default resilience is
+        // 0 — so a break admits nobody unless a task has deliberately been given a value for that kind, and
+        // an on-screen task certainly has not.
         val (s0, solo) = stateWithOneTask(minMinutes = 5)
         val s = withRestPose(
-            s0.copy(tasks = s0.tasks + (solo to s0.tasks[solo]!!.copy(onScreen = true, doableDuringBreak = true))),
+            s0.copy(
+                tasks = s0.tasks +
+                    (solo to s0.tasks[solo]!!.copy(resilience = mapOf(PeriodKinds.NO_SCREEN to 0.0))),
+            ),
         )
         val panels = SchedulerDomain.fillSchedule(s, NOW)
         val breakRange = panels.first { it.screenBreak }
@@ -576,7 +626,7 @@ class NoScreenInactivityPanelTest {
         val (s0, solo) = stateWithOneTask()
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR))
         s = s.copy(
@@ -645,7 +695,7 @@ class NoScreenInactivityPanelTest {
         val (s0, solo) = stateWithOneTask()
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetTaskScreenFlags(solo, onScreen = false, doableDuringBreak = false),
+            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR))
         s = s.copy(

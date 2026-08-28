@@ -60,10 +60,12 @@ the account went idle with a rest break actually DUE — the user walked away *t
 simply went idle (a lunch break, an errand). So `evaluate_pause_cue` considers only breaks that were
 **overdue** at the account's last beat — a published due `<= max(beat_at)` (+ a `t_a` clock-skew slack),
 factored into `overdue_break_at_last_beat()` so the cron pre-filter and the decision cannot drift apart.
-Each due is the pose's mathematical instant `lastRest + interval` (see `restPoseDueMillisByKey` /
-`RestPosePresenceWindowTest`); an already-due pose publishes the constant `0`, a not-yet-due one its real future
-instant, and a pose that was never **anchored** (`lastRestMillis == 0`) is not published at all — its due would
-sit in 1970 and read as permanently overdue, earning a freshly emptied account a cue it never took a break for.
+Each due is the pose's **next placed START** — the instant the recurrence bars put it at, which is also what the
+calendar draws and what the local cue sweep fires on (see `restPoseDueMillisByKey` /
+`RestPosePresenceWindowTest`; it was the anchored `lastRest + interval` until 2026-08-28, because a pose used to
+slide along the now-line — ADR 0003). An already-due pose publishes the constant `0`, a not-yet-due one its real
+future instant, and a pose the environment suspends indefinitely (a night, an open-ended inactivity period) has
+no placed occurrence inside the search window and is not published at all.
 Between the two dues the **longest overdue** break governs (`max(5min,15min)`) — resting 15 min discharges a
 5-min pose due at the same instant. If none is overdue the account is claimed (so it is not re-evaluated every
 tick) but owes **no** cue. The reference is the account's own newest `beat_at` — the last moment we saw *any* of

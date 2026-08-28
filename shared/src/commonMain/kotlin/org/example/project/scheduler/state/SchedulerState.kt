@@ -1,5 +1,6 @@
 package org.example.project.scheduler.state
 
+import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
@@ -528,6 +529,20 @@ data class SchedulerState(
      * front, so a mis-capture is not visible from where they are sitting), and Ctrl+Z is the way back.
      */
     val shortcutBindings: Map<GlobalShortcut, ShortcutBinding> = emptyMap(),
+    /**
+     * `side-dev/README.md` § *Restrictive Period*: **the kinds of restrictive period this account has
+     * defined**, in the order they were added. The two the README names itself
+     * ([org.example.project.scheduler.domain.PeriodKinds.BUILT_IN]) are always available and are NOT in this
+     * list — it holds the user's own, defined from the task edit window's resilience section.
+     *
+     * A kind is only a NAME here, and deliberately so: a task's behaviour inside a period of that kind is its
+     * own [org.example.project.scheduler.model.Task.resilience], which holds overrides only, so a kind
+     * nobody has been given a value for gives *every* task the default `1` and restricts nobody. That is
+     * what makes defining one free — there is nothing to write to twenty tasks.
+     *
+     * Authoritative user-authored data: persisted, synced, and an ordinary content history unit.
+     */
+    val periodKinds: List<String> = emptyList(),
     val notificationLog: List<NotificationLogEntry> = emptyList(),
     /**
      * A bounded, local-only diagnostic log of every Supabase HTTP call the app made, shown as the History
@@ -595,6 +610,15 @@ data class SchedulerState(
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots
     // (capture) and re-attached from the live tasks on restore (applyTree). Undo/Redo therefore
     // never reverts records, even though they live on the Task object.
+    /**
+     * `side-dev/README.md` § *Restrictive Period*: **every kind of restrictive period a task can be resilient
+     * to** — the two the README names first, then the account's own in the order they were defined. The one
+     * list the edit window's resilience section, the period editor's kind picker and the clipboard all read,
+     * so none of them can offer a kind another does not.
+     */
+    val allPeriodKinds: List<String>
+        get() = PeriodKinds.BUILT_IN + periodKinds.filter { PeriodKinds.isUserDefined(it) }
+
     fun captureTree(): TreeSnapshot =
         TreeSnapshot(
             cells = cells,

@@ -9,9 +9,9 @@ migration history.
 
 | # | Record | Covers |
 | --- | --- | --- |
-| [0001](0001-scheduler-model.md) | The scheduler is a cyclic proportional-share model | claims, chunk scale, influence field, atomic block, resume contract, sliding period, re-plan triggers |
+| [0001](0001-scheduler-model.md) | The scheduler is a cyclic proportional-share model | claims, chunk scale, the resilience model, influence field, atomic block, resume contract, re-plan triggers |
 | [0002](0002-calendar-layers-and-grey.md) | The calendar's two layers, and what GREY means | OS lock history as the layer source, assumed-unlocked default, derived grey bands |
-| [0003](0003-screen-breaks.md) | Screen breaks: sliding, serving, cue recurrence | the fixed-due rule, the three serving events, past-break drawing, decoupled poses, debug knobs |
+| [0003](0003-screen-breaks.md) | Screen breaks: the three dynamic restrictive periods | one kind end to end, the three recurrence bars, rest stretches, the derived anchors, the two `t_p` modes |
 | [0004](0004-relative-priority.md) | Relative priority (PRD §5) | the model, percentage-scaling solve, pin semantics |
 | [0005](0005-sync-and-merge.md) | Snapshot sync and the three-way merge | auto push/pull, catch-up on resubscribe, merge rules, lost-ack repair |
 | [0006](0006-pause-cue-delivery.md) | Pause-cue delivery | presence `t_a`/`t_b`, e1 vs e2, the overdue gate, `device_break` |
@@ -20,7 +20,7 @@ migration history.
 | [0009](0009-display-hot-path-and-horizon.md) | Display hot path, horizon, rolling calendar | O(screen) rule, horizon clamping, the rolling grid and its layout trap |
 | [0010](0010-alarms.md) | Alarms (PRD §18) | phone arming vs. desktop sweep, the synthesized tone |
 | [0011](0011-global-keyboard-shortcuts.md) | System-wide keyboard shortcuts | the swallow rule, hook vs. `RegisterHotKey`, the shortcuts window |
-| [0012](0012-clipboard-format.md) | The clipboard text is readable | what a copy carries, the prose format, paste strictness, the deep-copy depth window |
+| [0012](0012-clipboard-format.md) | The clipboard text is readable | what a copy carries, the prose format, the resilience attribute, paste strictness, the deep-copy depth window |
 
 ## Related docs
 

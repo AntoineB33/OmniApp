@@ -165,7 +165,6 @@ class CalendarDisplayEquivalenceTest {
                 reminder = rnd.nextInt(8) == 0,
                 screenBreak = rnd.nextInt(8) == 0,
                 alarm = rnd.nextInt(12) == 0,
-                screenBreakOpenFromMillis = if (rnd.nextInt(4) == 0) start + len / 2 else null,
                 deviceSegments =
                     if (rnd.nextInt(3) == 0) {
                         listOf(DeviceActivitySegment(start, start + len / 2, listOf("Desktop")))

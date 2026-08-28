@@ -135,15 +135,23 @@ One concept wearing four names:
 
 1. a hand-added inactivity period,
 2. a §17 **sleep window** (an inactivity period labelled "Sleep"),
-3. the **20-s look-away** end to end,
-4. the **closed first minute of a 5-min pose**.
+3. **all three screen breaks**, end to end.
 
-The last two are drawn grey INSIDE the break's blue outline (`SCREEN_BREAK_CLOSED_ALPHA`), no longer a
-solid blue slab. In `fillSchedule` all of it is `blockedRegions` → `accepted = emptyList()`.
+Item 3 was two items until 2026-08-28 ("the 20-s look-away end to end" and "the closed first minute of a
+5-min pose"), because a break had a *shape*: a closed head and a tail reserved for off-screen work, which
+stayed hollow-blue precisely because it was not grey. `side-dev/README.md` gives all three the one kind
+`no task allowed` end to end (ADR 0003), so a break is grey over its whole length and the hollow half is
+gone with the shapes.
 
-**Grey is NOT a screen classification:** it refuses an off-screen task exactly as it refuses an
-on-screen one, which is what separates it from a no-screen period. Conversely a pose's OPEN tail and the
-15-min pose are **not** grey — they are periods RESERVED for off-screen work, and stay hollow-blue.
+The breaks are drawn grey INSIDE the break's blue outline (`SCREEN_BREAK_CLOSED_ALPHA`), not as a solid blue
+slab. In `fillSchedule` grey is `blockedRegions`; a break is `sideRegions`, which suspends a chunk instead of
+cutting it (PRD §15) — the one thing that still tells the two apart there.
+
+**Grey is NOT a screen classification:** it refuses an off-screen task exactly as it refuses an on-screen one,
+which is what separates it from a no-screen period. What "refuses" now means precisely: the task's resilience
+to the covering period's kind is `0`. A task the user has deliberately given a non-zero resilience to
+`no task allowed` may work through one — which is the *only* way anything is placed there, and is why the
+band is uniform rather than split.
 
 ### The two behaviour changes this brought
 
