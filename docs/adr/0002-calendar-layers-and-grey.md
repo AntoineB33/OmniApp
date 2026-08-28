@@ -143,9 +143,31 @@ stayed hollow-blue precisely because it was not grey. `side-dev/README.md` gives
 `no task allowed` end to end (ADR 0003), so a break is grey over its whole length and the hollow half is
 gone with the shapes.
 
-The breaks are drawn grey INSIDE the break's blue outline (`SCREEN_BREAK_CLOSED_ALPHA`), not as a solid blue
-slab. In `fillSchedule` grey is `blockedRegions`; a break is `sideRegions`, which suspends a chunk instead of
+In `fillSchedule` grey is `blockedRegions`; a break is `sideRegions`, which suspends a chunk instead of
 cutting it (PRD §15) — the one thing that still tells the two apart there.
+
+### How grey is MARKED: vertical lines, delimited — 2026-08-28
+
+All three are drawn one way, by one modifier (`greyPeriodMarks`): **vertical lines** across the stretch, with
+a line across its **top and bottom edge**. Three things this settles, each of which had shipped the other way.
+
+- **A screen break is marked like the other two.** It used to wear a blue outline, a `●` and an accent-coloured
+  title inside a grey slab (`SCREEN_BREAK_CLOSED_ALPHA`), which said it was a different sort of period from the
+  inactivity band beside it. It is not: all three are `no task allowed`, so all three read the same.
+- **Lines, not a wash — because a grey period may legitimately contain a task panel.** §17 projects the plan
+  straight through a sleep window, and a task given a non-zero resilience to `no task allowed` works through a
+  break. A filled tint repaints whatever it covers, so those panels lost their own task colour to the marking
+  (that is exactly what `CalendarBlock`'s `sleepHourRanges` overlay did, and it is deleted). Lines mark the
+  stretch and leave every possible task colour readable through the gaps.
+- **Which is why the marking now draws OVER the panels**, like the layers and for the same reason. Behind them,
+  a stretch with a block on it would show no marking at all — which is what forced the per-block tint in the
+  first place.
+- **The band is DELIMITED.** An inactivity period ending exactly where a sleep window starts must still read as
+  two periods; a continuous pattern merges them into one stretch. The edge lines are drawn half a stroke inside
+  the band, so two abutting bands draw two distinct edges rather than sharing one pixel row.
+
+The bands stay purely decorative — no pointer input, so every block underneath keeps its hover, drag and
+right-click, and the hover bubble's sections still come from `contextOverlays`.
 
 **Grey is NOT a screen classification:** it refuses an off-screen task exactly as it refuses an on-screen one,
 which is what separates it from a no-screen period. What "refuses" now means precisely: the task's resilience

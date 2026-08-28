@@ -296,6 +296,13 @@ crossing can be silently clipped by a clock jump.
   not a screen classification: it refuses off-screen tasks too. "Refuses" means the task's resilience to the
   covering kind is `0`, so a task given a non-zero one may work through a break — the only thing that is ever
   placed there.
+- **All three are MARKED one way: vertical lines, delimited** (`greyPeriodMarks`, the one place a grey period
+  becomes something to paint). A screen break is drawn exactly like the inactivity band beside it — no blue
+  outline, no `●`, no accent title: they are the same kind of period. **Lines, never a fill**, because a grey
+  period may legitimately hold a task panel (§17 projects the plan through a sleep window; a resilient task
+  works through a break) and a wash repaints it — which is why the marking is drawn **over** the panels, like
+  the layers, and why `CalendarBlock` has no grey tint of its own. **Delimited** = an edge line top and bottom,
+  so an inactivity period abutting a sleep window still reads as two periods and not one stretch.
 - **Grey refuses everybody on the calendar too, not only in the fill.** A hand-added inactivity period
   overrides **every** task panel it covers (a no-screen period only the on-screen ones — §9 lets an
   off-screen task run inside one), and any task panel overrides it in turn.

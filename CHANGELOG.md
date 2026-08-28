@@ -11,6 +11,28 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Grey periods are marked with VERTICAL LINES, delimited — SHIPPED 2026-08-28
+
+→ ADR 0002 § *How grey is MARKED*. `ui/CalendarUi.kt` only; no logic change, no test change.
+
+- **`greyPeriodMarks` is the one place a grey period becomes something to paint.** Inactivity periods, sleep
+  windows and all three screen breaks go through it, so all three are marked identically. The screen break's
+  blue outline, its `●` and its accent-coloured title are gone (`SCREEN_BREAK_CLOSED_ALPHA` deleted): they said
+  a break was a different sort of period from the inactivity band beside it, and it is not — all three are
+  `no task allowed`.
+- **Vertical lines, not a filled tint** (`SLEEP_BAND_ALPHA` deleted). A grey period can legitimately hold a
+  task panel — §17 projects the plan straight through a sleep window, and a task with a non-zero resilience to
+  `no task allowed` works through a break — and a wash repainted those panels in grey, taking their task
+  colour. Lines leave every possible task colour readable through the gaps.
+- **The marking moved OVER the panels**, alongside the layers and for the same reason: behind them, a stretch
+  with a block on it showed no marking at all. That is what had forced `CalendarBlock`'s per-block
+  `sleepHourRanges` grey overlay, which is deleted with its parameter and its plumbing.
+- **Each band is DELIMITED** — an edge line across its top and bottom, drawn half a stroke inside the band —
+  so an inactivity period ending exactly where a sleep window starts still reads as two periods rather than
+  one merged stretch.
+- The bands stay non-interactive (no pointer input), the visible-window culling (ADR 0009) is unchanged, and
+  the hover bubble's sections still come from `contextOverlays`.
+
 ### The scheduler and the calendar are rebuilt on `side-dev/README.md`'s RESILIENCE model — 2026-08-28
 
 The README says a restrictive period is a start, an end and a **kind**, and that each task has a **resilience**

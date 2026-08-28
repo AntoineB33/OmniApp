@@ -163,8 +163,8 @@ private object CalColors {
     val event = Color(0xFF1A73E8) // Google-blue calendar event
 }
 
-/** Opacity of the greyed "Sleep"/"Inactivity" band overlay (and the matching tint on blocks under it). */
-private const val SLEEP_BAND_ALPHA = 0.16f
+/** Spacing between the vertical lines a grey period is marked with ([greyPeriodMarks]). */
+private val GREY_PERIOD_LINE_STEP = 7.dp
 
 private val WEEKDAY_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 private val WEEKDAY_INITIAL = listOf("M", "T", "W", "T", "F", "S", "S")
@@ -3500,11 +3500,6 @@ private fun DayColumn(
     fun onScreenDp(top: Dp, bottom: Dp) =
         hourHeight > 0.dp && onScreen(top / hourHeight, bottom / hourHeight)
 
-    // PRD §17: the fill schedules the work plan straight through the nightly sleep windows, so a block may
-    // land (partly) inside one. The overlapping sub-range is greyed "as if under the Sleep band" while the
-    // block stays a normal interactive block. Bands and blocks are both clipped to this day, so hour ranges
-    // compare directly.
-    val sleepHourRanges = sleepBands.map { it.startHour..it.endHour }
     // PRD §8: the bubble sections EVERY hoverable element in this column stacks under its own — the grey
     // periods the cursor sits inside and the two "nobody unlocked" LAYERS hatched over it. The layers
     // themselves stay non-interactive (they displace nothing and register no pointer input, so every block
@@ -3783,26 +3778,6 @@ private fun DayColumn(
             )
         }
 
-        // PRD §8/§17: the user's sleep windows — a GREY band drawn behind the task blocks, because a sleep
-        // window is an inactivity period (one labelled "Sleep") and grey is exactly "the scheduler places
-        // nothing here". It carries no hatch of its own any more: the two oblique-line slopes now mean only
-        // "no computer unlocked" / "no phone unlocked", and a sleep window gets both of them from the
-        // LAYERS drawn over the whole column (see [layerBands] below) rather than painting its own. Its
-        // "Sleep" label is drawn on top of everything further down, so it stays legible at the band's start.
-        // Purely decorative: these register no pointer input at all — their bubble section comes from
-        // [contextOverlays], carried either by the block on top or by the column-wide pickup below.
-        (inactivityBands + sleepBands).forEach { band ->
-            if (!onScreen(band.startHour, band.endHour)) return@forEach
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .offset(y = hourHeight * band.startHour)
-                    .height(hourHeight * (band.endHour - band.startHour))
-                    .clipToBounds()
-                    .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA)),
-            )
-        }
-
         // PRD §8: hovering a LAYER has to pop its section too — but a layer is a non-interactive overlay,
         // and an idle past stretch draws no band at all any more, so on most of the timeline there would be
         // nothing under the cursor to report it. This bottom-most tiling is that pickup: it lies under every
@@ -3927,7 +3902,6 @@ private fun DayColumn(
                 // Every other block — everything but itself — so a non-overlap drag/resize snaps around them.
                 others = allBlocks.filter { it.first != key }.map { it.second },
                 taskColor = record.taskId?.let { taskColors[it] },
-                sleepHourRanges = sleepHourRanges,
                 contextOverlays = contextOverlays,
                 overlapArmed = overlapArmed,
                 // Hide the resting (gesture-holding) slices while any move/resize preview overlay shows.
@@ -4014,8 +3988,6 @@ private fun DayColumn(
                                 .height(hourHeight * (slice.bottomHour - slice.topHour))
                                 .padding(horizontal = 1.dp),
                         ) {
-                            // Transient drag preview: left untinted; the resting block greys its sleep
-                            // sub-range on release (see [CalendarBlock]'s sleepHourRanges overlay).
                             val previewColor = rec.taskId?.let { taskColors[it] } ?: CalColors.event
                             CalendarBlockBody(
                                 previewColor,
@@ -4027,6 +3999,32 @@ private fun DayColumn(
                     }
                 }
             }
+        }
+
+        // PRD §8/§17: the grey periods — the user's hand-added inactivity periods and the §17 sleep windows
+        // (a sleep window is an inactivity period, one labelled "Sleep"). Grey is exactly "the scheduler
+        // places nothing here", and it is marked the same way as every other one: vertical lines, delimited
+        // top and bottom ([greyPeriodMarks]). They carry no hatch of their own — the two oblique-line slopes
+        // mean only "no computer unlocked" / "no phone unlocked", and a sleep window gets both of them from
+        // the LAYERS drawn over the whole column (see [layerBands] below).
+        //
+        // Drawn OVER the panels, like the layers and for the same reason: the fill projects the plan straight
+        // through a sleep window and a task resilient to a break's kind may work through one, so a marking
+        // hidden under the block would leave that stretch unmarked. Lines can be drawn over a block without
+        // taking its colour, which is what a filled band could not do. The "Sleep"/"Inactivity" label is
+        // drawn on top of everything further down, so it stays legible at the band's start.
+        // Purely decorative: these register no pointer input at all — their bubble section comes from
+        // [contextOverlays], carried either by the block on top or by the column-wide pickup below.
+        (inactivityBands + sleepBands).forEach { band ->
+            if (!onScreen(band.startHour, band.endHour)) return@forEach
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset(y = hourHeight * band.startHour)
+                    .height(hourHeight * (band.endHour - band.startHour))
+                    .clipToBounds()
+                    .greyPeriodMarks(),
+            )
         }
 
         // PRD §8 calendar LAYERS: the two decorative "nobody unlocked" hatches — "/" where no computer was
@@ -4185,18 +4183,6 @@ private val SCREEN_BREAK_MIN_HEIGHT = 3.dp
 private val SCREEN_BREAK_LABEL_MIN_HEIGHT = 13.dp
 
 /**
- * PRD §8/§15: fill of a screen-break band. All three breaks are periods of kind `no task allowed` **end to
- * end** (ADR 0003), which is precisely an inactivity period — so a band is grey like the §17 sleep band,
- * drawn inside the break's blue outline rather than as a solid blue slab, over its whole length.
- *
- * There is no hollow half any more. A break used to be read as a *shape* — a closed head and a tail accepting
- * the off-screen work — and the tail was drawn as a tinted outline so the work beneath showed through. A break
- * has no shape now, so a band that was part solid and part hollow would state a distinction the scheduler no
- * longer makes.
- */
-private const val SCREEN_BREAK_CLOSED_ALPHA = 0.34f
-
-/**
  * PRD §15 Screen break, rendered as a real time-positioned band (one [overlapLayout] slice of it) spanning its
  * true duration so the §9 fill leaves an exact gap for it. Sub-minute screen breaks render at [SCREEN_BREAK_MIN_HEIGHT]
  * (a hairline); the title is drawn only when the band is tall enough ([SCREEN_BREAK_LABEL_MIN_HEIGHT]). The full
@@ -4256,6 +4242,15 @@ private fun ScreenBreakBand(
 
 /**
  * PRD §15: the body of a [ScreenBreakBand] — one span, of one kind, painted one way.
+ *
+ * PRD §8/§15: all three breaks are periods of kind `no task allowed` **end to end** (ADR 0003), which is
+ * precisely an inactivity period — so a break is marked exactly like the inactivity and sleep bands beside
+ * it: vertical lines, delimited top and bottom ([greyPeriodMarks]), and a muted label at the top. It used to
+ * wear a blue outline and an accent-coloured title, which said it was a different sort of period; it is not.
+ *
+ * There is no hollow half either. A break used to be read as a *shape* — a closed head and a tail accepting
+ * the off-screen work. A break has no shape now, so a band that was part solid and part hollow would state a
+ * distinction the scheduler no longer makes.
  */
 @Composable
 private fun ScreenBreakSegment(
@@ -4263,27 +4258,17 @@ private fun ScreenBreakSegment(
     showLabel: Boolean,
     modifier: Modifier,
 ) {
-    Row(
-        modifier = modifier
-            .padding(horizontal = 1.dp)
-            .clip(RoundedCornerShape(4.dp))
-            // PRD §8/§15: a break accepts no task at all, which is precisely an inactivity period — so it
-            // is painted GREY like every other one, inside the screen break's own blue outline.
-            .background(CalColors.muted.copy(alpha = SCREEN_BREAK_CLOSED_ALPHA))
-            .border(1.dp, CalColors.accent, RoundedCornerShape(4.dp))
-            .then(if (showLabel) Modifier.padding(horizontal = 4.dp) else Modifier),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    Box(
+        modifier = modifier.clipToBounds().greyPeriodMarks(),
+        contentAlignment = Alignment.TopCenter,
     ) {
         if (showLabel) {
-            val labelColor = CalColors.accent
-            Text(text = "●", style = MaterialTheme.typography.labelSmall, color = labelColor)
             Text(
                 text = title,
                 style = MaterialTheme.typography.labelSmall,
-                color = labelColor,
+                color = CalColors.muted,
                 maxLines = 1,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.padding(horizontal = 4.dp),
             )
         }
     }
@@ -4602,12 +4587,6 @@ private fun CalendarBlock(
     /** PRD §8: this block's task's own colour, or null for a panel that keeps the default event blue. */
     taskColor: Color?,
     /**
-     * PRD §17: this day's sleep windows as hour-of-day ranges. Where a block overlaps one, only that
-     * sub-range is greyed (as if under the "Sleep" band) — so a block spanning day + a sleep sliver isn't
-     * tinted whole. The block stays a normal, fully interactive block drawn on top of the band.
-     */
-    sleepHourRanges: List<ClosedFloatingPointRange<Float>> = emptyList(),
-    /**
      * PRD §8: the bubble sections this block's own stacks on top of — the grey periods it is drawn inside
      * and the two "nobody unlocked" layers hatched over it. See the column's `contextOverlays`.
      */
@@ -4794,23 +4773,6 @@ private fun CalendarBlock(
                         hatched = record.noScreen,
                         titleColor = taskColor ?: CalColors.event,
                     )
-                    // PRD §17: grey the sub-range of this slice that falls inside a sleep window (the fill now
-                    // projects the plan through the night). A plain overlay Box with no pointer handler, so
-                    // the block underneath stays clickable/moveable — the block reads "as if under the band".
-                    sleepHourRanges.forEach { sleepRange ->
-                        val top = maxOf(slice.topHour, sleepRange.start)
-                        val bottom = minOf(slice.bottomHour, sleepRange.endInclusive)
-                        if (bottom > top) {
-                            Box(
-                                Modifier
-                                    .offset(y = hourHeight * (top - slice.topHour))
-                                    .fillMaxWidth()
-                                    .height(hourHeight * (bottom - top))
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(CalColors.muted.copy(alpha = SLEEP_BAND_ALPHA)),
-                            )
-                        }
-                    }
                     // The block's own section, one overlay per device-set segment, then re-tiled together
                     // with the grey periods and layers covering it so each tile reports one whole stack.
                     val ownOverlays = hoverZones.map { zone ->
@@ -4918,6 +4880,41 @@ private fun decorativeBandLabel(r: PlacedRecord): String = when {
  */
 private fun underHoverTitle(u: PlacedRecord): String =
     if (u.entryId == null && (u.sleep || u.inactivity || u.noScreen)) decorativeBandLabel(u) else u.title
+
+/**
+ * PRD §8/§15/§17: how EVERY grey period is marked — a hand-added inactivity period, a sleep window and all
+ * three screen breaks alike. They are one thing (`no task allowed`: the scheduler places nothing there), so
+ * they are drawn one way; a screen break used to wear a blue outline of its own, which said it was a
+ * different sort of period than the two beside it.
+ *
+ * VERTICAL LINES, never a filled wash. A tint repaints whatever it covers, so a task panel drawn inside a
+ * grey period (§17 projects the plan straight through the night, and a task resilient to the break's kind
+ * may work through one) lost its own colour to the marking. Lines mark the stretch and leave every possible
+ * task colour readable through the gaps.
+ *
+ * The band is DELIMITED — a line across its top and its bottom edge — so two grey periods that abut, an
+ * inactivity period ending exactly where a sleep window starts, still read as two. A continuous pattern
+ * cannot say that; it merges them into one stretch.
+ */
+private fun Modifier.greyPeriodMarks(color: Color = CalColors.muted): Modifier =
+    this.drawBehind {
+        val stroke = 1.dp.toPx()
+        val step = GREY_PERIOD_LINE_STEP.toPx()
+        var x = step / 2f
+        while (x < size.width) {
+            drawLine(color.copy(alpha = 0.34f), Offset(x, 0f), Offset(x, size.height), strokeWidth = stroke)
+            x += step
+        }
+        // The delimitation. Half a stroke in, so the line lands inside the band and two abutting bands draw
+        // two distinct edges rather than one shared pixel row.
+        val edge = color.copy(alpha = 0.6f)
+        val top = stroke / 2f
+        val bottom = size.height - stroke / 2f
+        drawLine(edge, Offset(0f, top), Offset(size.width, top), strokeWidth = stroke)
+        if (bottom > top) {
+            drawLine(edge, Offset(0f, bottom), Offset(size.width, bottom), strokeWidth = stroke)
+        }
+    }
 
 /**
  * PRD §8 decorative panels: an oblique-line hatch. [reversed] flips the slope — the no-screen pattern
