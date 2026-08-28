@@ -3,7 +3,6 @@ package org.example.project.ui
 import androidx.compose.ui.graphics.Color
 import org.example.project.scheduler.domain.TaskColorSpace
 import org.example.project.scheduler.model.TaskId
-import org.example.project.scheduler.state.SchedulerState
 
 /**
  * **What a task's colour looks like.** [TaskColorSpace] answers with a hue fraction and nothing else; this is
@@ -21,11 +20,12 @@ import org.example.project.scheduler.state.SchedulerState
  *   gives no colour.
  *
  * Saturation is fixed, so where a task sits in the tree is essentially the only thing that varies. Lightness
- * carries one extra thing: **the depth**, a step darker per level. That is not decoration — a hue does not
- * tell every pair of tasks apart on its own (see [TaskColorSpace.TaskHue]), and the pairs it cannot separate
- * are exactly the ancestor/descendant ones, which a depth always can. It also makes a branch read as a family
- * of shades rather than one flat colour. The step is small and stops after [DEPTH_STEPS] levels, so a deep
- * tree never runs out of contrast against the row's text.
+ * carries one extra thing: **the depth**, a step darker per level. It is no longer what tells two tasks
+ * apart — [TaskColorSpace] now places a parent off every hue its own sub-tree holds, so the hue alone always
+ * separates them — but a parent and the leaf it was placed beside are *neighbouring* hues by design, and a
+ * step of lightness is what makes that a branch reading as a family of shades rather than two rows the eye
+ * has to measure. The step is small and stops after [DEPTH_STEPS] levels, so a deep tree never runs out of
+ * contrast against the row's text.
  */
 internal object TaskPalette {
 
@@ -37,13 +37,17 @@ internal object TaskPalette {
     fun accent(hue: TaskColorSpace.TaskHue): Color =
         Color.hsl(degrees(hue.hue), ACCENT_SATURATION, ACCENT_LIGHTNESS - step(hue.depth) * ACCENT_DEPTH_STEP)
 
-    /** Every task's cell tint, for the task tree. */
-    fun sheetColors(state: SchedulerState): Map<TaskId, Color> =
-        TaskColorSpace.hues(state).mapValues { (_, hue) -> sheet(hue) }
+    /**
+     * Every task's cell tint, for the task tree. Takes the solved hues rather than the state: solving is
+     * [TaskHueMemo]'s business (it holds the previous answer the tie-breaks are settled against, and the
+     * debounce), and going through it is what keeps this reading and the calendar's identical.
+     */
+    fun sheetColors(hues: Map<TaskId, TaskColorSpace.TaskHue>): Map<TaskId, Color> =
+        hues.mapValues { (_, hue) -> sheet(hue) }
 
-    /** Every task's panel colour, for the calendar. */
-    fun accentColors(state: SchedulerState): Map<TaskId, Color> =
-        TaskColorSpace.hues(state).mapValues { (_, hue) -> accent(hue) }
+    /** Every task's panel colour, for the calendar. Same hues, same source — see [sheetColors]. */
+    fun accentColors(hues: Map<TaskId, TaskColorSpace.TaskHue>): Map<TaskId, Color> =
+        hues.mapValues { (_, hue) -> accent(hue) }
 
     private fun step(depth: Int): Float = depth.coerceIn(0, DEPTH_STEPS).toFloat()
 

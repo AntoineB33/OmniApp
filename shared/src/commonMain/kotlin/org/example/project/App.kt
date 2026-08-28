@@ -108,6 +108,7 @@ import org.example.project.ui.SleepWindow
 import org.example.project.ui.DefaultSubtreeWindow
 import org.example.project.ui.TaskListWindow
 import org.example.project.ui.TaskPalette
+import org.example.project.ui.rememberTaskHues
 import org.example.project.ui.TaskTreesWindow
 import org.example.project.ui.TimeSimPanel
 import org.example.project.ui.LocalTransientPopupHost
@@ -964,13 +965,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 )
             }
         // PRD §8: each task's own colour, so a task panel is drawn in the same colour as the task tree's
-        // cell for that task. Remembered against the three maps the partition reads and nothing else — the
-        // advance tick replaces the state object every second (records live on the tasks), and re-walking
-        // the tree on each of those is exactly the per-tick cost ADR 0009's display hot path forbids.
-        val taskPanelColors =
-            remember(schedulerState.cells, schedulerState.lists, schedulerState.tasks) {
-                TaskPalette.accentColors(schedulerState)
-            }
+        // cell for that task. Both read the ACCOUNT's one [TaskHueMemo] — it holds the previous solution the
+        // colour rule's ties are settled against, caches the answer per tree (so the two surfaces get the
+        // identical map, not two derivations of it) and carries the debounce.
+        val taskHues = rememberTaskHues(schedulerState)
+        val taskPanelColors = remember(taskHues) { TaskPalette.accentColors(taskHues) }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
         var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
         // PRD §8 Manual add: a not-yet-committed default panel shown in the edit window with a Save

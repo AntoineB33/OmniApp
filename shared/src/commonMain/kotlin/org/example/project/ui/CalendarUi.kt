@@ -2265,7 +2265,7 @@ fun CalendarFloatingWindow(
     modifier: Modifier = Modifier,
     records: List<CalendarRecord> = emptyList(),
     /**
-     * PRD §8: each task's own colour — its share of the colour space its sub-list divides
+     * PRD §8: each task's own colour — its place in the one colour space the tree partitions
      * ([org.example.project.scheduler.domain.TaskColorSpace]). A task panel is drawn in its task's colour
      * instead of the single `CalColors.event` blue; a task the tree gives no colour keeps that blue.
      */
@@ -2791,7 +2791,7 @@ private fun WeekView(
     nowMillis: Long,
     records: List<CalendarRecord>,
     /**
-     * PRD §8: each task's own colour — its share of the colour space its sub-list divides
+     * PRD §8: each task's own colour — its place in the one colour space the tree partitions
      * ([org.example.project.scheduler.domain.TaskColorSpace]). A task panel is drawn in its task's colour
      * instead of the single `CalColors.event` blue; a task the tree gives no colour keeps that blue.
      */
@@ -3439,7 +3439,7 @@ private fun DayColumn(
     now: LocalTime?,
     records: List<PlacedRecord>,
     /**
-     * PRD §8: each task's own colour — its share of the colour space its sub-list divides
+     * PRD §8: each task's own colour — its place in the one colour space the tree partitions
      * ([org.example.project.scheduler.domain.TaskColorSpace]). A task panel is drawn in its task's colour
      * instead of the single `CalColors.event` blue; a task the tree gives no colour keeps that blue.
      */
@@ -4640,8 +4640,8 @@ private fun CalendarBlock(
     }
 
     // PRD §8: no-screen / inactivity periods are decorative-patterned, muted blocks — they are not a task,
-    // so they take no task's colour. A real task period is drawn in ITS OWN colour (the share of the colour
-    // space its sub-list divides, see [org.example.project.scheduler.domain.TaskColorSpace]); the uniform
+    // so they take no task's colour. A real task period is drawn in ITS OWN colour (its place in the one
+    // colour space the tree partitions, see [org.example.project.scheduler.domain.TaskColorSpace]); the uniform
     // event blue survives as the colour of a period whose task the tree gives no colour — a manual panel on
     // a task no cell points at any more, and every block drawn before the tree has been read.
     val color =

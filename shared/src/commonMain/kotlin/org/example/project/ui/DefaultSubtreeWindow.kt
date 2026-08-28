@@ -198,6 +198,10 @@ fun DefaultSubtreeWindow(
                 onSetDeepCopyCell = onSetDeepCopyCell,
                 // The window's own raise-on-press is what focuses it, so the tree claims no app-wide focus.
                 refocusWindow = null,
+                // The template is its OWN tree, so it gets its own colour solution: sharing the account's
+                // memo would make each of the two trees the "previous answer" the other's ties are settled
+                // against, and the cached answer would be thrown away on every recomposition of either.
+                hueMemo = remember { TaskHueMemo() },
                 rowTrailing = { cellId ->
                     // PRD §4: every non-empty row carries the switch — an empty cell has no task behind it.
                     if (projected.cells[cellId]?.taskId != null) {

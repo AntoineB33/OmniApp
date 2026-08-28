@@ -531,34 +531,54 @@ the calendar's zoom — a search is a way of looking at the tree, never a fact a
 
 ### Task colours
 
-`TaskColorSpace` is the whole of the rule; `TaskPalette` is the only place a hue becomes something to paint
-with. Both the tree's cell and the calendar's panel read the **same** hue for a task — a second derivation is
-how the two surfaces start disagreeing about what colour a task is.
+→ ADR 0013. `TaskColorSpace` is the whole of the rule, `TaskHueMemo` holds the previous answer and the
+debounce, and `TaskPalette` is the only place a hue becomes something to paint with. Both the tree's cell and
+the calendar's panel read the **same** hue for a task — a second derivation is how the two surfaces start
+disagreeing about what colour a task is.
 
-- **One colour space is handed down the tree.** The root list owns the whole hue circle; a list's arc is split
-  between its cells **in proportion to the childless tasks each one's sub-tree holds** (not equally); a cell's
-  colour is the **average** of its own arc, and that arc is the space its sub-list divides. So a branch is a
-  contiguous family of shades and every leaf ends up with about the same slice of the circle.
+- **The tasks with an empty sub-tree own the circle, spread as far apart as they can be.** `n` of them take
+  the `n` hues `i/n` — the arrangement maximising the smallest distance between any two. They are the many,
+  and they are what the calendar shows.
+- **Their ORDER around the circle is the tree's own depth-first order**, which is what makes "the closer two
+  tasks are in the tree, the closer their colours" true. It is free: every order spreads them equally well, so
+  the order can be spent on the tree at no cost to the separation. A branch is a contiguous run of the circle.
+- **Every other task then takes what is left, as far from all the others as it can get** — one at a time, most
+  constrained first (narrowest sub-tree arc, ties by walk order), each landing at the point of **its own
+  sub-tree's arc** furthest from every colour already given out. The arc is the smallest stretch holding every
+  leaf below it, widened by **half a ring step** at each end — without that half-step the parent of a single
+  leaf would have nowhere to go but that leaf's own hue. The maxima are exactly the gap midpoints plus the
+  arc's two ends, so the search is an enumeration: never a scan, a grid or a repulsion loop.
+- **Where several answers tie, the one closest to the PREVIOUS answer wins.** Ties are the normal case (the
+  circle has no origin; a gap has two equally distant halves) and breaking them arbitrarily repaints the whole
+  tree on every edit. Both the ring's **rotation** and each parent's **pick** are settled that way, and
+  `hues(state, previous)` is a **fixed point of itself** — feed an answer back in and it comes back unchanged.
+- **One `TaskHueMemo` per tree, and it CACHES.** `TaskHueMemo.account` serves the task tree and the calendar
+  both, so the identity above holds by construction rather than by two call sites agreeing; the PRD §4 template
+  gets its own (sharing one would make each tree the other's "previous answer"). The cache key is
+  `cells`/`lists`/`tasks` alone — the advance tick replaces the state object every second (records live on the
+  tasks), and re-walking the tree on each one is the per-tick cost ADR 0009 forbids.
+- **The colours follow the tree with a DEBOUNCE** (`rememberTaskHues`, 400 ms; the first composition is
+  answered at once). Typing a title or pasting a sub-tree walks through a dozen intermediate trees.
 - **The walk visits each LIST once and a colour belongs to the TASK** — a sub-list belongs to the task id, so
   re-walking a mirror per occurrence is exponential *and* would leave the calendar panel, which knows only the
-  task, with several colours to pick from. The **first** occurrence reached colours the task and its sub-tree;
-  a later one still **consumes its share** of its own parent's arc (its siblings' widths must stay
-  proportional) without re-dividing it. The coloured set doubles as the cycle guard.
-- **Only populated cells take part** — an empty placeholder neither takes a colour nor consumes the arc.
-- **A hue does not tell every pair of tasks apart, and cannot.** A parent's colour is the average of the arc
-  its children divide, so a child sitting in the middle of it has the very same average (`Book` and `Draft` in
-  `TaskColorSpaceTest`). Siblings never collide, so the pairs a hue cannot separate are exactly the
-  ancestor/descendant ones — which is why `TaskHue` carries the **depth** and the palette spends it on
-  lightness. Do not "fix" the collision by perturbing the hue: the partition is the rule.
+  task, with several colours to pick from. The **first** occurrence reached names the task and walks its
+  sub-tree; a later one adds nothing, though the branch it is mirrored into still counts it as one of its own
+  when that branch's arc is measured (which is why an arc can wrap round the circle). The visited set doubles
+  as the cycle guard.
+- **Only populated cells take part** — an empty placeholder takes no colour and no room on the circle.
+- **The depth is no longer what tells two tasks apart** — the placement is, and a parent is kept off every hue
+  its own sub-tree holds. `TaskHue` still carries it and the palette still spends it on lightness, because a
+  parent and the leaf it was placed beside are *neighbouring* hues by design. Do not go back to averaging an
+  arc (that made `Book` and `Draft` the identical hue), and do not "fix" a collision by perturbing a hue.
 - **The tree's tint is the row's RESTING background only.** Drag-move, selection and non-selectable still win
   outright — a tint under each of them would be one more thing to read them against, and plain white is the
   strongest possible marker on a coloured tree.
 - **The uniform §8 event blue survives as the fallback**, for a panel whose task the tree gives no colour. A
   no-screen / inactivity period takes no task colour at all: it is not a task.
-- **Colours are DERIVED, never persisted or synced** — recomputed from the tree, like the percentages. And the
-  derivation is remembered against `cells`/`lists`/`tasks` alone: the advance tick replaces the state object
-  every second (records live on the tasks), and re-walking the tree on each one is the per-tick cost ADR 0009
-  forbids.
+- **Colours are DERIVED, never persisted or synced** — recomputed from the tree, like the percentages.
+- **Grey periods are marked with LINES so every colour stays available to the tasks** (ADR 0002/0013): a wash
+  over an inactivity period, a sleep window or a screen break would repaint the task panels a grey period may
+  legitimately hold, and would cost the palette a corner of the circle.
 
 ### The "All tasks" list
 

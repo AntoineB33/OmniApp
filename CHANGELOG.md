@@ -11,6 +11,33 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Task colours: the LEAVES own the circle — SHIPPED 2026-08-28
+
+→ ADR 0013. Replaces the *one colour space handed down the tree* rule shipped the day before.
+`shared` only (`TaskColorSpace.kt`, new `ui/TaskHueMemo.kt`, `TaskColorPalette.kt`, the three call sites);
+`TaskColorSpaceTest` rewritten. Client rebuild to see it.
+
+- **The tasks with an empty sub-tree are placed first and spread as far apart as they can be** — `n` of them
+  take the `n` hues `i/n`, the arrangement maximising the smallest distance between any two. Their order
+  around the circle is the tree's depth-first order, so "the closer in the tree, the closer in the colour
+  space" costs nothing: every order spreads them equally well.
+- **Every other task then takes the point of its OWN sub-tree's arc furthest from every colour already given
+  out**, one at a time, most constrained first. The arc is the smallest stretch holding the leaves below it,
+  widened by half a ring step at each end (without which the parent of a single leaf has nowhere to go). The
+  maxima are exactly the gap midpoints plus the arc's ends, so the search is an enumeration, not a sample.
+- **The collision the old rule had by construction is gone.** A cell's colour used to be the *average of its
+  own arc*, so a child sitting in the middle of that arc got the parent's very hue (`Book` and `Draft` in the
+  test fixture). `TaskHue` still carries the depth and the palette still spends it on lightness, but it is now
+  a legibility cue for neighbouring hues, not the thing that separates two tasks.
+- **Ties are settled toward the PREVIOUS answer** — the ring's rotation and each parent's pick both. The
+  circle has no origin and a gap has two equally distant halves, so ties are the normal case; broken
+  arbitrarily they repaint the whole tree on every edit. `hues(state, previous)` is a fixed point of itself.
+- **New `TaskHueMemo`, one per tree**: `TaskHueMemo.account` is shared by the task tree and the calendar (so
+  the two cannot derive different colours for one task), the PRD §4 template gets its own. It caches on
+  `cells`/`lists`/`tasks` — the ADR 0009 per-tick guard, unchanged in effect — and `rememberTaskHues` adds a
+  **400 ms debounce**, the first composition still answered at once.
+- Nothing persisted or synced changed: colours stay derived.
+
 ### Grey periods are marked with VERTICAL LINES, delimited — SHIPPED 2026-08-28
 
 → ADR 0002 § *How grey is MARKED*. `ui/CalendarUi.kt` only; no logic change, no test change.

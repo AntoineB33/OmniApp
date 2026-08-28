@@ -383,7 +383,7 @@ internal fun CellListSection(
     visibleOrder: List<CellId>,
     priorities: Map<TaskId, Double>,
     /**
-     * Each task's own colour — its share of the colour space its sub-list divides
+     * Each task's own colour — its place in the one colour space the tree partitions
      * ([org.example.project.scheduler.domain.TaskColorSpace]). Keyed by task, not by cell, so every
      * occurrence of a mirrored task is painted the same.
      */
