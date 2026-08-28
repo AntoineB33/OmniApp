@@ -16,7 +16,7 @@ import org.example.project.scheduler.state.SchedulerState
 
 /**
  * PRD §13 cell contextual menu: "copy" / "deep copy" serialize the cell's task — including everything the
- * "edit" window holds (the no-screen switch, the schedule unit and the text) — to the clipboard text that
+ * "edit task" window holds (the no-screen switch, the schedule unit and the text) — to the clipboard text that
  * Ctrl+V pastes back. Covers the readable format, the depth the deep copy is asked for, the path its
  * window prints, the paste restore, and that a payload written before this format existed still parses.
  */

@@ -55,7 +55,7 @@ import org.example.project.scheduler.ui.TaskTreeView
  *
  * That is possible because the template is a **real tree of real tasks**
  * ([org.example.project.scheduler.state.DefaultSubtreeTemplate]), so a template row has a task for the menu
- * to act on: "edit" writes a screen switch, a schedule unit and a text onto it, and the graft carries those
+ * to act on: "edit task" writes a screen switch, a schedule unit and a text onto it, and the graft carries those
  * across along with the row's minimum time and its sub-list's weight table.
  *
  * **The switch** is the node's binding, as it always was:

@@ -268,12 +268,19 @@ internal fun TaskTreeView(
         last
     }
 
-    // Bring the revealed row into view. The rows of a freshly expanded ancestor are not positioned yet on
-    // the frame the reveal is dispatched, so wait for their bounds to be reported (bounded, so a match on a
-    // row that never lands — an unexpandable ancestor — does not spin).
-    LaunchedEffect(findCurrentMatch, findMatches.size) {
-        val match = findCurrentMatch ?: return@LaunchedEffect
-        val occurrence = VisibleOccurrence(match.cellId, match.renderVia)
+    // Bring the SELECTED row into view. It is keyed on the selection rather than on the find bar's current
+    // match because a match is not the only thing that reveals a row: PRD §8's "go to task tree" reaches the
+    // tree through the very same RevealCell, from a surface that cannot reach into this composable at all.
+    // (Ordinary keyboard navigation lands here too, and wants exactly the same thing.) The find match stays
+    // a key so stepping onto a second hit inside a row already on screen still re-runs — it then measures a
+    // zero delta and scrolls nothing.
+    //
+    // The rows of a freshly expanded ancestor are not positioned yet on the frame the reveal is dispatched,
+    // so wait for their bounds to be reported (bounded, so a selection on a row that never lands — an
+    // unexpandable ancestor — does not spin).
+    LaunchedEffect(state.selection.main, state.selection.renderVia, findCurrentMatch, findMatches.size) {
+        val selected = state.selection.main ?: return@LaunchedEffect
+        val occurrence = VisibleOccurrence(selected, state.selection.renderVia)
         var bounds = rowBounds[occurrence]
         var frames = 0
         while (bounds == null && frames < 10) {

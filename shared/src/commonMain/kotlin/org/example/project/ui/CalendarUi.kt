@@ -2323,6 +2323,18 @@ fun CalendarFloatingWindow(
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit = { _, _, _, _ -> },
     /** PRD §8 task contextual menu "Edit": requests opening the edit window for this block. */
     onEditEntry: (PlacedRecord) -> Unit = {},
+    /**
+     * PRD §8 task contextual menu "edit task": requests the §13 task edit window for the panel's task —
+     * the same window the tree's own cell menu opens, so a task's resilience, schedule unit and text are
+     * reachable from the panel without hunting for the cell first.
+     */
+    onEditTask: (TaskId) -> Unit = {},
+    /**
+     * PRD §8 task contextual menu "go to task tree": requests selecting the first cell showing this
+     * panel's task. The panel's task id is `null` when its title names no task at all, which is one of the
+     * ways a panel can have no cell to go to — the handler is what says so.
+     */
+    onGoToTaskTree: (TaskId?, String) -> Unit = { _, _ -> },
     /** PRD §8 task contextual menu "Remove": requests deleting this block. */
     onRemoveEntry: (PlacedRecord) -> Unit = {},
     /** PRD §14 Reminders: a reminder tag was clicked → toggle its checked (done) state. */
@@ -2571,6 +2583,8 @@ fun CalendarFloatingWindow(
                     onAddInactivityAt = onAddInactivityAt,
                     onCommitBounds = onCommitBounds,
                     onEditEntry = onEditEntry,
+                    onEditTask = onEditTask,
+                    onGoToTaskTree = onGoToTaskTree,
                     onRemoveEntry = onRemoveEntry,
                     onToggleReminder = onToggleReminder,
                     onAdjustWeights = onAdjustWeights,
@@ -2834,6 +2848,8 @@ private fun WeekView(
     onAddInactivityAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
+    onEditTask: (TaskId) -> Unit,
+    onGoToTaskTree: (TaskId?, String) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
     onToggleReminder: (PlacedRecord) -> Unit,
     onAdjustWeights: (Map<String, Double>) -> Unit,
@@ -3349,6 +3365,8 @@ private fun WeekView(
                                     onAddInactivityAt = onAddInactivityAt,
                                     onCommitBounds = onCommitBounds,
                                     onEditEntry = onEditEntry,
+                                    onEditTask = onEditTask,
+                                    onGoToTaskTree = onGoToTaskTree,
                                     onRemoveEntry = onRemoveEntry,
                                     onToggleReminder = onToggleReminder,
                                     onLockScroll = { scrollLocked = it },
@@ -3480,6 +3498,8 @@ private fun DayColumn(
     onAddInactivityAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
+    onEditTask: (TaskId) -> Unit,
+    onGoToTaskTree: (TaskId?, String) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
     onToggleReminder: (PlacedRecord) -> Unit,
     onLockScroll: (Boolean) -> Unit,
@@ -3825,9 +3845,9 @@ private fun DayColumn(
             )
         }
 
-        // PRD §8 contextual menu, anchored at the right-click position. A block gets Edit/Remove; both a
-        // block and a gap also get the "add" actions (anchored at the right-click time), so a panel's menu
-        // is a superset of the gap's.
+        // PRD §8 contextual menu, anchored at the right-click position. A block gets Edit/Remove (and, on a
+        // task panel, "edit task" / "go to task tree"); both a block and a gap also get the "add" actions
+        // (anchored at the right-click time), so a panel's menu is a superset of the gap's.
         val anchor = menuOffset
         fun closeMenu() { menuOffset = null; menuTarget = null }
         DropdownMenu(
@@ -3862,6 +3882,29 @@ private fun DayColumn(
                     DropdownMenuItem(
                         text = { Text("Edit") },
                         onClick = { closeMenu(); onEditEntry(target) },
+                    )
+                }
+                // PRD §8: the two entries a TASK panel gets on top of "Edit" — "Edit" is about the panel
+                // (this occurrence's bounds and pins), these two are about the task behind it. A period, a
+                // reminder tag, an alarm marker, a sleep band, a screen break and a layer region are not
+                // tasks, so neither is offered on them.
+                val taskPanel = !target.reminder && !target.alarm && !target.sleep &&
+                    !target.inactivity && !target.noScreen && !target.screenBreak && target.layer == null
+                if (taskPanel) {
+                    // "edit task" is the tree cell menu's own entry, under the same name: it opens the §13
+                    // window on the panel's task. A panel whose title names no task has nothing to open.
+                    target.taskId?.let { taskId ->
+                        DropdownMenuItem(
+                            text = { Text("edit task") },
+                            onClick = { closeMenu(); onEditTask(taskId) },
+                        )
+                    }
+                    // "go to task tree" selects the task's first cell in the tree. Offered even where the
+                    // panel names no task: "it is not in the tree" is the answer either way, and the
+                    // handler is the one place that says so.
+                    DropdownMenuItem(
+                        text = { Text("go to task tree") },
+                        onClick = { closeMenu(); onGoToTaskTree(target.taskId, target.title) },
                     )
                 }
                 // The generated sleep band is not a removable/movable entity (no panel behind it).

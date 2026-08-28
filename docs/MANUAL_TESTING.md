@@ -96,6 +96,16 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
 - [ ] Undo (Ctrl+Z) / Redo across each category (edit / selection / calendar); focus routing behaves
       (`scheduler-history-architecture` note).
 - [ ] Add a manual calendar panel, edit it, drag/resize, remove it (PRD §8–§12).
+- [ ] **A task panel's menu reaches its task (PRD §8).** Right-click a task panel:
+  - [ ] **"edit task"** opens the §13 edition window on that task — the same window the tree cell's own
+        **"edit task"** opens (that entry is no longer called "edit").
+  - [ ] **"go to task tree"** selects the task's first cell, expanding whatever hid it, scrolling it into
+        view, and handing the tree the focus. On a mirrored task it is the FIRST row that is selected.
+  - [ ] Neither entry appears on an inactivity/no-screen period, a sleep band, a screen break, a reminder
+        tag or an alarm marker.
+  - [ ] Delete the task from the tree (empty its cell) with its panel still on the calendar, then
+        "go to task tree" on that panel → a message says it is not in the task tree; nothing is selected.
+        Pressing anywhere else dismisses the message and still does its normal job.
 - [ ] Close and relaunch → the task tree, records, and pinned panels are exactly as left (local SQLite,
       ~400 ms save debounce — **no** sync involved).
 - [ ] Auto/side/sleep panels regenerate on load (they are derived, not persisted — reconstructibility rule).

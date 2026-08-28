@@ -10,7 +10,7 @@ migration history.
 | # | Record | Covers |
 | --- | --- | --- |
 | [0001](0001-scheduler-model.md) | The scheduler is a cyclic proportional-share model | claims, chunk scale, the resilience model, influence field, atomic block, resume contract, re-plan triggers |
-| [0002](0002-calendar-layers-and-grey.md) | The calendar's two layers, and what GREY means | OS lock history as the layer source, assumed-unlocked default, derived grey bands |
+| [0002](0002-calendar-layers-and-grey.md) | The calendar's two layers, and what GREY means | OS lock history as the layer source, assumed-unlocked default, derived grey bands, a panel's jump to its task |
 | [0003](0003-screen-breaks.md) | Screen breaks: the three dynamic restrictive periods | one kind end to end, the three recurrence bars, rest stretches, the derived anchors, the two `t_p` modes |
 | [0004](0004-relative-priority.md) | Relative priority (PRD §5) | the model, percentage-scaling solve, pin semantics |
 | [0005](0005-sync-and-merge.md) | Snapshot sync and the three-way merge | auto push/pull, catch-up on resubscribe, merge rules, lost-ack repair |

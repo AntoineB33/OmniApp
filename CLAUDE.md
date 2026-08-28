@@ -310,6 +310,20 @@ crossing can be silently clipped by a clock jump.
   for a no-screen period, everybody's for a grey one. Same rule as `StripNoScreenRecords` (`stripRecords`,
   `onScreenOnly`), applied at once rather than at the next engine start; outside Undo/Redo like every write
   to the record.
+- **A task panel's menu reaches the TASK as well as the panel.** "Edit" is the panel (this occurrence's
+  bounds and pins); **"edit task"** opens the §13 window and **"go to task tree"** selects the task's first
+  cell. Both are offered on a task panel only — a period, a reminder, an alarm, a sleep band, a screen break
+  and a layer region are not tasks. Two things they must not become: **"edit task" is the tree cell menu's
+  own entry, under its own name** — one window for the task, so the tree's entry was renamed "edit" → "edit
+  task" rather than the calendar inventing a second name for it; and **"go to task tree" goes through
+  `RevealCell`**, the find bar's primitive (expand the way in as ONE unit, then select), never a fresh
+  selection path.
+- **`firstTaskOccurrence` is where "the first occurrence" is decided**, and `null` is a real answer, not an
+  error path — a panel outlives the cell that laid it (panels are not per-tree), so it may name a detached
+  parent, a task §4's blank title deleted, or a task another tree owns. The walk is `TaskTreeSearch.matches`'
+  — depth-first, **each LIST visited once** (a mirrored sub-tree is one list under many parents) — and it
+  skips a blank-titled cell entirely: that cell is the deleted one, and the reveal could not expand it
+  anyway. The one place that says "not in the task tree" is the handler, once, for every one of those cases.
 - **Both "add a … period" entries open the PERIOD EDITOR** (`PeriodEditWindow`, one window for both kinds) —
   they never lay a panel directly. Each bound is a date+time, **"now"** (resolved at Save), or **"∞"**
   (`SchedulerDomain.OPEN_PAST_MILLIS` / `OPEN_FUTURE_MILLIS` — real 1900/2200 instants, never
@@ -395,6 +409,10 @@ only ever means the one they just asked for. A pop-up there is exactly one of is
 precisely `windowStack` (Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, DefaultSubtree,
 Shortcuts, TimeSim) and every other pop-up in the app is sort 2.
 
+- **A notice the app says back to a gesture is sort 2 too** (`MessagePopup` — today only the calendar's "go
+  to task tree" on a task no cell holds): "the error about this panel" and "the error about that one" are two
+  different notices and only the latest is ever meant. It therefore leaves when anything else takes focus,
+  and needs no timer and no scrim of its own.
 - **At most one sort-2 pop-up is open at a time** — `TransientPopupHost.open` dismisses the others, so the
   invariant holds by construction and not by every opener remembering to close its predecessor.
 - **A sort-2 pop-up is NOT modal: no scrim, blocks nothing.** The press that dismisses it still does its
@@ -603,8 +621,8 @@ until it is applied to a real cell.
 
 - **The template IS a real task tree** (`DefaultSubtreeTemplate`: a `TreeSnapshot` in the same shape a
   `TaskTreeEntry` stores, rooted at the same `WellKnownIds`). Do not turn it back into a tree of titles — a
-  template row must be a real `Task`, or four of the five §13 menu entries have nothing to act on and "edit"
-  has nowhere to write.
+  template row must be a real `Task`, or four of the five §13 menu entries have nothing to act on and "edit
+  task" has nowhere to write.
 - **The window IS the task tree — the same code, not the same look.** `scheduler/ui/TaskTreeView.kt` is the
   ONE tree, drawn twice: once by `TaskSchedulerScreen` over the account's state, once by
   `ui/DefaultSubtreeWindow.kt` over `projectDefaultSubtree()`. So it has every gesture, Ctrl+F included, and

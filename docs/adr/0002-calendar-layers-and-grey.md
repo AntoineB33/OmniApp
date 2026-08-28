@@ -353,6 +353,43 @@ are the device zones, re-tiled against the context). Emission is still culled to
 
 Tests: `CalendarBubbleSectionTest` (the ordering, the ties, the break/task exclusion).
 
+## A task panel's menu reaches the TASK, not only the panel — 2026-08-28
+
+The panel menu's "Edit" is about **this occurrence**: its bounds, its pins, the window that lays it. Nothing
+in the calendar reached the **task** behind the panel, so setting a task's resilience or reading its text
+meant leaving the calendar, finding the cell in the tree by eye, and right-clicking it. Two entries close
+that, on a task panel only (a period, a reminder, an alarm, a sleep band, a screen break and a layer region
+are not tasks):
+
+- **"edit task"** — the §13 edition window, **under the name the tree cell's menu now uses too**. The tree's
+  entry was renamed "edit" → "edit task" in the same change, deliberately: it is one window, and two names
+  for it is how two surfaces start reading as two features. The window itself is untouched — `App` already
+  hoists it out of the tree onto the top layer, so the calendar only had to set `editTaskId`.
+- **"go to task tree"** — select the task's **first** cell. Three decisions:
+  - **"First" is the tree's own reading order**, not "some cell holding the task". `SchedulerDomain.
+    firstTaskOccurrence` is the one place that says so: depth-first, **each LIST visited once** (a sub-list
+    belongs to the task id, so a mirrored sub-tree is one list under many parents and re-entering it per
+    occurrence is exponential — the same walk, for the same reason, as `TaskTreeSearch.matches`), skipping
+    blank-titled cells, which are §4's deleted ones.
+  - **It goes through `RevealCell`**, the find bar's own primitive, because the two want the identical thing:
+    expand every collapsed ancestor as ONE history unit (a per-level unit would bury Ctrl+Z under the
+    navigation), then select in the occurrence the jump navigated to. `firstTaskOccurrence` therefore returns
+    the cell **and the ancestor chain**, which is exactly the pair the intent takes. The tree is focused
+    first — that is what "going to" it means, and what re-arms its keyboard.
+  - **`null` is a real answer, not an error path.** Panels are not per-tree and a panel outlives the cell that
+    laid it, so it may name a **detached parent**, a task §4's blank title deleted, a task another named tree
+    owns, or (a manual panel whose typed title never matched one) no task at all. All four are the same
+    sentence, said in one place: *"…" is not in the task tree*, in the app's first `MessagePopup` — a sort-2
+    pop-up, so one notice at a time, gone the moment anything else takes focus, with no scrim and no timer.
+
+Consequence elsewhere: the tree's bring-the-revealed-row-into-view effect is now keyed on the **selection**
+rather than on the find bar's current match. A match had stopped being the only thing that reveals a row, and
+the calendar cannot reach into that composable at all; ordinary keyboard navigation lands there too and
+wanted exactly the same thing. The find match stays a key so stepping onto a second hit inside a row already
+on screen still re-runs — and then measures a zero delta.
+
+Tests: `GoToTaskTreeTest` (the reading order, the mirror, the blanked task, the reveal).
+
 ## Known gap
 
 The phone's contextual menu still names only the panel it was opened on — a phone has no hover bubble, and

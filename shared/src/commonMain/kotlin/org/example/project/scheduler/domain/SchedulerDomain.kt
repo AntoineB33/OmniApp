@@ -115,6 +115,54 @@ object SchedulerDomain {
     fun selectableVisibleOccurrences(state: SchedulerState): List<VisibleOccurrence> =
         visibleOccurrences(state).filter { isSelectableCell(state, it.cellId) }
 
+    /**
+     * One cell showing a task, together with the [ancestors] chain the tree descends through to reach it
+     * (outermost first, the cell itself excluded) — exactly the pair
+     * [org.example.project.scheduler.state.SchedulerIntent.RevealCell] takes.
+     */
+    data class TaskOccurrence(val cellId: CellId, val ancestors: List<CellId>)
+
+    /**
+     * PRD §8 "go to task tree": the **first** cell showing [taskId], or `null` when no cell does.
+     *
+     * "First" is the tree's own reading order — the first row the user would see once the ancestors are
+     * expanded — so the walk is depth-first and **visits each LIST once**, the same walk (and the same
+     * reason) as [org.example.project.scheduler.domain.TaskTreeSearch.matches]: a sub-list belongs to the
+     * task id, so a mirrored sub-tree is ONE list under many parents and re-entering it per occurrence is
+     * exponential. The two are kept apart only because a search hit is a range inside a title and this is a
+     * task; neither walks anything the other does not.
+     *
+     * `null` is a real answer, not an error path: a panel outlives the cell that laid it (panels are not
+     * per-tree, §7), so it may name a **detached parent**, a task blanked by §4's deletion, or a task
+     * another named task tree owns.
+     */
+    fun firstTaskOccurrence(state: SchedulerState, taskId: TaskId): TaskOccurrence? {
+        val visitedLists = mutableSetOf<CellListId>()
+
+        fun walk(listId: CellListId, ancestors: List<CellId>): TaskOccurrence? {
+            if (!visitedLists.add(listId)) return null
+            val list = state.lists[listId] ?: return null
+            for (cellId in list.cellIds) {
+                val cell = state.cells[cellId] ?: continue
+                val cellTaskId = cell.taskId ?: continue
+                // A blank-titled cell is PRD §4's deleted one — an empty placeholder, drawn with no title
+                // and no expand arrow. It is not a row to go to, and nothing under it could be brought on
+                // screen anyway (the reveal will not expand it), so the walk neither matches nor descends
+                // there. That is what makes a panel naming a blanked task answer "not in the tree", which
+                // is exactly what it is.
+                if (isTextuallyEmptyCell(state, cellId)) continue
+                if (cellTaskId == taskId && isSelectableCell(state, cellId)) {
+                    return TaskOccurrence(cellId, ancestors)
+                }
+                val childListId = state.tasks[cellTaskId]?.childListId ?: continue
+                walk(childListId, ancestors + cellId)?.let { return it }
+            }
+            return null
+        }
+
+        return walk(state.rootListId, emptyList())
+    }
+
     /** Cells highlighted for selection actions (PRD §3). */
     fun activeSelectionCells(selection: SchedulerSelection): Set<CellId> {
         val multi = selection.selected

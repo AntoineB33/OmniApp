@@ -485,7 +485,7 @@ class DefaultSubtreeTest {
         assertTrue(SchedulerDomain.isSelectableCell(projected, planCell))
         assertNotNull(projected.tasks[planTask])
 
-        // "edit" — the §13 window needs a real Task, and a parent shows the text section alone.
+        // "edit task" — the §13 window needs a real Task, and a parent shows the text section alone.
         assertFalse(SchedulerDomain.isLeafTask(projected, planTask), "Plan parents Sketch")
         val sketchCell =
             projected.lists[projected.tasks[planTask]!!.childListId!!]!!.cellIds

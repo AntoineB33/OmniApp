@@ -234,7 +234,7 @@ data class TaskTreeStateSnapshot(
  * That is the whole point: the "Default sub-tree" window renders it with the *same* component the task tree
  * is drawn by, so it has the same chrome, the same gestures, the same §13 contextual menu and the same Edit
  * Mode, with no second copy of any of it. A template row is therefore a real [Task] — which is what lets the
- * menu's "edit" write a screen switch, a schedule unit and a text onto it, and lets the graft carry the
+ * menu's "edit task" write a screen switch, a schedule unit and a text onto it, and lets the graft carry the
  * row's minimum time and its sub-list's weight table across.
  *
  * The window projects this into a [SchedulerState] to draw it (see `DefaultSubtreeProjection.kt`); the live

@@ -1,9 +1,19 @@
 package org.example.project.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -22,6 +32,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.dp
 
 /**
  * ## The two sorts of pop-up window
@@ -149,4 +160,34 @@ fun Modifier.transientPopupCard(onDismiss: () -> Unit): Modifier {
     return this
         .onGloballyPositioned { host?.setBounds(key, it.boundsInWindow()) }
         .pointerInput(Unit) { detectTapGestures { } }
+}
+
+/**
+ * The one way the app says something back to a gesture it could not carry out — today the calendar's
+ * "go to task tree" on a panel whose task no cell holds (PRD §8).
+ *
+ * A **sort-2** pop-up, by the sort's own test: there is only ever one message, and it is about the one
+ * gesture that just failed, so it leaves the moment anything else takes focus — which is exactly what a
+ * notice wants, and why it needs no timer and no scrim. Dismissal discards it, like every sort-2 pop-up.
+ */
+@Composable
+fun MessagePopup(message: String, onDismiss: () -> Unit) {
+    TransientPopupLayer {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 12.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.transientPopupCard(onDismiss).widthIn(max = 420.dp),
+        ) {
+            Column(
+                Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.End,
+            ) {
+                Text(text = message, style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = onDismiss) { Text("OK") }
+            }
+        }
+    }
 }

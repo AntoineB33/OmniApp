@@ -249,7 +249,7 @@ fun TaskSchedulerScreen(
     // PRD §5: same hoisting for the relative-priority window (the percentage's right-click menu). Pass the
     // clicked cell's id to open it, or null to close.
     onSetRelativeWindow: (CellId?) -> Unit = {},
-    // PRD §13: the same hoisting for the two sort-2 pop-ups the tree opens — the task "edit" window and the
+    // PRD §13: the same hoisting for the two sort-2 pop-ups the tree opens — the "edit task" window and the
     // "deep copy" depth window. Drawn by the app so they land on the top layer, above every floating window.
     onSetEditTask: (TaskId?) -> Unit = {},
     onSetDeepCopyCell: (CellId?) -> Unit = {},
@@ -1774,7 +1774,7 @@ internal fun TaskRow(
     rowTrailing: (@Composable (CellId) -> Unit)? = null,
 ) {
     val editFocusRequester = remember { FocusRequester() }
-    // Whether this cell's right-click contextual menu ("edit" / "copy" / "deep copy" / "add default
+    // Whether this cell's right-click contextual menu ("edit task" / "copy" / "deep copy" / "add default
     // sub-tree") is showing.
     var contextMenuOpen by remember(cellId) { mutableStateOf(false) }
     // PRD §5: the percentage column's own right-click menu ("relative priority" / "priority weights").
@@ -1977,8 +1977,10 @@ internal fun TaskRow(
                             },
                         )
                     }
+                    // PRD §13: named "edit task" — the calendar's panel menu offers the very same window
+                    // beside its own panel "Edit" (PRD §8), so the two surfaces must not call it two things.
                     DropdownMenuItem(
-                        text = { Text("edit") },
+                        text = { Text("edit task") },
                         onClick = {
                             contextMenuOpen = false
                             cellMenu.onEdit()
@@ -2262,7 +2264,7 @@ internal fun TaskRow(
 }
 
 /**
- * A right-click (secondary button) opens a contextual menu — the cell's own ("edit" / "copy" / "deep copy" /
+ * A right-click (secondary button) opens a contextual menu — the cell's own ("edit task" / "copy" / "deep copy" /
  * "add default sub-tree")
  * on the row, and the two-option one on the priority-percentage column (PRD §5). Returns a no-op modifier
  * when [enabled] is false (cells with no menu — empty / root-main), so only eligible cells react. [onOpen]
@@ -2312,7 +2314,8 @@ internal class TaskCellMenuActions(
 )
 
 /**
- * PRD §13 Edition Window: the floating "edit" editor opened from a cell's contextual menu, in three
+ * PRD §13 Edition Window: the floating "edit task" editor opened from a cell's contextual menu (and from a
+ * calendar task panel's, PRD §8), in three
  * sections — the no-screen switch, the schedule unit, and the task's text document. The first two only
  * exist for a schedulable leaf task ([isLeaf]); a parent task gets the text section alone.
  *

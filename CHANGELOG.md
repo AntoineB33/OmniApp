@@ -11,6 +11,32 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A calendar task panel reaches its task: "edit task" / "go to task tree" — SHIPPED 2026-08-28
+
+→ PRD §8 / §13, ADR 0002. `shared` only (`SchedulerDomain.kt`, `ui/CalendarUi.kt`, `ui/PopupWindows.kt`,
+`scheduler/ui/TaskSchedulerScreen.kt`, `scheduler/ui/TaskTreeView.kt`, `App.kt`); new `GoToTaskTreeTest`.
+Client rebuild to see it — no deploy otherwise.
+
+- **A task panel's right-click menu now has two entries about the TASK**, beside the "Edit" that is about the
+  panel: **"edit task"** opens the §13 edition window, and **"go to task tree"** selects the task's first cell
+  in the tree. Offered on a task panel only — a period, a reminder, an alarm, a sleep band, a screen break and
+  a layer region are not tasks.
+- **The tree cell menu's "edit" was RENAMED "edit task"** — the calendar opens the very same window, and two
+  names for one window is how two surfaces start reading as two features.
+- **"First occurrence" is the tree's own reading order**, decided once in `SchedulerDomain.firstTaskOccurrence`:
+  depth-first, each **list** visited once (a mirrored sub-tree is one list under many parents), skipping
+  blank-titled cells — §4's deleted ones, which the reveal could not expand anyway. It returns the cell **and
+  the ancestor chain**, which is exactly what `RevealCell` takes, so the jump reuses the find bar's primitive
+  (expand the way in as ONE history unit, then select) rather than growing a second selection path. The tree
+  is then focused, which is what "going to" it means and what re-arms its keyboard.
+- **`null` is a real answer**: a panel outlives the cell that laid it (panels are not per-tree), so it may name
+  a detached parent, a task §4's blank title deleted, a task another named tree owns, or no task at all. All
+  four say the same thing — **an error message**, in the app's first `MessagePopup`, a sort-2 pop-up (one
+  notice at a time, gone when anything else takes focus, no scrim and no timer).
+- **The tree's bring-the-row-into-view effect is now keyed on the SELECTION, not on the find bar's current
+  match.** A match is no longer the only thing that reveals a row, and the calendar cannot reach into that
+  composable; ordinary keyboard navigation lands there too and wanted the same thing.
+
 ### A button that has a keyboard shortcut names it on hover — SHIPPED 2026-08-28
 
 → ADR 0011 § *A button that has a chord names it on hover*. `shared` only (new `ui/ShortcutHint.kt`,
