@@ -32,6 +32,24 @@ data class KeyboardShortcutGroup(
  * that can be checked mechanically (that every [GlobalShortcut] is listed, and that nothing is listed twice
  * within a group).
  */
+/**
+ * The chord spellings a **control** duplicates: the find bar's arrows and ✕, the deep-copy window's accept.
+ * Each of those buttons names its chord in a hover bubble ([ShortcutHint]), and the keyboard-shortcuts window
+ * lists the same chord a few lines below — so the spelling exists once and both read it, exactly as the
+ * system-wide block reads its three off [GlobalShortcutBindings].
+ *
+ * Only the fixed, per-surface chords belong here. A rebindable one must never be a constant: what the app is
+ * listening for is the account's binding, not what it ships with.
+ */
+object ControlChords {
+    const val ENTER = "Enter"
+    const val SHIFT_ENTER = "Shift + Enter"
+    const val ESCAPE = "Escape"
+
+    /** The find bar's replacement: Enter *while the replace field holds the keyboard*, not the bar's Enter. */
+    const val ENTER_IN_REPLACE_FIELD = "Enter (in the replace field)"
+}
+
 object KeyboardShortcutCatalog {
 
     /**
@@ -107,10 +125,10 @@ object KeyboardShortcutCatalog {
                     "collapsed rows included, and replacing renames the task — so every cell pointing at " +
                     "it follows.",
                 shortcuts = listOf(
-                    KeyboardShortcut("Enter", "Go to the next match"),
-                    KeyboardShortcut("Shift + Enter", "Go to the previous match"),
-                    KeyboardShortcut("Enter (in the replace field)", "Replace the current match"),
-                    KeyboardShortcut("Escape", "Close the bar and hand the keyboard back to the tree"),
+                    KeyboardShortcut(ControlChords.ENTER, "Go to the next match"),
+                    KeyboardShortcut(ControlChords.SHIFT_ENTER, "Go to the previous match"),
+                    KeyboardShortcut(ControlChords.ENTER_IN_REPLACE_FIELD, "Replace the current match"),
+                    KeyboardShortcut(ControlChords.ESCAPE, "Close the bar and hand the keyboard back to the tree"),
                 ),
             ),
             KeyboardShortcutGroup(
@@ -135,7 +153,7 @@ object KeyboardShortcutCatalog {
                 title = "Deep copy window",
                 note = "While the task cell's \"deep copy\" window is open (its depth and its three switches).",
                 shortcuts = listOf(
-                    KeyboardShortcut("Enter", "Copy down to the chosen depth and close the window"),
+                    KeyboardShortcut(ControlChords.ENTER, "Copy down to the chosen depth and close the window"),
                 ),
             ),
             KeyboardShortcutGroup(

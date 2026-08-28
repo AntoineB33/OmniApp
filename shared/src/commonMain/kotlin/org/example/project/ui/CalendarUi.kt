@@ -139,6 +139,9 @@ import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.ActiveSessionRecord
+import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.platform.GlobalShortcutBindings
+import org.example.project.scheduler.platform.ShortcutBinding
 import org.example.project.scheduler.state.CalendarEdge
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.HistoryUnit
@@ -845,6 +848,13 @@ fun LateralMenu(
      */
     onLookAwayNow: () -> Unit = {},
     onSwitchTask: () -> Unit = {},
+    /**
+     * PRD §7: the account's system-wide chord **overrides** (`SchedulerState.shortcutBindings`). Three of the
+     * buttons below duplicate a chord, and each shows it in an info bubble on hover — resolved through
+     * [GlobalShortcutBindings.chordOf], so a rebound chord reaches the button with no second lookup and the
+     * bubble can never advertise a chord the app is not listening for.
+     */
+    shortcutBindings: Map<GlobalShortcut, ShortcutBinding> = emptyMap(),
     /** Whether any floating window is open — gates the "close all windows" button + the callback to do so. */
     anyWindowOpen: Boolean = false,
     onCloseAllWindows: () -> Unit = {},
@@ -925,13 +935,23 @@ fun LateralMenu(
 
         // PRD §15 (20s look-away): take the 20s pause now. ALWAYS present — the user may choose to look away
         // at any moment, so this is never gated on the cadence's current state.
-        MenuButton(label = "Look away now", active = false, onClick = onLookAwayNow)
+        MenuButton(
+            label = "Look away now",
+            active = false,
+            onClick = onLookAwayNow,
+            chord = GlobalShortcutBindings.chordOf(shortcutBindings, GlobalShortcut.LookAwayNow),
+        )
 
         // PRD §7 "Switch task": refuse the task the now-line is on, so a DIFFERENT one starts from now. Like
         // "Look away now" it is always present — wanting off the current task is a thing the user may decide
         // at any moment — and it is the same action the system-wide Ctrl+Shift+Alt+Z chord fires, since it is
         // usually wanted with some other application in front.
-        MenuButton(label = "Switch task", active = false, onClick = onSwitchTask)
+        MenuButton(
+            label = "Switch task",
+            active = false,
+            onClick = onSwitchTask,
+            chord = GlobalShortcutBindings.chordOf(shortcutBindings, GlobalShortcut.SwitchTask),
+        )
 
         // PRD §7 Reminders: toggles the floating reminders window over the tree.
         MenuButton(
@@ -961,6 +981,7 @@ fun LateralMenu(
             label = if (away) "I'm back" else "I'm away",
             active = away,
             onClick = onToggleAway,
+            chord = GlobalShortcutBindings.chordOf(shortcutBindings, GlobalShortcut.ToggleAway),
         )
 
         // Sleep schedule: toggles the floating window for the nightly sleep window the scheduler avoids.
@@ -1014,8 +1035,9 @@ fun LateralMenu(
             }
         }
 
-        // PRD §7 Keyboard shortcuts: the reference list of every chord the app answers to — including the
-        // two system-wide ones, which are the only part of the app with no visible control of their own.
+        // PRD §7 Keyboard shortcuts: the reference list of every chord the app answers to, and the only place
+        // the three system-wide ones can be rebound. The buttons that duplicate a chord name it on hover
+        // (ShortcutHint); this window is where the rest of them are written down.
         MenuButton(
             label = "Keyboard shortcuts",
             active = shortcutsWindowOpen,
@@ -2111,26 +2133,34 @@ fun IconMenuButton(label: String, onClick: () -> Unit, modifier: Modifier = Modi
     }
 }
 
+/**
+ * One lateral-menu button. [chord] is the keyboard shortcut that fires the **same** action, or null where the
+ * button is the only way to it — hovering a button that has one shows it in an info bubble ([ShortcutHint]).
+ * For the three system-wide chords it must be read live off the account's bindings, never off
+ * `GlobalShortcut.defaultChord`.
+ */
 @Composable
-private fun MenuButton(label: String, active: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (active) CalColors.today else Color.Transparent)
-            .border(
-                1.dp,
-                if (active) CalColors.accent else CalColors.grid,
-                RoundedCornerShape(8.dp),
+private fun MenuButton(label: String, active: Boolean, onClick: () -> Unit, chord: String? = null) {
+    ShortcutHint(chord, modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (active) CalColors.today else Color.Transparent)
+                .border(
+                    1.dp,
+                    if (active) CalColors.accent else CalColors.grid,
+                    RoundedCornerShape(8.dp),
+                )
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (active) CalColors.accent else MaterialTheme.colorScheme.onSurface,
             )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (active) CalColors.accent else MaterialTheme.colorScheme.onSurface,
-        )
+        }
     }
 }
 
@@ -4446,11 +4476,13 @@ private fun Modifier.calendarTitleHover(
 
 /**
  * Multiplatform replacement for desktop Compose's `Modifier.onPointerEvent`: invoke [onEvent] for each
- * pointer event of type [eventType] seen on [pass]. Built on the common [pointerInput]/[awaitPointerEvent]
+ * pointer event of type [eventType] seen on [pass]. Internal rather than private because the hover bubble a
+ * control shows for its keyboard shortcut ([ShortcutHint]) reads hover the same way — a second spelling of
+ * "watch the pointer without consuming it" is how two hover surfaces start behaving differently. Built on the common [pointerInput]/[awaitPointerEvent]
  * primitives so it compiles on every target (the desktop extension is JVM/skiko-only). On touch-only
  * Android these hover events (Enter/Move/Exit) simply never fire, which is the correct no-op.
  */
-private fun Modifier.onPointerEventCompat(
+internal fun Modifier.onPointerEventCompat(
     eventType: PointerEventType,
     pass: PointerEventPass = PointerEventPass.Main,
     onEvent: (PointerEvent) -> Unit,

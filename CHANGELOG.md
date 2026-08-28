@@ -11,6 +11,28 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A button that has a keyboard shortcut names it on hover — SHIPPED 2026-08-28
+
+→ ADR 0011 § *A button that has a chord names it on hover*. `shared` only (new `ui/ShortcutHint.kt`,
+`ui/CalendarUi.kt`, `ui/KeyboardShortcuts.kt`, `ui/TaskTreeFindBar.kt`, `scheduler/ui/TaskSchedulerScreen.kt`,
+`App.kt`); `KeyboardShortcutsCatalogTest` extended. Client rebuild to see it — no deploy otherwise.
+
+- **Hovering a control that duplicates a chord shows that chord in an info bubble.** `ShortcutHint` is the one
+  place such a bubble is drawn; a control with no chord passes `null` and is a plain `Box`. Today: the lateral
+  menu's "Look away now" / "Switch task" / "I'm away" / "I'm back", the find bar's ↓ / ↑ / ✕ / Replace, and the
+  deep-copy window's "copy".
+- **The three system-wide chords are read LIVE off the account's bindings** —
+  `GlobalShortcutBindings.chordOf(state.shortcutBindings, …)`, the same lookup the keyboard-shortcuts window,
+  the receipt notification and the diagnostics use. `App.kt` hands `LateralMenu` the very map it hands
+  `installGlobalHotkeys`, so a rebinding reaches the bubble with no second resolution and a bubble can never
+  print a chord the app is not claiming.
+- **The fixed per-surface chords are spelled once**, in the new `ControlChords`, read by the button and by
+  `KeyboardShortcutCatalog` both; the test fails if a hinted constant stops being listed in the window.
+- **The bubble is placed below the control with a 6 dp gap, non-interactive and non-focusable** — a tooltip the
+  cursor can reach steals the hover and flickers (ADR 0002's "catch the bubble"), and a focusable one would eat
+  the click. Hover is read with `Modifier.onPointerEventCompat`, promoted from private in `CalendarUi.kt` to
+  internal rather than copied. Touch-only devices get no bubble, which is the correct no-op.
+
 ### Task colours: the LEAVES own the circle — SHIPPED 2026-08-28
 
 → ADR 0013. Replaces the *one colour space handed down the tree* rule shipped the day before.

@@ -6,6 +6,8 @@ import kotlin.test.assertTrue
 import org.example.project.scheduler.platform.GlobalShortcut
 import org.example.project.scheduler.platform.ShortcutBinding
 import org.example.project.scheduler.platform.ShortcutKey
+import org.example.project.scheduler.platform.GlobalShortcutBindings
+import org.example.project.ui.ControlChords
 import org.example.project.ui.KeyboardShortcutCatalog
 
 /**
@@ -49,6 +51,43 @@ class KeyboardShortcutsCatalogTest {
         assertEquals("Ctrl+Shift+Alt+A", GlobalShortcut.ToggleAway.defaultChord)
         assertEquals("Ctrl+Shift+Alt+E", GlobalShortcut.LookAwayNow.defaultChord)
         assertEquals("Ctrl+Shift+Alt+Z", GlobalShortcut.SwitchTask.defaultChord)
+    }
+
+    /**
+     * PRD §7 hover bubble: a control that duplicates a chord names it on hover, and the window lists the same
+     * chord a few lines below. For the three system-wide ones both sides go through
+     * [GlobalShortcutBindings.chordOf], so a rebinding cannot leave one of them printing the shipped chord.
+     */
+    @Test
+    fun aButtonsBubbleAndTheWindowPrintOneChord() {
+        val rebound = ShortcutBinding(ShortcutKey.J, ctrl = true, shift = true, alt = false)
+        val bindings = mapOf(GlobalShortcut.LookAwayNow to rebound)
+        val group = KeyboardShortcutCatalog.globalGroup(bindings)
+
+        GlobalShortcut.entries.forEachIndexed { index, shortcut ->
+            assertEquals(
+                group.shortcuts[index].keys,
+                GlobalShortcutBindings.chordOf(bindings, shortcut),
+                "the bubble on the \"${shortcut.action}\" button would disagree with the window",
+            )
+        }
+        assertEquals("Ctrl+Shift+J", GlobalShortcutBindings.chordOf(bindings, GlobalShortcut.LookAwayNow))
+    }
+
+    /**
+     * The fixed chords a control duplicates ([ControlChords] — the find bar's arrows and ✕, the deep-copy
+     * window's accept) are spelled once and read by both the button and the catalogue. A constant that is no
+     * longer listed means the window and a hover bubble have started describing two different chords.
+     */
+    @Test
+    fun everyControlChordIsListedInTheWindow() {
+        val listed = KeyboardShortcutCatalog.fixedGroups.flatMap { group -> group.shortcuts.map { it.keys } }
+        listOf(
+            ControlChords.ENTER,
+            ControlChords.SHIFT_ENTER,
+            ControlChords.ESCAPE,
+            ControlChords.ENTER_IN_REPLACE_FIELD,
+        ).forEach { chord -> assertTrue(chord in listed, "\"$chord\" is hinted on a button but never listed") }
     }
 
     @Test

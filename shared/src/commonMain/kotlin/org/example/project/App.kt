@@ -1030,6 +1030,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleLookAwayVoice = { vm.dispatch(SchedulerIntent.SetLookAwayVoice(it)) },
                     onLookAwayNow = { engine.restartLookAway() },
                     onSwitchTask = { engine.forceTaskSwitch() },
+                    // PRD §7: so the three buttons that duplicate a system-wide chord can name it on hover,
+                    // at whatever chord the ACCOUNT has it bound to (the same map installGlobalHotkeys above
+                    // is claiming).
+                    shortcutBindings = schedulerState.shortcutBindings,
                     sleepWindowOpen = sleepWindowOpen,
                     onToggleSleep = { onMenuWindowClicked(FloatingWindow.Sleep) { sleepWindowOpen = it } },
                     alarmWindowOpen = alarmWindowOpen,

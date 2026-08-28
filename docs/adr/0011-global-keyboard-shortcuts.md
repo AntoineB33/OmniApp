@@ -108,6 +108,59 @@ the task tree, Edit Mode, history, calendar and the tree-name field. Those per-s
 nothing can read the `onPreviewKeyEvent` branches back — so a new chord and its catalogue entry belong in the
 same change.
 
+## A button that has a chord names it on hover (1.6.0)
+
+A shortcut is invisible from where the user is sitting. The lateral menu's "Look away now" button says nothing
+about `Ctrl+Shift+Alt+E`, and since the three are rebindable, even a user who once read the keyboard-shortcuts
+window may be looking at a button whose chord has *moved* since. So **every control that duplicates a chord
+shows it in an info bubble while the pointer rests on it** — the window's answer, brought next to the control
+that fires the same action.
+
+`ShortcutHint` (`ui/ShortcutHint.kt`) is the one place such a bubble is drawn. It wraps the control; a control
+with no chord passes `null` and gets a plain `Box` with no hover node and nothing drawn. The controls that
+have one today:
+
+| Control | Chord |
+| --- | --- |
+| lateral menu "Look away now" / "Switch task" / "I'm away" / "I'm back" | the account's binding of the matching `GlobalShortcut` |
+| find bar ↓ / ↑ / ✕ / Replace | `Enter` / `Shift + Enter` / `Escape` / `Enter` in the replace field |
+| deep-copy window "copy" | `Enter` |
+
+Two rules keep the bubble from becoming a second source of truth:
+
+- **A rebindable chord is a live lookup, never a constant.** The three menu buttons go through
+  `GlobalShortcutBindings.chordOf(state.shortcutBindings, …)`, the same lookup the window, the receipt
+  notification and the diagnostics use — `App.kt` hands `LateralMenu` the very map it is handing
+  `installGlobalHotkeys`. Printing `GlobalShortcut.defaultChord` there would advertise a chord the app is not
+  listening for, which is why `GlobalShortcut.chord` was deleted in the first place.
+- **A fixed per-surface chord is spelled once**, in `ControlChords`, read by the button *and* by
+  `KeyboardShortcutCatalog`. The window lists those same chords a few lines below the button that hints them;
+  two spellings is how the two start describing different chords. `KeyboardShortcutsCatalogTest` fails if a
+  constant stops being listed.
+
+### Why the bubble is placed below, with a gap
+
+It is a `Popup` offset by the control's own height plus 6 dp, carrying no pointer input and
+`focusable = false`. A tooltip the cursor can reach steals the hover, which hides it, which returns the hover —
+the "catch the bubble" flicker ADR 0002 records for the calendar's own hover bubble; and a focusable popup
+would eat the click the hover is leading up to. Hover itself is read with `Modifier.onPointerEventCompat`
+(promoted from `private` in `CalendarUi.kt` to `internal` rather than copied), which observes the Main pass
+without consuming, so the button's click and any ancestor's drag are untouched.
+
+On a touch-only device Enter/Exit never fire and no bubble is ever shown. That is the correct no-op: Android
+and iOS report `Unsupported` for the system-wide chords anyway, and have no keyboard for the rest.
+
+### Rejected
+
+- **A tooltip on every button.** The bubble states one fact — "there is a chord for this" — and a bubble that
+  also appears where there is none is a bubble the user stops reading.
+- **A hover bubble as the app's general tooltip mechanism.** The calendar's bubble is a *stack of sections*
+  reported up to a viewport-level overlay (ADR 0002) because its elements are drawn across each other; a
+  button is one element with one thing to say, and reusing that plumbing would drag the whole hover-zone
+  tiling into the lateral menu. The two share the pointer helper and nothing else.
+- **Printing the chord in the button's label** ("Look away now (Ctrl+Shift+Alt+E)"). Every label doubles in
+  width for a fact that matters once; and the lateral menu is 188 dp wide.
+
 ## Rebinding (1.6.0)
 
 **Only the system-wide three can be rebound**, and that is not an arbitrary line. A system-wide claim is first
@@ -151,7 +204,9 @@ through a lookup for no failure it fixes.
 
 `KeyboardShortcutsCatalogTest` — every `GlobalShortcut` is listed, in order, in the window's first block, at the
 chord the *account* is bound to; the shipped chords are the documented ones; no group lists a chord twice or
-carries a blank entry. `GlobalShortcutRebindTest` — the two rules, overrides-only + reset-as-removal, the single
+carries a blank entry; a button's bubble and the window print one chord (both resolved through
+`GlobalShortcutBindings.chordOf`), and every `ControlChords` constant a button hints is still listed in the
+window. `GlobalShortcutRebindTest` — the two rules, overrides-only + reset-as-removal, the single
 Main history unit (including undoing a reset), the codec round trip, a pre-1.6.0 payload, and decode healing a
 table today's rules refuse. `SnapshotMergeTest` — per-shortcut merge, a reset surviving, and the collision
 repair. `GlobalShortcutReceiptTest` — every press posts a receipt naming its chord.

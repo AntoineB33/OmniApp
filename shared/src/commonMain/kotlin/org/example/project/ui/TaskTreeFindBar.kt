@@ -159,9 +159,19 @@ internal fun TaskTreeFindBar(
                         onClick = { onOptionsChange(options.copy(wholeWord = !options.wholeWord)) },
                     )
                     Spacer(Modifier.width(4.dp))
-                    FindBarIconButton("↑", enabled = matchCount > 0, onClick = onFindPrevious)
-                    FindBarIconButton("↓", enabled = matchCount > 0, onClick = onFindNext)
-                    FindBarIconButton("✕", enabled = true, onClick = onClose)
+                    FindBarIconButton(
+                        "↑",
+                        enabled = matchCount > 0,
+                        chord = ControlChords.SHIFT_ENTER,
+                        onClick = onFindPrevious,
+                    )
+                    FindBarIconButton(
+                        "↓",
+                        enabled = matchCount > 0,
+                        chord = ControlChords.ENTER,
+                        onClick = onFindNext,
+                    )
+                    FindBarIconButton("✕", enabled = true, chord = ControlChords.ESCAPE, onClick = onClose)
                 }
                 if (replaceExpanded) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -173,7 +183,12 @@ internal fun TaskTreeFindBar(
                             onFocusChange = { replaceFieldFocused = it },
                         )
                         Spacer(Modifier.width(6.dp))
-                        FindBarTextButton("Replace", enabled = canReplace, onClick = onReplace)
+                        FindBarTextButton(
+                            "Replace",
+                            enabled = canReplace,
+                            chord = ControlChords.ENTER_IN_REPLACE_FIELD,
+                            onClick = onReplace,
+                        )
                         Spacer(Modifier.width(4.dp))
                         FindBarTextButton("Replace All", enabled = canReplace, onClick = onReplaceAll)
                     }
@@ -226,34 +241,46 @@ private fun FindBarField(
     }
 }
 
+/**
+ * One of the bar's square icon buttons. [chord] is the key that does the same thing while the bar holds the
+ * keyboard, shown in a hover bubble ([ShortcutHint]) — the bar's buttons are unlabelled arrows, so the chord
+ * is the only place their equivalence with Enter / Shift + Enter / Escape is ever stated.
+ */
 @Composable
-private fun FindBarIconButton(label: String, enabled: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(22.dp)
-            .then(
-                if (enabled) {
-                    Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onClick,
-                    )
-                } else {
-                    Modifier
-                }
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color =
-                if (enabled) {
-                    MaterialTheme.colorScheme.onSurface
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                },
-        )
+private fun FindBarIconButton(
+    label: String,
+    enabled: Boolean,
+    chord: String? = null,
+    onClick: () -> Unit,
+) {
+    ShortcutHint(chord) {
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .then(
+                    if (enabled) {
+                        Modifier.clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onClick,
+                        )
+                    } else {
+                        Modifier
+                    }
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color =
+                    if (enabled) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                    },
+            )
+        }
     }
 }
 
@@ -286,35 +313,42 @@ private fun FindBarToggle(
 }
 
 @Composable
-private fun FindBarTextButton(label: String, enabled: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .defaultMinSize(minHeight = 22.dp)
-            .border(1.dp, SheetColors.grid)
-            .background(SheetColors.cellBackground)
-            .then(
-                if (enabled) {
-                    Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onClick,
-                    )
-                } else {
-                    Modifier
-                }
+private fun FindBarTextButton(
+    label: String,
+    enabled: Boolean,
+    chord: String? = null,
+    onClick: () -> Unit,
+) {
+    ShortcutHint(chord) {
+        Box(
+            modifier = Modifier
+                .defaultMinSize(minHeight = 22.dp)
+                .border(1.dp, SheetColors.grid)
+                .background(SheetColors.cellBackground)
+                .then(
+                    if (enabled) {
+                        Modifier.clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onClick,
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
+                .padding(horizontal = 8.dp, vertical = 3.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color =
+                    if (enabled) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                    },
             )
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color =
-                if (enabled) {
-                    MaterialTheme.colorScheme.onSurface
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                },
-        )
+        }
     }
 }

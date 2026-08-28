@@ -128,11 +128,13 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.defaultSubtreeIsEmpty
 import org.example.project.scheduler.state.SelectionNavigate
+import org.example.project.ui.ControlChords
 import org.example.project.ui.INDENT_STEP_DP
 import org.example.project.ui.PERCENT_COLUMN_WIDTH
 import org.example.project.ui.PRIORITY_COLUMN_MAX
 import org.example.project.ui.PRIORITY_COLUMN_MIN
 import org.example.project.ui.SheetColors
+import org.example.project.ui.ShortcutHint
 import org.example.project.ui.TransientPopupLayer
 import org.example.project.ui.transientPopupCard
 import org.example.project.ui.TaskTreeFindBar
@@ -2702,7 +2704,13 @@ internal fun DeepCopyWindow(
                     Spacer(Modifier.weight(1f))
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
-                    TextButton(enabled = canCopy, onClick = { onCopy(cellIds, depth, options) }) { Text("copy") }
+                    // The window's own Enter does exactly this (the ancestor handler above), so the button
+                    // names that chord on hover like every other control that duplicates one.
+                    ShortcutHint(ControlChords.ENTER) {
+                        TextButton(enabled = canCopy, onClick = { onCopy(cellIds, depth, options) }) {
+                            Text("copy")
+                        }
+                    }
                 }
             }
         }

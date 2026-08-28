@@ -861,6 +861,27 @@ cross-device presence.
 - The lateral menu's **Keyboard shortcuts** window lists every chord in the app (`KeyboardShortcutCatalog`). The
   per-surface entries are prose — add a chord and its entry in the same change.
 
+### A button that has a chord names it on hover
+
+**Every control that duplicates a keyboard shortcut shows that chord in an info bubble while the pointer rests
+on it** — `ShortcutHint` is the one place a bubble is drawn, and a control with no chord passes `null` and gets
+a plain `Box`. Today: the lateral menu's "Look away now" / "Switch task" / "I'm away", the find bar's ↑ / ↓ /
+✕ / Replace, and the deep-copy window's "copy".
+
+- **The chord is always a LIVE lookup, never a constant, for the three that can be rebound.** The buttons read
+  `GlobalShortcutBindings.chordOf(state.shortcutBindings, …)` — the same lookup the window, the receipt and the
+  diagnostics go through — so a rebinding reaches the bubble at once. A bubble printing
+  `GlobalShortcut.defaultChord` would advertise a chord the app is not listening for, which is exactly what
+  `GlobalShortcut.chord` was deleted to prevent.
+- **The fixed per-surface chords are spelled ONCE** (`ControlChords`), read by the button and by
+  `KeyboardShortcutCatalog` both. A second spelling is how the bubble and the window start describing two
+  different chords; `KeyboardShortcutsCatalogTest` pins that every constant is still listed.
+- **The bubble sits BELOW the control with a gap, and holds no pointer input or focus.** A bubble the cursor
+  can reach steals the hover, hides itself and flickers (ADR 0002's "catch the bubble" bug); one that takes
+  focus would eat the click the hover is leading up to. Hover is read with `onPointerEventCompat`, the same
+  non-consuming helper the calendar's bubble uses — on a touch-only device Enter/Exit never fire and nothing
+  is ever drawn, which is right: those platforms report `Unsupported` anyway.
+
 ---
 
 ## Scripts
