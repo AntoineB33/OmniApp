@@ -106,6 +106,18 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
   - [ ] Delete the task from the tree (empty its cell) with its panel still on the calendar, then
         "go to task tree" on that panel → a message says it is not in the task tree; nothing is selected.
         Pressing anywhere else dismisses the message and still does its normal job.
+- [ ] **Timers (PRD §18, the Alarms window's second section).** Open **Alarms** → *Timers*:
+  - [ ] **+ Add timer** → a row at 5:00, idle. Set it to `0:20`, press **Start** → the countdown reads down
+        every second; press **Pause** → it holds; **Start** (now *Resume*) → it continues from there, not
+        from the top; **Reset** → back to 0:20 and idle.
+  - [ ] Type a label while it counts down → the countdown does **not** jump (editing settings must never
+        disturb the instant it is due at). A duration typed mid-countdown applies at the next start.
+  - [ ] Let one run out → the guitar loop rings for the configured seconds, the notification is titled
+        **Timer**, and the row is back at its full duration (a timer *resets*; it has no on/off switch).
+  - [ ] With a timer running, close and relaunch → it is still running, with the right time left (the end
+        instant is persisted, the countdown is derived from it).
+  - [ ] An alarm due sooner than a running timer, and the reverse → whichever is sooner rings first, and both
+        ring (one OS slot, one merged sweep).
 - [ ] Close and relaunch → the task tree, records, and pinned panels are exactly as left (local SQLite,
       ~400 ms save debounce — **no** sync involved).
 - [ ] Auto/side/sleep panels regenerate on load (they are derived, not persisted — reconstructibility rule).
@@ -267,6 +279,39 @@ rows, and re-derive right after each reconcile.
       The peer shows the same gap only after **both** sides have reconciled (any trigger; press Sync to
       force it). Nights with no activity
       evidence stay solid. Nothing is pushed by the carving itself (check §3a: zero writes).
+
+---
+
+## 4b. The two `t_p` modes — an owed break slides at the screen, happens when you leave
+
+The mode is **which devices are unlocked** (mode 1 = at least one; mode 2 = none), read off the same
+account-wide pause §4 draws as its Inactivity band — so the two can never disagree, and the band is how you
+read the mode off the screen. Enable the screen-break display switch in the calendar window first, and use a
+fast-break script (`*-fast-break*.bat`) so the bars fire in seconds rather than in hours.
+
+- [ ] **Mode 1: the owed period parks at the now-line and nothing is scheduled under it.** Sit at the
+      unlocked desktop past a break's due → the band sits **on** the now-line and stays there as the line
+      advances (it never falls behind it), and the plan shows **no task** under it. That is "you owe a break"
+      as a period, not a hint — it is the README's mode 1 and it is intended.
+- [ ] **…and the past behind it is task panels, not breaks.** Scroll back over the stretch you just worked
+      through → no break bands in it. A period the line reached was pushed ahead of it and never happened.
+- [ ] **The cue still fires once, at the due.** Each break is still announced (notification + voice cue)
+      exactly once as the line reaches its slot — **not** repeatedly while the period is parked. Repeats here
+      mean something started keying on the drawn start instead of the due (the 2026-07-12 failure).
+- [ ] **Serving it clears it.** Use "Look away now" (`Ctrl+Shift+Alt+E`) and let it complete → the conducted
+      break is recorded as a real period where it happened, the 20-second bar re-arms from it, and the line is
+      free again. A 5- or 15-minute period is cleared only by an actual rest of that length.
+- [ ] **Mode 2: leaving makes the break happen.** Press "I'm away" (`Ctrl+Shift+Alt+A`) or lock the machine →
+      the Inactivity band opens at the now-line, the mode flips, the plan **re-plans once** (not per tick) and
+      the periods sit where the bars put them instead of on the line.
+- [ ] **Unlocking returns to mode 1**, because the unlock clears "I'm away" (§15) and closes the pause. One
+      re-plan, then the owed period is back on the line.
+- [ ] **The Sleep/Work toggle changes none of this.** Switching to Sleep with the machine unlocked must leave
+      the placement identical — it says the user has gone to bed, not that no screen is in use. (It was what
+      the mode was wrongly read from until 2026-08-28.)
+- [ ] **A peer keeps you in mode 1.** With the desktop locked and the phone foregrounded, once both sides
+      have reconciled the desktop's Inactivity band is removed over that stretch and the placement is mode 1
+      again. Staleness here is reconcile-bounded, exactly as in §4.
 
 ---
 

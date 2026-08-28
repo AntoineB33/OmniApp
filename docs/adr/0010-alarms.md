@@ -1,4 +1,4 @@
-# ADR 0010 — Alarms (PRD §18): no server involvement, by design
+# ADR 0010 — Alarms and timers (PRD §18): no server involvement, by design
 
 **Status:** active. **Invariant summary:** see `CLAUDE.md` → *Alarms*.
 
@@ -103,9 +103,81 @@ day.
 Under the sim clock it is converted to the real instant it is reached at (`realInstantFor`) for the phone's OS
 arming; the desktop sweep fires on sim instants directly.
 
+## A timer is an alarm at an absolute instant
+
+2026-08-28. The Alarms window gained a second section: **timers** (`SchedulerState.timers`, `TimerEntry`).
+
+The whole design is one observation. An alarm's due instant is derived from the local calendar — a time of day,
+on a set of weekdays, re-derived per local day so it survives DST. A timer's is *stored*: one absolute instant,
+fixed the moment it was started. **Everything downstream of "when is it due" is therefore the same problem**, so
+the timers reuse the alarms' machinery unchanged rather than growing a parallel one:
+
+| | Alarm | Timer |
+| --- | --- | --- |
+| Due instant | `LocalDateTime(day, hh:mm).toInstant(tz)`, per ringing day | `TimerEntry.endsAtMillis`, stored |
+| Boundary math | `AlarmDomain` | `TimerDomain` (no time zone, no calendar) |
+| Phone | one OS exact alarm, **shared slot** | same |
+| Desktop | `launchAlarmSweep` | same sweep, crossings merged |
+| Ring | `onAlarmFire` → `ringAlarm` | same, titled *Timer* |
+| Once it has rung | a one-off **disarms** itself | **resets** to its full duration |
+
+`ArmedAlarm.timer` is the one bit that distinguishes them, and it travels *with* the armed ring (into the phone's
+OS intent included) rather than being inferred from the `timer-{n}` id — the routing is stated, not guessed.
+
+### One OS slot, so one arming loop and one sweep
+
+`AlarmClockScheduler` arms exactly one alarm at a time, under a fixed request code. A second arming loop for the
+timers would therefore not add a ring — it would *overwrite* whichever the first loop had put there, and the phone
+would ring for whatever was recomputed last. So `launchAlarmArming` combines both lists and arms the soonest of
+the two, and `launchAlarmSweep` merges both crossing streams (`ringCrossingsBetween`) in boundary order. The two
+id namespaces are disjoint, so the sweep's `(id, instant)` de-dupe key cannot collide.
+
+### The run state is authoritative; the countdown is derived
+
+CLAUDE.md's state rule decides the split, and it decides it both ways at once:
+
+- **`endsAtMillis` is authoritative** — it cannot be recomputed from any other persisted field, so it is persisted
+  *and synced*. That is also what makes the feature behave the way PRD §18 already promises for alarms: starting a
+  timer on the desktop is what makes the phone ring at its end.
+- **The remaining time is derived** — `endsAtMillis` minus the now-line (`remainingAtMillis`). Nothing is written
+  as a timer counts down, so a running timer cannot move the sync fingerprint on a tick, and there is no per-tick
+  cost anywhere (ADR 0009).
+
+Three states are held in two nullable fields (`endsAtMillis` running, `remainingMillis` paused, both null idle) of
+which **at most one is ever non-null**. Both halves are synced, so a per-field merge could forge a row holding
+both, and so could an older or hand-edited payload — `TimerDomain.healed` is the single place that invariant is
+applied, from `decode`, from `SnapshotMerge` and from the reducer.
+
+### Why no on/off switch, and no repeat switch
+
+A timer that is not running is already not due — an idle row is not a silenced one, so there is nothing for a
+switch to say. And a timer is a one-off *by nature*: having run out it resets to its full duration, ready to be
+started again. A one-off alarm disarms itself instead precisely because it *has* a switch, and leaving it off is
+how the row survives the ring without coming round again tomorrow.
+
+### The countdown's clock is the window's own
+
+The engine's now-line advances once per production tick (`ADVANCE_TICK_MILLIS_PROD`, 30 s) — the schedule's
+cadence, and useless for a countdown. So `AlarmWindow` polls the app clock itself every 250 ms, but **only while
+it is open and something is actually running**. That is display-only Compose state, like the calendar's zoom: it
+is not persisted, not synced, and it schedules nothing. The three transitions dispatch `clock.nowMillis()` rather
+than the display now-line, so a timer started at 17:00:00.4 ends five minutes after *that*, not after the
+quantized instant the calendar happens to be drawn against.
+
+### Deliberately not on the calendar
+
+An alarm's rings are drawn (above); a timer's are not. An alarm is a fact about the user's week and belongs on it,
+whereas a timer exists only between a start and a ring — a mark for an instant that moves every time the row is
+restarted would say nothing about how the week is spent, and would have to be erased and redrawn on every press.
+
 ## Tests
 
 - `AlarmTest` — boundary math incl. a multi-day jump + DST, reducer, codec incl. a pre-alarms payload, and that
   alarms move the sync fingerprint.
 - `AlarmEngineTest` — the phone's arming/ring/disarm, and the desktop sweep: it rings on the crossing, exactly once,
   arms no OS alarm, and stays silent for a ring the process was down for.
+- `TimerTest` — the three states and the transitions between them, that only a running timer is due, half-open
+  crossings, the healing of a payload holding both run fields, a pre-timers payload, and that the settings *and*
+  the start move the sync fingerprint while counting down moves nothing.
+- `TimerEngineTest` — the join: one OS slot serving both lists (soonest wins, either way round), an idle/paused
+  timer arming nothing, the desktop ringing a timer and an alarm in boundary order, and a rung timer resetting.

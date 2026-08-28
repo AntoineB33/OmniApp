@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.map
@@ -23,12 +24,15 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.DebugFlags
+import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.AlarmDomain
+import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.domain.PlanBlock
 import org.example.project.scheduler.domain.PlanTask
 import org.example.project.scheduler.domain.RestrictivePeriod
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
@@ -236,6 +240,14 @@ data class ArmedAlarm(
     val label: String = "",
     val soundSeconds: Int = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
     val vibrate: Boolean = true,
+    /**
+     * PRD §18 Timers: whether [alarmId] names a `TimerEntry` rather than an `AlarmEntry`. A timer is due at
+     * one absolute instant instead of a wall-clock time of day, and that is the *whole* difference — so it is
+     * armed, swept and rung through this same type, and this flag exists only so `onAlarmFire` knows which
+     * list to put the row back in and what to call the ring. It travels with the armed ring (into the phone's
+     * OS intent included) rather than being inferred from the id, so the routing is stated, not guessed.
+     */
+    val timer: Boolean = false,
 )
 
 /** PRD §13: a compact `HH:MM` label for a schedule-unit step deadline in the task-switch notification. */
@@ -509,6 +521,9 @@ class SchedulerEngine(
         SchedulerReducer.liveRestGap = {
             SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, clock.nowMillis())
         }
+        // `side-dev/README.md` § *$t_p$ 2 modes*: mode 1 while a device of the account is unlocked, mode 2
+        // otherwise. Read at fill time from the same account-wide pause the calendar draws ([tpModeNow]).
+        SchedulerReducer.tpMode = { tpModeNow() }
         // PRD §9: every refill materializes the plan out to the DISPLAYED week (24h floor when no calendar is
         // open), never unconditionally 168h — so staying on the current week computes no later day.
         SchedulerReducer.scheduleHorizonEndMillis = { now -> scheduleHorizonEndMillis(now) }
@@ -521,6 +536,7 @@ class SchedulerEngine(
         launchHorizonReschedule()
         launchCalendarHorizonReschedule()
         launchPendingRescheduleOnSwitch()
+        launchTpModeReschedule()
         // PRD §15 / CLAUDE.md "each fires exactly once, in order": ONE now-line sweep drives the
         // task-switch, look-away, rest-pose and wind-down cues, ordered by their true boundary instants —
         // so a single leap that crosses several boundaries fires them chronologically (the
@@ -562,13 +578,13 @@ class SchedulerEngine(
         // listener knows which phone to push. Phones only; a no-op when sync is disabled / signed out.
         claimLastPhoneOnStartup()
         resolveSleepModeOnStartup()
-        // PRD §18 Alarms: keep this phone's OS alarm armed for the next ring in the synced alarm list.
+        // PRD §18 Alarms/Timers: keep this phone's OS alarm armed for the next ring in the synced lists.
         launchAlarmArming()
-        // PRD §18 Alarms: on a device with no OS alarm clock (the desktop), ring from the now-line instead.
+        // PRD §18 Alarms/Timers: on a device with no OS alarm clock (the desktop), ring from the now-line.
         launchAlarmSweep()
     }
 
-    // ----- PRD §18 Alarms -------------------------------------------------------------------------
+    // ----- PRD §18 Alarms and timers -------------------------------------------------------------------------
 
     // The ring this device currently has armed with the OS, so a re-computation that lands on the same
     // (alarm, instant) doesn't re-arm on every tick. Null when nothing is armed.
@@ -582,9 +598,13 @@ class SchedulerEngine(
     private var rungAlarms = setOf<Pair<String, Long>>()
 
     /**
-     * PRD §18 Alarms: keep the OS-level alarm armed for the soonest ring in the synced alarm list. Re-runs on
-     * every now-tick and whenever the list changes (an edit here, or a peer's edit arriving over sync), and
-     * only touches the OS when the target actually moves.
+     * PRD §18 Alarms/Timers: keep the OS-level alarm armed for the soonest ring in the synced alarm **and
+     * timer** lists. Re-runs on every now-tick and whenever either list changes (an edit here, a timer
+     * started, or a peer's edit arriving over sync), and only touches the OS when the target actually moves.
+     *
+     * The two lists are armed **together** because the OS slot is one: a second arming loop would overwrite
+     * whatever the first had put there, and the device would ring for whichever of the two happened to be
+     * recomputed last.
      *
      * **Phones only** — not because other devices stay silent (the desktop rings too, see [launchAlarmSweep]),
      * but because only a phone has an OS alarm clock to hand the ring to. A phone must ring with the app
@@ -593,22 +613,43 @@ class SchedulerEngine(
      */
     private fun launchAlarmArming() = scope.launch {
         if (deviceKind != DeviceKind.Phone) return@launch
-        combine(_nowMillis, vm.state.map { it.alarms }.distinctUntilChanged()) { now, alarms -> now to alarms }
-            .collectLatest { (now, alarms) -> armNextAlarm(now, alarms) }
+        combine(
+            _nowMillis,
+            vm.state.map { it.alarms }.distinctUntilChanged(),
+            vm.state.map { it.timers }.distinctUntilChanged(),
+        ) { now, alarms, timers -> Triple(now, alarms, timers) }
+            .collectLatest { (now, alarms, timers) -> armNextAlarm(now, alarms, timers) }
     }
 
-    // Computes the next ring after [now] and hands it to the OS (or cancels when there is none).
-    private fun armNextAlarm(now: Long, alarms: List<AlarmEntry>) {
-        val next = AlarmDomain.nextOccurrence(alarms, now, tz)
-        val armed = next?.let {
+    // Computes the next ring after [now] — the soonest of the alarms' and the timers' — and hands it to the
+    // OS (or cancels when there is none). Ties go to the alarm, arbitrarily but stably: the two lists' ids
+    // are disjoint, so the choice only has to be the same on every device.
+    private fun armNextAlarm(now: Long, alarms: List<AlarmEntry>, timers: List<TimerEntry>) {
+        val nextAlarm = AlarmDomain.nextOccurrence(alarms, now, tz)?.let {
             ArmedAlarm(
                 alarmId = it.entry.id,
-                atMillis = realInstantFor(it.instant),
+                atMillis = it.instant,
                 label = it.entry.label,
                 soundSeconds = it.entry.soundSeconds,
                 vibrate = it.entry.vibrate,
             )
         }
+        val nextTimer = TimerDomain.nextOccurrence(timers, now)?.let {
+            ArmedAlarm(
+                alarmId = it.entry.id,
+                atMillis = it.instant,
+                label = it.entry.label,
+                soundSeconds = it.entry.soundSeconds,
+                vibrate = it.entry.vibrate,
+                timer = true,
+            )
+        }
+        // The winner is picked on the engine's own (possibly simulated) timeline, and only then converted to
+        // the real instant the OS understands — the two candidates are comparable there, and [realInstantFor]
+        // is a per-call recomputation that has no business deciding which ring is sooner.
+        val armed = listOfNotNull(nextAlarm, nextTimer)
+            .minByOrNull { it.atMillis }
+            ?.let { it.copy(atMillis = realInstantFor(it.atMillis)) }
         if (!needsRearming(armed)) return
         armedAlarm = armed
         if (armed == null) {
@@ -622,8 +663,8 @@ class SchedulerEngine(
     }
 
     /**
-     * PRD §18 Alarms on a device with **no OS alarm clock** (the desktop): ring from the now-line. Every sweep
-     * fires the alarm instants the clock crossed since the previous one, in boundary order, then self-delays
+     * PRD §18 Alarms/Timers on a device with **no OS alarm clock** (the desktop): ring from the now-line. Every
+     * sweep fires the instants the clock crossed since the previous one, in boundary order, then self-delays
      * to the next ring — without that delay a ring would sound up to one production tick
      * ([ADVANCE_TICK_MILLIS_PROD], 30 s) late and then be swallowed as stale by its own freshness budget.
      *
@@ -634,13 +675,23 @@ class SchedulerEngine(
      * scanned crossing actually rings is decided ONLY by its REAL age ([ALARM_FRESH_MILLIS]) — an alarm the
      * machine slept through stays silent, one the running app merely observed late still rings.
      *
+     * The **timers** are swept in the same pass, their crossings merged into the alarms' in boundary order
+     * (ids are disjoint, so the de-dupe key cannot collide) — one sweep for both, exactly as one arming loop
+     * serves both on the phone. A timer the machine slept through is swallowed by the same freshness budget,
+     * and for the same reason: it is late in real time, and a countdown that ran out while the process was
+     * down is not worth sounding at the wrong moment.
+     *
      * No screen-active gate, unlike the §15 break cues: an alarm exists precisely to be heard by a user who
      * is not at the screen.
      */
     private fun launchAlarmSweep() = scope.launch {
         if (deviceKind == DeviceKind.Phone) return@launch
-        combine(_nowMillis, vm.state.map { it.alarms }.distinctUntilChanged()) { _, alarms -> alarms }
-            .collectLatest { alarms ->
+        combine(
+            _nowMillis,
+            vm.state.map { it.alarms }.distinctUntilChanged(),
+            vm.state.map { it.timers }.distinctUntilChanged(),
+        ) { _, alarms, timers -> alarms to timers }
+            .collectLatest { (alarms, timers) ->
                 while (true) {
                     val simNow = clock.nowMillis()
                     val speed = (clock as? SimAppClock)?.speed ?: 1.0
@@ -648,39 +699,68 @@ class SchedulerEngine(
                     val scanFloor = alarmSweep.scanFloorMillis(LOOK_AWAY_SWEEP_CAP_MILLIS)
                     rungAlarms = rungAlarms.filterTo(mutableSetOf()) { it.second >= scanFloor }
 
-                    for (crossing in AlarmDomain.crossingsBetween(alarms, scanFloor, simNow, tz)) {
-                        val key = crossing.entry.id to crossing.instant
+                    for (crossing in ringCrossingsBetween(alarms, timers, scanFloor, simNow)) {
+                        val key = crossing.alarmId to crossing.atMillis
                         if (key in rungAlarms) continue
                         rungAlarms = rungAlarms + key
-                        val lateness = alarmSweep.realLatenessMillis(crossing.instant)
+                        val lateness = alarmSweep.realLatenessMillis(crossing.atMillis)
                         if (lateness > ALARM_FRESH_MILLIS) {
                             Diagnostics.log(
-                                "alarm ${crossing.entry.id} at ${Diagnostics.formatInstant(crossing.instant)} " +
+                                "alarm ${crossing.alarmId} at ${Diagnostics.formatInstant(crossing.atMillis)} " +
                                     "swallowed: crossed ~$lateness ms (real) ago — process was suspended or " +
                                     "engine just started (budget $ALARM_FRESH_MILLIS ms, speed ${speed}x)",
                             )
                             continue
                         }
                         // Same entry point the phone's OS receiver uses, so both rings behave identically
-                        // (ring what was decided, disarm a one-off, log it).
-                        onAlarmFire(
-                            ArmedAlarm(
-                                alarmId = crossing.entry.id,
-                                atMillis = crossing.instant,
-                                label = crossing.entry.label,
-                                soundSeconds = crossing.entry.soundSeconds,
-                                vibrate = crossing.entry.vibrate,
-                            ),
-                        )
+                        // (ring what was decided, disarm a one-off / reset a timer, log it).
+                        onAlarmFire(crossing)
                     }
 
-                    // Sleep to the next ring so it sounds AT its instant. Re-read the list: a one-off just
-                    // rung has disarmed itself in the dispatch above.
-                    val next = AlarmDomain.nextOccurrence(vm.state.value.alarms, simNow, tz)?.instant ?: break
+                    // Sleep to the next ring so it sounds AT its instant. Re-read both lists: a one-off just
+                    // rung has disarmed itself, and a timer just rung has reset itself, in the dispatch above.
+                    val state = vm.state.value
+                    val next = listOfNotNull(
+                        AlarmDomain.nextOccurrence(state.alarms, simNow, tz)?.instant,
+                        TimerDomain.nextOccurrence(state.timers, simNow)?.instant,
+                    ).minOrNull() ?: break
                     if (speed <= 0.0) break
                     delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
                 }
             }
+    }
+
+    /**
+     * PRD §18: every ring — alarm or timer — the clock crossed in `(fromMillis, toMillis]`, as the
+     * [ArmedAlarm]s to sound, in boundary order. One merged stream so the two kinds fire in the order they
+     * are actually due rather than one whole list at a time.
+     */
+    private fun ringCrossingsBetween(
+        alarms: List<AlarmEntry>,
+        timers: List<TimerEntry>,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<ArmedAlarm> {
+        val fromAlarms = AlarmDomain.crossingsBetween(alarms, fromMillis, toMillis, tz).map {
+            ArmedAlarm(
+                alarmId = it.entry.id,
+                atMillis = it.instant,
+                label = it.entry.label,
+                soundSeconds = it.entry.soundSeconds,
+                vibrate = it.entry.vibrate,
+            )
+        }
+        val fromTimers = TimerDomain.crossingsBetween(timers, fromMillis, toMillis).map {
+            ArmedAlarm(
+                alarmId = it.entry.id,
+                atMillis = it.instant,
+                label = it.entry.label,
+                soundSeconds = it.entry.soundSeconds,
+                vibrate = it.entry.vibrate,
+                timer = true,
+            )
+        }
+        return (fromAlarms + fromTimers).sortedWith(compareBy({ it.atMillis }, { it.alarmId }))
     }
 
     /**
@@ -698,31 +778,48 @@ class SchedulerEngine(
     }
 
     /**
-     * PRD §18 Alarms: the OS alarm fired — ring exactly what was [armed] (its sound for its configured length,
-     * vibrating if asked), post the notification, disarm a **one-off** now that it has rung, and arm the next
-     * ring. Called from the platform receiver, which may have woken the process from scratch.
+     * PRD §18 Alarms/Timers: the OS alarm fired — ring exactly what was [armed] (its sound for its configured
+     * length, vibrating if asked), post the notification, put the row that rang back where it belongs, and arm
+     * the next ring. Called from the platform receiver, which may have woken the process from scratch.
      *
-     * The ring itself is unconditional: the arming decision was already made from the alarm list, so a list
-     * that has since changed (typically a peer that rang the same one-off a moment earlier and synced its
-     * disarm) must not silence this phone — PRD §18 rings every phone of the account.
+     * The ring itself is unconditional: the arming decision was already made from the lists, so a list that
+     * has since changed (typically a peer that rang the same one-off a moment earlier and synced its disarm)
+     * must not silence this phone — PRD §18 rings every phone of the account.
+     *
+     * What "putting the row back" means is the one thing the two kinds do differently, and it follows from
+     * what each of them is: a **one-off alarm** disarms itself (it has an on/off switch, and it has now
+     * happened), while a **timer** resets to its full duration (it has no switch — a countdown that has run
+     * out is simply back at the start, ready to be started again).
      */
     fun onAlarmFire(armed: ArmedAlarm) {
+        val kind = if (armed.timer) "timer" else "alarm"
         Diagnostics.log(
-            "alarm ${armed.alarmId} RINGING (${armed.soundSeconds}s sound, vibrate=${armed.vibrate})",
+            "$kind ${armed.alarmId} RINGING (${armed.soundSeconds}s sound, vibrate=${armed.vibrate})",
         )
         ringAlarm(armed)
-        notifyUser("Alarm", armed.label.ifBlank { "Alarm" })
-        // A one-off has now rung: disarm it so it doesn't come round again tomorrow (the row stays in the
-        // window, ready to be re-armed). Unknown id = deleted meanwhile; nothing to disarm.
-        val entry = vm.state.value.alarms.firstOrNull { it.id == armed.alarmId }
-        if (entry != null && !entry.repeats) {
-            vm.dispatch(SchedulerIntent.SetAlarmEnabled(entry.id, false))
+        val title = if (armed.timer) "Timer" else "Alarm"
+        notifyUser(title, armed.label.ifBlank { title })
+        if (armed.timer) {
+            // A timer is a one-off by nature: it has run out, so it goes back to its full duration. Unknown
+            // id = deleted meanwhile; nothing to reset.
+            vm.dispatch(SchedulerIntent.ResetTimer(armed.alarmId))
+        } else {
+            // A one-off alarm has now rung: disarm it so it doesn't come round again tomorrow (the row stays
+            // in the window, ready to be re-armed). Unknown id = deleted meanwhile; nothing to disarm.
+            val entry = vm.state.value.alarms.firstOrNull { it.id == armed.alarmId }
+            if (entry != null && !entry.repeats) {
+                vm.dispatch(SchedulerIntent.SetAlarmEnabled(entry.id, false))
+            }
         }
-        // Re-arm from the state as it is AFTER that dispatch, so a one-off doesn't re-arm itself. Only a
-        // phone arms anything: [launchAlarmSweep] (which is what called us on every other device) finds the
-        // next ring itself, and running the arming path there would log an OS arming that never happened.
+        // Re-arm from the state as it is AFTER that dispatch, so a one-off (or a just-reset timer) doesn't
+        // re-arm itself. Only a phone arms anything: [launchAlarmSweep] (which is what called us on every
+        // other device) finds the next ring itself, and running the arming path there would log an OS arming
+        // that never happened.
         armedAlarm = null
-        if (deviceKind == DeviceKind.Phone) armNextAlarm(clock.nowMillis(), vm.state.value.alarms)
+        if (deviceKind == DeviceKind.Phone) {
+            val state = vm.state.value
+            armNextAlarm(clock.nowMillis(), state.alarms, state.timers)
+        }
     }
 
     /**
@@ -1280,6 +1377,45 @@ class SchedulerEngine(
         lastRescheduleMillis = now
         if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(now))
         else pendingReschedule = true
+    }
+
+    /**
+     * `side-dev/README.md` § *$t_p$ 2 modes*: **the mode the now-line is in, right now** — the one reading,
+     * shared by the reducer's fills ([SchedulerReducer.tpMode]) and by the display (`App.kt` asks
+     * [SchedulerDomain.anyDeviceUnlockedAt] over the same three flows).
+     */
+    fun tpModeNow(nowMillis: Long = clock.nowMillis()): Int =
+        SchedulerDomain.tpMode(
+            SchedulerDomain.anyDeviceUnlockedAt(
+                _inactivityGaps.value, _inactiveSince.value, _activeSince.value, nowMillis,
+            ),
+        )
+
+    /**
+     * A **mode flip re-plans**, because the mode is part of the environment the three dynamic periods are
+     * placed against — where they sit relative to the line is a function of it.
+     *
+     * This is not "time passing re-plans" (CLAUDE.md's rule): the flip is an EDGE the platform announces — a
+     * lock, an unlock, the "I'm away" button — reaching this engine through the same session advance that
+     * moves [_inactiveSince] / [_activeSince]. Nothing polls, and a mode that does not change costs nothing.
+     * It goes through [requestReschedule] like every other re-plan rather than dispatching its own
+     * `RefreshSchedule`, so the staleness bound is re-armed with it. It cannot live in
+     * [SchedulerDomain.schedulingSignature] instead: the mode is not in `SchedulerState` — it is a fact about
+     * the devices, not about the account's data — which is also why it is not synced.
+     */
+    private fun launchTpModeReschedule() = scope.launch {
+        combine(_inactivityGaps, _inactiveSince, _activeSince) { gaps, inactive, active ->
+            SchedulerDomain.tpMode(
+                SchedulerDomain.anyDeviceUnlockedAt(gaps, inactive, active, clock.nowMillis()),
+            )
+        }
+            .distinctUntilChanged()
+            // The first emission is the mode the app started in, which the start-up fill already used.
+            .drop(1)
+            .collect {
+                Diagnostics.log("t_p mode is now $it (${if (it == DynamicPeriods.MODE_AT_SCREEN) "a device is unlocked" else "no device unlocked"})")
+                requestReschedule()
+            }
     }
 
     /**

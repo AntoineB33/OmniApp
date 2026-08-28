@@ -1,6 +1,8 @@
 package org.example.project.scheduler.state
 
 import org.example.project.scheduler.domain.AlarmDomain
+import org.example.project.scheduler.domain.DynamicPeriods
+import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
@@ -71,6 +73,19 @@ object SchedulerReducer {
      * asleep (account 3, 2026-08-24). Do not narrow this back to panels.
      */
     var noScreenEvidence: () -> List<TaskTimeRange> = { emptyList() }
+
+    /**
+     * `side-dev/README.md` § *$t_p$ 2 modes*: **which mode the now-line is in** — mode 1 while any device of
+     * the account is unlocked, mode 2 otherwise. Read by every [SchedulerDomain.fillSchedule] call site here,
+     * and by nothing else: it decides where the three dynamic periods sit relative to the line.
+     *
+     * Injected for the same reason [liveRestGap] is — the answer comes from the platform lock signal and the
+     * account's active sessions, which the engine owns and this reducer must stay pure of
+     * ([SchedulerDomain.anyDeviceUnlockedAt] is the whole of the rule). The default is mode 1: a shell with no
+     * device signal at all (tests, a headless host) should assume somebody is at a screen, which is the
+     * behaviour before this seam existed.
+     */
+    var tpMode: () -> Int = { DynamicPeriods.MODE_AT_SCREEN }
 
     /**
      * PRD §9: the instant every refill materializes the work plan out to, given `now` — **the horizon follows
@@ -169,6 +184,14 @@ object SchedulerReducer {
             is SchedulerIntent.AddReminder -> reduceAddReminder(state, intent.reminderId, intent.title, intent.atMillis, intent.checked, intent.pinned)
             is SchedulerIntent.SetAlarms -> reduceSetAlarms(state, intent.entries)
             is SchedulerIntent.SetAlarmEnabled -> reduceSetAlarmEnabled(state, intent.id, intent.enabled)
+            is SchedulerIntent.SetTimers -> reduceSetTimers(state, intent.entries)
+            is SchedulerIntent.StartTimer -> reduceTimerTransition(state, intent.id) {
+                TimerDomain.started(it, intent.nowMillis)
+            }
+            is SchedulerIntent.PauseTimer -> reduceTimerTransition(state, intent.id) {
+                TimerDomain.paused(it, intent.nowMillis)
+            }
+            is SchedulerIntent.ResetTimer -> reduceTimerTransition(state, intent.id, TimerDomain::reset)
             is SchedulerIntent.SetScreenBreaks ->
                 if (state.screenBreaks == intent.screenBreaks) state
                 else state.copy(screenBreaks = intent.screenBreaks)
@@ -679,6 +702,39 @@ object SchedulerReducer {
         val alarm = state.alarms.firstOrNull { it.id == id } ?: return state
         if (alarm.enabled == enabled) return state
         return state.copy(alarms = state.alarms.map { if (it.id == id) it.copy(enabled = enabled) else it })
+    }
+
+    /**
+     * PRD §18 Timers: store the timer list (minting an id for any blank row, and healing the run fields into
+     * the one shape they are allowed to be in). Authoritative state, and — like the alarms beside it — not
+     * routed through the Undo/Redo history.
+     *
+     * The rows carry their own run state, so a live text edit round-trips it untouched; the transitions below
+     * are what actually move it.
+     */
+    private fun reduceSetTimers(
+        state: SchedulerState,
+        entries: List<org.example.project.scheduler.model.TimerEntry>,
+    ): SchedulerState {
+        val withIds = TimerDomain.assignTimerIds(entries).map(TimerDomain::healed)
+        return if (state.timers == withIds) state else state.copy(timers = withIds)
+    }
+
+    /**
+     * PRD §18 Timers: apply one of the three run transitions ([TimerDomain.started] / [TimerDomain.paused] /
+     * [TimerDomain.reset]) to the timer [id]. One helper for all three because each is already a pure
+     * function on the entry — the reducer only has to find the row and skip the write when nothing moved.
+     * A no-op when the id is unknown or the transition changed nothing.
+     */
+    private fun reduceTimerTransition(
+        state: SchedulerState,
+        id: String,
+        transition: (org.example.project.scheduler.model.TimerEntry) -> org.example.project.scheduler.model.TimerEntry,
+    ): SchedulerState {
+        val timer = state.timers.firstOrNull { it.id == id } ?: return state
+        val next = transition(timer)
+        if (next == timer) return state
+        return state.copy(timers = state.timers.map { if (it.id == id) next else it })
     }
 
     /**
@@ -1705,6 +1761,7 @@ object SchedulerReducer {
                 advanced,
                 nowMillis,
                 liveRest = liveRestGap(),
+                tpMode = tpMode(),
                 horizonMillis = scheduleHorizonEndMillis(nowMillis),
             )
         if (filled == advanced.panels) return advanced
@@ -1769,6 +1826,7 @@ object SchedulerReducer {
                 advanced,
                 nowMillis,
                 liveRest = liveRestGap(),
+                tpMode = tpMode(),
                 horizonMillis = scheduleHorizonEndMillis(nowMillis),
                 keepExistingUntilMillis = materializedUntil,
             )
@@ -1801,6 +1859,7 @@ object SchedulerReducer {
                 committed,
                 now,
                 liveRest = liveRestGap(),
+                tpMode = tpMode(),
                 horizonMillis = scheduleHorizonEndMillis(now),
             )
         return committed.copy(panels = filled)
@@ -1830,6 +1889,7 @@ object SchedulerReducer {
                 updated,
                 now,
                 liveRest = liveRestGap(),
+                tpMode = tpMode(),
                 horizonMillis = scheduleHorizonEndMillis(now),
             ),
         )
@@ -1900,6 +1960,7 @@ object SchedulerReducer {
                 stripped,
                 now,
                 liveRest = liveRestGap(),
+                tpMode = tpMode(),
                 horizonMillis = scheduleHorizonEndMillis(now),
             ),
         )

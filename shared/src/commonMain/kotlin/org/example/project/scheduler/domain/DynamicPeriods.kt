@@ -92,8 +92,20 @@ object DynamicPeriods {
     /** One of the three: a label, how long it lasts, and its own recurrence bar. */
     data class Spec(val label: String, val durationMillis: Long, val cadenceMillis: Long)
 
-    /** One placed occurrence of a [Spec]. */
-    data class Instance(val spec: Spec, val startMillis: Long, val openStart: Boolean = false) {
+    /**
+     * One placed occurrence of a [Spec] — where it sits, given this position of the line.
+     *
+     * There is no "due" field here on purpose. A break's due is where the bars put it with **nothing
+     * dragged**, and the drag re-anchors the bars it fires on, so the undragged run is a different sequence
+     * and not something an instance of this one could carry. Ask for it by asking the placement with the line
+     * left out (`SchedulerDomain.screenBreakOccurrencesBetween`); a second, subtly different reading of "the
+     * due" hanging off this object is exactly how the announced instant and the drawn one drift apart.
+     */
+    data class Instance(
+        val spec: Spec,
+        val startMillis: Long,
+        val openStart: Boolean = false,
+    ) {
         val endMillis: Long get() = startMillis + spec.durationMillis
         val durationMillis: Long get() = spec.durationMillis
 
@@ -111,6 +123,16 @@ object DynamicPeriods {
                 openStart = openStart,
                 closedEnd = openStart,
             )
+
+        /**
+         * The same span as [toPeriod], written as the ordinary half-open `[from, until)` the rest of the app
+         * measures panels in. Time is discrete here — the millisecond is the unit — so the half-open
+         * `(t_p, t_p + duration]` a dragged period covers IS `[t_p + 1, t_p + duration + 1)`, exactly
+         * [durationMillis] long and leaving the instant `t_p` itself free. That equivalence is what lets the
+         * README's open-start period become an ordinary `TaskPanel` with no extra field on it.
+         */
+        val coveredFromMillis: Long get() = if (openStart) startMillis + 1 else startMillis
+        val coveredUntilMillis: Long get() = coveredFromMillis + spec.durationMillis
     }
 
     /** A half-open `[startMillis, endMillis)` span of the timeline. */
@@ -258,14 +280,29 @@ object DynamicPeriods {
                 }
             }
             if (moved) continue
-            var openStart = false
-            // Mode 1: `t_p` may not be covered by "no on-screen task". A period the line has swept up to is
-            // therefore pushed ahead of it and becomes the half-open `(t_p, t_p + duration]` — the line goes
-            // on delaying it, placing tasks where it stood.
-            if (mode == MODE_AT_SCREEN && start >= sweepFromMillis && start <= tpMillis) {
-                start = tpMillis
-                openStart = true
+            // Mode 1: `t_p` may not be covered by "no on-screen task". A period whose slot the line has SWEPT
+            // — travelled continuously through, from where its motion began up to here — is therefore pushed
+            // onto the line and becomes the half-open `(t_p, t_p + duration]`; the line goes on delaying it,
+            // placing tasks where it stood.
+            //
+            // Pushing it is a move like any other, so the loop goes round again and the ordinary rules get
+            // their say at the new position: the line may be standing inside a stretch nobody can run in (a
+            // hand-drawn inactivity period, a night), and a period must no more fall inside one of those for
+            // having been dragged than for having been placed there. A drag strictly increases the bar, so it
+            // cannot spin — and it re-anchors that bar AT the line, which is what bounds the whole thing: at
+            // most one occurrence per bar is ever swept, and the chain merge collapses those into one.
+            if (mode == MODE_AT_SCREEN && start >= sweepFromMillis && start < tpMillis) {
+                bars[label] = tpMillis
+                continue
             }
+            // It sits ON the line, and the line got here by SWEEPING (`sweepFrom < t_p`): this is the period
+            // the line is dragging, and the half-open form is what keeps the instant `t_p` itself free.
+            //
+            // The sweep test is not decoration. A caller whose `t_p` is a window edge rather than the line
+            // sweeps nothing (`sweepFrom == t_p`), and must not get the half-open form for the accident of a
+            // slot falling on that edge: the cue sweep would then read one break's due as `floor` in one scan
+            // and `floor + 1` in the next, and fire it twice.
+            val openStart = mode == MODE_AT_SCREEN && start == tpMillis && sweepFromMillis < tpMillis
             val inst = Instance(spec, start, openStart)
             out += inst
             barInstance(bars, byLabel, restedSpans, inst)
@@ -294,16 +331,35 @@ object DynamicPeriods {
         val placed =
             instances(base, dynamics, startMillis, horizonMillis, tpMillis, mode, sweepFromMillis)
                 .map { it.toPeriod() }
-        if (mode != MODE_AWAY) return placed
-        val covered = (placed + base.periods).any { it.covers(tpMillis) && PeriodKinds.coversNoScreen(it.kind) }
-        if (covered) return placed
+        return placed + listOfNotNull(awayCover(base, placed, tpMillis, mode))
+    }
+
+    /**
+     * Mode 2's cover, on its own — the one thing [periods] adds to [instances], split out so the app can
+     * build the three dynamic periods as the panels they are and still get this.
+     *
+     * Null in mode 1, null when `t_p` is already covered by something that turns the on-screen tasks away
+     * (a dynamic period the line is standing in, a standing "no on-screen task" period, the live pause this
+     * device is observing), and null when there is no gap to cover. Otherwise it is the README's own
+     * sentence: the stretch from the last such period's end up to and including `t_p`, as
+     * [PeriodKinds.NO_SCREEN] — so a task with a non-zero resilience to that kind may still fill it, and a
+     * timeline where nobody has one is simply empty there.
+     */
+    fun awayCover(
+        base: Base,
+        placed: List<RestrictivePeriod>,
+        tpMillis: Long,
+        mode: Int,
+    ): RestrictivePeriod? {
+        if (mode != MODE_AWAY) return null
+        val all = placed + base.periods
+        if (all.any { it.covers(tpMillis) && PeriodKinds.coversNoScreen(it.kind) }) return null
         val ends =
-            (placed + base.periods)
-                .filter { PeriodKinds.coversNoScreen(it.kind) && it.endMillis <= tpMillis }
+            all.filter { PeriodKinds.coversNoScreen(it.kind) && it.endMillis <= tpMillis }
                 .maxOfOrNull { it.endMillis }
         val from = ends ?: tpMillis
-        if (from >= tpMillis) return placed
-        return placed + RestrictivePeriod(from, tpMillis, PeriodKinds.NO_SCREEN, LABEL_AWAY, closedEnd = true)
+        if (from >= tpMillis) return null
+        return RestrictivePeriod(from, tpMillis, PeriodKinds.NO_SCREEN, LABEL_AWAY, closedEnd = true)
     }
 
     /**
@@ -355,14 +411,19 @@ object DynamicPeriods {
         rested: List<Span>,
         inst: Instance,
     ) {
+        // Measured from the last instant the period COVERS, not from its nominal end: a dragged period is the
+        // half-open `(t_p, t_p + duration]`, which in discrete time ends one millisecond later than
+        // `startMillis + duration`. A bar read off the nominal end is that millisecond short, and "no 20 s
+        // period in the next 20 minutes" then places one at 19 min 59.999 s.
+        val until = inst.coveredUntilMillis
         if (bars.containsKey(LABEL_20S) && LABEL_20S in byLabel) {
-            bars[LABEL_20S] = maxOf(bars.getValue(LABEL_20S), inst.endMillis + BAR_20S_AFTER_ANY_MILLIS)
+            bars[LABEL_20S] = maxOf(bars.getValue(LABEL_20S), until + BAR_20S_AFTER_ANY_MILLIS)
         }
         bars[inst.spec.label] =
-            maxOf(bars[inst.spec.label] ?: Long.MIN_VALUE, inst.endMillis + inst.spec.cadenceMillis)
+            maxOf(bars[inst.spec.label] ?: Long.MIN_VALUE, until + inst.spec.cadenceMillis)
         // The whole of a dynamic period counts as a rest stretch: its kind is "no task allowed", which covers
         // "no on-screen task" a fortiori and leaves nobody able to run.
-        val grown = growStretch(rested, inst.startMillis, inst.endMillis)
+        val grown = growStretch(rested, inst.coveredFromMillis, until)
         barStretch(bars, grown.startMillis, grown.endMillis)
     }
 
@@ -379,7 +440,7 @@ object DynamicPeriods {
         val out = mutableListOf<Instance>()
         for (inst in sorted) {
             val prev = out.lastOrNull()
-            if (prev != null && inst.startMillis <= prev.endMillis) {
+            if (prev != null && inst.coveredFromMillis <= prev.coveredUntilMillis) {
                 val longest = if (prev.durationMillis >= inst.durationMillis) prev else inst
                 out[out.size - 1] = Instance(longest.spec, prev.startMillis, prev.openStart)
             } else {

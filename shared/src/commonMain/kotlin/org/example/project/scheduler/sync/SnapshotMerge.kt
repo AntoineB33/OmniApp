@@ -2,6 +2,7 @@ package org.example.project.scheduler.sync
 
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.ChoreEntry
@@ -84,6 +85,12 @@ object SnapshotMerge {
             mergeKeyedList(base.chores, local.chores, remote.chores, ChoreEntry::id) { b, l, r -> pick(b, l, r) }
         val alarms =
             mergeKeyedList(base.alarms, local.alarms, remote.alarms, AlarmEntry::id) { b, l, r -> pick(b, l, r) }
+        // PRD §18 Timers: whole objects, like the alarms. A timer's settings and its run state are not
+        // independent fields to interleave — taking the duration from one side and the end instant from the
+        // other would produce a countdown neither device started (and TimerDomain.healed is what catches the
+        // one shape a field-wise merge could still forge).
+        val timers =
+            mergeKeyedList(base.timers, local.timers, remote.timers, TimerEntry::id) { b, l, r -> pick(b, l, r) }
         // Task trees resolve as WHOLE objects: an entry's title and its stored tree are not independent
         // fields to interleave — a tree captured on one device is one consistent thing. Adding a tree on each
         // device keeps both (they carry different ids); the live tree of whichever entry is active is merged
@@ -118,6 +125,7 @@ object SnapshotMerge {
                 panels = panels,
                 chores = chores,
                 alarms = alarms,
+                timers = timers.map(org.example.project.scheduler.domain.TimerDomain::healed),
                 automaticSchedule = pick(base.automaticSchedule, local.automaticSchedule, remote.automaticSchedule),
                 // PRD §4 Default sub-tree: the template resolves as ONE value, like a task tree — and it IS
                 // a tree, a shape the user drew, not independent rows to interleave (two devices each

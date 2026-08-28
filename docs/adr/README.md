@@ -18,7 +18,7 @@ migration history.
 | [0007](0007-accounts-and-persistence.md) | Accounts, persistence, authoritative vs. derived | guest accounts, per-account partitions, the reconstructibility rule, sleep carving |
 | [0008](0008-task-trees-and-timeline.md) | Task trees and the timeline blend | live alternatives, keyframes, the quantized re-plan exception |
 | [0009](0009-display-hot-path-and-horizon.md) | Display hot path, horizon, rolling calendar | O(screen) rule, horizon clamping, the rolling grid and its layout trap |
-| [0010](0010-alarms.md) | Alarms (PRD §18) | phone arming vs. desktop sweep, the synthesized tone |
+| [0010](0010-alarms.md) | Alarms and timers (PRD §18) | phone arming vs. desktop sweep, the synthesized tone, a timer as an alarm at an absolute instant |
 | [0011](0011-global-keyboard-shortcuts.md) | System-wide keyboard shortcuts | the swallow rule, hook vs. `RegisterHotKey`, the shortcuts window |
 | [0012](0012-clipboard-format.md) | The clipboard text is readable | what a copy carries, the prose format, the resilience attribute, paste strictness, the deep-copy depth window |
 | [0013](0013-task-colours.md) | Task colours: the leaves own the circle | maximal spread for the childless tasks, depth-first order, a parent in its own arc, ties settled toward the previous answer |

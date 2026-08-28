@@ -11,8 +11,10 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNames
 import org.example.project.scheduler.domain.AlarmDomain
+import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
@@ -260,6 +262,16 @@ object SchedulerStateCodec {
                         // is stable whatever order the set iterates in.
                         it.days.map { day -> day.isoDayNumber }.sorted(),
                         it.repeats, it.enabled,
+                    )
+                },
+            // PRD §18 Timers: the run state rides along with the settings — `endsAtMillis` is an absolute
+            // instant nothing else can recompute, so it is authoritative and belongs on the wire (CLAUDE.md
+            // § State). The remaining time never is: it is derived from that instant and the now-line.
+            timers =
+                timers.map {
+                    PersistedTimer(
+                        it.id, it.label, it.durationSeconds, it.soundSeconds, it.vibrate,
+                        it.endsAtMillis, it.remainingMillis,
                     )
                 },
             // PRD §5: the relative-priority window's pinned cells, sorted so the encoded payload (and the
@@ -716,6 +728,23 @@ object SchedulerStateCodec {
                     )
                 },
             ),
+            // PRD §18 Timers: a payload written before timers existed decodes to an empty list. Every row
+            // is healed on the way in (CLAUDE.md: decode heals a shape an older build wrote rather than
+            // surfacing it) — a blank id gets one minted, and a row holding BOTH run fields keeps only the
+            // instant it is due at.
+            timers = TimerDomain.assignTimerIds(
+                timers.map {
+                    TimerEntry(
+                        id = it.id,
+                        label = it.label,
+                        durationSeconds = it.durationSeconds,
+                        soundSeconds = it.soundSeconds,
+                        vibrate = it.vibrate,
+                        endsAtMillis = it.endsAtMillis,
+                        remainingMillis = it.remainingMillis,
+                    )
+                },
+            ).map(TimerDomain::healed),
             // PRD §5: a payload written before the relative-priority window existed decodes to no pins.
             relativePriorityPins =
                 relativePriorityPins
@@ -975,6 +1004,8 @@ private data class PersistedState(
     val chores: List<PersistedChoreEntry> = emptyList(),
     // PRD §18: a missing alarm list decodes to empty (payloads written before the Alarms window existed).
     val alarms: List<PersistedAlarm> = emptyList(),
+    // PRD §18: a missing timer list decodes to empty (payloads written before the Timers section existed).
+    val timers: List<PersistedTimer> = emptyList(),
     // PRD §5: the relative-priority window's pinned cells; a missing list decodes to no pins (payloads
     // written before the window existed).
     val relativePriorityPins: List<PersistedRelativePriorityPins> = emptyList(),
@@ -1174,6 +1205,26 @@ private data class PersistedAlarm(
     @JsonNames("repeatDaily")
     val repeats: Boolean = true,
     val enabled: Boolean = true,
+)
+
+/**
+ * PRD §18 Timers: one persisted timer. Every field carries a default so a payload written by an older shape
+ * (or by a build before a field existed) decodes cleanly.
+ *
+ * [endsAtMillis] and [remainingMillis] are the run state, and at most one of them is ever set — a payload
+ * holding both is healed on decode ([TimerDomain.healed]).
+ */
+@Serializable
+private data class PersistedTimer(
+    val id: String = "",
+    val label: String = "",
+    val durationSeconds: Int = TimerEntry.DEFAULT_TIMER_SECONDS,
+    val soundSeconds: Int = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
+    val vibrate: Boolean = true,
+    /** Running: the absolute instant it fires at. Null when idle or paused. */
+    val endsAtMillis: Long? = null,
+    /** Paused: the banked remainder. Null when idle or running. */
+    val remainingMillis: Long? = null,
 )
 
 @Serializable

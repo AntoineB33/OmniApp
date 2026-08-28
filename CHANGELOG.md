@@ -11,6 +11,89 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The two `t_p` modes, wired through — SHIPPED 2026-08-28
+
+→ `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive Period* / ADR 0003. `shared`
+(`scheduler/domain/DynamicPeriods.kt`, `scheduler/domain/SchedulerDomain.kt`,
+`scheduler/state/SchedulerReducer.kt`, `scheduler/engine/SchedulerEngine.kt`, `App.kt`); new `TpModeTest`,
+rewritten assertions in `DynamicPeriodsTest`, `ScreenBreakWindowTest`, `RestPosePresenceWindowTest`,
+`SchedulerCalendarTest`, `NotificationLogTest`. Client rebuild to see it — no Supabase deploy.
+
+Both modes were implemented in `DynamicPeriods` and tested there, and **neither reached the app**. This wires
+them.
+
+- **The mode is which devices are unlocked**: mode 1 while any device of the account is unlocked, mode 2
+  otherwise. `SchedulerDomain.tpMode` decides it once, `anyDeviceUnlockedAt` reads the input once — off the
+  account-wide pause the calendar already draws (`displayInactivityGaps`, right edge inclusive because an
+  ongoing pause's tail ends *at* the line), so the mode and the Inactivity band cannot disagree. **Replaces**
+  the read of `SchedulerState.sleepingUntilMillis` (the Sleep/Work toggle), which said "gone to bed", not "no
+  screen in use", and was the only thing either mode had ever been keyed on in the app. The reducer reads it
+  through a new injected `SchedulerReducer.tpMode` seam, beside `liveRestGap` / `noScreenEvidence`; the
+  display reads the same function over the same three engine flows.
+- **A mode flip re-plans** (`SchedulerEngine.launchTpModeReschedule` → `requestReschedule`). Not a tick: the
+  flip is an edge the OS announces. It cannot go in `schedulingSignature` — the mode is a fact about the
+  devices, not about the account's data, and so is never synced.
+- **Mode 1 drags again.** `SchedulerDomain.dynamicPeriodPanels` passed `sweepFromMillis = tpMillis`, which
+  made the drag fire only on exact equality — the line swept nothing, ever. It now passes the placement
+  origin wherever `tpMillis` really is the line (a new `atLine` flag; every other caller — the cue's dues, the
+  pause cue's next break, a navigated week — keeps the bars' undragged answer). So an owed period sits on the
+  line as `(t_p, t_p + duration]`, realized in discrete time as `[t_p + 1, t_p + duration + 1)`
+  (`Instance.coveredFromMillis`) so it stays an ordinary `TaskPanel`. **Consequence, deliberately accepted:**
+  while a device stays unlocked and no rest happens, the owed chain parks at the now-line and no task is
+  scheduled under it, and a stretch the line crossed in mode 1 draws task panels rather than breaks.
+- **The drag is bounded by the bars themselves**, which is why the fear that motivated `sweepFromMillis =
+  tpMillis` was unfounded: pushing a period onto the line re-anchors its own bar there, so at most one
+  occurrence per bar is swept and the chain merge collapses what piled up into the longest. A drag is also a
+  *move like any other* — it goes back through the loop, so the ordinary rules still refuse to place it inside
+  a stretch nobody can run in.
+- **The cue keys on the DUE, not on where the period sits** — `screenBreakOccurrencesBetween`, the placement
+  asked with the line left out, and the one reading of it. This is a partial reversal of "nothing slides, so
+  the cue may key on the drawn start" (2026-08-27): nothing slides *on its own*, but a period the line is
+  pushing is always "starting now", is never crossed, and a sweep keyed on it fires at every scan — the
+  2026-07-12 "spammed every frame" failure. `nextScreenBreakStartMillis` (the pause cue's `break_due_ms`) is
+  the same reading, so the server and the client still key on one instant.
+- **Mode 2's cover reaches the app**: `DynamicPeriods.awayCover` split out of `periods()`, emitted by
+  `dynamicPeriodPanels` as an `Away` panel of kind `no on-screen task` — so a task resilient to that kind may
+  work through it and an on-screen one may not. Where the app already has live evidence (this device's
+  ongoing pause) that evidence *is* the cover: `liveRestPeriod` is now `closedEnd` while the pause is ongoing,
+  so it covers the now-line and `awayCover` finds nothing left to do.
+- **Bars are measured from the last instant a period COVERS** (`coveredUntilMillis`), not from
+  `start + duration`. A dragged period ends one millisecond later than its nominal end, and a bar read off the
+  nominal end put the next 20-second period at 19 min 59.999 s.
+
+### Timers, in the Alarms window — SHIPPED 2026-08-28
+
+→ PRD §18 / ADR 0010. `shared` (`scheduler/model/TaskModels.kt`, new
+`scheduler/domain/TimerDomain.kt`, `scheduler/engine/SchedulerEngine.kt`, `scheduler/state/*`,
+`scheduler/persistence/SchedulerStateCodec.kt`, `scheduler/sync/SnapshotMerge.kt`, `ui/AlarmWindow.kt`,
+`App.kt`) and `androidApp` (`AlarmClockScheduler`, `AlarmClockReceiver`, `AlarmRingService`,
+`SchedulerHolder`); new `TimerTest` + `TimerEngineTest`. Client rebuild to see it — no Supabase deploy.
+
+- **The Alarms window has a second section: Timers.** A row is a duration (`SS` / `M:SS` / `H:MM:SS`, default
+  5:00, max 24 h), a label, a live countdown, start / pause / reset, and the same *Rings for* and *Vibrate*
+  fields an alarm has. It rings the same acoustic-guitar loop for the same length, through the same
+  notification funnel, titled *Timer*.
+- **A timer is an alarm at an ABSOLUTE instant, and that is the whole difference.** An alarm's due instant is
+  derived from the local calendar per ringing day; a timer's is stored, fixed the moment it was started. So
+  everything downstream — the phone's OS arming, the desktop's now-line sweep, `onAlarmFire`, the ring — is
+  the alarms' machinery unchanged rather than a parallel one. `TimerDomain` carries no time zone at all.
+- **One OS alarm slot, so one arming loop and one sweep.** `launchAlarmArming` now combines both lists and
+  arms the soonest of the two; `launchAlarmSweep` merges both crossing streams in boundary order
+  (`ringCrossingsBetween`). A second arming loop would not have added a ring — it would have overwritten the
+  first's. `ArmedAlarm.timer` says which list a ring came from, and travels with it into the phone's OS intent.
+- **`endsAtMillis` is authoritative and synced; the remaining time is derived and stored nowhere.** Starting a
+  timer on the desktop is therefore what makes the phone ring at its end — the same promise PRD §18 already
+  made for alarms — while a counting-down timer writes nothing and cannot move the sync fingerprint on a tick.
+  Three run states live in two nullable fields of which at most one is non-null, healed in one place
+  (`TimerDomain.healed`) from decode, from the merge and from the reducer.
+- **No on/off switch and no repeat switch**: a timer that is not running is already not due, and a timer is a
+  one-off by nature — having rung it *resets* to its full duration, where a one-off alarm *disarms* itself
+  because it has a switch to leave off.
+- The countdown reads down off the window's own 250 ms poll of the app clock (only while the window is open
+  and something is running), because the engine's now-line advances once per 30 s production tick. Editing a
+  row's settings mid-countdown cannot disturb the instant it is due at. A timer draws nothing on the calendar,
+  deliberately.
+
 ### A Notifications switch, and a chord to silence them — SHIPPED 2026-08-28
 
 → PRD §7/§11. `shared` only (`scheduler/platform/GlobalHotkey.kt`, `scheduler/platform/SystemNotifier*.kt`,

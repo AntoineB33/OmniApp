@@ -25,6 +25,10 @@ object AlarmClockScheduler {
     const val EXTRA_LABEL = "org.example.project.ALARM_LABEL"
     const val EXTRA_SECONDS = "org.example.project.ALARM_SECONDS"
     const val EXTRA_VIBRATE = "org.example.project.ALARM_VIBRATE"
+    // PRD §18 Timers: which list the armed ring came from. The receiver hands it straight back to
+    // `onAlarmFire`, which needs it to reset the timer (rather than disarm a one-off alarm) and to title the
+    // notification — so the routing survives a process the broadcast had to start from scratch.
+    const val EXTRA_TIMER = "org.example.project.ALARM_IS_TIMER"
 
     private fun pendingIntent(context: Context, armed: ArmedAlarm?): PendingIntent {
         val intent = Intent(context, AlarmClockReceiver::class.java).apply {
@@ -35,6 +39,7 @@ object AlarmClockScheduler {
             putExtra(EXTRA_LABEL, armed?.label.orEmpty())
             putExtra(EXTRA_SECONDS, armed?.soundSeconds ?: 0)
             putExtra(EXTRA_VIBRATE, armed?.vibrate ?: false)
+            putExtra(EXTRA_TIMER, armed?.timer ?: false)
         }
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         return PendingIntent.getBroadcast(context, REQUEST_CODE, intent, flags)

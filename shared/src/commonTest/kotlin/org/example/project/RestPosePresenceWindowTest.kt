@@ -56,20 +56,22 @@ class RestPosePresenceWindowTest {
     }
 
     @Test
-    fun the_published_instant_is_the_one_the_calendar_draws() {
-        // The whole point of the change: one instant, derived once. What the server is told and what the user
-        // sees are the same number by construction, not two derivations kept in step.
+    fun the_published_instant_is_the_one_the_cue_keys_on() {
+        // One instant, derived once. What the server is told and what this device announces are the same
+        // number by construction, not two derivations kept in step — the break's DUE, where the recurrence
+        // bars put it. (Not where mode 1 leaves the period: the line pushes a period it has reached, so the
+        // period's own start moves with the line and is no instant to publish.)
         val breaks = listOf(pose5(), pose15())
         val dues = SchedulerEngine.restPoseDueMillisByKey(breaks, NOW)
-        val drawn = SchedulerDomain.screenBreakPanels(breaks, NOW, NOW + 12 * HOUR)
+        val announced = SchedulerDomain.screenBreakOccurrencesBetween(
+            breaks, NOW, NOW + 12 * HOUR, anchorMillis = NOW,
+        )
         for (side in breaks) {
-            // The first occurrence the line has NOT already entered: a break in progress is one the user is
-            // taking, not one they are owed, so what the server is told about is the one after it.
-            val next = drawn.firstOrNull { it.title == side.title && it.startEpochMillis >= NOW } ?: continue
+            val next = announced.firstOrNull { it.title == side.title && it.startEpochMillis >= NOW } ?: continue
             assertEquals(
                 next.startEpochMillis,
                 dues[side.key],
-                "${side.title}: the published due must be the next placed occurrence",
+                "${side.title}: the published due must be the next occurrence the cue announces",
             )
         }
     }

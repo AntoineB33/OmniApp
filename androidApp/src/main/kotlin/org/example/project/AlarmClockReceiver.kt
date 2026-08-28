@@ -7,9 +7,9 @@ import org.example.project.scheduler.engine.ArmedAlarm
 import org.example.project.scheduler.platform.Diagnostics
 
 /**
- * PRD §18 Alarms: fires at an alarm's instant (see [AlarmClockScheduler]) and hands off to the shared
- * engine's `onAlarmFire`, which rings ([AlarmRingService]), posts the notification, disarms a one-off alarm
- * and arms the next ring. The broadcast may wake the process from scratch, so it goes through
+ * PRD §18 Alarms/Timers: fires at an armed ring's instant (see [AlarmClockScheduler]) and hands off to the
+ * shared engine's `onAlarmFire`, which rings ([AlarmRingService]), posts the notification, disarms a one-off
+ * alarm / resets a timer, and arms the next ring. The broadcast may wake the process from scratch, so it goes through
  * [SchedulerHolder.ensure] like every other Android entry point.
  */
 class AlarmClockReceiver : BroadcastReceiver() {
@@ -22,6 +22,7 @@ class AlarmClockReceiver : BroadcastReceiver() {
             label = intent.getStringExtra(AlarmClockScheduler.EXTRA_LABEL).orEmpty(),
             soundSeconds = intent.getIntExtra(AlarmClockScheduler.EXTRA_SECONDS, 0),
             vibrate = intent.getBooleanExtra(AlarmClockScheduler.EXTRA_VIBRATE, false),
+            timer = intent.getBooleanExtra(AlarmClockScheduler.EXTRA_TIMER, false),
         )
         Diagnostics.log("alarm receiver fired for id='${armed.alarmId}'")
         if (armed.alarmId.isBlank() || armed.soundSeconds <= 0) return

@@ -26,7 +26,7 @@ import org.example.project.scheduler.platform.AlarmTone
 import org.example.project.scheduler.platform.Diagnostics
 
 /**
- * PRD §18 Alarms (Android): rings one alarm — plays the **acoustic guitar** arpeggio ([AlarmTone], synthesized
+ * PRD §18 Alarms/Timers (Android): rings one alarm or timer — plays the **acoustic guitar** arpeggio ([AlarmTone], synthesized
  * in shared code so the phone and the desktop ring with the identical waveform) on the **alarm** audio stream,
  * looping so it is audible for the whole configured length, and vibrates alongside it when asked, then stops
  * itself. If the raw PCM track cannot be created the device's own alarm ringtone rings instead — an alarm must
@@ -54,10 +54,11 @@ class AlarmRingService : Service() {
             return START_NOT_STICKY
         }
         val label = intent?.getStringExtra(EXTRA_LABEL).orEmpty()
+        val title = intent?.getStringExtra(EXTRA_TITLE)?.takeIf { it.isNotBlank() } ?: "Alarm"
         val seconds = (intent?.getIntExtra(EXTRA_SECONDS, 0) ?: 0).coerceIn(1, MAX_SECONDS)
         val vibrate = intent?.getBooleanExtra(EXTRA_VIBRATE, false) ?: false
 
-        startForegroundNotification(label)
+        startForegroundNotification(title, label)
         // A new ring supersedes whatever was still sounding (same service instance).
         stopRinging()
         startRinging(vibrate)
@@ -178,8 +179,8 @@ class AlarmRingService : Service() {
         vibrator = null
     }
 
-    private fun startForegroundNotification(label: String) {
-        val notification = buildNotification(label)
+    private fun startForegroundNotification(title: String, label: String) {
+        val notification = buildNotification(title, label)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
@@ -187,7 +188,7 @@ class AlarmRingService : Service() {
         }
     }
 
-    private fun buildNotification(label: String): Notification {
+    private fun buildNotification(title: String, label: String): Notification {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (manager.getNotificationChannel(CHANNEL_ID) == null) {
@@ -210,8 +211,8 @@ class AlarmRingService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setContentTitle("Alarm")
-            .setContentText(label.ifBlank { "Alarm" })
+            .setContentTitle(title)
+            .setContentText(label.ifBlank { title })
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -224,13 +225,19 @@ class AlarmRingService : Service() {
         private const val NOTIFICATION_ID = 1002
         private const val ACTION_STOP = "org.example.project.ALARM_STOP"
         private const val EXTRA_LABEL = "org.example.project.ALARM_LABEL"
+        // PRD §18 Timers: "Alarm" or "Timer" — the ring is identical, only what it is called differs.
+        private const val EXTRA_TITLE = "org.example.project.ALARM_TITLE"
         private const val EXTRA_SECONDS = "org.example.project.ALARM_SECONDS"
         private const val EXTRA_VIBRATE = "org.example.project.ALARM_VIBRATE"
         private const val MAX_SECONDS = 600
 
-        /** Rings for [seconds] with [label] shown, vibrating when [vibrate]. Best-effort (never throws). */
-        fun ring(context: Context, label: String, seconds: Int, vibrate: Boolean) {
+        /**
+         * Rings for [seconds] with [label] shown under [title], vibrating when [vibrate]. Best-effort (never
+         * throws). [title] is "Alarm" or "Timer" (PRD §18) — the sound and the length are the same either way.
+         */
+        fun ring(context: Context, label: String, seconds: Int, vibrate: Boolean, title: String = "Alarm") {
             val intent = Intent(context, AlarmRingService::class.java)
+                .putExtra(EXTRA_TITLE, title)
                 .putExtra(EXTRA_LABEL, label)
                 .putExtra(EXTRA_SECONDS, seconds)
                 .putExtra(EXTRA_VIBRATE, vibrate)

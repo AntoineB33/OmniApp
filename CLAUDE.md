@@ -52,8 +52,8 @@ re-derives something mark the state dirty or trigger a sync push.
 
 | Class | Contents | Rule |
 | --- | --- | --- |
-| **Authoritative** | task tree (task **resilience** included), the account's **period kinds**, named task trees, the default sub-tree + its switch, user-authored/pinned panels and the periods the app conducted, chores/reminders, sleep schedule, alarms, settings, the system-wide chord bindings, Undo/Redo history units, manual record edits | persist + sync |
-| **Derived** | auto/screen-break/sleep panels, task colours, the dynamic periods' placement (the recurrence bars read their anchors out of the timeline), records the advance banks | persisted locally, **stripped from the wire**, never trigger a push on their own |
+| **Authoritative** | task tree (task **resilience** included), the account's **period kinds**, named task trees, the default sub-tree + its switch, user-authored/pinned panels and the periods the app conducted, chores/reminders, sleep schedule, alarms, timers (**whether one is running** included), settings, the system-wide chord bindings, Undo/Redo history units, manual record edits | persist + sync |
+| **Derived** | auto/screen-break/sleep panels, task colours, a running timer's remaining time, the dynamic periods' placement (the recurrence bars read their anchors out of the timeline), records the advance banks | persisted locally, **stripped from the wire**, never trigger a push on their own |
 | **Local-only view state** | focused window, tree selection, `showScreenBreaks`/`showReminders`, WindowNav/Selection history, window placement, OS-sleep scan checkpoint | persist locally, **never sync** |
 
 - Local view state is stripped from the fingerprint by `withLocalViewStateNeutralized()` and carried across a
@@ -115,7 +115,8 @@ re-derives something mark the state dirty or trigger a sync push.
   running has no such choice.
 - **The resume contract:** a chain of re-plans is the SAME schedule as one long plan. Anything new the walk
   carries must be reconstructible from the history, or this breaks silently.
-- **Do not answer a sliding period by re-planning per tick.** It is a display clip
+- **Do not answer a sliding period by re-planning per tick.** A mode-1 drag moves the owed period with the
+  line, and the plan under it was materialized at the last rule change: the answer is a display clip
   (`clipPlanForPinnedScreenBreak`), cutting what a break **refuses** — not what it covers.
 
 ### What reaches the scheduler
@@ -229,9 +230,12 @@ identifiers, persisted keys.
   "a pause re-anchors shorter pauses", no decoupled-pose special case. Every one of those said "a rest bars
   the breaks that follow it", which the bars say once — and the rests are read out of the timeline itself, so
   a live pause reaches the placement as the period it is (`liveRestPeriod`) rather than as an anchor overlay.
-- **Nothing slides.** A break's start is a fixed instant derived from the rules, so it IS a crossable
-  boundary — which is why the cue may key on it (below). The older rule ("no break has a drawn start anything
-  may key on") existed *because* breaks slid to the now-line while owed.
+- **A break has a DUE and a PLACE, and only the due is a boundary.** The due is where the recurrence bars put
+  it — a fixed instant derived from the rules, crossed once, and the only thing a trigger may key on
+  (`screenBreakOccurrencesBetween`, `dynamicPeriodPanels`' `atLine = false`). Where the period *sits* is the
+  due unless the line is dragging it (`screenBreakPanels` / `takenScreenBreakPanels`, `atLine = true`) — that
+  is what the calendar draws and what the fill obstructs on. Never key a cue on the second: a period the line
+  pushes is always "starting now", so it is never crossed and a sweep would fire at every scan.
 - **The placement's origin is anchored on the NOW-LINE, quantized to the day**
   (`dynamicPlacementOriginMillis`), never on the query window's own left edge. The bars are a walk from the
   origin, so the grid is a function of it: the fill asks from `now`, the cue sweep from its scan floor and the
@@ -240,10 +244,31 @@ identifiers, persisted keys.
 - **A materialized break is never an input to its own placement.** `restrictivePeriodsOf` drops
   `screenBreak` panels for that reason; feeding last fill's output back in makes each break a blocked stretch
   that absorbs the next, and the grid walks away from itself.
-- **The two `t_p` modes land on the "I'm away" toggle.** At the screen (mode 1) the now-line may not be
-  covered by "no on-screen task", so a period it has reached is pushed ahead of it as the half-open
-  `(t_p, t_p + duration]`; away (mode 2) it must be covered, so the gap back to the last period's end is
-  covered as `no on-screen task` — which the resilient tasks may still fill.
+- **The `t_p` mode is WHICH DEVICES ARE UNLOCKED, and nothing else**: mode 1 while any device of the account
+  is unlocked, mode 2 otherwise. `SchedulerDomain.tpMode` decides it once and `anyDeviceUnlockedAt` reads the
+  input once — off the **account-wide pause the calendar already draws** (`displayInactivityGaps`, right edge
+  inclusive because an ongoing pause's tail ends *at* the line), so the mode and the Inactivity band can never
+  disagree: what the user sees is the mode. It is **not** the Sleep/Work toggle (that says "gone to bed", not
+  "no screen in use" — it was what the code read until 2026-08-28) and not the "I'm away" button on its own —
+  that button reaches the mode by declaring this device idle, like a lock does.
+- **Mode 1: `t_p` is never covered.** Every period whose slot the line has SWEPT is pushed onto the line as the
+  half-open `(t_p, t_p + duration]` — in discrete time `[t_p + 1, t_p + duration + 1)`
+  (`Instance.coveredFromMillis`), which is how it stays an ordinary `TaskPanel`. Three things this rests on:
+  the drag **re-anchors the bar at the line**, so at most one occurrence per bar is swept and the chain merge
+  collapses what piled up (it is bounded — do not "fix" it by disabling the sweep, which is what
+  `sweepFromMillis = t_p` was); a drag is a **move like any other**, put back through the loop so the ordinary
+  rules still refuse to place it inside a stretch nobody can run in; and the **frozen past holds because of
+  it** — a dragged period is ahead of the line at every position of the line, so nothing behind the line ever
+  turns from a period into a task panel. Deliberate consequence: while a device stays unlocked and no rest
+  happens, the owed chain parks at the now-line and no task is scheduled under it.
+- **Mode 2: `t_p` is covered**, so the gap back to the last such period's end is covered as `no on-screen
+  task` — which the resilient tasks may still fill (`DynamicPeriods.awayCover`, the `Away` panel). Where the
+  app has live evidence, that evidence IS the cover: an **ongoing** pause is `closedEnd`, so `liveRestPeriod`
+  covers the line and `awayCover` has nothing left to do.
+- **A mode flip re-plans** (`launchTpModeReschedule` → `requestReschedule`) and that is not "time passing
+  re-plans": the flip is an edge the platform announces. It cannot go in `schedulingSignature` — the mode is
+  not in `SchedulerState`, being a fact about the devices and not about the account's data, which is also why
+  it is never synced. The reducer reads it through the injected `SchedulerReducer.tpMode` seam.
 - **An UNLOCK clears "I'm away", and it is an EDGE, not a poll** (`SchedulerEngine.noteScreenSignal`). The
   toggle overrides the platform screen sensor, so nothing but this would ever take it off by itself — and a
   flag left standing across a return holds this device's session finalized and its presence heartbeat closed
@@ -264,11 +289,13 @@ identifiers, persisted keys.
 Must be **mathematically accurate** — a pure function of which boundary instants the clock crossed (each
 fires exactly once, in order), never of how a sweep/heartbeat happens to align with the calendar.
 
-**Every break cue keys on the START of its placed period** (`cueCrossings` → `screenBreakOccurrencesBetween`),
-so what is announced and what is drawn are one instant by construction rather than two derivations kept in
-step. The sweep must therefore be handed the **same environment the fill was** (the standing periods and the
-tasks) and the same now-line anchor; asked without them the bars answer a different timeline. The sweep's
-self-delay reads the next placed start too — read off an anchor it found no next boundary at all and stopped.
+**Every break cue keys on the break's DUE** (`cueCrossings` → `screenBreakOccurrencesBetween`) — where the
+recurrence bars put it, with nothing dragged. The instant the line reaches that slot is the instant the break
+falls due, which is exactly when the app should say so, and it is crossed once. The sweep must be handed the
+**same environment the fill was** (the standing periods and the tasks) and the same now-line anchor; asked
+without them the bars answer a different timeline. The sweep's self-delay reads the next due too — read off an
+anchor it found no next boundary at all and stopped. The pause cue's `nextScreenBreakStartMillis` is the same
+reading, so the server and this device key on one instant.
 
 Staleness is judged only by the crossing's REAL age (`BoundarySweep`, 2-s budget), never by sim distance or
 scan-window position. Consecutive scans must tile the timeline with no gaps (`scanFloorMillis`), so no
@@ -836,11 +863,11 @@ permanently unprotected.
 - **Idleness is judged account-wide** (`max(beat_at)`), never per row.
 - `device_break` is **account-keyed, holds only the two due instants, and is written only on change**
   (retried with backoff). The break LENGTH is the server's (`break_config.length_ms`).
-- **`break_due_ms` is the pose's next placed START** (`nextScreenBreakStartMillis`) — a fixed instant the
-  recurrence bars derive, so it moves only when the rules or the environment do and can still be written
-  event-driven. It used to be the anchored due `lastRest + interval` precisely because the drawn start rode
-  the now-line; nothing slides any more, so the server and the client key on one instant. An already-due pose
-  publishes the constant `ALREADY_DUE_MILLIS`.
+- **`break_due_ms` is the pose's next DUE** (`nextScreenBreakStartMillis`) — a fixed instant the recurrence
+  bars derive, so it moves only when the rules or the environment do and can still be written event-driven. It
+  is the same reading the local cue keys on, so the server and the client key on one instant; publishing where
+  the *period* sits would be publishing an instant that moves with the now-line whenever mode 1 is dragging
+  one. An already-due pose publishes the constant `ALREADY_DUE_MILLIS`.
 - A device belongs to exactly **one** account — every per-device table needs a server-side eviction trigger
   **paired with** a client re-assertion when the row is written event-driven.
 - The Sleep/Work toggle writes `account_state` immediately, which suppresses the cue.
@@ -857,7 +884,7 @@ optimize.
 
 ---
 
-## Alarms
+## Alarms and timers
 
 → ADR 0010. **No server involvement, by design** — an alarm's instant is known in advance, so local arming
 rings offline/dozing/app-killed. The pause cue needs the server only because its *timing* depends on
@@ -874,6 +901,41 @@ cross-device presence.
 - The tone is synthesized in commonMain (`AlarmTone.loopPcm()`, deterministic) so every device rings
   identically with no loadable resource. Android falls back to the system alarm ringtone if the PCM track
   fails — an alarm must never fail silently. The desktop uses its own thread, never the voice-cue worker.
+
+### A timer is an alarm at an ABSOLUTE instant, and that is the whole difference
+
+The Alarms window's second section (`SchedulerState.timers`, `TimerEntry`, `TimerDomain`). An alarm's due
+instant is derived from the local calendar per ringing day; a timer's is **stored** — one instant, fixed when
+it was started. Everything after "when is it due" is the alarms' machinery **unchanged**: do not grow a second
+arming loop, a second sweep, a second ring path or a second notification funnel.
+
+- **One OS slot ⇒ one arming loop and one sweep.** `AlarmClockScheduler` arms exactly one alarm under a fixed
+  request code, so `launchAlarmArming` combines both lists and arms the **soonest of the two**, and
+  `launchAlarmSweep` merges both crossing streams (`ringCrossingsBetween`) in boundary order. A second loop
+  would not add a ring — it would overwrite the first's. Ids are disjoint (`alarm-{n}` / `timer-{n}`), so the
+  sweep's `(id, instant)` de-dupe key cannot collide.
+- **`ArmedAlarm.timer` is the one distinguishing bit, and it TRAVELS with the armed ring** — into the phone's
+  OS intent included — never inferred from the id. It decides two things and nothing else: reset-vs-disarm,
+  and whether the notification is titled *Timer* or *Alarm*.
+- **`endsAtMillis` is authoritative; the remaining time is DERIVED.** The instant cannot be recomputed from
+  anything else, so it is persisted **and synced** — which is what makes "it rings on every device of the
+  account" true of a timer started on the desktop. The countdown is `endsAtMillis` minus the now-line
+  (`remainingAtMillis`), so a running timer writes nothing and can never move the fingerprint on a tick.
+- **Three states, two nullable fields, AT MOST ONE non-null** (running / paused / idle). Both are synced, so a
+  per-field merge — or an older payload — can forge a row holding both; **`TimerDomain.healed` is the single
+  place that invariant is applied**, from `decode`, from `SnapshotMerge` and from the reducer.
+- **No on/off switch and no repeat switch.** A timer that is not running is already not due (an idle row is not
+  a silenced one), and a timer is a one-off by nature: having rung it **resets** to its full duration. A
+  one-off *alarm* disarms itself instead precisely because it has a switch to leave off.
+- **Editing a row's settings must not disturb the instant it is due at.** `SetTimers` carries the settings;
+  the run state moves only through `StartTimer` / `PauseTimer` / `ResetTimer`, which take `nowMillis` as an
+  argument so the reducer stays pure — and the window's local row copy deliberately holds no run state.
+- **The countdown's clock is the window's own**: the engine's now-line ticks once per 30 s production tick, so
+  `AlarmWindow` polls `clock.nowMillis()` itself every 250 ms — **only while it is open and something is
+  running**. Display-only Compose state, like the calendar's zoom. The transitions dispatch the clock's
+  instant, not the quantized display now-line.
+- **A timer draws nothing on the calendar**, deliberately: an alarm is a fact about the user's week, a timer
+  exists only between a start and a ring.
 
 ---
 

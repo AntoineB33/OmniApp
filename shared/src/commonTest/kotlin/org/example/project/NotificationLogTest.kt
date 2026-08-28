@@ -95,9 +95,14 @@ class NotificationLogTest {
         engine.start()
         runCurrent()
         assertTrue(vm.state.value.notificationLog.isEmpty(), "nothing is announced before the break is due")
-        // The instant to cross is the one the calendar DRAWS the break at — the cue and the fill read one
-        // placement, so the test can read it off the state exactly as the user would off the screen.
-        val firstStart = vm.state.value.panels.filter { it.screenBreak }.minOfOrNull { it.startEpochMillis }
+        // The instant to cross is the break's DUE — where the recurrence bars put it. It is not where the
+        // period ends up sitting: the engine runs in `t_p` mode 1 here (`screenActive = { true }`, no pause),
+        // and mode 1 pushes a period the line has swept onto the line, so the drawn period has no crossable
+        // start at all. The due is the fixed instant, and it is what the sweep keys on.
+        val firstStart =
+            SchedulerDomain.screenBreakOccurrencesBetween(
+                vm.state.value.screenBreaks, start, start + 24 * 60 * 60_000L, anchorMillis = start,
+            ).minOfOrNull { it.startEpochMillis }
         assertNotNull(firstStart)
         assertTrue(firstStart > start, "the first break must be ahead of the line for the sweep to cross it")
         // Advanced in seconds rather than in one leap: the sweep judges a crossing by its REAL age, and a

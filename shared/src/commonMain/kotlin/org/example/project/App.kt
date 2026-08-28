@@ -35,7 +35,6 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.PeriodKinds
-import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.RestrictivePeriod
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.engine.AppSchedulerHost
@@ -337,6 +336,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val activeSessions by engine.activeSessions.collectAsState()
         // PRD §15: whether the user declared they are away from THIS device (left-menu "I'm away" button).
         val userAway by engine.userAway.collectAsState()
+        // `side-dev/README.md` § *$t_p$ 2 modes*: mode 1 while a device of the account is unlocked, mode 2
+        // otherwise. The SAME reading the reducer's fills use (`SchedulerReducer.tpMode`, injected by the
+        // engine over these three flows) — the display and the plan must not answer it differently, or the
+        // calendar would draw the three dynamic periods somewhere the schedule did not put them.
+        val tpMode =
+            SchedulerDomain.tpMode(
+                SchedulerDomain.anyDeviceUnlockedAt(inactivityGaps, inactiveSince, activeSince, nowMillis),
+            )
         // PRD §7/§15: what claim the OS granted the system-wide chords — shown in the keyboard-shortcuts window,
         // since a chord another application already owns is otherwise indistinguishable from a broken app.
         val globalHotkeyClaim by GlobalHotkeys.claim.collectAsState()
@@ -597,40 +604,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 liveSleepBand
         val displaySleepRegions =
             displaySleepPanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
-        // The same live-pause placement overlay the reducer refill applies (SchedulerReducer.liveRestGap):
-        // the display projection folds this device's ongoing/held pause into the screen-break grid, so the
-        // rendered markers match the engine's placement and move with the pause (an ongoing pause is
-        // presumed to serve each task — the whole grid re-places at walk-away and stays fluid under an
-        // accelerated leap) instead of letting the now-line cross a stale slot or freezing everything
-        // downstream of a not-yet-served pose. Placement-only — stored screen-break state is untouched.
-        //
-        // Bound to the VISIBLE days, not `[now, visibleSpanEnd]` (CLAUDE.md: hot-path display derivations
-        // scale with the screen, not with total history). When the displayed span contains the present, the
-        // forward projection from `now` — which carries the overdue-slide + live-rest semantics near the
-        // now-line — is already bounded to `≤ 1` week (ends at `visibleSpanEnd`). When the displayed span is
-        // entirely in the FUTURE, projecting from `now` would generate every occurrence between `now` and
-        // that week; at a shrunk 5-min-break interval ([DebugFlags.breakIntervalMillisOverride]) that is tens of thousands of markers pushed
-        // through the O(n²) placement scan, which froze the app when a distant day was opened. Reconstruct
-        // just that week's window from the fixed grid instead (no walk from `now`, no live-rest overlay
-        // needed — the present isn't in view).
-        // PRD §15: the breaks that ALREADY HAPPENED stay on the calendar — a look-away is drawn where it was
-        // taken, not erased the moment the now-line passes it. The forward projection below starts at `now`, so
-        // the elapsed part of the focused week is reconstructed from the same fixed grid, bounded to the
-        // VISIBLE window (CLAUDE.md: display derivations scale with the screen, not with history) and stopping
-        // one millisecond short of `now` so the two sources can never draw the same occurrence twice.
-        //
-        // It is a reconstruction rather than a record because the anchors make it exact where it matters: every
-        // break now recurs a fixed (duration + interval) cycle after the previous one ends, and each rest that
-        // served it — a conducted look-away, a pose break, a long pause — moves the anchor to its own end. So
-        // walking the grid back from the live anchor reproduces the occurrences actually taken since the last
-        // rest, and no state has to be persisted to show them. Only the TAKEN ones are drawn here: the break
-        // that is still owed slides to the now-line and is the forward projection's to draw.
-        val displayPastSidePanels =
-            SchedulerDomain.takenScreenBreakPanels(
-                schedulerState.screenBreaks,
-                visibleSpanStartMillis,
-                minOf(nowMillis - 1, visibleSpanEndMillis),
-            )
         // `side-dev/README.md` § *3 Dynamic Restrictive Period*: the three are placed by the recurrence bars
         // over the environment they interrupt, so the display hands the placement that environment — the
         // standing restrictive periods (the user's own and the §17 sleep windows) and the tasks, which is
@@ -656,6 +629,39 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     )
                 }
         val displayDynamicTasks = SchedulerDomain.planTasksOf(schedulerState, nowMillis)
+        // `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive Period*: the elapsed part of the visible
+        // window — what the three dynamic periods DID over a stretch the line has already crossed.
+        //
+        // It is the same placement, asked about a window that has gone by, with the same environment the
+        // forward call gets (the live pause included) and the real now-line as $t_p$ — which is what decides
+        // whether anything is there at all. In mode 1 a period the line reached was pushed ahead of it and
+        // never happened, so a stretch crossed at the screen holds task panels and no break; a break shows
+        // where the line crossed it in mode 2, or where the app CONDUCTED one and recorded it as an ordinary
+        // period (which is pre-placed, and so is never dragged).
+        //
+        // Bounded to the VISIBLE days (CLAUDE.md: hot-path display derivations scale with the screen, not with
+        // total history) and stopping one millisecond short of `now`, so this and the forward projection below
+        // can never draw the same occurrence twice.
+        val displayPastSidePanels =
+            SchedulerDomain.takenScreenBreakPanels(
+                schedulerState.screenBreaks,
+                visibleSpanStartMillis,
+                minOf(nowMillis - 1, visibleSpanEndMillis),
+                basePeriods = displayDynamicBase,
+                tasks = displayDynamicTasks,
+                tpMillis = nowMillis,
+                mode = tpMode,
+            )
+        // The three over the visible span. Which half the calendar is looking at decides which question is
+        // asked, and the split is the `t_p` line: a span containing the present is the past behind the line
+        // plus the projection ahead of it, both asked AT the line so the two modes apply; a span entirely in
+        // the FUTURE is a window the line is not in, so nothing there is being dragged or covered and it is
+        // reconstructed from the bars alone.
+        //
+        // That is also a hot-path rule (CLAUDE.md / ADR 0009): projecting from `now` to a distant week would
+        // generate every occurrence in between — at a shrunk break interval ([DebugFlags.breakIntervalMillisOverride])
+        // tens of thousands of markers pushed through the O(n²) placement scan, which froze the app when a
+        // far day was opened. Both branches are bounded by the VISIBLE days.
         val displaySidePanels =
             if (visibleSpanStartMillis <= nowMillis) {
                 displayPastSidePanels +
@@ -665,10 +671,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         horizonMillis = visibleSpanEndMillis,
                         basePeriods = displayDynamicBase,
                         tasks = displayDynamicTasks,
-                        // The README's `t_p` mode, on the control the app already has: away means the
-                        // now-line must be covered by "no on-screen task".
-                        mode = if (schedulerState.sleepingUntilMillis != null) DynamicPeriods.MODE_AWAY
-                        else DynamicPeriods.MODE_AT_SCREEN,
+                        mode = tpMode,
                     )
             } else {
                 SchedulerDomain.screenBreakPanelsInWindow(
@@ -680,10 +683,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 )
             }
 
-        // PRD §15: a screen break the now-line has REACHED is a period accepting no task, and it slides right
-        // with the now-line for as long as it stays owed. The plan under it was materialized by a fill that ran
-        // at a rule change (CLAUDE.md: time passing never re-plans), so the auto panels have to be cut out of
-        // the break's span here, on the display side — the reference's sliding-period regime, pinned to the
+        // PRD §15: a screen break the now-line has REACHED is a period accepting no task, and in `t_p` mode 1
+        // it slides right with the now-line for as long as it stays owed. The plan under it was materialized
+        // by a fill that ran at a rule change (CLAUDE.md: time passing never re-plans), so the auto panels
+        // have to be cut out of the break's span here, on the display side — the reference's sliding-period regime, pinned to the
         // plan's own origin (`side-dev/scheduler_logic.py` tests 10–11).
         val displayWorkPlanPanels =
             SchedulerDomain.clipPlanForPinnedScreenBreak(
@@ -1630,12 +1633,26 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         )
                     }
 
-                    // PRD §18 Alarms: floating window listing the account's alarms (time, sound length,
-                    // vibration). The list is authoritative synced state, so saving it here arms every phone.
+                    // PRD §18 Alarms and timers: floating window listing the account's alarms (time, sound
+                    // length, vibration) and, in its second section, its timers. Both lists are authoritative
+                    // synced state, so saving one here arms every phone — and starting a timer starts it for
+                    // the account, not for this device.
                     if (alarmWindowOpen) {
                         AlarmWindow(
                             alarms = schedulerState.alarms,
                             onChange = { vm.dispatch(SchedulerIntent.SetAlarms(it)) },
+                            timers = schedulerState.timers,
+                            onTimersChange = { vm.dispatch(SchedulerIntent.SetTimers(it)) },
+                            // The three run transitions are dispatched with the clock's instant, not the
+                            // display now-line: a countdown started at 17:00:00.4 must end 5 minutes after
+                            // that, not after the quantized tick the calendar is drawn against.
+                            onStartTimer = { vm.dispatch(SchedulerIntent.StartTimer(it, clock.nowMillis())) },
+                            onPauseTimer = { vm.dispatch(SchedulerIntent.PauseTimer(it, clock.nowMillis())) },
+                            onResetTimer = { vm.dispatch(SchedulerIntent.ResetTimer(it)) },
+                            // Read straight off the clock (simulated under §16), and polled by the window
+                            // itself while a timer runs — the engine's now-line only advances once per
+                            // production tick, which is far too coarse for a countdown.
+                            nowMillis = { clock.nowMillis() },
                             onDismiss = { alarmWindowOpen = false },
                             // Pre-fill a newly added alarm's Time field with the current clock time.
                             newRowTimeOfDayMinutes = {

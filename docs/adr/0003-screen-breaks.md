@@ -1,7 +1,7 @@
 # ADR 0003 — Screen breaks: the three dynamic restrictive periods
 
 **Status:** active (rewritten 2026-08-27 to `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive
-Period*). **Invariant summary:** see `CLAUDE.md` → *Screen breaks*.
+Period*; the two `t_p` modes wired through 2026-08-28). **Invariant summary:** see `CLAUDE.md` → *Screen breaks*.
 
 Terminology: the eye-care breaks are named **"screen breaks"** everywhere (PRD §15) — UI, docs, code
 identifiers (`ScreenBreak`, `screenBreak*`, `showScreenBreaks`, `DEFAULT_SCREEN_BREAKS`, …) and persisted
@@ -88,19 +88,28 @@ anchor.
 
 ---
 
-## Nothing slides, and that is what lets the cue key on the drawn start
+## A break has a DUE, and in mode 1 it also slides — and the cue keys on the due
 
-A break's start is now a **fixed instant derived from the rules**, so it is a crossable boundary. The cue
-therefore keys on it (`cueCrossings` → `screenBreakOccurrencesBetween`), and *what is announced and what is
-drawn are one instant by construction* rather than two derivations that have to be kept in step.
+Two instants, and keeping them apart is the point:
 
-This reverses the older rule in this ADR — "no break has a drawn start anything may key on" — and it is worth
-being precise about why that rule existed. Breaks used to **slide**: an owed break sat at the now-line and
-moved right with it (`screenBreakNextStart = maxOf(lastRest + interval, now)`), so its drawn start was never
-crossed and the cue had to key on a separate anchored due. The reasoning was sound for a sliding period; it
-does not apply to one the bars pin.
+- **The due** — where the recurrence bars put the period. A fixed instant derived from the rules, crossed
+  once, and therefore the only thing a trigger may key on. `screenBreakOccurrencesBetween` is the one reading
+  of it (`dynamicPeriodPanels` with `atLine = false`), and the pause cue's `nextScreenBreakStartMillis` and
+  the local `cueCrossings` both go through it.
+- **Where the period sits** — the due, unless the line is dragging it. `screenBreakPanels` /
+  `takenScreenBreakPanels` (`atLine = true`) is that reading: it is what the calendar draws and what the fill
+  treats as an obstacle.
 
-The rule that *does* survive, unchanged and load-bearing:
+They are the same instant except under the mode-1 drag, which is exactly why the cue may not key on the second
+one: a period the line is pushing is always "starting now", so it is never crossed, and a sweep keyed on it
+would announce a break at every scan for as long as one is owed. (That is not hypothetical — it is the
+2026-07-12 "spammed every frame" incident, from the era when breaks slid unconditionally.)
+
+This is a **partial reversal** of the intermediate rule "nothing slides, so the cue may key on the drawn
+start". Nothing slides *on its own* — the bars pin every due — but the README's mode 1 does slide the period
+the line has reached, so the two questions came apart again and now have two functions instead of one flag.
+
+The rule that survives every revision of this ADR, unchanged and load-bearing:
 
 > **The boundary a trigger keys on must be a fixed instant derived from the rules** — never a position the
 > placement recomputes every frame.
@@ -132,19 +141,65 @@ next, and the grid walks away from itself on every pass.
 
 ## The two `t_p` modes
 
-The README's `t_p` modes land on a control the app already has — the **"I'm away" toggle**.
+**The mode is which devices are unlocked, and nothing else: mode 1 while ANY device of the account is
+unlocked, mode 2 otherwise.** `SchedulerDomain.tpMode` is the one place it is decided and
+`anyDeviceUnlockedAt` the one place the input is read.
 
-- **Mode 1 (at the screen).** `t_p` may not be covered by "no on-screen task", so a period the line has
-  reached is pushed ahead of it and becomes the half-open `(t_p, t_p + duration]` — the instant `t_p` itself
-  is free while every instant after it is covered. The line goes on delaying it, placing tasks where it stood.
-- **Mode 2 (away).** `t_p` must be covered, so the gap between the last period's end and the line is covered
-  as **`no on-screen task`** — not `no task allowed` — which is what the README's own example asks for: the
-  gap is filled with the tasks that have a non-zero resilience to that kind, and left empty if none have.
+It is *not* the Sleep/Work toggle, which is what the code read until 2026-08-28 — that toggle says the user
+has gone to bed, not that no screen is in use, and a machine left unlocked while its owner naps is squarely
+mode 1. It is not the "I'm away" button on its own either: that button reaches the mode the same way a lock
+does, by declaring this device idle, which is precisely why an unlock clears it
+(`SchedulerEngine.noteScreenSignal`).
 
-`sweepFromMillis` is where the line's continuous motion began, and the app sets it to `t_p` itself: the
-lookback is a device for reading the rest stretches behind the now-line, not a claim that the line travelled
-through them. Told otherwise, mode 1 would drag every period in the lookback onto the now-line and the chain
-merge would collapse them into one.
+"Unlocked" is read off the **account-wide pause the calendar already draws** — `displayInactivityGaps`: the
+derived gaps (the complement of every device's active intervals, this device's own rows plus the peers' the
+last reconcile pulled) plus the live tail of the pause this device is observing now. The line being inside one
+of those *is* "no device is unlocked". One reading, so the mode and the Inactivity band can never say
+different things: **what the user sees is the mode.** The right edge is tested inclusively — an ongoing pause's
+tail ends *at* the now-line, and a half-open test would report the device unlocked at the one instant being
+asked about. Peers arrive with reconcile-bounded staleness and the live tail is a local presumption a later
+derive shrinks; that is the same bound the band itself carries.
+
+- **Mode 1 (a device is unlocked).** `t_p` may not be covered, so every period whose slot the line has
+  **swept** — travelled continuously through, from where its motion began up to here — is pushed onto the line
+  and becomes the half-open `(t_p, t_p + duration]`. In the app's discrete millisecond time that is
+  `[t_p + 1, t_p + duration + 1)`, which is how it becomes an ordinary `TaskPanel` with no extra field:
+  `Instance.coveredFromMillis`. The line goes on delaying it, placing tasks where it stood, so a stretch
+  crossed at the screen holds task panels and no break.
+- **Mode 2 (no device unlocked).** `t_p` must be covered, so the gap between the last such period's end and
+  the line is covered as **`no on-screen task`** — not `no task allowed` — which is what the README's own
+  example asks for: the gap is filled with the tasks resilient to that kind, and left empty if none are.
+  `DynamicPeriods.awayCover` is the whole of it, drawn as the `Away` panel.
+
+Three things that fall out, and each is load-bearing:
+
+- **The drag is bounded, and not by a special case.** Pushing a period onto the line re-anchors its own bar
+  there, so at most one occurrence per bar can be swept; the chain merge then collapses what piled up into the
+  longest of them. One period is owed at the line, never four hours of them. The earlier code passed
+  `sweepFromMillis = t_p` — disabling the drag entirely — out of exactly that fear.
+- **A drag is a move like any other.** It puts the period back through the loop, so the ordinary rules get
+  their say at the new position: the line may be standing inside a stretch nobody can run in (a hand-drawn
+  inactivity period, a night), and a period must no more fall inside one for having been dragged than for
+  having been placed there.
+- **The frozen past holds *because* of the drag, not despite it.** A dragged period is ahead of the line at
+  every position of the line, so the elapsed timeline never held it and nothing behind the line ever changes
+  from a period into a task panel — it was a task panel all along. That is the README's "the passing of the
+  `t_p` line creates task panels not covered by the period", read exactly.
+
+Where the app has live evidence that nobody is at a screen, that evidence *is* mode 2's cover: an **ongoing**
+pause is `closedEnd`, so `liveRestPeriod` covers the now-line and `awayCover` finds nothing left to do. A pause
+the user has come back from stops at the return, exclusive, like every other period.
+
+**Consequence, deliberately accepted.** While a device stays unlocked and no rest happens, the owed chain
+parks at the now-line and the fill schedules no task under it — "you owe a break" is a period, not a hint. It
+clears when the app conducts a break and records it (a pre-placed period, so never dragged), or when the user
+actually goes away and the mode flips.
+
+A **mode flip re-plans** (`SchedulerEngine.launchTpModeReschedule` → `requestReschedule`). That is not "time
+passing re-plans": the flip is an edge the platform announces — a lock, an unlock, the button — and a mode that
+does not change costs nothing. It cannot live in `schedulingSignature` instead, because the mode is not in
+`SchedulerState`: it is a fact about the devices, not about the account's data, which is also why it is never
+synced.
 
 ---
 
@@ -156,7 +211,10 @@ was superseded by a second press, or that the app stopped mid-run, leaves no tra
 now structural rather than a property of an anchor that only moves on completion.
 
 Everything else in the past is simply the placement asked about a window that has already gone by — the bars
-are deterministic over the recorded environment, so the past placement *is* the placement.
+are deterministic over the recorded environment, so the past placement *is* the placement, asked **at the
+line** (`takenScreenBreakPanels`, `atLine = true`) because that is where the two modes are read from. So a
+stretch the line crossed in mode 1 holds none of the three, and a break shows in the past when it really was
+one: the stretch was crossed in mode 2, or the app conducted it and recorded it as above.
 
 ---
 

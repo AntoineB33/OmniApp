@@ -323,6 +323,47 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §18 Timers: replace the whole timer list with [entries] (rows are edited live in the Alarms
+     * window's Timers section). Blank ids are filled in with a fresh `timer-{n}`. Authoritative — persisted
+     * and synced, like the alarms; not part of the tree Undo/Redo history.
+     *
+     * This carries the rows' **settings** (label, duration, ring length, vibration). Whether a timer is
+     * running is moved only by [StartTimer] / [PauseTimer] / [ResetTimer], so editing a row's text while it
+     * counts down cannot disturb its end instant.
+     */
+    data class SetTimers(
+        val entries: List<org.example.project.scheduler.model.TimerEntry>,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §18 Timers: start one timer, or resume it from where a [PauseTimer] left it — it becomes due at
+     * [nowMillis] plus whatever is left. [nowMillis] is passed in rather than read, so the reducer stays a
+     * pure function of its inputs. A no-op when the timer is unknown or already running.
+     */
+    data class StartTimer(
+        val id: String,
+        val nowMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §18 Timers: hold one timer where it is, banking the time left at [nowMillis] so [StartTimer]
+     * resumes from there. A no-op when the timer is unknown or not running.
+     */
+    data class PauseTimer(
+        val id: String,
+        val nowMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §18 Timers: return one timer to idle at its full duration. Dispatched by the row's reset button and
+     * by the engine when the timer has **rung** — a timer is a one-off by nature, so going off puts the row
+     * back where it was started from. A no-op when the timer is unknown or already idle.
+     */
+    data class ResetTimer(
+        val id: String,
+    ) : SchedulerIntent
+
+    /**
      * PRD §15 Screen breaks: replace the screen-break list — used at launch to seed each screen break's
      * the screen-break list (durations/intervals, debug overrides included). Session state,
      * not undoable.

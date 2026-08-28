@@ -37,15 +37,20 @@ class ScreenBreakWindowTest {
     }
 
     @Test
-    fun window_reproduces_the_forward_projections_occurrences_over_the_same_span() {
+    fun window_reproduces_the_bars_own_occurrences_over_the_same_span() {
         // Over a span the forward projection reaches, the windowed reconstruction draws the same markers —
         // it is the same grid engine, only seeded from the past rather than walked from `now`.
+        //
+        // Asked of the bars' own answer, not of the placement AT the line: mode 1 pushes a period the line
+        // has swept onto the line, and a window the line is not in has nothing to push. That difference is
+        // the two `t_p` modes, not two grids.
         val tasks = listOf(lookAway, pose5)
-        val forward = SchedulerDomain.screenBreakPanels(tasks, nowMillis = 0, horizonMillis = 6 * 60 * MIN)
+        val dues = SchedulerDomain.screenBreakOccurrencesBetween(tasks, 0, 6 * 60 * MIN, anchorMillis = 0)
             .map { it.title to it.startEpochMillis }.sortedBy { it.second }
         val windowed = SchedulerDomain.screenBreakPanelsInWindow(tasks, 0, 6 * 60 * MIN)
+            .filter { it.startEpochMillis >= 0 }
             .map { it.title to it.startEpochMillis }.sortedBy { it.second }
-        assertEquals(forward, windowed)
+        assertEquals(dues, windowed)
     }
 
     @Test

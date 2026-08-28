@@ -847,15 +847,17 @@ class SchedulerCalendarTest {
         val t1 = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(start))
         val first = t1.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
         assertEquals(5 * MIN, first.endEpochMillis - first.startEpochMillis)
-        assertTrue(first.startEpochMillis >= start, "the period is ahead of the line, not on it")
+        assertTrue(first.startEpochMillis > start, "the period is ahead of the line, never on it")
 
-        // A refill twelve minutes later leaves every period the line has not reached exactly where it was.
+        // `side-dev/README.md` mode 1 (the default: a device is unlocked): every dynamic period is strictly
+        // AHEAD of the line, at every position of the line. That is what makes the frozen past hold while a
+        // period is being dragged — the elapsed timeline never held it, so nothing behind the line changes
+        // from a period into a task panel; it was a task panel all along.
         val t2 = SchedulerReducer.reduce(t1, SchedulerIntent.RefreshSchedule(start + 12 * MIN))
-        val ahead1 = t1.panels.filter { it.screenBreak && it.startEpochMillis > start + 12 * MIN }
-            .map { it.startEpochMillis }.sorted()
-        val ahead2 = t2.panels.filter { it.screenBreak && it.startEpochMillis > start + 12 * MIN }
-            .map { it.startEpochMillis }.sorted()
-        assertEquals(ahead1, ahead2, "a period the line has not reached does not move when the clock does")
+        assertTrue(
+            t2.panels.filter { it.screenBreak }.all { it.startEpochMillis > start + 12 * MIN },
+            "no dynamic period may sit at or behind the line in mode 1",
+        )
 
         // And no task panel overlaps one — the fill leaves it a clean place (PRD §15).
         for (band in t2.panels.filter { it.screenBreak }) {

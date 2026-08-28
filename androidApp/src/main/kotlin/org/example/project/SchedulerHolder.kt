@@ -92,7 +92,13 @@ object SchedulerHolder {
                 // service that plays the alarm ringtone for the configured length + vibrates.
                 scheduleDeviceAlarm = { armed -> AlarmClockScheduler.apply(appContext, armed) },
                 ringAlarm = { armed ->
-                    AlarmRingService.ring(appContext, armed.label, armed.soundSeconds, armed.vibrate)
+                    AlarmRingService.ring(
+                        appContext,
+                        armed.label,
+                        armed.soundSeconds,
+                        armed.vibrate,
+                        title = if (armed.timer) "Timer" else "Alarm",
+                    )
                 },
             )
         engine.start()

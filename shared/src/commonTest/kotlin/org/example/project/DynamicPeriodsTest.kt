@@ -12,6 +12,7 @@ import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
+import org.example.project.scheduler.model.TaskTimeRange
 
 /**
  * `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive Period*: **where the 20 s, the 5 min and the 15 min
@@ -40,8 +41,21 @@ class DynamicPeriodsTest {
         blocks: List<PlanBlock> = emptyList(),
         tasks: List<PlanTask> = emptyList(),
         sides: List<ScreenBreak> = breaks,
+        mode: Int = DynamicPeriods.MODE_AT_SCREEN,
     ): List<TaskPanel> =
-        SchedulerDomain.screenBreakPanels(sides, NOW, toMillis, periods, blocks, tasks)
+        SchedulerDomain.screenBreakPanels(sides, NOW, toMillis, periods, blocks, tasks, mode)
+
+    /** The bars' own answer over the same span - the dues, with no line dragging anything. */
+    private fun dues(
+        toMillis: Long = NOW + 6 * HOUR,
+        periods: List<RestrictivePeriod> = emptyList(),
+        blocks: List<PlanBlock> = emptyList(),
+        tasks: List<PlanTask> = emptyList(),
+        sides: List<ScreenBreak> = breaks,
+    ): List<TaskPanel> =
+        SchedulerDomain.screenBreakOccurrencesBetween(
+            sides, NOW, toMillis, periods, blocks, tasks, anchorMillis = NOW,
+        )
 
     private fun starts(panels: List<TaskPanel>, title: String) =
         panels.filter { it.title == title }.map { it.startEpochMillis - NOW }
@@ -224,23 +238,24 @@ class DynamicPeriodsTest {
     }
 
     @Test
-    fun the_placement_is_the_same_whether_it_is_asked_forward_or_over_a_window() {
-        // The calendar asks for a week it has navigated to through the same engine, so a break drawn in one
-        // view is the break drawn in the other.
-        val forward = place(toMillis = NOW + 6 * HOUR)
+    fun the_bars_give_one_answer_wherever_they_are_asked() {
+        // The drag is the ONLY thing that moves a period, and only the line drags. So every question that is
+        // not about the line - the cue's dues, a week the calendar has navigated to - gets the same placement.
+        val cue = dues(toMillis = NOW + 6 * HOUR)
         val window = SchedulerDomain.screenBreakPanelsInWindow(breaks, NOW, NOW + 6 * HOUR)
         assertEquals(
-            forward.map { it.title to it.startEpochMillis },
-            window.map { it.title to it.startEpochMillis },
+            cue.map { it.title to it.startEpochMillis },
+            // The window keeps a period that STRADDLES its left edge; the dues are the ones that begin
+            // inside it. Same placement either way, which is what this is about.
+            window.filter { it.startEpochMillis >= NOW }.map { it.title to it.startEpochMillis },
         )
     }
 
     @Test
-    fun a_break_is_announced_at_the_instant_it_is_drawn() {
-        // The cue and the calendar read ONE placement, so they cannot disagree about when a break begins.
-        // (While breaks slid this was impossible: a drawn start that moves with the now-line is never
-        // crossed, which is why the cue used to key on a separate anchored due.)
-        val panels = place(toMillis = NOW + 2 * HOUR)
+    fun a_break_is_announced_at_its_DUE_not_where_the_line_leaves_it() {
+        // The cue keys on the due - where the bars put the break - because in mode 1 the period itself has no
+        // crossable start: the line pushes it, so it is always "starting now" and a sweep keyed on it would
+        // announce a break at every scan for as long as one is owed.
         val crossings = SchedulerDomain.cueCrossings(
             screenBreaks = breaks,
             windDownInstants = emptyList(),
@@ -250,8 +265,106 @@ class DynamicPeriodsTest {
             toMillis = NOW + 2 * HOUR,
         )
         assertEquals(
-            panels.filter { it.startEpochMillis in NOW..(NOW + 2 * HOUR) }.map { it.startEpochMillis },
+            dues(toMillis = NOW + 2 * HOUR)
+                .filter { it.startEpochMillis in NOW..(NOW + 2 * HOUR) }
+                .map { it.startEpochMillis },
             crossings.filter { it.kind != SchedulerDomain.CueKind.WindDown }.map { it.instant },
+        )
+        // ...and those dues are NOT where mode 1 leaves the periods: the swept ones are all on the line.
+        assertTrue(
+            place(toMillis = NOW + 2 * HOUR).any { it.startEpochMillis == NOW + 1 },
+            "the swept chain is owed at the line",
+        )
+    }
+
+    // ----- the two modes, as the app asks them -------------------------------------------------
+
+    @Test
+    fun mode_one_leaves_the_line_uncovered_and_mode_two_covers_it() {
+        // The two modes, applied at the one place they bite: the placement asked AT the line.
+        val atScreen = place(mode = DynamicPeriods.MODE_AT_SCREEN)
+        assertTrue(atScreen.isNotEmpty(), "there must be periods for this to be about")
+        assertTrue(
+            atScreen.none { it.startEpochMillis <= NOW && NOW < it.endEpochMillis },
+            "mode 1: nothing the line placed may cover t_p itself",
+        )
+        // Mode 2's cover lies BEHIND the line (it is the gap the line has already crossed while away), so it
+        // is the elapsed window that holds it, not the forward projection. Whatever the grid happens to put
+        // near the line, the invariant is the README's: t_p is covered, by something the on-screen tasks are
+        // turned away by.
+        val away =
+            SchedulerDomain.takenScreenBreakPanels(
+                breaks, NOW - 6 * HOUR, NOW - 1, tpMillis = NOW, mode = DynamicPeriods.MODE_AWAY,
+            )
+        val covering = away.filter { it.startEpochMillis <= NOW && NOW <= it.endEpochMillis }
+        assertTrue(covering.isNotEmpty(), "mode 2: t_p must be covered")
+        assertTrue(
+            covering.all { PeriodKinds.coversNoScreen(it.restrictiveKind) },
+            "…by a period that turns the on-screen tasks away",
+        )
+
+        // And where the gap is a real one, the cover is the README's own object: `no on-screen task`, from
+        // the last such period's end up to the line. (One break with a cadence longer than the window, so the
+        // grid places nothing and the standing period is what the gap is measured from.)
+        val rare = listOf(ScreenBreak("rare", intervalMillis = 48 * HOUR, durationMillis = 15 * MIN))
+        val standing = RestrictivePeriod(NOW - 2 * HOUR, NOW - 10 * MIN, PeriodKinds.NO_SCREEN, "No screen")
+        val gap =
+            SchedulerDomain.takenScreenBreakPanels(
+                rare, NOW - 6 * HOUR, NOW - 1,
+                basePeriods = listOf(standing),
+                tpMillis = NOW,
+                mode = DynamicPeriods.MODE_AWAY,
+            ).single { it.title == SchedulerDomain.AWAY_PANEL_TITLE }
+        assertEquals(PeriodKinds.NO_SCREEN, gap.restrictiveKind, "the cover is 'no on-screen task'")
+        assertEquals(NOW - 10 * MIN, gap.startEpochMillis, "starting where the last such period ended")
+        assertEquals(NOW, gap.endEpochMillis, "and reaching the line")
+    }
+
+    @Test
+    fun the_mode_follows_whether_any_device_is_unlocked() {
+        // The rule, and the whole of it: mode 1 while a device of the account is unlocked, mode 2 otherwise -
+        // read off the same account-wide pause the calendar draws as its Inactivity band.
+        val unlocked = SchedulerDomain.anyDeviceUnlockedAt(emptyList(), null, null, NOW)
+        assertTrue(unlocked, "no pause anywhere means somebody is at a screen")
+        assertEquals(DynamicPeriods.MODE_AT_SCREEN, SchedulerDomain.tpMode(unlocked))
+
+        // An OPEN pause on this device - the lock signal, or the "I'm away" button - reaches up to the line.
+        val locked = SchedulerDomain.anyDeviceUnlockedAt(emptyList(), NOW - 10 * MIN, null, NOW)
+        assertTrue(!locked, "an ongoing pause covers the line, so no device is unlocked")
+        assertEquals(DynamicPeriods.MODE_AWAY, SchedulerDomain.tpMode(locked))
+
+        // Once the user is back the pause is capped at the return, and the line is outside it again.
+        assertTrue(SchedulerDomain.anyDeviceUnlockedAt(emptyList(), NOW - 10 * MIN, NOW - MIN, NOW))
+        // A pause the account-wide derive banked, which the line has since left, says nothing about now.
+        val banked = listOf(TaskTimeRange(NOW - HOUR, NOW - 30 * MIN))
+        assertTrue(SchedulerDomain.anyDeviceUnlockedAt(banked, null, null, NOW))
+    }
+
+    @Test
+    fun an_ongoing_pause_covers_the_line_so_mode_two_needs_no_cover_of_its_own() {
+        // The two halves compose: where the app has live evidence that nobody is at a screen, that evidence IS
+        // mode 2's cover, and `awayCover` finds nothing left to do.
+        val ongoing =
+            SchedulerDomain.liveRestPeriod(
+                SchedulerDomain.LiveRest(TaskTimeRange(NOW - 10 * MIN, NOW), ongoing = true),
+            )
+        assertTrue(ongoing != null && ongoing.covers(NOW), "an ongoing pause covers the now-line")
+        val held =
+            SchedulerDomain.liveRestPeriod(
+                SchedulerDomain.LiveRest(TaskTimeRange(NOW - 10 * MIN, NOW), ongoing = false),
+            )
+        assertTrue(held != null && !held.covers(NOW), "one the user has come back from does not")
+
+        val away =
+            SchedulerDomain.takenScreenBreakPanels(
+                breaks, NOW - 6 * HOUR, NOW - 1,
+                basePeriods = listOf(ongoing!!),
+                tpMillis = NOW,
+                mode = DynamicPeriods.MODE_AWAY,
+            )
+        assertTrue(
+            away.none { it.title == SchedulerDomain.AWAY_PANEL_TITLE },
+            "the live pause already covers t_p, so mode 2 adds nothing",
         )
     }
 }

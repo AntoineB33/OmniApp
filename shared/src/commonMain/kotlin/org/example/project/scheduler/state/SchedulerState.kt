@@ -379,6 +379,15 @@ data class SchedulerState(
      */
     val alarms: List<org.example.project.scheduler.model.AlarmEntry> = emptyList(),
     /**
+     * PRD §18 Timers: the countdowns in the Alarms window's **Timers** section. Authoritative user data,
+     * persisted **and synced** exactly like [alarms] — including whether each one is **running**
+     * (`TimerEntry.endsAtMillis`), which is an absolute instant no other field can recompute, so starting a
+     * timer on one device makes every device of the account ring at its end. The remaining time is derived
+     * from that instant and the now-line, so a counting-down timer writes nothing and never moves the sync
+     * fingerprint on a tick. Empty by default (a fresh account has no timer).
+     */
+    val timers: List<org.example.project.scheduler.model.TimerEntry> = emptyList(),
+    /**
      * PRD §15 Screen breaks: the periodic screen breaks to weave into the auto schedule. A hardcoded set in
      * production (seeded by [org.example.project.scheduler.ui.TaskSchedulerViewModel] from
      * [org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SCREEN_BREAKS]); empty by default so the

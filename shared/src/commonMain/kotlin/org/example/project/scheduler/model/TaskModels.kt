@@ -288,6 +288,83 @@ data class AlarmEntry(
 }
 
 /**
+ * PRD §18 Timers: one countdown in the Alarms window's **Timers** section — a [durationSeconds] the user
+ * starts on demand, which rings exactly like an [AlarmEntry] when it runs out.
+ *
+ * A timer differs from an alarm in **when** it is due, and in nothing else: an alarm is a wall-clock time of
+ * day on a set of local weekdays, a timer is one absolute instant computed when it is started. So there is no
+ * calendar arithmetic and no time zone here, and everything downstream of the due instant — the phone's OS
+ * arming, the desktop's now-line sweep, the ring itself — is the alarms' machinery unchanged
+ * (see [org.example.project.scheduler.domain.TimerDomain]).
+ *
+ * **The run state is authoritative, not derived** (CLAUDE.md § *State*): [endsAtMillis] cannot be recomputed
+ * from anything else, so it is persisted and synced with the rest of the row — starting a timer on the
+ * desktop makes the phone ring too, which is what "it rings on every device of the account" already means for
+ * an alarm. What IS derived, and therefore never stored, is the remaining time while running: it is
+ * [endsAtMillis] minus the now-line ([remainingAtMillis]), so a running timer writes nothing as it counts down
+ * and can never make the sync fingerprint move on a tick.
+ *
+ * Three states, held by two nullable fields of which **at most one is ever non-null**
+ * ([org.example.project.scheduler.domain.TimerDomain.healed] enforces it, and the codec heals a payload an
+ * older build wrote):
+ *
+ * | State | [endsAtMillis] | [remainingMillis] |
+ * | --- | --- | --- |
+ * | idle (full duration, not counting) | null | null |
+ * | running (fires at that instant) | set | null |
+ * | paused (that much left) | null | set |
+ */
+data class TimerEntry(
+    /** Stable identity (`timer-{n}`), so a ring can name its timer across devices and edits. */
+    val id: String,
+    val label: String = "",
+    /** How long the countdown lasts when started from idle. */
+    val durationSeconds: Int = DEFAULT_TIMER_SECONDS,
+    /** How long the ring lasts once it goes off — the same field, and the same meaning, as an alarm's. */
+    val soundSeconds: Int = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
+    val vibrate: Boolean = true,
+    /** Running: the absolute instant this timer fires at. Null when idle or paused. */
+    val endsAtMillis: Long? = null,
+    /** Paused: how much of the countdown is left. Null when idle or running. */
+    val remainingMillis: Long? = null,
+) {
+    /** Counting down: it has an instant to fire at. */
+    val running: Boolean get() = endsAtMillis != null
+
+    /** Held with time left on it — [remainingMillis] resumes from there. */
+    val paused: Boolean get() = endsAtMillis == null && remainingMillis != null
+
+    /** Neither running nor paused: it shows its full [durationSeconds] and is waiting to be started. */
+    val idle: Boolean get() = endsAtMillis == null && remainingMillis == null
+
+    val durationMillis: Long get() = durationSeconds.toLong() * 1_000L
+
+    /**
+     * Whether this timer can ever ring: it is running, and its ring lasts a positive time. Unlike an alarm's
+     * there is nothing about days or a time of day — a timer that is not running is simply not due, and an
+     * idle row is not a silenced one.
+     */
+    val schedulable: Boolean get() = endsAtMillis != null && soundSeconds > 0
+
+    /**
+     * How much is left at [nowMillis] — **derived**, never stored: the running form is the distance to
+     * [endsAtMillis], the paused form is what was banked, and the idle form is the full duration.
+     */
+    fun remainingAtMillis(nowMillis: Long): Long = when {
+        endsAtMillis != null -> (endsAtMillis - nowMillis).coerceAtLeast(0L)
+        remainingMillis != null -> remainingMillis.coerceAtLeast(0L)
+        else -> durationMillis
+    }
+
+    companion object {
+        /** How long a freshly added timer counts down for. */
+        const val DEFAULT_TIMER_SECONDS: Int = 5 * 60
+
+        /** Upper bound on [durationSeconds] (24 h) — past that the user wants an alarm, not a timer. */
+        const val MAX_TIMER_SECONDS: Int = 24 * 60 * 60
+    }
+}
+/**
  * The user's sleep schedule: a nightly window `[wake − sleepDuration, wake)` (local wall-clock) that the
  * task scheduler and screen-break projection must leave empty (see
  * [org.example.project.scheduler.domain.SchedulerDomain.sleepPanels]).
