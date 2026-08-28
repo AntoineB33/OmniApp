@@ -289,6 +289,13 @@ sentences:
   a default for a **task**; `PeriodKinds.defaultResilience` is a default for a **kind**. They are
   different questions, and the clipboard writes the difference between the two (ADR 0012).
 
+**`no task allowed` is the one kind the edit window offers no field for** (2026-08-28,
+`PeriodKinds.isResilienceEditable`). Its default is `0` because it accepts nobody by its own name — so unlike
+every other kind, there is no value there for a task to choose, and a field would have been offering to write
+one. This is a rule about the **window**, deliberately and only: `resilienceFor` still answers for the kind on
+every path (that is how a grey period refuses everybody), an override an older payload wrote still decodes,
+syncs and is obeyed by the walk, and nothing below §4 changed.
+
 ### What this replaced
 
 | Was | Is |

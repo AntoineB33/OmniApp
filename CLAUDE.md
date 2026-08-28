@@ -140,6 +140,12 @@ model exists to prevent.
   task), and **"on screen" is not a flag** — it is exactly a `0` against `no on-screen task`, read through the
   derived `Task.onScreen`. `doableDuringBreak` is gone: all three dynamic periods are `no task allowed` end to
   end, so there is nothing there to be resilient to.
+- **`no task allowed` is the one kind a task has NO resilience to define** (`PeriodKinds.isResilienceEditable`
+  — the single predicate, applied by the edit window's row loop and by nothing else). It accepts nobody by its
+  own name, so its multiplier is always `0` and there is nothing there for a task to choose; the window shows
+  no row for it and writes no override. That is a rule about the **window**, not about the model:
+  `resilienceFor` still answers for it everywhere (that is how a grey period refuses everybody), and an
+  override an older payload wrote is still honoured on decode, on the wire and in the walk.
 - **A task a period leaves at `1` is UNAFFECTED by it, not confined to it.** The app used to confine an
   off-screen task to no-screen periods; a period can only multiply what it covers and says nothing about the
   timeline it does not, so the model cannot express that and no longer does.
@@ -296,6 +302,11 @@ crossing can be silently clipped by a clock jump.
   not a screen classification: it refuses off-screen tasks too. "Refuses" means the task's resilience to the
   covering kind is `0`, so a task given a non-zero one may work through a break — the only thing that is ever
   placed there.
+- **Every grey period NAMES itself, a screen break included.** A break's band is drawn at least one label line
+  tall (`SCREEN_BREAK_MIN_HEIGHT`) and its title is unconditional — the gate it used to carry was a height no
+  break reaches at any ordinary zoom (a 20-s look-away is a third of a pixel), and because the hover zones are
+  mapped onto that same rendered height, the hairline was too thin to put a cursor on and the info bubble never
+  named it either. One minimum fixes both; which of the three a band is, is the only thing its name says.
 - **All three are MARKED one way: vertical lines, delimited** (`greyPeriodMarks`, the one place a grey period
   becomes something to paint). A screen break is drawn exactly like the inactivity band beside it — no blue
   outline, no `●`, no accent title: they are the same kind of period. **Lines, never a fill**, because a grey
@@ -332,8 +343,15 @@ crossing can be silently clipped by a clock jump.
   recorded past.
 - Derived grey bands are `[displayFloor, now]` minus everything already drawn, except no-screen periods and
   screen breaks. Display-only, sub-minute remnants dropped.
-- Known and accepted: a task panel can sit under the computer hatch (the OS wins) — but it banks **no
-  record**, see below.
+- **A stretch carrying both layers OVERRIDES the on-screen task panels it covers**
+  (`clipPanelsForObservedNoScreen`), because it *is* a `no on-screen task` period — the same rule a hand-drawn
+  "No screen" panel follows, and the same set §9 refuses to bank a record over
+  (`observedNoScreenRegions`, asked once and read by both). Only the bank half shipped, so the calendar went on
+  drawing an on-screen task straight across a machine the OS reported asleep. Off-screen tasks are exempt (§9
+  lets them run there), a period is never cut (it is what the cut is made of), and a **failed** own scan is not
+  evidence — no regions, no cut. Display-side, like `clipPlanForPinnedScreenBreak`: the regions are the past,
+  the fill only places ahead of the now-line, and what the OS reports is not a user edit. What the cut vacates
+  is idle time and draws as a derived "Inactivity" band.
 - **Known inconsistency:** layers **and the §9 record bank** read the OS lock history; the engine's pause
   derivation still reads `device_active_session`. Decide this before adding anything else that reads one and
   not the other.

@@ -2362,8 +2362,11 @@ internal fun TaskEditWindow(
     /**
      * `side-dev/README.md` § *Restrictive Period*: every kind of restrictive period the account knows —
      * the two the README names plus the ones the user has defined
-     * ([org.example.project.scheduler.state.SchedulerState.periodKinds]). Every one of them gets a row, and
-     * a task says something about all of them, because a resilience is defined *"for each kind"*.
+     * ([org.example.project.scheduler.state.SchedulerState.periodKinds]).
+     *
+     * All but one of them gets a row: **"no task allowed" has no resilience to choose**, because by its own
+     * name it accepts nobody and its multiplier is always `0` ([PeriodKinds.isResilienceEditable]). The list
+     * arrives whole so the *filter* lives here, next to the rows it governs, rather than at the call site.
      */
     periodKinds: List<String>,
     /** Define a new kind here and now; it gives every task the default resilience 1 until one is changed. */
@@ -2406,8 +2409,12 @@ internal fun TaskEditWindow(
                 // One row per kind, showing the multiplier as a percentage because that is what it means:
                 // 0 % forbids the task inside such a period, 100 % leaves it untouched, and anything between
                 // scales its priority percentage for as long as the period lasts. A kind the task has never
-                // been given a value for shows its default (100 %, or 0 % for "no task allowed"), which is
-                // exactly what the absent override means — nothing is written until the user moves it.
+                // been given a value for shows its default (100 %), which is exactly what the absent override
+                // means — nothing is written until the user moves it.
+                //
+                // "no task allowed" is NOT among them: it is the one kind whose value is not the task's to
+                // pick — it accepts nobody, always, which is what its name says — so offering a field there
+                // would be offering to write a number the app then ignores.
                 //
                 // The old pair of switches is gone: "on screen" is a 0 % against "no on-screen task", and
                 // "doable during a screen break" has nothing left to say now that all three dynamic periods
@@ -2421,7 +2428,7 @@ internal fun TaskEditWindow(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    for (kind in periodKinds) {
+                    for (kind in periodKinds.filter(PeriodKinds::isResilienceEditable)) {
                         val current = PeriodKinds.resilienceFor(resilience, kind)
                         Row(
                             modifier = Modifier.fillMaxWidth(),

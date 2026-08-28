@@ -11,6 +11,38 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "no task allowed" leaves the edit window; every screen break names itself; both layers cut the panel — SHIPPED 2026-08-28
+
+→ `side-dev/README.md` § *Restrictive Period*, PRD §8/§9/§15, ADR 0002/0003. `shared` only
+(`scheduler/domain/PeriodKinds.kt`, `scheduler/domain/SchedulerDomain.kt`, `scheduler/ui/TaskSchedulerScreen.kt`,
+`ui/CalendarUi.kt`, `App.kt`); new `ObservedNoScreenPanelClipTest`, two new `TaskResilienceTest` cases. Client
+rebuild to see it — no deploy otherwise.
+
+- **The task edit window no longer offers a resilience to "no task allowed".** It is the one kind whose value
+  is not the task's to pick: by its own name it accepts nobody, so its multiplier is always `0`. The rule is
+  one predicate, `PeriodKinds.isResilienceEditable`, read by the window's row loop (and by App's save loop, so
+  the intent can never be raised for it). It governs the **window** only — `resilienceFor` still answers for
+  the kind everywhere, and an override an older payload wrote still decodes, syncs and is obeyed by the walk.
+- **Anomaly: a screen break showed no name, on the calendar or in the hover bubble.** Both halves were one
+  cause. The band's title was gated on a 13 dp height and the band is drawn at its true duration — a
+  20-second look-away is a third of a device pixel, a 5-minute pose about five — so no break ever reached the
+  gate; and the hover zones are mapped onto that same rendered height, so the hairline was too thin to put a
+  cursor on and the bubble named the sleep band underneath instead. `SCREEN_BREAK_MIN_HEIGHT` is now one label
+  line (16 dp) and the title is unconditional, ellipsised when the column is too narrow.
+  `SCREEN_BREAK_LABEL_MIN_HEIGHT` is gone.
+- **Anomaly: an on-screen task's panel crossed a stretch where neither a computer nor a phone was unlocked.**
+  ADR 0002 already says a stretch carrying BOTH layers *is* a "no on-screen task" period, and a no-screen
+  period overrides the on-screen task panels it covers — but only the record half of that was implemented
+  (§9 refuses to bank there; the panel went on being drawn). `SchedulerDomain.clipPanelsForObservedNoScreen`
+  is the other half, cutting on-screen task panels out of `observedNoScreenRegions` — the same set the record
+  bank asks, so the two can never disagree. Off-screen tasks are exempt (§9 lets them run in a no-screen
+  period), a restrictive period is never cut, and a **failed** own lock scan is not evidence (no regions, no
+  cut) — the calendar's own "assumed locked" default would otherwise erase a whole displayed past on one
+  PowerShell hiccup. Display-side, like the §15 plan clip: the regions are the past, the fill only places
+  ahead of the now-line. What the cut vacates draws as a derived "Inactivity" band.
+- The calendar's OS lock-history scan moved **above** the record assembly in `App.kt` (it is now an input to
+  the panels, not only to the hatching). Same query, same quantized window, same off-UI-thread dispatch.
+
 ### A calendar task panel reaches its task: "edit task" / "go to task tree" — SHIPPED 2026-08-28
 
 → PRD §8 / §13, ADR 0002. `shared` only (`SchedulerDomain.kt`, `ui/CalendarUi.kt`, `ui/PopupWindows.kt`,

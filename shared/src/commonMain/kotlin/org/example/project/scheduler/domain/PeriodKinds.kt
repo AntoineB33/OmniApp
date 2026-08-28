@@ -41,6 +41,19 @@ object PeriodKinds {
      */
     fun defaultResilience(kind: String): Double = if (kind == NO_TASK) 0.0 else 1.0
 
+    /**
+     * Whether a task may be given a resilience to [kind] **at all**.
+     *
+     * [NO_TASK] is the one kind it may not: *"no task allowed"* says in its own name that it accepts nobody,
+     * so its multiplier is always `0` and there is nothing for a task to choose. Every other kind — [NO_SCREEN]
+     * and every kind the user defines — is an ordinary editable value.
+     *
+     * This is a rule about the EDIT WINDOW, not about [resilienceFor]: the map is still read for [NO_TASK]
+     * everywhere (that is how a grey period refuses everybody), and an override an older payload wrote is
+     * still honoured. What is gone is the row that offered to write one.
+     */
+    fun isResilienceEditable(kind: String): Boolean = kind != NO_TASK
+
     /** A resilience is a multiplier in `[0, 1]`; anything outside is healed to the nearest bound. */
     fun clamp(value: Double): Double = if (value.isNaN()) 1.0 else value.coerceIn(0.0, 1.0)
 

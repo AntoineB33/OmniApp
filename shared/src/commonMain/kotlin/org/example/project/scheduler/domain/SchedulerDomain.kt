@@ -2217,6 +2217,42 @@ object SchedulerDomain {
     }
 
     /**
+     * PRD §8/§9: the panels with every ON-SCREEN task's work cut out of [noScreenRegions] — the stretches the
+     * devices OBSERVED nobody at a screen for ([observedNoScreenRegions]).
+     *
+     * **A stretch carrying both calendar layers IS a "no on-screen task" period** (ADR 0002 pins that
+     * identity), and a no-screen period overrides the on-screen task panels it covers — the same rule a
+     * hand-drawn "No screen" panel already follows. Only that half of the rule was implemented: §9 refused to
+     * BANK a record over an observed no-screen stretch, but the panel that record would have come from went on
+     * being drawn straight across the hatch. So the calendar showed an on-screen task running on a machine the
+     * OS reported asleep, which is the thing the bank rule exists to deny.
+     *
+     * Who is cut is the resilience and nothing else: a task is on-screen exactly when
+     * [org.example.project.scheduler.model.Task.onScreen] — a `0` against [PeriodKinds.NO_SCREEN]. §9 lets an
+     * off-screen task run in a no-screen period, so its panel is true there and is left alone; so is every
+     * restrictive period (a period is not work) and every panel of no task at all.
+     *
+     * Display-side, like [clipPlanForPinnedScreenBreak] and [carveSleepPanels]: the regions are the past
+     * (`[floor, now]`), the fill only ever places ahead of the now-line, and what the devices report is not a
+     * user edit — nothing here belongs in the stored plan. Whatever the cut vacates is then idle time and the
+     * calendar draws it as a derived "Inactivity" band, exactly as any other uncovered past stretch.
+     */
+    fun clipPanelsForObservedNoScreen(
+        panels: List<TaskPanel>,
+        tasks: Map<TaskId, Task>,
+        noScreenRegions: List<TaskTimeRange>,
+    ): List<TaskPanel> {
+        if (noScreenRegions.isEmpty()) return panels
+        val regions = mergeOccupied(noScreenRegions)
+        if (regions.isEmpty()) return panels
+        return panels.flatMap { panel ->
+            val task = panel.taskId?.let { tasks[it] }
+            if (task == null || panel.isRestrictivePeriod || !task.onScreen) listOf(panel)
+            else panel.minus(regions)
+        }
+    }
+
+    /**
      * This panel with [regions] (merged and sorted) cut out of it. The first surviving piece keeps the panel's
      * id and each later one takes a distinct `/resume` id, so two display blocks can never share one.
      */

@@ -4249,18 +4249,28 @@ private val REMINDER_TAG_HEIGHT = 18.dp
 /** PRD §18: an alarm ring rendered as a small marker on the calendar (zero duration, so a fixed height). */
 private val ALARM_MARKER_HEIGHT = 18.dp
 
-/** PRD §15: smallest rendered height for a screen-break band, so a sub-minute look-away stays a visible hairline. */
-private val SCREEN_BREAK_MIN_HEIGHT = 3.dp
-
-/** PRD §15: a screen-break band only draws its title (●/name) once it is at least this tall; shorter ones are bare. */
-private val SCREEN_BREAK_LABEL_MIN_HEIGHT = 13.dp
+/**
+ * PRD §15: smallest rendered height for a screen-break band.
+ *
+ * It is exactly **one line of the band's own label**, because a band that cannot hold its name is a band that
+ * does not say which of the three breaks it is — and at any ordinary zoom none of them can: a 20-second
+ * look-away is a third of a device pixel tall, a 5-minute pose about five. The two symptoms were one: the
+ * title was gated on a height the band never reached, and the hover zones are mapped onto that same rendered
+ * height, so the hairline was too thin to put a cursor on and the info bubble never named it either.
+ *
+ * The band still spans its true duration wherever that is taller. Drawing a short one at this minimum
+ * overstates it — but a break is marked with LINES over whatever is beneath it (never a fill, see
+ * [greyPeriodMarks]), so the overstatement costs the neighbouring block nothing but a marking.
+ */
+private val SCREEN_BREAK_MIN_HEIGHT = 16.dp
 
 /**
  * PRD §15 Screen break, rendered as a real time-positioned band (one [overlapLayout] slice of it) spanning its
- * true duration so the §9 fill leaves an exact gap for it. Sub-minute screen breaks render at [SCREEN_BREAK_MIN_HEIGHT]
- * (a hairline); the title is drawn only when the band is tall enough ([SCREEN_BREAK_LABEL_MIN_HEIGHT]). The full
- * name always shows on hover (PRD §8), anchored at the cursor so zoom never floats the bubble off-screen, with
- * the screen break's true (un-clipped) start–end times on a second line — the same bubble blocks get.
+ * true duration so the §9 fill leaves an exact gap for it. A break shorter than [SCREEN_BREAK_MIN_HEIGHT]
+ * renders at that minimum, which is one line tall — so **every** break names itself, whichever of the three it
+ * is. The full name also shows on hover (PRD §8), anchored at the cursor so zoom never floats the bubble
+ * off-screen, with the screen break's true (un-clipped) start–end times on a second line — the same bubble
+ * blocks get.
  */
 @Composable
 private fun ScreenBreakBand(
@@ -4283,13 +4293,12 @@ private fun ScreenBreakBand(
     ) {
         ScreenBreakSegment(
             title = marker.title,
-            showLabel = height >= SCREEN_BREAK_LABEL_MIN_HEIGHT,
             modifier = Modifier.fillMaxWidth().height(height),
         )
         // PRD §8: tiled by whatever else covers each sub-range (see [bubbleHoverZones]), so the bubble
         // stacks those sections below this screen break's own. The zones are mapped onto the RENDERED
         // [height] (not the break's true span): a sub-minute look-away draws at the coerced
-        // [SCREEN_BREAK_MIN_HEIGHT] hairline, so sizing its hover zones by the ~0-height true duration would
+        // [SCREEN_BREAK_MIN_HEIGHT], so sizing its hover zones by the ~0-height true duration would
         // leave the visible band un-hoverable — the pointer would fall through to the sleep band beneath and
         // the bubble would name that instead of the break (which must come first).
         val span = slice.bottomHour - slice.topHour
@@ -4321,6 +4330,11 @@ private fun ScreenBreakBand(
  * it: vertical lines, delimited top and bottom ([greyPeriodMarks]), and a muted label at the top. It used to
  * wear a blue outline and an accent-coloured title, which said it was a different sort of period; it is not.
  *
+ * The label is **unconditional**, exactly like the "Sleep"/"Inactivity" label beside it: naming the period is
+ * how the three breaks are told apart, and the band is drawn at least one line tall
+ * ([SCREEN_BREAK_MIN_HEIGHT]) so there is always room for it. A name too wide for the column ellipsises;
+ * the hover bubble carries it whole.
+ *
  * There is no hollow half either. A break used to be read as a *shape* — a closed head and a tail accepting
  * the off-screen work. A break has no shape now, so a band that was part solid and part hollow would state a
  * distinction the scheduler no longer makes.
@@ -4328,22 +4342,20 @@ private fun ScreenBreakBand(
 @Composable
 private fun ScreenBreakSegment(
     title: String,
-    showLabel: Boolean,
     modifier: Modifier,
 ) {
     Box(
         modifier = modifier.clipToBounds().greyPeriodMarks(),
         contentAlignment = Alignment.TopCenter,
     ) {
-        if (showLabel) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelSmall,
-                color = CalColors.muted,
-                maxLines = 1,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelSmall,
+            color = CalColors.muted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
     }
 }
 

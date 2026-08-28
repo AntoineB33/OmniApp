@@ -294,8 +294,38 @@ What is still NOT folded in: the asserted regions. A screen break suspends a chu
 (§15), so treating breaks and sleep windows as no-screen evidence would silently stop recording across
 every one of them. Only the OS evidence and the user's own drawn periods reach the bank.
 
+**The PANEL half followed on 2026-08-28.** Answering the record question left the display half of the same
+sentence open, and the section above named it as accepted: the panel the suppressed record would have come
+from went on being drawn straight across the two hatches, so the calendar still showed an on-screen task
+running on a machine the OS reported asleep. But the identity is not about records — *a stretch carrying both
+layers is a no-screen period*, and a no-screen period overrides the on-screen task panels it covers, which is
+already the rule for a hand-drawn one. `SchedulerDomain.clipPanelsForObservedNoScreen` applies it to the same
+`observedNoScreenRegions` the bank asks, so the panel and the record can never disagree about what was
+observed. It is display-side, deliberately: the regions are the past, the fill only ever places ahead of the
+now-line, and what the OS reports is not a user edit — nothing here belongs in the stored plan. Off-screen
+tasks are exempt (§9 lets them run in a no-screen period), a restrictive period is never cut, and the
+failed-query rule above holds unchanged — no successful own scan, no regions, no cut. What the cut vacates is
+idle time and draws as a derived "Inactivity" band, by the ordinary rule.
+
 Tests: `CalendarLayerTest` (evidence source, the assumed-unlocked default, the seam filter, the
-no-screen intersection).
+no-screen intersection); `ObservedNoScreenPanelClipTest` (the panel half).
+
+## Every grey period names itself — a screen break included
+
+Fixed 2026-08-28. A screen break's band is drawn at its true duration, and its title was gated on a 13 dp
+height. At any ordinary zoom no break reaches that: a 20-second look-away is a third of a device pixel tall, a
+5-minute pose about five. So the bands were anonymous, and the user could not tell which of the three they
+were looking at.
+
+The hover bubble had the same cause, not a second one. The band's hover zones are mapped onto the RENDERED
+height (that is deliberate — sizing them by a ~0-height true duration would leave the visible band
+un-hoverable), so a 3 dp hairline was too thin to put a cursor on, the pointer fell through to whatever was
+underneath, and the bubble named the sleep band instead of the break. One minimum fixes both:
+`SCREEN_BREAK_MIN_HEIGHT` is now one label line and the title is unconditional.
+
+Drawing a 20-second break 16 dp tall overstates it. That is the trade the minimum has always made (it was
+3 dp before), and it costs the neighbouring block nothing but a marking: a break is marked with LINES over
+whatever is beneath it, never a fill.
 
 ## Known inconsistency, deliberate and unresolved
 

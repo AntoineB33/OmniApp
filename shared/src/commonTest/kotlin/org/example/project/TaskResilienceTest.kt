@@ -131,6 +131,38 @@ class TaskResilienceTest {
         assertEquals(listOf(PeriodKinds.NO_TASK, PeriodKinds.NO_SCREEN, "deep focus"), s.allPeriodKinds)
     }
 
+    /**
+     * CLAUDE.md / the edit window: **"no task allowed" is the one kind a task cannot be given a resilience
+     * to** — it accepts nobody by its own name, so its multiplier is always `0` and there is nothing to
+     * choose. The window filters its rows with this predicate, so the rule is asserted where it lives rather
+     * than in Compose.
+     */
+    @Test
+    fun no_task_allowed_is_the_one_kind_with_no_resilience_to_edit() {
+        val (s0, _) = stateWithOneTask()
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddPeriodKind("deep focus"))
+        assertFalse(PeriodKinds.isResilienceEditable(PeriodKinds.NO_TASK))
+        assertTrue(PeriodKinds.isResilienceEditable(PeriodKinds.NO_SCREEN))
+        assertTrue(PeriodKinds.isResilienceEditable("deep focus"))
+        // What the edit window puts a row against: every kind the account knows, minus that one.
+        assertEquals(
+            listOf(PeriodKinds.NO_SCREEN, "deep focus"),
+            s.allPeriodKinds.filter(PeriodKinds::isResilienceEditable),
+        )
+    }
+
+    /**
+     * The predicate governs the WINDOW, not the model: a resilience to "no task allowed" is still read
+     * everywhere (that is how a task works through a screen break), and an override an older payload wrote is
+     * still honoured. Only the field that offered to write one is gone.
+     */
+    @Test
+    fun a_no_task_allowed_override_already_stored_is_still_honoured() {
+        val (s0, solo) = stateWithOneTask()
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_TASK, 0.5))
+        assertEquals(0.5, s.tasks[solo]!!.resilienceFor(PeriodKinds.NO_TASK))
+    }
+
     @Test
     fun a_built_in_or_blank_kind_cannot_be_defined() {
         val (s0, _) = stateWithOneTask()

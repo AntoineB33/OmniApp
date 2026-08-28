@@ -794,6 +794,85 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     .minOfOrNull { it.startEpochMillis },
                 schedulerState.tasks.values.flatMap { it.record }.minOfOrNull { it.startEpochMillis },
             ).minOrNull()
+        // WHICH LAYER IS HATCHED WHERE IS THE DEVICE'S OWN OS HISTORY, not the app's activity heartbeats.
+        // The app only knows when it was itself running and being touched; the question a layer asks is
+        // whether the DEVICE was usable, so it is asked of the OS — the lock/unlock record where the platform
+        // exposes one, else the sleep/awake record ([deviceLockedIntervals], which documents why Windows
+        // forces the fallback). Two earlier readings were both wrong for the same reason: deriving the layer
+        // from the app's active sessions painted an unbroken week of "nobody unlocked" (the app had only been
+        // open ~15 minutes), and patching that by counting a banked task panel as evidence was a heuristic
+        // standing in for the real source.
+        //
+        // Only THIS device can be asked. Every other kind gets `null` — "cannot tell" — and a device that
+        // cannot tell is ASSUMED LOCKED, so running on a computer with no phone on the account hatches the
+        // whole displayed past with the phone layer (the user's own example: the phone's data is not
+        // available, so it is considered to have been locked all along).
+        //
+        // Bounded by the DISPLAYED span: there is no reason to ask about days that are not on screen, and
+        // scrolling further back moves [displayFloorMillis] and asks again. Re-asked on a coarse bucket of
+        // `now` as well, so a machine that goes to standby while the calendar is open is picked up without
+        // spawning a query per tick — the call costs a process launch, so it never runs on the UI thread and
+        // never on the display cadence.
+        val ownLayer = remember { SchedulerDomain.layerForDeviceKind(currentDeviceKind()) }
+        var lockedIntervals by remember { mutableStateOf<List<TaskTimeRange>?>(null) }
+        // A scan that has not COME BACK yet is not the same answer as one that came back empty-handed: under
+        // the assumed-LOCKED default the latter hatches the whole window, so treating "not asked yet" as
+        // "cannot be asked" would flash a full-window hatch over the own layer on every launch, until the
+        // first PowerShell query lands. Before that first answer the own layer draws nothing; a LATER re-scan
+        // keeps showing the previous answer while it runs, so this only ever gates the first one.
+        var lockHistoryScanned by remember { mutableStateOf(false) }
+        // Both ends of the asked window are QUANTIZED to the refresh period, or the effect would relaunch on
+        // every display tick: [displayFloorMillis] is `now − 168h` whenever the calendar is not scrolled past
+        // that, so it slides with the now-line and would re-key the scan ~every 30 s (observed: a PowerShell
+        // process per tick). Rounding the floor DOWN and the ceiling UP also means the window only ever grows
+        // between scans, so nothing in view is left unasked.
+        val lockScanSince = (displayFloorMillis / LOCK_HISTORY_REFRESH_MILLIS) * LOCK_HISTORY_REFRESH_MILLIS
+        val lockScanUntil =
+            ((nowMillis / LOCK_HISTORY_REFRESH_MILLIS) + 1) * LOCK_HISTORY_REFRESH_MILLIS
+        LaunchedEffect(lockScanSince, lockScanUntil) {
+            val since = lockScanSince
+            val until = lockScanUntil
+            val scanned =
+                withContext(Dispatchers.Default) {
+                    deviceLockedIntervals(since, until)?.map { TaskTimeRange(it.startMillis, it.endMillis) }
+                }
+            lockedIntervals = scanned
+            lockHistoryScanned = true
+            // scripts/collect-diagnostics.bat: the layers are read from the OS, so an anomaly in them is an
+            // anomaly in THIS answer — record it rather than asking the user to describe the hatching. One
+            // line per scan (at most one per LOCK_HISTORY_REFRESH_MILLIS), not per frame.
+            Diagnostics.log(
+                if (scanned == null) {
+                    "device lock history unavailable — ${ownLayer.name} assumed locked over the whole window"
+                } else {
+                    val hatchedMillis = scanned.sumOf { it.endEpochMillis - it.startEpochMillis }
+                    "device lock history: ${scanned.size} locked span(s), " +
+                        "${hatchedMillis / 3_600_000}h of ${(until - since) / 3_600_000}h, layer ${ownLayer.name}"
+                },
+            )
+        }
+        // PRD §8/§9: **a stretch carrying BOTH layers is a "no on-screen task" period** (ADR 0002) — so the
+        // intersection of the two layers' evidence is exactly that period, read for the panels rather than for
+        // the hatching ([SchedulerDomain.observedNoScreenRegions], the same function the record bank asks).
+        // It overrides the on-screen task panels it covers, below, which is the half of the rule the app was
+        // missing: §9 already refused to BANK a record over one of these stretches, and the panel that record
+        // would have come from went on being drawn across the hatch anyway.
+        //
+        // A FAILED query is not evidence. `null` means "assumed locked throughout" to the layers, where
+        // hatching a stretch nobody can vouch for is honest — but here it would erase every on-screen panel in
+        // the displayed past on one PowerShell hiccup. So the OWN scan must SUCCEED to say anything, exactly as
+        // `SchedulerEngine.readNoScreenEvidence` requires; a PEER's null keeps its assumed-locked meaning.
+        val observedNoScreenRegions =
+            lockedIntervals?.takeIf { lockHistoryScanned }?.let { locked ->
+                SchedulerDomain.observedNoScreenRegions(
+                    computerLocked =
+                        if (ownLayer == SchedulerDomain.ActivityLayer.NoComputerUnlocked) locked else null,
+                    phoneLocked = if (ownLayer == SchedulerDomain.ActivityLayer.NoPhoneUnlocked) locked else null,
+                    sinceMillis = displayFloorMillis,
+                    untilMillis = nowMillis,
+                )
+            } ?: emptyList()
+
         // ADR 0009 hot path: the session history is indexed ONCE per change instead of being re-labelled for
         // every panel on every observed now-line (the segmentation below runs over every record there is).
         val deviceActivityIndex = remember(activeSessions) { DeviceActivityIndex(activeSessions) }
@@ -804,7 +883,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             schedulerState.tasks.values.flatMap { task ->
                 task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
             } + mergePanelsForDisplay(
-                displayWorkPlanPanels, displayReminderPanels, displaySidePanels, displaySleepPanels,
+                // PRD §8/§9: an on-screen task's panel is CUT where the devices observed nobody at a screen —
+                // the same "a stretch carrying both layers is a no-screen period" the hatching draws, applied
+                // to the panels it covers. An off-screen task is left alone (§9 lets it run in one).
+                SchedulerDomain.clipPanelsForObservedNoScreen(
+                    displayWorkPlanPanels, schedulerState.tasks, observedNoScreenRegions,
+                ),
+                displayReminderPanels, displaySidePanels, displaySleepPanels,
                 schedulerState.showScreenBreaks, schedulerState.showReminders,
                 schedulerState.screenBreaks, activeRegions, displayInactivityGaps,
             )
@@ -870,63 +955,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     displaySleepRegions.filter { it.endEpochMillis > nowMillis }
                         .map { TaskTimeRange(maxOf(it.startEpochMillis, nowMillis), it.endEpochMillis) },
             )
-        // WHICH LAYER IS HATCHED WHERE IS THE DEVICE'S OWN OS HISTORY, not the app's activity heartbeats.
-        // The app only knows when it was itself running and being touched; the question a layer asks is
-        // whether the DEVICE was usable, so it is asked of the OS — the lock/unlock record where the platform
-        // exposes one, else the sleep/awake record ([deviceLockedIntervals], which documents why Windows
-        // forces the fallback). Two earlier readings were both wrong for the same reason: deriving the layer
-        // from the app's active sessions painted an unbroken week of "nobody unlocked" (the app had only been
-        // open ~15 minutes), and patching that by counting a banked task panel as evidence was a heuristic
-        // standing in for the real source.
-        //
-        // Only THIS device can be asked. Every other kind gets `null` — "cannot tell" — and a device that
-        // cannot tell is ASSUMED LOCKED, so running on a computer with no phone on the account hatches the
-        // whole displayed past with the phone layer (the user's own example: the phone's data is not
-        // available, so it is considered to have been locked all along).
-        //
-        // Bounded by the DISPLAYED span: there is no reason to ask about days that are not on screen, and
-        // scrolling further back moves [displayFloorMillis] and asks again. Re-asked on a coarse bucket of
-        // `now` as well, so a machine that goes to standby while the calendar is open is picked up without
-        // spawning a query per tick — the call costs a process launch, so it never runs on the UI thread and
-        // never on the display cadence.
-        val ownLayer = remember { SchedulerDomain.layerForDeviceKind(currentDeviceKind()) }
-        var lockedIntervals by remember { mutableStateOf<List<TaskTimeRange>?>(null) }
-        // A scan that has not COME BACK yet is not the same answer as one that came back empty-handed: under
-        // the assumed-LOCKED default the latter hatches the whole window, so treating "not asked yet" as
-        // "cannot be asked" would flash a full-window hatch over the own layer on every launch, until the
-        // first PowerShell query lands. Before that first answer the own layer draws nothing; a LATER re-scan
-        // keeps showing the previous answer while it runs, so this only ever gates the first one.
-        var lockHistoryScanned by remember { mutableStateOf(false) }
-        // Both ends of the asked window are QUANTIZED to the refresh period, or the effect would relaunch on
-        // every display tick: [displayFloorMillis] is `now − 168h` whenever the calendar is not scrolled past
-        // that, so it slides with the now-line and would re-key the scan ~every 30 s (observed: a PowerShell
-        // process per tick). Rounding the floor DOWN and the ceiling UP also means the window only ever grows
-        // between scans, so nothing in view is left unasked.
-        val lockScanSince = (displayFloorMillis / LOCK_HISTORY_REFRESH_MILLIS) * LOCK_HISTORY_REFRESH_MILLIS
-        val lockScanUntil =
-            ((nowMillis / LOCK_HISTORY_REFRESH_MILLIS) + 1) * LOCK_HISTORY_REFRESH_MILLIS
-        LaunchedEffect(lockScanSince, lockScanUntil) {
-            val since = lockScanSince
-            val until = lockScanUntil
-            val scanned =
-                withContext(Dispatchers.Default) {
-                    deviceLockedIntervals(since, until)?.map { TaskTimeRange(it.startMillis, it.endMillis) }
-                }
-            lockedIntervals = scanned
-            lockHistoryScanned = true
-            // scripts/collect-diagnostics.bat: the layers are read from the OS, so an anomaly in them is an
-            // anomaly in THIS answer — record it rather than asking the user to describe the hatching. One
-            // line per scan (at most one per LOCK_HISTORY_REFRESH_MILLIS), not per frame.
-            Diagnostics.log(
-                if (scanned == null) {
-                    "device lock history unavailable — ${ownLayer.name} assumed locked over the whole window"
-                } else {
-                    val hatchedMillis = scanned.sumOf { it.endEpochMillis - it.startEpochMillis }
-                    "device lock history: ${scanned.size} locked span(s), " +
-                        "${hatchedMillis / 3_600_000}h of ${(until - since) / 3_600_000}h, layer ${ownLayer.name}"
-                },
-            )
-        }
         val layerRecords =
             SchedulerDomain.ActivityLayer.entries.flatMap { layer ->
                 val regions =
@@ -1194,8 +1222,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                         // One intent per section, and only for what actually changed — so
                                         // Save on an untouched window adds nothing to the Undo/Redo history
                                         // (PRD §6). The resilience map goes one KIND at a time, because that
-                                        // is the grain the intent (and the history unit) has.
-                                        for (kind in popupState.allPeriodKinds) {
+                                        // is the grain the intent (and the history unit) has. "no task
+                                        // allowed" is not among them: the window offers no field for it
+                                        // ([PeriodKinds.isResilienceEditable]), so there is nothing there
+                                        // that could have moved.
+                                        for (kind in popupState.allPeriodKinds.filter(PeriodKinds::isResilienceEditable)) {
                                             val next = PeriodKinds.resilienceFor(resilience, kind)
                                             if (next != task.resilienceFor(kind)) {
                                                 popupDispatch(SchedulerIntent.SetTaskResilience(taskId, kind, next))
