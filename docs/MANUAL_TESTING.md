@@ -120,6 +120,11 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
   - [ ] On an AZERTY layout, `Shift+AltGr+E` still types its character (the hook must pass AltGr through).
   - [ ] `diagnostics.log` shows `global hotkeys: claim=Exclusive` at startup and one `global hotkey pressed`
         line per press (`scripts\collect-diagnostics.bat`).
+- [ ] **"I'm away" is turned off by an unlock (PRD §15).** Press **I'm away** (the button reads *I'm back*),
+      then lock the session (`Win+L`) — it must still read *I'm back* — and log back in: the button must be
+      back to **I'm away** within a moment, with no click, and `diagnostics.log` must show
+      `desktop session unlock` followed by `"I'm away" cleared: this device was unlocked`. Locking and
+      unlocking *without* having pressed the button must change nothing.
 
 ---
 

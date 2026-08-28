@@ -2605,8 +2605,43 @@ private val BASE_HOUR_HEIGHT = 48.dp
 // date pick's whole-day fit ([wholeDayZoom]) asks for on a scaled/small window; the fit is clamped into
 // these bounds, so a floor above what the window needs would silently stop showing the whole day.
 private const val MIN_CALENDAR_ZOOM = 0.25f
-private const val MAX_CALENDAR_ZOOM = 16f
+
+/**
+ * PRD §8 zoom: how far IN the calendar goes.
+ *
+ * The ceiling is set by the shortest thing the calendar draws — the 20-second look-away. At zoom 1f it is
+ * `48 dp / 180` = 0.27 dp tall, so it needs a zoom of ~60 merely to reach one line of its own label
+ * ([SCREEN_BREAK_LABEL_MIN_HEIGHT]); the old 16f could not bring any of the three breaks to a height that
+ * holds a name or takes a cursor, which is why the band used to be inflated instead — and an inflated band
+ * overlaps the task panel beside it. This is the other half of that fix: nothing is stretched, and the zoom
+ * reaches far enough to look at whatever is too small to read.
+ *
+ * The effective cap is [maxCalendarZoom], which lowers this one on a dense display.
+ */
+private const val MAX_CALENDAR_ZOOM = 128f
 private const val CALENDAR_ZOOM_STEP = 1.15f
+
+/**
+ * The tallest a single day row may be laid out at, in PIXELS. Compose packs a measurement into a `Long`, so
+ * a constraint beyond ~262 143 px cannot be represented at all and the layout throws — a limit [MAX_CALENDAR_ZOOM]
+ * alone cannot respect, because a day's height at zoom 1f is a dp height times the display's density.
+ */
+private const val MAX_DAY_HEIGHT_PX = 200_000f
+
+/**
+ * PRD §8 zoom: the effective in-bound — [MAX_CALENDAR_ZOOM], lowered on a display dense enough that a whole
+ * day row would exceed [MAX_DAY_HEIGHT_PX] there. Pure, so the bound is unit-tested independently of Compose;
+ * every zoom path ([calendarSpanZoom] and the gestures alike) clamps through it, so no route can reach a day
+ * height the layout cannot measure.
+ */
+internal fun maxCalendarZoom(dayHeightPxAtZoom1: Float): Float =
+    if (dayHeightPxAtZoom1 <= 0f) {
+        MAX_CALENDAR_ZOOM
+    } else {
+        MAX_CALENDAR_ZOOM
+            .coerceAtMost(MAX_DAY_HEIGHT_PX / dayHeightPxAtZoom1)
+            .coerceAtLeast(MIN_CALENDAR_ZOOM)
+    }
 
 /** PRD §8: a graduation tick must be at least this tall (dp) to label legibly; below it we use a coarser one. */
 private const val MIN_TICK_DP = 26f
@@ -2787,7 +2822,7 @@ internal fun wholeDayZoom(viewportPx: Float, dayHeightPxAtZoom1: Float): Float =
 internal fun calendarSpanZoom(viewportPx: Float, dayHeightPxAtZoom1: Float, spanMinutes: Int): Float =
     if (viewportPx <= 0f || dayHeightPxAtZoom1 <= 0f || spanMinutes <= 0) 1f
     else (viewportPx / (dayHeightPxAtZoom1 * spanMinutes / MINUTES_PER_DAY))
-        .coerceIn(MIN_CALENDAR_ZOOM, MAX_CALENDAR_ZOOM)
+        .coerceIn(MIN_CALENDAR_ZOOM, maxCalendarZoom(dayHeightPxAtZoom1))
 
 private const val MINUTES_PER_DAY = 24 * 60
 
@@ -2955,7 +2990,7 @@ private fun WeekView(
     // state this needs no mutex and no wait for the scroll range to grow — the offset is a plain number
     // with no upper bound, so a burst of zoom steps composes exactly, one synchronous update each.
     fun applyZoom(factor: Float, focal: Float, focalAfter: Float = focal) {
-        val next = (zoom * factor).coerceIn(MIN_CALENDAR_ZOOM, MAX_CALENDAR_ZOOM)
+        val next = (zoom * factor).coerceIn(MIN_CALENDAR_ZOOM, maxCalendarZoom(dayHeightPxAt(1f)))
         if (next == zoom && focal == focalAfter) return
         val f = next / zoom
         zoom = next
@@ -4189,8 +4224,11 @@ private fun DayColumn(
 
         // PRD §15 Screen breaks: drawn as real time-positioned bands spanning their true duration, so the §9
         // fill leaves an exact gap for each one (no overlap with the surrounding task, no stray white where
-        // a multi-minute rest pause sits). A sub-minute look-away therefore renders as a hairline; the 5/15-
-        // min rest pauses fill their region. A small minimum height keeps even a hairline visible/hoverable.
+        // a multi-minute rest pause sits). A sub-minute look-away therefore renders as a hairline (down to
+        // [SCREEN_BREAK_MIN_HEIGHT], which keeps it drawn at all); the 5/15-min rest pauses fill their
+        // region. Nothing here is inflated to fit its label — a band taller than its break OVERLAPS the task
+        // panel beside it, so the label is dropped instead ([SCREEN_BREAK_LABEL_MIN_HEIGHT]) and the zoom
+        // ([MAX_CALENDAR_ZOOM]) is what brings a short break up to a readable size.
         // Coinciding screen breaks (e.g. the hourly and 2-hourly pose both due now) share the column width side
         // by side via [overlapLayout], exactly like overlapping task blocks.
         // Culled like the blocks: widths still come from [overlapLayout] over the whole day, and when
@@ -4250,27 +4288,39 @@ private val REMINDER_TAG_HEIGHT = 18.dp
 private val ALARM_MARKER_HEIGHT = 18.dp
 
 /**
- * PRD §15: smallest rendered height for a screen-break band.
+ * PRD §15: smallest rendered height for a screen-break band — a hairline, not a label line.
  *
- * It is exactly **one line of the band's own label**, because a band that cannot hold its name is a band that
- * does not say which of the three breaks it is — and at any ordinary zoom none of them can: a 20-second
- * look-away is a third of a device pixel tall, a 5-minute pose about five. The two symptoms were one: the
- * title was gated on a height the band never reached, and the hover zones are mapped onto that same rendered
- * height, so the hairline was too thin to put a cursor on and the info bubble never named it either.
+ * A band says WHEN the break is, so it spans its true duration and nothing more: inflating a 20-second
+ * look-away to a legible height drew it across the neighbouring task panel and claimed minutes the break
+ * does not take. The floor exists only so a sub-pixel break is still drawn at all.
  *
- * The band still spans its true duration wherever that is taller. Drawing a short one at this minimum
- * overstates it — but a break is marked with LINES over whatever is beneath it (never a fill, see
- * [greyPeriodMarks]), so the overstatement costs the neighbouring block nothing but a marking.
+ * Its name is what gives way instead ([SCREEN_BREAK_LABEL_MIN_HEIGHT]): a break too short to hold a line of
+ * text shows none, and the zoom goes far enough ([MAX_CALENDAR_ZOOM]) that any of the three can be brought
+ * up to a size that holds its name and takes a cursor.
  */
-private val SCREEN_BREAK_MIN_HEIGHT = 16.dp
+private val SCREEN_BREAK_MIN_HEIGHT = 2.dp
+
+/**
+ * PRD §15: the rendered height at which a screen-break band shows its own name — one line of it.
+ *
+ * Below this the label is dropped rather than the band stretched to fit it: text half-drawn over the block
+ * beside it names nothing, and stretching the band to hold it is what made a 20-second look-away overlap
+ * the task panel it abuts. The name is still on the hover bubble at any height the pointer can reach, and
+ * zooming in past [MAX_CALENDAR_ZOOM] / 2 brings even the look-away over this line.
+ */
+private val SCREEN_BREAK_LABEL_MIN_HEIGHT = 16.dp
 
 /**
  * PRD §15 Screen break, rendered as a real time-positioned band (one [overlapLayout] slice of it) spanning its
- * true duration so the §9 fill leaves an exact gap for it. A break shorter than [SCREEN_BREAK_MIN_HEIGHT]
- * renders at that minimum, which is one line tall — so **every** break names itself, whichever of the three it
- * is. The full name also shows on hover (PRD §8), anchored at the cursor so zoom never floats the bubble
- * off-screen, with the screen break's true (un-clipped) start–end times on a second line — the same bubble
- * blocks get.
+ * TRUE duration, down to a hairline ([SCREEN_BREAK_MIN_HEIGHT]) — never stretched to hold anything. A band
+ * drawn taller than the break lasts overlaps the task panel it abuts, which is exactly what the user sees as
+ * "a task running through the break".
+ *
+ * So the NAME is conditional on the room there is for it ([SCREEN_BREAK_LABEL_MIN_HEIGHT]) — a 20-second
+ * look-away at an ordinary zoom shows a marked hairline and no text, and zooming in (the cap is
+ * [MAX_CALENDAR_ZOOM], high enough for exactly this) grows it until it names itself. The full name also
+ * shows on hover (PRD §8), anchored at the cursor so zoom never floats the bubble off-screen, with the
+ * screen break's true (un-clipped) start–end times on a second line — the same bubble blocks get.
  */
 @Composable
 private fun ScreenBreakBand(
@@ -4293,14 +4343,16 @@ private fun ScreenBreakBand(
     ) {
         ScreenBreakSegment(
             title = marker.title,
+            showTitle = height >= SCREEN_BREAK_LABEL_MIN_HEIGHT,
             modifier = Modifier.fillMaxWidth().height(height),
         )
         // PRD §8: tiled by whatever else covers each sub-range (see [bubbleHoverZones]), so the bubble
         // stacks those sections below this screen break's own. The zones are mapped onto the RENDERED
-        // [height] (not the break's true span): a sub-minute look-away draws at the coerced
-        // [SCREEN_BREAK_MIN_HEIGHT], so sizing its hover zones by the ~0-height true duration would
-        // leave the visible band un-hoverable — the pointer would fall through to the sleep band beneath and
-        // the bubble would name that instead of the break (which must come first).
+        // [height], which is the break's own duration down to the hairline [SCREEN_BREAK_MIN_HEIGHT]: a
+        // sub-minute look-away is a hard target at an ordinary zoom, and that is the price of not
+        // overstating it on the calendar — the zoom (see [MAX_CALENDAR_ZOOM]) is what brings it under the
+        // cursor. Whatever the band does cover, it takes the hover first: the pointer must not fall through
+        // to the sleep band beneath and have the bubble name that instead of the break.
         val span = slice.bottomHour - slice.topHour
         val ownOverlay =
             BubbleOverlay(
@@ -4330,10 +4382,12 @@ private fun ScreenBreakBand(
  * it: vertical lines, delimited top and bottom ([greyPeriodMarks]), and a muted label at the top. It used to
  * wear a blue outline and an accent-coloured title, which said it was a different sort of period; it is not.
  *
- * The label is **unconditional**, exactly like the "Sleep"/"Inactivity" label beside it: naming the period is
- * how the three breaks are told apart, and the band is drawn at least one line tall
- * ([SCREEN_BREAK_MIN_HEIGHT]) so there is always room for it. A name too wide for the column ellipsises;
- * the hover bubble carries it whole.
+ * The label is drawn only where the band has ROOM for it ([showTitle], gated on
+ * [SCREEN_BREAK_LABEL_MIN_HEIGHT] by the caller): naming the period is how the three breaks are told apart,
+ * but a band is never stretched to make room — that overstated a 20-second look-away by minutes and drew it
+ * across the task panel beside it. Un-named, the band is still marked like every other grey period, the
+ * hover bubble still names it, and the zoom still grows it until the text fits. A name too wide for the
+ * column ellipsises; the hover bubble carries it whole.
  *
  * There is no hollow half either. A break used to be read as a *shape* — a closed head and a tail accepting
  * the off-screen work. A break has no shape now, so a band that was part solid and part hollow would state a
@@ -4342,20 +4396,23 @@ private fun ScreenBreakBand(
 @Composable
 private fun ScreenBreakSegment(
     title: String,
+    showTitle: Boolean,
     modifier: Modifier,
 ) {
     Box(
         modifier = modifier.clipToBounds().greyPeriodMarks(),
         contentAlignment = Alignment.TopCenter,
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelSmall,
-            color = CalColors.muted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
+        if (showTitle) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+        }
     }
 }
 

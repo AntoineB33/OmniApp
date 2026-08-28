@@ -244,6 +244,16 @@ identifiers, persisted keys.
   covered by "no on-screen task", so a period it has reached is pushed ahead of it as the half-open
   `(t_p, t_p + duration]`; away (mode 2) it must be covered, so the gap back to the last period's end is
   covered as `no on-screen task` — which the resilient tasks may still fill.
+- **An UNLOCK clears "I'm away", and it is an EDGE, not a poll** (`SchedulerEngine.noteScreenSignal`). The
+  toggle overrides the platform screen sensor, so nothing but this would ever take it off by itself — and a
+  flag left standing across a return holds this device's session finalized and its presence heartbeat closed
+  at a machine somebody is demonstrably sitting at. The trigger is the **lock→unlock transition of the raw
+  `screenActive()` signal**, which the OS already announces (`WM_WTSSESSION_CHANGE` / `ACTION_USER_PRESENT`)
+  and the engine already receives through `onPlatformActivityChanged`; the active-session beat re-reads it
+  only as a backstop for a missed notification, never as the mechanism. **Never add a timer for it.** Only
+  that edge clears: a lock while away leaves it on (locking is not returning), an unlock with no lock behind
+  it is not a return, the first sample after start is no edge at all, and a host whose signal never flips
+  (a non-Windows JVM, iOS) simply keeps the flag the user set.
 - **A break the app CONDUCTED is recorded as a period** (`RecordConductedBreak`), so the past is a fact and
   not a reconstruction. Only on completion: a manual "Look away now" that was superseded leaves no trace.
 - The **end** of a break is a notification, not only a voice cue.
@@ -302,11 +312,17 @@ crossing can be silently clipped by a clock jump.
   not a screen classification: it refuses off-screen tasks too. "Refuses" means the task's resilience to the
   covering kind is `0`, so a task given a non-zero one may work through a break — the only thing that is ever
   placed there.
-- **Every grey period NAMES itself, a screen break included.** A break's band is drawn at least one label line
-  tall (`SCREEN_BREAK_MIN_HEIGHT`) and its title is unconditional — the gate it used to carry was a height no
-  break reaches at any ordinary zoom (a 20-s look-away is a third of a pixel), and because the hover zones are
-  mapped onto that same rendered height, the hairline was too thin to put a cursor on and the info bubble never
-  named it either. One minimum fixes both; which of the three a band is, is the only thing its name says.
+- **A band spans its TRUE duration and is NEVER stretched to hold its own name.** A break drawn taller than it
+  lasts covers the task panel it abuts, which reads on the calendar as a task running through the break. So the
+  band's floor is a hairline (`SCREEN_BREAK_MIN_HEIGHT`) and the NAME is what gives way: it is drawn only where
+  the rendered band is at least one label line tall (`SCREEN_BREAK_LABEL_MIN_HEIGHT`). Which of the three a band
+  is, is the only thing its name says, and the hover bubble still says it at any height the cursor can reach.
+- **The ZOOM is the other half of that rule.** A 20-s look-away is 0.27 dp tall at zoom 1f, so the in-bound
+  (`MAX_CALENDAR_ZOOM`) must be high enough to bring the shortest of the three over a label line and under a
+  cursor — that is what the ceiling is for, and it is why the band may be left un-named at an ordinary zoom.
+  The effective cap is `maxCalendarZoom(dayHeightPxAtZoom1)`, which lowers it on a display where a whole day row
+  would exceed what a Compose constraint can represent; **every** zoom path clamps through it, the fits
+  (`calendarSpanZoom` / `wholeDayZoom`) included.
 - **All three are MARKED one way: vertical lines, delimited** (`greyPeriodMarks`, the one place a grey period
   becomes something to paint). A screen break is drawn exactly like the inactivity band beside it — no blue
   outline, no `●`, no accent title: they are the same kind of period. **Lines, never a fill**, because a grey

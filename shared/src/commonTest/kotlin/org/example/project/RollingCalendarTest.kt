@@ -19,6 +19,7 @@ import org.example.project.ui.rollingDayShift
 import org.example.project.ui.rollingRowCount
 import org.example.project.ui.visibleHourWindow
 import org.example.project.ui.weekAnchorDay
+import org.example.project.ui.maxCalendarZoom
 import org.example.project.ui.wholeDayZoom
 import org.example.project.ui.zoomAnchoredOffset
 
@@ -250,8 +251,7 @@ class RollingCalendarTest {
     fun opening_the_calendar_zooms_so_exactly_an_hour_and_a_half_fills_the_viewport() {
         // A calendar that has just been opened shows OPENING_SPAN_MINUTES of timeline, whatever the
         // viewport is — the zoom fit is what makes that span the same on every window size. The window is
-        // a fixed 720x540 dp, so every viewport it can offer is well inside the zoom ceiling (which caps
-        // the fit at 16 x 72 dp = 1152 px of 1 h 30 at this density).
+        // a fixed 720x540 dp, so every viewport it can offer is well inside the zoom ceiling.
         val spanHeight = dayHeight * OPENING_SPAN_MINUTES / (24f * 60f)
         for (viewport in listOf(200f, 400f, 600f, 1152f)) {
             val zoom = calendarSpanZoom(viewport, dayHeight, OPENING_SPAN_MINUTES)
@@ -266,11 +266,43 @@ class RollingCalendarTest {
             assertEquals(wholeDayZoom(viewport, dayHeight), calendarSpanZoom(viewport, dayHeight, 24 * 60))
         }
         // Clamped into the zoom bounds like any other zoom, and neutral before the first layout.
-        assertEquals(16f, calendarSpanZoom(viewportPx = 100_000f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 90))
+        assertEquals(
+            maxCalendarZoom(dayHeight),
+            calendarSpanZoom(viewportPx = 1_000_000f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 90),
+        )
         assertEquals(0.25f, calendarSpanZoom(viewportPx = 1f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 90))
         assertEquals(1f, calendarSpanZoom(viewportPx = 0f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 90))
         assertEquals(1f, calendarSpanZoom(viewportPx = 600f, dayHeightPxAtZoom1 = 0f, spanMinutes = 90))
         assertEquals(1f, calendarSpanZoom(viewportPx = 600f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 0))
+    }
+
+    // ----- the zoom ceiling ----------------------------------------------------------------------
+
+    @Test
+    fun the_zoom_goes_far_enough_to_read_a_twenty_second_screen_break() {
+        // PRD §15: a screen-break band spans its TRUE duration and is never stretched to hold its own name,
+        // so the zoom is what has to reach — the 20-second look-away is 48 dp / 180 = 0.267 dp tall at zoom
+        // 1f, and one line of label is 16 dp. Anything under ~60x would leave the shortest of the three
+        // permanently unreadable and un-hoverable, which is the state the inflated band was hiding.
+        val lookAwayDpAtZoom1 = 48f / 180f
+        val labelLineDp = 16f
+        assertTrue(
+            lookAwayDpAtZoom1 * maxCalendarZoom(dayHeight) >= labelLineDp,
+            "a 20-s look-away cannot be zoomed to one label line",
+        )
+    }
+
+    @Test
+    fun the_zoom_ceiling_drops_on_a_display_a_day_row_would_overflow() {
+        // A day row is laid out at a real pixel height, and Compose cannot represent a constraint past
+        // ~262 143 px. The dp ceiling alone cannot promise that (a day's px height scales with the display
+        // density), so the effective bound is lowered until the row fits — and never below the floor.
+        val dense = 200_000f / 10f // a day row 10x taller than the budget at the dp ceiling
+        assertTrue(maxCalendarZoom(dense) < maxCalendarZoom(dayHeight))
+        assertTrue(dense * maxCalendarZoom(dense) <= 200_000f)
+        assertEquals(0.25f, maxCalendarZoom(dayHeightPxAtZoom1 = 10_000_000f))
+        // Before the first layout there is no density to read: the plain dp ceiling.
+        assertEquals(maxCalendarZoom(0f), maxCalendarZoom(-1f))
     }
 
     // ----- the date pick's whole-day fit --------------------------------------------------------
@@ -295,7 +327,7 @@ class RollingCalendarTest {
         // A viewport far shorter/taller than any legal zoom can render a day at is clamped like any other
         // zoom — the fit is a zoom, not an escape from the bounds.
         assertEquals(0.25f, wholeDayZoom(viewportPx = 10f, dayHeightPxAtZoom1 = dayHeight))
-        assertEquals(16f, wholeDayZoom(viewportPx = 100_000f, dayHeightPxAtZoom1 = dayHeight))
+        assertEquals(maxCalendarZoom(dayHeight), wholeDayZoom(viewportPx = 1_000_000f, dayHeightPxAtZoom1 = dayHeight))
         // The zoom floor must still be low enough for a genuinely small window to show a whole day, or the
         // pick would silently stop keeping its promise there.
         assertEquals(0.5f, wholeDayZoom(viewportPx = dayHeight / 2f, dayHeightPxAtZoom1 = dayHeight))

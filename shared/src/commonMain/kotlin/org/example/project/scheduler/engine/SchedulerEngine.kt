@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -388,11 +389,20 @@ class SchedulerEngine(
     // While set, the device reads screen-inactive regardless of the platform sensor, so its active session is
     // finalized and its `t_a` presence tick stopped + reported as a screen-off — telling the server this device
     // is no longer being worked on. Purely local runtime state: never persisted, never synced,
-    // so a restart returns the device to active. Toggled by [setUserAway]; the menu reads it via [userAway].
+    // so a restart returns the device to active. Toggled by [setUserAway], cleared by an unlock
+    // ([noteScreenSignal]); the menu reads it via [userAway].
     private val _userAway = MutableStateFlow(false)
 
     /** PRD §15: whether the user declared they are away from this device (drives the left-menu button label). */
     val userAway: StateFlow<Boolean> = _userAway.asStateFlow()
+
+    // The RAW platform lock signal ([screenActive], unmasked by the away flag or the debug leap) as of the last
+    // sample — the only thing the away flag's automatic clearing is read from (see [noteScreenSignal]). A
+    // MutableStateFlow rather than a plain field because the two samplers sit on different threads: the
+    // active-session beat is on the engine scope, while [onPlatformActivityChanged] is called straight from the
+    // OS notification thread (the Win32 session listener, Android's broadcast receiver). Null until the first
+    // sample, so an engine that starts on a locked device has no phantom edge to answer.
+    private val lastScreenSignal = MutableStateFlow<Boolean?>(null)
 
     // PRD §7: a §9 calculation event that comes due while "Auto schedule" is off is deferred and coalesced
     // into a single reschedule fired when the switch is turned back on.
@@ -834,6 +844,34 @@ class SchedulerEngine(
         }
     }
 
+    /**
+     * PRD §15: sample the RAW platform lock signal and clear "I'm away" on a **lock→unlock edge**.
+     *
+     * Unlocking this device is the user coming back to it — the one unambiguous "I'm back" the app can read
+     * without being told — so the button must not be left declaring an absence that has visibly ended, holding
+     * the active session finalized and the heartbeat closed for as long as it does. Only that edge clears: an
+     * unlock with no lock before it is not a return (nothing said the user left), and a lock while away must
+     * obviously leave the flag alone.
+     *
+     * **This needs no polling.** The edge IS the platform's own event — Windows `WM_WTSSESSION_CHANGE`
+     * (`WTS_SESSION_LOCK`/`_UNLOCK`), Android's `ACTION_SCREEN_OFF`/`ACTION_USER_PRESENT` — which already
+     * reaches the engine through [onPlatformActivityChanged], the same poke that re-samples presence at a
+     * lock/unlock. The active-session beat calls this too, but only as a re-read of a signal it is sampling
+     * anyway (`ARCHITECTURE.md` §8): it is a safety net for a missed notification, not the mechanism. A host
+     * with no such signal (a non-Windows JVM, a failed native install, iOS) never flips it and the flag simply
+     * stays as the user set it — which is the same degradation `isScreenActive` already has there.
+     *
+     * The read-modify-write is atomic on both flows because the OS notification thread and the beat can call
+     * this concurrently; the clear is idempotent, so the worst a race can do is answer one edge twice.
+     */
+    private fun noteScreenSignal() {
+        val signal = screenActive()
+        val wasLocked = lastScreenSignal.getAndUpdate { signal } == false
+        if (signal && wasLocked && _userAway.compareAndSet(expect = true, update = false)) {
+            Diagnostics.log("\"I'm away\" cleared: this device was unlocked")
+        }
+    }
+
     // The screen-activity sample every engine site reads: the real platform sensor, overridden to inactive
     // while the debug leap forces it ([setDebugForcedInactive]) or the user declared they are away ([setUserAway]).
     private fun effectiveScreenActive(): Boolean = !debugForcedInactive && !_userAway.value && screenActive()
@@ -940,6 +978,9 @@ class SchedulerEngine(
         while (true) {
             val realNow = SystemAppClock.nowMillis()
             val suspended = realNow - lastRealBeat > DEVICE_SLEEP_THRESHOLD_MILLIS
+            // Re-read the raw lock signal first: an unlock clears "I'm away" (see [noteScreenSignal]), and the
+            // sample below must already be answering the flag that unlock left behind.
+            noteScreenSignal()
             advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended)
             lastRealBeat = realNow
             // Beat faster while accelerated (re-checked each pass — the speed changes at runtime) so the session
@@ -1816,6 +1857,9 @@ class SchedulerEngine(
      * waiting for the next minute beat. Same-value samples are no-ops, so spurious calls are harmless.
      */
     fun onPlatformActivityChanged() {
+        // Synchronously, before the sample below is scheduled: an unlock is also the user's "I'm back"
+        // ([noteScreenSignal]), and the session/heartbeat this poke advances must reflect the cleared flag.
+        noteScreenSignal()
         scope.launch { advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended = false) }
     }
 

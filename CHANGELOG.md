@@ -11,6 +11,28 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An unlock turns "I'm away" off — SHIPPED 2026-08-28
+
+→ PRD §15, ARCHITECTURE.md §8. `shared` only (`scheduler/engine/SchedulerEngine.kt`); new
+`UserAwayUnlockTest`. Client rebuild to see it — no deploy otherwise.
+
+- **"I'm away" now clears itself when this device is unlocked.** The toggle overrides the platform screen
+  sensor, so until now nothing but a second press ever took it off: leaving with the button pressed, locking
+  the machine and coming back to it left the app declaring an absence that had visibly ended — the active
+  session stayed finalized and the presence heartbeat stayed closed at a desk somebody was sitting at, which
+  is exactly the state the server's cue gate reads.
+- **The trigger is an EDGE, and it needed no polling.** The lock and the unlock are notifications the OS
+  already sends and the engine already receives (`WM_WTSSESSION_CHANGE` on Windows, `ACTION_SCREEN_OFF` /
+  `ACTION_USER_PRESENT` on Android, both arriving at `onPlatformActivityChanged`) — the same signal the button
+  is overriding. `SchedulerEngine.noteScreenSignal` reads the lock→unlock transition of the RAW
+  `screenActive()` sample off it; the active-session beat calls it too, but only as a backstop for a missed
+  notification, not as a cadence of its own. No timer was added.
+- Only that edge clears. A lock while away leaves the flag on (locking the machine is not coming back to it),
+  an unlock with no lock behind it is not a return, and the first sample after start is no edge — an engine
+  that starts on a locked device has no phantom transition to answer. A host with no session signal (a
+  non-Windows JVM, a failed native install, iOS) never flips it and keeps the flag as the user set it, the
+  same degradation `isScreenActive` already has there.
+
 ### "no task allowed" leaves the edit window; every screen break names itself; both layers cut the panel — SHIPPED 2026-08-28
 
 → `side-dev/README.md` § *Restrictive Period*, PRD §8/§9/§15, ADR 0002/0003. `shared` only
