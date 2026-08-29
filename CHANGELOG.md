@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A ring lasts 3 s by default — CHANGED 2026-08-29
+
+→ ADR 0010. `shared` (`scheduler/model/TaskModels.kt`). Client rebuild — no Supabase deploy.
+
+- The Alarms window's **Rings for** field now opens on **3 s** instead of 30 s, for alarms and timers alike.
+  A timer's ring length is the alarm's field unchanged (`AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS` is the one
+  constant both read), so the two could not have been given different defaults without splitting it.
+- Existing rows are untouched — `soundSeconds` is persisted per row; only a new row, and a legacy payload
+  written before the field existed, take the new default.
+
 ### A panel's label was written over the day's date — FIXED 2026-08-29
 
 → ADR 0002. `shared` (`ui/CalendarUi.kt`). Client rebuild to see it — no Supabase deploy.

@@ -274,8 +274,8 @@ data class AlarmEntry(
     fun ringsOn(day: DayOfWeek): Boolean = day in days
 
     companion object {
-        /** How long the alarm sound lasts by default. */
-        const val DEFAULT_ALARM_SOUND_SECONDS: Int = 30
+        /** How long the alarm sound lasts by default — a timer's too, the field being the same one. */
+        const val DEFAULT_ALARM_SOUND_SECONDS: Int = 3
 
         /** Upper bound on [soundSeconds] (10 minutes) — long enough to wake, short enough to stop itself. */
         const val MAX_ALARM_SOUND_SECONDS: Int = 600

@@ -7,6 +7,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.TimerDomain
+import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.SchedulerIntent
@@ -377,7 +378,7 @@ class TimerTest {
         assertNotNull(decoded)
         val t = decoded.timers.single()
         assertEquals(TimerEntry.DEFAULT_TIMER_SECONDS, t.durationSeconds)
-        assertEquals(30, t.soundSeconds)
+        assertEquals(AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS, t.soundSeconds)
         assertTrue(t.vibrate)
         assertTrue(t.idle, "a row that says nothing about running is idle")
     }
