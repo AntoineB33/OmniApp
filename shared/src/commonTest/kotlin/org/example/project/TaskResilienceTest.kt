@@ -39,11 +39,15 @@ class TaskResilienceTest {
     }
 
     @Test
-    fun a_kind_a_task_was_never_told_about_defaults_to_one() {
+    fun a_kind_a_task_was_never_told_about_defaults_to_zero() {
+        // A restrictive period restricts: an unmentioned kind turns the task away, which is what "adding a
+        // period adds it to every task with the default value 0" means.
         val (s, solo) = stateWithOneTask()
-        assertEquals(1.0, s.tasks[solo]!!.resilienceFor("deep focus"))
-        // …except "no task allowed", the kind that by its own name accepts nobody.
+        assertEquals(0.0, s.tasks[solo]!!.resilienceFor("deep focus"))
         assertEquals(0.0, s.tasks[solo]!!.resilienceFor(PeriodKinds.NO_TASK))
+        // …except "no on-screen task", whose default has to be the other answer: an ON-screen task is
+        // exactly a 0 against it, so it is the off-screen one that carries an override.
+        assertEquals(1.0, PeriodKinds.defaultResilience(PeriodKinds.NO_SCREEN))
     }
 
     @Test
@@ -69,9 +73,9 @@ class TaskResilienceTest {
         val (s0, solo) = stateWithOneTask()
         val s1 = SchedulerReducer.reduce(s0, SchedulerIntent.SetTaskResilience(solo, "noisy", 0.5))
         assertTrue("noisy" in s1.tasks[solo]!!.resilience)
-        val s2 = SchedulerReducer.reduce(s1, SchedulerIntent.SetTaskResilience(solo, "noisy", 1.0))
+        val s2 = SchedulerReducer.reduce(s1, SchedulerIntent.SetTaskResilience(solo, "noisy", 0.0))
         assertFalse("noisy" in s2.tasks[solo]!!.resilience)
-        assertEquals(1.0, s2.tasks[solo]!!.resilienceFor("noisy"))
+        assertEquals(0.0, s2.tasks[solo]!!.resilienceFor("noisy"))
     }
 
     @Test
@@ -114,13 +118,14 @@ class TaskResilienceTest {
     // ----- defining kinds -----------------------------------------------------------------------
 
     @Test
-    fun a_new_kind_gives_every_task_the_default_resilience_of_one() {
-        // The README's own words. Nothing is written to a single task: an absent override IS the default,
-        // which is what makes defining a kind free however many tasks the account holds.
+    fun a_new_kind_is_added_to_every_task_at_the_default_value_zero() {
+        // The task edit window's `+`. Nothing is written to a single task: an absent override IS the
+        // default, which is what makes defining a kind free however many tasks the account holds — and what
+        // makes a task created LATER carry the same answer as the ones that were already there.
         val (s0, solo) = stateWithOneTask()
         val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddPeriodKind("deep focus"))
         assertEquals(listOf("deep focus"), s.periodKinds)
-        assertEquals(1.0, s.tasks[solo]!!.resilienceFor("deep focus"))
+        assertEquals(0.0, s.tasks[solo]!!.resilienceFor("deep focus"))
         assertTrue(s.tasks[solo]!!.resilience.none { it.key == "deep focus" })
     }
 
@@ -192,7 +197,7 @@ class TaskResilienceTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.RemovePeriodKind("noisy"))
         assertEquals(emptyList(), s.periodKinds)
         assertFalse("noisy" in s.tasks[solo]!!.resilience)
-        assertEquals(1.0, s.tasks[solo]!!.resilienceFor("noisy"))
+        assertEquals(0.0, s.tasks[solo]!!.resilienceFor("noisy"))
     }
 
     @Test
@@ -257,13 +262,16 @@ class TaskResilienceTest {
             {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
              "cells":[{"id":"c0","parentListId":"L","taskId":"t0"}],
              "tasks":[{"id":"t0","title":"X","occurrences":["c0"],
-                       "resilience":{"noisy":7.5,"quiet":1.0,"no on-screen task":0.0}}]}
+                       "resilience":{"noisy":7.5,"quiet":0.0,"no on-screen task":0.0}}]}
             """.trimIndent()
         val decoded = SchedulerStateCodec.decode(json)
         assertNotNull(decoded)
         val task = decoded.tasks[TaskId("t0")]!!
         assertEquals(1.0, task.resilienceFor("noisy"))
+        // `quiet: 0` IS the default for a user-defined kind, so it is redundant and is dropped…
         assertFalse("quiet" in task.resilience)
+        // …while `no on-screen task: 0` is an override, that kind's default being 1.
         assertEquals(0.0, task.resilienceFor(PeriodKinds.NO_SCREEN))
+        assertTrue(PeriodKinds.NO_SCREEN in task.resilience)
     }
 }

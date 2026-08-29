@@ -135,12 +135,14 @@ so the strictest still forbids. There is no other mechanism, and adding a second
 model exists to prevent.
 
 - **`Task.resilience` holds OVERRIDES ONLY.** An absent kind takes `PeriodKinds.defaultResilience`, which is
-  `1` for every kind except `no task allowed` (the kind that, by its name, accepts nobody). Two things follow,
-  and both are load-bearing: **a kind the user has just defined restricts nobody** (that is what "a new period
-  gives the default resilience 1 to every task" means, and it is why defining one writes nothing to any
-  task), and **"on screen" is not a flag** — it is exactly a `0` against `no on-screen task`, read through the
-  derived `Task.onScreen`. `doableDuringBreak` is gone: all three dynamic periods are `no task allowed` end to
-  end, so there is nothing there to be resilient to.
+  `0` for every kind except `no on-screen task`. Two things follow, and both are load-bearing: **a kind the
+  user has just defined is added to every task at `0`** — a restrictive period restricts, so a new one turns
+  everybody away until its own edit window hands somebody a value above zero, and it is why defining one
+  still writes nothing to any task (absence *is* the default, which is also what makes a task created *later*
+  carry the same answer) — and **"on screen" is not a flag**: it is exactly a `0` against `no on-screen task`,
+  read through the derived `Task.onScreen`, which is the one kind whose default has to be `1` or the
+  off-screen task would be the one that has to say so. `doableDuringBreak` is gone: all three dynamic periods
+  are `no task allowed` end to end, so there is nothing there to be resilient to.
 - **`no task allowed` is the one kind a task has NO resilience to define** (`PeriodKinds.isResilienceEditable`
   — the single predicate, applied by the edit window's row loop and by nothing else). It accepts nobody by its
   own name, so its multiplier is always `0` and there is nothing there for a task to choose; the window shows
@@ -153,9 +155,20 @@ model exists to prevent.
 - **`Task.DEFAULT_RESILIENCE` (a new task is on screen) is a default for a TASK; `defaultResilience` is a
   default for a KIND.** They are different questions. The clipboard writes the difference between the two,
   which is why an ordinary task's copy says nothing about a screen (ADR 0012).
-- **The account's own kinds are `SchedulerState.periodKinds`**, defined in the task edit window's resilience
-  section. The two built-ins are never in that list; `state.allPeriodKinds` is the one reading of "every kind
-  a task can be resilient to". Removing a kind takes every task's override and every panel laid with it.
+- **The account's own kinds are `SchedulerState.periodKinds`**, defined by the **`+`** in the task edit
+  window's resilience section. The two built-ins are never in that list; `state.allPeriodKinds` is the one
+  reading of "every kind a task can be resilient to". Removing a kind takes every task's override and every
+  panel laid with it.
+- **A period is an OBJECT, and its window is the task edit window's section read the other way round.** Every
+  row there carries a **✎** onto `PeriodKindEditWindow` — *one kind, every task*, where the section is *one
+  task, every kind*. It holds exactly three things: **Delete** (`RemovePeriodKind`, offered only for a
+  user-defined kind — the one place a period is deleted, because it is the one place a period is an object);
+  the **schedulable leaves** with a check box and a percentage each (`SchedulerDomain.periodKindTaskRows` — a
+  parent task is never placed, so a value on one is a number nothing reads); and a **bulk field** that appears
+  as soon as anything is checked, showing the value the checked tasks share or **blank** where they do not
+  (`SchedulerDomain.commonResilience`). That field and each row's own write through the **one** intent,
+  `SetPeriodResilience`, so checking twenty tasks and typing one percentage is **one** history unit — never a
+  fan-out of `SetTaskResilience`. It is a sort-2 pop-up like the window it opens from, so it dismisses it.
 - **A panel's kind is `TaskPanel.restrictiveKind`**, the single reading of `periodKind` and the legacy
   `noScreen`/`inactivity`/`sleep`/`screenBreak` flags. A payload written before kinds existed is healed from
   those flags on decode.
@@ -510,7 +523,8 @@ pop-up is about.
   focus**.
 
 **The test is whether it could have several instances open at once.** A pop-up about ONE object — a task,
-a cell, a sub-list, a calendar block, a period, a reminder, a history unit, a tree entry — is sort 2,
+a cell, a sub-list, a calendar block, a period, a *kind* of period, a reminder, a history unit, a tree entry —
+is sort 2,
 because "the edit window of task A" and "the edit window of task B" are two different windows and the user
 only ever means the one they just asked for. A pop-up there is exactly one of is sort 1. So sort 1 is
 precisely `windowStack` (Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, DefaultSubtree,

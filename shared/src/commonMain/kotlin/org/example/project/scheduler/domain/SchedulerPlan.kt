@@ -109,9 +109,9 @@ data class PlanTask(
     /**
      * `side-dev/README.md`: the task's **resilience** to each kind of restrictive period — a multiplier in
      * `[0, 1]` on its priority percentage for as long as a period of that kind lasts. Overrides only: a kind
-     * absent from the map takes [PeriodKinds.defaultResilience], which is `1` for every kind except
-     * [PeriodKinds.NO_TASK]. So a kind the user has only just defined restricts nobody, and "on screen" is
-     * exactly a `0` against [PeriodKinds.NO_SCREEN].
+     * absent from the map takes [PeriodKinds.defaultResilience], which is `0` for every kind except
+     * [PeriodKinds.NO_SCREEN]. So a kind the user has only just defined turns everybody away until somebody
+     * is given a value above zero, and "on screen" is exactly a `0` against [PeriodKinds.NO_SCREEN].
      */
     val resilience: Map<String, Double> = emptyMap(),
 ) {

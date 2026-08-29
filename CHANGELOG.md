@@ -11,6 +11,41 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A period is an object: its own edit window, and a new one now restricts — 2026-08-29
+
+→ ADR 0001. `shared` (`scheduler/domain/PeriodKinds.kt`, `scheduler/domain/SchedulerDomain.kt`,
+`scheduler/state/SchedulerIntent.kt`, `scheduler/state/SchedulerReducer.kt`,
+`scheduler/ui/TaskSchedulerScreen.kt`, `App.kt`). Client rebuild to see it — no Supabase deploy.
+
+User spec: *"a `+` button must allow the user to add a new period, which adds it to every other task with the
+default value 0. Every displayed period must have a button to edit the period. This button opens a type 2
+window with a button to delete this period, and a list of all the tasks with boxes to check, and their
+resilience value to this period. A button allows the user to select all. When at least one task is selected, a
+field appears at the top. If all selected tasks have the same resilience value, the field shows this value,
+otherwise it is blank."*
+
+- **`PeriodKinds.defaultResilience` is now `0` for every kind but `no on-screen task`** (it was `1` for
+  everything but `no task allowed`). A restrictive period restricts: a kind the user has just defined turns
+  **everybody** away until its own window lets somebody back in. Still nothing written to any task — absence
+  *is* the default, so defining a kind stays free and a task created later carries the same answer.
+  `no on-screen task` keeps its `1` because "on screen" is a `0` against it.
+  - **Behaviour change on existing data, deliberately un-migrated:** a task that never overrode a
+    user-defined kind was unaffected by periods of that kind and is now forbidden in them. Nothing decodes
+    wrong (a stored `1.0` is now the override and is honoured; a stored `0.0` is dropped as redundant) — the
+    plan simply follows the new default.
+- **The task edit window's resilience section**: the "Add" button is a **`+`**, and each row's `×` is
+  replaced by a **`✎`** onto the period's own window. Deleting a period moved into that window.
+- **`PeriodKindEditWindow`** (sort 2, raised in `App`): the kind's name, **Delete** for a user-defined kind,
+  every schedulable **leaf** with a check box and a percentage (`SchedulerDomain.periodKindTaskRows`),
+  **Select all / Select none**, and — while anything is checked — a **bulk field** holding the shared value or
+  **blank** where the selection disagrees (`SchedulerDomain.commonResilience`, `null` being a real answer).
+- **`SchedulerIntent.SetPeriodResilience(taskIds, kind, value)`** is the one write for both the bulk field and
+  each row: one gesture, **one** Undo/Redo unit, and no unit at all when it moves nobody. A fan-out of
+  `SetTaskResilience` would have cost twenty `Ctrl+Z` to put back one edit.
+- Opening the period window dismisses the task edit window it came from — the sort-2 price, not a bug.
+- Pinned by `PeriodKindWindowTest` (rows, the blank field, the single history unit, the clamp/overrides-only
+  rule, delete) and by the updated `TaskResilienceTest` (the new default, and the decode heal).
+
 ### An observed pause barred no screen break — FIXED 2026-08-29
 
 → ADR 0003. `shared` (`scheduler/domain/SchedulerDomain.kt`, `scheduler/engine/SchedulerEngine.kt`,

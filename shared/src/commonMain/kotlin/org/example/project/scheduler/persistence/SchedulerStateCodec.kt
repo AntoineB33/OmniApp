@@ -777,8 +777,8 @@ object SchedulerStateCodec {
             // or hand-edited payload holds, it never hands the claim a chord the app would not accept.
             shortcutBindings = shortcutBindings.toShortcutBindings(),
             // A blank or built-in name is not a kind; duplicates collapse. A payload written
-            // before kinds existed decodes to the two built-ins alone, which is right — a kind
-            // nobody defined restricts nobody.
+            // before kinds existed decodes to the two built-ins alone, which is right — an account that
+            // defined no kind has none.
             periodKinds =
                 periodKinds.map(PeriodKinds::normalize).filter(PeriodKinds::isUserDefined).distinct(),
             focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),

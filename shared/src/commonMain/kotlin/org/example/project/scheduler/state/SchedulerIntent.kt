@@ -205,13 +205,6 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * `side-dev/README.md`: **define a new kind of restrictive period.** Raised by the task edit window's
-     * resilience section, which is where the user meets the kinds in the first place. The new kind gives
-     * *every* task the default resilience `1` — that is not written anywhere, it is what an absent override
-     * means ([org.example.project.scheduler.model.Task.resilience]) — so adding one restricts nobody until a
-     * task is given a value below one. A blank or built-in name is a no-op.
-     */
-    /**
      * PRD §15 "Look away now" (the lateral-menu button and `Ctrl+Shift+Alt+E`): **a dynamic period the app
      * actually conducted**, recorded where it happened.
      *
@@ -232,13 +225,39 @@ sealed interface SchedulerIntent {
         val endEpochMillis: Long,
     ) : SchedulerIntent
 
+    /**
+     * `side-dev/README.md`: **define a new kind of restrictive period.** Raised by the task edit window's
+     * `+`, which is where the user meets the kinds in the first place.
+     *
+     * The new kind is **added to every task at the default value `0`** — nothing is written to a single task
+     * to say so, because that is what an absent override means
+     * ([org.example.project.scheduler.domain.PeriodKinds.defaultResilience]). So a new period turns everybody
+     * away until its own edit window hands somebody a value above zero, and a task created *later* carries
+     * the same answer as the ones that were already there. A blank or built-in name is a no-op.
+     */
     data class AddPeriodKind(val kind: String) : SchedulerIntent
 
     /**
      * Remove a user-defined kind, with every task's override for it and every panel laid with it. The two
-     * built-in kinds cannot be removed.
+     * built-in kinds cannot be removed. Raised by the **period edit window's** delete button — the one place
+     * a period is deleted, since that window is the one place a period is an object in its own right.
      */
     data class RemovePeriodKind(val kind: String) : SchedulerIntent
+
+    /**
+     * The **period edit window's** write: give every task in [taskIds] the same resilience [value] to [kind].
+     *
+     * It is [SetTaskResilience] over a set rather than a task, and it exists for the grain of the history
+     * rather than for the arithmetic: checking twenty tasks and typing one percentage is **one** gesture, so
+     * it must be **one** Undo/Redo unit. The window's per-row field raises it too, with a single-element
+     * list, so there is one write path and not two. Tasks already at [value] contribute nothing, and a call
+     * that moves nobody records no unit at all.
+     */
+    data class SetPeriodResilience(
+        val taskIds: List<TaskId>,
+        val kind: String,
+        val value: Double,
+    ) : SchedulerIntent
 
     /**
      * PRD §13 Schedule Unit "Save": replace a task's schedule unit with [entries] (empty clears it).

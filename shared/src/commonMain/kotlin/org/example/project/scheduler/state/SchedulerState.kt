@@ -559,12 +559,13 @@ data class SchedulerState(
      * `side-dev/README.md` § *Restrictive Period*: **the kinds of restrictive period this account has
      * defined**, in the order they were added. The two the README names itself
      * ([org.example.project.scheduler.domain.PeriodKinds.BUILT_IN]) are always available and are NOT in this
-     * list — it holds the user's own, defined from the task edit window's resilience section.
+     * list — it holds the user's own, defined by the `+` in the task edit window's resilience section.
      *
      * A kind is only a NAME here, and deliberately so: a task's behaviour inside a period of that kind is its
      * own [org.example.project.scheduler.model.Task.resilience], which holds overrides only, so a kind
-     * nobody has been given a value for gives *every* task the default `1` and restricts nobody. That is
-     * what makes defining one free — there is nothing to write to twenty tasks.
+     * nobody has been given a value for gives *every* task the default `0` — the new period turns everybody
+     * away until its own edit window lets somebody back in. That is what makes defining one free: there is
+     * nothing to write to twenty tasks.
      *
      * Authoritative user-authored data: persisted, synced, and an ordinary content history unit.
      */

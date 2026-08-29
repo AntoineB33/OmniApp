@@ -12,17 +12,23 @@ package org.example.project.scheduler.domain
  *
  * Two kinds are built in because the README names them:
  * - [NO_TASK] — *"no task allowed"*, the kind of the three dynamic restrictive periods (§ *3 Dynamic
- *   Restrictive Period*) and of the app's grey regions (an inactivity period, a §17 sleep window). It is the
- *   one kind whose **default** resilience is `0`: by its own name it accepts nobody, so a task says nothing
- *   about it unless it is deliberately given a non-zero value.
+ *   Restrictive Period*) and of the app's grey regions (an inactivity period, a §17 sleep window). Its
+ *   default resilience is `0` — by its own name it accepts nobody — and it is the one kind a task may not be
+ *   given a value for at all ([isResilienceEditable]).
  * - [NO_SCREEN] — *"no on-screen task"*, the kind the two `t_p` modes and all three recurrence bars are
  *   written in terms of.
  *
- * **Every other kind is the user's** ([org.example.project.scheduler.state.SchedulerState.periodKinds]).
- * A kind the user has just defined is one no task was ever told about, so every task's resilience to it is
- * the default `1` — the new kind restricts nobody until somebody is given a value below one. That is why
- * [resilienceFor] answers `1` for an unknown kind rather than refusing: absence *is* the default, exactly as
- * `shortcutBindings` holds overrides only.
+ * **Every other kind is the user's** ([org.example.project.scheduler.state.SchedulerState.periodKinds]),
+ * defined by the task edit window's `+`. **A kind the user has just defined is added to every task at the
+ * default value `0`** — a restrictive period restricts, so a new one turns everybody away until the period's
+ * own edit window hands somebody a value above zero. Nothing is written to a single task to say so: absence
+ * *is* the default ([defaultResilience]), exactly as `shortcutBindings` holds overrides only, which is what
+ * makes defining a kind free however many tasks the account holds and what makes a task created *later*
+ * carry the same answer as the ones that were there.
+ *
+ * [NO_SCREEN] is the one kind whose default is `1`, and it has to be: "on screen" is a `0` against it
+ * ([org.example.project.scheduler.model.Task.DEFAULT_RESILIENCE]), so an off-screen task is exactly one that
+ * never overrode it.
  */
 object PeriodKinds {
     /** `side-dev/README.md`'s "no task allowed" — the kind of the three dynamic periods and of grey. */
@@ -35,11 +41,16 @@ object PeriodKinds {
     val BUILT_IN: List<String> = listOf(NO_TASK, NO_SCREEN)
 
     /**
-     * The resilience a task that was never told about [kind] has to it: `0` for [NO_TASK] (the kind that, by
-     * its name, accepts nobody) and `1` for every other kind — including every kind the user defines, which
-     * is what "a new period gives the default resilience value (1) to every task" means.
+     * The resilience a task that was never told about [kind] has to it: **`0` for every kind but
+     * [NO_SCREEN]**.
+     *
+     * That is what a restrictive period *is* — [NO_TASK] accepts nobody by its own name, and a kind the user
+     * has just defined accepts nobody either until its edit window says otherwise, which is what "adding a
+     * period adds it to every task with the default value 0" means. The one exception is [NO_SCREEN]: an
+     * on-screen task is exactly a `0` against it ([org.example.project.scheduler.model.Task.DEFAULT_RESILIENCE]),
+     * so its default has to be the *other* answer or an off-screen task would be the one that has to say so.
      */
-    fun defaultResilience(kind: String): Double = if (kind == NO_TASK) 0.0 else 1.0
+    fun defaultResilience(kind: String): Double = if (kind == NO_SCREEN) 1.0 else 0.0
 
     /**
      * Whether a task may be given a resilience to [kind] **at all**.

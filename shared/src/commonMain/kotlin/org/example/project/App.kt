@@ -76,6 +76,7 @@ import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.defaultSubtreePriorities
 import org.example.project.scheduler.state.projectDefaultSubtree
 import org.example.project.scheduler.state.SchedulerReducer
+import org.example.project.scheduler.ui.PeriodKindEditWindow
 import org.example.project.scheduler.ui.PriorityWeightWindow
 import org.example.project.scheduler.ui.RelativePriorityWindow
 import org.example.project.scheduler.ui.SignInDialog
@@ -374,6 +375,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Both are raised out of TaskSchedulerScreen so they draw ABOVE the floating windows rather than
         // under whichever one happens to be stacked over the tree.
         var editTaskId by remember { mutableStateOf<TaskId?>(null) }
+        // The period edit window's subject: one KIND of restrictive period. Opened from a resilience
+        // row's pencil in the task edit window; a sort-2 pop-up like that one, so opening it dismisses it.
+        var editPeriodKind by remember { mutableStateOf<String?>(null) }
         var deepCopyCellId by remember { mutableStateOf<CellId?>(null) }
         // The one message the app has to say back to a gesture it could not carry out — today only PRD §8's
         // "go to task tree" on a panel whose task no cell holds. A sort-2 pop-up like the two above.
@@ -1270,7 +1274,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     isLeaf = SchedulerDomain.isLeafTask(popupState, taskId),
                                     periodKinds = popupState.allPeriodKinds,
                                     onAddPeriodKind = { popupDispatch(SchedulerIntent.AddPeriodKind(it)) },
-                                    onRemovePeriodKind = { popupDispatch(SchedulerIntent.RemovePeriodKind(it)) },
+                                    onEditPeriodKind = { editPeriodKind = it },
                                     onSave = { resilience, entries, text ->
                                         // One intent per section, and only for what actually changed — so
                                         // Save on an untouched window adds nothing to the Undo/Redo history
@@ -1294,6 +1298,35 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                         editTaskId = null
                                     },
                                     onDismiss = { editTaskId = null },
+                                )
+                            }
+                        }
+                    }
+
+                    // `side-dev/README.md` § *Restrictive Period*: the PERIOD edit window — one kind, and
+                    // every task's resilience to it. The task edit window's resilience section read the
+                    // other way round, and the one place a period is deleted. Same top layer and same sort
+                    // as the window it is opened from, which is why opening it closes that one.
+                    editPeriodKind?.let { kind ->
+                        if (kind !in popupState.allPeriodKinds) {
+                            // Deleted under it (from here, from a peer's sync, or by an undo).
+                            editPeriodKind = null
+                        } else {
+                            Box(Modifier.fillMaxSize().zIndex(100f)) {
+                                PeriodKindEditWindow(
+                                    kind = kind,
+                                    rows = SchedulerDomain.periodKindTaskRows(popupState, kind),
+                                    // The two kinds the README names are the account's whether it likes it
+                                    // or not; only a kind the user defined can be dropped.
+                                    canDelete = PeriodKinds.isUserDefined(kind),
+                                    onSetResilience = { ids, value ->
+                                        popupDispatch(SchedulerIntent.SetPeriodResilience(ids, kind, value))
+                                    },
+                                    onDelete = {
+                                        popupDispatch(SchedulerIntent.RemovePeriodKind(kind))
+                                        editPeriodKind = null
+                                    },
+                                    onDismiss = { editPeriodKind = null },
                                 )
                             }
                         }

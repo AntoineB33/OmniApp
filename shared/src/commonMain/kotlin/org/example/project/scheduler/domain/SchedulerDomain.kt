@@ -663,6 +663,59 @@ object SchedulerDomain {
         )
     }
 
+    // ----- The period edit window (a kind of restrictive period, and who may work through it) ----
+
+    /**
+     * One row of the **period edit window**: a task, and its resilience to the kind that window is about.
+     *
+     * The window is the other half of the task edit window's resilience section, read the other way round —
+     * that section is *one task, every kind*, this is *one kind, every task*. Both read
+     * [PeriodKinds.resilienceFor], so neither can invent a value the other disagrees with.
+     */
+    data class PeriodKindTaskRow(
+        val taskId: TaskId,
+        val title: String,
+        val resilience: Double,
+    )
+
+    /**
+     * Every task the period edit window lists for [kind], ordered by title (then id, so the order is total).
+     *
+     * The rows are the **schedulable leaves** of [taskListEntries], and only those: a resilience says where a
+     * task may be *placed*, and a parent task is a grouping the scheduler never places (the task edit window
+     * shows it no resilience section for the same reason). Offering a parent a value would be offering to
+     * write a number nothing reads.
+     */
+    fun periodKindTaskRows(state: SchedulerState, kind: String): List<PeriodKindTaskRow> =
+        taskListEntries(state)
+            .filter { isLeafTask(state, it.taskId) }
+            .map { entry ->
+                PeriodKindTaskRow(
+                    taskId = entry.taskId,
+                    title = entry.title,
+                    resilience = state.tasks[entry.taskId]?.resilienceFor(kind)
+                        ?: PeriodKinds.defaultResilience(kind),
+                )
+            }
+            .sortedWith(compareBy({ it.title.lowercase() }, { it.taskId.value }))
+
+    /**
+     * The value the period edit window's bulk field shows for [selected]: the resilience they **all** share,
+     * or `null` where they do not agree — which the window draws as a blank field, exactly as asked.
+     *
+     * `null` for an empty selection too, which is the same answer by another route: with nothing selected
+     * there is no field at all.
+     */
+    fun commonResilience(rows: List<PeriodKindTaskRow>, selected: Set<TaskId>): Double? {
+        var common: Double? = null
+        for (row in rows) {
+            if (row.taskId !in selected) continue
+            if (common == null) common = row.resilience
+            else if (common != row.resilience) return null
+        }
+        return common
+    }
+
     // ----- The task-tree timeline ("All task trees") -------------------------------------------
 
     /**

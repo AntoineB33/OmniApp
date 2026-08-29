@@ -258,6 +258,9 @@ class NoScreenInactivityPanelTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cells[1], "Rival"))
         val rival = s.tasks.keys.first { s.tasks[it]!!.title == "Rival" }
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(rival, 10))
+        // The rival is the UNAFFECTED one, and it has to say so: a kind the user defines is added to every
+        // task at the default 0, so a task that has never been given a value for it is forbidden there.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(rival, "noisy", 1.0))
         s = s.copy(
             panels = s.panels + TaskPanel(
                 id = "period/noisy",

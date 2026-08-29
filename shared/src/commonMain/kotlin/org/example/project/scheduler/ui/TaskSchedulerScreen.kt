@@ -37,6 +37,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -2369,10 +2370,19 @@ internal fun TaskEditWindow(
      * arrives whole so the *filter* lives here, next to the rows it governs, rather than at the call site.
      */
     periodKinds: List<String>,
-    /** Define a new kind here and now; it gives every task the default resilience 1 until one is changed. */
+    /**
+     * The `+` beside the name field: define a new kind here and now. It is added to **every** task at the
+     * default value `0` ([PeriodKinds.defaultResilience]) — a restrictive period restricts — so the new
+     * period turns everybody away until its own edit window hands somebody a value above zero.
+     */
     onAddPeriodKind: (String) -> Unit,
-    /** Drop a user-defined kind, with every task's value for it. Never offered for the two built-in kinds. */
-    onRemovePeriodKind: (String) -> Unit,
+    /**
+     * The ✎ on a period's row: open **that period's** edit window, which is where it is deleted and where
+     * every task's resilience to it is handed out at once. This row shows one TASK's value for every kind;
+     * that window shows one KIND's value for every task. It is a sort-2 pop-up like this one, so opening it
+     * dismisses this window — the price of the sort (see `ui/PopupWindows.kt`).
+     */
+    onEditPeriodKind: (String) -> Unit,
     onSave: (resilience: Map<String, Double>, entries: List<ScheduleUnitEntry>, text: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -2409,8 +2419,15 @@ internal fun TaskEditWindow(
                 // One row per kind, showing the multiplier as a percentage because that is what it means:
                 // 0 % forbids the task inside such a period, 100 % leaves it untouched, and anything between
                 // scales its priority percentage for as long as the period lasts. A kind the task has never
-                // been given a value for shows its default (100 %), which is exactly what the absent override
-                // means — nothing is written until the user moves it.
+                // been given a value for shows that KIND's default, which is exactly what the absent override
+                // means — nothing is written until the user moves it. That default is 0 % for a kind the user
+                // defined (a restrictive period restricts) and 100 % for "no on-screen task", which is the
+                // one kind an on-screen task is the one to override.
+                //
+                // Each row also carries a ✎ onto the PERIOD's own window: this section is one task and every
+                // kind, that window is one kind and every task — which is the question you have the moment a
+                // period is defined, since defining one turns everybody away. It is where a period is
+                // deleted, too, the row's old × having said "remove this from this task".
                 //
                 // "no task allowed" is NOT among them: it is the one kind whose value is not the task's to
                 // pick — it accepts nobody, always, which is what its name says — so offering a field there
@@ -2451,9 +2468,11 @@ internal fun TaskEditWindow(
                                         else resilience + (kind to next)
                                 },
                             )
-                            if (PeriodKinds.isUserDefined(kind)) {
-                                TextButton(onClick = { onRemovePeriodKind(kind) }) { Text("\u00d7") }
-                            }
+                            // The period itself is an object: this opens its own window, where it is
+                            // deleted and where every task’s value for it is handed out together. Offered
+                            // for the built-in "no on-screen task" too — it cannot be deleted, but "which
+                            // tasks need a screen" is exactly the question that window answers.
+                            TextButton(onClick = { onEditPeriodKind(kind) }) { Text("✎") }
                         }
                     }
                     Row(
@@ -2468,6 +2487,7 @@ internal fun TaskEditWindow(
                             label = { Text("New kind of period") },
                             modifier = Modifier.weight(1f),
                         )
+                        // The `+`: define the named period. It is added to every task at the default 0.
                         TextButton(
                             enabled = PeriodKinds.isUserDefined(PeriodKinds.normalize(newKind)) &&
                                 periodKinds.none { it.equals(PeriodKinds.normalize(newKind), ignoreCase = true) },
@@ -2475,7 +2495,7 @@ internal fun TaskEditWindow(
                                 onAddPeriodKind(newKind)
                                 newKind = ""
                             },
-                        ) { Text("Add") }
+                        ) { Text("+") }
                     }
                 }
 
@@ -2573,6 +2593,187 @@ internal fun TaskEditWindow(
             }
         }
     }
+}
+
+/**
+ * `side-dev/README.md` § *Restrictive Period*: the **period edit window** — one KIND of restrictive period,
+ * and every task's resilience to it.
+ *
+ * It is the task edit window's resilience section read the other way round. That section is *one task, every
+ * kind*; this is *one kind, every task* — which is the question you actually have when you have just defined
+ * a period ("who may work through it?"), because defining one adds it to every task at the default `0`
+ * ([PeriodKinds.defaultResilience]) and somebody has to be let back in.
+ *
+ * Three things it holds, and nothing else:
+ * - **Delete**, offered only for a user-defined kind: this is the one place a period is deleted, because it
+ *   is the one place a period is an object in its own right. It takes every task's value for it and every
+ *   panel laid with it ([org.example.project.scheduler.state.SchedulerIntent.RemovePeriodKind]). The two
+ *   built-in kinds cannot be removed.
+ * - **The list of tasks**, each with a check box and its own percentage field. The rows are the schedulable
+ *   leaves ([SchedulerDomain.periodKindTaskRows]) — a parent task is a grouping the scheduler never places,
+ *   so a resilience on one would be a number nothing reads.
+ * - **The bulk field**, which appears as soon as anything is checked. It shows the value the checked tasks
+ *   share, or **blank** where they do not agree ([SchedulerDomain.commonResilience]), and typing in it gives
+ *   all of them that value as ONE history unit
+ *   ([org.example.project.scheduler.state.SchedulerIntent.SetPeriodResilience]) — checking twenty tasks and
+ *   typing one percentage is one gesture. "Select all" is the shortcut to the whole list, and reads "select
+ *   none" once everything is checked, since that is the only thing left it can usefully do.
+ *
+ * A **sort-2** pop-up (`ui/PopupWindows.kt`): it is about ONE object — this period — so "the window of period
+ * A" and "the window of period B" are two different windows and only the one just asked for is ever meant.
+ * Opening it therefore dismisses the task edit window it was opened from, discarding whatever was half-typed
+ * there; that is the sort's price, not an oversight. Unlike the task window it has no Save: every field
+ * writes as it is typed, exactly like the row-level `×` it replaces.
+ */
+@Composable
+internal fun PeriodKindEditWindow(
+    kind: String,
+    rows: List<SchedulerDomain.PeriodKindTaskRow>,
+    /** False for the two built-in kinds — the README names them, so the account cannot drop them. */
+    canDelete: Boolean,
+    onSetResilience: (List<TaskId>, Double) -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // Which tasks the bulk field acts on. Compose-only state, like the calendar's zoom and the find bar's
+    // query: a selection is a way of looking at the list, never a fact about the account. Rows that leave
+    // under it (a task deleted while the window is open) are dropped rather than kept as phantom targets.
+    var selected by remember(kind) { mutableStateOf(emptySet<TaskId>()) }
+    val present = rows.map { it.taskId }.toSet()
+    val checked = selected.intersect(present)
+    val common = SchedulerDomain.commonResilience(rows, checked)
+    val allChecked = rows.isNotEmpty() && checked.size == rows.size
+
+        // A sort-2 pop-up: it draws on the top layer, blocks nothing behind it, and the host
+        // dismisses it as soon as a press lands anywhere else (see TransientPopupHost).
+    TransientPopupLayer {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 12.dp,
+            border = BorderStroke(1.dp, SheetColors.grid),
+            modifier = Modifier.transientPopupCard(onDismiss).width(400.dp),
+        ) {
+            Column(
+                Modifier.padding(16.dp).heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(kind, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    // The one place a period is deleted. A built-in kind has no button at all rather than a
+                    // disabled one: it is not a thing the account could ever do.
+                    if (canDelete) TextButton(onClick = onDelete) { Text("Delete period") }
+                }
+                Text(
+                    "Each task’s resilience to a period of this kind: 0 % forbids it there, " +
+                        "100 % leaves it untouched.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                HorizontalDivider()
+
+                // The bulk field, and it exists only while something is checked — with nothing selected
+                // there is nothing for it to say. Blank means "the checked tasks disagree"; typing a value
+                // ends that disagreement in one history unit.
+                if (checked.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = "${checked.size} selected",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        BulkPercentField(
+                            value = common,
+                            onValueChange = { next -> onSetResilience(checked.toList(), next) },
+                        )
+                    }
+                    HorizontalDivider()
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(
+                        enabled = rows.isNotEmpty(),
+                        onClick = { selected = if (allChecked) emptySet() else present },
+                    ) { Text(if (allChecked) "Select none" else "Select all") }
+                }
+
+                if (rows.isEmpty()) {
+                    Text(
+                        "No schedulable task yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                for (row in rows) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Checkbox(
+                            checked = row.taskId in checked,
+                            onCheckedChange = { on ->
+                                selected = if (on) checked + row.taskId else checked - row.taskId
+                            },
+                        )
+                        Text(
+                            text = row.title.ifBlank { "(untitled)" },
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        // The row's own field. It goes through the same bulk intent with a one-element list,
+                        // so there is one write path and not two.
+                        PercentField(
+                            value = row.resilience,
+                            onValueChange = { next -> onSetResilience(listOf(row.taskId), next) },
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Close") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * [PercentField]'s two-state sibling: the period edit window's bulk field, which must be able to show
+ * **nothing**. `null` is "the checked tasks do not agree", and it is a real answer rather than a missing one
+ * — the field is blank until the user types the value that ends the disagreement.
+ */
+@Composable
+private fun BulkPercentField(value: Double?, onValueChange: (Double) -> Unit) {
+    var text by remember(value) { mutableStateOf(value?.let(::formatPercent) ?: "") }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { raw ->
+            text = raw
+            raw.trim().removeSuffix("%").trim().replace(',', '.').toDoubleOrNull()?.let {
+                onValueChange(PeriodKinds.clamp(it / 100.0))
+            }
+        },
+        singleLine = true,
+        suffix = { Text("%") },
+        modifier = Modifier.width(88.dp),
+    )
 }
 
 /**

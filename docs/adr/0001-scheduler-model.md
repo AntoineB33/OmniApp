@@ -274,27 +274,65 @@ forbids and the model needs no precedence rule.
 | Kind | Default resilience | What it is |
 | --- | --- | --- |
 | `no task allowed` | **0** | the kind that, by its name, accepts nobody: sleep windows, inactivity periods, hand-drawn grey, and all three screen breaks end to end |
-| `no on-screen task` | 1 | the §9 screen zone: a no-screen period, and the gap mode 2 covers behind the now-line |
-| anything the user defines | 1 | `SchedulerState.periodKinds`, defined in the task edit window |
+| `no on-screen task` | **1** | the §9 screen zone: a no-screen period, and the gap mode 2 covers behind the now-line |
+| anything the user defines | **0** | `SchedulerState.periodKinds`, defined by the `+` in the task edit window |
 
 **`Task.resilience` holds OVERRIDES ONLY**, and that single decision carries two of the README's
 sentences:
 
-- **A kind the user has just defined restricts nobody.** "A new period gives the default resilience 1
-  to every task" is not a migration that stamps a `1` onto every task — it is the *absence* of an
-  override, so defining a kind writes nothing to any task at all and removing one takes only the
-  overrides that named it.
+- **A kind the user has just defined is added to every task at `0`** (2026-08-29; it was `1` before).
+  A restrictive period restricts: a new one turns everybody away, and its own edit window is where
+  somebody is let back in — which is the workflow that window exists for. "Added to every task" is not
+  a migration that stamps a `0` onto every task, it is the *absence* of an override, so defining a kind
+  still writes nothing to any task at all, removing one takes only the overrides that named it, and a
+  task created **later** carries the same answer as the ones that were already there. The rejected
+  alternative was to write an explicit `0` to every existing task at definition time: same first
+  screen, but the account then holds N rows saying what the default already says, and the next task the
+  user creates silently disagrees with all of them.
 - **"On screen" is not a flag.** It is exactly a `0` against `no on-screen task`, read through the
   derived `Task.onScreen`. `Task.DEFAULT_RESILIENCE` (a task the user has just created is on screen) is
   a default for a **task**; `PeriodKinds.defaultResilience` is a default for a **kind**. They are
   different questions, and the clipboard writes the difference between the two (ADR 0012).
 
+`no on-screen task` is the one kind whose default is the *other* answer, and it has to be: "on screen" is a
+`0` against it, so an off-screen task would otherwise be the one that had to say so — and every task the app
+has ever created would carry a redundant override.
+
 **`no task allowed` is the one kind the edit window offers no field for** (2026-08-28,
-`PeriodKinds.isResilienceEditable`). Its default is `0` because it accepts nobody by its own name — so unlike
-every other kind, there is no value there for a task to choose, and a field would have been offering to write
-one. This is a rule about the **window**, deliberately and only: `resilienceFor` still answers for the kind on
+`PeriodKinds.isResilienceEditable`). It accepts nobody by its own name — so unlike every other kind, there is
+no value there for a task to choose, and a field would have been offering to write one. This is a rule about the **window**, deliberately and only: `resilienceFor` still answers for the kind on
 every path (that is how a grey period refuses everybody), an override an older payload wrote still decodes,
 syncs and is obeyed by the walk, and nothing below §4 changed.
+
+### The period edit window: one kind, every task
+
+The task edit window's resilience section is *one task, every kind*. The **period edit window**
+(`PeriodKindEditWindow`, 2026-08-29) is the same table read the other way round — *one kind, every task* —
+and it is the question the user actually has the moment a period is defined, because defining one turns
+everybody away and somebody has to be let back in. Every row of the section carries a **✎** onto it.
+
+Three things it holds, and the reasons they are there rather than somewhere else:
+
+- **Delete.** A period had no home of its own before, so its removal lived as a `×` on a row of *one task's*
+  window — which read as "remove this from this task". The window is where a period is an object, so it is
+  where the period is deleted. Offered for a user-defined kind only; the README names the other two.
+- **The schedulable leaves**, checkable, each with its own percentage (`SchedulerDomain.periodKindTaskRows`).
+  Parents are left out for exactly the reason the task edit window shows a parent no resilience section: the
+  scheduler places leaves, so a value on a parent is a number nothing reads.
+- **A bulk field**, shown only while something is checked, holding the value the checked tasks share or
+  **blank** where they do not (`SchedulerDomain.commonResilience` — `null` is a real answer, not a missing
+  one). Blank is what makes "select all, type 100" a safe gesture on a table you have not read.
+
+**One intent, `SetPeriodResilience`, for both the bulk field and each row.** The temptation is to fan out
+`SetTaskResilience` per task; that is right arithmetically and wrong for the history — checking twenty tasks
+and typing one percentage is one gesture, so it must be one Undo/Redo unit, and twenty units would need
+twenty `Ctrl+Z` to put back. A call that moves nobody records nothing, exactly as the single-task intent
+already did.
+
+It is a **sort-2** pop-up, so opening it dismisses the task edit window it came from, discarding what was
+half-typed there. That is the sort's price (`ui/PopupWindows.kt`), not an oversight: "the window of period A"
+and "the window of period B" are two different windows. Saving the task window on the way out was rejected —
+a button that silently commits an unrelated form is worse than a button that discards visibly.
 
 ### What this replaced
 

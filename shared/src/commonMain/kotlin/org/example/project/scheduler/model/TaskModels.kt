@@ -47,12 +47,14 @@ data class Task(
      * lasts. `0` forbids the task there, `1` leaves it untouched, and anything between scales its share.
      *
      * It is stored as **overrides only**: a kind absent from the map takes
-     * [org.example.project.scheduler.domain.PeriodKinds.defaultResilience], which is `1` for every kind
-     * except [org.example.project.scheduler.domain.PeriodKinds.NO_TASK]. Two things follow, and they are the
-     * whole reason for that shape:
-     * - **a kind the user has only just defined restricts nobody** — every task's resilience to it is the
-     *   default `1` until somebody is given a value below one, which is exactly what "a new period gives the
-     *   default resilience value (1) to every task" asks for;
+     * [org.example.project.scheduler.domain.PeriodKinds.defaultResilience], which is `0` for every kind
+     * except [org.example.project.scheduler.domain.PeriodKinds.NO_SCREEN]. Two things follow, and they are
+     * the whole reason for that shape:
+     * - **a kind the user has only just defined is added to every task at `0`** — a restrictive period
+     *   restricts, so a new one turns everybody away until the period's own edit window gives somebody a
+     *   value above zero. Nothing is written to a single task to say so, which is what makes defining a kind
+     *   free however many tasks the account holds, and what makes a task created *later* carry the same
+     *   answer as the ones that were already there;
      * - **there is no "on screen" flag any more.** An on-screen task is one with a `0` against
      *   [org.example.project.scheduler.domain.PeriodKinds.NO_SCREEN] — read through [onScreen], which is a
      *   *derivation*, never a second piece of state. The old *doable during a screen break* switch is gone

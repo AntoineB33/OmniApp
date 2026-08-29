@@ -172,6 +172,25 @@ object SchedulerReducer {
                     )
                 }
             }
+            is SchedulerIntent.SetPeriodResilience -> {
+                // The period edit window's write: one value, many tasks, ONE history unit — checking a block
+                // of tasks and typing a percentage is one gesture. Tasks already at the value are dropped
+                // first, so a call that moves nobody records nothing, exactly as the single-task
+                // SetTaskResilience does.
+                val kind = PeriodKinds.normalize(intent.kind)
+                val value = PeriodKinds.clamp(intent.value)
+                val targets = periodResilienceTargets(state, intent.taskIds, kind, value)
+                if (targets.isEmpty()) {
+                    state
+                } else {
+                    commitDelta(
+                        state,
+                        priorityTreeDelta(state, "Resilience") { working ->
+                            targets.fold(working) { acc, id -> applySetTaskResilience(acc, id, kind, value) }
+                        },
+                    )
+                }
+            }
             is SchedulerIntent.RecordConductedBreak -> reduceRecordConductedBreak(state, intent)
             is SchedulerIntent.AddPeriodKind -> reduceAddPeriodKind(state, intent.kind)
             is SchedulerIntent.RemovePeriodKind -> reduceRemovePeriodKind(state, intent.kind)
@@ -3033,10 +3052,28 @@ private fun reduceRecordConductedBreak(
 }
 
 /**
+ * Which of [taskIds] [SchedulerIntent.SetPeriodResilience] actually has to move: the tasks that exist and are
+ * not already at [value] for [kind]. An empty answer is what keeps a no-op bulk write out of the history.
+ */
+private fun periodResilienceTargets(
+    state: SchedulerState,
+    taskIds: List<TaskId>,
+    kind: String,
+    value: Double,
+): List<TaskId> {
+    if (kind.isEmpty()) return emptyList()
+    return taskIds.distinct().filter { id ->
+        val task = state.tasks[id]
+        task != null && task.resilienceFor(kind) != value
+    }
+}
+
+/**
  * `side-dev/README.md`: **the user defines a new kind of restrictive period.** Adding one is deliberately
- * cheap and total — a kind no task was ever told about gives *every* task the default resilience `1`
- * ([PeriodKinds.defaultResilience]), so nothing is written to a single task here and the new kind restricts
- * nobody until somebody is given a value below one. That is why the account holds only the LIST of kinds.
+ * cheap and total — a kind no task was ever told about is at that kind's own default
+ * ([PeriodKinds.defaultResilience]), which for a user-defined kind is `0`, so nothing is written to a single
+ * task here and the new period **turns everybody away** until its edit window hands somebody a value above
+ * zero. That is why the account holds only the LIST of kinds.
  *
  * Authoritative + synced, and **not** an Undo/Redo unit — the same shape as the account's other settings
  * (`deepCopyMaxDepth`, the copy options). What *is* undoable is the resilience a task is then given, which
