@@ -25,7 +25,9 @@ import org.example.project.scheduler.state.SchedulerState
  *    off-screen tasks only inside them, and the §15 screen breaks as periods — closed for their first
  *    minute (a 20-second look-away end to end), then accepting the off-screen break-doable tasks whose
  *    minimum still fits;
- *  - past no-screen ⇒ past inactivity: the schedule-advance banks NO record over a no-screen period.
+ *  - past no-screen ⇒ past inactivity: the schedule-advance banks NO record over a no-screen period — and
+ *    writes NO panel for it either. What the strip vacates is idle time the calendar derives a grey band
+ *    for; a grey period is an object only the user or the rules create.
  */
 class NoScreenInactivityPanelTest {
 
@@ -596,7 +598,7 @@ class NoScreenInactivityPanelTest {
     }
 
     @Test
-    fun advance_materializes_a_past_inactivity_panel_over_the_covered_span() {
+    fun advance_writes_no_inactivity_panel_over_the_covered_span() {
         val (s0, solo) = stateWithOneTask()
         var s = SchedulerReducer.reduce(
             s0,
@@ -613,15 +615,19 @@ class NoScreenInactivityPanelTest {
             ),
         )
         val advanced = SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(NOW))
-        // PRD §9 "past no-screen ⇒ past inactivity": the covered hour becomes a REAL inactivity panel
-        // (the no-screen panel is only decorative, §8 taxonomy) marking that nothing happened there.
-        val inactivity = advanced.panels.single { it.inactivity }
-        assertEquals("Inactivity", inactivity.title)
-        assertEquals(NOW - 2 * HOUR, inactivity.startEpochMillis)
-        assertEquals(NOW - HOUR, inactivity.endEpochMillis)
-        // Re-advancing must not duplicate it (the elapsed panel was dropped, nothing re-banks).
+        // The covered hour banks no record (above) and that is ALL it does. A grey period is an object the
+        // user drew, or one the rules lay; "the app was not running / nobody was at a screen" is evidence,
+        // and evidence stays DERIVED — the calendar paints the vacated hour as a derived grey band. The app
+        // used to materialize a real `no task allowed` panel here, which persisted and SYNCED an observation
+        // (218 of them had piled up on the release account by 2026-08-29), and silently upgraded a
+        // "no on-screen task" observation into a period that refuses off-screen tasks too.
+        assertTrue(
+            advanced.panels.none { it.inactivity },
+            "a no-screen period must not materialize a grey panel: ${advanced.panels.filter { it.inactivity }}",
+        )
+        // And it stays that way however many times the tick runs — this was the unbounded-growth path.
         val again = SchedulerReducer.reduce(advanced, SchedulerIntent.AdvanceSchedule(NOW))
-        assertEquals(1, again.panels.count { it.inactivity })
+        assertTrue(again.panels.none { it.inactivity })
     }
 
     @Test
@@ -648,7 +654,7 @@ class NoScreenInactivityPanelTest {
     }
 
     @Test
-    fun advance_skips_spans_an_existing_inactivity_panel_already_covers() {
+    fun advance_leaves_a_hand_added_inactivity_panel_alone() {
         val (s0, solo) = stateWithOneTask()
         var s = SchedulerReducer.reduce(
             s0,
@@ -671,7 +677,7 @@ class NoScreenInactivityPanelTest {
     }
 
     @Test
-    fun device_sleep_cut_materializes_the_covered_span_as_inactivity() {
+    fun device_sleep_cut_writes_no_inactivity_panel() {
         val (s0, solo) = stateWithOneTask()
         var s = SchedulerReducer.reduce(
             s0,
@@ -688,9 +694,11 @@ class NoScreenInactivityPanelTest {
             ),
         )
         val slept = SchedulerReducer.reduce(s, SchedulerIntent.ReportDeviceSleep(NOW, NOW + HOUR))
-        val inactivity = slept.panels.single { it.inactivity }
-        assertEquals(NOW - 2 * HOUR, inactivity.startEpochMillis)
-        assertEquals(NOW - HOUR, inactivity.endEpochMillis)
+        // Same rule as the advance tick: the device going to sleep is evidence, never a period.
+        assertTrue(
+            slept.panels.none { it.inactivity },
+            "a device sleep must not materialize a grey panel: ${slept.panels.filter { it.inactivity }}",
+        )
     }
 
     @Test

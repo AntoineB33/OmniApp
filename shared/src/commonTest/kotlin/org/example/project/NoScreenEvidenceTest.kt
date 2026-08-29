@@ -79,10 +79,13 @@ class NoScreenEvidenceTest {
         assertEquals(2, record.size, "the observed hour must be a hole, not completed work: $record")
         assertEquals(NOW - 3 * HOUR to NOW - 2 * HOUR, record[0].startEpochMillis to record[0].endEpochMillis)
         assertEquals(NOW - HOUR to NOW, record[1].startEpochMillis to record[1].endEpochMillis)
-        // …and the covered span still materializes as a real grey panel, as the drawn-panel path does.
-        val inactivity = advanced.panels.single { it.inactivity }
-        assertEquals(NOW - 2 * HOUR, inactivity.startEpochMillis)
-        assertEquals(NOW - HOUR, inactivity.endEpochMillis)
+        // …and it writes NO panel for it, exactly as the drawn-panel path does not. Evidence is derived: it
+        // says what the devices saw, never that the account owns a period there. The calendar paints the
+        // hole as a derived grey band instead.
+        assertTrue(
+            advanced.panels.none { it.inactivity },
+            "observed evidence must not become a persisted period: ${advanced.panels.filter { it.inactivity }}",
+        )
     }
 
     @Test
@@ -132,7 +135,7 @@ class NoScreenEvidenceTest {
     }
 
     @Test
-    fun strip_removes_the_covered_part_of_an_on_screen_record_and_greys_it() {
+    fun strip_removes_the_covered_part_of_an_on_screen_record_without_laying_a_period() {
         val (s, solo) = bankedRecord(TaskTimeRange(NOW - 3 * HOUR, NOW))
         val stripped = SchedulerReducer.reduce(
             s,
@@ -142,9 +145,10 @@ class NoScreenEvidenceTest {
         assertEquals(2, record.size, "the observed hour must be carved out of the stored record: $record")
         assertEquals(NOW - 3 * HOUR to NOW - 2 * HOUR, record[0].startEpochMillis to record[0].endEpochMillis)
         assertEquals(NOW - HOUR to NOW, record[1].startEpochMillis to record[1].endEpochMillis)
-        val inactivity = stripped.panels.single { it.inactivity }
-        assertEquals(NOW - 2 * HOUR, inactivity.startEpochMillis)
-        assertEquals(NOW - HOUR, inactivity.endEpochMillis)
+        assertTrue(
+            stripped.panels.none { it.inactivity },
+            "the strip vacates the record; it does not lay a period: ${stripped.panels.filter { it.inactivity }}",
+        )
     }
 
     @Test
@@ -153,7 +157,7 @@ class NoScreenEvidenceTest {
         val ranges = listOf(TaskTimeRange(NOW - 2 * HOUR, NOW - HOUR))
         val once = SchedulerReducer.reduce(s, SchedulerIntent.StripNoScreenRecords(ranges))
         val twice = SchedulerReducer.reduce(once, SchedulerIntent.StripNoScreenRecords(ranges))
-        // Same INSTANCE: the start-up pass must not churn storage or re-materialize a second grey panel.
+        // Same INSTANCE: the start-up pass must not churn storage.
         assertTrue(twice === once, "a second strip must be a no-op")
     }
 

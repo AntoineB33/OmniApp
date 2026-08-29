@@ -178,19 +178,45 @@ internal object WindowsPowerLog {
         return debounce(raw)
     }
 
-    /** See the class comment: a flip that did not hold for [DEBOUNCE_MILLIS] cancels its predecessor. */
+    /**
+     * See the class comment: a flip that did not hold for [DEBOUNCE_MILLIS] cancels its predecessor.
+     *
+     * A cancellation is **provisional**, and that is what closes the class comment's "unmatched wake" case.
+     * Cancelling a pair asserts the device came back at the bounce; if the very next event REPEATS the state
+     * the bounce claimed to have returned to, that return demonstrably never happened — the bounce was the
+     * spurious half — so the cancelled transition is put back and the repeat closes it instead. Observed
+     * 2026-08-29 on the release machine: `506`@15:12:40, `507`@15:12:41, `507`@15:26:53 cancelled the sleep,
+     * left the genuine resume with nothing to pair against, and lost a real 14-minute standby outright — the
+     * machine then read as time spent at the desk, which is precisely the reading the record bank must not
+     * get. The restored pair is still re-tested against [DEBOUNCE_MILLIS], so a genuinely brief flip stays
+     * jitter.
+     */
     fun debounce(events: List<PowerTransition>): List<PowerTransition> {
         val kept = ArrayList<PowerTransition>(events.size)
+        // The transition the last cancellation removed, and the polarity the cancelling event claimed.
+        var cancelled: PowerTransition? = null
+        var cancelledBy: Boolean? = null
         for (event in events) {
+            if (cancelled != null) {
+                // Same polarity as the canceller ⇒ the state never returned; undo the cancellation.
+                if (cancelledBy == event.down) kept.add(cancelled)
+                cancelled = null
+                cancelledBy = null
+            }
             val last = kept.lastOrNull()
             if (last == null) {
                 kept.add(event)
                 continue
             }
             if (event.millis - last.millis < DEBOUNCE_MILLIS) {
-                // Jitter: the pair leaves no trace. A repeat of the state already held is a duplicate — two
-                // providers logging one shutdown — and is simply dropped.
-                if (event.down != last.down) kept.removeAt(kept.size - 1)
+                // Jitter: the pair leaves no trace *unless* the next event proves otherwise (above). A repeat
+                // of the state already held is a duplicate — two providers logging one shutdown — and is
+                // simply dropped, so a shutdown run still counts from its first event.
+                if (event.down != last.down) {
+                    kept.removeAt(kept.size - 1)
+                    cancelled = last
+                    cancelledBy = event.down
+                }
             } else if (event.down != last.down) {
                 kept.add(event)
             }

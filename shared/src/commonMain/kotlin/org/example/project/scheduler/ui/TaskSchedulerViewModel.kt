@@ -275,9 +275,9 @@ class TaskSchedulerViewModel(
      * are stripped from the sync wire — but materializing one calls `allocatePanelId()`, which advances the
      * persisted `nextPanelCounter` (part of `syncFingerprint`). Left syncable, that counter bump alone flips
      * the fingerprint and fires a **phantom push** of otherwise-identical content, which (whole-doc LWW) makes
-     * peers pull-and-drop their own unpushed edits. So it must NOT push on its own. (Its sibling
-     * `materializePastInactivity` has no intent of its own — it rides `AdvanceSchedule`/`ReportDeviceSleep`,
-     * already gated here — so it needs no separate entry.)
+     * peers pull-and-drop their own unpushed edits. So it must NOT push on its own. (It has no inactivity
+     * sibling any more: what a no-screen period vacates is idle time the calendar DERIVES a grey band for,
+     * never a panel the app writes — see `SchedulerReducer.stripRecords`.)
      *
      * Every other intent — tree edits, pinned/user panels, reminders, sleep/settings, history, and the MANUAL
      * record edits `RemoveRecordPeriod` / `PinRecordAsPanel` — is authoritative and syncs (subject to the

@@ -21,7 +21,7 @@ Restrictive periods are objects with a start and end time, and a kind.
 Pre-placed tasks or restrictive periods inevitably create priority deficits for excluded tasks. The scheduler compensates for this by scheduling deprived tasks immediately before or after a blockage. To prevent massive, disruptive overcompensation, this mechanism uses an **exponential decay** model. The influence of the debt repayment decays over distance from the blockage.
 
 ### Rule state evolution
-* **Rule State Definition:** A rule state is the set of tasks and their associated priority percentages and minimum execution time at a given moment in time.
+* **Rule State Definition:** A rule state is the set of tasks and their associated priority percentages, minimum execution time and resilience values for every periods at a given moment in time.
 * **Rule State Evolution:** When there is one defined rule state, it stays the same forever. When multiple rule states are defined for specific moments in time, that means that between two consecutive rule states, the rule state transforms evenly from the first state to the second one.
 
 

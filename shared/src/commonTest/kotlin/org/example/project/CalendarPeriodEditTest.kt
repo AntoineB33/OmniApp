@@ -210,9 +210,9 @@ class CalendarPeriodEditTest {
             s.tasks.getValue(away).record.map { it.startEpochMillis to it.endEpochMillis },
             "§9 lets an off-screen task run in a no-screen period, so its record over one is true",
         )
-        // §8 taxonomy: the no-screen period is decorative, so the stripped span is materialized as a real
-        // grey panel — the past stays fully accounted for.
-        assertNotNull(s.panels.firstOrNull { it.inactivity })
+        // The stripped span lays no period of its own: the past stays fully accounted for because the
+        // calendar DERIVES a grey band over whatever no task panel covers, not because the app writes one.
+        assertTrue(s.panels.none { it.inactivity }, "stripping must not lay a period: ${s.panels}")
     }
 
     @Test

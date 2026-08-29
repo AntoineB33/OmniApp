@@ -198,8 +198,8 @@ emptied DB's past simply carries both "nobody unlocked" layers and no panel, per
 Past "Sleep" is instead **persisted**:
 
 - `SchedulerEngine.maybeMaterializePastSleep` banks a materialized "Sleep" panel (allocated id, NOT a derived
-  `sleep/{day}` one — `SchedulerReducer.materializePastSleep`, `MaterializePastSleep` intent, outside Undo/Redo
-  like `materializePastInactivity`) when a scheduled sleep window fully elapses **while this session ran**
+  `sleep/{day}` one — `SchedulerReducer.materializePastSleep`, `MaterializePastSleep` intent, outside
+  Undo/Redo like the record bank) when a scheduled sleep window fully elapses **while this session ran**
   (`sessionStartMillis` lower-bounds the candidate span so a fresh/empty account never retroactively
   materializes the whole 168 h) and the account was inactive there
   (`intersectRegions(scheduledSleep, inactivityGaps)`).

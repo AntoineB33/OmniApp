@@ -243,10 +243,45 @@ Tests: `CalendarPeriodEditTest`.
 ### What did NOT change
 
 Both contextual-menu options stay (a no-screen period is "a period asserting both layers", an
-inactivity period is the grey one); the automatic override/trim between on-screen task panels and
-no-screen periods stays (it was widened, above, never narrowed); and `materializePastInactivity` stays — a past no-screen period that covered a
-SCHEDULED task still banks no record and materializes a real grey panel. That is about a task that was
-scheduled; the "draw nothing" rule is about an idle stretch where nothing was.
+inactivity period is the grey one); and the automatic override/trim between on-screen task panels and
+no-screen periods stays (it was widened, above, never narrowed).
+
+`materializePastInactivity` did **not** stay — see *A period is never manufactured from evidence*, below.
+It was kept here on the reasoning that "a past no-screen period that covered a SCHEDULED task" is a
+different question from an idle stretch. It is not: both are answers about what the app OBSERVED, and
+neither is a period the account owns.
+
+## A period is never manufactured from evidence — 2026-08-29
+
+`materializePastInactivity` turned every elapsed span where scheduled on-screen work met a no-screen period
+into a real `TaskPanel` — `inactivity = true`, `periodKind = NO_TASK`, allocated id, in `state.panels`.
+Three things were wrong with it, and the user's own statement of the rule is what exposed them:
+
+> Inactivity in the calendar must be represented by vertical lines. If it appears, it is because at this
+> time the rule states say all tasks have 0 resilience to some periods there, or because the user added it
+> manually, or because this time was in the past beyond the memory of the app.
+
+1. **It persisted derived state.** "The devices observed no screen here" is evidence, recomputed on every
+   scan; writing it into authoritative, synced `panels` is exactly what ADR 0007's table forbids — and it
+   grew without bound (218 panels on the release account by 2026-08-29, a fresh batch per `account3-deploy-
+   windows.bat`, because the app banks nothing while it is being rebuilt).
+2. **It changed the kind.** The evidence says `no on-screen task`; the panel it wrote said `no task
+   allowed`. So an observation an off-screen task may legitimately run through became a period refusing
+   everybody — and then fed `restrictivePeriodsOf` → the recurrence bars as a `NO_TASK` rest stretch.
+3. **It was the second mechanism.** `observedNoScreenRegions` already answers the display side
+   (`clipPanelsForObservedNoScreen`) and `observedNoScreenPeriods` the placement side. This predated both
+   and duplicated them.
+
+What the strip vacates is idle time, and the calendar already DERIVES a grey band over whatever no task
+panel covers. So the fix is a deletion, and the display is unchanged. `materializePastSleep` is deliberately
+kept: a sleep session is a fact the **user** asserted with the Sleep/Work toggle, not something a scan
+observed.
+
+Existing materialized panels are left where they are: a hand-added inactivity period IS a `no task allowed`
+period, so they are shape-identical to the user's own and cannot be told apart on decode. Each is an object
+with a Remove in its menu.
+
+Tests: `NoScreenInactivityPanelTest`, `NoScreenEvidenceTest`, `CalendarPeriodEditTest`.
 
 ## The derived grey bands
 

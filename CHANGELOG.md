@@ -11,6 +11,34 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A grey period is never manufactured from evidence — 2026-08-29
+
+→ ADR 0002. `shared` (`scheduler/state/SchedulerReducer.kt`, `scheduler/platform/WindowsPowerLog.kt`).
+Client rebuild — no Supabase deploy.
+
+Reported as: *"I run `scriptsccount3-deploy-windows.bat`, and I see a gray panel in the calendar as an
+inactivity layer."* The deploy stops the running app, builds for minutes, reinstalls and relaunches; the app
+banks nothing while it is down, and on restart `materializePastInactivity` wrote every elapsed span where
+scheduled on-screen work met a no-screen period into `state.panels` as a real `no task allowed` period.
+218 of them had accumulated on the release account.
+
+Deleted, with its two call-site helpers. Grey appears for exactly three reasons — a covering period every
+task has 0 resilience to, a period the user drew, or past beyond the app's memory — and "the devices
+observed no screen" is none of them. It is evidence, so it stays derived: the calendar already paints the
+vacated stretch as a derived grey band, and the display is unchanged. Existing materialized panels are left
+in place (a hand-added inactivity period is the same object, so decode cannot tell them apart);
+`materializePastSleep` stays, because a sleep session is a fact the user asserted with the toggle.
+
+Alongside it, `WindowsPowerLog.debounce` made its cancellation **provisional**. A bounce cancelled as jitter
+used to leave a genuine later wake with nothing to pair against, losing the absence outright — two wakes
+with no sleep between them is not something the machine can do, so the earlier one is the spurious half.
+Observed the same day: `506`@15:12:40, `507`@15:12:41, `507`@15:26:53 lost a real 14-minute standby, which
+the §9 record bank then banked straight through as time at the desk. The restored pair is still re-tested
+against the minimum dwell, so brief flips stay jitter. This reverses
+`a_bounce_that_leaves_an_unmatched_wake_claims_nothing`.
+
+---
+
 ### The now-line carries its seconds — 2026-08-29
 
 → ADR 0002, PRD §8. `shared` (`ui/CalendarUi.kt`). Client rebuild to see it — no Supabase deploy.

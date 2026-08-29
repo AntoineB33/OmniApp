@@ -390,7 +390,10 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   desk); **an id means nothing without its provider** (`1` is Kernel-Power "resumed" *and* Kernel-General
   "the system time has changed" — each provider is asked for its own ids, and the sets are disjoint); and **a
   flip shorter than a minute is jitter**, cancelling the transition it undid, so the timeline strictly
-  alternates. Both window edges are handled: an open absence clips to `until`, and the state the window
+  alternates — but the cancellation is **provisional**: a later event repeating the state the bounce claimed
+  to have returned to proves the return never happened, so the pair is restored and re-tested (two wakes with
+  no sleep between them is not something the machine can do; dropping the pair lost a real standby and banked
+  records straight through it). Both window edges are handled: an open absence clips to `until`, and the state the window
   *opens* in comes from events fetched BEFORE it.
 - **A device that cannot be asked was LOCKED** (`null` ⇒ the layer hatches the whole asked past; an empty
   list ⇒ nothing drawn — the same default as `derivePauses`, and `null` and an empty list stay different
@@ -485,6 +488,16 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   evidence — no regions, no cut. Display-side, like `clipPlanForPinnedScreenBreak`: the regions are the past,
   the fill only places ahead of the now-line, and what the OS reports is not a user edit. What the cut vacates
   is idle time and draws as a derived "Inactivity" band.
+- **A grey period is NEVER manufactured from evidence.** Grey appears for exactly three reasons: a covering
+  period every task has 0 resilience to, a period the **user** drew, or past beyond the app's memory. "The
+  devices observed no screen here" is none of them — it is evidence, recomputed every scan, and it stays
+  DERIVED. `materializePastInactivity` wrote it into `state.panels` as a real `no task allowed` period and is
+  gone (ADR 0002): it persisted and synced an observation, it grew without bound (218 panels on the release
+  account — a fresh batch per `account3-deploy-windows.bat`, which stops the app for the whole build so
+  nothing is banked), and it silently upgraded a `no on-screen task` observation into a period refusing the
+  off-screen tasks too. What a strip vacates is idle time the calendar already derives a band for, so the
+  deletion changed no pixel. `materializePastSleep` is the deliberate counter-case: a sleep session is a fact
+  the **user** asserted with the Sleep/Work toggle, not something a scan observed.
 - **Known inconsistency:** layers **and the §9 record bank** read the OS lock history; the engine's pause
   derivation still reads `device_active_session`. Decide this before adding anything else that reads one and
   not the other.

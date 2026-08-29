@@ -72,11 +72,34 @@ class WindowsPowerLogTest {
     }
 
     @Test
-    fun a_bounce_that_leaves_an_unmatched_wake_claims_nothing() {
-        // The log recorded no sleep for the eight hours that follow, and neither the debouncer nor the pairing
-        // may invent one. What matters is that the three-second sliver is not emitted as an absence either.
+    fun a_bounce_before_a_wake_does_not_swallow_the_absence_behind_it() {
+        // Two wakes with NO sleep between them is not something the machine can do: one of them is spurious.
+        // It cannot be the later one (a resume is what ends a standby), so the machine never came back at
+        // t0+3s and the absence runs to the real resume. Cancelling the bounce as an ordinary jitter pair
+        // used to drop the sleep outright, leaving the genuine wake with nothing to close and reporting the
+        // whole stretch as time at the desk.
+        //
+        // Observed on the release machine 2026-08-29: 506@15:12:40, 507@15:12:41, 507@15:26:53 lost a real
+        // 14-minute standby — which the §9 record bank then banked straight through.
         val read = WindowsPowerLog.transitions(lines(t0 to 42, (t0 + 3_000) to 1, (t0 + 8 * hour) to 1))!!
+        assertEquals(listOf(DeviceSleepGap(t0, t0 + 8 * hour)), WindowsPowerLog.intervals(read))
+    }
+
+    @Test
+    fun a_restored_bounce_is_still_re_tested_against_the_debounce() {
+        // The restoration is not a licence to invent short absences: the recovered pair goes back through
+        // the same minimum-dwell test, so a genuinely brief flip stays jitter and claims nothing.
+        val read = WindowsPowerLog.transitions(lines(t0 to 42, (t0 + 1_000) to 1, (t0 + 2_000) to 1))!!
         assertEquals(emptyList(), WindowsPowerLog.intervals(read))
+    }
+
+    @Test
+    fun a_bounce_the_machine_really_returned_from_still_leaves_no_trace() {
+        // The counter-case that keeps the fix honest: here a genuine SLEEP follows the bounce, so the wake at
+        // t0+3s really did happen and the cancellation stands — the absence starts at the second sleep, not
+        // the first. (Same shape as the long-absence test above, checked from the debouncer's side.)
+        val kept = WindowsPowerLog.debounce(listOf(down(t0), up(t0 + 3_000), down(t0 + 6_000), up(t0 + 8 * hour)))
+        assertEquals(listOf(down(t0 + 6_000), up(t0 + 8 * hour)), kept)
     }
 
     @Test
