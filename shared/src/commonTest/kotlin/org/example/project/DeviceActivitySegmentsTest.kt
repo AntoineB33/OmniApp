@@ -104,6 +104,41 @@ class DeviceActivitySegmentsTest {
         assertEquals(listOf(DeviceActivitySegment(0, 10, listOf("Device"))), segments)
     }
 
+    @Test
+    fun a_device_is_named_by_the_first_row_that_states_a_kind_not_by_its_oldest_row() {
+        // The `kind` column post-dates the earliest sessions (schema v8), so a long-lived install's oldest
+        // rows are blank while every recent one says "desktop". A kind is a fact about the DEVICE: naming it
+        // off the oldest row left it permanently labelled the anonymous "Device".
+        val sessions = listOf(
+            session("d1", 0, 10, ""),
+            session("d1", 20, 30, ""),
+            session("d1", 40, 50, "desktop"),
+        )
+        val segments = deviceActivitySegments(TaskTimeRange(0, 10), sessions, untilMillis = 10)
+        assertEquals(listOf(DeviceActivitySegment(0, 10, listOf("Desktop"))), segments)
+    }
+
+    @Test
+    fun upgrading_a_blank_kind_does_not_renumber_the_labels() {
+        // The numbering follows FIRST APPEARANCE, and learning d1's kind from a later row must not move it
+        // behind d2 in that order — d1 is "Desktop", the install that appeared after it is "Desktop 2".
+        val sessions = listOf(
+            session("d1", 0, 10, ""),
+            session("d2", 5, 60, "desktop"),
+            session("d1", 30, 60, "desktop"),
+        )
+        val segments = deviceActivitySegments(TaskTimeRange(0, 60), sessions, untilMillis = 60)
+        assertEquals(
+            listOf(
+                DeviceActivitySegment(0, 5, listOf("Desktop")),
+                DeviceActivitySegment(5, 10, listOf("Desktop", "Desktop 2")),
+                DeviceActivitySegment(10, 30, listOf("Desktop 2")),
+                DeviceActivitySegment(30, 60, listOf("Desktop", "Desktop 2")),
+            ),
+            segments,
+        )
+    }
+
     // ---- recordsForDay carries the segments into the day view as hour-of-day sub-ranges ----
 
     private val tz = TimeZone.UTC

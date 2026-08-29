@@ -433,6 +433,13 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   The effective cap is `maxCalendarZoom(dayHeightPxAtZoom1)`, which lowers it on a display where a whole day row
   would exceed what a Compose constraint can represent; **every** zoom path clamps through it, the fits
   (`calendarSpanZoom` / `wholeDayZoom`) included.
+- **Everything the grid places carries SECONDS, the NOW-LINE included** (`LocalTime.hourOfDay`). That ceiling is
+  what makes it load-bearing: at a zoom where a minute is hundreds of pixels, reading a time to the minute does
+  not round it, it MOVES it by up to 59 s. The indicator was drawn at `hour + minute / 60` and so sat at the top
+  of the current minute, which put the line on the wrong side of every band the calendar had placed truthfully —
+  a layer region ending at `now` read as a claim about the future, a grey band ending before `now` as scheduled
+  emptiness after it, and the elapsed half of the panel the line sits in as entirely unelapsed. The lock's
+  centring fraction and the reminder stack's anchor read the same instant, or the line is not the one on screen.
 - **All three are MARKED one way: vertical lines, delimited** (`greyPeriodMarks`, the one place a grey period
   becomes something to paint). A screen break is drawn exactly like the inactivity band beside it — no blue
   outline, no `●`, no accent title: they are the same kind of period. **Lines, never a fill**, because a grey
@@ -1114,3 +1121,9 @@ Two rules that bite:
   npm `.cmd` shim and silently skips steps 2–3.
 - `pause-cue-setup.sql` must contain **no double-quote character at all**, comments included — the CLI
   otherwise receives a truncated query and still exits 0.
+
+
+
+
+
+Never create git commits automatically.

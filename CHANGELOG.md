@@ -11,6 +11,38 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The now-line carries its seconds — 2026-08-29
+
+→ ADR 0002, PRD §8. `shared` (`ui/CalendarUi.kt`). Client rebuild to see it — no Supabase deploy.
+
+Three reported calendar anomalies, one cause. Zoomed in far enough for a 20-second look-away to be visible,
+the calendar showed: a "no phone unlocked" hatch running past the now-line (*"how can it know in advance
+there won't be any phone unlocked?"*), an Inactivity band after the now-line, and an "Open: Device" line on
+a panel that looked entirely future.
+
+- **The current-time indicator was drawn at `hour + minute / 60`**, i.e. at the top of the current minute,
+  while every band, panel, layer region and device segment around it is placed to the second
+  (`recordsForDay`). At zoom 1 a minute is 0.7 dp and the gap never showed; at the zoom `MAX_CALENDAR_ZOOM`
+  exists for, a minute is well over a hundred pixels, so the line sat up to 59 s above where it belonged and
+  everything the calendar had placed truthfully read as being on the wrong side of it. In the report the
+  line was drawn at 16:41:00 with the real instant at 16:41:47: the layer ended exactly at `now`, the grey
+  band ended at 16:41:16 (before it), and 30 s of the "planning" panel really had elapsed.
+- **`LocalTime.hourOfDay()` is now the one reading**, used by the indicator, by the lock-to-now centring
+  fraction (which must centre on the line the user can see) and by the reminder stack's now-line anchor.
+  Nothing about the layers, the bands or the record bank changed — they were already right.
+
+### A device is named by the first session row that states a kind — 2026-08-29
+
+→ ADR 0002, PRD §8. `shared` (`ui/CalendarUi.kt`). Client rebuild to see it — no Supabase deploy.
+
+The hover bubble's "Open: …" line called a month-old desktop install **"Device"**. `ActiveSessionRecord.kind`
+post-dates the earliest sessions (schema v8), and the label was taken from the device's *oldest* row — blank
+on any account older than that column — so an install that has been recording `"desktop"` ever since stayed
+anonymous forever. A kind is a fact about the DEVICE, not about one session: `deviceLabels` now takes the
+first row that actually states one, keeping the first-appearance order so the `Phone 2` / `Phone 3` numbering
+never shifts. Spelled once and shared by `deviceActivitySegments` and `DeviceActivityIndex`, which
+`CalendarDisplayEquivalenceTest` already pins together.
+
 ### The hour before bed is covered by the period "before bed" — 2026-08-29
 
 → ADR 0001, PRD §17. `shared` (`scheduler/domain/PeriodKinds.kt`, `scheduler/domain/SchedulerDomain.kt`,

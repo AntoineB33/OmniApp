@@ -274,6 +274,39 @@ data class DeviceActivitySegment(
 )
 
 /**
+ * The hover bubble's per-install device labels, in first-appearance order: the kind capitalized ("desktop" →
+ * "Desktop"), numbered "Phone 2", "Phone 3"… when several distinct installs share a kind, and the anonymous
+ * "Device" for an install no row names a kind for.
+ *
+ * A KIND IS A FACT ABOUT THE DEVICE, NOT ABOUT ONE SESSION, so the label reads the first row that actually
+ * states one rather than simply the device's oldest row. `ActiveSessionRecord.kind` post-dates the earliest
+ * sessions on a long-lived install (schema v8), so on any account older than that column the oldest row is
+ * blank — and naming the device off it left a desktop that has been recording "desktop" for a month
+ * permanently labelled "Device". The numbering still follows first appearance, so the labels are stable.
+ *
+ * [byStart] must be start-ordered; both callers below share this function so their labels cannot diverge.
+ */
+private fun deviceLabels(byStart: List<ActiveSessionRecord>): Map<String, String> {
+    val kindByDevice = LinkedHashMap<String, String>()
+    for (session in byStart) {
+        val kind = session.kind.trim().lowercase()
+        val known = kindByDevice[session.deviceId]
+        // Re-putting an existing key keeps its insertion position, so upgrading a blank kind to a real one
+        // never reorders — and hence never renumbers — the labels.
+        if (known == null || (known.isEmpty() && kind.isNotEmpty())) kindByDevice[session.deviceId] = kind
+    }
+    val labelById = LinkedHashMap<String, String>()
+    val kindCounts = mutableMapOf<String, Int>()
+    for ((deviceId, kind) in kindByDevice) {
+        val base = if (kind.isEmpty()) "Device" else kind.replaceFirstChar { it.uppercase() }
+        val n = (kindCounts[base] ?: 0) + 1
+        kindCounts[base] = n
+        labelById[deviceId] = if (n == 1) base else "$base $n"
+    }
+    return labelById
+}
+
+/**
  * Segments `[range.start, min(range.end, untilMillis)]` of a panel by the set of devices with an active
  * session covering each instant — the data behind the hover bubble's "which devices were open" line and
  * the dashed set-change separators. Pure so the sweep is unit-testable.
@@ -281,9 +314,7 @@ data class DeviceActivitySegment(
  * Only the region the data can speak for is segmented: nothing is claimed before the oldest known session
  * start (a panel predating all activity data gets no segments, not a false "no device"), and nothing after
  * [untilMillis] (the future part of a still-running panel). Within that region, a covered instant lists the
- * open devices and an uncovered one is a real "no device was open" segment. Device labels come from each
- * session's recorded [ActiveSessionRecord.kind] ("desktop" → "Desktop"; blank/legacy rows → "Device"),
- * numbered "Phone 2", "Phone 3"… when several distinct installs share a kind.
+ * open devices and an uncovered one is a real "no device was open" segment. The labels are [deviceLabels]'.
  */
 fun deviceActivitySegments(
     range: TaskTimeRange,
@@ -297,19 +328,7 @@ fun deviceActivitySegments(
     if (end <= start) return emptyList()
 
     // Stable per-install labels: kind capitalized, numbered by order of first appearance within a kind.
-    val labelById = LinkedHashMap<String, String>()
-    val kindCounts = mutableMapOf<String, Int>()
-    for (s in sessions.sortedBy { it.startMillis }) {
-        labelById.getOrPut(s.deviceId) {
-            val base = when (s.kind.trim().lowercase()) {
-                "" -> "Device"
-                else -> s.kind.trim().lowercase().replaceFirstChar { it.uppercase() }
-            }
-            val n = (kindCounts[base] ?: 0) + 1
-            kindCounts[base] = n
-            if (n == 1) base else "$base $n"
-        }
-    }
+    val labelById = deviceLabels(sessions.sortedBy { it.startMillis })
 
     // Sweep the clipped window over every session boundary; between two consecutive cuts the open set is
     // constant. Consecutive equal sets merge, so the result is minimal. (distinct+sorted, not sortedSetOf —
@@ -361,21 +380,8 @@ class DeviceActivityIndex(sessions: List<ActiveSessionRecord>) {
 
     private val byStart: List<ActiveSessionRecord> = sessions.sortedBy { it.startMillis }
 
-    /** Stable per-install labels, in the same first-appearance order the per-call form assigns them in. */
-    private val labelById: Map<String, String> =
-        buildMap {
-            val kindCounts = mutableMapOf<String, Int>()
-            for (session in byStart) {
-                if (containsKey(session.deviceId)) continue
-                val base = when (session.kind.trim().lowercase()) {
-                    "" -> "Device"
-                    else -> session.kind.trim().lowercase().replaceFirstChar { it.uppercase() }
-                }
-                val n = (kindCounts[base] ?: 0) + 1
-                kindCounts[base] = n
-                put(session.deviceId, if (n == 1) base else "$base $n")
-            }
-        }
+    /** Stable per-install labels — the per-call form's own [deviceLabels], so the two cannot diverge. */
+    private val labelById: Map<String, String> = deviceLabels(byStart)
 
     /** `maxEnd[i]` = the latest end instant among `byStart[0..i]`, so a backward scan knows when to stop. */
     private val maxEnd: LongArray =
@@ -505,6 +511,17 @@ data class PlacedDeviceSegment(
     val endHour: Float,
     val devices: List<String>,
 )
+
+/**
+ * A time of day as the hour-of-day fraction the grid places everything by — **SECONDS INCLUDED**.
+ *
+ * The same rule [recordsForDay] keeps for a record's own bounds, and for the same reason: the zoom ceiling
+ * exists so a 20-second look-away can be seen and hovered (ADR 0002), and at that zoom a minute is well over
+ * a hundred pixels. Reading a time to the minute there does not round it — it moves it, by up to 59 seconds.
+ * The now-line was drawn that way, so everything the calendar places truthfully (a band ending at `now`, the
+ * elapsed part of the panel the now-line sits in) read as being on the wrong side of the line.
+ */
+internal fun LocalTime.hourOfDay(): Float = hour + minute / 60f + second / 3600f
 
 /**
  * PRD §8: the portions of [records] that fall on [day] (in [tz]), each clipped to that day so a
@@ -2992,10 +3009,11 @@ private fun WeekView(
     // wheel turn is a ZOOM on exactly this, and the scroller consults the SAME decision — so one notch can
     // never be read as both a zoom AND a scroll, which is what silently switched the now-line lock off.
     val zoomModifierHeld = remember { mutableStateOf(false) }
-    // How far into today the now-line sits, as a fraction of the day. Deliberately to the MINUTE and not
-    // finer: that is exactly where DayColumn's current-time indicator is drawn, and the lock must centre on
-    // the line the user can see, not on a truer instant a pixel away from it.
-    val nowFraction = (now.hour + now.minute / 60f) / 24f
+    // How far into today the now-line sits, as a fraction of the day. Read to the SECOND, because that is
+    // exactly where DayColumn's current-time indicator is drawn ([hourOfDay]) and the lock must centre on the
+    // line the user can see: at the zoom a 20-second break needs, a minute is hundreds of pixels, so a
+    // minute-resolution fraction would park the line most of a screen away from it.
+    val nowFraction = now.hourOfDay() / 24f
     val nowFractionState = rememberUpdatedState(nowFraction)
     val todayState = rememberUpdatedState(today)
 
@@ -4224,7 +4242,7 @@ private fun DayColumn(
 
         // Current-time indicator (only on today's column).
         if (now != null) {
-            val offsetY = hourHeight * (now.hour + now.minute / 60f)
+            val offsetY = hourHeight * now.hourOfDay()
             Box(
                 modifier = Modifier
                     .offset(y = offsetY)
@@ -4246,11 +4264,10 @@ private fun DayColumn(
         // accumulates on the live now-line, stacked top-down (so it tracks the clock until dealt with). A
         // checked reminder FREEZES at the moment it was checked ([checkedAtMillis]): it neither snaps back to
         // its scheduled slot nor keeps following the now-line. Clicking a tag toggles its checked state.
-        val nowHour = now?.let { it.hour + it.minute / 60f }
+        val nowHour = now?.hourOfDay()
         fun checkedAtHour(tag: PlacedRecord): Float? =
             tag.checkedAtMillis?.let {
-                val t = Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time
-                t.hour + t.minute / 60f
+                Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay()
             }
         fun onNowLine(tag: PlacedRecord) = nowHour != null && !tag.checked && tag.startHour <= nowHour
         // PRD §14: scheduled reminders that fall at the same time — or close enough that their fixed-height
