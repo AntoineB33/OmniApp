@@ -11,6 +11,27 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The dragged screen break drew over the task panel — FIXED 2026-08-29
+
+→ ADR 0003/0001. `shared` (`scheduler/domain/SchedulerDomain.kt`); new case in `SchedulerSchedulerTest`.
+Client rebuild to see it — no Supabase deploy.
+
+Reported anomaly: a 20 s look-away drawn on top of a task panel. `SchedulerDomain.clipPlanForPinnedScreenBreak`
+— the display clip that keeps "a period accepting no task" true between fills — was a **no-op in mode 1**, i.e.
+whenever any device of the account is unlocked.
+
+- **An off-by-one against the half-open dragged period.** Mode 1 leaves the instant $t_p$ itself free, so the
+  period the line drags is `(t_p, t_p + duration]`, which in the app's discrete time starts at `t_p + 1`
+  (`DynamicPeriods.Instance.coveredFromMillis`). The clip's chain walk seeded its cursor at `t_p` and asked
+  for a band with `start <= t_p`, so it never found the one band it exists to cut, returned the plan
+  untouched, and the owed look-away parked at the now-line was drawn straight over the auto panel the fill had
+  placed there. The walk now seeds one millisecond past the line; the transitive hop is unchanged.
+- **Known, still open:** the drag also **re-anchors the 20 s bar at the line**, so every *later* occurrence of
+  that bar slides with the now-line while the materialized plan does not. The clip is scoped to the chain
+  covering the line ("the disturbed slot is the one the cursor is in"), which is why a second overlap can show
+  up one bar ahead until the next re-plan. Reproduced on account 3's state at 2026-08-29 11:50:52: the display
+  grid put a 20 s at 12:11:12 where the stored plan ran `planning` 11:56:00 → 12:13:50.
+
 ### A running timer marks the calendar — SHIPPED 2026-08-29
 
 → ADR 0010. `shared` (`scheduler/domain/TimerDomain.kt`, `ui/CalendarUi.kt`, `ui/AlarmWindow.kt`, `App.kt`);

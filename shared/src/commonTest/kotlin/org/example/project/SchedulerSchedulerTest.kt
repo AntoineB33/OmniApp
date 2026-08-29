@@ -413,6 +413,41 @@ class SchedulerSchedulerTest {
         assertEquals(panels, SchedulerDomain.clipPlanForPinnedScreenBreak(panels, future, now))
     }
 
+    @Test
+    fun the_plan_is_cut_under_the_break_the_now_line_is_DRAGGING() {
+        // `side-dev/README.md` $t_p$ mode 1: the instant $t_p$ itself may not be covered, so the period the
+        // line drags is the half-open `(t_p, t_p + duration]` — which in the app's discrete millisecond time
+        // is the ordinary `[t_p + 1, t_p + duration + 1)` (`DynamicPeriods.Instance.coveredFromMillis`). That
+        // is the ONLY band [SchedulerDomain.clipPlanForPinnedScreenBreak] ever has to cut in mode 1, and the
+        // chain walk used to seed at $t_p$ and ask for `start <= t_p` — one millisecond too early to see it.
+        // So the clip was a no-op for as long as any device stayed unlocked, and the owed look-away parked at
+        // the now-line was drawn over the task panel the fill had placed there (reported 2026-08-29).
+        val now = 1_000_000_000_000L
+        val dragged = TaskPanel(
+            id = "side/0", taskId = null, title = "Eyes",
+            startEpochMillis = now + 1, endEpochMillis = now + 1 + 20_000L, screenBreak = true,
+        )
+        val running = TaskPanel(
+            id = "a", taskId = TaskId("t"), title = "T",
+            startEpochMillis = now - 10 * MIN, endEpochMillis = now + 10 * MIN, auto = true,
+        )
+        val out = SchedulerDomain.clipPlanForPinnedScreenBreak(listOf(running), listOf(dragged), now)
+        assertTrue(
+            out.none {
+                it.startEpochMillis < dragged.endEpochMillis && it.endEpochMillis > dragged.startEpochMillis
+            },
+            "the dragged break must leave no task panel under it: " +
+                out.map { it.startEpochMillis - now to it.endEpochMillis - now },
+        )
+        // The elapsed head runs up to the line — $t_p$ is free, so it ends there, not a break-length earlier —
+        // and the work resumes on the far side under a distinct id.
+        assertEquals(
+            listOf((now - 10 * MIN) to (now + 1), (now + 1 + 20_000L) to (now + 10 * MIN)),
+            out.sortedBy { it.startEpochMillis }.map { it.startEpochMillis to it.endEpochMillis },
+        )
+        assertEquals(2, out.map { it.id }.distinct().size)
+    }
+
 
 
 

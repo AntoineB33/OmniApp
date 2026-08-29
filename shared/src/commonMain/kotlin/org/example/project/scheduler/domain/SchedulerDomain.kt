@@ -2284,13 +2284,24 @@ object SchedulerDomain {
         // How far the break covering the now-line reaches. Walked transitively, because the 5↔15 merge and a
         // look-away re-anchored onto a pose's edge can leave two touching markers: the plan resumes past the
         // last of them, not inside the seam.
+        //
+        // The walk is seeded one millisecond PAST the line, not at it. `side-dev/README.md`'s mode 1 says the
+        // instant $t_p$ itself must stay free, so the period the line drags is the half-open
+        // `(t_p, t_p + duration]` — in the app's discrete time `[t_p + 1, …)`
+        // ([DynamicPeriods.Instance.coveredFromMillis]). Seeded at $t_p$ the walk asks for a band with
+        // `start <= t_p` and the dragged one starts at `t_p + 1`, so it found nothing: in mode 1 — every
+        // moment a device of the account is unlocked, i.e. the ordinary state of the app — this whole
+        // function returned the plan untouched and the parked look-away was drawn straight over the task
+        // panel the fill had placed under it.
         var end = nowMillis
+        var cursor = nowMillis + 1
         while (true) {
             val next = breakPanels
-                .filter { it.startEpochMillis <= end && it.endEpochMillis > end }
+                .filter { it.startEpochMillis <= cursor && it.endEpochMillis > cursor }
                 .maxOfOrNull { it.endEpochMillis } ?: break
             if (next <= end) break
             end = next
+            cursor = next
         }
         if (end <= nowMillis) return panels
         val chain = breakPanels.filter { it.endEpochMillis > nowMillis && it.startEpochMillis < end }
