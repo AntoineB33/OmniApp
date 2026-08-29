@@ -3436,6 +3436,8 @@ private fun WeekView(
                                     records = recordsPerDay[day].orEmpty(),
                                     taskColors = taskColors,
                                     visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
+                                    // The badge below is drawn for every row but the top one.
+                                    showsDayDate = row > 0,
                                     onAddTaskAt = onAddTaskAt,
                                     onAddReminderAt = onAddReminderAt,
                                     onAddNoScreenAt = onAddNoScreenAt,
@@ -3592,6 +3594,12 @@ private fun DayColumn(
      * day, so what is on screen is identical to what an unculled column would show.
      */
     visibleHours: HourWindow,
+    /**
+     * PRD §8: does this column's day boundary carry the in-grid day-date badge ("Mon 12")? True for every
+     * row but the top one, whose date is written in the header above the viewport. It is what a panel
+     * opening at midnight has to write its own label clear of ([panelLabelTopInset]).
+     */
+    showsDayDate: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -4062,6 +4070,13 @@ private fun DayColumn(
                 hoverScope = hoverScope,
                 tz = tz,
                 onEditEntry = onEditEntry,
+                // A block opening at midnight writes its title below the day's own date badge.
+                titleTopInset = panelLabelTopInset(
+                    record.startHour,
+                    hourHeight * (record.endHour - record.startHour),
+                    hourHeight,
+                    showsDayDate,
+                ) ?: 0.dp,
             )
         }
 
@@ -4143,6 +4158,12 @@ private fun DayColumn(
                                 previewColor,
                                 rec.title,
                                 showTitle = idx == 0,
+                                titleTopInset = panelLabelTopInset(
+                                    slice.topHour,
+                                    hourHeight * (slice.bottomHour - slice.topHour),
+                                    hourHeight,
+                                    showsDayDate,
+                                ) ?: 0.dp,
                                 titleColor = previewColor,
                             )
                         }
@@ -4295,7 +4316,9 @@ private fun DayColumn(
                     val slices = sideLayout[key]
                         ?: listOf(PanelSlice(marker.startHour, marker.endHour, xFraction = 0f, widthFraction = 1f))
                     slices.forEach { slice ->
-                        ScreenBreakBand(marker, slice, hourHeight, colWidth, tz, hoverScope, sideUnders)
+                        ScreenBreakBand(
+                            marker, slice, hourHeight, colWidth, tz, hoverScope, sideUnders, showsDayDate,
+                        )
                     }
                 }
             }
@@ -4306,18 +4329,23 @@ private fun DayColumn(
         // interactive (a plain Text Box consumes no pointer events), so the blocks beneath stay clickable.
         (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to "Inactivity" }).forEach { (band, label) ->
             if (!onScreen(band.startHour, band.endHour)) return@forEach
+            val height = hourHeight * (band.endHour - band.startHour)
+            // A band opening at midnight would write its name straight over the day's own date. It is
+            // pushed below the badge instead — and dropped where the band is too short to hold it there
+            // (the zoom brings it back). See [panelLabelTopInset].
+            val inset = panelLabelTopInset(band.startHour, height, hourHeight, showsDayDate) ?: return@forEach
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .offset(y = hourHeight * band.startHour)
-                    .height(hourHeight * (band.endHour - band.startHour)),
+                    .height(height),
                 contentAlignment = Alignment.TopCenter,
             ) {
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,
                     color = CalColors.muted,
-                    modifier = Modifier.padding(top = 2.dp),
+                    modifier = Modifier.padding(top = inset + 2.dp),
                 )
             }
         }
@@ -4354,6 +4382,45 @@ private val SCREEN_BREAK_MIN_HEIGHT = 2.dp
 private val SCREEN_BREAK_LABEL_MIN_HEIGHT = 16.dp
 
 /**
+ * PRD §8: the vertical zone the in-grid day-date badge ("Mon 12") claims at the top of every day boundary
+ * scrolled into view — its own 2.dp offset plus one line of `labelSmall` and its padding.
+ *
+ * No panel may write its own label into that zone. The badge and the label of a panel that opens AT
+ * midnight are two texts at the same point, and they were simply drawn over each other — a full-day
+ * "Inactivity" band under the date it opens was the reported case. Two overlapping texts name nothing, so
+ * the panel's label is what gives way ([panelLabelTopInset]), exactly as a screen break's name gives way
+ * to the band's true height: written BELOW the badge where the panel has the room for it, and not written
+ * at all where it has not — the zoom is what grows the panel until it does.
+ */
+private val DAY_DATE_BADGE_HEIGHT = 18.dp
+
+/**
+ * PRD §8: where a panel's own top label goes, given the panel's [startHour] in the day and its
+ * [renderedHeight] — an inset from the panel's top, or `null` for "there is no room: draw no label".
+ *
+ * `0.dp` for everything that starts clear of the day-date badge, which is almost everything: only a panel
+ * opening within [DAY_DATE_BADGE_HEIGHT] of midnight is inset at all, and that is the one case the two
+ * texts collide in. A panel that must be inset needs the room for a whole label line BELOW the badge
+ * ([SCREEN_BREAK_LABEL_MIN_HEIGHT]) — a big band therefore names itself under the date, a short one names
+ * itself only once the zoom has made it tall enough. Never the other way round: the badge is not moved and
+ * no panel is stretched to hold its own name.
+ *
+ * [showsDayDate] is false for the grid's TOP row, whose date is written in the header above the viewport
+ * and so overlaps nothing.
+ */
+private fun panelLabelTopInset(
+    startHour: Float,
+    renderedHeight: Dp,
+    hourHeight: Dp,
+    showsDayDate: Boolean,
+): Dp? {
+    if (!showsDayDate) return 0.dp
+    val inset = DAY_DATE_BADGE_HEIGHT - hourHeight * startHour
+    if (inset <= 0.dp) return 0.dp
+    return if (renderedHeight >= inset + SCREEN_BREAK_LABEL_MIN_HEIGHT) inset else null
+}
+
+/**
  * PRD §15 Screen break, rendered as a real time-positioned band (one [overlapLayout] slice of it) spanning its
  * TRUE duration, down to a hairline ([SCREEN_BREAK_MIN_HEIGHT]) — never stretched to hold anything. A band
  * drawn taller than the break lasts overlaps the task panel it abuts, which is exactly what the user sees as
@@ -4375,6 +4442,8 @@ private fun ScreenBreakBand(
     hoverScope: CalendarTitleHoverScope,
     /** PRD §8: the bubble sections stacked under this (topmost) band's own — see the caller's [sideUnders]. */
     underOverlays: List<BubbleOverlay>,
+    /** PRD §8: does this column's day boundary carry the day-date badge? See [panelLabelTopInset]. */
+    showsDayDate: Boolean,
 ) {
     val height = (hourHeight * (slice.bottomHour - slice.topHour)).coerceAtLeast(SCREEN_BREAK_MIN_HEIGHT)
     val timeRange = "${formatHm(marker.fullStartMillis, tz)} – ${formatHm(marker.fullEndMillis, tz)}"
@@ -4384,9 +4453,14 @@ private fun ScreenBreakBand(
             .width(colWidth * slice.widthFraction)
             .height(height),
     ) {
+        // A break falling at midnight has the day's own date written where its name goes, so the name is
+        // inset below the badge — and dropped when the band has no room for it there, which is the same
+        // answer, by the same rule, as a band too short to hold the name at all.
+        val labelInset = panelLabelTopInset(slice.topHour, height, hourHeight, showsDayDate)
         ScreenBreakSegment(
             title = marker.title,
-            showTitle = height >= SCREEN_BREAK_LABEL_MIN_HEIGHT,
+            showTitle = labelInset != null && height >= labelInset + SCREEN_BREAK_LABEL_MIN_HEIGHT,
+            titleTopInset = labelInset ?: 0.dp,
             modifier = Modifier.fillMaxWidth().height(height),
         )
         // PRD §8: tiled by whatever else covers each sub-range (see [bubbleHoverZones]), so the bubble
@@ -4440,6 +4514,8 @@ private fun ScreenBreakBand(
 private fun ScreenBreakSegment(
     title: String,
     showTitle: Boolean,
+    /** PRD §8: how far below the band's top the name is written — see [panelLabelTopInset]. */
+    titleTopInset: Dp,
     modifier: Modifier,
 ) {
     Box(
@@ -4453,7 +4529,7 @@ private fun ScreenBreakSegment(
                 color = CalColors.muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 4.dp),
+                modifier = Modifier.padding(horizontal = 4.dp).padding(top = titleTopInset),
             )
         }
     }
@@ -4794,6 +4870,8 @@ private fun CalendarBlock(
     hoverScope: CalendarTitleHoverScope,
     tz: TimeZone,
     onEditEntry: (PlacedRecord) -> Unit,
+    /** PRD §8: how far below its top this block writes its title — see [panelLabelTopInset]. */
+    titleTopInset: Dp = 0.dp,
 ) {
     val key = calendarBlockKey(record)
     // Read inside the long-lived gesture closure so a mid-drag `O` toggle is picked up immediately.
@@ -4963,6 +5041,7 @@ private fun CalendarBlock(
                         color,
                         record.title,
                         showTitle = isFirst,
+                        titleTopInset = titleTopInset,
                         hatched = record.noScreen,
                         titleColor = taskColor ?: CalColors.event,
                     )
@@ -5133,6 +5212,12 @@ private fun CalendarBlockBody(
     color: Color,
     title: String,
     showTitle: Boolean,
+    /**
+     * PRD §8: how far below the block's top its title is written — non-zero only for a block that opens at
+     * midnight, whose title would otherwise be drawn over the day's own date badge ([panelLabelTopInset]).
+     * A block clips its own content, so a block with no room for the inset title simply shows none.
+     */
+    titleTopInset: Dp = 0.dp,
     hatched: Boolean = false,
     /**
      * PRD §8: the colour of the title written on the block. Its own [color] for a task panel — so the words
@@ -5160,7 +5245,8 @@ private fun CalendarBlockBody(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 3.dp, vertical = 1.dp),
+                    .padding(horizontal = 3.dp, vertical = 1.dp)
+                    .padding(top = titleTopInset),
             )
         }
     }

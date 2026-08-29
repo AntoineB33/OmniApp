@@ -367,6 +367,14 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   band's floor is a hairline (`SCREEN_BREAK_MIN_HEIGHT`) and the NAME is what gives way: it is drawn only where
   the rendered band is at least one label line tall (`SCREEN_BREAK_LABEL_MIN_HEIGHT`). Which of the three a band
   is, is the only thing its name says, and the hover bubble still says it at any height the cursor can reach.
+- **No two texts share a point: the PANEL's label is what gives way to the DAY'S DATE.** Every day boundary
+  scrolled into the grid is named by its own badge ("Sat 30"), so a panel opening at midnight would write its
+  label into that same corner. `panelLabelTopInset` is the one answer, and it is the band rule above by
+  another route: the badge is never moved and no panel is ever stretched — a panel starting within
+  `DAY_DATE_BADGE_HEIGHT` of midnight writes its label BELOW the badge where it has a whole label line of
+  room there, and writes none where it has not, the zoom being what brings a short one back. It is applied
+  by the grey bands, the screen-break bands and the task panels alike; the grid's TOP row passes
+  `showsDayDate = false`, its date being written in the header above the viewport.
 - **The ZOOM is the other half of that rule.** A 20-s look-away is 0.27 dp tall at zoom 1f, so the in-bound
   (`MAX_CALENDAR_ZOOM`) must be high enough to bring the shortest of the three over a label line and under a
   cursor — that is what the ceiling is for, and it is why the band may be left un-named at an ordinary zoom.

@@ -11,6 +11,23 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A panel's label was written over the day's date — FIXED 2026-08-29
+
+→ ADR 0002. `shared` (`ui/CalendarUi.kt`). Client rebuild to see it — no Supabase deploy.
+
+Reported anomaly: the in-grid day-date badge ("Sat 30", drawn at every day boundary scrolled into view)
+and the "Inactivity" label of the big band opening at that boundary were two texts drawn at the same
+point, on top of each other.
+
+- **The panel's label gives way, the badge does not move and no panel is stretched** — the same rule the
+  short screen-break band already followed for its own name (`SCREEN_BREAK_LABEL_MIN_HEIGHT`). A panel
+  opening within `DAY_DATE_BADGE_HEIGHT` of midnight writes its label BELOW the badge where it has the room
+  for a whole label line there, and writes none where it has not: the zoom is what grows a short panel until
+  it names itself, exactly as it is for a 20-second look-away.
+- `panelLabelTopInset` is the one place that answers it, applied by the grey bands ("Sleep"/"Inactivity"),
+  the screen-break bands and the task panels alike; `showsDayDate` is false for the grid's top row, whose
+  date is written in the header above the viewport and overlaps nothing.
+
 ### The dragged screen break drew over the task panel — FIXED 2026-08-29
 
 → ADR 0003/0001. `shared` (`scheduler/domain/SchedulerDomain.kt`); new case in `SchedulerSchedulerTest`.
