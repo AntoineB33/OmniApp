@@ -13,6 +13,9 @@ import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
+import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.state.SchedulerReducer
+import org.example.project.scheduler.state.SchedulerState
 
 /**
  * `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive Period*: **where the 20 s, the 5 min and the 15 min
@@ -365,6 +368,128 @@ class DynamicPeriodsTest {
         assertTrue(
             away.none { it.title == SchedulerDomain.AWAY_PANEL_TITLE },
             "the live pause already covers t_p, so mode 2 adds nothing",
+        )
+    }
+
+    // ----- what the DEVICES observed is a rest stretch too ---------------------------------------
+
+    @Test
+    fun a_pause_the_devices_observed_bars_the_5min_period_for_an_hour() {
+        // The reported anomaly (2026-08-29): both layers said "nobody unlocked" from 12:15 to 12:28 and a
+        // 5-minute pose was owed at 12:40, thirteen minutes into the hour the README bars it in.
+        //
+        // A rest stretch is read out of the TIMELINE, so a pause has to be on the timeline. The live gap only
+        // ever holds the pause this device is in the middle of (and a restart clears even that), so a pause
+        // that has ENDED left no mark at all and the bars went on counting from the last recorded break.
+        //
+        // The window is anchored on the baseline's own answer so the assertion cannot go vacuous: the rest is
+        // placed to end ten minutes before the 5-min pose the bars would otherwise put there.
+        val baselineFirst5 = starts(place(), pose5).minOrNull()
+        assertTrue(baselineFirst5 != null, "the 5 min period must appear at all")
+        val restEnd = NOW + baselineFirst5 - 10 * MIN
+        val restStart = restEnd - 13 * MIN
+        val observed = listOf(TaskTimeRange(restStart, restEnd))
+
+        // The baseline really does put a pose inside the barred hour - that IS the anomaly.
+        assertTrue(
+            starts(place(), pose5).any { NOW + it >= restEnd && NOW + it < restEnd + HOUR },
+            "the scenario must contain the pose the rest is supposed to bar",
+        )
+
+        val periods = SchedulerDomain.observedNoScreenPeriods(observed)
+        assertEquals(1, periods.size)
+        assertEquals(PeriodKinds.NO_SCREEN, periods.single().kind)
+
+        // An ordinary on-screen task: a 0 against "no on-screen task" is what "on screen" IS.
+        val onScreen = listOf(PlanTask(TaskId("task/user/0"), 1.0, 15 * MIN, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
+        val barred = place(periods = periods, tasks = onScreen)
+        val offending = starts(barred, pose5).filter { NOW + it >= restEnd && NOW + it < restEnd + HOUR }
+        assertTrue(
+            offending.isEmpty(),
+            "a 13-minute observed pause must bar the 5 min period for an hour after it; " +
+                "got one at ${offending.firstOrNull()?.div(60000)}min",
+        )
+    }
+
+    @Test
+    fun an_observed_pause_is_no_on_screen_task_so_an_off_screen_task_keeps_it_from_being_a_rest() {
+        // The evidence says nobody was at a SCREEN, and that is all it says - which is why the period's kind
+        // is `no on-screen task` and not `no task allowed`. The README's clause takes all three of its parts:
+        // *covered by "no on-screen task"* **without any task**. A task that may run off a screen could have
+        // been working straight through it, so the stretch is correctly not a rest on such an account.
+        val baselineFirst5 = starts(place(), pose5).minOrNull()
+        assertTrue(baselineFirst5 != null)
+        val restEnd = NOW + baselineFirst5 - 10 * MIN
+        val periods = SchedulerDomain.observedNoScreenPeriods(listOf(TaskTimeRange(restEnd - 13 * MIN, restEnd)))
+
+        val onScreen = listOf(PlanTask(TaskId("task/user/0"), 1.0, 15 * MIN, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
+        // No override at all = resilience 1 to every kind but `no task allowed`: an off-screen task.
+        val offScreen = listOf(PlanTask(TaskId("task/user/1"), 1.0, 15 * MIN))
+
+        assertEquals(
+            starts(place(tasks = offScreen), pose5),
+            starts(place(periods = periods, tasks = offScreen), pose5),
+            "somebody could have been working there, so it bars nothing",
+        )
+        assertTrue(
+            starts(place(periods = periods, tasks = onScreen), pose5) !=
+                starts(place(tasks = onScreen), pose5),
+            "with only on-screen tasks the same stretch IS a rest",
+        )
+    }
+
+    @Test
+    fun the_fill_is_handed_what_the_devices_observed() {
+        // The wiring, at the level the app actually runs at. `fillSchedule` assembles the bars' environment
+        // itself (out of the panels it is keeping), so an observed pause has to reach it as a parameter or
+        // everything above is unreachable from the running app - which is exactly what shipped.
+        var state = SchedulerState.empty()
+        state =
+            SchedulerReducer.reduce(
+                state,
+                SchedulerIntent.SetCellTitle(state.lists[state.rootListId]!!.cellIds[0], "Screen work"),
+            )
+        state = state.copy(screenBreaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS)
+
+        fun poses(evidence: List<TaskTimeRange>) =
+            SchedulerDomain.fillSchedule(
+                state, NOW, horizonMillis = NOW + 6 * HOUR, noScreenEvidence = evidence,
+            ).filter { it.title == pose5 }.map { it.startEpochMillis }
+
+        val baselineFirst = poses(emptyList()).minOrNull()
+        assertTrue(baselineFirst != null, "the fill must place a 5 min pose to be about")
+        val restEnd = baselineFirst - 10 * MIN
+        val observed = listOf(TaskTimeRange(restEnd - 13 * MIN, restEnd))
+        assertTrue(
+            poses(observed).none { it >= restEnd && it < restEnd + HOUR },
+            "the fill must bar the 5 min pose for an hour after a pause the devices observed",
+        )
+    }
+
+    @Test
+    fun the_placement_environment_is_assembled_in_one_place() {
+        // `dynamicPeriodBase` is the one funnel: the standing periods a set of panels holds, the live pause,
+        // and what the devices observed. The fill, the cue sweep, the published pause-cue due and the calendar
+        // all ask through it - asked three different ways they would answer three different timelines, and the
+        // app would announce a break at an instant the calendar does not draw one at.
+        val drawn =
+            TaskPanel(
+                id = "p1", taskId = null, title = "Inactivity",
+                startEpochMillis = NOW - 4 * HOUR, endEpochMillis = NOW - 3 * HOUR,
+                inactivity = true, periodKind = PeriodKinds.NO_TASK,
+            )
+        val base =
+            SchedulerDomain.dynamicPeriodBase(
+                panels = listOf(drawn),
+                liveRest = SchedulerDomain.LiveRest(TaskTimeRange(NOW - 10 * MIN, NOW), ongoing = true),
+                noScreenEvidence = listOf(TaskTimeRange(NOW - 2 * HOUR, NOW - 90 * MIN)),
+            )
+        assertEquals(3, base.size, "one period per source, and none of the three dropped")
+        assertTrue(base.any { it.startMillis == NOW - 4 * HOUR }, "the panel the user drew")
+        assertTrue(base.any { it.covers(NOW) }, "the live pause, covering the line")
+        assertTrue(
+            base.any { it.startMillis == NOW - 2 * HOUR && it.kind == PeriodKinds.NO_SCREEN },
+            "what the devices observed",
         )
     }
 }

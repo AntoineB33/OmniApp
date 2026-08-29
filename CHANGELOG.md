@@ -11,6 +11,36 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An observed pause barred no screen break — FIXED 2026-08-29
+
+→ ADR 0003. `shared` (`scheduler/domain/SchedulerDomain.kt`, `scheduler/engine/SchedulerEngine.kt`,
+`scheduler/state/SchedulerReducer.kt`, `App.kt`). Client rebuild to see it — no Supabase deploy.
+
+Reported anomaly: both calendar layers said nobody was unlocked from 12:15 to 12:28, and a **5-minute pose
+was owed at 12:40** — thirteen minutes into the hour `side-dev/README.md` bars it in (*"after any ≥ 5-minute
+stretch covered by 'no on-screen task' without any task, no 5min period in the next 1 hour"*).
+
+- Cause: the recurrence bars read their rest stretches out of the **timeline** (ADR 0003 — there is no stored
+  `lastRest`), and only two things ever put a pause on that timeline: a period the user drew, and
+  `liveRestPeriod` — the pause **this device is in the middle of**, off `inactiveSince`/`activeSince`. A pause
+  that had *ended* was in neither: a derive retires the live tail, and the 12:38 restart cleared it outright.
+  So the bars walked a timeline in which the user had been at the screen without interruption since the
+  placement origin.
+- Fix: **what the devices observed is the third source**, `SchedulerDomain.observedNoScreenPeriods` over the
+  `observedNoScreenRegions` the §9 record bank and the calendar's panel clipping already read — one reading of
+  "nobody was at a screen here", now with three consumers instead of two. The kind is `no on-screen task`, not
+  `no task allowed`: that is the whole of what the evidence says, so an account with an off-screen task
+  correctly gets no rest stretch out of the same span.
+- `SchedulerDomain.dynamicPeriodBase` is the one funnel the three parts are assembled in, and the **cue sweep,
+  the published pause-cue due and the calendar now go through it too** — they asked with
+  `restrictivePeriodsOf(state.panels)` alone, so the instant the app announced a break at and the instant the
+  fill placed one at were answers to two different timelines.
+- `SchedulerEngine.noScreenEvidence` exposes the engine's single cached scan (24 h window, coarse bucket, off
+  the tick — ADR 0009) so the display shares it rather than deriving a second answer.
+- Pinned by `DynamicPeriodsTest`: the observed pause bars the 5 min period for an hour, an off-screen task
+  keeps the same span from being a rest, `fillSchedule` is actually handed the evidence, and the funnel
+  carries all three sources.
+
 ### A ring lasts 3 s by default — CHANGED 2026-08-29
 
 → ADR 0010. `shared` (`scheduler/model/TaskModels.kt`). Client rebuild — no Supabase deploy.

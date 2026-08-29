@@ -230,6 +230,21 @@ identifiers, persisted keys.
   "a pause re-anchors shorter pauses", no decoupled-pose special case. Every one of those said "a rest bars
   the breaks that follow it", which the bars say once — and the rests are read out of the timeline itself, so
   a live pause reaches the placement as the period it is (`liveRestPeriod`) rather than as an anchor overlay.
+- **A rest has to BE on the timeline for the bars to see it, and there are exactly THREE ways it gets there**
+  — `SchedulerDomain.dynamicPeriodBase`, the one funnel every caller asks through: the standing periods a
+  set of panels holds (`restrictivePeriodsOf` — what the user drew, the §17 sleep windows, a break the app
+  conducted), the pause this device is living through **right now** (`liveRestPeriod`), and **what the devices
+  OBSERVED** (`observedNoScreenPeriods` over `SchedulerReducer.noScreenEvidence`). The third was missing until
+  2026-08-29 and its absence is invisible from any one of the others: the live gap only ever holds the pause
+  this device is in the middle of, a derive retires it and a restart clears it, so a pause that had simply
+  **ended** left no mark at all and the bars went on counting from the last recorded break. It is
+  `PeriodKinds.NO_SCREEN`, because "nobody was at a screen" is the whole of what the evidence says — which is
+  also why an account with an off-screen task correctly gets no rest stretch out of it (the README's clause is
+  *covered by "no on-screen task"* **without any task**).
+- **The cue sweep, the published pause-cue due and the calendar ask through that same funnel.** They read
+  `restrictivePeriodsOf(state.panels)` alone until 2026-08-29, so the instant the app ANNOUNCED a break at and
+  the instant the fill PLACED one at were answers to two different timelines — the drift the whole due/place
+  split exists to remove.
 - **A break has a DUE and a PLACE, and only the due is a boundary.** The due is where the recurrence bars put
   it — a fixed instant derived from the rules, crossed once, and the only thing a trigger may key on
   (`screenBreakOccurrencesBetween`, `dynamicPeriodPanels`' `atLine = false`). Where the period *sits* is the

@@ -337,6 +337,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val activeSessions by engine.activeSessions.collectAsState()
         // PRD §15: whether the user declared they are away from THIS device (left-menu "I'm away" button).
         val userAway by engine.userAway.collectAsState()
+        // `side-dev/README.md` § *3 Dynamic Restrictive Period*: what the DEVICES observed about whether
+        // anybody was at a screen — the engine's ONE cached reading, the same value the reducer's fills and
+        // the cue sweep are given. It reaches the recurrence bars below as the restrictive periods it is
+        // ([SchedulerDomain.observedNoScreenPeriods]), so a pause that has ENDED still bars the breaks the
+        // README says it does. The display's own wider-window copy further down is for the panel clipping and
+        // the hatching, which are asked over the whole scrolled span; the bars deliberately share the engine's,
+        // or the calendar would draw a break at an instant the app does not announce one at.
+        val observedNoScreenEvidence by engine.noScreenEvidence.collectAsState()
         // `side-dev/README.md` § *$t_p$ 2 modes*: mode 1 while a device of the account is unlocked, mode 2
         // otherwise. The SAME reading the reducer's fills use (`SchedulerReducer.tpMode`, injected by the
         // engine over these three flows) — the display and the plan must not answer it differently, or the
@@ -567,6 +575,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 withContext(Dispatchers.Default) {
                     SchedulerDomain.fillSchedule(
                         schedulerState, nowMillis, timeZone = tz, horizonMillis = visibleSpanEndMillis,
+                        noScreenEvidence = observedNoScreenEvidence,
                     )
                 }
             farWeekPlan = fill
@@ -619,6 +628,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
                     ),
                 ) +
+                // ...and a pause that has already ENDED reaches them the same way, off what the devices
+                // observed — the live gap covers only the one this device is in the middle of, and a restart
+                // clears even that.
+                SchedulerDomain.observedNoScreenPeriods(observedNoScreenEvidence) +
                 SchedulerDomain.sleepRegions(
                     schedulerState.sleep,
                     visibleSpanStartMillis - SchedulerDomain.DYNAMIC_PLACEMENT_LOOKBACK_MILLIS,

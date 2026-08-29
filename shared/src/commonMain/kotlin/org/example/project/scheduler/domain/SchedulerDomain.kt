@@ -1661,6 +1661,68 @@ object SchedulerDomain {
     }
 
     /**
+     * `side-dev/README.md` § *3 Dynamic Restrictive Period*: **what the devices OBSERVED, as restrictive
+     * periods** — the third of the three ways a pause reaches the recurrence bars, and the one that was
+     * missing.
+     *
+     * A rest stretch is read out of the timeline itself (ADR 0003: there is no stored `lastRest` any more),
+     * so a pause has to BE on the timeline for the bars to see it at all. Two routes put it there and both
+     * are narrow: a period the user drew by hand, and the pause **this device is living through right now**
+     * ([liveRestPeriod], off `inactiveSince`/`activeSince`). Neither covers a pause that has simply *ended* —
+     * a derive retires the live tail, and a restart clears it outright — so a quarter of an hour away from
+     * every device left no mark on the placement whatsoever. The bars went on counting from the last
+     * *recorded* break, which is why a 5-minute pose fell due well inside the hour the README bars it in
+     * (observed 2026-08-29: both layers locked 12:15–12:28, a 5-min pose owed at 12:40 instead of 13:28).
+     *
+     * [regions] is [observedNoScreenRegions] — both calendar layers' OS lock/standby evidence intersected —
+     * so the placement, the §9 record bank and the calendar's panel clipping are all answering the same
+     * reading of "nobody was at a screen here" and cannot drift apart.
+     *
+     * The kind is [PeriodKinds.NO_SCREEN] and not [PeriodKinds.NO_TASK], because that is exactly what the
+     * evidence says: nobody was at a SCREEN. An off-screen task may legitimately have run there (§9 exempts
+     * one from the record ban for that very reason), and the README's clause is *"covered by the period 'no
+     * on-screen task' **without any task**"* — so the stretch is a rest on an account whose tasks are all
+     * on-screen, and correctly is not one where somebody could have been working through it.
+     *
+     * Nothing here is stored, drawn or synced: it is derived evidence handed to a placement, like the live
+     * pause beside it.
+     */
+    fun observedNoScreenPeriods(regions: List<TaskTimeRange>): List<RestrictivePeriod> =
+        regions.mapNotNull { region ->
+            if (region.endEpochMillis <= region.startEpochMillis) {
+                null
+            } else {
+                RestrictivePeriod(
+                    startMillis = region.startEpochMillis,
+                    endMillis = region.endEpochMillis,
+                    kind = PeriodKinds.NO_SCREEN,
+                    label = "Inactivity",
+                )
+            }
+        }
+
+    /**
+     * `side-dev/README.md` § *3 Dynamic Restrictive Period*: **the environment the three are placed over**,
+     * assembled once.
+     *
+     * The bars are a walk over the timeline, so two callers handed two different timelines get two different
+     * grids — and the app would then announce a break at an instant the calendar does not draw one at, which
+     * is the drift the whole due/place split exists to remove. So there is one funnel: the standing periods a
+     * set of panels holds ([restrictivePeriodsOf]), the live pause ([liveRestPeriod]) and what the devices
+     * observed ([observedNoScreenPeriods]). The cue sweep, the pause cue's published due and the calendar's
+     * display all ask through here; [fillSchedule] builds the same three parts out of the panels it is
+     * keeping, plus the §17 sleep windows it is about to place.
+     */
+    fun dynamicPeriodBase(
+        panels: List<TaskPanel>,
+        liveRest: LiveRest? = null,
+        noScreenEvidence: List<TaskTimeRange> = emptyList(),
+    ): List<RestrictivePeriod> =
+        restrictivePeriodsOf(panels) +
+            listOfNotNull(liveRestPeriod(liveRest)) +
+            observedNoScreenPeriods(noScreenEvidence)
+
+    /**
      * `side-dev/README.md` § *$t_p$ 2 modes* — **which mode the line is in**, and the one place it is decided.
      *
      * The rule is the user's: mode 1 while ANY device of the account is unlocked, mode 2 otherwise. It is not
@@ -2727,6 +2789,11 @@ object SchedulerDomain {
         // restrictive period it is ([liveRestPeriod]), so the grid moves with a pause the derives have not
         // banked yet — and nothing is stored.
         liveRest: LiveRest? = null,
+        // What the DEVICES observed about whether anybody was at a screen ([observedNoScreenRegions], through
+        // `SchedulerReducer.noScreenEvidence`). Handed to the recurrence bars as the restrictive periods it is
+        // ([observedNoScreenPeriods]), so a pause the app was not watching from the inside — one that ended, one
+        // a derive has retired, anything at all before a restart — still bars the breaks the README says it does.
+        noScreenEvidence: List<TaskTimeRange> = emptyList(),
         // The instant to materialize the plan out to — **the horizon follows what is displayed**, never a
         // fixed 168h. Live callers pass [scheduleHorizonEndMillis] of the focused week (the reducer, via
         // `SchedulerReducer.scheduleHorizonEndMillis`), so staying on the current week computes only that
@@ -2808,8 +2875,10 @@ object SchedulerDomain {
         //
         // They are placed by the recurrence bars ([DynamicPeriods]) over the environment they interrupt, so
         // the environment has to be built first: the standing restrictive periods (the user's own, the §17
-        // sleep windows) reaching back one lookback behind the now-line, and the pre-placed task blocks —
-        // a pre-placed task IS a task, so an hour of it is not a rest and bars nothing.
+        // sleep windows) reaching back one lookback behind the now-line, the live pause and what the devices
+        // OBSERVED behind the line, and the pre-placed task blocks — a pre-placed task IS a task, so an hour of
+        // it is not a rest and bars nothing. It is [dynamicPeriodBase]'s three parts, built out of the panels
+        // this fill is keeping rather than out of `state.panels`.
         //
         // Bounded by THIS fill's [horizon], not by the fixed 168h default: a fill for a short horizon must
         // not project a week of breaks it will then carry in `panels`, and a DISPLAY fill for a far week
@@ -2819,7 +2888,7 @@ object SchedulerDomain {
                 val kind = panel.restrictiveKind
                 if (kind.isEmpty()) null
                 else RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, kind, panel.title)
-            } + listOfNotNull(liveRestPeriod(liveRest))
+            } + listOfNotNull(liveRestPeriod(liveRest)) + observedNoScreenPeriods(noScreenEvidence)
         val dynamicBlocks =
             kept.asSequence()
                 .filter { it.taskId != null && !it.chore && !it.isRestrictivePeriod }

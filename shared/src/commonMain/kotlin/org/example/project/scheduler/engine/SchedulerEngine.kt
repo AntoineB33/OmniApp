@@ -378,6 +378,18 @@ class SchedulerEngine(
     // Derived, device-level and local: never persisted, never synced, never part of any fingerprint.
     private val _noScreenEvidence = MutableStateFlow<List<TaskTimeRange>>(emptyList())
 
+    /**
+     * The stretches the devices observed nobody at a screen for — the ONE reading of it in the app.
+     *
+     * `side-dev/README.md` § *3 Dynamic Restrictive Period*: the recurrence bars read their rest stretches out
+     * of the timeline, so this evidence is part of the timeline they are asked about
+     * ([SchedulerDomain.observedNoScreenPeriods]). It reaches the fill through
+     * [SchedulerReducer.noScreenEvidence], the cue sweep and the published due through the call sites below,
+     * and the calendar through this flow — one cached answer, so none of them can place a break on a different
+     * timeline from the others.
+     */
+    val noScreenEvidence: StateFlow<List<TaskTimeRange>> = _noScreenEvidence.asStateFlow()
+
     private val _inactiveSince = MutableStateFlow<Long?>(null)
 
     /** End of this device's last finalized session — the live "Inactivity" tail's start (null = none pending). */
@@ -1214,7 +1226,7 @@ class SchedulerEngine(
         val dues = restPoseDueMillisByKey(
             screenBreaks = st.screenBreaks,
             nowMillis = now,
-            basePeriods = SchedulerDomain.restrictivePeriodsOf(st.panels),
+            basePeriods = dynamicPeriodBaseNow(st),
             tasks = SchedulerDomain.planTasksOf(st, now),
         )
         presence.setNextBreak(
@@ -1378,6 +1390,24 @@ class SchedulerEngine(
         if (vm.state.value.automaticSchedule) vm.dispatch(SchedulerIntent.RefreshSchedule(now))
         else pendingReschedule = true
     }
+
+    /**
+     * `side-dev/README.md` § *3 Dynamic Restrictive Period*: **the environment the three are placed over, as
+     * this engine sees it right now** — the same three parts the reducer's fills are given
+     * ([SchedulerDomain.dynamicPeriodBase]), so the instant the app ANNOUNCES a break at and the instant the
+     * fill places one at are answers to one question.
+     *
+     * Asked without the live pause and the observed evidence — which is what these call sites did until
+     * 2026-08-29 — the bars walk a timeline in which the user has been at the screen without interruption
+     * since the placement origin, and a pose falls due inside the hour a real pause bars it in.
+     */
+    private fun dynamicPeriodBaseNow(state: SchedulerState) =
+        SchedulerDomain.dynamicPeriodBase(
+            panels = state.panels,
+            liveRest =
+                SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, clock.nowMillis()),
+            noScreenEvidence = _noScreenEvidence.value,
+        )
 
     /**
      * `side-dev/README.md` § *$t_p$ 2 modes*: **the mode the now-line is in, right now** — the one reading,
@@ -1696,7 +1726,7 @@ class SchedulerEngine(
                         alreadyNotifiedPoseDues = sidePoseNotifiedDue,
                         fromMillis = scanFloor,
                         toMillis = simNow,
-                        basePeriods = SchedulerDomain.restrictivePeriodsOf(st.panels),
+                        basePeriods = dynamicPeriodBaseNow(st),
                         tasks = SchedulerDomain.planTasksOf(st, simNow),
                     )
 
@@ -1849,7 +1879,7 @@ class SchedulerEngine(
                             screenBreaks = eligible,
                             fromMillis = simNow,
                             toMillis = simNow + SchedulerDomain.NEXT_BREAK_SEARCH_MILLIS,
-                            basePeriods = SchedulerDomain.restrictivePeriodsOf(st.panels),
+                            basePeriods = dynamicPeriodBaseNow(st),
                             tasks = SchedulerDomain.planTasksOf(st, simNow),
                             anchorMillis = simNow,
                         )
