@@ -592,31 +592,38 @@ def verify_frozen_past(case, verbose=True):
     return fails
 
 
-def verify_jump_sweeps_nothing(case, verbose=True):
-    """A click that lands ahead is a JUMP, and a jump sweeps nothing: every
-    dynamic period BELOW the landing point is where the bars put it, none
-    dragged -- because the line was never inside any of them.
+def verify_line_moves_continuously(case, verbose=True):
+    """The line MOVES: every t below it is a position it has already held, so
+    it can never land somewhere it did not travel through.
 
-    A period that begins exactly AT the landing point is the one exception,
-    and it is mode 1 rather than the sweep: the line may not be covered, so
-    that one is pushed off it like any other the line stands on.
+    A click halfway across the test is therefore a journey, not a landing, and
+    it must leave exactly what a four-times-finer sampling of the same journey
+    leaves: the same frozen past, and -- in mode 1, where the line may not be
+    covered -- no dynamic period left standing below it.
     """
     fails = []
     if verbose:
-        print("--- a jump sweeps nothing ---")
-    sched = case.fresh().sched
-    target = sched.t_start + (case.span - sched.t_start) / 2
-    before = sched.planner_at(target).instances(target, 1, sweep_from=target)
-    sched.teleport_to(target, 1)
-    after = sched.planner_at(target).instances(target, 1, sweep_from=sched.sweep_from)
-    below = [i for i in after if i.end <= target]
-    if any(i.open_start for i in below):
-        fails.append("the jump dragged a period")
-    if len(before) != len(after):
-        fails.append("the jump changed where the periods are")
+        print("--- the line moves continuously ---")
+    target = case.sched.t_start + (case.span - case.sched.t_start) / 2
+    one = case.fresh().sched
+    one.advance_to(target, 1)
+
+    fine = case.fresh().sched
+    step = fine._sweep_step()
+    t = fine.t_start
+    while t < target:
+        t = min(target, t + (step / 4 if step else target))
+        fine._commit_at(t, 1)
+
+    below = [i for i in one.planner_at(target).instances(target, 1) if i.start < target]
+    if below:
+        fails.append(f"{len(below)} dynamic period(s) left standing below the line")
+    if not same_timeline(one.committed, fine.committed):
+        fails.append("the route changed the frozen past: one move and a finer "
+                     "sampling of it disagree")
     if verbose:
-        print(f"  landed at {clock(target)}, {len(below)} period(s) standing "
-              f"below it, none dragged")
+        print(f"  travelled to {clock(target)}, {len(one.committed)} placement(s) "
+              f"frozen, nothing left below the line")
         _report(fails)
     return fails
 
@@ -972,7 +979,7 @@ def verify_all(case=None, verbose=True):
     fails += verify_timelines(case, verbose)
     fails += verify_bars(case, verbose)
     fails += verify_frozen_past(case, verbose)
-    fails += verify_jump_sweeps_nothing(case, verbose)
+    fails += verify_line_moves_continuously(case, verbose)
     fails += verify_rules(case, verbose)
     fails += verify_progressive(case, verbose)
     fails += verify_percentages(case, verbose)
@@ -1065,15 +1072,11 @@ class Deriver(threading.Thread):
                 kind, value = self.commands.get_nowait()
             except queue.Empty:
                 return moved
-            if kind == "t_p":                # a drag: the line sweeps
+            if kind == "t_p":                # the line travels, and sweeps
                 target = max(frac(value), sched.t_p)
                 if target != sched.t_p:
                     sched.advance_to(target, self.mode)
                     moved = True
-            elif kind == "jump":             # a click ahead: it sweeps nothing
-                target = max(frac(value), sched.t_p)
-                sched.teleport_to(target, self.mode)
-                moved = True
             elif kind == "mode":
                 self.mode = int(value)
                 sched.advance_to(sched.t_p, self.mode)
@@ -1274,14 +1277,11 @@ class Panel:
     # -- interaction ---------------------------------------------------------
 
     def set_line(self, t_p):
-        """A drag: the line travels, so it sweeps what it passes."""
+        """Move the line. It TRAVELS there -- a click and a drag are the same
+        gesture, because the line has no way of landing somewhere it did not
+        pass through -- so it sweeps everything on the way."""
         if self.deriver:
             self.deriver.send("t_p", frac(t_p))
-
-    def jump(self, t_p):
-        """A click: the line lands somewhere it never travelled through."""
-        if self.deriver:
-            self.deriver.send("jump", frac(t_p))
 
     def set_mode(self, mode):
         self.mode = int(mode)
@@ -1949,8 +1949,9 @@ class Workbench:
         return self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
 
     def _press(self, event):
-        """A press is a JUMP: the line lands where it was clicked without
-        travelling through anything in between, so it sweeps nothing."""
+        """A press MOVES the line to where it was clicked: it travels there
+        through everything in between, sweeping it, because the line has no way
+        of landing somewhere it was never at."""
         x, y = self._canvas_xy(event)
         panel = self._panel_at(x, y)
         if panel is None:
@@ -1958,11 +1959,11 @@ class Workbench:
         panel.play(False)
         self.sync_buttons()
         self._dragging = panel
-        panel.jump(panel.t_of(x))
+        panel.set_line(panel.t_of(x))
 
     def _drag(self, event):
-        """A drag MOVES the line continuously, so it sweeps -- and drags the
-        dynamic period it reaches."""
+        """A drag moves the line the same way a press does -- continuously, so
+        it sweeps, and drags the dynamic period it reaches."""
         x, _y = self._canvas_xy(event)
         if self._dragging is not None:
             self._dragging.set_line(self._dragging.t_of(x))
@@ -2183,12 +2184,12 @@ def main(argv=None):
                 bench.sync_buttons()
 
         def exercise():
-            # the paths a hand would take: flip the mode, jump the line, take a
+            # the paths a hand would take: flip the mode, move the line, take a
             # copy, then edit the test and apply it
             panel = bench.panel
             if panel:
                 panel.set_mode(2)
-                panel.jump(panel.case.span / 2)
+                panel.set_line(panel.case.span / 2)
                 panel.copy()
             bench.editor._choose(preset_names()[1])
             bench.editor._choose(CUSTOM)

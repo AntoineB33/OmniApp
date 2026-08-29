@@ -23,7 +23,10 @@ What the README asks for, and where each clause lives
 * the three dynamic periods and their recurrence bars
                                           -> `DynamicPlanner`
 * the two t_p modes and the chain merge   -> `DynamicPlanner.periods`
-* frozen past                             -> `Scheduler.advance_to`
+* the line moving CONTINUOUSLY            -> `Scheduler.advance_to` (there is
+                                             no jump: a distant position is a
+                                             journey, swept a slot at a time)
+* frozen past                             -> `Scheduler._commit_at`
 * alternative schedules                   -> `Placement.alt`
 * no idling                               -> `Walk.run` (a non-empty candidate
                                              set is always served)
@@ -900,10 +903,10 @@ class DynamicPlanner:
     screen the whole time.
 
     The timeline is taken to START rested: the first 20s may fall one bar
-    after t_pstart, the first 5min one hour after it, the first 15min two
-    hours after it. Placing all three at t_pstart instead would be legal and
-    useless -- the chain merge would collapse them into a single 15-minute
-    period at the origin.
+    after the timeline's own start, the first 5min one hour after it, the
+    first 15min two hours after it. Placing all three at the start instead
+    would be legal and useless -- the chain merge would collapse them into a
+    single 15-minute period at the origin.
     """
 
     def __init__(self, base_env: Environment, specs, dynamics=DEFAULT_DYNAMICS,
@@ -987,17 +990,20 @@ class DynamicPlanner:
 
     # -- placement -----------------------------------------------------------
 
-    def instances(self, t_p, mode=1, sweep_from=None):
+    def instances(self, t_p, mode=1):
         """Where the three periods fall, for this position of the line.
 
-        `sweep_from` is where the line's continuous motion began. It matters
-        because mode 1 DRAGS: a period the line has reached is pushed ahead of
-        it and goes on being pushed, so it never happens at all. A period the
-        line never stood inside -- everything below a teleport's landing point
-        -- is untouched, which is why a jump sweeps nothing.
+        THE LINE MOVES CONTINUOUSLY, so every t <= t_p is a position the line
+        has already held: there is no floor on the sweep and no route to
+        remember. Mode 1 DRAGS -- a period the line reached is pushed ahead of
+        it and goes on being pushed, so it never happens at all -- and since
+        the line has stood everywhere below itself, EVERY slot the bars put
+        below t_p is one it reached. The drag re-anchors the bar at the line,
+        so at most one occurrence per bar is ever swept and the chain merge
+        collapses what piled up; the answer is a function of the position
+        alone, never of how the line got there.
         """
         t_p = frac(t_p)
-        sweep_from = self.t_start if sweep_from is None else frac(sweep_from)
         if not self.dynamics:
             return []
         labels = sorted(self.dynamics, key=lambda l: -self.dynamics[l].duration)
@@ -1037,7 +1043,7 @@ class DynamicPlanner:
             # the line has swept up to is therefore pushed ahead of it, and
             # becomes the half-open (t_p, t_p + duration] -- the line goes on
             # delaying it, placing tasks where it stood.
-            if mode == 1 and sweep_from <= start <= t_p:
+            if mode == 1 and start <= t_p:
                 start, open_start = t_p, True
             inst = Instance(spec, start, open_start)
             out.append(inst)
@@ -1064,9 +1070,9 @@ class DynamicPlanner:
                 out.append(inst)
         return out
 
-    def periods(self, t_p, mode=1, sweep_from=None):
+    def periods(self, t_p, mode=1):
         t_p = frac(t_p)
-        inst = self.instances(t_p, mode, sweep_from)
+        inst = self.instances(t_p, mode)
         out = [p for i in inst for p in i.to_periods()]
         if mode == 2:
             env = self.base_env.with_periods(out)
@@ -1225,7 +1231,6 @@ class Scheduler:
         self.walk_kw = walk_kw
         self.mode = 1
         self.t_p = self.t_start
-        self.sweep_from = self.t_start   # where the line's continuous motion began
         self.committed = []
         self.commit_point = self.t_start
         self.front = self.t_start
@@ -1259,10 +1264,10 @@ class Scheduler:
         return p
 
     def dynamic_periods(self, t_p, mode):
-        key = (frac(t_p), mode, self.sweep_from)
+        key = (frac(t_p), mode)
         out = self._period_cache.get(key)
         if out is None:
-            out = tuple(self.planner_at(t_p).periods(t_p, mode, self.sweep_from))
+            out = tuple(self.planner_at(t_p).periods(t_p, mode))
             if len(self._period_cache) > 4096:
                 self._period_cache.clear()
             self._period_cache[key] = out
@@ -1317,16 +1322,62 @@ class Scheduler:
     # -- the frozen past -----------------------------------------------------
 
     def advance_to(self, t_p, mode=None):
-        """Move the line, committing everything it passes.
+        """Move the line to `t_p`, CONTINUOUSLY, committing everything it passes.
 
-        The past is frozen BY CONSTRUCTION rather than by a check: what is
-        below the line is stored, and every later plan is asked only for the
-        continuation from there.
+        The README's line takes every value below itself on the way, so a
+        caller that asks for a distant position is asking for a journey, not a
+        landing: the line is walked there a slot at a time, freezing what it
+        passes as it passes it. Sampling that motion more coarsely is not the
+        same schedule -- in mode 1 the dragged chain rides
+        immediately ahead of the line, and a stretch planned once with that
+        obstacle parked at the far end is not the stretch the line would have
+        written on its way through.
+
+        THE STEP IS ONE MINIMUM EXECUTION TIME, and that is the whole of the
+        granularity question: the finest thing the walk can place is one task's
+        minimum, so a line that never skips a whole minimum never skips a
+        placement it should have entered. Stepping at that bound reproduces a
+        four-times-finer sampling exactly, on every case here; stepping at
+        twice it does not, on four of the five. Stepping ON the placement edges
+        instead is the tempting alternative and it is wrong: it never freezes a
+        partial slot, and it is ENTERING a placement -- not landing on its
+        edge -- that settles the picks after it.
+
+        An ordinary tick -- a frame, a second -- is far inside the first step
+        and costs exactly one commit, so nothing is spent except where a caller
+        asks the line to cover ground.
         """
         t_p = frac(t_p)
         mode = self.mode if mode is None else mode
         if t_p < self.commit_point - EPS:
             raise ValueError("t_p only ever moves forward")
+        guard = 0
+        while True:
+            guard += 1
+            if guard > 1_000_000:
+                raise RuntimeError("the line did not reach its target")
+            step = self._sweep_step()
+            stop = t_p if step is None else min(t_p, self.t_p + step)
+            self._commit_at(stop, mode)
+            if stop >= t_p:
+                return self.committed
+
+    def _sweep_step(self):
+        """The coarsest step the line may take without skipping a slot: the
+        smallest minimum execution time the rules hold at the line."""
+        mins = [s.min_time for s in self.specs_at(self.t_p) if s.min_time > 0]
+        return min(mins) if mins else None
+
+    def _commit_at(self, t_p, mode):
+        """One step of the journey: draw at this position and freeze the past.
+
+        The past is frozen BY CONSTRUCTION rather than by a check: what is
+        below the line is stored, and every later plan is asked only for the
+        continuation from there. This is the line at ONE position; `advance_to`
+        is the line MOVING, and it is the only thing that should be called from
+        outside -- a caller that steps this one itself is choosing its own
+        sampling of a motion that has none.
+        """
         old_periods = self.dynamic_periods(self.t_p, self.mode)
         drawn = self.timeline(t_p, mode)
         self.committed = clip(drawn, self.t_start, t_p)
@@ -1346,17 +1397,6 @@ class Scheduler:
 
     def set_mode(self, mode):
         return self.advance_to(self.t_p, mode)
-
-    def teleport_to(self, t_p, mode=None):
-        """Test 12's jump: the line lands somewhere it never travelled through,
-        so it sweeps nothing -- the dynamic periods below it are exactly where
-        they were, because the line was never inside any of them."""
-        t_p = frac(t_p)
-        out = self.advance_to(t_p, mode)
-        self.sweep_from = t_p
-        self._period_cache.clear()
-        self._chain, self._chain_key, self.front = [], None, t_p
-        return out
 
     # -- progressive calculation --------------------------------------------
 
@@ -2091,18 +2131,53 @@ def check_many_tasks_share():
 
 
 @check
-def check_teleport_sweeps_nothing():
-    """Test 12's jump: a line that lands somewhere it never travelled through
-    leaves every dynamic period below it exactly where it was."""
-    s = case_three_days()
-    before = s.planner_at(0).instances(DAY, 1, sweep_from=DAY)
-    s.teleport_to(DAY, 1)
-    after = s.planner_at(DAY).instances(DAY, 1, sweep_from=s.sweep_from)
-    below = [i for i in after if i.end <= DAY]
-    require(below, "the first day held no dynamic period at all")
-    require(not any(i.open_start for i in below), "the jump dragged a period")
-    require(len(before) == len(after), "the jump changed the placement")
-    return f"{len(below)} periods still standing in the swept-over day"
+def check_line_moves_continuously():
+    """The README's line: every t <= t_p is a position the line has ALREADY
+    held, so it moves continuously forward and can never land somewhere it did
+    not travel through.
+
+    Two consequences, and together they are the whole of the clause:
+
+    * MODE 1 LEAVES NOTHING BEHIND. The line may not be covered, so a period it
+      reaches is pushed ahead of it -- and it has stood on every instant below
+      itself, so no dynamic period can be left standing below the line. There
+      is no floor on the sweep to be told where the line "started".
+    * THE ROUTE IS NOT A VARIABLE. One move to a position and a four-times
+      finer sampling of the same journey are the same journey, so they must
+      leave the same frozen past.
+
+    The route half is asked of a case with the three dynamic periods and NO two
+    tasks alike: the drag rides an obstacle immediately ahead of the line, which
+    is what makes a coarse move differ in the first place, and tasks that tie
+    would flip on any perturbation and prove nothing either way.
+    """
+    tasks = (task("A", 55, 10, resilience=ON_SCREEN),
+             task("B", 25, 15, resilience=ON_SCREEN),
+             task("C", 20, 20))
+    make = lambda: Scheduler([state(0, tasks)], horizon=6 * HOUR)
+    target = 3 * HOUR
+    step = min(t.min_time for t in tasks)
+
+    one = make()
+    one.advance_to(target, 1)
+
+    fine, t = make(), Fraction(0)
+    while t < target:                       # four stops inside every slot
+        t = min(target, t + step / 4)
+        fine._commit_at(t, 1)
+
+    below = [i for i in one.planner_at(target).instances(target, 1) if i.start < target]
+    require(not below, f"{len(below)} dynamic period(s) left standing below the line")
+    on_line = [i for i in one.planner_at(target).instances(target, 1) if i.start == target]
+    require(on_line, "the swept hours owed nothing at all")
+    require(all(i.open_start for i in on_line),
+            "a period sits ON the line instead of the half-open (t_p, t_p + d]")
+    require(same_timeline(one.committed, fine.committed),
+            f"the route changed the frozen past ({len(one.committed)} placements "
+            f"against {len(fine.committed)})")
+    return (f"one move over {human(target)} = a {human(step / 4)} sampling of it, "
+            f"{len(one.committed)} placements, nothing left below the line")
+
 
 
 # --------------------------------------------------------------------------- #

@@ -2223,8 +2223,10 @@ object SchedulerDomain {
         val base = DynamicPeriods.Base(basePeriods, blocks, tasks)
         val titleOfLabel = dynamicPeriodTitles(screenBreaks)
         val indexOfTitle = screenBreaks.withIndex().associate { (i, side) -> side.title to i }
-        // What the line has SWEPT, which is the whole of mode 1: from $t_{pstart}$ — here the placement
-        // origin — up to the line. Every period whose slot falls in that stretch was reached by the line and
+        // What the line has SWEPT, which is the whole of mode 1: from the placement origin up to the line.
+        // The line moves CONTINUOUSLY, so there is no instant below it that it did not stand on, and the
+        // sweep gets no floor of its own — it starts where the timeline does. Every period whose slot falls
+        // in that stretch was therefore reached by the line and
         // is therefore pushed ahead of it, and the chain merge then collapses the ones that pile up into the
         // longest, exactly as the README says. It is bounded, and that is not an accident: the drag re-anchors
         // each bar at the line, so at most one occurrence per bar can be swept and the merge leaves ONE period
@@ -2325,8 +2327,8 @@ object SchedulerDomain {
     /**
      * `side-dev/README.md`: the three dynamic periods over a window the now-line is NOT in — a week the user
      * has navigated to. Same rules, same engine; the line is taken to be at the window's start, so nothing
-     * there is being dragged (the README's own point about a teleport: a period the line never stood inside
-     * is untouched).
+     * there is being dragged. That is not the line jumping — the line cannot jump — it is asking the bars
+     * where the periods FALL over a window the line is nowhere near.
      */
     fun screenBreakPanelsInWindow(
         screenBreaks: List<ScreenBreak>,

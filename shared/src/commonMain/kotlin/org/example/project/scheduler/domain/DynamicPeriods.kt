@@ -219,9 +219,12 @@ object DynamicPeriods {
     /**
      * Where the three periods fall, for this position of the line.
      *
-     * [sweepFromMillis] is where the line's continuous motion began. It matters because mode 1 **drags**: a
-     * period the line has reached is pushed ahead of it and goes on being pushed, so it never happens at all.
-     * A period the line never stood inside is untouched, which is why a jump sweeps nothing.
+     * [sweepFromMillis] is the floor of the drag. The line itself has no such floor: it moves CONTINUOUSLY,
+     * so every instant below it is one it has already stood on, and the placement path passes the timeline's
+     * own origin — mode 1 **drags**, a period the line reached is pushed ahead of it and goes on being pushed,
+     * so it never happens at all. The floor exists for the callers that are NOT the line: asking where the
+     * bars put a break with nothing dragged (the break's **due**) is `sweepFrom = t_p`, which makes the drag's
+     * condition unsatisfiable. Never read it as the line having jumped — under the README the line cannot.
      */
     fun instances(
         base: Base,
