@@ -164,11 +164,29 @@ is not persisted, not synced, and it schedules nothing. The three transitions di
 than the display now-line, so a timer started at 17:00:00.4 ends five minutes after *that*, not after the
 quantized instant the calendar happens to be drawn against.
 
-### Deliberately not on the calendar
+### On the calendar too — the same marker, one bit apart
 
-An alarm's rings are drawn (above); a timer's are not. An alarm is a fact about the user's week and belongs on it,
-whereas a timer exists only between a start and a ring — a mark for an instant that moves every time the row is
-restarted would say nothing about how the week is spent, and would have to be erased and redrawn on every press.
+*Superseded 2026-08-29.* This originally read "deliberately not on the calendar": an alarm is a fact about the
+user's week, whereas a timer exists only between a start and a ring, so a mark for an instant that moves on every
+press seemed to say nothing about how the week is spent. That is the wrong way round — the thing a running timer
+*is* is an instant it will go off at, and the calendar is where the app says when things go off. So a running
+timer now draws the alarms' marker, and the objection is simply its behaviour: it is there while the timer runs,
+it moves when the row is restarted, and the ring resets the row so nothing is left behind.
+
+It is the alarms' path unchanged, not a second one. `CalendarRecord.alarm` means "this is a ring"; the new
+`CalendarRecord.timer` / `PlacedRecord.timer` beside it says *which sort*, mirroring `ArmedAlarm.timer` — one bit,
+travelling with the record rather than inferred from the `timer-{n}` id, deciding the icon (⏳ against the alarm's
+⏰) and nothing else. Everything the alarm marker already gets is therefore free and cannot drift: the fixed
+height, the stacking sweep, the inertness, and the exclusions from `blockRecords` / `allBlocks` / the drag snap
+set / the task-panel menu entries.
+
+`TimerDomain.occurrencesInWindow` is the projection, bounded by the displayed span like the alarms' (ADR 0009) and
+likewise independent of `now`. It is a *filter*, not a per-day walk: a timer's instant is stored, so it has at most
+one occurrence, and only while it is running — an idle or paused row has no instant to draw at all.
+
+The label falls back to the timer's **duration** where an alarm's falls back to its time of day, each being the
+thing that row is. That spelling is `TimerDomain.formatDuration` / `formatCountdown`, which the Alarms window's own
+countdown column now delegates to, so the marker and the window cannot describe one timer two ways.
 
 ## Tests
 
@@ -177,7 +195,8 @@ restarted would say nothing about how the week is spent, and would have to be er
 - `AlarmEngineTest` — the phone's arming/ring/disarm, and the desktop sweep: it rings on the crossing, exactly once,
   arms no OS alarm, and stays silent for a ring the process was down for.
 - `TimerTest` — the three states and the transitions between them, that only a running timer is due, half-open
-  crossings, the healing of a payload holding both run fields, a pre-timers payload, and that the settings *and*
+  crossings, what the calendar draws (closed-at-the-start display window, running rows only, the duration
+  fallback), the healing of a payload holding both run fields, a pre-timers payload, and that the settings *and*
   the start move the sync fingerprint while counting down moves nothing.
 - `TimerEngineTest` — the join: one OS slot serving both lists (soonest wins, either way round), an idle/paused
   timer arming nothing, the desktop ringing a timer and an alarm in boundary order, and a rung timer resetting.

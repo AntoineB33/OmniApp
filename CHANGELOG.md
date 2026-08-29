@@ -11,6 +11,26 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A running timer marks the calendar — SHIPPED 2026-08-29
+
+→ ADR 0010. `shared` (`scheduler/domain/TimerDomain.kt`, `ui/CalendarUi.kt`, `ui/AlarmWindow.kt`, `App.kt`);
+new cases in `TimerTest`. Client rebuild to see it — no Supabase deploy.
+
+Reverses ADR 0010's *"deliberately not on the calendar"*. A timer's whole content is an instant it will go off
+at, and the calendar is where the app says when things go off.
+
+- **The alarms' marker, one bit apart.** `CalendarRecord.alarm` stays "this is a ring"; the new
+  `CalendarRecord.timer` / `PlacedRecord.timer` beside it says which sort — mirroring `ArmedAlarm.timer`, and
+  deciding the icon (⏳ / ⏰) and nothing else. Everything else the alarm marker has (fixed height, the
+  stacking sweep, inertness, and the exclusions from `blockRecords` / `allBlocks` / the drag snap set / the
+  task-panel menu entries) is inherited rather than re-stated.
+- **Drawn at most once, and only while running.** `TimerDomain.occurrencesInWindow` bounds the projection by
+  the displayed span like the alarms' (ADR 0009) and is a filter, not a per-day walk: the instant is stored,
+  so an idle or paused row has none, and the ring resets the row so nothing is left behind.
+- **A nameless timer is named by its DURATION**, where a nameless alarm falls back to its time of day.
+  `TimerDomain.formatDuration` / `formatCountdown` is that one spelling; the Alarms window's countdown column
+  now delegates to it instead of holding a private copy.
+
 ### The two `t_p` modes, wired through — SHIPPED 2026-08-28
 
 → `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive Period* / ADR 0003. `shared`

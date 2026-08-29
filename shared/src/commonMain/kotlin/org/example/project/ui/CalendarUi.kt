@@ -213,6 +213,13 @@ data class CalendarRecord(
      * everyday alarm draws on each day of the week the calendar shows.
      */
     val alarm: Boolean = false,
+    /**
+     * PRD §18 Timers: set alongside [alarm] when the ring being marked is a TIMER's rather than an alarm's.
+     * It is the same marker on the same path — a timer draws its due instant exactly the way an alarm draws
+     * one — and this bit decides only which of the two the icon says it is, mirroring `ArmedAlarm.timer`,
+     * the one distinguishing bit that travels with an armed ring. Meaningless on its own.
+     */
+    val timer: Boolean = false,
     /** The user's sleep window, drawn as a labeled greyed band behind the task blocks. */
     val sleep: Boolean = false,
     /**
@@ -471,6 +478,8 @@ data class PlacedRecord(
     val screenBreak: Boolean = false,
     /** PRD §18 Alarms: one ring, rendered as a fixed-height marker at [startHour]. See [CalendarRecord.alarm]. */
     val alarm: Boolean = false,
+    /** PRD §18 Timers: this ring is a timer's, not an alarm's. See [CalendarRecord.timer]. */
+    val timer: Boolean = false,
     /** The user's sleep window, rendered as a labeled greyed band over [startHour, endHour]. */
     val sleep: Boolean = false,
     /** PRD §8: a grey period the scheduler places nothing in (hand-added, or a §17 sleep window). */
@@ -553,6 +562,7 @@ fun recordsForDay(
             checkedAtMillis = record.checkedAtMillis,
             screenBreak = record.screenBreak,
             alarm = record.alarm,
+            timer = record.timer,
             sleep = record.sleep,
             inactivity = record.inactivity,
             layer = record.layer,
@@ -4241,10 +4251,11 @@ private fun DayColumn(
             ReminderTag(tag, Modifier.offset(y = y)) { onToggleReminder(tag) }
         }
 
-        // PRD §18 Alarms: each ring of each alarm is drawn at its own instant — a fixed-height marker, since
-        // an alarm has no duration. Unlike a reminder it is never checked off and never follows the now-line:
-        // it is a fixed wall-clock boundary, so a past ring stays where it went off. Alarms falling at (or
-        // within a marker's height of) the same time stack downward, exactly like the reminder tags.
+        // PRD §18 Alarms and Timers: each ring is drawn at its own instant — a fixed-height marker, since a
+        // ring has no duration. Unlike a reminder it is never checked off and never follows the now-line: an
+        // alarm's instant is a fixed wall-clock boundary, so a past ring stays where it went off, and a
+        // running timer's is the absolute instant it was started for. Rings falling at (or within a marker's
+        // height of) the same time stack downward, exactly like the reminder tags.
         var lastAlarmBottom: Dp? = null
         alarmMarkers.sortedBy { it.startHour }.forEach { marker ->
             val naturalY = hourHeight * marker.startHour
@@ -4712,10 +4723,12 @@ private fun ReminderTag(tag: PlacedRecord, modifier: Modifier = Modifier, onClic
 }
 
 /**
- * PRD §18 Alarms: one ring of an alarm on the calendar. Zero duration, so it draws as a fixed-height marker
- * at its instant rather than a height-proportional block, and it is inert — an alarm is not a task, so there
- * is nothing to check off, drag or edit here (the Alarms window owns it). The label falls back to the ring
- * time so a nameless alarm still says what it is.
+ * PRD §18 Alarms and Timers: one ring on the calendar — an alarm's, or (when [PlacedRecord.timer] is set) a
+ * running timer's. Zero duration, so it draws as a fixed-height marker at its instant rather than a
+ * height-proportional block, and it is inert — neither is a task, so there is nothing to check off, drag or
+ * edit here (the Alarms window owns both). The label falls back to what the ring IS — an alarm's time of
+ * day, a timer's duration — so a nameless one still says what it is, and the icon is the only thing that
+ * tells the two apart.
  */
 @Composable
 private fun AlarmMarker(marker: PlacedRecord, modifier: Modifier = Modifier) {
@@ -4730,7 +4743,11 @@ private fun AlarmMarker(marker: PlacedRecord, modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(text = "⏰", style = MaterialTheme.typography.labelSmall, color = Color.White)
+        Text(
+            text = if (marker.timer) "⏳" else "⏰",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+        )
         Text(
             text = marker.title,
             style = MaterialTheme.typography.labelSmall,

@@ -62,6 +62,47 @@ object TimerDomain {
     }
 
     /**
+     * The timer rings falling in `[fromMillis, toMillis)` — what the calendar DRAWS over the window it is
+     * showing. Closed at the start and open at the end so each ring belongs to exactly one displayed window,
+     * and bounded by that window rather than by the account's timers' history, per the CLAUDE.md hot-path
+     * rule.
+     *
+     * A timer has at most ONE occurrence, and only while it is running: its due instant is stored, not
+     * derived from the local calendar, so there is no per-day walk here and nothing to draw for an idle or
+     * paused row (a timer that is not counting down has no instant to mark). That is the whole difference
+     * from [AlarmDomain.occurrencesInWindow] — the marker itself is the alarms' unchanged.
+     */
+    fun occurrencesInWindow(
+        timers: List<TimerEntry>,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<TimerOccurrence> = crossingsBetween(timers, fromMillis - 1, toMillis - 1)
+
+    /**
+     * A duration in seconds as `M:SS`, or `H:MM:SS` once it reaches an hour — the Alarms window's countdown
+     * column and the calendar marker's label for a timer with no name. It lives here, once, so the two can
+     * never disagree about how long a timer is.
+     */
+    fun formatDuration(seconds: Int): String = formatCountdown(seconds.toLong() * 1_000L)
+
+    /**
+     * PRD §18 Timers: how much is left, as `M:SS` (or `H:MM:SS` from an hour up). Rounded **up** to the next
+     * whole second, so a freshly started 5:00 timer reads 5:00 rather than 4:59 and `0:00` appears only when
+     * it has actually run out.
+     */
+    fun formatCountdown(millis: Long): String {
+        val total = ((millis.coerceAtLeast(0L) + 999L) / 1_000L)
+        val h = total / 3600
+        val m = (total % 3600) / 60
+        val s = total % 60
+        return if (h > 0) {
+            "$h:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
+        } else {
+            "$m:${s.toString().padStart(2, '0')}"
+        }
+    }
+
+    /**
      * Start [entry] (from its full duration) or resume it (from what a pause banked), due at [nowMillis] plus
      * whatever is left. A timer already running is returned unchanged — pressing start twice must not push
      * its end away — and so is one with nothing to count down.

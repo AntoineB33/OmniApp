@@ -934,8 +934,18 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   `AlarmWindow` polls `clock.nowMillis()` itself every 250 ms — **only while it is open and something is
   running**. Display-only Compose state, like the calendar's zoom. The transitions dispatch the clock's
   instant, not the quantized display now-line.
-- **A timer draws nothing on the calendar**, deliberately: an alarm is a fact about the user's week, a timer
-  exists only between a start and a ring.
+- **A running timer draws the SAME marker an alarm does**, on the same path — `CalendarRecord.alarm` is "this
+  is a ring", and `CalendarRecord.timer` beside it is the one bit that says which sort, exactly as
+  `ArmedAlarm.timer` does for an armed ring. It decides the icon (⏳ / ⏰) and nothing else; never fork the
+  marker, the stacking sweep or the block exclusions on it.
+  - **A timer marks the calendar at most ONCE, and only while it is running.** Its instant is stored, not
+    derived per ringing day, so `TimerDomain.occurrencesInWindow` is a filter and not a walk; an idle or
+    paused row has no instant, and a ring **resets** the row, so nothing is left behind afterwards. That is
+    the whole of the difference — an alarm is a fact about the user's week, a timer exists between a start
+    and a ring, and the calendar shows it for exactly that long.
+  - The label falls back to the timer's **duration** where an alarm's falls back to its time of day — the
+    thing each one is. `TimerDomain.formatDuration` / `formatCountdown` are that spelling, and they are the
+    Alarms window's own: the window delegates to them so the two readouts cannot disagree.
 
 ---
 

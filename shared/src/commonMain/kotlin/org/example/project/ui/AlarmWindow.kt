@@ -656,22 +656,12 @@ private fun parseDurationSeconds(text: String): Int? {
     return seconds.takeIf { it in 1..TimerEntry.MAX_TIMER_SECONDS }
 }
 
-/** A duration in seconds as `M:SS`, or `H:MM:SS` once it reaches an hour. */
-private fun formatDuration(seconds: Int): String = formatCountdown(seconds.toLong() * 1_000L)
-
 /**
- * PRD §18 Timers: how much is left, as `M:SS` (or `H:MM:SS` from an hour up). Rounded **up** to the next
- * whole second, so a freshly started 5:00 timer reads 5:00 rather than 4:59 and `0:00` appears only when it
- * has actually run out.
+ * A duration in seconds as `M:SS`, or `H:MM:SS` once it reaches an hour. Both of these are [TimerDomain]'s,
+ * because the calendar marker names a nameless timer by its duration too — one spelling, so the window and
+ * the marker can never disagree about how long a timer is.
  */
-private fun formatCountdown(millis: Long): String {
-    val total = ((millis.coerceAtLeast(0L) + 999L) / 1_000L)
-    val h = total / 3600
-    val m = (total % 3600) / 60
-    val s = total % 60
-    return if (h > 0) {
-        "$h:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
-    } else {
-        "$m:${s.toString().padStart(2, '0')}"
-    }
-}
+private fun formatDuration(seconds: Int): String = TimerDomain.formatDuration(seconds)
+
+/** PRD §18 Timers: how much is left. See [TimerDomain.formatCountdown]. */
+private fun formatCountdown(millis: Long): String = TimerDomain.formatCountdown(millis)

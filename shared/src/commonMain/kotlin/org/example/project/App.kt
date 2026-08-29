@@ -37,6 +37,7 @@ import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.RestrictivePeriod
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.engine.AppSchedulerHost
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.AlarmEntry
@@ -720,6 +721,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 schedulerState.alarms, visibleSpanStartMillis, visibleSpanEndMillis, tz,
             )
 
+        // PRD §18 Timers: the same marker for a RUNNING timer's ring, on the same window. A timer has at
+        // most one instant and only while it is counting down ([TimerEntry.endsAtMillis] is stored, not
+        // derived from the calendar), so an idle or paused row draws nothing and a ring that already went
+        // off leaves nothing behind — the ring resets the row. Bounded by the displayed window like the
+        // alarms', and independent of `nowMillis`: a running timer writes nothing on a tick, so the marker
+        // is recomputed only when the timers themselves or the displayed span change.
+        val displayTimerOccurrences =
+            TimerDomain.occurrencesInWindow(
+                schedulerState.timers, visibleSpanStartMillis, visibleSpanEndMillis,
+            )
+
         // PRD §15/§17: where the account was demonstrably ACTIVE in the past window, the "Sleep" band is carved
         // to show a gap (the user kept working through the scheduled sleep). Account-wide past activity is the
         // complement of the account-wide pauses over the derive window `[now − 168h, now]`; where there is no
@@ -1001,6 +1013,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     entryId = occurrence.entry.id,
                     entryIds = listOf(occurrence.entry.id),
                     alarm = true,
+                )
+            } +
+            displayTimerOccurrences.map { occurrence ->
+                // PRD §18 Timers: the alarm marker unchanged, save for the bit that says which it is. Named
+                // by the timer's label, falling back to its DURATION (an alarm falls back to its time of day,
+                // but that is the thing a timer is not — what it says about itself is how long it runs).
+                CalendarRecord(
+                    title =
+                        occurrence.entry.label.ifBlank {
+                            TimerDomain.formatDuration(occurrence.entry.durationSeconds)
+                        },
+                    range = TaskTimeRange(occurrence.instant, occurrence.instant),
+                    entryId = occurrence.entry.id,
+                    entryIds = listOf(occurrence.entry.id),
+                    alarm = true,
+                    timer = true,
                 )
             }
         // PRD §8: each task's own colour, so a task panel is drawn in the same colour as the task tree's

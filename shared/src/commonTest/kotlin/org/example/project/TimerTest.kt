@@ -177,6 +177,56 @@ class TimerTest {
         )
     }
 
+    // ----- what the calendar draws --------------------------------------------------------------
+
+    @Test
+    fun the_display_window_is_closed_at_the_start_so_a_ring_belongs_to_one_window_only() {
+        // The mirror of [AlarmDomain.occurrencesInWindow]: a ring exactly on a day boundary is drawn by the
+        // window that STARTS there, never by the one that ends there, so scrolling never doubles or loses it.
+        val t = timer(endsAtMillis = now + minute)
+        assertEquals(
+            listOf(now + minute),
+            TimerDomain.occurrencesInWindow(listOf(t), now, now + 2 * minute).map { it.instant },
+        )
+        assertEquals(
+            listOf(now + minute),
+            TimerDomain.occurrencesInWindow(listOf(t), now + minute, now + 2 * minute).map { it.instant },
+            "the window opening on the ring draws it",
+        )
+        assertTrue(
+            TimerDomain.occurrencesInWindow(listOf(t), now, now + minute).isEmpty(),
+            "the window ending on the ring does not",
+        )
+    }
+
+    @Test
+    fun only_a_running_timer_is_drawn_and_only_once() {
+        // A timer's instant is stored, not derived per day, so unlike an everyday alarm it marks the
+        // calendar at most once — and an idle or paused row has no instant at all.
+        val timers = listOf(
+            timer(id = "timer-0", endsAtMillis = now + 10 * minute),
+            timer(id = "timer-1"), // idle
+            timer(id = "timer-2", remainingMillis = 42 * second), // paused
+            timer(id = "timer-3", soundSeconds = 0, endsAtMillis = now + minute), // can never ring
+        )
+        assertEquals(
+            listOf("timer-0"),
+            TimerDomain.occurrencesInWindow(timers, now, now + 7L * 24 * 60 * minute).map { it.entry.id },
+        )
+    }
+
+    @Test
+    fun a_nameless_timer_is_named_by_its_duration() {
+        // The calendar marker's label falls back to this, exactly as an alarm's falls back to its time of
+        // day — and it is the Alarms window's own countdown spelling, from the one place it lives.
+        assertEquals("5:00", TimerDomain.formatDuration(5 * 60))
+        assertEquals("0:45", TimerDomain.formatDuration(45))
+        assertEquals("1:30:00", TimerDomain.formatDuration(90 * 60))
+        assertEquals("5:00", TimerDomain.formatCountdown(5 * minute), "rounded up: a fresh 5:00 reads 5:00")
+        assertEquals("0:01", TimerDomain.formatCountdown(1), "and 0:00 only once it has really run out")
+        assertEquals("0:00", TimerDomain.formatCountdown(0))
+    }
+
     // ----- ids and healing ----------------------------------------------------------------------
 
     @Test
