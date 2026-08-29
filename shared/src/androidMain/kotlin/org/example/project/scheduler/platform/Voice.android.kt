@@ -57,8 +57,13 @@ private fun playWavPcm(bytes: ByteArray, gen: Long) {
     val channelMask =
         if (wav.channels >= 2) AudioFormat.CHANNEL_OUT_STEREO else AudioFormat.CHANNEL_OUT_MONO
     val track = AudioTrack(
+        // USAGE_MEDIA is what puts the cue on STREAM_MUSIC, i.e. under the phone's own media slider — the
+        // one the user reaches for. USAGE_ASSISTANCE_ACCESSIBILITY (what this used to be) routes to
+        // STREAM_ACCESSIBILITY instead: a separate stream most volume panels never expose, so turning the
+        // music down left the cue at full blast. An alarm keeps USAGE_ALARM for the same reason in reverse
+        // (AlarmRingService) — each cue belongs on the slider that governs it.
         AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+            .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .build(),
         AudioFormat.Builder()
