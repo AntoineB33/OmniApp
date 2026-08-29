@@ -131,11 +131,18 @@ Modern-Standby machine dips in and out for seconds all day and would draw hairli
 
 ## GREY = the scheduler places nothing here
 
-One concept wearing four names:
+One concept wearing several names:
 
 1. a hand-added inactivity period,
 2. a §17 **sleep window** (an inactivity period labelled "Sleep"),
-3. **all three screen breaks**, end to end.
+3. **all three screen breaks**, end to end,
+4. the §17 **"Before bed" hour** (2026-08-29).
+
+Item 4 is the one that is grey without being `no task allowed`: its kind is `before bed`, whose default
+resilience is `0`, so it places nothing for the same reason and is painted the same way. That is the point
+worth keeping — **grey is what the calendar paints "nothing is placed here" with, and it is not a kind.** A
+band that is grey still carries its own kind and its own name, which is why `decorativeBandLabel` reads a
+derived band's own title rather than always answering "Inactivity".
 
 Item 3 was two items until 2026-08-28 ("the 20-s look-away end to end" and "the closed first minute of a
 5-min pose"), because a break had a *shape*: a closed head and a tail reserved for off-screen work, which
@@ -143,8 +150,10 @@ stayed hollow-blue precisely because it was not grey. `side-dev/README.md` gives
 `no task allowed` end to end (ADR 0003), so a break is grey over its whole length and the hollow half is
 gone with the shapes.
 
-In `fillSchedule` grey is `blockedRegions`; a break is `sideRegions`, which suspends a chunk instead of
-cutting it (PRD §15) — the one thing that still tells the two apart there.
+In `fillSchedule` grey is `blockedRegions` (`no task allowed` **or** `before bed` — both refuse everybody, so
+both suspend a chunk rather than cutting it and are stepped over by "does the minimum fit?"); a break is
+`sideRegions`, which suspends for the same reason but is collected separately because PRD §15 also decides
+what a break's own end does to a resumption.
 
 ### How grey is MARKED: vertical lines, delimited — 2026-08-28
 

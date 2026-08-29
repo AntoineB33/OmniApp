@@ -44,7 +44,7 @@ Everything in this section belongs to the Task Scheduler page. Additional pages 
 
 **Alarms.** Ordinary wall-clock alarms that ring on every device of the account, with per-day scheduling, a configurable ring length and vibration.
 
-**A sleep schedule.** A nightly window the scheduler leaves empty, with a wind-down hour before bed and a wake time that can drift gradually toward a goal.
+**A sleep schedule.** A nightly window the scheduler leaves empty, with a wind-down hour before bed — covered by a period of its own kind, "before bed", so a task you mark resilient to it can still run there — and a wake time that can drift gradually toward a goal.
 
 **Full undo/redo and cross-device sync.** Every user change is a history unit you can walk with `Ctrl+Z`/`Ctrl+Y`, browsable in a History window. Data is offline-first: the local database is the source of truth and everything keeps working with no network. When two devices edit at once, their changes are *merged* rather than one overwriting the other. (These last are shell capabilities rather than scheduler ones — they will cover future pages too.)
 

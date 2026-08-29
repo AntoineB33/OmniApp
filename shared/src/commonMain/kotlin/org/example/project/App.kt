@@ -645,6 +645,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     RestrictivePeriod(
                         it.startEpochMillis, it.endEpochMillis, PeriodKinds.NO_TASK, SchedulerDomain.SLEEP_PANEL_TITLE,
                     )
+                } +
+                // PRD §17: and the hour before each of those bedtimes, which is covered by the period
+                // "before bed". Projected here for the same reason the sleep windows are — the visible span
+                // may run past the fill's horizon, where `schedulerState.panels` holds neither.
+                SchedulerDomain.beforeBedRegions(
+                    schedulerState.sleep,
+                    visibleSpanStartMillis - SchedulerDomain.DYNAMIC_PLACEMENT_LOOKBACK_MILLIS,
+                    visibleSpanEndMillis,
+                    tz,
+                ).map {
+                    RestrictivePeriod(
+                        it.startEpochMillis,
+                        it.endEpochMillis,
+                        PeriodKinds.BEFORE_BED,
+                        SchedulerDomain.BEFORE_BED_PANEL_TITLE,
+                    )
                 }
         val displayDynamicTasks = SchedulerDomain.planTasksOf(schedulerState, nowMillis)
         // `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive Period*: the elapsed part of the visible
@@ -2110,7 +2126,24 @@ private fun mergePanelsForDisplay(
     // as scheduled and the checked state of each reminder is carried over by matching its deterministic id.
     val reminders = if (showReminders) reminderPanels else emptyList()
     val sides = sidePanels
-    val blocks = panels.filter { !SchedulerDomain.isReminder(it) && !it.screenBreak && !it.sleep }
+    val blocks =
+        panels.filter {
+            !SchedulerDomain.isReminder(it) && !it.screenBreak && !it.sleep &&
+                it.restrictiveKind != PeriodKinds.BEFORE_BED
+        }
+    // PRD §17: the hour before bed, drawn as the grey band it is. DERIVED, like the "Sleep" window it
+    // precedes and unlike the user's own periods, so it carries no `entryId`: there is no object of its own
+    // behind it to edit or remove — the sleep schedule is the object, and the Sleep band an hour later is
+    // where its menu leads. Its KIND is still `before bed` in the scheduler; grey is only what the calendar
+    // paints "nothing is placed here" with.
+    val beforeBedRecords =
+        panels.filter { it.restrictiveKind == PeriodKinds.BEFORE_BED }.map { panel ->
+            CalendarRecord(
+                title = panel.title,
+                range = TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis),
+                inactivity = true,
+            )
+        }
     val reminderRecords =
         reminders.map { tag ->
             CalendarRecord(
@@ -2185,5 +2218,5 @@ private fun mergePanelsForDisplay(
                 noScreenRange = enclosing,
             )
         }
-    return sleepRecords + blockRecords + reminderRecords + sideRecords
+    return sleepRecords + beforeBedRecords + blockRecords + reminderRecords + sideRecords
 }

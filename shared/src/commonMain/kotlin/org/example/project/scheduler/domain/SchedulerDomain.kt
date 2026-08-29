@@ -1567,8 +1567,23 @@ object SchedulerDomain {
     /** The production-default sleep schedule: wake 07:30, no drift, 8h30 in bed (so bedtime 23:00). */
     val DEFAULT_SLEEP: SleepSchedule = SleepSchedule()
 
-    /** Wind-down before bed in which no task is scheduled (the sleep obstacle extends this much earlier). */
-    const val NO_TASK_BEFORE_BED_MILLIS: Long = 60L * MILLIS_PER_MINUTE
+    /**
+     * PRD §17 wind-down: **the hour before bed**, which is covered by a period of
+     * [PeriodKinds.BEFORE_BED] ([beforeBedPanels]) — not by an extension of the sleep obstacle, which is what
+     * it used to be. The length of the period, and nothing else; who may run inside it is each task's own
+     * resilience to that kind, exactly as for every other restrictive period.
+     */
+    const val BEFORE_BED_MILLIS: Long = 60L * MILLIS_PER_MINUTE
+
+    /** The title the §17 wind-down periods carry, so a caller can build the same period the fill builds. */
+    const val BEFORE_BED_PANEL_TITLE: String = "Before bed"
+
+    /**
+     * The id prefix of a DERIVED §17 wind-down panel (`before-bed/{wake day}`) — the one place the fill's
+     * `kept` filter and [isRegeneratedPanel] recognise it, exactly as `sleep/{day}` names the derived sleep
+     * windows. It carries no authoritative state: it is re-derived from the sleep schedule on every fill.
+     */
+    const val BEFORE_BED_PANEL_ID_PREFIX: String = "before-bed/"
 
     /**
      * The wake time (minutes since local midnight) for the local day [dateEpochDay], after applying the
@@ -1654,6 +1669,57 @@ object SchedulerDomain {
     /** The sleep windows from [sleepPanels] as occupied time ranges, for scheduler obstacle math. */
     fun sleepRegions(sleep: SleepSchedule?, fromMillis: Long, toMillis: Long, timeZone: TimeZone): List<TaskTimeRange> =
         sleepPanels(sleep, fromMillis, toMillis, timeZone).map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+
+    /**
+     * PRD §17 **the hour before bed, as the period it is**: `[bedtime − [BEFORE_BED_MILLIS], bedtime)` for
+     * every §17 sleep window intersecting `[fromMillis, toMillis)`, laid as a restrictive period of
+     * [PeriodKinds.BEFORE_BED].
+     *
+     * Derived from [sleepPanels], never from a second reading of the schedule, so the wind-down cannot drift
+     * away from the bedtime it is measured back from — the wake time drifts toward its goal
+     * ([effectiveWakeMinutes]) and the hour drifts with it. The window is asked one [BEFORE_BED_MILLIS] wider
+     * on the right, because a sleep window that starts just past [toMillis] still has an hour inside it.
+     *
+     * **This is the whole of the rule.** No task is scheduled here because every task's resilience to the
+     * kind defaults to `0` ([PeriodKinds.defaultResilience]); a task the user hands a value above zero works
+     * through the wind-down, and there is nothing else anywhere that says so. The panel carries the KIND and
+     * no legacy flag — it is not an `inactivity` period wearing a different name — and the calendar paints it
+     * as the grey band every "the scheduler places nothing here" stretch is painted as.
+     */
+    fun beforeBedPanels(
+        sleep: SleepSchedule?,
+        fromMillis: Long,
+        toMillis: Long,
+        timeZone: TimeZone,
+    ): List<TaskPanel> {
+        if (toMillis <= fromMillis) return emptyList()
+        return sleepPanels(sleep, fromMillis, toMillis + BEFORE_BED_MILLIS, timeZone).mapNotNull { window ->
+            val start = window.startEpochMillis - BEFORE_BED_MILLIS
+            val end = window.startEpochMillis
+            if (end <= fromMillis || start >= toMillis) {
+                null
+            } else {
+                TaskPanel(
+                    id = BEFORE_BED_PANEL_ID_PREFIX + window.id.removePrefix("sleep/"),
+                    taskId = null,
+                    title = BEFORE_BED_PANEL_TITLE,
+                    startEpochMillis = start,
+                    endEpochMillis = end,
+                    periodKind = PeriodKinds.BEFORE_BED,
+                )
+            }
+        }
+    }
+
+    /** The §17 wind-down hours from [beforeBedPanels] as occupied time ranges. */
+    fun beforeBedRegions(
+        sleep: SleepSchedule?,
+        fromMillis: Long,
+        toMillis: Long,
+        timeZone: TimeZone,
+    ): List<TaskTimeRange> =
+        beforeBedPanels(sleep, fromMillis, toMillis, timeZone)
+            .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
 
     /**
      * PRD §15: a screen break that **happened** — the object the "what serves a break" rules are written
@@ -2438,8 +2504,9 @@ object SchedulerDomain {
         }
         return panels.flatMap { panel ->
             when {
-                // Fixed blocks and the bands are not the plan; a period cannot move them.
-                !isRegeneratedPanel(panel) || panel.screenBreak || panel.sleep -> listOf(panel)
+                // Fixed blocks and the bands are not the plan; a period cannot move them. A restrictive
+                // period is never cut at all — it is what the cut is made of (the §17 wind-down included).
+                !isRegeneratedPanel(panel) || panel.isRestrictivePeriod -> listOf(panel)
                 // Wholly past, or already past the break: untouched.
                 panel.endEpochMillis <= nowMillis || panel.startEpochMillis >= end -> listOf(panel)
                 // Every refusing region starts at/after the now-line, so a straddling panel keeps its elapsed
@@ -2765,17 +2832,20 @@ object SchedulerDomain {
 
     /**
      * CLAUDE.md reconstructibility rule: true for a panel [fillSchedule] **regenerates** deterministically
-     * from `now` + the tree + the sleep/screen-break config — the screen-break and sleep obstacle panels and the
+     * from `now` + the tree + the sleep/screen-break config — the screen-break, sleep-obstacle and §17
+     * wind-down ("before bed") panels and the
      * non-pinned auto-fill panels. These carry no authoritative user state, so a re-derive that only moves
      * them is not a syncable change. Pinned panels (user-fixed) and reminder tags (`chore`, which carry the
      * authoritative `checked` state) are NOT regenerated and so are never treated as derived. Mirrors the
-     * `kept` filter in [fillSchedule] (screenBreak/sleep always cut; everything else kept when fixed or a
-     * reminder). Used by [org.example.project.scheduler.persistence.SchedulerStateCodec.syncFingerprint] to
+     * `kept` filter in [fillSchedule] (screenBreak / derived sleep / `before-bed/{day}` always cut; everything
+     * else kept when fixed or a reminder). Used by
+     * [org.example.project.scheduler.persistence.SchedulerStateCodec.syncFingerprint] to
      * exclude derived panels from the sync fingerprint, so an engine-tick reschedule that only re-derives
      * them neither marks state dirty nor pushes ("known deviation" fix).
      */
     fun isRegeneratedPanel(panel: TaskPanel): Boolean =
-        panel.screenBreak || panel.sleep || (panel.auto && !panel.pinned && !panel.chore)
+        panel.screenBreak || panel.sleep || panel.id.startsWith(BEFORE_BED_PANEL_ID_PREFIX) ||
+            (panel.auto && !panel.pinned && !panel.chore)
 
     /**
      * PRD §9 Scheduling: regenerate the auto schedule with the **cyclic proportional-share** rules of
@@ -2876,11 +2946,13 @@ object SchedulerDomain {
         // outside the window — already past (end ≤ now) or beyond the horizon (start > horizon). Screen-break
         // and schedule-DERIVED (`sleep/{day}`) sleep panels are always cut and regenerated fresh below, so
         // they never accumulate — but MATERIALIZED past-sleep panels (PRD §17, allocated id) are a recorded
-        // fact and kept, like the materialized Inactivity panels.
+        // fact and kept, like the materialized Inactivity panels. The §17 wind-down periods
+        // (`before-bed/{day}`) are derived from those same windows and are cut and regenerated with them.
         val kept = state.panels.filter {
             when {
                 it.screenBreak -> false
                 it.sleep -> !it.id.startsWith("sleep/")
+                it.id.startsWith(BEFORE_BED_PANEL_ID_PREFIX) -> false
                 else ->
                     // `side-dev/README.md`: EVERY restrictive period is kept, whatever its kind — the two
                     // built-in ones and the account's own alike, read through the single [TaskPanel.restrictiveKind].
@@ -2894,6 +2966,11 @@ object SchedulerDomain {
         // so, like every grey period, it is a period accepting NOBODY (see [blockedRegions] below). It is
         // still not an occupancy *obstacle*: a chunk crossing one suspends and resumes on the far side.
         val sleepPanels = sleepPanels(state.sleep, nowMillis, horizon, timeZone)
+        // PRD §17 wind-down: **the hour before bed is covered by the period "before bed"**. It is an ordinary
+        // restrictive period of its own kind ([PeriodKinds.BEFORE_BED]) — the hour stays empty because every
+        // task's default resilience to that kind is `0`, and a task given a value above zero works through it.
+        // Derived from the same schedule the sleep windows are, and regenerated with them.
+        val beforeBedPanels = beforeBedPanels(state.sleep, nowMillis, horizon, timeZone)
         // The task-tree timeline: while `now` sits between two dated trees the scheduler follows the two
         // trees' BLENDED priorities over the UNION of their leaves, not the live tree's own — so the plan
         // transforms continuously from one arrangement into the next. With no dated tree these collapse to
@@ -2937,7 +3014,7 @@ object SchedulerDomain {
         // not project a week of breaks it will then carry in `panels`, and a DISPLAY fill for a far week
         // must project across it.
         val dynamicBase =
-            (kept.filter { it.isRestrictivePeriod } + sleepPanels).mapNotNull { panel ->
+            (kept.filter { it.isRestrictivePeriod } + sleepPanels + beforeBedPanels).mapNotNull { panel ->
                 val kind = panel.restrictiveKind
                 if (kind.isEmpty()) null
                 else RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, kind, panel.title)
@@ -2958,7 +3035,9 @@ object SchedulerDomain {
                 tasks = planTasks,
                 mode = tpMode,
             )
-        if (leaves.isEmpty()) return (kept + sidePanels + sleepPanels).sortedBy { it.startEpochMillis }
+        if (leaves.isEmpty()) {
+            return (kept + sidePanels + sleepPanels + beforeBedPanels).sortedBy { it.startEpochMillis }
+        }
 
         // --- the RESTRICTIVE PERIODS (`side-dev/README.md` § *Restrictive Period*).
         //
@@ -2966,7 +3045,7 @@ object SchedulerDomain {
         // behaviour inside one is its own resilience to that kind ([Task.resilience]). So there is no longer a
         // list of accepted sets to assemble per sort of band: the grey regions, the no-screen zones and the
         // three dynamic periods all become periods of a kind, and the walk asks [PeriodKinds.multiplier].
-        val periodPanels = kept.filter { it.isRestrictivePeriod } + sleepPanels + sidePanels
+        val periodPanels = kept.filter { it.isRestrictivePeriod } + sleepPanels + beforeBedPanels + sidePanels
         val restrictions =
             periodPanels.mapNotNull { panel ->
                 val kind = panel.restrictiveKind
@@ -2978,9 +3057,16 @@ object SchedulerDomain {
         // The two regions the *display* and the record bank still ask about by name. They are derived from
         // the periods rather than collected separately, so a user-defined kind that happens to refuse
         // everybody behaves exactly like a hand-drawn inactivity period.
+        //
+        // PRD §17's "before bed" joins the grey ones here for the one reason grey is collected at all: a
+        // stretch nobody may run in SUSPENDS a chunk rather than cutting it, and is stepped over by "does the
+        // minimum fit?" (CLAUDE.md). The wind-down hour is exactly that — its default resilience turns every
+        // task away — so a run that meets it resumes after the night with its minimum intact, like one that
+        // meets a sleep window or a screen break. A task deliberately given a resilience to the kind is still
+        // placed inside it, which is the same escape a break already has.
         val blockedRegions =
             mergeOccupied(
-                restrictions.filter { it.kind == PeriodKinds.NO_TASK }
+                restrictions.filter { it.kind == PeriodKinds.NO_TASK || it.kind == PeriodKinds.BEFORE_BED }
                     .map { TaskTimeRange(it.startMillis, it.endMillis) },
             )
         val noScreenRegions =
@@ -3346,7 +3432,8 @@ object SchedulerDomain {
         }
         // PRD §9: two consecutive auto panels of the same task merge into one block. Screen-break and sleep
         // panels are added as-is (they split the run, so adjacent same-task pieces don't touch and stay apart).
-        return (kept + sidePanels + sleepPanels + mergeSameTaskPanels(generated)).sortedBy { it.startEpochMillis }
+        return (kept + sidePanels + sleepPanels + beforeBedPanels + mergeSameTaskPanels(generated))
+            .sortedBy { it.startEpochMillis }
     }
 
     /**

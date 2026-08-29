@@ -1558,9 +1558,12 @@ object SchedulerReducer {
      * PRD §8: true for a real (auto or user-authored) TASK panel of either screen kind — what an inactivity
      * period overrides, since grey refuses on-screen and off-screen tasks alike. The periods themselves and
      * the decorative reminder / screen-break / sleep bands are never one.
+     *
+     * Asked through [TaskPanel.isRestrictivePeriod], the single reading of a panel's kind, so a period of a
+     * kind that has no legacy flag — PRD §17's "before bed", or one of the account's own — is a period here
+     * too. Spelling out the four flags said the same thing for the four kinds that had one, and only those.
      */
-    private fun isTaskPanel(panel: TaskPanel): Boolean =
-        !panel.noScreen && !panel.inactivity && !panel.screenBreak && !panel.sleep && !panel.chore
+    private fun isTaskPanel(panel: TaskPanel): Boolean = !panel.isRestrictivePeriod && !panel.chore
 
     /**
      * PRD §8 screen-override resolution: after the user lays / moves / resizes panel [changedId], trim or

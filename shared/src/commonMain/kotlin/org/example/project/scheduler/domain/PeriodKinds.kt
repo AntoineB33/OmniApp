@@ -10,13 +10,21 @@ package org.example.project.scheduler.domain
  * as long as the period lasts — so "on screen" is not a flag: it is exactly **a resilience of 0 to the kind
  * [NO_SCREEN]**, read through [resilienceFor] like every other kind.
  *
- * Two kinds are built in because the README names them:
+ * Three kinds are built in — two because the README names them, one because the app's own §17 sleep
+ * schedule lays it:
  * - [NO_TASK] — *"no task allowed"*, the kind of the three dynamic restrictive periods (§ *3 Dynamic
  *   Restrictive Period*) and of the app's grey regions (an inactivity period, a §17 sleep window). Its
  *   default resilience is `0` — by its own name it accepts nobody — and it is the one kind a task may not be
  *   given a value for at all ([isResilienceEditable]).
  * - [NO_SCREEN] — *"no on-screen task"*, the kind the two `t_p` modes and all three recurrence bars are
  *   written in terms of.
+ * - [BEFORE_BED] — PRD §17's wind-down: **the hour before bed is covered by the period "before bed"**. It
+ *   used to be a hard-coded extension of the sleep obstacle, which is a second mechanism for "where may this
+ *   task run" and therefore the mistake this model exists to prevent. As a KIND it is one period like any
+ *   other: its default `0` is what keeps the hour empty, and a task the user gives a non-zero resilience to
+ *   it works through the wind-down without any rule of its own. It is deliberately NOT [coversNoScreen] —
+ *   the user is still at a screen in that hour (PRD §17 lets the screen breaks fall in it), so it is a
+ *   stretch nothing is placed in, never a *rest* that bars the breaks after it.
  *
  * **Every other kind is the user's** ([org.example.project.scheduler.state.SchedulerState.periodKinds]),
  * defined by the task edit window's `+`. **A kind the user has just defined is added to every task at the
@@ -37,8 +45,22 @@ object PeriodKinds {
     /** `side-dev/README.md`'s "no on-screen task" — what the modes and the recurrence bars are written in. */
     const val NO_SCREEN: String = "no on-screen task"
 
-    /** The two kinds the README itself names; the rest of the list is the account's. */
-    val BUILT_IN: List<String> = listOf(NO_TASK, NO_SCREEN)
+    /**
+     * PRD §17's wind-down: the kind the hour before each §17 bedtime is covered by
+     * ([org.example.project.scheduler.domain.SchedulerDomain.beforeBedPanels]). Built in because the sleep
+     * schedule lays periods of it by itself — the user can no more delete it than they can delete "no task
+     * allowed" — but an ordinary editable kind in every other respect ([isResilienceEditable]), so "I may
+     * still do this in the hour before bed" is a resilience above `0` and nothing else.
+     */
+    const val BEFORE_BED: String = "before bed"
+
+    /**
+     * The two kinds the README itself names plus the one PRD §17 lays; the rest of the list is the account's.
+     * A payload that predates [BEFORE_BED] and holds a *user-defined* kind of that very name decodes into
+     * this one (`SchedulerStateCodec` keeps only [isUserDefined] names), which is the right healing: the
+     * tasks' overrides are keyed by the name, so they go on answering for the period they were written for.
+     */
+    val BUILT_IN: List<String> = listOf(NO_TASK, NO_SCREEN, BEFORE_BED)
 
     /**
      * The resilience a task that was never told about [kind] has to it: **`0` for every kind but
@@ -95,6 +117,11 @@ object PeriodKinds {
      * README says *"covered by the period 'no on-screen task'"*, and [NO_TASK] covers it a fortiori (a period
      * that turns everybody away turns the on-screen tasks away too). That is exactly why the three dynamic
      * periods, whose kind is [NO_TASK], are the ones the modes govern.
+     *
+     * [BEFORE_BED] is deliberately not one of them, though it too refuses everybody by default: the wind-down
+     * hour says nothing about screens — the user is expected to be at one, and PRD §17 lets the screen breaks
+     * fall inside it — so it absorbs a dynamic period like any other emptiness without becoming a REST that
+     * bars the breaks that follow.
      */
     fun coversNoScreen(kind: String): Boolean = kind == NO_TASK || kind == NO_SCREEN
 

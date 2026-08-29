@@ -29,6 +29,7 @@ import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.domain.PlanBlock
 import org.example.project.scheduler.domain.PlanTask
+import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.RestrictivePeriod
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
@@ -1710,9 +1711,12 @@ class SchedulerEngine(
                     announcedStarts = announcedStarts.filterTo(mutableSetOf()) { it >= scanFloor }
                     announcedWindDowns = announcedWindDowns.filterTo(mutableSetOf()) { it >= scanFloor }
 
+                    // PRD §17: the wind-down cue fires where the "before bed" PERIOD starts — the period the
+                    // fill laid, not a second reading of the sleep schedule. One instant, so the notification
+                    // and the band on the calendar can never say two different things.
                     val windDownInstants = st.panels
-                        .filter { it.sleep }
-                        .map { it.startEpochMillis - SchedulerDomain.NO_TASK_BEFORE_BED_MILLIS }
+                        .filter { it.restrictiveKind == PeriodKinds.BEFORE_BED }
+                        .map { it.startEpochMillis }
                     // `side-dev/README.md`: the cue's boundaries are the STARTS of the placed dynamic
                     // periods, so the sweep has to be handed the same environment the fill was — the standing
                     // restrictive periods (the user's own and the §17 sleep windows, both already materialized

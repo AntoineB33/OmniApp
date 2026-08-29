@@ -3620,6 +3620,8 @@ private fun DayColumn(
     // "Inactivity" (the §17 sleep windows are the other grey label and draw as [sleepBands]). Derived means no
     // [entryId]: display-only, neither removable nor draggable. A user-authored inactivity PANEL carries an
     // entryId and stays a real block in the pipeline below.
+    // (PRD §17's "Before bed" hour is one of these too: derived from the sleep schedule, so it carries no
+    // entryId either, and it NAMES ITSELF — a derived band's own title is its label wherever one is drawn.)
     val inactivityBands = records.filter { it.inactivity && it.entryId == null }
     val blockRecords =
         records.filterNot {
@@ -3677,7 +3679,7 @@ private fun DayColumn(
                         band.endHour,
                         CalendarBubbleSection(
                             CalendarBubbleSection.Kind.Inactivity,
-                            "Inactivity",
+                            decorativeBandLabel(band),
                             placedTimeRange(band, tz),
                         ),
                     ),
@@ -4327,7 +4329,8 @@ private fun DayColumn(
         // The "Sleep"/"Inactivity" band label, drawn ON TOP of everything so it stays legible at the start
         // of the band even though the work plan now projects tinted blocks through the window. Non-
         // interactive (a plain Text Box consumes no pointer events), so the blocks beneath stay clickable.
-        (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to "Inactivity" }).forEach { (band, label) ->
+        (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to decorativeBandLabel(it) })
+            .forEach { (band, label) ->
             if (!onScreen(band.startHour, band.endHour)) return@forEach
             val height = hourHeight * (band.endHour - band.startHour)
             // A band opening at midnight would write its name straight over the day's own date. It is
@@ -5139,11 +5142,18 @@ private fun deviceHoverZones(
     return zones
 }
 
-/** The label for a derived (no-[entryId]) sleep / no-screen / inactivity record. */
+/**
+ * The label for a derived (no-[entryId]) sleep / no-screen / inactivity record.
+ *
+ * A derived band NAMES ITSELF where it has a name: PRD §17's "Before bed" hour is a grey band with no object
+ * of its own behind it, exactly like the Inactivity gaps, but it is not one of them and must not read as one.
+ * The Inactivity gaps carry "Inactivity" as their title already, so the fallback is only for a band built
+ * without one.
+ */
 private fun decorativeBandLabel(r: PlacedRecord): String = when {
     r.sleep -> "Sleep"
     r.noScreen -> "No screen"
-    else -> "Inactivity"
+    else -> r.title.ifBlank { "Inactivity" }
 }
 
 /**

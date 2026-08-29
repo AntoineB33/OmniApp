@@ -130,10 +130,13 @@ class TaskResilienceTest {
     }
 
     @Test
-    fun the_two_built_in_kinds_are_always_offered_and_are_never_in_the_accounts_list() {
+    fun the_built_in_kinds_are_always_offered_and_are_never_in_the_accounts_list() {
         val (s0, _) = stateWithOneTask()
         val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddPeriodKind("deep focus"))
-        assertEquals(listOf(PeriodKinds.NO_TASK, PeriodKinds.NO_SCREEN, "deep focus"), s.allPeriodKinds)
+        assertEquals(
+            listOf(PeriodKinds.NO_TASK, PeriodKinds.NO_SCREEN, PeriodKinds.BEFORE_BED, "deep focus"),
+            s.allPeriodKinds,
+        )
     }
 
     /**
@@ -149,9 +152,12 @@ class TaskResilienceTest {
         assertFalse(PeriodKinds.isResilienceEditable(PeriodKinds.NO_TASK))
         assertTrue(PeriodKinds.isResilienceEditable(PeriodKinds.NO_SCREEN))
         assertTrue(PeriodKinds.isResilienceEditable("deep focus"))
+        // PRD §17's wind-down is an ordinary kind in this respect: "I may still do this in the hour before
+        // bed" is a resilience above 0, so the window offers a row for it.
+        assertTrue(PeriodKinds.isResilienceEditable(PeriodKinds.BEFORE_BED))
         // What the edit window puts a row against: every kind the account knows, minus that one.
         assertEquals(
-            listOf(PeriodKinds.NO_SCREEN, "deep focus"),
+            listOf(PeriodKinds.NO_SCREEN, PeriodKinds.BEFORE_BED, "deep focus"),
             s.allPeriodKinds.filter(PeriodKinds::isResilienceEditable),
         )
     }

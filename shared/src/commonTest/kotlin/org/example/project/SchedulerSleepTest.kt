@@ -2,6 +2,7 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.datetime.LocalDateTime
@@ -138,20 +139,26 @@ class SchedulerSleepTest {
     }
 
     @Test
-    fun the_work_plan_stops_at_the_sleep_window_and_resumes_after_it() {
-        // The boundary CUTS the chunk rather than suspending it (only a §15 screen break suspends one), so
-        // the plan runs up to the window's edge and opens a fresh chunk on the far side.
+    fun the_work_plan_stops_at_the_wind_down_hour_and_resumes_after_the_sleep_window() {
+        // PRD §17: work stops an hour BEFORE bedtime, because that hour is covered by the period "before
+        // bed" and no task is resilient to it by default. So the plan runs up to the wind-down's start —
+        // not to the sleep window's — and opens a fresh chunk on the far side of the night.
         val now = utc(2024, 1, 1, 10, 0)
         val panels = SchedulerDomain.fillSchedule(soloTask().copy(sleep = SchedulerDomain.DEFAULT_SLEEP), now, tz)
         val autos = panels.filter { it.auto }
         val firstNight = panels.filter { it.sleep }.minByOrNull { it.startEpochMillis }
-        assertTrue(firstNight != null, "no sleep window was projected")
+        assertNotNull(firstNight, "no sleep window was projected")
+        val windDownStart = firstNight.startEpochMillis - SchedulerDomain.BEFORE_BED_MILLIS
         assertTrue(
-            autos.any { it.endEpochMillis == firstNight!!.startEpochMillis },
-            "the work plan does not run up to the start of the sleep window",
+            autos.any { it.endEpochMillis == windDownStart },
+            "the work plan does not run up to the start of the wind-down hour",
         )
         assertTrue(
-            autos.any { it.startEpochMillis == firstNight!!.endEpochMillis },
+            autos.none { it.startEpochMillis < firstNight.startEpochMillis && it.endEpochMillis > windDownStart },
+            "a task was scheduled inside the wind-down hour",
+        )
+        assertTrue(
+            autos.any { it.startEpochMillis == firstNight.endEpochMillis },
             "the work plan does not resume at the end of the sleep window",
         )
     }
