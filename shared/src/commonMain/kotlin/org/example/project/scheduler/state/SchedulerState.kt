@@ -477,6 +477,23 @@ data class SchedulerState(
     val defaultSubtreeSelection: SchedulerSelection = SchedulerSelection(),
     val defaultSubtreeEditSession: SchedulerEditSession? = null,
     /**
+     * PRD §7 **All tasks**: the window's own expansion set, selection and in-flight Edit Mode session.
+     *
+     * That window draws the *live* tree with the task tree's own component, re-rooted at a synthetic list
+     * holding one cell per task in the sorter's order ([projectTaskList]). The cells are the live tree's, so
+     * an edit made there is an edit to the tree — but *which rows are open*, *what is highlighted* and *what
+     * is being typed* are facts about the window, not about the tree, and a cell open in one must not be
+     * open in the other.
+     *
+     * **Deliberately not persisted and not synced**, for the same reason [defaultSubtreeSelection] is not: a
+     * selection is local view state (CLAUDE.md), and so — here — is an expansion, which is a way of looking
+     * at the list beside the sorter itself. Keeping them out of the payload keeps them out of the sync
+     * fingerprint for free, so opening a row in the window can never enqueue a push.
+     */
+    val taskListExpanded: Set<CellId> = emptySet(),
+    val taskListSelection: SchedulerSelection = SchedulerSelection(),
+    val taskListEditSession: SchedulerEditSession? = null,
+    /**
      * PRD §4/§7: whether the [defaultSubtree] policy is **currently applied** — the switch left of the
      * "Default sub-tree" button in the lateral menu. Off by default (and for every payload written before the
      * feature existed), so an existing account's cells keep behaving exactly as they did. Turning it off

@@ -236,6 +236,9 @@ object SchedulerReducer {
                 if (state.notificationsEnabled == intent.enabled) state
                 else state.copy(notificationsEnabled = intent.enabled)
             is SchedulerIntent.InDefaultSubtree -> reduceInDefaultSubtree(state, intent.inner)
+            is SchedulerIntent.InTaskList -> reduceInTaskList(state, intent.inner, intent.rootCells)
+            is SchedulerIntent.CollapseTaskListRows ->
+                if (state.taskListExpanded.isEmpty()) state else state.copy(taskListExpanded = emptySet())
             is SchedulerIntent.SetDefaultSubtreeCellBound ->
                 reduceSetDefaultSubtreeCellBound(state, intent.cellId, intent.bound)
             is SchedulerIntent.SetDefaultSubtreeEnabled ->
@@ -384,6 +387,13 @@ object SchedulerReducer {
                         cellId = intent.cellId,
                         renderVia = selection.renderVia,
                         draftText = draft,
+                        // PRD §4 default: Change Task. PRD §7's "All tasks" window is the one caller that
+                        // asks for another — its root rows are always renaming (see reduceInTaskList), and a
+                        // session opened straight in Rename mode needs the baseline that a switch INTO
+                        // Rename would have captured, or leaving it would have nothing to revert to.
+                        mode = intent.mode ?: CellEditMode.ChangeTask,
+                        renameTreeBefore =
+                            if (intent.mode == CellEditMode.Rename) state.captureTree() else null,
                         // PRD §4 default selection: typing into a cell defaults the id menu to the first
                         // eligible existing task whose title matches (reuse it), or "New task" when none
                         // matches; re-entering an assigned cell keeps its current task selected.
@@ -888,6 +898,70 @@ object SchedulerReducer {
             // so the ancestors have to be open for them to be visible at all.
             working.copy(expanded = state.expanded + targets.visited),
             TreeMutationDelta(before = before, after = after, label = "Add default sub-tree"),
+        )
+    }
+
+    /**
+     * PRD §7 **All tasks**: run [inner] against the live tree as that window shows it.
+     *
+     * The window is the task tree, so it emits the task tree's intents; this is the whole of what makes them
+     * follow the *window's* rows. The state is projected ([projectTaskList]) — re-rooted at the synthetic
+     * list of [rootCells] and carrying the window's own expansion/selection/edit session — the intent is
+     * reduced there, and the result folded back with [withTaskListCapturedFrom].
+     *
+     * Unlike [reduceInDefaultSubtree] the tree half of the result is **kept**: these are the live tree's own
+     * cells, so an edit made in the window is an edit to the tree. What is put back is the root id, the
+     * tree's own view state, and the histories — the gesture is committed here as ONE Main unit (a
+     * [TreeMutationDelta] over the whole tree), exactly as the template window commits one
+     * [DefaultSubtreeDelta], so the inner reduction's units evaporate with the projection and one Ctrl+Z
+     * undoes one gesture.
+     *
+     * Two rules of the window live here rather than in its UI, because they are rules about what a gesture
+     * *means* and not about how it is drawn:
+     *  - **a root row is always in renaming mode** (PRD §7). The row IS the task, and the order is the
+     *    sorter's, so "change task" would only re-point a cell the user is not looking at. The window shows
+     *    no Mode selector for those rows and [SchedulerIntent.BeginEdit] is given the mode here, at the one
+     *    place that knows which cells are roots;
+     *  - **nothing may be moved into the root** — the order is the sorter's, so a drop there would be a
+     *    reordering the next re-sort silently undoes. The window already refuses to draw the blue line at
+     *    root level; this is the backstop for anything dispatching without asking.
+     *
+     * Undo/Redo are deliberately **not** forwarded: they belong to the app's stacks, where this method's own
+     * unit is waiting. The window dispatches them unwrapped.
+     */
+    private fun reduceInTaskList(
+        state: SchedulerState,
+        inner: SchedulerIntent,
+        rootCells: List<CellId>,
+    ): SchedulerState {
+        if (inner is SchedulerIntent.InTaskList) return state
+        if (
+            inner is SchedulerIntent.Undo || inner is SchedulerIntent.Redo ||
+            inner is SchedulerIntent.UndoSelection || inner is SchedulerIntent.RedoSelection
+        ) {
+            return state
+        }
+        // The order is the sorter's: a move into the root is not a move this window can honour.
+        if (inner is SchedulerIntent.MoveSelectedCells && inner.targetCellId in rootCells) return state
+        val effective =
+            if (inner is SchedulerIntent.BeginEdit && inner.cellId in rootCells) {
+                inner.copy(mode = CellEditMode.Rename)
+            } else {
+                inner
+            }
+        val projected = state.projectTaskList(rootCells)
+        val reduced = reduce(projected, effective)
+        if (reduced === projected) return state
+        val folded = state.withTaskListCapturedFrom(reduced)
+        val before = state.captureTree()
+        val after = folded.captureTree()
+        // A gesture that only moved the window's own caret, selection or expansion changes no tree and
+        // records no unit — the same rule the tree follows for a selection-only change.
+        if (before == after) return folded
+        return commitDelta(
+            folded,
+            TreeMutationDelta(before = before, after = after, label = "All tasks"),
+            HistoryCategory.Main,
         )
     }
 

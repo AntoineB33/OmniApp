@@ -54,7 +54,7 @@ re-derives something mark the state dirty or trigger a sync push.
 | --- | --- | --- |
 | **Authoritative** | task tree (task **resilience** included), the account's **period kinds**, named task trees, the default sub-tree + its switch, user-authored/pinned panels and the periods the app conducted, chores/reminders, sleep schedule, alarms, timers (**whether one is running** included), settings, the system-wide chord bindings, Undo/Redo history units, manual record edits | persist + sync |
 | **Derived** | auto/screen-break/sleep panels, task colours, a running timer's remaining time, the dynamic periods' placement (the recurrence bars read their anchors out of the timeline), records the advance banks | persisted locally, **stripped from the wire**, never trigger a push on their own |
-| **Local-only view state** | focused window, tree selection, `showScreenBreaks`/`showReminders`, WindowNav/Selection history, window placement, OS-sleep scan checkpoint | persist locally, **never sync** |
+| **Local-only view state** | focused window, tree selection, the "All tasks" window's own expansion/selection/edit session, `showScreenBreaks`/`showReminders`, WindowNav/Selection history, window placement, OS-sleep scan checkpoint | persist locally, **never sync** |
 
 - Local view state is stripped from the fingerprint by `withLocalViewStateNeutralized()` and carried across a
   pull by `withLocalViewStateFrom`.
@@ -765,7 +765,8 @@ disagreeing about what colour a task is.
 
 ### The "All tasks" list
 
-→ PRD §7. `SchedulerDomain.taskListEntries` is the whole of it; `ui/TaskListWindow.kt` only draws it.
+→ PRD §7. `SchedulerDomain.taskListEntries` decides which tasks and in what order; `ui/TaskListWindow.kt`
+draws them **as task cells**.
 
 - **It is a readout of the LIVE tree**: `absoluteTaskPriorities` (the identity the tree's own percentage column
   keeps), never `blendedTaskPriorities`. `formatPriorityPercent` is shared with the tree — a second copy is how
@@ -778,6 +779,50 @@ disagreeing about what colour a task is.
 - **The sorter is Compose-only state**, like the calendar's zoom and the find bar: an ordering is a way of
   looking at the tree, never a fact about it. Not persisted, not synced, no history unit.
 
+#### The rows ARE task cells — the THIRD drawing of the tree
+
+**The window is the task tree — the same code, not the same look**, exactly as the default sub-tree window is
+(`TaskTreeView` is now drawn three times). `projectTaskList(rootCells)` hands it the **live** state re-rooted at
+a synthetic list holding, in the sorter's order, the **first occurrence cell** of every listed task, and
+`SchedulerIntent.InTaskList` is what points its intents there. So the rows carry the tree's chrome, its
+percentage and minimum-time columns, Edit Mode, the selection and keyboard, drag-move, Ctrl+C/X/V, Ctrl+F and
+the full §13 contextual menu — plus **"go to task tree"**, the calendar panel's own entry under its own name and
+through the same `RevealCell` primitive. Expanding a row shows that task's sub-tree, because a sub-list belongs
+to the task id. Do not add a second row implementation: the flat one this replaced is exactly what drifts.
+
+- **A root row is a REAL cell of the live tree, never a synthetic one.** That is what makes an edit here an
+  edit to the tree with no translation — and what keeps every count honest: occurrences and percentages are
+  read off `state.cells`, and a synthetic cell per task would silently double all of them. A task no cell
+  reachable from the root holds has no row, which is the same answer "go to task tree" gives.
+  `firstTaskOccurrences` is the one walk that finds them all (one walk, not one per row — ADR 0009), and it is
+  the *same* walk as `firstTaskOccurrence`.
+- **Re-rooting is the whole of the projection**, so every navigation the tree does — visible order, `Ctrl+A`,
+  the arrows, Ctrl+F's walk — follows the window's rows for free. Two root walks must NOT follow it, and do
+  not: `pruneDetachedTree` seeds `WellKnownIds.MAIN_LIST` **as well as** `rootListId` (a real root cell that is
+  not a first occurrence is reachable from neither the synthetic root nor a detached parent, and without that
+  seed the first edit boundary here would delete it), and the **colours** are solved over the live state
+  (`TaskTreeView`'s `colorSource`) so a task is one colour in the list, the tree and the calendar (ADR 0013).
+- **The synthetic list never escapes the projection.** `withTaskListCapturedFrom` drops it, which is what keeps
+  it out of every history delta, out of the persisted payload and off the wire.
+- **The window's expansion, selection and edit session are its own** (`taskListExpanded` /
+  `taskListSelection` / `taskListEditSession`) — local view state, not persisted, not synced, no history unit.
+  A row open here is not a row open in the tree, and an edit here never moves the tree's caret. **"Collapse
+  all"** is the button that closes them; the flat list is what the window is for.
+- **One gesture is ONE Main history unit** (a `TreeMutationDelta` labelled "All tasks"), like the template
+  window's; the inner reduction's units evaporate with the projection. It edits the live tree, so it re-plans
+  and syncs like any other tree edit.
+- **Nothing may be moved into the root**: the order is the sorter's, so a drop there would be a reordering the
+  next re-sort silently undoes. The blue line never appears at root level (`allowRootDrop = false`) and
+  `reduceInTaskList` refuses such a move as the backstop.
+- **A root row has NO Mode selector — it is always renaming.** The row IS the task, so "change task" there
+  could only re-point a cell the user is not looking at. `reduceInTaskList` opens the session in
+  `CellEditMode.Rename` (the one place that knows which cells are roots) and the window hides the selector; a
+  cell that is not one of the rows opens on §4's default, as anywhere else.
+- **The order is HELD STILL while it is edited, and "update order" is what re-sorts it.** Editing a row is
+  what the rows being cells is for, so the list must not re-sort from under the cursor: the displayed order is
+  pinned (Compose-only, like the sorter itself), a task created since is appended and one deleted drops out,
+  and the button appears exactly while the pinned order and the fresh one differ.
+
 ### The default sub-tree
 
 PRD §4/§7: one per account, grafted under every task the user **creates**. Off by default
@@ -789,10 +834,11 @@ until it is applied to a real cell.
   template row must be a real `Task`, or four of the five §13 menu entries have nothing to act on and "edit
   task" has nowhere to write.
 - **The window IS the task tree — the same code, not the same look.** `scheduler/ui/TaskTreeView.kt` is the
-  ONE tree, drawn twice: once by `TaskSchedulerScreen` over the account's state, once by
-  `ui/DefaultSubtreeWindow.kt` over `projectDefaultSubtree()`. So it has every gesture, Ctrl+F included, and
-  the **full five-entry §13 menu**. A second implementation is what shipped before, and it silently lacked the
-  menu entirely. Add a tree feature in `TaskTreeView` and both get it.
+  ONE tree, drawn **three times**: by `TaskSchedulerScreen` over the account's state, by
+  `ui/DefaultSubtreeWindow.kt` over `projectDefaultSubtree()`, and by `ui/TaskListWindow.kt` over
+  `projectTaskList()`. So it has every gesture, Ctrl+F included, and the **full five-entry §13 menu**. A second
+  implementation is what shipped before, and it silently lacked the menu entirely. Add a tree feature in
+  `TaskTreeView` and all three get it.
 - **Nothing is dropped but the switch is added**: the percentage (the row's share **within the template**) and
   the minimum time are both shown and both meaningful, and the switch is one more column after them. Do not
   add a bin button: **the blank title is what deletes**, here as in the tree.

@@ -382,6 +382,31 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The one message the app has to say back to a gesture it could not carry out — today only PRD §8's
         // "go to task tree" on a panel whose task no cell holds. A sort-2 pop-up like the two above.
         var appMessage by remember { mutableStateOf<String?>(null) }
+        // PRD §8/§13 "go to task tree": select the first cell showing the task, expanding whatever hides it
+        // (RevealCell, the find bar's own primitive), and hand the tree the focus — "going to" the tree is
+        // the tree becoming the focused surface, which is also what re-arms its keyboard.
+        //
+        // Declared once because TWO surfaces offer the entry under that name: a calendar task panel's menu
+        // (PRD §8) and the "All tasks" window's rows (PRD §7), whose rows are the tree's cells shown in the
+        // sorter's order. A panel outlives the cell that laid it (panels are not per-tree, §7), so the task
+        // may be a detached parent, deleted, or another task tree's — and a panel whose title never named a
+        // task has no id at all. All of those are the same answer, said once, here.
+        val goToTaskTree: (TaskId?, String) -> Unit = { taskId, title ->
+            val occurrence = taskId?.let { SchedulerDomain.firstTaskOccurrence(schedulerState, it) }
+            if (occurrence == null) {
+                val name = taskId?.let { schedulerState.tasks[it]?.title }?.ifEmpty { null }
+                    ?: title.ifEmpty { null }
+                appMessage =
+                    if (name == null) {
+                        "This panel's task is not in the task tree."
+                    } else {
+                        "\"$name\" is not in the task tree."
+                    }
+            } else {
+                vm.dispatch(SchedulerIntent.FocusWindow(AppWindow.Tree))
+                vm.dispatch(SchedulerIntent.RevealCell(occurrence.cellId, occurrence.ancestors))
+            }
+        }
         // PRD §4/§13: the four sort-2 pop-ups the tree hoists up here are opened by BOTH trees — the
         // account's and the default sub-tree's. They name a cell/task/list id, and the same id means
         // different things in the two trees, so this records which tree asked. It decides both the state
@@ -1482,34 +1507,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 popupFromDefaultSubtree = false
                                 editTaskId = taskId
                             },
-                            // PRD §8 "go to task tree": select the first cell showing the panel's task,
-                            // expanding whatever hides it (RevealCell, the find bar's own primitive), and
-                            // hand the tree the focus — "going to" the tree is the tree becoming the
-                            // focused surface, which is also what re-arms its keyboard.
-                            //
-                            // A panel outlives the cell that laid it (panels are not per-tree, §7), so the
-                            // task may be a detached parent, deleted, or another task tree's — and a panel
-                            // whose title never named a task has no id at all. All of those are the same
-                            // answer, said once, here.
-                            onGoToTaskTree = { taskId, title ->
-                                val occurrence =
-                                    taskId?.let { SchedulerDomain.firstTaskOccurrence(schedulerState, it) }
-                                if (occurrence == null) {
-                                    val name = taskId?.let { schedulerState.tasks[it]?.title }?.ifEmpty { null }
-                                        ?: title.ifEmpty { null }
-                                    appMessage =
-                                        if (name == null) {
-                                            "This panel's task is not in the task tree."
-                                        } else {
-                                            "\"$name\" is not in the task tree."
-                                        }
-                                } else {
-                                    vm.dispatch(SchedulerIntent.FocusWindow(AppWindow.Tree))
-                                    vm.dispatch(
-                                        SchedulerIntent.RevealCell(occurrence.cellId, occurrence.ancestors),
-                                    )
-                                }
-                            },
+                            // PRD §8 "go to task tree" — the app's one handler, shared with the "All
+                            // tasks" window's rows (declared beside [appMessage]).
+                            onGoToTaskTree = goToTaskTree,
                             // PRD §8 task contextual menu "Remove": delete the block by its source.
                             onRemoveEntry = { block -> removeBlockIntent(block)?.let(vm::dispatch) },
                             // PRD §14 Reminders: clicking a reminder tag toggles its checked (done) state.
@@ -1790,26 +1790,48 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         )
                     }
 
-                    // All tasks: every task of the LIVE tree, flat, over its sorter configuration. The two
-                    // columns are readouts of the tree on screen (SchedulerDomain.taskListEntries), so the
-                    // percentage is the same absolute priority the tree's own rows show — not the keyframe
-                    // blend the scheduler follows. Ordering happens in the domain, which is why the sort is
-                    // part of the remember key: the list is recomputed when the tree or the sorter changes,
-                    // never per now-line tick.
+                    // All tasks: every task of the LIVE tree, flat, over its sorter configuration — and
+                    // every row is a TASK CELL, drawn by the SAME task-tree component the account's tree and
+                    // the §4 template are, over the state projectTaskList() makes (the live tree re-rooted
+                    // at this window's own list). So the rows carry the §13 contextual menu, Edit Mode and
+                    // every tree gesture, plus "go to task tree" — and an edit made here is an edit to the
+                    // tree. The percentage stays the same absolute priority the tree's own rows show, not
+                    // the keyframe blend the scheduler follows.
                     if (taskListWindowOpen) {
-                        val taskListEntries = remember(schedulerState, taskListSort, taskListDescending) {
-                            SchedulerDomain.taskListEntries(
-                                state = schedulerState,
-                                sort = taskListSort,
-                                descending = taskListDescending,
-                            )
-                        }
                         TaskListWindow(
-                            entries = taskListEntries,
+                            state = schedulerState,
                             sort = taskListSort,
                             onSortChange = { taskListSort = it },
                             descending = taskListDescending,
                             onDirectionChange = { taskListDescending = it },
+                            onIntent = { vm.dispatch(it) },
+                            // The rows own the keyboard only while this window is the front one.
+                            focused = focusedWindow() == FloatingWindow.TaskList,
+                            // PRD §5/§13: the same four sort-2 pop-ups the account's tree opens. They read
+                            // and write the LIVE state, because that is exactly what this window's rows are.
+                            onSetWeightWindow = {
+                                popupFromDefaultSubtree = false
+                                weightWindowListId = it
+                            },
+                            onSetRelativeWindow = {
+                                popupFromDefaultSubtree = false
+                                relativeWindowCellId = it
+                            },
+                            onSetEditTask = {
+                                popupFromDefaultSubtree = false
+                                editTaskId = it
+                            },
+                            onSetDeepCopyCell = {
+                                popupFromDefaultSubtree = false
+                                deepCopyCellId = it
+                            },
+                            // PRD §8's entry under its own name — the app's one handler, shared with the
+                            // calendar panel's menu. A row here always names a live task, so the "not in the
+                            // task tree" branch is unreachable from this surface; it is the same call all
+                            // the same, because a second one is how two surfaces start answering differently.
+                            onGoToTaskTree = { taskId ->
+                                goToTaskTree(taskId, schedulerState.tasks[taskId]?.title.orEmpty())
+                            },
                             onDismiss = { taskListWindowOpen = false },
                             initialOffset = taskListOffset,
                             onOffsetChange = {

@@ -163,6 +163,38 @@ object SchedulerDomain {
         return walk(state.rootListId, emptyList())
     }
 
+    /**
+     * [firstTaskOccurrence] for **every** task at once, in one walk.
+     *
+     * PRD §7's "All tasks" window needs the first occurrence of each of its rows to draw them as the tree's
+     * own cells, and asking one task at a time would re-walk the tree per task — O(tasks × tree) on every
+     * recomposition, which is exactly the display cost ADR 0009 forbids. Same walk, same rules (depth-first,
+     * each LIST visited once, a blank-titled cell neither matched nor descended into), so the two can never
+     * disagree about which cell "the first occurrence" is.
+     */
+    fun firstTaskOccurrences(state: SchedulerState): Map<TaskId, TaskOccurrence> {
+        val found = LinkedHashMap<TaskId, TaskOccurrence>()
+        val visitedLists = mutableSetOf<CellListId>()
+
+        fun walk(listId: CellListId, ancestors: List<CellId>) {
+            if (!visitedLists.add(listId)) return
+            val list = state.lists[listId] ?: return
+            for (cellId in list.cellIds) {
+                val cell = state.cells[cellId] ?: continue
+                val cellTaskId = cell.taskId ?: continue
+                if (isTextuallyEmptyCell(state, cellId)) continue
+                if (cellTaskId !in found && isSelectableCell(state, cellId)) {
+                    found[cellTaskId] = TaskOccurrence(cellId, ancestors)
+                }
+                val childListId = state.tasks[cellTaskId]?.childListId ?: continue
+                walk(childListId, ancestors + cellId)
+            }
+        }
+
+        walk(state.rootListId, emptyList())
+        return found
+    }
+
     /** Cells highlighted for selection actions (PRD §3). */
     fun activeSelectionCells(selection: SchedulerSelection): Set<CellId> {
         val multi = selection.selected
@@ -4447,7 +4479,15 @@ object SchedulerDomain {
             state.tasks.keys.mapNotNull { taskId ->
                 state.tasks[taskId]?.childListId?.takeIf { isDetachedParentTask(state, taskId, withCells) }
             }
-        val queue = ArrayDeque(listOf(state.rootListId) + detachedRoots)
+        // [WellKnownIds.MAIN_LIST] is seeded as well as [SchedulerState.rootListId]: every tree in the
+        // account is rooted there (SchedulerState.empty, withTaskTreeLoaded, projectDefaultSubtree), so for
+        // all of them this is the same list twice. It matters for the ONE projection that re-roots the state
+        // elsewhere — PRD §7's "All tasks" window
+        // ([org.example.project.scheduler.state.projectTaskList]), whose synthetic root holds one cell per
+        // task: a real root cell that is not the first occurrence of its task (nor an empty placeholder) is
+        // reachable from neither that root nor a detached parent, and without this seed the first edit
+        // boundary in that window would prune it out of the tree.
+        val queue = ArrayDeque(listOf(state.rootListId, WellKnownIds.MAIN_LIST) + detachedRoots)
         while (queue.isNotEmpty()) {
             val listId = queue.removeFirst()
             if (!reachableLists.add(listId)) continue

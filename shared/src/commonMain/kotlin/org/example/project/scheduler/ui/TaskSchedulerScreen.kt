@@ -410,6 +410,10 @@ internal fun CellListSection(
     onIntent: (SchedulerIntent) -> Unit,
     /** PRD §4: one extra cell at the end of every row — the default sub-tree's switch. Null in the tree. */
     rowTrailing: (@Composable (CellId) -> Unit)? = null,
+    /** PRD §7/§8: "go to task tree" on the row's §13 menu, or null where the entry has no meaning. */
+    onGoToTaskTree: ((TaskId) -> Unit)? = null,
+    /** PRD §7 "All tasks": [depth] 0 rows carry no Mode selector — they are always renaming. */
+    rootRenameOnly: Boolean = false,
 ) {
     val list = state.lists[listId] ?: return
 
@@ -506,6 +510,10 @@ internal fun CellListSection(
                                     null
                                 },
                             onEdit = { onOpenTaskEdit(taskId) },
+                            // PRD §7/§8: offered only where the surface is NOT the tree — the "All tasks"
+                            // window today. Same entry, same name and the same RevealCell primitive the
+                            // calendar panel's menu uses.
+                            onGoToTaskTree = onGoToTaskTree?.let { go -> { go(taskId) } },
                             onCopy = { onCopyCell(cellId) },
                             onDeepCopy = { onDeepCopyCell(cellId) },
                             // PRD §7/§13: the template on demand. Like "copy", it acts on the whole block
@@ -601,6 +609,9 @@ internal fun CellListSection(
                             cellId = cellId,
                             draftText = editDraft,
                             onIntent = onIntent,
+                            // PRD §7: a root row of the "All tasks" window is always renaming, so it is
+                            // offered no choice (the reducer opens its session in Rename mode to match).
+                            hideModeSelector = rootRenameOnly && depth == 0,
                         )
                     }
                 } else {
@@ -636,6 +647,8 @@ internal fun CellListSection(
                 onMoveDragEnd = onMoveDragEnd,
                 onIntent = onIntent,
                 rowTrailing = rowTrailing,
+                onGoToTaskTree = onGoToTaskTree,
+                rootRenameOnly = rootRenameOnly,
             )
         }
     }
@@ -792,6 +805,13 @@ internal fun EditModeMenus(
     cellId: CellId,
     draftText: String,
     onIntent: (SchedulerIntent) -> Unit,
+    /**
+     * PRD §7 "All tasks": hide the Change Task / Rename selector, because in that window's root the answer
+     * is fixed — the row IS the task, so it is always renaming. Hiding it is only half the rule: the session
+     * is *opened* in Rename mode by `SchedulerReducer.reduceInTaskList`, which is the one place that knows
+     * which cells are that window's roots.
+     */
+    hideModeSelector: Boolean = false,
 ) {
     val session = state.editSession ?: return
     // A cell that had no task before this edit began is being *created* — it is always in Change Task mode
@@ -814,7 +834,7 @@ internal fun EditModeMenus(
         }
 
     val modeOptions =
-        if (isBeingCreated) {
+        if (isBeingCreated || hideModeSelector) {
             emptyList()
         } else {
             listOf(
@@ -1987,6 +2007,17 @@ internal fun TaskRow(
                             cellMenu.onEdit()
                         },
                     )
+                    // PRD §7/§8: the calendar panel's entry under its own name, offered by any surface that
+                    // is not the tree itself. Only the "All tasks" window passes it today.
+                    cellMenu.onGoToTaskTree?.let { goToTaskTree ->
+                        DropdownMenuItem(
+                            text = { Text("go to task tree") },
+                            onClick = {
+                                contextMenuOpen = false
+                                goToTaskTree()
+                            },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("copy") },
                         onClick = {
@@ -2309,6 +2340,12 @@ internal fun contextMenuModifier(
 internal class TaskCellMenuActions(
     val onStartNow: (() -> Unit)?,
     val onEdit: () -> Unit,
+    /**
+     * PRD §7/§8 **"go to task tree"** — null in the account's own tree (you are already there) and in the §4
+     * template, non-null in the "All tasks" window, whose rows are the tree's cells shown in the sorter's
+     * order rather than the tree's.
+     */
+    val onGoToTaskTree: (() -> Unit)?,
     val onCopy: () -> Unit,
     val onDeepCopy: () -> Unit,
     val onAddDefaultSubtree: (() -> Unit)?,

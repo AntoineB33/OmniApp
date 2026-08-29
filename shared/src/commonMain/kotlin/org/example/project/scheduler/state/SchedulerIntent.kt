@@ -537,6 +537,38 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §7 **All tasks**: run [inner] against the live tree seen **through that window** — re-rooted at a
+     * synthetic list holding [rootCells] (one cell per task, in the sorter's order) and carrying the
+     * window's own expansion/selection/edit session instead of the tree's
+     * ([org.example.project.scheduler.state.projectTaskList]).
+     *
+     * The window draws the task tree's own component, so it emits the task tree's own intents — `ClickCell`,
+     * `SetCellTitle`, `ToggleExpand`, `Copy`, `Paste`, the lot. This wrapper is what points them at the
+     * window's rows rather than the tree's: without it the arrow keys, `Ctrl+A` and Ctrl+F would all walk the
+     * tree's order, and an edit would move the tree's caret.
+     *
+     * The rows travel with the intent because the order is the **window's** Compose-only sorter state (PRD §7
+     * — an ordering is a way of looking at the tree, never a fact about it), so the reducer has nothing to
+     * recompute it from and must be told exactly which rows the gesture was made on.
+     *
+     * What it edits is the **live tree**, so the whole gesture lands as **one Main history unit** and syncs
+     * like any other tree edit. The inner reduction's own units evaporate with the projection, exactly as
+     * they do for [InDefaultSubtree].
+     */
+    data class InTaskList(
+        val inner: SchedulerIntent,
+        val rootCells: List<CellId>,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §7 "All tasks": close every row the window has open — the button beside its sorter.
+     *
+     * Local view state ([org.example.project.scheduler.state.SchedulerState.taskListExpanded]): not
+     * persisted, not synced, and no Undo/Redo unit, like the sorter it sits beside.
+     */
+    data object CollapseTaskListRows : SchedulerIntent
+
+    /**
      * PRD §4/§7: turn the default-sub-tree policy on/off (the switch left of the lateral-menu button). Off
      * means new cells are created bare, exactly as before the feature existed; the template itself is kept
      * either way. Persisted + synced; not undoable.
@@ -606,10 +638,18 @@ sealed interface SchedulerIntent {
         val ranges: List<org.example.project.scheduler.model.TaskTimeRange>,
     ) : SchedulerIntent
 
-    /** [initialText] non-null when entering via typing (replaces cell content with first keystroke). */
+    /**
+     * [initialText] non-null when entering via typing (replaces cell content with first keystroke).
+     *
+     * [mode] forces the session's Edit Mode instead of letting it open on PRD §4's default (Change Task).
+     * The one caller is PRD §7's "All tasks" window: its root rows are **always in renaming mode**, because
+     * the row IS the task and re-pointing it at another one there would say nothing (see
+     * [SchedulerReducer]'s `reduceInTaskList`). Null everywhere else, which is the default.
+     */
     data class BeginEdit(
         val cellId: CellId,
         val initialText: String? = null,
+        val mode: CellEditMode? = null,
     ) : SchedulerIntent
 
     data class UpdateEditText(val text: String) : SchedulerIntent

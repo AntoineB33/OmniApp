@@ -11,6 +11,64 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "All tasks" is the task tree, drawn a third time — 2026-08-29
+
+→ PRD §7. `shared` (`ui/TaskListWindow.kt`, `scheduler/state/TaskListProjection.kt`,
+`scheduler/state/SchedulerIntent.kt` + `SchedulerReducer.kt` + `SchedulerState.kt`,
+`scheduler/ui/TaskTreeView.kt` + `TaskSchedulerScreen.kt`, `scheduler/domain/SchedulerDomain.kt`,
+`App.kt`). Client rebuild — no Supabase deploy.
+
+Asked for: *"In the All tasks window, it must be task cells."* The window listed each task as a plain
+`Text` row with two numbers beside it — a second, much poorer implementation of a row the app already has,
+with no menu, no Edit Mode, no sub-tree and no keyboard. It is now the **same `TaskTreeView`** the account's
+tree and the §4 template are drawn by, over `projectTaskList(rootCells)`: the **live** state re-rooted at a
+synthetic list (`TASK_LIST_ROOT_ID`) holding, in the sorter's order, the first occurrence cell of every
+listed task, with its intents wrapped in `SchedulerIntent.InTaskList(inner, rootCells)`.
+
+The rows are **real cells of the live tree**, never synthetic ones — that is what makes an edit there an
+edit to the tree with no translation, and what keeps the occurrence counts and percentages honest (both are
+read off `state.cells`). Re-rooting is the whole of the projection, so the visible order, `Ctrl+A`, the
+arrow keys and Ctrl+F's walk follow the window's rows for free.
+
+New in the window, and each one a consequence of the root being the *sorter's* order rather than the tree's:
+
+- **"go to task tree"** on every row's §13 menu — the calendar panel's entry, under its own name and through
+  the same `RevealCell` primitive. `App.kt`'s handler was hoisted so both surfaces call one function;
+  `TaskCellMenuActions.onGoToTaskTree` is null in the tree (you are already there) and in the template.
+- **"Collapse all"**, beside the sorter, closing every row the window has open.
+- **Nothing may be moved into the root.** The blue drop line never appears at root level
+  (`TaskTreeView`'s `allowRootDrop`), and `reduceInTaskList` refuses such a `MoveSelectedCells` as the
+  backstop.
+- **A root row has no Mode selector — it is always renaming.** `SchedulerIntent.BeginEdit` gained an
+  optional `mode`, set by `reduceInTaskList` (the one place that knows which cells are roots);
+  `EditModeMenus` hides the selector to match. A cell that is not one of the rows still opens on §4's
+  default.
+- **"Update order"**, which appears exactly while an edit has moved a row's figure enough to re-sort the
+  list. The displayed order is pinned (Compose-only, like the sorter), so editing a row cannot re-sort the
+  list from under the cursor; a task created since is appended and one deleted drops out.
+
+Three things the re-rooting could have broken, and how each is held:
+
+- `pruneDetachedTree` now seeds `WellKnownIds.MAIN_LIST` **as well as** `state.rootListId`. A real root cell
+  that is not the first occurrence of its task is reachable from neither the synthetic root nor a detached
+  parent, so the first edit boundary in the window would have pruned it out of the tree. Every other caller
+  is unaffected — for them the two ids are the same list.
+- The **colours** are solved over the live state (`TaskTreeView`'s new `colorSource`), not the projection,
+  whose ring would be ordered by the sorter. ADR 0013's identity — one hue per task across the tree, this
+  list and the calendar — holds by construction, and the shared `TaskHueMemo.account` cache is not thrashed.
+- The **synthetic list never escapes**: `withTaskListCapturedFrom` drops it, so it is in no history delta,
+  no persisted payload and nothing on the wire.
+
+The window's expansion, selection and edit session are its own (`taskListExpanded` / `taskListSelection` /
+`taskListEditSession`) — local view state, never persisted or synced, so a row open here is not a row open
+in the tree and moving the caret here can never enqueue a push. One gesture is **one** Main history unit
+(`TreeMutationDelta`, "All tasks"), like the template window's. `SchedulerDomain.firstTaskOccurrences` is
+the new one-walk plural of `firstTaskOccurrence` (one walk, not one per row — ADR 0009's display hot path).
+
+Pinned by `TaskListRowsTest`; `TaskListWindowTest` still pins the domain's ordering unchanged.
+
+---
+
 ### A grey period is never manufactured from evidence — 2026-08-29
 
 → ADR 0002. `shared` (`scheduler/state/SchedulerReducer.kt`, `scheduler/platform/WindowsPowerLog.kt`).
