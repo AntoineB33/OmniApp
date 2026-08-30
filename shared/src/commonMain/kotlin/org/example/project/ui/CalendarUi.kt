@@ -4071,7 +4071,14 @@ private fun DayColumn(
             // Culled AFTER [overlapLayout] has seen the whole day: a block's width comes from what it
             // overlaps, so a partner scrolled out of view must still narrow the one on screen.
             if (key != gestureKey && !onScreen(record.startHour, record.endHour)) return@forEach
-            val topReminderOccupancy = reminderStackOverlapAt(record.startHour, reminderTags, hourHeight) { tag ->
+            val topReminderOccupancy = reminderStackOverlapAt(
+                record.startHour,
+                record.endHour,
+                reminderTags,
+                hourHeight,
+                now?.hourOfDay(),
+                showsDayDate,
+            ) { tag ->
                 tag.checkedAtMillis?.let {
                     Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay()
                 }
@@ -4188,7 +4195,14 @@ private fun DayColumn(
                                 .padding(horizontal = 1.dp),
                         ) {
                             val previewColor = rec.taskId?.let { taskColors[it] } ?: CalColors.event
-                            val previewOccupancy = reminderStackOverlapAt(slice.topHour, reminderTags, hourHeight) { tag ->
+                            val previewOccupancy = reminderStackOverlapAt(
+                                slice.topHour,
+                                slice.bottomHour,
+                                reminderTags,
+                                hourHeight,
+                                now?.hourOfDay(),
+                                showsDayDate,
+                            ) { tag ->
                                 tag.checkedAtMillis?.let {
                                     Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay()
                                 }
@@ -4478,29 +4492,44 @@ private fun panelLabelTopInset(
  */
 private fun reminderStackOverlapAt(
     startHour: Float,
+    endHour: Float,
     reminderTags: List<PlacedRecord>,
     hourHeight: Dp,
+    nowHour: Float?,
+    showsDayDate: Boolean,
     checkedAtHour: (PlacedRecord) -> Float?,
 ): Dp {
     val panelTop = hourHeight * startHour
-    var lastBottom = 0.dp
-    var maxOverlap = 0.dp
-
-    reminderTags
-        .sortedBy { checkedAtHour(it) ?: it.startHour }
-        .forEach { tag ->
-            val tagHour = checkedAtHour(tag) ?: tag.startHour
-            val y = maxOf(hourHeight * tagHour, lastBottom)
-            val bottom = y + REMINDER_TAG_HEIGHT
-            if (y < panelTop && bottom > panelTop) {
-                maxOverlap = maxOf(maxOverlap, bottom - panelTop)
-            } else if (y >= panelTop && y < panelTop + REMINDER_TAG_HEIGHT) {
-                maxOverlap = maxOf(maxOverlap, REMINDER_TAG_HEIGHT)
-            }
-            lastBottom = bottom
+    val panelBottom = hourHeight * endHour
+    val scheduled = reminderTags.filter { nowHour == null || it.checked || it.startHour > nowHour }
+    val overdue = reminderTags.filter { nowHour != null && !it.checked && it.startHour <= nowHour }
+    val tagBounds = buildList {
+        var lastScheduledBottom = 0.dp
+        scheduled.sortedBy { checkedAtHour(it) ?: it.startHour }.forEach { tag ->
+            val naturalY = hourHeight * (checkedAtHour(tag) ?: tag.startHour)
+            val y = maxOf(naturalY, lastScheduledBottom)
+            add(y to (y + REMINDER_TAG_HEIGHT))
+            lastScheduledBottom = y + REMINDER_TAG_HEIGHT
         }
+        overdue.forEachIndexed { index, _ ->
+            val y = hourHeight * (nowHour ?: 0f) + REMINDER_TAG_HEIGHT * index
+            add(y to (y + REMINDER_TAG_HEIGHT))
+        }
+    }
 
-    return maxOverlap
+    var titleTop = panelTop +
+        if (showsDayDate) (DAY_DATE_BADGE_HEIGHT - panelTop).coerceAtLeast(0.dp) else 0.dp
+    repeat(tagBounds.size + 1) {
+        val titleBottom = titleTop + SCREEN_BREAK_LABEL_MIN_HEIGHT
+        val collidingBottom = tagBounds
+            .filter { (tagTop, tagBottom) ->
+                tagTop < titleBottom && tagBottom > titleTop && tagBottom > panelTop && tagTop < panelBottom
+            }
+            .maxOfOrNull { it.second }
+        if (collidingBottom == null || collidingBottom <= titleTop) return@repeat
+        titleTop = collidingBottom
+    }
+    return (titleTop - panelTop).coerceAtLeast(0.dp)
 }
 
 /**
