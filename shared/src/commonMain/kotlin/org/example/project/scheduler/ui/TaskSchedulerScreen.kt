@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -63,6 +64,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -101,6 +103,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
@@ -138,6 +141,7 @@ import org.example.project.ui.SheetColors
 import org.example.project.ui.ShortcutHint
 import org.example.project.ui.TransientPopupLayer
 import org.example.project.ui.transientPopupCard
+import org.example.project.ui.windowDragHandle
 import org.example.project.ui.TaskTreeFindBar
 import org.example.project.ui.TaskSheetExpandArrow
 import org.example.project.ui.TaskSheetTitleBounds
@@ -1314,6 +1318,7 @@ internal fun PriorityWeightWindow(
     // The rows of the table / chart are the populated cells of the sub-list (those with a priority).
     val populated =
         list.cellIds.filter { id -> state.cells[id]?.taskId?.let { priorities[it] != null } == true }
+    var offset by remember(listId) { mutableStateOf(Offset.Zero) }
     var draggedColumn by remember(listId) { mutableStateOf<Int?>(null) }
     var columnDropIndex by remember(listId) { mutableStateOf<Int?>(null) }
     // The table as this window found it: captured on the composition that opened it, and kept across
@@ -1329,89 +1334,113 @@ internal fun PriorityWeightWindow(
         // Bound the window to the screen (so the chart on the right is never pushed off-screen).
         // [transientPopupCard] does the rest: it is a sort-2 pop-up.
         modifier = modifier
+            .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
             .transientPopupCard(onDismiss)
             .widthIn(max = 760.dp)
             .heightIn(max = 600.dp),
     ) {
-        Column(Modifier.padding(16.dp)) {
-            // `fill = false` so a short table keeps the window short; the Cancel bar below always shows.
-            Row(Modifier.weight(1f, fill = false), verticalAlignment = Alignment.Top) {
-                // The table takes the remaining width and scrolls if it is wider/taller than the window,
-                // leaving the fixed-width chart column always visible on the right.
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                        .horizontalScroll(rememberScrollState()),
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .windowDragHandle(onDragEnd = {}) { dragAmount -> offset += dragAmount }
+                    .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Priority weights",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                Box(
+                    modifier = Modifier.size(28.dp).clip(CircleShape).clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    WeightTableHeader(
-                        depth = 0,
-                        leadingWidth = WEIGHT_WINDOW_TITLE_WIDTH,
-                        weightColumns = list.weightColumns,
-                        draggedColumn = draggedColumn,
-                        dropIndex = columnDropIndex,
-                        onDraggedColumnChange = { draggedColumn = it },
-                        onDropIndexChange = { columnDropIndex = it },
-                        onSetColumnWeight = { c, w -> onIntent(SchedulerIntent.SetPriorityColumnWeight(listId, c, w)) },
-                        onAddColumn = { i -> onIntent(SchedulerIntent.AddPriorityColumn(listId, i)) },
-                        onResetColumn = { c -> onIntent(SchedulerIntent.ResetPriorityColumn(listId, c)) },
-                        onDeleteColumn = { c -> onIntent(SchedulerIntent.DeletePriorityColumn(listId, c)) },
-                        onMoveColumn = { f, t -> onIntent(SchedulerIntent.MovePriorityColumn(listId, f, t)) },
-                    )
-                    populated.forEach { cellId ->
-                        val cell = state.cells[cellId] ?: return@forEach
-                        val title = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.width(WEIGHT_WINDOW_TITLE_WIDTH).padding(horizontal = 4.dp)) {
-                                Text(
-                                    text = title.ifEmpty { "(untitled)" },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            for (column in list.weightColumns.indices) {
-                                if (draggedColumn != null && columnDropIndex == column) ColumnDropLine()
-                                Box(
-                                    modifier = Modifier.background(
-                                        if (draggedColumn == column) SheetColors.moveDragFill else Color.Transparent,
-                                    ),
-                                ) {
-                                    WeightInputCell(
-                                        value = cell.priorityWeights.getOrElse(column) { 1.0 },
-                                        onSet = { value -> onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, value)) },
+                    Text("✕", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+            Column(Modifier.padding(16.dp)) {
+                // `fill = false` so a short table keeps the window short; the Cancel bar below always shows.
+                Row(Modifier.weight(1f, fill = false), verticalAlignment = Alignment.Top) {
+                    // The table takes the remaining width and scrolls if it is wider/taller than the window,
+                    // leaving the fixed-width chart column always visible on the right.
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                            .horizontalScroll(rememberScrollState()),
+                    ) {
+                        WeightTableHeader(
+                            depth = 0,
+                            leadingWidth = WEIGHT_WINDOW_TITLE_WIDTH,
+                            weightColumns = list.weightColumns,
+                            draggedColumn = draggedColumn,
+                            dropIndex = columnDropIndex,
+                            onDraggedColumnChange = { draggedColumn = it },
+                            onDropIndexChange = { columnDropIndex = it },
+                            onSetColumnWeight = { c, w -> onIntent(SchedulerIntent.SetPriorityColumnWeight(listId, c, w)) },
+                            onAddColumn = { i -> onIntent(SchedulerIntent.AddPriorityColumn(listId, i)) },
+                            onResetColumn = { c -> onIntent(SchedulerIntent.ResetPriorityColumn(listId, c)) },
+                            onDeleteColumn = { c -> onIntent(SchedulerIntent.DeletePriorityColumn(listId, c)) },
+                            onMoveColumn = { f, t -> onIntent(SchedulerIntent.MovePriorityColumn(listId, f, t)) },
+                        )
+                        populated.forEach { cellId ->
+                            val cell = state.cells[cellId] ?: return@forEach
+                            val title = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.width(WEIGHT_WINDOW_TITLE_WIDTH).padding(horizontal = 4.dp)) {
+                                    Text(
+                                        text = title.ifEmpty { "(untitled)" },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
+                                for (column in list.weightColumns.indices) {
+                                    if (draggedColumn != null && columnDropIndex == column) ColumnDropLine()
+                                    Box(
+                                        modifier = Modifier.background(
+                                            if (draggedColumn == column) SheetColors.moveDragFill else Color.Transparent,
+                                        ),
+                                    ) {
+                                        WeightInputCell(
+                                            value = cell.priorityWeights.getOrElse(column) { 1.0 },
+                                            onSet = { value -> onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, value)) },
+                                        )
+                                    }
+                                }
+                                if (draggedColumn != null && columnDropIndex == list.weightColumns.size) ColumnDropLine()
                             }
-                            if (draggedColumn != null && columnDropIndex == list.weightColumns.size) ColumnDropLine()
                         }
                     }
+                    Spacer(Modifier.width(16.dp))
+                    PriorityChart(
+                        titles = populated.map { id -> state.cells[id]?.taskId?.let { state.tasks[it]?.title }.orEmpty() },
+                        // PRD §5: each row's share of THIS sub-list — the number the table on the left sets —
+                        // rather than the task's absolute priority (its share of the whole tree).
+                        fractions = populated.map { id -> RelativePriorityDomain.cellShare(state, id) },
+                        modifier = Modifier.width(220.dp).verticalScroll(rememberScrollState()),
+                    )
                 }
-                Spacer(Modifier.width(16.dp))
-                PriorityChart(
-                    titles = populated.map { id -> state.cells[id]?.taskId?.let { state.tasks[it]?.title }.orEmpty() },
-                    // PRD §5: each row's share of THIS sub-list — the number the table on the left sets —
-                    // rather than the task's absolute priority (its share of the whole tree).
-                    fractions = populated.map { id -> RelativePriorityDomain.cellShare(state, id) },
-                    modifier = Modifier.width(220.dp).verticalScroll(rememberScrollState()),
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                // PRD §5 Cancel: back to the table this window opened on, as one undoable content delta.
-                TextButton(
-                    onClick = {
-                        onIntent(
-                            SchedulerIntent.RestorePriorityWeights(
-                                listId = listId,
-                                weightColumns = openedTable.weightColumns,
-                                cellWeights = openedTable.cellWeights,
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    // PRD §5 Cancel: back to the table this window opened on, as one undoable content delta.
+                    TextButton(
+                        onClick = {
+                            onIntent(
+                                SchedulerIntent.RestorePriorityWeights(
+                                    listId = listId,
+                                    weightColumns = openedTable.weightColumns,
+                                    cellWeights = openedTable.cellWeights,
+                                )
                             )
-                        )
-                    },
-                    enabled = tableEdited,
-                ) {
-                    Text("Cancel")
+                        },
+                        enabled = tableEdited,
+                    ) {
+                        Text("Cancel")
+                    }
                 }
             }
         }
@@ -1448,6 +1477,7 @@ internal fun RelativePriorityWindow(
     val chains = RelativePriorityDomain.occurrenceChains(state, taskId, relativeTo)
     val value = RelativePriorityDomain.relativePriority(state, taskId, relativeTo)
     val pinned = state.relativePriorityPins[RelativePriorityPinKey(taskId, relativeTo)].orEmpty()
+    var offset by remember(cellId) { mutableStateOf(Offset.Zero) }
 
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -1456,99 +1486,119 @@ internal fun RelativePriorityWindow(
         border = BorderStroke(1.dp, SheetColors.grid),
         // Same contract as the weight window — a sort-2 pop-up.
         modifier = modifier
+            .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
             .transientPopupCard(onDismiss)
             .widthIn(max = 760.dp)
             .heightIn(max = 600.dp),
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                text = "Relative priority of " + quoted(state.tasks[taskId]?.title.orEmpty()),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                PercentInputField(
-                    fraction = value,
-                    onSet = { onIntent(SchedulerIntent.SetRelativePriority(taskId, relativeTo, it)) },
-                )
-                Spacer(Modifier.width(16.dp))
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .windowDragHandle(onDragEnd = {}) { dragAmount -> offset += dragAmount }
+                    .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    text = "Relative to:",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = "Relative priority of " + quoted(state.tasks[taskId]?.title.orEmpty()),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.width(6.dp))
-                Box {
-                    TextButton(onClick = { relativeToMenuOpen = true }) {
-                        Text(relativeToLabel(state, relativeTo))
-                    }
-                    DropdownMenu(
-                        expanded = relativeToMenuOpen,
-                        onDismissRequest = { relativeToMenuOpen = false },
-                    ) {
-                        // Root first, then this cell's ancestors from the root-most down to its parent.
-                        options.forEach { option ->
-                            DropdownMenuItem(
-                                text = { Text(relativeToLabel(state, option)) },
-                                onClick = {
-                                    relativeToMenuOpen = false
-                                    relativeTo = option
-                                },
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.weight(1f))
-                TextButton(
-                    onClick = { onIntent(SchedulerIntent.ClearRelativePriorityPins(taskId, relativeTo)) },
-                    enabled = pinned.isNotEmpty(),
+                Box(
+                    modifier = Modifier.size(28.dp).clip(CircleShape).clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Text("Clear pins")
+                    Text("✕", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            Spacer(Modifier.height(6.dp))
-            HorizontalDivider(color = SheetColors.grid)
-            Spacer(Modifier.height(8.dp))
-            if (chains.isEmpty()) {
-                Text(
-                    text = "No occurrence of this task under " + relativeToLabel(state, relativeTo) + ".",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                Column(
-                    Modifier
-                        .verticalScroll(rememberScrollState())
-                        .horizontalScroll(rememberScrollState()),
-                ) {
-                    chains.forEach { chain ->
-                        Row(
-                            modifier = Modifier.padding(vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+            Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+            Column(Modifier.padding(16.dp)) {
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PercentInputField(
+                        fraction = value,
+                        onSet = { onIntent(SchedulerIntent.SetRelativePriority(taskId, relativeTo, it)) },
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Text(
+                        text = "Relative to:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Box {
+                        TextButton(onClick = { relativeToMenuOpen = true }) {
+                            Text(relativeToLabel(state, relativeTo))
+                        }
+                        DropdownMenu(
+                            expanded = relativeToMenuOpen,
+                            onDismissRequest = { relativeToMenuOpen = false },
                         ) {
-                            chain.forEachIndexed { index, chainCellId ->
-                                if (index > 0) {
-                                    Text(
-                                        text = " > ",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                RelativePriorityChainCell(
-                                    state = state,
-                                    cellId = chainCellId,
-                                    pinned = chainCellId in pinned,
-                                    onTogglePin = {
-                                        onIntent(
-                                            SchedulerIntent.ToggleRelativePriorityPin(
-                                                taskId,
-                                                relativeTo,
-                                                chainCellId,
-                                            )
-                                        )
+                            // Root first, then this cell's ancestors from the root-most down to its parent.
+                            options.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(relativeToLabel(state, option)) },
+                                    onClick = {
+                                        relativeToMenuOpen = false
+                                        relativeTo = option
                                     },
                                 )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(
+                        onClick = { onIntent(SchedulerIntent.ClearRelativePriorityPins(taskId, relativeTo)) },
+                        enabled = pinned.isNotEmpty(),
+                    ) {
+                        Text("Clear pins")
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                HorizontalDivider(color = SheetColors.grid)
+                Spacer(Modifier.height(8.dp))
+                if (chains.isEmpty()) {
+                    Text(
+                        text = "No occurrence of this task under " + relativeToLabel(state, relativeTo) + ".",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Column(
+                        Modifier
+                            .verticalScroll(rememberScrollState())
+                            .horizontalScroll(rememberScrollState()),
+                    ) {
+                        chains.forEach { chain ->
+                            Row(
+                                modifier = Modifier.padding(vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                chain.forEachIndexed { index, chainCellId ->
+                                    if (index > 0) {
+                                        Text(
+                                            text = " > ",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    RelativePriorityChainCell(
+                                        state = state,
+                                        cellId = chainCellId,
+                                        pinned = chainCellId in pinned,
+                                        onTogglePin = {
+                                            onIntent(
+                                                SchedulerIntent.ToggleRelativePriorityPin(
+                                                    taskId,
+                                                    relativeTo,
+                                                    chainCellId,
+                                                )
+                                            )
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
