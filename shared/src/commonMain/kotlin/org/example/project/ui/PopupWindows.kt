@@ -1,7 +1,6 @@
 package org.example.project.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -144,9 +143,12 @@ fun TransientPopupLayer(
 }
 
 /**
- * Applied to a sort-2 pop-up's card. It registers the pop-up with the host (which closes any other one),
- * keeps its window-space bounds published so a press inside it is never read as a press elsewhere, and
- * swallows the taps that do land inside.
+ * Applied to a sort-2 pop-up's card. It registers the pop-up with the host (which closes any other one)
+ * and keeps its window-space bounds published so a press inside it is never read as a press elsewhere.
+ *
+ * The card intentionally does not consume the press: the top bar and other controls inside the popup need
+ * their own drag / click handlers to run, and the one observer at the app root is already handling the
+ * outside-dismiss decision. The popup still stays non-modal and the first press outside it still closes it.
  */
 @Composable
 fun Modifier.transientPopupCard(onDismiss: () -> Unit): Modifier {
@@ -159,7 +161,6 @@ fun Modifier.transientPopupCard(onDismiss: () -> Unit): Modifier {
     }
     return this
         .onGloballyPositioned { host?.setBounds(key, it.boundsInWindow()) }
-        .pointerInput(Unit) { detectTapGestures { } }
 }
 
 /**
