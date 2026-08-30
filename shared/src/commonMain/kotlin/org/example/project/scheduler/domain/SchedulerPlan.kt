@@ -197,6 +197,26 @@ data class PlanWindow(
 data class PlanSlot(val taskId: TaskId?, val durationMillis: Long)
 
 /**
+ * `side-dev/scheduler.py` `Walk.run`'s `pending`: **the chunk still in progress** — the task, what is left of
+ * it, and the candidate set it was decided against.
+ *
+ * The last of the three is the whole of the atomic block's other half. The run continues while its task is
+ * still a candidate and its chunk is unpaid — *but only while the field it was decided against has not
+ * WIDENED*. A task that started inside a period only it was allowed in has no claim on the time after the
+ * rivals come back: carrying its minimum out past the window would not merely use the period, it would
+ * lengthen everybody else's ban. A set that SHRANK, or one that came back the same after an interval that
+ * accepted nobody, is the atomic block and does resume.
+ *
+ * It is also half of what a progressive link hands to the next one ([SchedulerPlanner.runRange]): a chunk
+ * suspended at a link boundary must resume there, or the seam would show in the schedule.
+ */
+data class PendingChunk(
+    val taskId: TaskId,
+    val leftMillis: Double,
+    val against: Set<TaskId>,
+)
+
+/**
  * `side-dev/README.md`: the finite rule list — [prefix] played once from [startMillis], then [cycle] forever.
  * An empty [cycle] means the walk was capped before a stable cycle could be calculated ("truncated timelines").
  */
@@ -958,147 +978,37 @@ class SchedulerPlanner(
         maxRules: Int = MAX_RULES,
         history: List<PlanBlock> = emptyList(),
     ): Plan {
-        val sorted = blocks.sortedBy { it.startMillis }
-
-        val past = sorted.filter { it.endMillis <= nowMillis } + history.filter { it.startMillis < nowMillis }
-        val ahead = sorted.filter { it.endMillis > nowMillis }
-        // Only obstacles still AHEAD bend the plan: what already happened is history, not a blockage the
-        // timeline has to be compensated around. The past reaches the walk through the clocks instead.
-        setField(ahead, windows)
-
-        // The clocks are replayed over TWO periods, not one. A period is exactly the spacing of one task's
-        // slots, so a window one period wide samples the past at the rate the schedule repeats at: whatever
-        // the phase, a task whose slot has just left the window and whose next one has not yet entered it
-        // reads as NEVER SERVED, and a task that reads as never served claims the maximum however small its
-        // priority. Two periods cannot alias — a task's slot count in the window is one or two, never none.
-        val want = lookbackMillis ?: (2.0 * minPeriodMillis)
-        var windowStart = lookbackStart(windows, nowMillis, want)
-        past.minOfOrNull { it.startMillis }?.let { windowStart = maxOf(windowStart, it) }
-        windowStart = minOf(windowStart, nowMillis)
-
-        val walk = PlanWalk(this, replayClocks(past, windows, nowMillis, windowStart))
-        walk.clamp(nowMillis)
+        val seeded = seedWalk(blocks, windows, nowMillis, lookbackMillis, history)
+        val walk = seeded.walk
+        val ahead = seeded.ahead
 
         val slots = mutableListOf<PlanSlot>()
         var t = nowMillis
-        var freeTail = false
-        var steps = 0
         // Safety valve: slots are merged, so their count no longer bounds the walk.
         val maxSteps = MAX_STEPS_PER_RULE * maxRules
 
-        // `_head`: the run still in progress at `nowMillis`, and how much of its minimum it has already
-        // served. The walk continues that run rather than starting a fresh one.
-        val head = headRun(past, nowMillis)
-        // `_last_run`, deliberately NOT `_head`: a run SURVIVES an idling interruption (which is what `_head`
-        // reads, and what the atomic block is about), but `last` is the other rule — a task is not picked
-        // twice in a row — and the walk clears it at every gap it pushes. A task that stopped and was not
-        // replaced never took a second turn, so nothing is owed on its account. Reading `last` off `_head`
-        // instead makes a RESUMED plan refuse the very task the timeline left off with, however far behind it
-        // is: on a timeline that re-plans at every boundary the rightful pick then loses a slot at every break.
-        walk.setLast(lastRun(past, nowMillis))
-
-        // Every instant the environment can change at, sorted once: the walk asks about them constantly, and
-        // with a three-day timeline there are many.
-        val allBounds = boundsAfter(ahead, windows, nowMillis)
-        var boundIndex = 0
-        // The instants a rival comes back from an exclusion: a run may not be in progress across one of them
-        // unless it was already running.
-        val walls = wallsOf(ahead, windows)
-
-        /**
-         * `side-dev/scheduler.py` `Walk.run`'s `pending`: **the chunk still in progress** — the task, what is
-         * left of it, and the candidate set it was decided against.
-         *
-         * The last of those three is the whole of the atomic block's other half. The run continues while its
-         * task is still a candidate and its chunk is unpaid — *but only while the field it was decided
-         * against has not WIDENED*. A task that started inside a period only it was allowed in has no claim
-         * on the time after the rivals come back: carrying its minimum out past the window would not merely
-         * use the period, it would lengthen everybody else's ban. A set that SHRANK, or one that came back
-         * the same after an interval that accepted nobody, is the atomic block and does resume.
-         */
-        var pending: Triple<TaskId, Double, Set<TaskId>>? =
-            head?.let { (id, served) ->
-                val minimum = (minimumOf[id] ?: 0L).toDouble()
-                if (served.toDouble() < minimum) Triple(id, minimum - served.toDouble(), share.keys.toSet()) else null
-            }
+        var pending: PendingChunk? = seeded.pending
 
         // --- phase 1: the disturbed part of the timeline ---
         //
-        // A literal port of `side-dev/scheduler.py` `Walk.run`. Two rules of the README are structural here
-        // rather than checked afterwards: NO IDLING — wherever the candidate set is non-empty somebody is
-        // placed, always; and an interval that accepts NOBODY suspends the run in progress instead of ending
-        // it, so a 20-second look-away every twenty minutes does not make a 45-minute minimum unschedulable.
-        while (slots.size < maxRules && steps < maxSteps) {
-            steps++
-            val limit = nextBoundary(ahead, windows, t)
-            val fieldEnd = fieldEndMillis
-            // A run suspended by a period it is banned from is not finished with the timeline, so the walk may
-            // not stop at the last boundary while it still owes its minimum.
-            if (limit == null && (fieldEnd == null || t >= fieldEnd) && pending == null) break
-
-            // The environment is read at the MIDPOINT of the segment, exactly as the reference reads it —
-            // which is what makes an open-started period (the README's dragged 20 seconds, the half-open
-            // `(t_p, t_p + 20s]`) mean what it says.
-            val next = limit ?: (t + (2.0 * minPeriodMillis).roundToLong().coerceAtLeast(1L))
-            val mid = t + (next - t) / 2
-
-            val block = blockAt(ahead, mid)
-            if (block != null && block.taskId !in minimumOf) {
-                // A pre-placed block owned by nobody schedulable: it suspends, exactly as an all-refusing
-                // period does. `last` stands and the run in progress is untouched.
-                pushSlot(slots, block.taskId, next - t)
-                t = next
-                freeTail = false
-                walk.clamp(t)
-                continue
-            }
-
-            val weights = weightsAt(ahead, windows, mid)
-            val candidates = candidatesAt(weights, permittedAt(ahead, windows, mid))
-            if (candidates.isEmpty()) {
-                pushSlot(slots, null, next - t)
-                t = next
-                freeTail = false
-                walk.clamp(t)
-                continue
-            }
-            // The percentages the walk races on here are the EFFECTIVE ones — each task's share after its
-            // resilience to the kinds in force, renormalized over whoever is left.
-            val local = localSharesOf(weights, candidates)
-
-            val held = pending
-            val name: TaskId
-            var left: Double
-            val here = candidates.toSet()
-            // `not set(cand) > pending[2]` — a STRICT superset is the only thing that ends the run.
-            val widened = here.size > held?.third.orEmpty().size && here.containsAll(held?.third.orEmpty())
-            if (held != null && held.first in candidates && held.second > 0.0 && !widened) {
-                name = held.first
-                left = held.second
-            } else {
-                val picked = walk.pick(candidates, avoidLast = true, shares = local) ?: break
-                name = picked
-                left = walk.chunkMillis(picked, candidates, boostAt(picked, t), shares = local)
-            }
-
-            val stop = minOf(t + left.roundToLong().coerceAtLeast(1L), next)
-            val served = stop - t
-            if (served <= 0L) break
-            pushSlot(slots, name, served)
-            // `side-dev/scheduler.py`: `v[name] += served / w[name]` — charged against the task's EFFECTIVE
-            // weight, at the plain rate. The field lengthens the slot; it does not also discount its cost.
-            walk.serveWeighted(name, served.toDouble(), weights[name] ?: 0.0)
-            // `side-dev/scheduler.py` `Walk._relax`: `T = self.min_period` — the GLOBAL period, never one
-            // renormalized over whoever happens to be a candidate here. The band an excluded group is held
-            // within is a property of the whole rule state, not of the stretch being walked.
-            walk.relax(served.toDouble(), minPeriodMillis, candidates)
-            left -= served.toDouble()
-            pending = if (left > CHUNK_EPSILON_MILLIS) Triple(name, left, candidates.toSet()) else null
-            t = stop
-            freeTail = true
-            walk.clamp(t)
-        }
-
+        // [runRange] IS the walk, and the one copy of it. It is asked here for the whole timeline — with
+        // `stopWhenSettled` it gives up the moment nothing is left to distort the schedule, and
+        // phase 2 below attaches the analytic cycle — and asked for one LINK at a time by
+        // [ProgressiveSchedule.settle], which is the same walk paused and resumed rather than a second one.
+        val phase1 = runRange(
+            walk = walk,
+            ahead = ahead,
+            windows = windows,
+            startMillis = t,
+            endMillis = Long.MAX_VALUE,
+            pendingIn = pending,
+            slots = slots,
+            maxRules = maxRules,
+            maxSteps = maxSteps,
+            stopWhenSettled = true,
+        )
+        t = phase1.cursorMillis
+        pending = phase1.pending
         // --- phase 2: settle what is still owed, then repeat forever ---
         var cycle = emptyList<PlanSlot>()
         val tailWeights = weightsAt(ahead, windows, t)
@@ -1130,6 +1040,226 @@ class SchedulerPlanner(
         val (prefix, tidied) = tidy(slots, cycle)
         return Plan(startMillis = nowMillis, prefix = prefix, cycle = tidied)
     }
+
+    /**
+     * `side-dev/scheduler.py` `Walk._seed` — **the walk, seeded from the drawn past**, and the one copy of it.
+     *
+     * It is what makes a chain of re-plans and one long plan of the same environment the same schedule, and it
+     * is the approximation the reference names as such: a resumed plan reconstructs the clocks, `last` and the
+     * chunk in progress from the timeline that was DRAWN, where a progressive link ([runRange] with the same
+     * [PlanWalk] handed back in) carries the live walk instead and is exact. The app must re-seed — it re-plans
+     * from records, not from a walk object it kept — so both paths exist and only one of them is exact.
+     *
+     * The field is set here, over everything still AHEAD of [nowMillis]: what already happened is history, not
+     * a blockage the timeline has to be compensated around, and the past reaches the walk through the clocks.
+     * A caller settling a progressive chain seeds ONCE, at its commit point, and every link then walks inside
+     * the field this built — `side-dev/scheduler.py`'s `field_span`.
+     */
+    internal fun seedWalk(
+        blocks: List<PlanBlock>,
+        windows: List<PlanWindow>,
+        nowMillis: Long,
+        lookbackMillis: Double? = null,
+        history: List<PlanBlock> = emptyList(),
+    ): SeededWalk {
+        val sorted = blocks.sortedBy { it.startMillis }
+
+        val past = sorted.filter { it.endMillis <= nowMillis } + history.filter { it.startMillis < nowMillis }
+        val ahead = sorted.filter { it.endMillis > nowMillis }
+        // Only obstacles still AHEAD bend the plan: what already happened is history, not a blockage the
+        // timeline has to be compensated around. The past reaches the walk through the clocks instead.
+        setField(ahead, windows)
+
+        // The clocks are replayed over TWO periods, not one. A period is exactly the spacing of one task's
+        // slots, so a window one period wide samples the past at the rate the schedule repeats at: whatever
+        // the phase, a task whose slot has just left the window and whose next one has not yet entered it
+        // reads as NEVER SERVED, and a task that reads as never served claims the maximum however small its
+        // priority. Two periods cannot alias — a task's slot count in the window is one or two, never none.
+        val want = lookbackMillis ?: (2.0 * minPeriodMillis)
+        var windowStart = lookbackStart(windows, nowMillis, want)
+        past.minOfOrNull { it.startMillis }?.let { windowStart = maxOf(windowStart, it) }
+        windowStart = minOf(windowStart, nowMillis)
+
+        val walk = PlanWalk(this, replayClocks(past, windows, nowMillis, windowStart))
+        walk.clamp(nowMillis)
+
+        // `_head`: the run still in progress at `nowMillis`, and how much of its minimum it has already
+        // served. The walk continues that run rather than starting a fresh one.
+        val head = headRun(past, nowMillis)
+        // `_last_run`, deliberately NOT `_head`: a run SURVIVES an idling interruption (which is what `_head`
+        // reads, and what the atomic block is about), but `last` is the other rule — a task is not picked
+        // twice in a row — and the walk clears it at every gap it pushes. A task that stopped and was not
+        // replaced never took a second turn, so nothing is owed on its account. Reading `last` off `_head`
+        // instead makes a RESUMED plan refuse the very task the timeline left off with, however far behind it
+        // is: on a timeline that re-plans at every boundary the rightful pick then loses a slot at every break.
+        walk.setLast(lastRun(past, nowMillis))
+
+        val pending =
+            head?.let { (id, served) ->
+                val minimum = (minimumOf[id] ?: 0L).toDouble()
+                if (served.toDouble() < minimum) {
+                    PendingChunk(id, minimum - served.toDouble(), share.keys.toSet())
+                } else {
+                    null
+                }
+            }
+        return SeededWalk(walk = walk, ahead = ahead, past = past, pending = pending)
+    }
+
+    /** What [seedWalk] hands the walk: the walk itself, the obstacles still ahead, the past it read, and the
+     *  chunk that was already in progress at the seam. */
+    internal data class SeededWalk(
+        val walk: PlanWalk,
+        val ahead: List<PlanBlock>,
+        val past: List<PlanBlock>,
+        val pending: PendingChunk?,
+    )
+
+    /**
+     * `side-dev/scheduler.py` `Walk.run` — **the walk, and the one copy of it**, asked for the stretch
+     * `[startMillis, endMillis)`.
+     *
+     * Two rules of `side-dev/README.md` are structural here rather than checked afterwards: **no idling** —
+     * wherever the candidate set is non-empty somebody is placed, always; and an interval that accepts
+     * NOBODY **suspends** the run in progress instead of ending it ([PendingChunk]), so a 20-second look-away
+     * every twenty minutes does not make a 45-minute minimum unschedulable.
+     *
+     * Two callers, and the difference between them is the whole of the progressive calculation:
+     *
+     * - [plan] asks for the WHOLE timeline (`endMillis = Long.MAX_VALUE`) with [stopWhenSettled], so the walk
+     *   gives up the moment nothing is left to distort the schedule and phase 2 attaches the analytic cycle;
+     * - [ProgressiveSchedule.settle] asks for one LINK of it at a time and hands the walk itself, plus
+     *   [pendingIn], back in for the next link. That is what makes a chain of links the SAME schedule one long
+     *   walk would have written, rather than merely a close one — the link carries the clocks and the chunk in
+     *   progress instead of reconstructing them from the drawn past.
+     *
+     * The influence field is deliberately NOT rebuilt here. [setField] is called ONCE by the caller, over the
+     * whole span the walk will run across — `side-dev/scheduler.py`'s `field_span`, which for
+     * [ProgressiveSchedule] is `[commitPoint, horizon]` and never one link's own slice. A link whose field
+     * stopped at its own edge could see neither the exclusion just past it nor the one it had already walked
+     * through, whose tail still decays into it; either way where the links happened to fall would become
+     * visible in the schedule.
+     */
+    internal fun runRange(
+        walk: PlanWalk,
+        ahead: List<PlanBlock>,
+        windows: List<PlanWindow>,
+        startMillis: Long,
+        endMillis: Long,
+        pendingIn: PendingChunk?,
+        slots: MutableList<PlanSlot>,
+        maxRules: Int = MAX_RULES,
+        maxSteps: Int = MAX_STEPS_PER_RULE * maxRules,
+        stopWhenSettled: Boolean = false,
+        collector: PlacementCollector? = null,
+    ): RunRange {
+        var t = startMillis
+        var pending = pendingIn
+        var freeTail = false
+        var steps = 0
+        while (slots.size < maxRules && steps < maxSteps && t < endMillis) {
+            steps++
+            val limit = nextBoundary(ahead, windows, t)
+            val fieldEnd = fieldEndMillis
+            // A run suspended by a period it is banned from is not finished with the timeline, so the walk may
+            // not stop at the last boundary while it still owes its minimum.
+            if (stopWhenSettled && limit == null && (fieldEnd == null || t >= fieldEnd) && pending == null) break
+
+            // The environment is read at the MIDPOINT of the segment, exactly as the reference reads it —
+            // which is what makes an open-started period (the README's dragged 20 seconds, the half-open
+            // `(t_p, t_p + 20s]`) mean what it says.
+            var next = limit ?: (t + (2.0 * minPeriodMillis).roundToLong().coerceAtLeast(1L))
+            // `env.next_bound(cursor, end)`: a boundary beyond the stretch asked for is not one of ITS bounds,
+            // so a link stops where it was asked to and the next one picks the walk up there.
+            if (next > endMillis) next = endMillis
+            if (next <= t) next = endMillis
+            val mid = t + (next - t) / 2
+
+            val block = blockAt(ahead, mid)
+            if (block != null && block.taskId !in minimumOf) {
+                // A pre-placed block owned by nobody schedulable: it suspends, exactly as an all-refusing
+                // period does. `last` stands and the run in progress is untouched.
+                pushSlot(slots, block.taskId, next - t)
+                collector?.placed(block.taskId, t, next, null)
+                t = next
+                freeTail = false
+                walk.clamp(t)
+                continue
+            }
+
+            val weights = weightsAt(ahead, windows, mid)
+            val candidates = candidatesAt(weights, permittedAt(ahead, windows, mid))
+            if (candidates.isEmpty()) {
+                pushSlot(slots, null, next - t)
+                collector?.placed(null, t, next, null)
+                t = next
+                freeTail = false
+                walk.clamp(t)
+                continue
+            }
+            // The percentages the walk races on here are the EFFECTIVE ones — each task's share after its
+            // resilience to the kinds in force, renormalized over whoever is left.
+            val local = localSharesOf(weights, candidates)
+
+            val held = pending
+            val name: TaskId
+            var left: Double
+            val here = candidates.toSet()
+            // `not set(cand) > pending[2]` — a STRICT superset is the only thing that ends the run.
+            val widened = here.size > held?.against.orEmpty().size && here.containsAll(held?.against.orEmpty())
+            if (held != null && held.taskId in candidates && held.leftMillis > 0.0 && !widened) {
+                name = held.taskId
+                left = held.leftMillis
+            } else {
+                val picked = walk.pick(candidates, avoidLast = true, shares = local) ?: break
+                name = picked
+                left = walk.chunkMillis(picked, candidates, boostAt(picked, t), shares = local)
+            }
+
+            // `side-dev/scheduler.py`: `alt = self._alternative(v, cand, name, p_local)` — read BEFORE the
+            // clocks are charged, so the alternative is the answer to "who instead" asked at the same instant
+            // the pick was made. Only a caller that wants the rules pays for it.
+            val alternative = if (collector == null) null else walk.alternative(candidates, name, local)
+            val stop = minOf(t + left.roundToLong().coerceAtLeast(1L), next)
+            val served = stop - t
+            if (served <= 0L) break
+            pushSlot(slots, name, served)
+            collector?.placed(name, t, stop, alternative)
+            // `side-dev/scheduler.py`: `v[name] += served / w[name]` — charged against the task's EFFECTIVE
+            // weight, at the plain rate. The field lengthens the slot; it does not also discount its cost.
+            walk.serveWeighted(name, served.toDouble(), weights[name] ?: 0.0)
+            // `side-dev/scheduler.py` `Walk._relax`: `T = self.min_period` — the GLOBAL period, never one
+            // renormalized over whoever happens to be a candidate here. The band an excluded group is held
+            // within is a property of the whole rule state, not of the stretch being walked.
+            walk.relax(served.toDouble(), minPeriodMillis, candidates)
+            left -= served.toDouble()
+            pending = if (left > CHUNK_EPSILON_MILLIS) PendingChunk(name, left, candidates.toSet()) else null
+            t = stop
+            freeTail = true
+            walk.clamp(t)
+        }
+        return RunRange(cursorMillis = t, pending = pending, freeTail = freeTail, steps = steps)
+    }
+
+    /**
+     * What [runRange] placed, stretch by stretch, with the README's **alternative schedule** beside it: who
+     * runs from here instead if the scheduled task cannot be run now.
+     *
+     * [SchedulerPlanner.plan] passes none — it answers with a [Plan], a rule list that names no alternative —
+     * and pays nothing for it. [ProgressiveSchedule] passes one, because a set of rules that does not say what
+     * to run instead is not the set of rules `side-dev/README.md` asks for.
+     */
+    fun interface PlacementCollector {
+        fun placed(taskId: TaskId?, startMillis: Long, endMillis: Long, alternativeId: TaskId?)
+    }
+
+    /** Where [runRange] stopped, and what it left owed. */
+    internal data class RunRange(
+        val cursorMillis: Long,
+        val pending: PendingChunk?,
+        val freeTail: Boolean,
+        val steps: Int,
+    )
 
     /**
      * `_lookback_start`: how far back the clocks are replayed — [wantMillis] of **SCHEDULABLE** time.
