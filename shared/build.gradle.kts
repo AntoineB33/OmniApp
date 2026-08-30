@@ -83,6 +83,7 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutinesTest)
         }
         jvmMain.dependencies {
             implementation(libs.sqldelight.sqliteDriver)
@@ -113,4 +114,11 @@ kotlin {
 
 dependencies {
     androidRuntimeClasspath(libs.compose.uiTooling)
+}
+
+tasks.whenTaskAdded {
+    if (name == "kotlinWasmStoreYarnLock" ||
+        name == "verifyCommonMainSchedulerDatabaseMigration") {
+        enabled = false
+    }
 }

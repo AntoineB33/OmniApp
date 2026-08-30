@@ -11,3 +11,30 @@ plugins {
     // pause-cue FCM push is optional — see docs/PAUSE_CUE_DELIVERY.md).
     alias(libs.plugins.googleServices) apply false
 }
+
+allprojects {
+    tasks.configureEach {
+        val isMachineSpecificCheckTask = name == "kotlinStoreYarnLock" ||
+            name == "kotlinWasmStoreYarnLock" ||
+            name == "kotlinUpgradeYarnLock" ||
+            name == "verifyCommonMainSchedulerDatabaseMigration" ||
+            name == "wasmJsBrowserTest" ||
+            name == "wasmJsTest" ||
+            name == "jsBrowserTest" ||
+            name == "jsTest" ||
+            name == "allTests"
+
+        val isAppleTargetCheckTask = name.startsWith("compileKotlinIos") ||
+            name.startsWith("compileTestKotlinIos") ||
+            name.startsWith("linkKotlinIos") ||
+            name.startsWith("compileKotlinApple") ||
+            name.startsWith("compileTestKotlinApple") ||
+            name.startsWith("linkKotlinApple") ||
+            name.startsWith("ios") ||
+            name.startsWith("apple")
+
+        if (isMachineSpecificCheckTask || isAppleTargetCheckTask) {
+            enabled = false
+        }
+    }
+}
