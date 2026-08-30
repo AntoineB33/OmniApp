@@ -20,7 +20,11 @@ if exist "%~dp0acc3.cred" (
   )
 )
 for %%F in ("%~dp0app\*.exe") do (
-  start "" "%%~fF"
+  set "APP_EXE=%%~fF"
+  set "APP_EXE_NAME=%%~nxF"
+  REM Prevent duplicate release instances from sharing the same state DB and tripping SQLite locks.
+  taskkill /F /IM "!APP_EXE_NAME!" >nul 2>&1
+  start "" "!APP_EXE!"
   goto :eof
 )
 echo [x] Release app not found under "%~dp0app". Run account3-deploy-windows.bat first.
