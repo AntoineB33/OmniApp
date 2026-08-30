@@ -4071,11 +4071,27 @@ private fun DayColumn(
             // Culled AFTER [overlapLayout] has seen the whole day: a block's width comes from what it
             // overlaps, so a partner scrolled out of view must still narrow the one on screen.
             if (key != gestureKey && !onScreen(record.startHour, record.endHour)) return@forEach
+            val topReminderOccupancy = reminderStackOverlapAt(record.startHour, reminderTags, hourHeight) { tag ->
+                tag.checkedAtMillis?.let {
+                    Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay()
+                }
+            }
+            val recordSlices = layout[key] ?: listOf(
+                PanelSlice(record.startHour, record.endHour, xFraction = 0f, widthFraction = 1f),
+            )
+            val titleSlice = recordSlices.firstOrNull()
+            val titleInset = titleSlice?.let {
+                panelLabelTopInset(
+                    it.topHour,
+                    hourHeight * (it.bottomHour - it.topHour),
+                    hourHeight,
+                    showsDayDate,
+                    topReminderOccupancy,
+                )
+            }
             CalendarBlock(
                 record = record,
-                slices = layout[key] ?: listOf(
-                    PanelSlice(record.startHour, record.endHour, xFraction = 0f, widthFraction = 1f),
-                ),
+                slices = recordSlices,
                 hourHeight = hourHeight,
                 // Every other block — everything but itself — so a non-overlap drag/resize snaps around them.
                 others = allBlocks.filter { it.first != key }.map { it.second },
@@ -4090,13 +4106,11 @@ private fun DayColumn(
                 hoverScope = hoverScope,
                 tz = tz,
                 onEditEntry = onEditEntry,
-                // A block opening at midnight writes its title below the day's own date badge.
-                titleTopInset = panelLabelTopInset(
-                    record.startHour,
-                    hourHeight * (record.endHour - record.startHour),
-                    hourHeight,
-                    showsDayDate,
-                ) ?: 0.dp,
+                // A block opening at midnight writes its title below the day's own date badge. When a
+                // reminder stack sits at the same top edge, it must push the title down too, and when the
+                // block is too short the title is hidden instead of writing over the reminders.
+                titleTopInset = titleInset ?: 0.dp,
+                titleVisible = titleInset != null,
             )
         }
 
@@ -4174,16 +4188,23 @@ private fun DayColumn(
                                 .padding(horizontal = 1.dp),
                         ) {
                             val previewColor = rec.taskId?.let { taskColors[it] } ?: CalColors.event
+                            val previewOccupancy = reminderStackOverlapAt(slice.topHour, reminderTags, hourHeight) { tag ->
+                                tag.checkedAtMillis?.let {
+                                    Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay()
+                                }
+                            }
+                            val previewTitleInset = panelLabelTopInset(
+                                slice.topHour,
+                                hourHeight * (slice.bottomHour - slice.topHour),
+                                hourHeight,
+                                showsDayDate,
+                                previewOccupancy,
+                            )
                             CalendarBlockBody(
                                 previewColor,
                                 rec.title,
-                                showTitle = idx == 0,
-                                titleTopInset = panelLabelTopInset(
-                                    slice.topHour,
-                                    hourHeight * (slice.bottomHour - slice.topHour),
-                                    hourHeight,
-                                    showsDayDate,
-                                ) ?: 0.dp,
+                                showTitle = idx == 0 && previewTitleInset != null,
+                                titleTopInset = previewTitleInset ?: 0.dp,
                                 titleColor = previewColor,
                             )
                         }
@@ -4407,37 +4428,79 @@ private val SCREEN_BREAK_LABEL_MIN_HEIGHT = 16.dp
  *
  * No panel may write its own label into that zone. The badge and the label of a panel that opens AT
  * midnight are two texts at the same point, and they were simply drawn over each other — a full-day
- * "Inactivity" band under the date it opens was the reported case. Two overlapping texts name nothing, so
- * the panel's label is what gives way ([panelLabelTopInset]), exactly as a screen break's name gives way
- * to the band's true height: written BELOW the badge where the panel has the room for it, and not written
- * at all where it has not — the zoom is what grows the panel until it does.
+ * "Inactivity" band under the date it opens was the reported case. The same top strip is also where the
+ * reminder tags sit, so the panel title must move below whichever of those two claims is taller. Two
+ * overlapping texts name nothing, so the panel's label is what gives way ([panelLabelTopInset]), exactly as
+ * a screen break's name gives way to the band's true height: written below the reserved strip where the
+ * panel has the room for it, and not written at all where it has not — the zoom is what grows the panel
+ * until it does.
  */
 private val DAY_DATE_BADGE_HEIGHT = 18.dp
+
+/**
+ * PRD §8: the fixed-height strip at the top of the day section used by reminder tags, which also needs to
+ * stay clear of the panel title.
+ */
+private val DAY_TOP_REMINDER_STRIP = REMINDER_TAG_HEIGHT
 
 /**
  * PRD §8: where a panel's own top label goes, given the panel's [startHour] in the day and its
  * [renderedHeight] — an inset from the panel's top, or `null` for "there is no room: draw no label".
  *
- * `0.dp` for everything that starts clear of the day-date badge, which is almost everything: only a panel
- * opening within [DAY_DATE_BADGE_HEIGHT] of midnight is inset at all, and that is the one case the two
- * texts collide in. A panel that must be inset needs the room for a whole label line BELOW the badge
- * ([SCREEN_BREAK_LABEL_MIN_HEIGHT]) — a big band therefore names itself under the date, a short one names
- * itself only once the zoom has made it tall enough. Never the other way round: the badge is not moved and
- * no panel is stretched to hold its own name.
+ * `0.dp` for everything that starts clear of the reserved top strip, which is almost everything: only a
+ * panel opening within the day-date/reminder strip of midnight is inset at all, and that is the case the
+ * title would otherwise collide with. A panel that must be inset needs room for a whole label line below
+ * that strip ([SCREEN_BREAK_LABEL_MIN_HEIGHT]) — a big band therefore names itself lower down, a short one
+ * names itself only once the zoom has made it tall enough. Never the other way round: the badge and any
+ * reminder are not moved and no panel is stretched to hold its own name.
  *
  * [showsDayDate] is false for the grid's TOP row, whose date is written in the header above the viewport
- * and so overlaps nothing.
+ * and so overlaps nothing; the reminder strip still applies there because a reminder tag can sit at the top
+ * of the column even without the date badge.
  */
 private fun panelLabelTopInset(
     startHour: Float,
     renderedHeight: Dp,
     hourHeight: Dp,
     showsDayDate: Boolean,
+    reminderOccupancyAtTop: Dp = 0.dp,
 ): Dp? {
-    if (!showsDayDate) return 0.dp
-    val inset = DAY_DATE_BADGE_HEIGHT - hourHeight * startHour
+    val dateInset = if (showsDayDate) DAY_DATE_BADGE_HEIGHT - hourHeight * startHour else 0.dp
+    val inset = maxOf(dateInset, reminderOccupancyAtTop)
     if (inset <= 0.dp) return 0.dp
     return if (renderedHeight >= inset + SCREEN_BREAK_LABEL_MIN_HEIGHT) inset else null
+}
+
+/**
+ * PRD §8: the actual vertical space occupied by the reminder stack at the panel's top edge after the
+ * tags have been stacked to avoid overlap. If a reminder crosses into the panel at the top, the title is
+ * moved below that occupied strip and hidden when the panel is too short to hold the text beneath it.
+ */
+private fun reminderStackOverlapAt(
+    startHour: Float,
+    reminderTags: List<PlacedRecord>,
+    hourHeight: Dp,
+    checkedAtHour: (PlacedRecord) -> Float?,
+): Dp {
+    val panelTop = hourHeight * startHour
+    var lastBottom = 0.dp
+    var maxOverlap = 0.dp
+
+    reminderTags
+        .sortedBy { checkedAtHour(it) ?: it.startHour }
+        .forEach { tag ->
+            val tagHour = checkedAtHour(tag) ?: tag.startHour
+            val y = maxOf(hourHeight * tagHour, lastBottom)
+            val bottom = y + REMINDER_TAG_HEIGHT
+            if (y < panelTop && bottom > panelTop) {
+                maxOverlap = maxOf(maxOverlap, bottom - panelTop)
+            } else if (y >= panelTop && y < panelTop + REMINDER_TAG_HEIGHT) {
+                maxOverlap = maxOf(maxOverlap, REMINDER_TAG_HEIGHT)
+            }
+            lastBottom = bottom
+        }
+
+    return maxOverlap
 }
 
 /**
@@ -4892,6 +4955,8 @@ private fun CalendarBlock(
     onEditEntry: (PlacedRecord) -> Unit,
     /** PRD §8: how far below its top this block writes its title — see [panelLabelTopInset]. */
     titleTopInset: Dp = 0.dp,
+    /** False when the panel is too short to fit its title below the reserved top strip. */
+    titleVisible: Boolean = true,
 ) {
     val key = calendarBlockKey(record)
     // Read inside the long-lived gesture closure so a mid-drag `O` toggle is picked up immediately.
@@ -5060,7 +5125,7 @@ private fun CalendarBlock(
                     CalendarBlockBody(
                         color,
                         record.title,
-                        showTitle = isFirst,
+                        showTitle = isFirst && titleVisible,
                         titleTopInset = titleTopInset,
                         hatched = record.noScreen,
                         titleColor = taskColor ?: CalColors.event,
