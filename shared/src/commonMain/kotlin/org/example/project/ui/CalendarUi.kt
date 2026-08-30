@@ -4117,7 +4117,7 @@ private fun DayColumn(
                 // reminder stack sits at the same top edge, it must push the title down too, and when the
                 // block is too short the title is hidden instead of writing over the reminders.
                 titleTopInset = titleInset ?: 0.dp,
-                titleVisible = titleInset != null,
+                titleVisible = true,
             )
         }
 
@@ -4217,7 +4217,7 @@ private fun DayColumn(
                             CalendarBlockBody(
                                 previewColor,
                                 rec.title,
-                                showTitle = idx == 0 && previewTitleInset != null,
+                                showTitle = idx == 0,
                                 titleTopInset = previewTitleInset ?: 0.dp,
                                 titleColor = previewColor,
                             )
