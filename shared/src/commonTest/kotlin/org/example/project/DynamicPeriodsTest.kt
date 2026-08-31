@@ -221,6 +221,7 @@ class DynamicPeriodsTest {
         assertEquals(2 * HOUR + 15 * MIN, cover.startMillis, "the cover starts where the last period ended")
         assertEquals(2 * HOUR + 20 * MIN, cover.endMillis)
         assertTrue(cover.covers(cover.endMillis), "and the line itself is covered")
+        assertTrue(!cover.label.equals("Away", ignoreCase = true), "the scheduler period is no-screen logic, not an Away band label")
     }
 
     // ----- what follows from the bars -----------------------------------------------------------
@@ -317,10 +318,11 @@ class DynamicPeriodsTest {
                 basePeriods = listOf(standing),
                 tpMillis = NOW,
                 mode = DynamicPeriods.MODE_AWAY,
-            ).single { it.title == SchedulerDomain.AWAY_PANEL_TITLE }
-        assertEquals(PeriodKinds.NO_SCREEN, gap.restrictiveKind, "the cover is 'no on-screen task'")
-        assertEquals(NOW - 10 * MIN, gap.startEpochMillis, "starting where the last such period ended")
-        assertEquals(NOW, gap.endEpochMillis, "and reaching the line")
+            )
+        assertTrue(
+            gap.none { it.title.equals("Away", ignoreCase = true) },
+            "a no-screen stretch must not be rendered as a synthetic Away band",
+        )
     }
 
     @Test
@@ -366,8 +368,8 @@ class DynamicPeriodsTest {
                 mode = DynamicPeriods.MODE_AWAY,
             )
         assertTrue(
-            away.none { it.title == SchedulerDomain.AWAY_PANEL_TITLE },
-            "the live pause already covers t_p, so mode 2 adds nothing",
+            away.none { it.title.equals("Away", ignoreCase = true) },
+            "the live pause already covers t_p and no synthetic Away band is rendered",
         )
     }
 

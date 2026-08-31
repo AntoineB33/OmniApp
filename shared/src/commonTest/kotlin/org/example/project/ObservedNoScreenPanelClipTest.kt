@@ -71,6 +71,21 @@ class ObservedNoScreenPanelClipTest {
         assertEquals(panels, SchedulerDomain.clipPanelsForObservedNoScreen(panels, tasks, observed))
     }
 
+    @Test
+    fun an_on_screen_task_record_is_cut_where_the_devices_observed_no_screen() {
+        val record = listOf(TaskTimeRange(NOW - 3 * HOUR, NOW))
+        val out = SchedulerDomain.clipRecordsForObservedNoScreen(record, tasks[onScreenId], observed)
+        assertEquals(2, out.size, "the observed hour must be cut out of the record: $out")
+        assertEquals(NOW - 3 * HOUR to NOW - 2 * HOUR, out[0].startEpochMillis to out[0].endEpochMillis)
+        assertEquals(NOW - HOUR to NOW, out[1].startEpochMillis to out[1].endEpochMillis)
+    }
+
+    @Test
+    fun an_off_screen_task_record_is_left_alone() {
+        val record = listOf(TaskTimeRange(NOW - 3 * HOUR, NOW))
+        assertEquals(record, SchedulerDomain.clipRecordsForObservedNoScreen(record, tasks[offScreenId], observed))
+    }
+
     /** A period is not work: it is what the cut is made OF, and it must survive its own region. */
     @Test
     fun a_restrictive_period_and_a_taskless_panel_are_left_alone() {

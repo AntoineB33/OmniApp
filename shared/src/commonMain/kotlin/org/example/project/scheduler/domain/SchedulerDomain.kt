@@ -2291,38 +2291,8 @@ object SchedulerDomain {
         // Mode 2's cover, the other half of the two modes: the line must BE covered, so the gap back to the
         // last period that turns the on-screen tasks away is one — as `no on-screen task`, which the tasks
         // resilient to that kind may still fill. Only ever asked of the line itself.
-        val cover =
-            if (!atLine) null
-            else DynamicPeriods.awayCover(base, placed.map { it.toPeriod() }, tpMillis, mode)
-        val coverPanel =
-            cover
-                ?.takeIf { it.endMillis > fromMillis && it.startMillis <= toMillis }
-                ?.let { awayCoverPanel(maxOf(it.startMillis, fromMillis), it.endMillis) }
-        return (breaks + listOfNotNull(coverPanel)).sortedBy { it.startEpochMillis }
+        return breaks.sortedBy { it.startEpochMillis }
     }
-
-    /** The title mode 2's cover carries on the calendar. */
-    const val AWAY_PANEL_TITLE: String = "Away"
-
-    /**
-     * Mode 2's cover as a panel: a period of `no on-screen task` behind the line, regenerated on every fill
-     * like the three dynamic periods themselves ([TaskPanel.screenBreak] is what marks a panel as one of
-     * those — cut and re-derived each pass, and never fed back into its own placement). Its
-     * [TaskPanel.periodKind] is what makes it `no on-screen task` rather than the `no task allowed` the flag
-     * alone would mean: an off-screen task may work through it, an on-screen one may not.
-     */
-    private fun awayCoverPanel(start: Long, end: Long): TaskPanel =
-        TaskPanel(
-            id = "side/away/$start",
-            taskId = null,
-            title = AWAY_PANEL_TITLE,
-            startEpochMillis = start,
-            endEpochMillis = end,
-            pinned = false,
-            auto = false,
-            screenBreak = true,
-            periodKind = PeriodKinds.NO_SCREEN,
-        )
 
     /**
      * The three the README names, read off the account's [ScreenBreak] list: a label (its role among the
@@ -2586,6 +2556,20 @@ object SchedulerDomain {
      * user edit — nothing here belongs in the stored plan. Whatever the cut vacates is then idle time and the
      * calendar draws it as a derived "Inactivity" band, exactly as any other uncovered past stretch.
      */
+    fun clipRecordsForObservedNoScreen(
+        records: List<TaskTimeRange>,
+        task: Task?,
+        noScreenRegions: List<TaskTimeRange>,
+    ): List<TaskTimeRange> {
+        if (noScreenRegions.isEmpty()) return records
+        val regions = mergeOccupied(noScreenRegions)
+        if (regions.isEmpty()) return records
+        if (task == null || !task.onScreen) return records
+        return records.flatMap { record ->
+            subtractRegions(listOf(TaskTimeRange(record.startEpochMillis, record.endEpochMillis)), regions)
+        }
+    }
+
     fun clipPanelsForObservedNoScreen(
         panels: List<TaskPanel>,
         tasks: Map<TaskId, Task>,

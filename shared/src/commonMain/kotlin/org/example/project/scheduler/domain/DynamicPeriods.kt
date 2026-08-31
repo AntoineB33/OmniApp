@@ -63,9 +63,6 @@ object DynamicPeriods {
     /** The stable label of the 15-minute period. */
     const val LABEL_15MIN: String = "15min"
 
-    /** The label mode 2's cover carries, so the calendar can name the band the user is standing in. */
-    const val LABEL_AWAY: String = "away"
-
     /** Runaway guard — the placement loop is monotone, so this can only fire on a degenerate environment. */
     private const val MAX_STEPS = 200_000
 
@@ -338,15 +335,9 @@ object DynamicPeriods {
     }
 
     /**
-     * Mode 2's cover, on its own — the one thing [periods] adds to [instances], split out so the app can
-     * build the three dynamic periods as the panels they are and still get this.
-     *
-     * Null in mode 1, null when `t_p` is already covered by something that turns the on-screen tasks away
-     * (a dynamic period the line is standing in, a standing "no on-screen task" period, the live pause this
-     * device is observing), and null when there is no gap to cover. Otherwise it is the README's own
-     * sentence: the stretch from the last such period's end up to and including `t_p`, as
-     * [PeriodKinds.NO_SCREEN] — so a task with a non-zero resilience to that kind may still fill it, and a
-     * timeline where nobody has one is simply empty there.
+     * Mode 2's cover, on its own — a logic-only no-screen period that represents the line being covered
+     * while away. It is kept for the scheduler's environment, but never rendered as a visible synthetic
+     * "Away" band in the calendar UI.
      */
     fun awayCover(
         base: Base,
@@ -362,7 +353,7 @@ object DynamicPeriods {
                 .maxOfOrNull { it.endMillis }
         val from = ends ?: tpMillis
         if (from >= tpMillis) return null
-        return RestrictivePeriod(from, tpMillis, PeriodKinds.NO_SCREEN, LABEL_AWAY, closedEnd = true)
+        return RestrictivePeriod(from, tpMillis, PeriodKinds.NO_SCREEN, "no screen", closedEnd = true)
     }
 
     /**

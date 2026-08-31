@@ -958,7 +958,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // span the focused week.
         val baseCalendarRecords = (
             schedulerState.tasks.values.flatMap { task ->
-                task.record.map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
+                SchedulerDomain.clipRecordsForObservedNoScreen(task.record, task, observedNoScreenRegions)
+                    .map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
             } + mergePanelsForDisplay(
                 // PRD §8/§9: an on-screen task's panel is CUT where the devices observed nobody at a screen —
                 // the same "a stretch carrying both layers is a no-screen period" the hatching draws, applied
