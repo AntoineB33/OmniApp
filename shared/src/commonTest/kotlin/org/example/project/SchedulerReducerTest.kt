@@ -933,6 +933,29 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun priority_weight_window_lists_tasks_in_the_parent_subtree_even_when_not_in_this_list() {
+        var s = SchedulerState.empty()
+        val rootCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(rootCell, "Parent"))
+        val parentId = s.cells[rootCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(rootCell))
+
+        val childList = s.tasks[parentId]!!.childListId!!
+        val aCell = s.lists[childList]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(aCell, "Child A"))
+        val aTask = s.cells[aCell]!!.taskId!!
+        val bCell = s.lists[childList]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(bCell, "Child B"))
+        val bTask = s.cells[bCell]!!.taskId!!
+
+        val rows = org.example.project.scheduler.ui.priorityWeightTableRows(s, childList)
+        val titles = rows.map { it.title }
+        assertTrue(titles.contains("Child A"))
+        assertTrue(titles.contains("Child B"))
+        assertEquals(listOf(aTask, bTask), rows.mapNotNull { it.taskId }.distinct())
+    }
+
+    @Test
     fun a_cancel_that_changes_nothing_records_no_history_unit() {
         var s = seedThreeTasks()
         val listId = s.rootListId

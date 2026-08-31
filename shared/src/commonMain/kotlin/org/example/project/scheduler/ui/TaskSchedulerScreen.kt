@@ -1276,6 +1276,45 @@ private fun WeightTableHeader(
 private val WEIGHT_WINDOW_TITLE_WIDTH = 160.dp
 
 /**
+ * PRD §5: a row in the priority-weight window. Existing cells are real members of the sub-list; optional
+ * rows are tasks that live in the parent task's subtree but are not currently in this sub-list yet.
+ */
+internal data class PriorityWeightTableRow(
+    val cellId: CellId? = null,
+    val taskId: TaskId? = null,
+    val title: String = "",
+    val isOptional: Boolean = false,
+)
+
+internal fun priorityWeightTableRows(state: SchedulerState, listId: CellListId): List<PriorityWeightTableRow> {
+    val list = state.lists[listId] ?: return emptyList()
+    val currentMembers = list.cellIds.mapNotNull { cellId ->
+        val cell = state.cells[cellId] ?: return@mapNotNull null
+        val taskId = cell.taskId ?: return@mapNotNull null
+        val title = state.tasks[taskId]?.title.orEmpty()
+        if (title.isBlank()) return@mapNotNull null
+        PriorityWeightTableRow(cellId = cellId, taskId = taskId, title = title, isOptional = false)
+    }
+
+    val parentTaskId = SchedulerDomain.parentTaskIdOfList(state, listId)
+    val subtreeTasks = parentTaskId
+        ?.let { SchedulerDomain.descendantTaskIds(state, it) }
+        .orEmpty()
+        .filter { it != parentTaskId }
+    val seenTaskIds = currentMembers.mapNotNull { it.taskId }.toSet()
+    val optional = subtreeTasks
+        .filter { it !in seenTaskIds }
+        .mapNotNull { taskId ->
+            val title = state.tasks[taskId]?.title.orEmpty()
+            if (title.isBlank()) return@mapNotNull null
+            PriorityWeightTableRow(taskId = taskId, title = title, isOptional = true)
+        }
+        .sortedWith(compareBy<PriorityWeightTableRow> { it.title.lowercase() }.thenBy { it.taskId?.value ?: "" })
+
+    return currentMembers + optional
+}
+
+/**
  * PRD §5: everything the priority-weight window can edit about one sub-list — the column headers and each
  * listed cell's weight row. Captured when the window opens so **Cancel** can put it all back.
  */
@@ -1315,9 +1354,11 @@ internal fun PriorityWeightWindow(
     modifier: Modifier = Modifier,
 ) {
     val list = state.lists[listId] ?: return
-    // The rows of the table / chart are the populated cells of the sub-list (those with a priority).
-    val populated =
-        list.cellIds.filter { id -> state.cells[id]?.taskId?.let { priorities[it] != null } == true }
+    // The rows of the table / chart are the populated cells of the sub-list, plus any task in the parent
+    // subtree that the user has chosen to add as an optional row while the table is open.
+    val populated = list.cellIds.filter { id -> state.cells[id]?.taskId?.let { priorities[it] != null } == true }
+    val optionalRows = priorityWeightTableRows(state, listId).filter { it.isOptional }
+    val populatedWithOptional = populated + optionalRows.mapNotNull { it.cellId }
     var offset by remember(listId) { mutableStateOf(Offset.Zero) }
     var draggedColumn by remember(listId) { mutableStateOf<Int?>(null) }
     var columnDropIndex by remember(listId) { mutableStateOf<Int?>(null) }
@@ -1386,13 +1427,14 @@ internal fun PriorityWeightWindow(
                             onDeleteColumn = { c -> onIntent(SchedulerIntent.DeletePriorityColumn(listId, c)) },
                             onMoveColumn = { f, t -> onIntent(SchedulerIntent.MovePriorityColumn(listId, f, t)) },
                         )
-                        populated.forEach { cellId ->
-                            val cell = state.cells[cellId] ?: return@forEach
-                            val title = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()
+                        priorityWeightTableRows(state, listId).forEach { row ->
+                            val cellId = row.cellId
+                            val cell = cellId?.let { state.cells[it] }
+                            val title = row.title.ifEmpty { "(untitled)" }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.width(WEIGHT_WINDOW_TITLE_WIDTH).padding(horizontal = 4.dp)) {
                                     Text(
-                                        text = title.ifEmpty { "(untitled)" },
+                                        text = title,
                                         style = MaterialTheme.typography.bodyMedium,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -1405,9 +1447,14 @@ internal fun PriorityWeightWindow(
                                             if (draggedColumn == column) SheetColors.moveDragFill else Color.Transparent,
                                         ),
                                     ) {
+                                        val value = cell?.priorityWeights?.getOrElse(column) { 1.0 } ?: 1.0
                                         WeightInputCell(
-                                            value = cell.priorityWeights.getOrElse(column) { 1.0 },
-                                            onSet = { value -> onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, value)) },
+                                            value = value,
+                                            onSet = {
+                                                if (cellId != null) {
+                                                    onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, it))
+                                                }
+                                            },
                                         )
                                     }
                                 }
@@ -1417,10 +1464,12 @@ internal fun PriorityWeightWindow(
                     }
                     Spacer(Modifier.width(16.dp))
                     PriorityChart(
-                        titles = populated.map { id -> state.cells[id]?.taskId?.let { state.tasks[it]?.title }.orEmpty() },
+                        titles = priorityWeightTableRows(state, listId).map { it.title.ifEmpty { "(untitled)" } },
                         // PRD §5: each row's share of THIS sub-list — the number the table on the left sets —
                         // rather than the task's absolute priority (its share of the whole tree).
-                        fractions = populated.map { id -> RelativePriorityDomain.cellShare(state, id) },
+                        fractions = priorityWeightTableRows(state, listId).map { row ->
+                            row.cellId?.let { RelativePriorityDomain.cellShare(state, it) } ?: 0.0
+                        },
                         modifier = Modifier.width(220.dp).verticalScroll(rememberScrollState()),
                     )
                 }
