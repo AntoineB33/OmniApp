@@ -2,6 +2,7 @@ package org.example.project.scheduler.domain
 
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.state.SchedulerState
@@ -140,6 +141,38 @@ object RelativePriorityDomain {
             if (reached) chains.add(chain.toList())
         }
         return chains
+    }
+
+    /** The first stable path from [listId]'s parent task to an optional [taskId] row. */
+    fun optionalTaskPath(state: SchedulerState, listId: CellListId, taskId: TaskId): List<CellId> {
+        val parentTask = SchedulerDomain.parentTaskIdOfList(state, listId) ?: return emptyList()
+        return occurrenceChains(state, taskId, parentTask).minWithOrNull(
+            compareBy<List<CellId>> { it.size }.thenBy { it.joinToString("/") { cell -> cell.value } },
+        ).orEmpty()
+    }
+
+    /** Scale one weight column along an optional task's path, except cells pinned for that task and parent. */
+    fun scaleOptionalTaskPath(
+        state: SchedulerState,
+        listId: CellListId,
+        taskId: TaskId,
+        column: Int,
+        factor: Double,
+    ): SchedulerState {
+        if (column < 0 || !factor.isFinite() || factor < 0.0) return state
+        val path = optionalTaskPath(state, listId, taskId)
+        val parentTask = SchedulerDomain.parentTaskIdOfList(state, listId) ?: return state
+        val pinned = state.relativePriorityPins[RelativePriorityPinKey(taskId, parentTask)].orEmpty()
+        val cells = state.cells.toMutableMap()
+        for (cellId in path) {
+            if (cellId in pinned) continue
+            val cell = cells[cellId] ?: continue
+            val weights = cell.priorityWeights.toMutableList()
+            while (weights.size <= column) weights += SchedulerDomain.defaultWeightAt(weights.size)
+            weights[column] *= factor
+            cells[cellId] = cell.copy(priorityWeights = weights)
+        }
+        return state.copy(cells = cells)
     }
 
     /**

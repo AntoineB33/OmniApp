@@ -54,6 +54,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -140,6 +141,9 @@ import org.example.project.ui.PRIORITY_COLUMN_MIN
 import org.example.project.ui.SheetColors
 import org.example.project.ui.ShortcutHint
 import org.example.project.ui.TransientPopupLayer
+import org.example.project.ui.TaskPalette
+import org.example.project.ui.TaskHueMemo
+import org.example.project.ui.rememberTaskHues
 import org.example.project.ui.transientPopupCard
 import org.example.project.ui.windowDragHandle
 import org.example.project.ui.TaskTreeFindBar
@@ -895,6 +899,38 @@ internal fun EditModeMenus(
     }
 }
 
+/** Change-task-only menus for the priority window's local, empty placeholder editor. */
+@Composable
+private fun OptionalTaskEditMenus(
+    state: SchedulerState,
+    cellId: CellId,
+    draftText: String,
+    onDraftChange: (String) -> Unit,
+    onPickTask: (TaskId) -> Unit,
+) {
+    val taskRows = SchedulerDomain.eligibleAssignTaskIds(state, cellId, draftText).map { taskId ->
+        EditMenuItem(
+            label = state.tasks[taskId]?.title.orEmpty(),
+            onClick = { onPickTask(taskId) },
+        )
+    }
+    val suggestionRows = SchedulerDomain.titleSuggestions(state, draftText).map { suggestion ->
+        EditMenuItem(suggestion) { onDraftChange(suggestion) }
+    }
+    if (taskRows.isEmpty() && suggestionRows.isEmpty()) return
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        EditModeMenuBlock(
+            modeOptions = emptyList(),
+            identityLabel = "Tasks",
+            identityRows = taskRows,
+            suggestions = suggestionRows,
+        )
+    }
+}
+
 /** Steps [value] by [delta], clamps to [0, maxValue], and rounds off binary-float noise. */
 private fun stepWeight(value: Double, delta: Double, maxValue: Double): Double {
     val next = (value + delta).coerceIn(0.0, maxValue)
@@ -1286,7 +1322,11 @@ internal data class PriorityWeightTableRow(
     val isOptional: Boolean = false,
 )
 
-internal fun priorityWeightTableRows(state: SchedulerState, listId: CellListId): List<PriorityWeightTableRow> {
+internal fun priorityWeightTableRows(
+    state: SchedulerState,
+    listId: CellListId,
+    optionalTaskIds: Set<TaskId> = emptySet(),
+): List<PriorityWeightTableRow> {
     val list = state.lists[listId] ?: return emptyList()
     val currentMembers = list.cellIds.mapNotNull { cellId ->
         val cell = state.cells[cellId] ?: return@mapNotNull null
@@ -1297,12 +1337,8 @@ internal fun priorityWeightTableRows(state: SchedulerState, listId: CellListId):
     }
 
     val parentTaskId = SchedulerDomain.parentTaskIdOfList(state, listId)
-    val subtreeTasks = parentTaskId
-        ?.let { SchedulerDomain.descendantTaskIds(state, it) }
-        .orEmpty()
-        .filter { it != parentTaskId }
     val seenTaskIds = currentMembers.mapNotNull { it.taskId }.toSet()
-    val optional = subtreeTasks
+    val optional = optionalTaskIds
         .filter { it !in seenTaskIds }
         .mapNotNull { taskId ->
             val title = state.tasks[taskId]?.title.orEmpty()
@@ -1311,7 +1347,13 @@ internal fun priorityWeightTableRows(state: SchedulerState, listId: CellListId):
         }
         .sortedWith(compareBy<PriorityWeightTableRow> { it.title.lowercase() }.thenBy { it.taskId?.value ?: "" })
 
-    return currentMembers + optional
+    val rows = currentMembers + optional
+    val emptyCell = list.cellIds.firstOrNull { state.cells[it]?.taskId == null }
+    return if (parentTaskId != null && rows.any { it.taskId != null } && emptyCell != null) {
+        rows + PriorityWeightTableRow(cellId = emptyCell, isOptional = true)
+    } else {
+        rows
+    }
 }
 
 /**
@@ -1354,11 +1396,13 @@ internal fun PriorityWeightWindow(
     modifier: Modifier = Modifier,
 ) {
     val list = state.lists[listId] ?: return
-    // The rows of the table / chart are the populated cells of the sub-list, plus any task in the parent
-    // subtree that the user has chosen to add as an optional row while the table is open.
-    val populated = list.cellIds.filter { id -> state.cells[id]?.taskId?.let { priorities[it] != null } == true }
-    val optionalRows = priorityWeightTableRows(state, listId).filter { it.isOptional }
-    val populatedWithOptional = populated + optionalRows.mapNotNull { it.cellId }
+    val taskHues = rememberTaskHues(state, TaskHueMemo.account)
+    val taskColors = remember(taskHues) { TaskPalette.sheetColors(taskHues) }
+    // Optional rows are a window-local projection. They start empty and are never persisted as list members.
+    var optionalTaskIds by remember(listId) { mutableStateOf(emptySet<TaskId>()) }
+    var emptyRowEditing by remember(listId) { mutableStateOf(false) }
+    var emptyRowDraft by remember(listId) { mutableStateOf("") }
+    val tableRows = priorityWeightTableRows(state, listId, optionalTaskIds)
     var offset by remember(listId) { mutableStateOf(Offset.Zero) }
     var draggedColumn by remember(listId) { mutableStateOf<Int?>(null) }
     var columnDropIndex by remember(listId) { mutableStateOf<Int?>(null) }
@@ -1427,47 +1471,155 @@ internal fun PriorityWeightWindow(
                             onDeleteColumn = { c -> onIntent(SchedulerIntent.DeletePriorityColumn(listId, c)) },
                             onMoveColumn = { f, t -> onIntent(SchedulerIntent.MovePriorityColumn(listId, f, t)) },
                         )
-                        priorityWeightTableRows(state, listId).forEach { row ->
+                        tableRows.forEach { row ->
+                            key(row.taskId ?: row.cellId ?: "empty") {
                             val cellId = row.cellId
                             val cell = cellId?.let { state.cells[it] }
-                            val title = row.title.ifEmpty { "(untitled)" }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.width(WEIGHT_WINDOW_TITLE_WIDTH).padding(horizontal = 4.dp)) {
-                                    Text(
-                                        text = title,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
+                            val taskId = row.taskId ?: cell?.taskId
+                            val isEditing = state.editSession?.cellId == cellId ||
+                                (row.isOptional && taskId == null && emptyRowEditing)
+                            val title = taskId?.let { state.tasks[it]?.title }.orEmpty()
+                            val displayedTitle =
+                                if (row.isOptional && taskId == null && emptyRowEditing) emptyRowDraft else title
+                            val path =
+                                if (row.isOptional && taskId != null) {
+                                    RelativePriorityDomain.optionalTaskPath(state, listId, taskId)
+                                } else {
+                                    emptyList()
                                 }
-                                for (column in list.weightColumns.indices) {
-                                    if (draggedColumn != null && columnDropIndex == column) ColumnDropLine()
-                                    Box(
-                                        modifier = Modifier.background(
-                                            if (draggedColumn == column) SheetColors.moveDragFill else Color.Transparent,
-                                        ),
-                                    ) {
-                                        val value = cell?.priorityWeights?.getOrElse(column) { 1.0 } ?: 1.0
-                                        WeightInputCell(
-                                            value = value,
-                                            onSet = {
-                                                if (cellId != null) {
-                                                    onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, it))
-                                                }
-                                            },
-                                        )
+                            val representative = path.lastOrNull()?.let { state.cells[it] }
+                            TaskRow(
+                                depth = 0,
+                                cellId = cellId ?: CellId("priority-weight-$listId-${row.taskId?.value ?: "empty"}"),
+                                renderVia = null,
+                                displayTitle = displayedTitle,
+                                isMainSelection = false,
+                                isInSelectionRange = false,
+                                // Optional rows with a task id are virtual readouts; the optional row without
+                                // one is the real trailing placeholder and must remain editable.
+                                selectable = cellId != null && (taskId == null || !row.isOptional),
+                                isEditing = isEditing,
+                                hasChildren = false,
+                                expanded = false,
+                                moveDropBefore = false,
+                                moveDropAfter = false,
+                                canMoveFromCell = false,
+                                isBeingMoved = false,
+                                priorityLabel = null,
+                                priorityColumnWidth = WEIGHT_WINDOW_TITLE_WIDTH,
+                                taskColor = taskId?.let { taskColors[it] },
+                                searchRanges = emptyList(),
+                                currentSearchRange = null,
+                                textOverflow = false,
+                                minMinutes = taskId?.let { state.tasks[it]?.minimumMinutes } ?: 0,
+                                minTimeEditing = false,
+                                cellMenu = null,
+                                onTogglePriorityWeights = {},
+                                onOpenRelativePriority = {},
+                                onSetMinTime = {},
+                                onActivateMinTime = {},
+                                onClick = { clicked, _, _, _ ->
+                                    if (row.isOptional && taskId == null) {
+                                        emptyRowDraft = ""
+                                        emptyRowEditing = true
                                     }
-                                }
-                                if (draggedColumn != null && columnDropIndex == list.weightColumns.size) ColumnDropLine()
+                                },
+                                onDragSelect = { _, _ -> },
+                                moveDragActive = false,
+                                resolveRowAt = { null },
+                                onRowBounds = { _, _, _ -> },
+                                onMoveDragStart = {},
+                                onMoveDropHover = { _, _, _ -> },
+                                onMoveDragEnd = {},
+                                onDoubleClick = {
+                                    if (row.isOptional && taskId == null) {
+                                        emptyRowDraft = ""
+                                        emptyRowEditing = true
+                                    }
+                                },
+                                onTextChange = { draft ->
+                                    if (row.isOptional && taskId == null && cellId != null) {
+                                        emptyRowDraft = draft
+                                    }
+                                },
+                                onExitEdit = {
+                                    emptyRowEditing = false
+                                    emptyRowDraft = ""
+                                },
+                                onToggleExpand = {},
+                                editMenus =
+                                    if (row.isOptional && taskId == null && cellId != null && emptyRowEditing) {
+                                        {
+                                            OptionalTaskEditMenus(
+                                                state = state,
+                                                cellId = cellId,
+                                                draftText = emptyRowDraft,
+                                                onDraftChange = { emptyRowDraft = it },
+                                                onPickTask = {
+                                                    optionalTaskIds = optionalTaskIds + it
+                                                    emptyRowEditing = false
+                                                    emptyRowDraft = ""
+                                                },
+                                            )
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                rowContent =
+                                    if (taskId != null) {
+                                        {
+                                            for (column in list.weightColumns.indices) {
+                                                if (draggedColumn != null && columnDropIndex == column) ColumnDropLine()
+                                                Box(
+                                                    modifier = Modifier.background(
+                                                        if (draggedColumn == column) SheetColors.moveDragFill else Color.Transparent,
+                                                    ),
+                                                ) {
+                                                    val value =
+                                                        (if (row.isOptional) representative else cell)
+                                                            ?.priorityWeights
+                                                            ?.getOrElse(column) { 1.0 }
+                                                            ?: 1.0
+                                                    WeightInputCell(
+                                                        value = value,
+                                                        onSet = {
+                                                            when {
+                                                                row.isOptional -> {
+                                                                    val old = value
+                                                                    val factor = if (old > 0.0) it / old else it
+                                                                    onIntent(
+                                                                        SchedulerIntent.SetOptionalTaskPathWeight(
+                                                                            listId,
+                                                                            taskId,
+                                                                            column,
+                                                                            factor,
+                                                                        ),
+                                                                    )
+                                                                }
+                                                                cellId != null -> {
+                                                                    onIntent(SchedulerIntent.SetPriorityWeight(cellId, column, it))
+                                                                }
+                                                            }
+                                                        },
+                                                    )
+                                                }
+                                            }
+                                            if (draggedColumn != null && columnDropIndex == list.weightColumns.size) ColumnDropLine()
+                                        }
+                                    } else {
+                                        null
+                                    },
+                            )
                             }
                         }
                     }
                     Spacer(Modifier.width(16.dp))
+                    val chartRows = tableRows.filter { it.taskId != null }
                     PriorityChart(
-                        titles = priorityWeightTableRows(state, listId).map { it.title.ifEmpty { "(untitled)" } },
+                        titles = chartRows.map { it.title },
                         // PRD §5: each row's share of THIS sub-list — the number the table on the left sets —
                         // rather than the task's absolute priority (its share of the whole tree).
-                        fractions = priorityWeightTableRows(state, listId).map { row ->
+                        fractions = chartRows.map { row ->
                             row.cellId?.let { RelativePriorityDomain.cellShare(state, it) } ?: 0.0
                         },
                         modifier = Modifier.width(220.dp).verticalScroll(rememberScrollState()),
@@ -1890,6 +2042,8 @@ internal fun TaskRow(
     onExitEdit: (EditExitNavigation) -> Unit,
     onToggleExpand: () -> Unit,
     editMenus: (@Composable () -> Unit)?,
+    /** Additional controls rendered after the title and before the task row's trailing spacer. */
+    rowContent: (@Composable () -> Unit)? = null,
     /** PRD §4: one extra cell at the end of the row — the default sub-tree's switch. Null in the tree. */
     rowTrailing: (@Composable (CellId) -> Unit)? = null,
 ) {
@@ -2367,6 +2521,7 @@ internal fun TaskRow(
                 rowTrailing?.invoke(cellId)
                 Spacer(Modifier.weight(1f))
             }
+            rowContent?.invoke()
         }
         if (moveDropAfter) {
             Box(

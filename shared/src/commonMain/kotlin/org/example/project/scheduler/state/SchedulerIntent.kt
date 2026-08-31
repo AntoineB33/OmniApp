@@ -110,6 +110,14 @@ sealed interface SchedulerIntent {
         val value: Double,
     ) : SchedulerIntent
 
+    /** PRD §5: scale one column of an optional task row's path weights by [factor]. */
+    data class SetOptionalTaskPathWeight(
+        val listId: CellListId,
+        val taskId: TaskId,
+        val column: Int,
+        val factor: Double,
+    ) : SchedulerIntent
+
     /**
      * PRD §5 the relative-priority window: set [taskId]'s priority **relative to** [relativeTo] to [value]
      * (a fraction in `[0,1]`). Every cell of every occurrence chain has its percentage scaled by one common

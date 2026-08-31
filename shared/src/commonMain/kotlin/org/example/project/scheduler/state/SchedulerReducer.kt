@@ -117,6 +117,16 @@ object SchedulerReducer {
             is SchedulerIntent.DeleteTaskTree -> reduceDeleteTaskTree(state, intent.id)
             is SchedulerIntent.SetPriorityWeight ->
                 commitDelta(state, priorityTreeDelta(state, "Priority weight") { applySetPriorityWeight(it, intent.cellId, intent.column, intent.value) })
+            is SchedulerIntent.SetOptionalTaskPathWeight ->
+                commitDelta(state, priorityTreeDelta(state, "Optional task priority weight") {
+                    RelativePriorityDomain.scaleOptionalTaskPath(
+                        it,
+                        intent.listId,
+                        intent.taskId,
+                        intent.column,
+                        intent.factor,
+                    )
+                })
             is SchedulerIntent.SetRelativePriority ->
                 commitDelta(
                     state,

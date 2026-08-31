@@ -948,11 +948,46 @@ class SchedulerReducerTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(bCell, "Child B"))
         val bTask = s.cells[bCell]!!.taskId!!
 
-        val rows = org.example.project.scheduler.ui.priorityWeightTableRows(s, childList)
+        val initially = org.example.project.scheduler.ui.priorityWeightTableRows(s, childList)
+        assertTrue(initially.none { it.isOptional && it.taskId != null })
+        assertTrue(initially.any { it.isOptional && it.cellId != null && it.taskId == null })
+
+        val rows = org.example.project.scheduler.ui.priorityWeightTableRows(s, childList, setOf(bTask))
         val titles = rows.map { it.title }
         assertTrue(titles.contains("Child A"))
         assertTrue(titles.contains("Child B"))
+        assertTrue(rows.any { it.isOptional && it.title.isEmpty() })
         assertEquals(listOf(aTask, bTask), rows.mapNotNull { it.taskId }.distinct())
+    }
+
+    @Test
+    fun optional_task_weight_scales_its_path_except_pinned_cells() {
+        var s = SchedulerState.empty()
+        val rootCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(rootCell, "Parent"))
+        val parentId = s.cells[rootCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(rootCell))
+
+        val childList = s.tasks[parentId]!!.childListId!!
+        val childCell = s.lists[childList]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(childCell, "Child"))
+        val childId = s.cells[childCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(childCell))
+
+        val grandchildList = s.tasks[childId]!!.childListId!!
+        val taskCell = s.lists[grandchildList]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(taskCell, "Target"))
+        val targetId = s.cells[taskCell]!!.taskId!!
+
+        val pinned = s.copy(
+            relativePriorityPins = mapOf(
+                org.example.project.scheduler.model.RelativePriorityPinKey(targetId, parentId) to setOf(childCell),
+            ),
+        )
+        val scaled = RelativePriorityDomain.scaleOptionalTaskPath(pinned, childList, targetId, 0, 2.0)
+
+        assertEquals(1.0, scaled.cells[childCell]!!.priorityWeights[0])
+        assertEquals(2.0, scaled.cells[taskCell]!!.priorityWeights[0])
     }
 
     @Test
