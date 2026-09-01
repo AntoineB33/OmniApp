@@ -59,6 +59,9 @@ sealed interface SchedulerIntent {
 
     data class ToggleExpand(val cellId: CellId) : SchedulerIntent
 
+    /** Collapse [cellId] and every cell in its sub-tree, recorded as one expansion-set delta. */
+    data class CollapseSubtree(val cellId: CellId) : SchedulerIntent
+
     data class SetCellTitle(
         val cellId: CellId,
         val title: String,

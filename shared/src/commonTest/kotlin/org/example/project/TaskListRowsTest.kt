@@ -247,6 +247,28 @@ class TaskListRowsTest {
         assertTrue(rootWrite in moved.cells)
     }
 
+    // ----- collapse a sub-tree -------------------------------------------------------------------
+
+    @Test
+    fun collapsingASubtreeClosesThisCellAndEveryDescendant() {
+        val state = fixture()
+        val bookRow = rowOf(state, "Book")
+        val chapterRow = rowOf(state, "Chapter")
+        val notesRow = rowOf(state, "Notes")
+
+        val expanded = state.copy(expanded = setOf(bookRow, chapterRow))
+        val collapsed = SchedulerReducer.reduce(expanded, SchedulerIntent.CollapseSubtree(bookRow))
+
+        assertTrue(bookRow !in collapsed.expanded)
+        assertTrue(chapterRow !in collapsed.expanded)
+        assertEquals(state.expanded, collapsed.expanded)
+        assertEquals(state.captureTree(), collapsed.captureTree())
+
+        val nested = SchedulerReducer.reduce(state.copy(expanded = setOf(notesRow)), SchedulerIntent.CollapseSubtree(notesRow))
+        assertTrue(notesRow !in nested.expanded)
+        assertEquals(state.expanded, nested.expanded)
+    }
+
     // ----- collapse all --------------------------------------------------------------------------
 
     @Test

@@ -524,6 +524,12 @@ internal fun CellListSection(
                             onGoToTaskTree = onGoToTaskTree?.let { go -> { go(taskId) } },
                             onCopy = { onCopyCell(cellId) },
                             onDeepCopy = { onDeepCopyCell(cellId) },
+                            onCollapseSubtree =
+                                if (hasChildren) {
+                                    { onIntent(SchedulerIntent.CollapseSubtree(cellId)) }
+                                } else {
+                                    null
+                                },
                             // PRD §7/§13: the template on demand. Like "copy", it acts on the whole block
                             // when the right-click lands inside a multi-selection.
                             onAddDefaultSubtree =
@@ -2359,6 +2365,15 @@ internal fun TaskRow(
                             cellMenu.onDeepCopy()
                         },
                     )
+                    cellMenu.onCollapseSubtree?.let { collapseSubtree ->
+                        DropdownMenuItem(
+                            text = { Text("collapse subtree") },
+                            onClick = {
+                                contextMenuOpen = false
+                                collapseSubtree()
+                            },
+                        )
+                    }
                     // PRD §7: only offered where there is a template to add.
                     cellMenu.onAddDefaultSubtree?.let { addDefaultSubtree ->
                         DropdownMenuItem(
@@ -2676,6 +2691,7 @@ internal class TaskCellMenuActions(
     val onGoToTaskTree: (() -> Unit)?,
     val onCopy: () -> Unit,
     val onDeepCopy: () -> Unit,
+    val onCollapseSubtree: (() -> Unit)?,
     val onAddDefaultSubtree: (() -> Unit)?,
 )
 

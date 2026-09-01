@@ -36,6 +36,7 @@ New in the window, and each one a consequence of the root being the *sorter's* o
   the same `RevealCell` primitive. `App.kt`'s handler was hoisted so both surfaces call one function;
   `TaskCellMenuActions.onGoToTaskTree` is null in the tree (you are already there) and in the template.
 - **"Collapse all"**, beside the sorter, closing every row the window has open.
+- **"collapse subtree"** in a task cell's right-click menu, closing the clicked row and every expanded descendant in its own branch.
 - **Nothing may be moved into the root.** The blue drop line never appears at root level
   (`TaskTreeView`'s `allowRootDrop`), and `reduceInTaskList` refuses such a `MoveSelectedCells` as the
   backstop.
