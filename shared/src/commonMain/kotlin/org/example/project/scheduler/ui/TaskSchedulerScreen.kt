@@ -1361,15 +1361,14 @@ internal fun priorityWeightTableRows(
     val currentMembers = list.cellIds.mapNotNull { cellId ->
         val cell = state.cells[cellId] ?: return@mapNotNull null
         val taskId = cell.taskId ?: return@mapNotNull null
+        if (taskId in optionalTaskIds) return@mapNotNull null
         val title = state.tasks[taskId]?.title.orEmpty()
         if (title.isBlank()) return@mapNotNull null
         PriorityWeightTableRow(cellId = cellId, taskId = taskId, title = title, isOptional = false)
     }
 
     val parentTaskId = SchedulerDomain.parentTaskIdOfList(state, listId)
-    val seenTaskIds = currentMembers.mapNotNull { it.taskId }.toSet()
     val optional = optionalTaskIds
-        .filter { it !in seenTaskIds }
         .mapNotNull { taskId ->
             val title = state.tasks[taskId]?.title.orEmpty()
             if (title.isBlank()) return@mapNotNull null
@@ -1384,6 +1383,23 @@ internal fun priorityWeightTableRows(
     } else {
         rows
     }
+}
+
+internal fun priorityWeightTableValue(
+    state: SchedulerState,
+    listId: CellListId,
+    row: PriorityWeightTableRow,
+    column: Int,
+    optionalTaskIds: Set<TaskId> = emptySet(),
+): Double {
+    val list = state.lists[listId] ?: return 0.0
+    val cellId = row.cellId
+    val cell = cellId?.let { state.cells[it] }
+    val taskId = row.taskId ?: cell?.taskId
+    if (row.isOptional && taskId != null) {
+        return list.optionalTaskValues[taskId]?.getOrElse(column) { 0.0 } ?: 0.0
+    }
+    return cell?.priorityWeights?.getOrElse(column) { 1.0 } ?: 1.0
 }
 
 /**
@@ -1428,8 +1444,7 @@ internal fun PriorityWeightWindow(
     val list = state.lists[listId] ?: return
     val taskHues = rememberTaskHues(state, TaskHueMemo.account)
     val taskColors = remember(taskHues) { TaskPalette.sheetColors(taskHues) }
-    // Optional rows are a window-local projection. They start empty and are never persisted as list members.
-    var optionalTaskIds by remember(listId) { mutableStateOf(emptySet<TaskId>()) }
+    val optionalTaskIds = list.optionalTaskIds
     var emptyRowEditing by remember(listId) { mutableStateOf(false) }
     var emptyRowDraft by remember(listId) { mutableStateOf("") }
     val tableRows = priorityWeightTableRows(state, listId, optionalTaskIds)
@@ -1597,7 +1612,7 @@ internal fun PriorityWeightWindow(
                                                 draftText = emptyRowDraft,
                                                 onDraftChange = { emptyRowDraft = it },
                                                 onPickTask = {
-                                                    optionalTaskIds = optionalTaskIds + it
+                                                    onIntent(SchedulerIntent.AddPriorityWeightTableTask(listId, it))
                                                     emptyRowEditing = false
                                                     emptyRowDraft = ""
                                                 },
@@ -1617,10 +1632,12 @@ internal fun PriorityWeightWindow(
                                                     ),
                                                 ) {
                                                     val value =
-                                                        (if (row.isOptional) representative else cell)
-                                                            ?.priorityWeights
-                                                            ?.getOrElse(column) { 1.0 }
-                                                            ?: 1.0
+                                                        if (row.isOptional) {
+                                                            val taskValue = list.optionalTaskValues[taskId]
+                                                            taskValue?.getOrElse(column) { 0.0 } ?: 0.0
+                                                        } else {
+                                                            cell?.priorityWeights?.getOrElse(column) { 1.0 } ?: 1.0
+                                                        }
                                                     val fieldKey = PriorityWeightFieldKey(
                                                         cellId = representative?.id ?: cellId,
                                                         column = column,

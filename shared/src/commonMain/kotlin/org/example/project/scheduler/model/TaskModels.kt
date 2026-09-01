@@ -631,4 +631,8 @@ data class CellList(
      * Defaults to a single column of weight 1 (equivalent to a plain weighted split).
      */
     val weightColumns: List<Double> = listOf(1.0),
+    /** Tasks the user manually added to this table as optional rows; persisted per sub-list. */
+    val optionalTaskIds: Set<TaskId> = emptySet(),
+    /** The last-entered value for each optional row in this list's weight columns. */
+    val optionalTaskValues: Map<TaskId, List<Double>> = emptyMap(),
 )

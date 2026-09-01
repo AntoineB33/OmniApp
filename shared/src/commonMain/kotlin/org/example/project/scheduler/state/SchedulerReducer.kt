@@ -117,6 +117,10 @@ object SchedulerReducer {
             is SchedulerIntent.DeleteTaskTree -> reduceDeleteTaskTree(state, intent.id)
             is SchedulerIntent.SetPriorityWeight ->
                 commitDelta(state, priorityTreeDelta(state, "Priority weight") { applySetPriorityWeight(it, intent.cellId, intent.column, intent.value) })
+            is SchedulerIntent.AddPriorityWeightTableTask ->
+                commitDelta(state, priorityTreeDelta(state, "Add optional table task") {
+                    applyAddPriorityWeightTableTask(it, intent.listId, intent.taskId)
+                })
             is SchedulerIntent.SetOptionalTaskPathWeight ->
                 commitDelta(state, priorityTreeDelta(state, "Optional task priority weight") {
                     RelativePriorityDomain.scaleOptionalTaskPath(
@@ -3324,6 +3328,24 @@ private fun applyRestorePriorityWeights(
     val lists =
         if (columnsChanged) state.lists + (listId to list.copy(weightColumns = weightColumns)) else state.lists
     return state.copy(cells = cells, lists = lists)
+}
+
+private fun applyAddPriorityWeightTableTask(
+    state: SchedulerState,
+    listId: CellListId,
+    taskId: TaskId,
+): SchedulerState {
+    val list = state.lists[listId] ?: return state
+    if (taskId in list.optionalTaskIds) return state
+    val parentTaskId = SchedulerDomain.parentTaskIdOfList(state, listId) ?: return state
+    if (RelativePriorityDomain.optionalTaskPath(state, listId, taskId).isEmpty()) return state
+    val zeroed = List(list.weightColumns.size.coerceAtLeast(1)) { 0.0 }
+    return state.copy(
+        lists = state.lists + (listId to list.copy(
+            optionalTaskIds = list.optionalTaskIds + taskId,
+            optionalTaskValues = list.optionalTaskValues + (taskId to zeroed),
+        )),
+    )
 }
 
 private fun setCellTitleDelta(

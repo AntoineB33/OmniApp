@@ -110,6 +110,12 @@ sealed interface SchedulerIntent {
         val value: Double,
     ) : SchedulerIntent
 
+    /** PRD §5: add a task row to this sub-list's priority-weight table, seeded at zero in every column. */
+    data class AddPriorityWeightTableTask(
+        val listId: CellListId,
+        val taskId: TaskId,
+    ) : SchedulerIntent
+
     /** PRD §5: scale one column of an optional task row's path weights by [factor]. */
     data class SetOptionalTaskPathWeight(
         val listId: CellListId,

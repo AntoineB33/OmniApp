@@ -961,6 +961,28 @@ class SchedulerReducerTest {
     }
 
     @Test
+    fun manually_added_priority_table_rows_persist_per_list_and_start_at_zero() {
+        var s = SchedulerState.empty()
+        val rootCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(rootCell, "Parent"))
+        val parentId = s.cells[rootCell]!!.taskId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(rootCell))
+
+        val childList = s.tasks[parentId]!!.childListId!!
+        val childCell = s.lists[childList]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(childCell, "Child"))
+        val childTask = s.cells[childCell]!!.taskId!!
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddPriorityWeightTableTask(childList, childTask))
+        assertTrue(s.lists[childList]!!.optionalTaskIds.contains(childTask))
+
+        val rows = org.example.project.scheduler.ui.priorityWeightTableRows(s, childList, s.lists[childList]!!.optionalTaskIds)
+        val row = rows.first { it.taskId == childTask }
+        val value = org.example.project.scheduler.ui.priorityWeightTableValue(s, childList, row, 0, s.lists[childList]!!.optionalTaskIds)
+        assertEquals(0.0, value, 1e-9)
+    }
+
+    @Test
     fun optional_task_weight_scales_its_path_except_pinned_cells() {
         var s = SchedulerState.empty()
         val rootCell = s.lists[s.rootListId]!!.cellIds.first()

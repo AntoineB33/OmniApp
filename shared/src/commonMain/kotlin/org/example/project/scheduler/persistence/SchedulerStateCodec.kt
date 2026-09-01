@@ -196,6 +196,8 @@ object SchedulerStateCodec {
                         it.parentCellId?.value,
                         it.cellIds.map(CellId::value),
                         it.weightColumns,
+                        it.optionalTaskIds.map(TaskId::value),
+                        it.optionalTaskValues.mapKeys { (taskId, _) -> taskId.value },
                     )
                 },
             cells =
@@ -567,6 +569,8 @@ object SchedulerStateCodec {
                         it.parentCellId?.value,
                         it.cellIds.map(CellId::value),
                         it.weightColumns,
+                        it.optionalTaskIds.map(TaskId::value),
+                        it.optionalTaskValues.mapKeys { (taskId, _) -> taskId.value },
                     )
                 },
             cells =
@@ -648,6 +652,8 @@ object SchedulerStateCodec {
                         parentCellId = p.parentCellId?.let(::CellId),
                         cellIds = p.cellIds.map(::CellId),
                         weightColumns = p.weightColumns,
+                        optionalTaskIds = p.optionalTaskIds.map(::TaskId).toSet(),
+                        optionalTaskValues = p.optionalTaskValues.mapKeys { (taskId, _) -> TaskId(taskId) },
                     )
             }
         return SchedulerState(
@@ -1464,6 +1470,8 @@ private data class PersistedList(
     val parentCellId: String?,
     val cellIds: List<String>,
     val weightColumns: List<Double> = listOf(1.0),
+    val optionalTaskIds: List<String> = emptyList(),
+    val optionalTaskValues: Map<String, List<Double>> = emptyMap(),
 )
 
 @Serializable
