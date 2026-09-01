@@ -44,11 +44,18 @@ Deep work
 		second line
 	Reading
 		- minimum time: 30 min
+
+Copied tasks:
+	Deep work: minimum time: 45 min, id: task/user/41
+	Reading: minimum time: 30 min, id: task/user/13
 ```
 
-A tab-indented **title line** per task; one level deeper, one `- <field>: <value>` line per thing the task holds;
-the task text **verbatim** in its own indented block; the children after the attributes, at the title's own
-indent + 1. Everything at its default value is omitted, so an ordinary task is a title and its minimum time.
+The copied tree itself keeps only the structural/task metadata the paste needs. A tab-indented **title line** per
+task; one level deeper, one `- <field>: <value>` line per thing the task holds; the children after the attributes,
+at the title's own indent + 1. The task text is intentionally omitted from the tree payload and appears instead in
+the separate `Copied tasks:` summary below it. That summary lists each **unique task** that appeared in the copied
+sub-tree exactly once, so a mirrored task no longer prints the same metadata again and again. The summary is
+human-facing only: a paste still reads only the tree section above it, and the parser ignores the summary block.
 
 Consequences that are load-bearing:
 

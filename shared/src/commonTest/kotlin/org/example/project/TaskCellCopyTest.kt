@@ -70,24 +70,28 @@ class TaskCellCopyTest {
         val idP = s.cells[cP]!!.taskId!!.value
         val childList = s.tasks[s.cells[cP]!!.taskId!!]!!.childListId!!
         val idC1 = s.cells[s.lists[childList]!!.cellIds[0]]!!.taskId!!.value
-        assertEquals(
-            "P\n" +
-                "\t- id: $idP\n" +
-                "\t- minimum time: 45 min\n" +
-                "\t- resilience to no on-screen task: 100 %\n" +
-                "\t- schedule unit:\n" +
-                "\t\t- warm up: 5 min\n" +
-                "\t\t- run: 25 min\n" +
-                "\t- text:\n" +
-                "\t\tline one\n" +
-                "\t\tline two\n" +
-                "\tC1\n" +
-                "\t\t- id: $idC1\n" +
-                "\t\t- minimum time: 45 min\n" +
-                "\t\t- text:\n" +
-                "\t\t\tchild note\n",
-            SchedulerDomain.copyCellsText(s, listOf(cP), maxDepth = 20),
-        )
+        val text = SchedulerDomain.copyCellsText(s, listOf(cP), maxDepth = 20)
+        assertTrue(text.startsWith("P\n"), text)
+        assertTrue(text.contains("\t- id: $idP\n"), text)
+        assertTrue(text.contains("\t- minimum time: 45 min\n"), text)
+        assertTrue(!text.contains("\t- text:\n"), text)
+        assertTrue(text.contains("\tC1\n"), text)
+        assertTrue(text.contains("\t\t- id: $idC1\n"), text)
+        assertTrue(text.contains("Copied tasks:\n"), text)
+        assertTrue(text.contains("- P: minimum time: 45 min, id: $idP, text: line one\\nline two"), text)
+        assertTrue(text.contains("- C1: minimum time: 45 min, id: $idC1, text: child note"), text)
+    }
+
+    @Test
+    fun copied_text_appends_a_readable_summary_of_unique_tasks_below_the_tree() {
+        val (s, cP) = stateWithParentAndChild()
+        val idP = s.cells[cP]!!.taskId!!.value
+        val text = SchedulerDomain.copyCellsText(s, listOf(cP), maxDepth = 20)
+
+        assertTrue(text.contains("Copied tasks:"), text)
+        assertTrue(text.contains("- P: minimum time: 45 min, id: $idP"), text)
+        assertTrue(!text.contains("\n\tP: minimum time: 45 min, id: $idP"), text)
+        assertTrue(SchedulerDomain.parseTreeText(text) != null, text)
     }
 
     @Test
@@ -146,15 +150,21 @@ class TaskCellCopyTest {
     }
 
     @Test
-    fun a_task_text_holding_a_blank_line_survives_the_round_trip() {
-        // The text block is bounded by indentation, so an empty line has to keep its indent or it would
-        // end the block early and the rest of the note would be read as a child task.
+    fun new_copy_text_is_summary_only_but_older_text_blocks_still_parse() {
+        // New copies omit task text from the tree payload and keep it in the summary footer.
         var s = SchedulerState.empty()
         val c = s.lists[s.rootListId]!!.cellIds[0]
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c, "P"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskText(s.cells[c]!!.taskId!!, "a\n\nb"))
 
-        val nodes = SchedulerDomain.parseTreeText(SchedulerDomain.copyCellsText(s, listOf(c), maxDepth = 20))!!
+        val text = SchedulerDomain.copyCellsText(s, listOf(c), maxDepth = 20)
+        assertTrue(text.contains("Copied tasks:"), text)
+        assertTrue(text.contains("- P: minimum time: 45 min, id: ${s.cells[c]!!.taskId!!.value}, text: a\\n\\nb"), text)
+        assertTrue(!text.contains("\t- text:\n"), text)
+
+        // Older clipboard payloads with a text block still parse for compatibility.
+        val legacy = "P\n\t- text:\n\ta\n\n\tb"
+        val nodes = SchedulerDomain.parseTreeText(legacy)!!
         assertEquals("a\n\nb", nodes.single().text)
         assertTrue(nodes.single().children.isEmpty())
     }
@@ -172,16 +182,21 @@ class TaskCellCopyTest {
     }
 
     @Test
-    fun copy_carries_the_resilience_map_the_schedule_unit_and_the_text() {
+    fun copy_carries_the_resilience_map_the_schedule_unit_and_the_text_summary() {
         val (s, cP) = stateWithParentAndChild()
-        val node = SchedulerDomain.parseTreeText(SchedulerDomain.copyCellsText(s, listOf(cP), maxDepth = 20))!!.single()
-        // `side-dev/README.md`: what travels is the resilience MAP, one `- resilience to <kind>: <n> %` line
-        // per override — so a task that needs no screen comes back needing no screen.
+        val text = SchedulerDomain.copyCellsText(s, listOf(cP), maxDepth = 20)
+        val node = SchedulerDomain.parseTreeText(text)!!.single()
+        // The tree payload no longer carries raw task notes; the human-readable summary below it does.
         assertEquals(emptyMap(), node.resilience)
         assertEquals(listOf(ScheduleUnitEntry("warm up", 5), ScheduleUnitEntry("run", 25)), node.scheduleUnit)
-        // The text is escaped onto one appendix line, so its newline must survive the round-trip.
-        assertEquals("line one\nline two", node.text)
-        assertEquals("child note", node.children.single().text)
+        assertTrue(!text.contains("\t- text:\n"), text)
+        val childListId = s.tasks[s.cells[cP]!!.taskId!!]!!.childListId!!
+        val childCellId = s.lists[childListId]!!.cellIds.first { s.cells[it]?.taskId != null }
+        val childId = s.cells[childCellId]!!.taskId!!.value
+        assertTrue(text.contains("- P: minimum time: 45 min, id: ${s.cells[cP]!!.taskId!!.value}, text: line one\\nline two"), text)
+        assertTrue(text.contains("- C1: minimum time: 45 min, id: $childId, text: child note"), text)
+        assertEquals("", node.text)
+        assertEquals("", node.children.single().text)
     }
 
     @Test
@@ -193,7 +208,7 @@ class TaskCellCopyTest {
         assertEquals("P", newP.title)
         assertEquals(false, newP.onScreen)
         assertEquals(listOf(ScheduleUnitEntry("warm up", 5), ScheduleUnitEntry("run", 25)), newP.scheduleUnit)
-        assertEquals("line one\nline two", newP.text)
+        assertEquals("", newP.text)
 
         val newChildList = newP.childListId!!
         val newC1cell = dst.lists[newChildList]!!.cellIds.first { dst.cells[it]!!.taskId != null }
@@ -201,7 +216,7 @@ class TaskCellCopyTest {
         assertEquals("C1", newC1.title)
         // C1 was never switched off-screen, so it must come back on-screen (the default).
         assertEquals(true, newC1.onScreen)
-        assertEquals("child note", newC1.text)
+        assertEquals("", newC1.text)
     }
 
     @Test
@@ -211,10 +226,10 @@ class TaskCellCopyTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c, "Plain"))
         val text = SchedulerDomain.copyCellsText(s, listOf(c), maxDepth = 1)
         // The default (on-screen) is omitted, so an ordinary task is its title, its id and its minimum time.
-        assertEquals(
-            listOf("Plain", "\t- id: ${s.cells[c]!!.taskId!!.value}", "\t- minimum time: 45 min", ""),
-            text.split('\n'),
-        )
+        assertTrue(text.startsWith("Plain\n"), text)
+        assertTrue(text.contains("\t- id: ${s.cells[c]!!.taskId!!.value}"), text)
+        assertTrue(text.contains("\t- minimum time: 45 min"), text)
+        assertTrue(text.contains("Copied tasks:\n- Plain: minimum time: 45 min, id: ${s.cells[c]!!.taskId!!.value}"), text)
         val (dst, target) = pasteIntoFreshTree(text)
         assertEquals(true, dst.tasks[dst.cells[target]!!.taskId!!]!!.onScreen)
     }

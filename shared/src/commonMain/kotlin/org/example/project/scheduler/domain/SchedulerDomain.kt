@@ -4550,6 +4550,7 @@ object SchedulerDomain {
      * readable shape below — but [parseTreeText] still reads it, so text copied by an older build pastes.
      */
     const val COPY_SECTION_SEPARATOR: String = "\u000C"
+    const val COPIED_TASKS_SECTION_HEADER: String = "Copied tasks:"
 
     /**
      * PRD §13 "deep copy": the depth a fresh account starts at, and the value the window's **reset** button
@@ -4828,6 +4829,38 @@ object SchedulerDomain {
      * so an ordinary task stays a title and two lines. [options] drops what the deep-copy window's switches
      * turned off, and swaps the weight table for its percentage.
      */
+    private fun renderTaskSummary(nodes: List<CopiedNode>, options: CopyOptions): List<String> {
+        val seen = LinkedHashSet<String>()
+        val lines = ArrayList<String>()
+
+        fun addIfNeeded(node: CopiedNode) {
+            val key = node.taskId?.value ?: node.title
+            if (!seen.add(key)) return
+            val fields = ArrayList<String>()
+            if (options.includeMinimumTime) {
+                fields += "minimum time: ${node.minMinutes ?: DEFAULT_MINIMUM_MINUTES} min"
+            }
+            if (options.includeIds && node.taskId != null) {
+                fields += "id: ${node.taskId.value}"
+            }
+            if (options.includeText && node.text.isNotBlank()) {
+                fields += "text: ${escapeField(node.text)}"
+            }
+            if (fields.isEmpty()) return
+            lines += "- ${escapeTitleField(node.title)}: ${fields.joinToString(", ")}"
+        }
+
+        fun walk(ns: List<CopiedNode>) {
+            for (n in ns) {
+                addIfNeeded(n)
+                walk(n.children)
+            }
+        }
+
+        walk(nodes)
+        return lines
+    }
+
     private fun renderCopiedNodes(nodes: List<CopiedNode>, options: CopyOptions = CopyOptions()): String {
         val sb = StringBuilder()
         fun line(depth: Int, content: String) {
@@ -4865,22 +4898,27 @@ object SchedulerDomain {
                 } else if (options.includePriorityPercentages) {
                     attribute(d, ATTR_SHARE, "${formatSharePercent(n.rowWeights.firstOrNull() ?: 1.0)} %")
                 }
+                // Task text is intentionally not part of the tree payload anymore. It is listed once in the
+                // human-facing summary below the tree, and the parser still accepts legacy clipboard text
+                // blocks for backward compatibility.
                 if (n.scheduleUnit.isNotEmpty()) {
                     line(d, "$ATTR_MARKER$ATTR_UNIT:")
                     for (step in n.scheduleUnit) {
                         line(d + 1, "$ATTR_MARKER${escapeField(step.title)}: ${step.spanMinutes} min")
                     }
                 }
-                if (n.text.isNotEmpty()) {
-                    line(d, "$ATTR_MARKER$ATTR_TEXT:")
-                    // Verbatim, one level deeper: an empty line keeps the indent so it stays part of the
-                    // block. This is the whole point of the format — the note reads as the note.
-                    for (textLine in n.text.split('\n')) line(d + 1, textLine)
-                }
                 render(n.children, depth + 1)
             }
         }
         render(nodes, 0)
+        val summary = renderTaskSummary(nodes, options)
+        if (summary.isNotEmpty()) {
+            sb.append('\n')
+            sb.append(COPIED_TASKS_SECTION_HEADER).append('\n')
+            for (line in summary) {
+                sb.append(line).append('\n')
+            }
+        }
         return sb.toString()
     }
 
@@ -4916,12 +4954,13 @@ object SchedulerDomain {
     }
 
     private fun parseReadableTreeText(lines: List<String>): List<CopiedNode>? {
+        val effectiveLines = lines.takeWhile { it.trim() != COPIED_TASKS_SECTION_HEADER }
         val entries = ArrayList<MutableCopiedNode>()
         val depths = ArrayList<Int>()
         var i = 0
-        while (i < lines.size) {
-            val depth = indentOf(lines[i])
-            val rest = lines[i].substring(depth)
+        while (i < effectiveLines.size) {
+            val depth = indentOf(effectiveLines[i])
+            val rest = effectiveLines[i].substring(depth)
             if (rest.isBlank()) {
                 i++
                 continue
@@ -4934,9 +4973,9 @@ object SchedulerDomain {
             depths.add(depth)
             i++
             // Everything marked and indented one level under the title describes THIS task.
-            while (i < lines.size) {
-                val d = indentOf(lines[i])
-                val body = lines[i].substring(d)
+            while (i < effectiveLines.size) {
+                val d = indentOf(effectiveLines[i])
+                val body = effectiveLines[i].substring(d)
                 if (body.isBlank()) {
                     i++
                     continue
@@ -4947,9 +4986,9 @@ object SchedulerDomain {
                 when (field) {
                     "$ATTR_UNIT:" -> {
                         // One `- <step>: <n> min` line per step, in order, a level deeper.
-                        while (i < lines.size) {
-                            val sd = indentOf(lines[i])
-                            val step = lines[i].substring(sd)
+                        while (i < effectiveLines.size) {
+                            val sd = indentOf(effectiveLines[i])
+                            val step = effectiveLines[i].substring(sd)
                             if (step.isBlank()) {
                                 i++
                                 continue
@@ -4960,11 +4999,21 @@ object SchedulerDomain {
                         }
                     }
                     "$ATTR_TEXT:" -> {
-                        // The verbatim block: every line indented deeper than the marker, that indent
-                        // stripped. A child task sits one level *shallower*, so it is never swallowed.
+                        // The verbatim block: in the modern format the block is indented deeper than the
+                        // marker, but older 1.6-era clipboard payloads kept the text at the same indent as
+                        // the attribute itself. Keep accepting both: the block ends before the next task or
+                        // attribute line, while blank lines stay part of the text.
                         val textLines = ArrayList<String>()
-                        while (i < lines.size && indentOf(lines[i]) >= depth + 2) {
-                            textLines.add(lines[i].substring(depth + 2))
+                        while (i < effectiveLines.size) {
+                            val nextDepth = indentOf(effectiveLines[i])
+                            val nextBody = effectiveLines[i].substring(nextDepth)
+                            if (nextBody.isBlank()) {
+                                textLines.add("")
+                                i++
+                                continue
+                            }
+                            if (nextDepth <= depth || (nextDepth == depth + 1 && nextBody.startsWith(ATTR_MARKER))) break
+                            textLines.add(if (nextDepth >= depth + 2) nextBody else nextBody)
                             i++
                         }
                         node.text = textLines.joinToString("\n")
