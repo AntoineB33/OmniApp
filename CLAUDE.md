@@ -11,6 +11,15 @@ Before changing a subsystem, read its ADR.
 - `./gradlew :shared:jvmTest` — the real logic gate (see *Verification* below).
 - `./gradlew :desktopApp:run` — run the desktop app to verify UI/desktop changes.
 
+## Agent safety: do not touch the live release app
+
+- The deployed Windows release app is the user's live runtime and uses `%USERPROFILE%\.omniapp-release`.
+- Never run a dev/test desktop build against that same state dir. Doing so can write over the live local DB and trigger crashes or state corruption.
+- If the user already has the release app running, prefer a separate throwaway state dir such as `%USERPROFILE%\.omniapp-dev` or `%USERPROFILE%\.omniapp-guest` for agent-driven runs.
+- When testing a local build, use `-Pomniapp.stateDir=...` or a dedicated account script, never the release app's DB.
+- Do not kill `org.example.project.exe` or rerun `scripts\account3-deploy-windows.bat` unless the user explicitly asks for a redeploy.
+- Treat the deployed app as production-like state: keep it isolated from experiments and from agent-run builds.
+
 ## Verification
 
 - After any change to shared Kotlin logic, run `:shared:check` before reporting it as done.
