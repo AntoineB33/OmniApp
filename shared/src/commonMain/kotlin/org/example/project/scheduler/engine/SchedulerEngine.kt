@@ -172,7 +172,8 @@ private fun phoneSessionLeaseMillis(): Long = PHONE_SESSION_LEASE_MILLIS
 // The phone's clock is accelerated via the desktop time-link even though DebugFlags.TIME_SIMULATION is off
 // there, so every accelerated cadence keys off the clock's actual speed ([timeAccelerated]), not the flag.
 private const val ADVANCE_DISPLAY_MILLIS_ACCEL: Long = 50
-// The now-line display cadence at REAL time (1×): the production advance/poll cadence.
+// The real-time engine cadence for schedule banking and housekeeping. The Compose UI samples the visual
+// now-line from the frame clock, so this is deliberately unrelated to display refresh.
 private const val ADVANCE_TICK_MILLIS_PROD: Long = 30L * 1_000
 // The finer cadence used for the schedule-advance dispatch and the horizon/active-session polls while
 // accelerated (the display now-line moves faster still, every [ADVANCE_DISPLAY_MILLIS_ACCEL]).
@@ -1077,7 +1078,7 @@ class SchedulerEngine(
     //
     // Two cadences, so an accelerated now-line GLIDES instead of jumping once per tick (the x300 "jumps"
     // anomaly, worst on the phone where the production 30 s tick made each jump ~2.5 h of sim time):
-    //  • the display now-line ([_nowMillis], which the UI collects) moves every [ADVANCE_DISPLAY_MILLIS_ACCEL];
+    //  • the engine clock state ([_nowMillis]) advances on the engine cadence;
     //  • the heavier schedule advance (banking auto records / re-deriving panels) fires only once the clock has
     //    moved [SCHEDULE_ADVANCE_STEP_MILLIS] of sim time — no point banking records at sub-second sim res.
     // At real time (1×) both collapse to the single production cadence, so production behaviour is unchanged.

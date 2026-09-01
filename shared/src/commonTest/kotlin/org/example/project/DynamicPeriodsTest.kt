@@ -256,6 +256,27 @@ class DynamicPeriodsTest {
     }
 
     @Test
+    fun a_break_straddling_the_now_line_is_drawn_on_the_past_side_only() {
+        val shortBreak = ScreenBreak("20s", intervalMillis = 20 * MIN, durationMillis = 20 * SEC)
+        val refusedTask = PlanTask(TaskId("task/user/refused"), 1.0, 0L)
+        val origin = SchedulerDomain.dynamicPlacementOriginMillis(NOW)
+        val due =
+            SchedulerDomain.screenBreakPanelsInWindow(
+                listOf(shortBreak), origin, origin + HOUR, tasks = listOf(refusedTask), anchorMillis = NOW,
+            ).minBy { it.startEpochMillis }
+        val now = due.startEpochMillis + 10 * SEC
+        val past = due
+        val future =
+            SchedulerDomain.screenBreakPanels(
+                listOf(shortBreak), now, now + HOUR, tasks = listOf(refusedTask), mode = DynamicPeriods.MODE_AWAY,
+            ).filter { it.startEpochMillis >= now }
+
+        assertTrue(past.startEpochMillis < now, "the occurrence starts before the line and belongs to the past")
+        assertTrue(past.endEpochMillis > now, "the regression must straddle the line")
+        assertTrue(future.none { it.startEpochMillis == past.startEpochMillis })
+    }
+
+    @Test
     fun a_break_is_announced_at_its_DUE_not_where_the_line_leaves_it() {
         // The cue keys on the due - where the bars put the break - because in mode 1 the period itself has no
         // crossable start: the line pushes it, so it is always "starting now" and a sweep keyed on it would

@@ -143,18 +143,6 @@ private enum class FloatingWindow {
 // those loops within a display frame, so this is a comfortable margin, not a tight race.
 private const val SIM_PAUSE_LEAP_SETTLE_MILLIS: Long = 350
 
-// Display quantum for the observed now-line UNDER TIME SIMULATION. The engine advances `now` every
-// [ADVANCE_DISPLAY_MILLIS_ACCEL] (50 ms) whenever the debug clock is accelerated — and DebugFlags.TIME_SIMULATION
-// forces that fine cadence on even at 1×. The whole calendar/band/record derivation below is a pure function of
-// `nowMillis` and re-runs on every emission, at O(account history) each time. On an empty account that is cheap,
-// but on a real (large) account it pegs the AWT/Compose UI thread ~20×/s and Compose never presents a first
-// frame — the window is created but stays hidden (the "time simulation shows no window" bug). Snapping the
-// OBSERVED now-line to this step and reading it through a derivedStateOf gates recomposition to ~this cadence
-// (≈4 fps of now-line motion) instead of 20×/s, keeping a big account responsive while fast-forwarding. Only the
-// on-screen now-line granularity is affected; the engine's cues/records/schedule still use its exact clock.
-// Production (real clock) already emits `now` only every 30 s (ADVANCE_TICK_MILLIS_PROD), so it is left exact.
-private const val DISPLAY_NOW_QUANTUM_MILLIS: Long = 250
-
 @Composable
 @Preview
 fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedulerHost? = null) {
@@ -310,16 +298,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 onForegrounded = { engine.onAppForegrounded() },
             )
         }
-        // Observed now-line. Under time simulation it is snapped to [DISPLAY_NOW_QUANTUM_MILLIS] and read through
-        // a derivedStateOf so this composable recomposes only when the quantized value changes (a few times a
-        // second) rather than on every 50 ms engine emission — otherwise the O(history) derivation below pegs the
-        // UI thread on a real account and the window never presents. Production advances only every 30 s, so it is
-        // observed exactly (the branch is a no-op there).
-        val nowMillisState = engine.nowMillis.collectAsState()
-        val nowMillis by remember {
-            derivedStateOf {
-                val raw = nowMillisState.value
-                if (DebugFlags.TIME_SIMULATION) raw - (raw % DISPLAY_NOW_QUANTUM_MILLIS) else raw
+        // The visual now-line is sampled on Compose's frame clock. A fixed timer can either stutter between
+        // frames or wake the UI when no frame is due; the frame clock gives each rendered frame the exact clock
+        // instant, while the engine continues to use its own cadence for scheduling side effects.
+        var nowMillis by remember(clock) { mutableLongStateOf(clock.nowMillis()) }
+        LaunchedEffect(clock) {
+            while (true) {
+                withFrameNanos { nowMillis = clock.nowMillis() }
             }
         }
         // PRD §15 device-sleep gaps: past pauses drawn as greyed "Inactivity" bands (display-only; see the engine).
@@ -731,7 +716,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         basePeriods = displayDynamicBase,
                         tasks = displayDynamicTasks,
                         mode = tpMode,
-                    )
+                    ).filter { it.startEpochMillis >= nowMillis }
             } else {
                 SchedulerDomain.screenBreakPanelsInWindow(
                     screenBreaks = schedulerState.screenBreaks,
