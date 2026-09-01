@@ -1384,12 +1384,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                         popupState.selection,
                                         cellId,
                                     ),
-                                    onCopy = { targets, maxDepth, options ->
+                                    onCopy = { targets, maxDepth, unlimited, options ->
                                         // The depth and the three switches are the ACCOUNT's, not this
                                         // copy's: what the window is asked here is what every later copy
                                         // carries — the menu's "copy" and §4's Ctrl+C / Ctrl+X included
                                         // (the chord still takes the whole sub-tree).
                                         vm.dispatch(SchedulerIntent.SetDeepCopyMaxDepth(maxDepth))
+                                        vm.dispatch(SchedulerIntent.SetDeepCopyUnlimited(unlimited))
                                         vm.dispatch(SchedulerIntent.SetCopyOptions(options))
                                         // Explicit options: the dispatches above have not reached this
                                         // composition's state.

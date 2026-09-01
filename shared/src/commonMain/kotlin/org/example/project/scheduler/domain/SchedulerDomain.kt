@@ -4589,6 +4589,9 @@ object SchedulerDomain {
         val includeIds: Boolean = true,
         val priorityTables: Boolean = true,
         val includeText: Boolean = true,
+        val includePriorityPercentages: Boolean = true,
+        val includeMinimumTime: Boolean = true,
+        val excludeTitle: String = "",
     ) {
         companion object {
             /** The account's answers (what every copy uses unless a caller says otherwise). */
@@ -4597,6 +4600,9 @@ object SchedulerDomain {
                     includeIds = state.copyIncludeIds,
                     priorityTables = state.copyPriorityTables,
                     includeText = state.copyIncludeText,
+                    includePriorityPercentages = state.copyIncludePriorityPercentages,
+                    includeMinimumTime = state.copyIncludeMinimumTime,
+                    excludeTitle = state.copyExcludeTitle,
                 )
         }
     }
@@ -4647,11 +4653,12 @@ object SchedulerDomain {
         cellId: CellId,
         remainingDepth: Int,
         options: CopyOptions,
-    ): CopiedNode {
+    ): CopiedNode? {
         val cell = state.cells[cellId]
         val taskId = cell?.taskId
         val task = taskId?.let { state.tasks[it] }
         val title = task?.title.orEmpty()
+        if (options.excludeTitle.isNotBlank() && title == options.excludeTitle) return null
         val childList = task?.childListId?.let { state.lists[it] }
         val rowWeights =
             if (options.priorityTables) cell?.priorityWeights ?: DEFAULT_WEIGHTS
@@ -4662,7 +4669,7 @@ object SchedulerDomain {
             if (remainingDepth <= 1) emptyList()
             else childList?.cellIds.orEmpty()
                 .filter { isPopulated(state, it) }
-                .map { copiedSubtree(state, it, remainingDepth - 1, options) }
+                .mapNotNull { copiedSubtree(state, it, remainingDepth - 1, options) }
         return CopiedNode(
             title = title,
             children = children,
@@ -4695,7 +4702,8 @@ object SchedulerDomain {
         options: CopyOptions = CopyOptions.from(state),
     ): String {
         if (maxDepth < 1) return ""
-        val nodes = cellIds.filter { isPopulated(state, it) }.map { copiedSubtree(state, it, maxDepth, options) }
+        val nodes = cellIds.filter { isPopulated(state, it) }
+            .mapNotNull { copiedSubtree(state, it, maxDepth, options) }
         if (nodes.isEmpty()) return ""
         return renderCopiedNodes(nodes, options)
     }
@@ -4833,7 +4841,9 @@ object SchedulerDomain {
                 val d = depth + 1
                 // The identity first: pasting back into the tree lands on this very task (ADR 0012).
                 n.taskId?.let { attribute(d, ATTR_ID, it.value) }
-                attribute(d, ATTR_MIN_TIME, "${n.minMinutes ?: DEFAULT_MINIMUM_MINUTES} min")
+                if (options.includeMinimumTime) {
+                    attribute(d, ATTR_MIN_TIME, "${n.minMinutes ?: DEFAULT_MINIMUM_MINUTES} min")
+                }
                 // `side-dev/README.md`: one line per resilience that differs from what a FRESH task carries
                 // ([Task.DEFAULT_RESILIENCE]), sorted so a copy is stable. An ordinary on-screen task
                 // therefore says nothing about a screen — exactly as its edit window reads — and a kind the
@@ -4852,7 +4862,7 @@ object SchedulerDomain {
                     if (n.children.isNotEmpty() && n.childHeader != DEFAULT_WEIGHTS) {
                         attribute(d, ATTR_COLUMNS, formatWeights(n.childHeader))
                     }
-                } else {
+                } else if (options.includePriorityPercentages) {
                     attribute(d, ATTR_SHARE, "${formatSharePercent(n.rowWeights.firstOrNull() ?: 1.0)} %")
                 }
                 if (n.scheduleUnit.isNotEmpty()) {

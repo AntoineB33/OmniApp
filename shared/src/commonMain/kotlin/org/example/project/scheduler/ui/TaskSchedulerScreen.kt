@@ -3167,14 +3167,15 @@ private fun BulkPercentField(value: Double?, onValueChange: (Double) -> Unit) {
 internal fun DeepCopyWindow(
     state: SchedulerState,
     cellIds: List<CellId>,
-    onCopy: (List<CellId>, Int, SchedulerDomain.CopyOptions) -> Unit,
+    onCopy: (List<CellId>, Int, Boolean, SchedulerDomain.CopyOptions) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val key = cellIds.firstOrNull()
     // The raw text, so the field can be emptied while typing; a blank/0 depth simply copies nothing.
     var depthText by remember(key) { mutableStateOf(state.deepCopyMaxDepth.toString()) }
+    var unlimited by remember(key) { mutableStateOf(state.deepCopyUnlimited) }
     var options by remember(key) { mutableStateOf(SchedulerDomain.CopyOptions.from(state)) }
-    val depth = depthText.toIntOrNull() ?: 0
+    val depth = if (unlimited) SchedulerDomain.FULL_SUBTREE_DEPTH else depthText.toIntOrNull() ?: 0
     val path = SchedulerDomain.deepCopyPathTitles(state, cellIds, depth)
     val canCopy = depth >= 1 && cellIds.isNotEmpty()
     val focusRequester = remember { FocusRequester() }
@@ -3198,7 +3199,7 @@ internal fun DeepCopyWindow(
                 // window's own accept, not a character the field should ever receive.
                 .onPreviewKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-                        if (canCopy) onCopy(cellIds, depth, options)
+                        if (canCopy) onCopy(cellIds, depth, unlimited, options)
                         true
                     } else {
                         false
@@ -3226,9 +3227,10 @@ internal fun DeepCopyWindow(
                         modifier = Modifier.weight(1f),
                     )
                     OutlinedTextField(
-                        value = depthText,
+                        value = if (unlimited) "∞" else depthText,
                         onValueChange = { raw -> depthText = raw.filter { it.isDigit() }.take(3) },
                         singleLine = true,
+                        enabled = !unlimited,
                         modifier = Modifier.width(88.dp).focusRequester(focusRequester),
                     )
                     Column {
@@ -3236,6 +3238,12 @@ internal fun DeepCopyWindow(
                         WeightStepButton("−") { setDepth(depth - 1) }
                     }
                 }
+
+                DeepCopySwitchRow(
+                    label = "Copy the entire sub-tree",
+                    checked = unlimited,
+                    onCheckedChange = { unlimited = it },
+                )
 
                 HorizontalDivider()
                 // What each copied task carries. The percentage row says which of the two forms the
@@ -3246,16 +3254,31 @@ internal fun DeepCopyWindow(
                     onCheckedChange = { options = options.copy(includeIds = it) },
                 )
                 DeepCopySwitchRow(
-                    label =
-                        if (options.priorityTables) "Copy the priority weight tables"
-                        else "Copy the priority percentage only",
+                    label = "Copy the priority weight tables",
                     checked = options.priorityTables,
                     onCheckedChange = { options = options.copy(priorityTables = it) },
+                )
+                DeepCopySwitchRow(
+                    label = "Copy priority percentages",
+                    checked = options.includePriorityPercentages,
+                    onCheckedChange = { options = options.copy(includePriorityPercentages = it) },
+                )
+                DeepCopySwitchRow(
+                    label = "Copy minimum time",
+                    checked = options.includeMinimumTime,
+                    onCheckedChange = { options = options.copy(includeMinimumTime = it) },
                 )
                 DeepCopySwitchRow(
                     label = "Copy the task text",
                     checked = options.includeText,
                     onCheckedChange = { options = options.copy(includeText = it) },
+                )
+                OutlinedTextField(
+                    value = options.excludeTitle,
+                    onValueChange = { options = options.copy(excludeTitle = it) },
+                    label = { Text("Exclude tasks with title") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
                 )
 
                 HorizontalDivider()
@@ -3272,6 +3295,7 @@ internal fun DeepCopyWindow(
                     TextButton(
                         onClick = {
                             setDepth(SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH)
+                            unlimited = false
                             options = SchedulerDomain.CopyOptions()
                         },
                     ) {
@@ -3283,7 +3307,7 @@ internal fun DeepCopyWindow(
                     // The window's own Enter does exactly this (the ancestor handler above), so the button
                     // names that chord on hover like every other control that duplicates one.
                     ShortcutHint(ControlChords.ENTER) {
-                        TextButton(enabled = canCopy, onClick = { onCopy(cellIds, depth, options) }) {
+                        TextButton(enabled = canCopy, onClick = { onCopy(cellIds, depth, unlimited, options) }) {
                             Text("copy")
                         }
                     }

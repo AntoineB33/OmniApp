@@ -509,6 +509,7 @@ data class SchedulerState(
      * the setting existed decodes to [org.example.project.scheduler.domain.SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH].
      */
     val deepCopyMaxDepth: Int = SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH,
+    val deepCopyUnlimited: Boolean = false,
     /**
      * PRD §13 deep copy: **what** a copy carries, beside how deep it goes — the three switches in the
      * deep-copy window (see [org.example.project.scheduler.domain.SchedulerDomain.CopyOptions]). Like
@@ -524,6 +525,9 @@ data class SchedulerState(
     val copyIncludeIds: Boolean = true,
     val copyPriorityTables: Boolean = true,
     val copyIncludeText: Boolean = true,
+    val copyIncludePriorityPercentages: Boolean = true,
+    val copyIncludeMinimumTime: Boolean = true,
+    val copyExcludeTitle: String = "",
     /**
      * PRD §5 the relative-priority window: the cells whose percentage is **pinned** while a relative
      * priority is retargeted, per (task, ancestor) pair (see [RelativePriorityPinKey]). Authoritative

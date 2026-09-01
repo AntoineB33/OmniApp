@@ -738,6 +738,8 @@ sealed interface SchedulerIntent {
      */
     data class SetDeepCopyMaxDepth(val depth: Int) : SchedulerIntent
 
+    data class SetDeepCopyUnlimited(val unlimited: Boolean) : SchedulerIntent
+
     /**
      * PRD §13 deep copy: the account's three **what does a copy carry** switches (see
      * [org.example.project.scheduler.domain.SchedulerDomain.CopyOptions]), set from the deep-copy window

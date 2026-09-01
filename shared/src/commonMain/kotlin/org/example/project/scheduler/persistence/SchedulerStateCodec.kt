@@ -308,9 +308,13 @@ object SchedulerStateCodec {
             defaultSubtreeEnabled = defaultSubtreeEnabled,
             // PRD §13: the account's one deep-copy depth, and its three "what does a copy carry" switches.
             deepCopyMaxDepth = deepCopyMaxDepth,
+            deepCopyUnlimited = deepCopyUnlimited,
             copyIncludeIds = copyIncludeIds,
             copyPriorityTables = copyPriorityTables,
             copyIncludeText = copyIncludeText,
+            copyIncludePriorityPercentages = copyIncludePriorityPercentages,
+            copyIncludeMinimumTime = copyIncludeMinimumTime,
+            copyExcludeTitle = copyExcludeTitle,
             // PRD §7 Keyboard shortcuts: the account's system-wide chord OVERRIDES, sorted by shortcut so
             // one binding table has exactly one encoding (the fingerprint is this payload, byte for byte).
             shortcutBindings = shortcutBindings.toPersistedRows(),
@@ -773,9 +777,13 @@ object SchedulerStateCodec {
             // PRD §13: a payload written before the account-wide deep-copy depth existed decodes to the
             // default the window used to open on, and a hand-edited out-of-range one is healed into range.
             deepCopyMaxDepth = deepCopyMaxDepth.coerceIn(SchedulerDomain.DEEP_COPY_DEPTH_RANGE),
+            deepCopyUnlimited = deepCopyUnlimited,
             copyIncludeIds = copyIncludeIds,
             copyPriorityTables = copyPriorityTables,
             copyIncludeText = copyIncludeText,
+            copyIncludePriorityPercentages = copyIncludePriorityPercentages,
+            copyIncludeMinimumTime = copyIncludeMinimumTime,
+            copyExcludeTitle = copyExcludeTitle,
             // PRD §7 Keyboard shortcuts: a payload written before the window could rebind anything has no
             // entries at all, which is exactly "every chord is the one it ships with". A row naming a
             // shortcut or a key this build does not have is DROPPED rather than surfaced (that shortcut
@@ -1046,11 +1054,15 @@ private data class PersistedState(
     // PRD §13 deep copy: the account-wide maximum depth. A missing value decodes to the depth the window
     // used to open on, which is exactly what a payload written before the setting existed behaved as.
     val deepCopyMaxDepth: Int = SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH,
+    val deepCopyUnlimited: Boolean = false,
     // PRD §13 deep copy: the account's three "what does a copy carry" switches. Missing values decode to
     // ON — a payload written before the switches existed came from a build that always carried all three.
     val copyIncludeIds: Boolean = true,
     val copyPriorityTables: Boolean = true,
     val copyIncludeText: Boolean = true,
+    val copyIncludePriorityPercentages: Boolean = true,
+    val copyIncludeMinimumTime: Boolean = true,
+    val copyExcludeTitle: String = "",
     // PRD §7 Keyboard shortcuts: the account's system-wide chord overrides. A missing value decodes to none,
     // i.e. every chord is the one it ships with — which is what every payload written before the window could
     // rebind anything behaved as.

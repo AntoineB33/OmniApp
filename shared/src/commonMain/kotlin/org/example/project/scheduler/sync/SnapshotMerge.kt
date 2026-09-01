@@ -136,12 +136,17 @@ object SnapshotMerge {
                     pick(base.defaultSubtreeEnabled, local.defaultSubtreeEnabled, remote.defaultSubtreeEnabled),
                 // PRD §13: the account-wide deep-copy depth is an ordinary scalar setting.
                 deepCopyMaxDepth = pick(base.deepCopyMaxDepth, local.deepCopyMaxDepth, remote.deepCopyMaxDepth),
+                deepCopyUnlimited = pick(base.deepCopyUnlimited, local.deepCopyUnlimited, remote.deepCopyUnlimited),
                 // ...and so is each of the three "what does a copy carry" switches beside it: they move
                 // independently in the window, so they merge independently.
                 copyIncludeIds = pick(base.copyIncludeIds, local.copyIncludeIds, remote.copyIncludeIds),
                 copyPriorityTables =
                     pick(base.copyPriorityTables, local.copyPriorityTables, remote.copyPriorityTables),
                 copyIncludeText = pick(base.copyIncludeText, local.copyIncludeText, remote.copyIncludeText),
+                copyIncludePriorityPercentages =
+                    pick(base.copyIncludePriorityPercentages, local.copyIncludePriorityPercentages, remote.copyIncludePriorityPercentages),
+                copyIncludeMinimumTime = pick(base.copyIncludeMinimumTime, local.copyIncludeMinimumTime, remote.copyIncludeMinimumTime),
+                copyExcludeTitle = pick(base.copyExcludeTitle, local.copyExcludeTitle, remote.copyExcludeTitle),
                 // PRD §7 Keyboard shortcuts: the chord overrides merge PER SHORTCUT — rebinding "I'm away" on
                 // the desktop while the laptop rebinds "Switch task" keeps both — but one shortcut's chord is
                 // a whole value, never a key from one device wearing the other's modifiers. Resetting is a

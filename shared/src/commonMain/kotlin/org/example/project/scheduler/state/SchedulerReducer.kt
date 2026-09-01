@@ -305,13 +305,19 @@ object SchedulerReducer {
                 val depth = intent.depth.coerceIn(SchedulerDomain.DEEP_COPY_DEPTH_RANGE)
                 if (state.deepCopyMaxDepth == depth) state else state.copy(deepCopyMaxDepth = depth)
             }
+            is SchedulerIntent.SetDeepCopyUnlimited ->
+                if (state.deepCopyUnlimited == intent.unlimited) state
+                else state.copy(deepCopyUnlimited = intent.unlimited)
             is SchedulerIntent.SetGlobalShortcutBinding ->
                 reduceSetGlobalShortcutBinding(state, intent.shortcut, intent.binding)
             is SchedulerIntent.SetCopyOptions -> {
                 val o = intent.options
                 if (state.copyIncludeIds == o.includeIds &&
                     state.copyPriorityTables == o.priorityTables &&
-                    state.copyIncludeText == o.includeText
+                    state.copyIncludeText == o.includeText &&
+                    state.copyIncludePriorityPercentages == o.includePriorityPercentages &&
+                    state.copyIncludeMinimumTime == o.includeMinimumTime &&
+                    state.copyExcludeTitle == o.excludeTitle
                 ) {
                     state
                 } else {
@@ -319,6 +325,9 @@ object SchedulerReducer {
                         copyIncludeIds = o.includeIds,
                         copyPriorityTables = o.priorityTables,
                         copyIncludeText = o.includeText,
+                        copyIncludePriorityPercentages = o.includePriorityPercentages,
+                        copyIncludeMinimumTime = o.includeMinimumTime,
+                        copyExcludeTitle = o.excludeTitle,
                     )
                 }
             }

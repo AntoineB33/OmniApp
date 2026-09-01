@@ -188,6 +188,12 @@ Three switches under the depth, all on by default (`SchedulerDomain.CopyOptions`
   produce: `- priority in its sub-list: 37.5 %`, the cell's share of its own sub-list (`RelativePriorityDomain.cellShare`).
 - **copy the task text** — off, the `- text:` block is left behind.
 
+The deep-copy window also has an infinite-depth switch. When enabled, the finite maximum is ignored and the
+whole reachable subtree is copied. Two additional switches independently control whether minimum-time fields
+and the percentage representation are written. The percentage switch matters when priority tables are off;
+the table switch is always labelled **copy the priority weight tables**, including when it is off. An exact
+title filter can exclude matching tasks (and their copied descendants) from the output.
+
 Three decisions there are load-bearing:
 
 - **They are the account's, exactly like the depth.** The window edits them and writes them back on copy; every
