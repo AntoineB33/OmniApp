@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableDelayedExpansion
 REM =====================================================================
 REM  release-launch-acc3.bat - starts the INSTALLED release app for account 3
 REM  with its own DB and auto-login credentials. Deployed by
