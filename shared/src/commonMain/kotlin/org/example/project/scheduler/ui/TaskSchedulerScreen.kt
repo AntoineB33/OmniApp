@@ -158,8 +158,8 @@ import org.example.project.ui.EditModeMenuBlock
 import org.example.project.ui.EditModeOption
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** Width of one weight-table column (number field + stacked +/- buttons). */
-private val WEIGHT_COLUMN_WIDTH = 60.dp
+/** Width of one weight-table column (text field + stacked +/- buttons + pin button). */
+private val WEIGHT_COLUMN_WIDTH = 130.dp
 
 /** PRD §10: width of the per-task minimum-time field (minutes input + stacked +/- buttons + unit). */
 private val MIN_TIME_COLUMN_WIDTH = 72.dp
@@ -946,6 +946,8 @@ private fun stepWeight(value: Double, delta: Double, maxValue: Double): Double {
 private fun WeightInputCell(
     value: Double,
     onSet: (Double) -> Unit,
+    pinned: Boolean,
+    onTogglePinned: () -> Unit,
     modifier: Modifier = Modifier,
     maxValue: Double = Double.POSITIVE_INFINITY,
     step: Double = 1.0,
@@ -977,6 +979,28 @@ private fun WeightInputCell(
             WeightStepButton(label = "▲", onClick = { onSet(stepWeight(value, step, maxValue)) })
             WeightStepButton(label = "▼", onClick = { onSet(stepWeight(value, -step, maxValue)) })
         }
+        WeightPinButton(pinned = pinned, onClick = onTogglePinned)
+    }
+}
+
+@Composable
+private fun WeightPinButton(pinned: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(width = 30.dp, height = 22.dp)
+            .border(1.dp, if (pinned) SheetColors.activeBorder else SheetColors.grid)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = if (pinned) "pinned" else "pin",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -1162,6 +1186,8 @@ private fun WeightTableHeader(
     onDraggedColumnChange: (Int?) -> Unit,
     onDropIndexChange: (Int?) -> Unit,
     onSetColumnWeight: (Int, Double) -> Unit,
+    pinnedColumns: Set<Int>,
+    onTogglePinnedColumn: (Int) -> Unit,
     onAddColumn: (Int) -> Unit,
     onResetColumn: (Int) -> Unit,
     onDeleteColumn: (Int) -> Unit,
@@ -1298,6 +1324,8 @@ private fun WeightTableHeader(
                     WeightInputCell(
                         value = weight,
                         onSet = { onSetColumnWeight(column, it) },
+                        pinned = column in pinnedColumns,
+                        onTogglePinned = { onTogglePinnedColumn(column) },
                         maxValue = 1.0,
                         step = 0.1,
                     )
@@ -1310,6 +1338,8 @@ private fun WeightTableHeader(
 
 /** Width of the task-title column inside the priority-weight window. */
 private val WEIGHT_WINDOW_TITLE_WIDTH = 160.dp
+
+private data class PriorityWeightFieldKey(val cellId: CellId?, val column: Int)
 
 /**
  * PRD §5: a row in the priority-weight window. Existing cells are real members of the sub-list; optional
@@ -1406,6 +1436,8 @@ internal fun PriorityWeightWindow(
     var offset by remember(listId) { mutableStateOf(Offset.Zero) }
     var draggedColumn by remember(listId) { mutableStateOf<Int?>(null) }
     var columnDropIndex by remember(listId) { mutableStateOf<Int?>(null) }
+    var pinnedWeightFields by remember(listId) { mutableStateOf(emptySet<PriorityWeightFieldKey>()) }
+    val pinnedWeightColumns = pinnedWeightFields.filter { it.cellId == null }.map { it.column }.toSet()
     // The table as this window found it: captured on the composition that opened it, and kept across
     // every edit made since — Cancel always goes back to the start, never one step.
     val openedTable = remember(listId) { weightTableSnapshot(state, listId) }
@@ -1466,6 +1498,15 @@ internal fun PriorityWeightWindow(
                             onDraggedColumnChange = { draggedColumn = it },
                             onDropIndexChange = { columnDropIndex = it },
                             onSetColumnWeight = { c, w -> onIntent(SchedulerIntent.SetPriorityColumnWeight(listId, c, w)) },
+                            pinnedColumns = pinnedWeightColumns,
+                            onTogglePinnedColumn = { column ->
+                                val field = PriorityWeightFieldKey(cellId = null, column = column)
+                                pinnedWeightFields = if (field in pinnedWeightFields) {
+                                    pinnedWeightFields - field
+                                } else {
+                                    pinnedWeightFields + field
+                                }
+                            },
                             onAddColumn = { i -> onIntent(SchedulerIntent.AddPriorityColumn(listId, i)) },
                             onResetColumn = { c -> onIntent(SchedulerIntent.ResetPriorityColumn(listId, c)) },
                             onDeleteColumn = { c -> onIntent(SchedulerIntent.DeletePriorityColumn(listId, c)) },
@@ -1580,8 +1621,20 @@ internal fun PriorityWeightWindow(
                                                             ?.priorityWeights
                                                             ?.getOrElse(column) { 1.0 }
                                                             ?: 1.0
+                                                    val fieldKey = PriorityWeightFieldKey(
+                                                        cellId = representative?.id ?: cellId,
+                                                        column = column,
+                                                    )
                                                     WeightInputCell(
                                                         value = value,
+                                                        pinned = fieldKey in pinnedWeightFields,
+                                                        onTogglePinned = {
+                                                            pinnedWeightFields = if (fieldKey in pinnedWeightFields) {
+                                                                pinnedWeightFields - fieldKey
+                                                            } else {
+                                                                pinnedWeightFields + fieldKey
+                                                            }
+                                                        },
                                                         onSet = {
                                                             when {
                                                                 row.isOptional -> {
@@ -1593,6 +1646,10 @@ internal fun PriorityWeightWindow(
                                                                             taskId,
                                                                             column,
                                                                             factor,
+                                                                            pinnedCells = pinnedWeightFields
+                                                                                .filter { it.column == column }
+                                                                                .mapNotNull { it.cellId }
+                                                                                .toSet(),
                                                                         ),
                                                                     )
                                                                 }

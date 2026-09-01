@@ -116,6 +116,7 @@ sealed interface SchedulerIntent {
         val taskId: TaskId,
         val column: Int,
         val factor: Double,
+        val pinnedCells: Set<CellId> = emptySet(),
     ) : SchedulerIntent
 
     /**

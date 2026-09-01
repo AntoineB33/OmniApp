@@ -158,6 +158,7 @@ object RelativePriorityDomain {
         taskId: TaskId,
         column: Int,
         factor: Double,
+        pinnedCells: Set<CellId> = emptySet(),
     ): SchedulerState {
         if (column < 0 || !factor.isFinite() || factor < 0.0) return state
         val path = optionalTaskPath(state, listId, taskId)
@@ -165,7 +166,7 @@ object RelativePriorityDomain {
         val pinned = state.relativePriorityPins[RelativePriorityPinKey(taskId, parentTask)].orEmpty()
         val cells = state.cells.toMutableMap()
         for (cellId in path) {
-            if (cellId in pinned) continue
+            if (cellId in pinned || cellId in pinnedCells) continue
             val cell = cells[cellId] ?: continue
             val weights = cell.priorityWeights.toMutableList()
             while (weights.size <= column) weights += SchedulerDomain.defaultWeightAt(weights.size)

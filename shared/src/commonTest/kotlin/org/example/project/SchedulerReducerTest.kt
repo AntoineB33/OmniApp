@@ -988,6 +988,17 @@ class SchedulerReducerTest {
 
         assertEquals(1.0, scaled.cells[childCell]!!.priorityWeights[0])
         assertEquals(2.0, scaled.cells[taskCell]!!.priorityWeights[0])
+
+        val tablePinned = RelativePriorityDomain.scaleOptionalTaskPath(
+            s,
+            childList,
+            targetId,
+            0,
+            2.0,
+            pinnedCells = setOf(childCell),
+        )
+        assertEquals(1.0, tablePinned.cells[childCell]!!.priorityWeights[0])
+        assertEquals(2.0, tablePinned.cells[taskCell]!!.priorityWeights[0])
     }
 
     @Test

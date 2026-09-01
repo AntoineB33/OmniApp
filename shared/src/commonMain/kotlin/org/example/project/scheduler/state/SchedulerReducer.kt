@@ -125,6 +125,7 @@ object SchedulerReducer {
                         intent.taskId,
                         intent.column,
                         intent.factor,
+                            intent.pinnedCells,
                     )
                 })
             is SchedulerIntent.SetRelativePriority ->

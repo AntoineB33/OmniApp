@@ -81,6 +81,14 @@ different denominators side by side in one window.
 The slices themselves never changed: their sweeps were always normalized by the sub-list total, which for a
 set of shares of one list is 1. Only the legend's numbers moved.
 
+## Weight-table inputs can be pinned while editing optional rows
+
+Each number input in the priority-weight table has a local pin switch. When an optional task row is edited,
+the edit scales the matching column along the task's path; pinned cell inputs are left at their current value,
+so a parent task already shown in the table does not move unless its field is unpinned. These pins are scoped to
+the open table and are not persisted or synced. Header inputs expose the same switch for a consistent table
+shape, but headers are not cells on an optional-task path and therefore do not constrain that scaling.
+
 ## Cancel is a history unit, not an escape hatch
 
 **Cancel** puts the whole table back to what it was when the window opened — every column header and every
