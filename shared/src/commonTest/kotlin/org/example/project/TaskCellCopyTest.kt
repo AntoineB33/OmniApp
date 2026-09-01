@@ -150,6 +150,21 @@ class TaskCellCopyTest {
     }
 
     @Test
+    fun copy_paste_round_trips_titles_that_look_like_the_summary_header_or_field_markers() {
+        // Titles matching the summary footer header or carrying a field delimiter must stay literal and not
+        // be mistaken for part of the copy format itself.
+        var s = SchedulerState.empty()
+        val c = s.lists[s.rootListId]!!.cellIds[0]
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c, "Copied tasks:"))
+        val text = SchedulerDomain.copyTreeText(
+            s,
+            org.example.project.scheduler.state.SchedulerSelection(main = c, selected = setOf(c)),
+        )
+        val nodes = SchedulerDomain.parseTreeText(text)
+        assertEquals(listOf("Copied tasks:"), nodes!!.map { it.title })
+    }
+
+    @Test
     fun new_copy_text_is_summary_only_but_older_text_blocks_still_parse() {
         // New copies omit task text from the tree payload and keep it in the summary footer.
         var s = SchedulerState.empty()

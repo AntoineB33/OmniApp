@@ -4954,7 +4954,8 @@ object SchedulerDomain {
     }
 
     private fun parseReadableTreeText(lines: List<String>): List<CopiedNode>? {
-        val effectiveLines = lines.takeWhile { it.trim() != COPIED_TASKS_SECTION_HEADER }
+        val headerAt = lines.indexOfLast { it.trim() == COPIED_TASKS_SECTION_HEADER }
+        val effectiveLines = if (headerAt >= 0) lines.take(headerAt) else lines
         val entries = ArrayList<MutableCopiedNode>()
         val depths = ArrayList<Int>()
         var i = 0
@@ -5193,10 +5194,12 @@ object SchedulerDomain {
             )
     }
 
-    /** Escapes a title onto one line, and past a leading [ATTR_MARKER] that would read as an attribute. */
+    /** Escapes a title onto one line. A user-written title must never be mistaken for a copied-task
+     * attribute, a field entry or the summary footer marker that follows the tree payload.
+     */
     private fun escapeTitleField(s: String): String {
         val escaped = escapeField(s)
-        return if (escaped.startsWith(ATTR_MARKER)) "\\$escaped" else escaped
+        return if (escaped.startsWith(ATTR_MARKER) || escaped == COPIED_TASKS_SECTION_HEADER) "\\$escaped" else escaped
     }
 
     /** Escapes a tab-separated field (a title, a schedule-unit step name) onto one line. */
