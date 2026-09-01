@@ -1530,11 +1530,44 @@ fun ChoresManagerWindow(
     }
 }
 
+data class HistoryFilterConfig(
+    val categories: Set<HistoryCategory> = HistoryCategory.entries.toSet(),
+    val query: String = "",
+)
+
+data class FilteredHistoryEntry(
+    val category: HistoryCategory,
+    val unit: HistoryUnit,
+)
+
+fun filteredHistoryUnits(
+    histories: SchedulerHistories,
+    filter: HistoryFilterConfig,
+): List<FilteredHistoryEntry> {
+    val needle = filter.query.trim()
+    fun matchesQuery(unit: HistoryUnit): Boolean {
+        if (needle.isBlank()) return true
+        val haystack = (listOf(unit.delta.label) + unit.delta.details).joinToString("\n")
+        return haystack.contains(needle, ignoreCase = true)
+    }
+
+    return histories.all()
+        .filter { (category, _) -> category in filter.categories }
+        .flatMap { (category, history) ->
+            history.units.map { unit -> FilteredHistoryEntry(category, unit) }
+        }
+        .filter { matchesQuery(it.unit) }
+        .sortedWith(
+            compareByDescending<FilteredHistoryEntry> { it.unit.timeMillis }
+                .thenByDescending { it.unit.chronoId },
+        )
+}
+
 /**
- * PRD §5/§6 History Manager: a floating, draggable in-app window (like the calendar / reminders windows)
- * that **shows all the history unit lists** — one section per [HistoryCategory] (Main "the rest", Calendar,
- * Edit Mode, Selection), each listing its [HistoryUnit]s oldest-first with the current pointer marked.
- * Read-only: it reflects the live history so the user can see what Ctrl+Z / Ctrl+Y (and Alt+←/→) will walk.
+ * PRD §5/§6 History Manager: a floating, draggable in-app window that shows a single vertical list of
+ * the retained history units. The user can filter the list by category and text, which makes queries like
+ * "the recent priority-weight changes on a specific sub-list" straightforward without re-creating the
+ * history as separate columns.
  */
 @Composable
 fun HistoryManagerWindow(
@@ -1553,16 +1586,9 @@ fun HistoryManagerWindow(
     onRaise: () -> Unit = {},
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
-    // PRD §6: the history unit whose information window is open (clicked from a row); null when closed.
     var infoUnit by remember { mutableStateOf<HistoryUnit?>(null) }
-    // Display order: the content stacks first (most-used), then selection.
-    val sections = listOf(
-        "Main (the rest)" to HistoryCategory.Main,
-        "Calendar" to HistoryCategory.Calendar,
-        "Edit Mode" to HistoryCategory.Edit,
-        "Selection" to HistoryCategory.Selection,
-        "Window nav" to HistoryCategory.WindowNav,
-    )
+    var filter by remember { mutableStateOf(HistoryFilterConfig()) }
+    val rows = filteredHistoryUnits(histories, filter)
 
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -1571,16 +1597,11 @@ fun HistoryManagerWindow(
         border = BorderStroke(1.dp, CalColors.grid),
         modifier = modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            // requiredSize (not size) so the window keeps its fixed size and does not adapt to the app's
-            // width when the content area is narrower than it. Wider than the category-only layout to make
-            // room for the Notifications and Supabase-usage diagnostic columns.
-            .requiredSize(width = 1480.dp, height = 520.dp)
-            // Raise on press AFTER the offset so the hit region tracks the (possibly dragged) window.
+            .requiredSize(width = 980.dp, height = 520.dp)
             .raiseOnPress(onRaise),
     ) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize()) {
-                // Title bar doubles as the drag handle for moving the window.
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1608,39 +1629,102 @@ fun HistoryManagerWindow(
                 }
                 Box(Modifier.fillMaxWidth().height(1.dp).background(CalColors.grid))
 
-                // The category lists sit side by side so every list's head is aligned at the top (PRD §5/§6),
-                // with the local-only Notifications diagnostic column last. Each column scrolls independently.
-                Row(
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    sections.forEach { (title, category) ->
-                        HistoryCategorySection(
-                            title = title,
-                            history = histories.forCategory(category),
-                            // PRD §6: clicking a unit row opens its information window.
-                            onSelectUnit = { infoUnit = it },
-                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedTextField(
+                            value = filter.query,
+                            onValueChange = { filter = filter.copy(query = it) },
+                            label = { Text("Filter") },
+                            placeholder = { Text("label, details, or task text") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
                         )
-                        Box(Modifier.fillMaxHeight().width(1.dp).background(CalColors.grid))
+                        Button(
+                            onClick = {
+                                filter = HistoryFilterConfig(
+                                    categories = HistoryCategory.entries.toSet(),
+                                    query = "",
+                                )
+                            },
+                        ) {
+                            Text("Reset")
+                        }
                     }
-                    // The local-only notification log — a diagnostic column (not a history category), wider
-                    // than the others because it carries the notification text.
-                    NotificationLogSection(
-                        log = notificationLog,
-                        modifier = Modifier.weight(2f).fillMaxHeight(),
-                    )
-                    Box(Modifier.fillMaxHeight().width(1.dp).background(CalColors.grid))
-                    // The local-only Supabase-usage log — a diagnostic column tracking the account's draw-down
-                    // on the Supabase free-plan limits (egress bandwidth, Auth MAU, request count).
-                    SupabaseUsageSection(
-                        log = supabaseUsageLog,
-                        modifier = Modifier.weight(2f).fillMaxHeight(),
-                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        HistoryCategory.entries.forEach { category ->
+                            val active = category in filter.categories
+                            val label = category.name
+                            val chipColor = if (active) CalColors.accent else CalColors.muted
+                            Text(
+                                text = label,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(if (active) Color(0xFFEEF3FF) else Color(0xFFF2F3F5))
+                                    .clickable {
+                                        val next = filter.categories.toMutableSet().apply {
+                                            if (contains(category)) remove(category) else add(category)
+                                        }
+                                        filter = filter.copy(categories = next)
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                color = chipColor,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFF8F9FA)),
+                    ) {
+                        if (rows.isEmpty()) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("(no history units match)", color = CalColors.muted)
+                            }
+                        } else {
+                            SelectionContainer(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState()),
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    rows.forEach { row ->
+                                        HistoryUnitRow(
+                                            position = 0,
+                                            unit = row.unit,
+                                            applied = true,
+                                            isCurrent = false,
+                                            onClick = { infoUnit = row.unit },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            // PRD §6: the information window for a clicked history unit, overlaid (modal) on the manager.
             infoUnit?.let { unit ->
                 HistoryUnitInfoWindow(unit = unit, onDismiss = { infoUnit = null })
             }

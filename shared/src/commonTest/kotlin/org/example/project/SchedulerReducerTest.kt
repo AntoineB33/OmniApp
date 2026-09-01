@@ -24,6 +24,8 @@ import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.SelectionNavigate
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
+import org.example.project.ui.HistoryFilterConfig
+import org.example.project.ui.filteredHistoryUnits
 
 class SchedulerReducerTest {
     @Test
@@ -55,6 +57,27 @@ class SchedulerReducerTest {
         // history window lists under the label.
         val details = main.units.last().delta.details
         assertTrue(details.any { it.contains("Daily") }, "details should describe the title change: $details")
+    }
+
+    @Test
+    fun history_window_filter_matches_category_and_text_query() {
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Daily"))
+
+        val all = filteredHistoryUnits(s.histories, HistoryFilterConfig())
+        assertTrue(all.any { it.category == HistoryCategory.Main && it.unit.delta.label == "Set title" })
+
+        val filtered = filteredHistoryUnits(
+            s.histories,
+            HistoryFilterConfig(
+                categories = setOf(HistoryCategory.Main),
+                query = "title",
+            ),
+        )
+        assertEquals(1, filtered.size)
+        assertEquals(HistoryCategory.Main, filtered.single().category)
+        assertTrue(filtered.single().unit.delta.label.contains("title", ignoreCase = true))
     }
 
     @Test
