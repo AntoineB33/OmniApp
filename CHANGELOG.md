@@ -11,6 +11,37 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Edit Mode's id menu shows six rows at a time and scrolls — 2026-09-02
+
+PRD §4. `shared` (`ui/CalendarUi.kt`'s `EditModeMenuBlock` / `EditMenuSection`) +
+`docs/PRD_TaskScheduler.md` + `CLAUDE.md`. Client rebuild only — no Supabase deploy, no migration, no
+persisted or synced state (a menu's scroll offset is Compose-only state, like the calendar's zoom), no
+history unit.
+
+Asked for: *"when the id suggestion list has something to show, it currently shows all of them, even if the
+title suggestion list has something to show. There must be a limit on the number of elements the list shows
+at a time, so that the user can still see the list below, without having to scroll for a long time if there
+is a lot of id suggestions. The user can naturally scroll through the id list."*
+
+- **The bound is a VIEWPORT, not a `take`.** The identity menu keeps every row it was given and scrolls past
+  `EDIT_MENU_IDENTITY_VISIBLE_ROWS` (6) of them, where the **title suggestions** are still truncated at
+  `EDIT_MENU_SUGGESTION_LIMIT` (8). The two are different questions and the difference is deliberate: a
+  suggestion is a guess the field offers, so eight of them is the whole offer, while an id row names one task
+  the user may be looking for — dropping the ninth would hide it with no way back. (On the release account,
+  typing `planning` produces **60**+ reachable rows, so this is the everyday case, not an extreme one.)
+- **It lives in `EditModeMenuBlock`, so no caller decides it** — the same place the suggestion cap already
+  lived. That makes it the answer for every naming field in the app at once: the cell's **Tasks** menu (§4),
+  the task-tree selector's **Task trees** menu, the calendar edit window's **Tasks** menu (§8) and the three
+  reminder editors' **Reminders** menu (§14).
+- **`heightIn` bounds nothing until the rows exceed it**, so a short menu lays out exactly as before and the
+  inner scroll is only ever reached by a list long enough to have somewhere to go — everything else falls
+  through to the parent's scroll, which is what keeps the wheel over a two-row menu scrolling the tree.
+- **The viewport is keyed on the row count**, so narrowing the list by typing another character starts it
+  back at the top — the rows now on offer — rather than at the offset the longer list held.
+- The row height is a plain `EDIT_MENU_ROW_HEIGHT` (28 dp, its inter-row spacing included) rather than a
+  measurement: the bound is a comfort bound, and a row landing half-cut at the bottom edge is exactly what
+  says "there is more below".
+
 ### An id row of Edit Mode's task menu right-clicks to "go to task" — 2026-09-02
 
 PRD §4. `shared` (`ui/CalendarUi.kt`'s `EditMenuRow`/`EditMenuItem` + the new `EditMenuRowActions`,

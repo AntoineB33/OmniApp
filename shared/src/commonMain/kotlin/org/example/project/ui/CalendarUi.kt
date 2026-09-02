@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
@@ -36,6 +37,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -6381,6 +6383,27 @@ data class EditMenuItem(
 private const val EDIT_MENU_SUGGESTION_LIMIT = 8
 
 /**
+ * PRD §4: how many **identity (id) rows** an edit-mode menu shows at a time. Unlike the title suggestions
+ * above, the id rows are not truncated — every match a caller hands over is still there, and the section
+ * SCROLLS past this many. The two are different questions: a title suggestion is a guess the field offers,
+ * so eight of them is the whole offer; an id row names a task the user may be looking for, so dropping the
+ * ninth would hide it entirely.
+ *
+ * The cap exists because the sections are stacked ([EditModeMenuBlock]'s fixed order) — an uncapped id menu
+ * on an account with a hundred matching tasks pushes the **Title suggestions** section below it off the
+ * screen, so the user has to scroll a long way to find out that there even is one.
+ */
+private const val EDIT_MENU_IDENTITY_VISIBLE_ROWS = 6
+
+/**
+ * The height one [EditMenuRow] takes, its 4 dp of inter-row spacing included — what turns
+ * [EDIT_MENU_IDENTITY_VISIBLE_ROWS] into a viewport height. An approximation of a row of `bodySmall` text
+ * with 4 dp of vertical padding, and deliberately a plain height rather than a measurement: the viewport is
+ * a comfort bound, and a row landing half-cut at its bottom edge is exactly what says "there is more below".
+ */
+private val EDIT_MENU_ROW_HEIGHT = 28.dp
+
+/**
  * **The** edit-mode menu block, in the one order PRD §4 fixes for every field that names an object:
  * the **Mode** selector, then the **identity** menu (whose rows *act* — they pick/create the object the
  * field refers to), then the **Title suggestions** menu (whose rows only fill the field). Every such field
@@ -6389,8 +6412,12 @@ private const val EDIT_MENU_SUGGESTION_LIMIT = 8
  *
  * Each section is shown exactly when its content is non-empty, so a caller hides one by passing an empty
  * list — that is where the per-site rules live (a cell shows its Tasks menu only beyond the lone "New task"
- * row, a reminder editor only in Change mode, and so on). Suggestions are capped at
- * [EDIT_MENU_SUGGESTION_LIMIT] here, so no caller has to remember to.
+ * row, a reminder editor only in Change mode, and so on).
+ *
+ * **Neither menu may bury the one under it**, and the two answer that differently, here, so that no caller
+ * has to remember either: the suggestions are capped at [EDIT_MENU_SUGGESTION_LIMIT] by a plain `take`,
+ * while the identity rows are all kept and the section SCROLLS past [EDIT_MENU_IDENTITY_VISIBLE_ROWS] of
+ * them.
  *
  * [focusPreserving] is passed straight through to [EditModeSelector]/[EditMenuRow]: set it in a focus-gated
  * editor (one whose menus live only while its field holds focus), where a pick must not blur that field.
@@ -6408,24 +6435,58 @@ fun EditModeMenuBlock(
     if (modeOptions.isNotEmpty()) {
         EditModeSelector(options = modeOptions, focusPreserving = focusPreserving)
     }
-    EditMenuSection(identityLabel, identityRows, focusPreserving)
+    EditMenuSection(identityLabel, identityRows, focusPreserving, scrolls = true)
     EditMenuSection("Title suggestions", suggestions.take(EDIT_MENU_SUGGESTION_LIMIT), focusPreserving)
 }
 
-/** One labelled section of an [EditModeMenuBlock]; nothing at all when it has no [rows]. */
+/**
+ * One labelled section of an [EditModeMenuBlock]; nothing at all when it has no [rows].
+ *
+ * [scrolls] bounds the section at [EDIT_MENU_IDENTITY_VISIBLE_ROWS] rows and lets the user scroll the rest
+ * into view, instead of listing them all and pushing the section below off the screen. It is the identity
+ * menu's answer, the title suggestions being capped by a plain `take` at the call above — see
+ * [EDIT_MENU_IDENTITY_VISIBLE_ROWS] for why the two differ. `heightIn` bounds nothing until the rows
+ * actually exceed it, so a short menu is laid out exactly as it was before, and the scroll is only ever
+ * reached by a list long enough to have somewhere to go: everything else falls through to the parent.
+ */
 @Composable
-private fun EditMenuSection(label: String, rows: List<EditMenuItem>, focusPreserving: Boolean) {
+private fun EditMenuSection(
+    label: String,
+    rows: List<EditMenuItem>,
+    focusPreserving: Boolean,
+    scrolls: Boolean = false,
+) {
     if (rows.isEmpty()) return
     EditMenuSectionLabel(label)
-    rows.forEach { row ->
-        EditMenuRow(
-            label = row.label,
-            selected = row.selected,
-            focusPreserving = focusPreserving,
-            actions = row.actions,
-            onClick = row.onClick,
-        )
+    if (!scrolls) {
+        rows.forEach { row -> EditMenuSectionRow(row, focusPreserving) }
+        return
     }
+    // Keyed on the row count, so narrowing the list by typing another character starts the viewport back at
+    // the top — the rows the user is now being offered — rather than at whatever offset the longer list held.
+    val scrollState = remember(rows.size) { ScrollState(0) }
+    Column(
+        modifier = Modifier
+            .heightIn(max = EDIT_MENU_ROW_HEIGHT * EDIT_MENU_IDENTITY_VISIBLE_ROWS)
+            .verticalScroll(scrollState),
+        // The rows are one child of the caller's `Column` now, so its own spacing no longer falls between
+        // them: the section reproduces it here.
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        rows.forEach { row -> EditMenuSectionRow(row, focusPreserving) }
+    }
+}
+
+/** One [EditMenuItem] of an [EditMenuSection], drawn the one way every edit-mode menu row is. */
+@Composable
+private fun EditMenuSectionRow(row: EditMenuItem, focusPreserving: Boolean) {
+    EditMenuRow(
+        label = row.label,
+        selected = row.selected,
+        focusPreserving = focusPreserving,
+        actions = row.actions,
+        onClick = row.onClick,
+    )
 }
 
 /**

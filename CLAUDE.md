@@ -699,6 +699,16 @@ Shortcuts, TimeSim) and every other pop-up in the app is sort 2.
   secondary press is **consumed** by `contextMenuModifier`, so opening the menu never also *picks* the id under
   it; and the reveal follows the surface's own `state`/`onIntent`, so in the "All tasks" window and the §4
   template it lands on that window's rows — which is why it is named "go to task" and not "go to task tree".
+- **Neither edit-mode menu may bury the one under it, and the two answer that differently**
+  (`EditModeMenuBlock`, the one block every naming field renders through — so no caller decides this). The
+  **identity** menu keeps every row it is given and **SCROLLS** past `EDIT_MENU_IDENTITY_VISIBLE_ROWS` of
+  them; the **title suggestions** are **truncated** at `EDIT_MENU_SUGGESTION_LIMIT` by a plain `take`. That
+  is not an inconsistency: a suggestion is a guess the field offers, so eight of them is the whole offer,
+  while an id row names a task the user may be looking for — dropping the ninth would hide it with no way
+  back. So never `take` the identity rows, and never make the suggestions scroll. The sections are stacked in
+  a fixed order, which is the whole reason a bound is needed at all: an id menu that listed a hundred matching
+  tasks pushed **Title suggestions** off the screen entirely, and a user with no reason to scroll that far
+  never learned it was there.
 
 ### Copying a cell
 
