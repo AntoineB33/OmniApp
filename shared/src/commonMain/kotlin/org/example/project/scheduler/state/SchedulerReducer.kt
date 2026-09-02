@@ -22,6 +22,8 @@ import org.example.project.scheduler.platform.GlobalShortcut
 import org.example.project.scheduler.platform.GlobalShortcutBindings
 import org.example.project.scheduler.platform.ShortcutBinding
 import org.example.project.scheduler.model.TaskPanel
+import org.example.project.scheduler.model.TaskRelationKey
+import org.example.project.scheduler.model.TaskRelationMark
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.time.AppClock
@@ -150,6 +152,20 @@ object SchedulerReducer {
                 reduceToggleRelativePriorityPin(state, intent.taskId, intent.relativeTo, intent.cellId)
             is SchedulerIntent.ClearRelativePriorityPins ->
                 reduceClearRelativePriorityPins(state, intent.taskId, intent.relativeTo)
+            is SchedulerIntent.RecordTaskRelation ->
+                reduceRecordTaskRelation(
+                    state,
+                    TaskRelationKey(intent.taskId, intent.relativeTo),
+                    intent.changed,
+                )
+            is SchedulerIntent.KeepTaskRelation ->
+                reduceMarkTaskRelation(state, TaskRelationKey(intent.taskId, intent.relativeTo)) {
+                    it.copy(kept = true, hidden = false)
+                }
+            is SchedulerIntent.DropTaskRelation ->
+                reduceMarkTaskRelation(state, TaskRelationKey(intent.taskId, intent.relativeTo)) {
+                    it.copy(kept = false, hidden = true)
+                }
             is SchedulerIntent.SetPriorityColumnWeight ->
                 commitDelta(state, priorityTreeDelta(state, "Column weight") { applySetPriorityColumnWeight(it, intent.listId, intent.column, intent.weight) })
             is SchedulerIntent.AddPriorityColumn ->
@@ -3217,6 +3233,45 @@ private fun reduceToggleRelativePriorityPin(
         else state.relativePriorityPins + (key to next)
     return state.copy(relativePriorityPins = pins)
 }
+
+/**
+ * PRD §5 the **task relations** window: apply [update] to this pair's mark, seeding the default mark when the
+ * pair has never been recorded. The state is returned unchanged when the mark does not move, so a redundant
+ * press (a keystroke that leaves the verdict where it was) neither saves nor pushes.
+ */
+private fun reduceMarkTaskRelation(
+    state: SchedulerState,
+    key: TaskRelationKey,
+    update: (TaskRelationMark) -> TaskRelationMark,
+): SchedulerState {
+    val current = state.taskRelations[key] ?: TaskRelationMark()
+    val next = update(current)
+    if (next == current && key in state.taskRelations) return state
+    return state.copy(taskRelations = state.taskRelations + (key to next))
+}
+
+/**
+ * PRD §5 the task-relations window: the relative-priority window reporting on a pair it has been open on.
+ *
+ * The mark's mere existence is section 3's fact ("looked at, never changed"), so the recording never removes
+ * an entry — it only moves the two flags:
+ *
+ * - **[TaskRelationMark.kept] is never touched.** Section 1 is the user's own filing; opening a window on a
+ *   pair is not unfiling it.
+ * - **[TaskRelationMark.hidden] is lifted only by a real change.** A struck-off pair the user merely looks at
+ *   stays struck off; one they actually retarget is one they are working on again.
+ * - **[TaskRelationMark.retargeted] is the verdict of THIS session**, so putting a percentage back where it
+ *   was demotes the pair to section 3 — which is exactly the rule the window's field commits keystroke by
+ *   keystroke.
+ */
+private fun reduceRecordTaskRelation(
+    state: SchedulerState,
+    key: TaskRelationKey,
+    changed: Boolean,
+): SchedulerState =
+    reduceMarkTaskRelation(state, key) { mark ->
+        mark.copy(retargeted = changed, hidden = mark.hidden && !changed)
+    }
 
 /** PRD §5 the relative-priority window's "clear pins" button. */
 private fun reduceClearRelativePriorityPins(

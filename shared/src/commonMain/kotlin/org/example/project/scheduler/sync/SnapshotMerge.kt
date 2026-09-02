@@ -186,6 +186,16 @@ object SnapshotMerge {
                         local.relativePriorityPins,
                         remote.relativePriorityPins,
                     ) { bb, ll, rr -> pick(bb, ll, rr) },
+                // PRD §5: the task-relations window's pairs merge per pair — filing one on the desktop and
+                // another on the phone keeps both — but one pair's mark resolves as a WHOLE value: its three
+                // flags are one statement about one pair ("kept, retargeted, struck off"), and a field-wise
+                // merge could hand back a pair that is kept AND struck off at once.
+                taskRelations =
+                    mergeKeyed(
+                        base.taskRelations,
+                        local.taskRelations,
+                        remote.taskRelations,
+                    ) { bb, ll, rr -> pick(bb, ll, rr) },
                 // histories / focusedWindow / selection / the display switches / the diagnostic logs stay
                 // LOCAL — see the class KDoc.
             )

@@ -156,6 +156,43 @@ sealed interface SchedulerIntent {
         val relativeTo: TaskId,
     ) : SchedulerIntent
 
+    /**
+     * PRD §5 the **task relations** window: record that the relative-priority window has been open on this
+     * (task, target) pair, and whether it left the percentage [changed].
+     *
+     * Raised by that window itself — once when it settles on a pair, and again on every keystroke of the
+     * percentage field, because the field commits every keystroke and the user's rule is about where the
+     * number *ends up*: typing a value and putting it back leaves the pair exactly as untouched as never
+     * having typed at all. So [changed] is the verdict of this window session against the value the pair
+     * read when the window settled on it, not "an edit happened".
+     *
+     * Not undoable — it records no priority change, only that the user looked (the same reason a pin is not).
+     */
+    data class RecordTaskRelation(
+        val taskId: TaskId,
+        val relativeTo: TaskId,
+        val changed: Boolean,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §5 the task-relations window: file this pair in **section 1** — the list the user curates by hand.
+     * Offered on every row that is not there already; it also lifts a [DropTaskRelation]. Not undoable.
+     */
+    data class KeepTaskRelation(
+        val taskId: TaskId,
+        val relativeTo: TaskId,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §5 the task-relations window: section 1's own button — strike this pair off the list entirely,
+     * whichever section would otherwise hold it. Touching the pair again from the relative-priority window
+     * brings it back. Not undoable.
+     */
+    data class DropTaskRelation(
+        val taskId: TaskId,
+        val relativeTo: TaskId,
+    ) : SchedulerIntent
+
     /** PRD §5: set the nominal header weight of a sub-list's priority column (clamped to ≥ 0). */
     data class SetPriorityColumnWeight(
         val listId: CellListId,

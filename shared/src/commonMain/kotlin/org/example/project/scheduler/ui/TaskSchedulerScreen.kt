@@ -1792,6 +1792,22 @@ internal fun RelativePriorityWindow(
     val pinned = state.relativePriorityPins[RelativePriorityPinKey(taskId, relativeTo)].orEmpty()
     var offset by remember(cellId) { mutableStateOf(Offset.Zero) }
 
+    // PRD §5 the **task relations** window: opening this window on a (task, `t_r`) pair is what puts that
+    // pair on the account's relations list, and whether it ends up in that window's "edited" or "opened"
+    // section is decided HERE — the rule is about where the number ends up, so it is judged against the
+    // percentage the pair read when this window settled on it, not against "an edit happened". Switching
+    // the drop-down is settling on a new pair and takes a baseline of its own.
+    //
+    // The field commits every keystroke (see [PercentInputField]), so the verdict is re-reported on every
+    // one of them: typing a value and putting it back reports "unchanged" and demotes the pair again. The
+    // reducer returns the state untouched when the verdict has not moved, so the keystrokes that change
+    // nothing cost neither a save nor a push.
+    val shownPercent = percentFieldText(value)
+    val baseline = remember(cellId, taskId, relativeTo) { shownPercent }
+    LaunchedEffect(cellId, taskId, relativeTo, shownPercent) {
+        onIntent(SchedulerIntent.RecordTaskRelation(taskId, relativeTo, changed = shownPercent != baseline))
+    }
+
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -1989,6 +2005,15 @@ private fun RelativePriorityChainCell(
 }
 
 /**
+ * What the relative-priority window's percentage field shows for a fraction — rounded to the hundredth of a
+ * percent, the resolution the field itself edits at. Spelled once because the window's task-relations
+ * recording compares against it: judging "did this window session change the number" against the raw
+ * `Double` would call a bisection landing one ulp away a change the user never made.
+ */
+private fun percentFieldText(fraction: Double): String =
+    formatWeight((fraction * 10_000).roundToInt() / 100.0)
+
+/**
  * The window's percentage field: the same "numbers and comma" input as the weight table (PRD §5), reading
  * and writing a fraction as a percentage. Like a weight field it commits every valid keystroke — which is
  * safe here because the edit targets an ABSOLUTE value: retargeting 5% and then 12% lands exactly where
@@ -1996,7 +2021,7 @@ private fun RelativePriorityChainCell(
  */
 @Composable
 private fun PercentInputField(fraction: Double, onSet: (Double) -> Unit) {
-    var text by remember(fraction) { mutableStateOf(formatWeight((fraction * 10_000).roundToInt() / 100.0)) }
+    var text by remember(fraction) { mutableStateOf(percentFieldText(fraction)) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         BasicTextField(
             value = text,

@@ -105,6 +105,69 @@ The restore is scoped to that one sub-list's weights: a cell listed in the snaps
 another list is left to its new table, and the list's membership is never rewritten. Cancel undoes weight
 edits, not tree edits.
 
+## The pairs are collected: the task-relations window
+
+**Status:** added 2026-09-03.
+
+A relative priority is a statement about a *pair* — a task, and the ancestor its share is measured inside —
+and until now every one of those pairs was thrown away the moment the window that raised it closed. The
+weight table's **optional rows** are the same pair by another route (a task, and the sub-list's own parent
+task), and they at least survived, but only inside the one table that held them. The lateral menu's **Task
+relations** button is where they are gathered up: one flat list of every pair the priority machinery has
+raised, so the ones that carry meaning can be kept and the rest recognised for what they are.
+
+`TaskRelationsDomain` is the whole of the rule; `SchedulerState.taskRelations` is the only thing stored.
+
+### The sections are a precedence, not four independent lists
+
+`Kept` → `Edited` → `Opened` → `Broken`, and a pair is in exactly one of them. Two of the four decisions are
+worth writing down:
+
+- **Broken wins over everything, section 1 included.** It is a *status*, not an origin. A pair the user filed
+  by hand is precisely the one they most need to be told has stopped resolving, and burying it under "kept"
+  would hide the only thing about it that has changed. The row still shows section 1's own button, because
+  the button follows `kept` and nothing else — filing a pair and un-filing it stay one gesture and its
+  inverse, wherever the row is drawn.
+- **`hidden` outranks every source of a pair, the weight table's live rows included.** "Make it disappear
+  from this list" means the list, not one of its sources; a pair struck off while it is a table row would
+  otherwise come straight back on the next composition. Only a real retarget lifts it — looking at it again
+  is not working on it again.
+
+### What is stored is only what cannot be recomputed
+
+Section 2 has two halves and they are deliberately unlike each other. The **weight-table** half is derived,
+every time, from `CellList.optionalTaskIds` — which is what makes "if the user then manually deleted it, it
+doesn't appear here" true with no bookkeeping at all. Section 4 is likewise a question asked of the live tree
+(`breakOf` → `occurrenceChains`, the same walk the window itself opens on), so a pair naming a deleted task is
+**reported**, never pruned: no tree edit has to keep this list in step.
+
+Only the **relative-priority window's** half is stored, because nothing else can know it happened.
+
+### `TaskRelationMark` is three flags, and its existence is the fourth
+
+`kept`, `retargeted`, `hidden` are independent — a pair can be filed by hand *and* have been retargeted — so
+this is not an enum. And the mark's **mere presence** is the section-3 fact: an all-false mark means the
+window has been opened on that pair and left it alone. It is therefore never dropped as "empty", and the
+codec round-trips it.
+
+### The verdict is the last session's, judged on the displayed number
+
+The percentage field commits every keystroke (above), so the window reports the verdict on every one of them
+and a value typed and then put back leaves the pair in section 3. That is the user's rule read literally —
+"changed manually but ends back to its value at the opening of the window" — and it costs nothing, because
+the reducer returns the state unchanged when the verdict has not moved, so the keystrokes that decide nothing
+never reach the save debounce or the wire.
+
+The comparison is against `percentFieldText`, the string the field itself shows. Comparing the raw `Double`
+would call a bisection landing one ulp from where it started a change the user never made.
+
+### It is not an Undo/Redo unit
+
+Same reason the pins are not: filing a pair changes no priority. It *is* authoritative and synced — which
+pairs are worth keeping is a judgement nothing re-derives — and merges per pair as a **whole value**, since
+the three flags are one statement about one pair (a field-wise merge could hand back a pair that is kept and
+struck off at once).
+
 ## Known deviation from the spec's wording
 
 A chain cell is drawn as a compact chip (title + its sub-list percentage + the pin), not as a full

@@ -618,6 +618,38 @@ data class Cell(
  */
 data class RelativePriorityPinKey(val taskId: TaskId, val relativeTo: TaskId)
 
+/**
+ * PRD §5 the **task relations** window: one *pair* — a task, and the task its priority was last expressed
+ * **relative to**. The same shape as [RelativePriorityPinKey] and deliberately not the same type: a pin key
+ * files a set of cells under one open window, where this is the account's own standing list of the pairs the
+ * user has worked on. The target is a task because that is what names a sub-list (the sub-list *of* a task,
+ * `MAIN_TASK` for the root list) — the relative-priority window's `t_r` and the priority-weight table's
+ * parent task are the same thing said twice.
+ */
+data class TaskRelationKey(val taskId: TaskId, val relativeTo: TaskId)
+
+/**
+ * PRD §5 the task-relations window: what the user has done with one [TaskRelationKey]. Three INDEPENDENT
+ * facts, which is why this is not an enum — a pair can be filed by hand *and* have had its percentage
+ * retargeted, and the window has to be able to say so.
+ *
+ * The **existence** of a mark is itself the fourth fact: it means the relative-priority window has been
+ * opened on that pair. A mark with all three flags false is therefore "looked at, never changed" — the
+ * window's third section — and is never dropped to save space.
+ *
+ * [retargeted] is the verdict of the **last** window session on that pair, not a running total: the window
+ * commits every keystroke, so typing a percentage and then putting it back where it was leaves the pair
+ * exactly as un-retargeted as never having touched it, which is the rule the user asked for.
+ */
+data class TaskRelationMark(
+    /** Section 1: the user filed this pair there themselves. */
+    val kept: Boolean = false,
+    /** Section 2: the last relative-priority window opened on this pair left its percentage changed. */
+    val retargeted: Boolean = false,
+    /** Struck off the list by section 1's own button. Hides the pair whatever else is true of it. */
+    val hidden: Boolean = false,
+)
+
 @JvmInline
 value class CellListId(val value: String)
 

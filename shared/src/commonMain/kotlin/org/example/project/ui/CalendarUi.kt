@@ -839,6 +839,9 @@ fun LateralMenu(
     /** All tasks (the flat, sortable list of every task in the tree): whether it is open + toggle callback. */
     taskListWindowOpen: Boolean = false,
     onToggleTaskList: () -> Unit = {},
+    /** PRD §5 Task relations: whether the (task, relational target) pair list is open + toggle callback. */
+    taskRelationsWindowOpen: Boolean = false,
+    onToggleTaskRelations: () -> Unit = {},
     /** PRD §4 Default sub-tree: whether that window is open + toggle callback. */
     defaultSubtreeWindowOpen: Boolean = false,
     onToggleDefaultSubtree: () -> Unit = {},
@@ -1072,6 +1075,15 @@ fun LateralMenu(
             label = "All tasks",
             active = taskListWindowOpen,
             onClick = onToggleTaskList,
+        )
+
+        // PRD §5 Task relations: every (task, relational target) pair the priority machinery has raised — a
+        // weight table's optional row, a relative priority the user opened or changed — in four sections,
+        // so the ones worth keeping can be kept and the rest recognised as noise.
+        MenuButton(
+            label = "Task relations",
+            active = taskRelationsWindowOpen,
+            onClick = onToggleTaskRelations,
         )
 
         // PRD §4 Default sub-tree: the template grafted under every newly created task. The switch to the

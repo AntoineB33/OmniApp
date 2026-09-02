@@ -61,7 +61,7 @@ re-derives something mark the state dirty or trigger a sync push.
 
 | Class | Contents | Rule |
 | --- | --- | --- |
-| **Authoritative** | task tree (task **resilience** included), the account's **period kinds**, named task trees, the default sub-tree + its switch, user-authored/pinned panels and the periods the app conducted, chores/reminders, sleep schedule, alarms, timers (**whether one is running** included), settings, the system-wide chord bindings, Undo/Redo history units, manual record edits | persist + sync |
+| **Authoritative** | task tree (task **resilience** included), the account's **period kinds**, named task trees, the default sub-tree + its switch, user-authored/pinned panels and the periods the app conducted, chores/reminders, sleep schedule, alarms, timers (**whether one is running** included), settings, the system-wide chord bindings, the **task relations** the user kept or struck off, Undo/Redo history units, manual record edits | persist + sync |
 | **Derived** | auto/screen-break/sleep panels, task colours, a running timer's remaining time, the dynamic periods' placement (the recurrence bars read their anchors out of the timeline), records the advance banks | persisted locally, **stripped from the wire**, never trigger a push on their own |
 | **Local-only view state** | focused window, tree selection, the "All tasks" window's own expansion/selection/edit session, `showScreenBreaks`/`showReminders`, WindowNav/Selection history, window placement, OS-sleep scan checkpoint | persist locally, **never sync** |
 
@@ -608,8 +608,8 @@ a cell, a sub-list, a calendar block, a period, a *kind* of period, a reminder, 
 is sort 2,
 because "the edit window of task A" and "the edit window of task B" are two different windows and the user
 only ever means the one they just asked for. A pop-up there is exactly one of is sort 1. So sort 1 is
-precisely `windowStack` (Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, DefaultSubtree,
-Shortcuts, TimeSim) and every other pop-up in the app is sort 2.
+precisely `windowStack` (Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, TaskRelations,
+DefaultSubtree, Shortcuts, TimeSim) and every other pop-up in the app is sort 2.
 
 - **A notice the app says back to a gesture is sort 2 too** (`MessagePopup` — today only the calendar's "go
   to task tree" on a task no cell holds): "the error about this panel" and "the error about that one" are two
@@ -650,6 +650,47 @@ Shortcuts, TimeSim) and every other pop-up in the app is sort 2.
   never one edit back — as one ordinary `priorityTreeDelta`, which is what makes Ctrl+Z undo the cancel. A
   cancel that changes nothing records no unit. It rewrites that one sub-list's weights and nothing else: a cell
   that has since moved lists keeps its new table, and membership is never touched.
+
+### The task-relations list
+
+→ ADR 0004, PRD §5/§7. The lateral menu's **Task relations** button; `TaskRelationsDomain` is the whole of
+the rule and `ui/TaskRelationsWindow.kt` draws it.
+
+A **relation** is a *pair*: a task, and the task its priority was expressed **relative to**. It is the pair
+`RelativePriorityPinKey` already files pins under, asked as a question about the account instead of about one
+open window — so `SchedulerState.taskRelations` is keyed by the deliberately separate `TaskRelationKey`.
+
+- **Four sections, and they are a PRECEDENCE — a pair is in exactly one.** In order: **kept** (the user filed
+  it by hand), **edited** (a live optional row of the target sub-list's weight table, or a percentage the user
+  actually changed), **opened** (the relative-priority window was opened on it and left it as it was), and
+  **broken**.
+- **Broken outranks every other section, section 1 included.** It is a *status*, not an origin — the task or
+  the target is gone (PRD §4's blank title), or the task has no occurrence under the target any more — and a
+  pair the user kept is exactly the one they most need to be told has stopped meaning anything. `breakOf` asks
+  the tree through `occurrenceChains`, so a pair is broken here exactly when the relative-priority window
+  would open on "no occurrence of this task under …".
+- **The row's button follows `kept` ALONE, never the section**: kept ⇒ **✕** (strike it off entirely), not
+  kept ⇒ **keep**. That is what lets a kept-and-broken pair, drawn under section 4, still offer the way back
+  out of section 1.
+- **`TaskRelationMark` is three INDEPENDENT flags, not an enum, and its mere EXISTENCE is the fourth fact.**
+  An all-false mark means "opened, never changed" — section 3 — so it is never dropped to save space, and the
+  codec must round-trip it.
+- **`retargeted` is the verdict of the LAST window session, not a running total.** The percentage field
+  commits every keystroke, so the window re-reports the verdict on each one and typing a value then putting it
+  back demotes the pair to section 3 — the user's rule is about where the number *ends up*. The comparison is
+  against `percentFieldText`, the string the field shows: judging it on the raw `Double` would call a
+  bisection landing one ulp away a change nobody made. The reducer returns the state **unchanged** when the
+  verdict has not moved, which is what keeps the keystrokes off the save debounce and off the wire.
+- **Only what cannot be recomputed is stored.** The weight-table half of section 2 is read straight off
+  `CellList.optionalTaskIds` (`weightTableRelations`), so a row the user removes from a table leaves this list
+  by itself, and section 4 is a question asked of the live tree. A pair naming a deleted task is **reported**,
+  never pruned — no tree edit has to keep this in step.
+- **`hidden` outranks every source**, weight-table rows included: "make it disappear from this list" means the
+  list. Only a real **retarget** lifts it — merely looking at a struck-off pair again is not working on it
+  again.
+- Authoritative + synced (which pairs matter is a judgement nothing re-derives), merged **per pair as a whole
+  value** — three flags that are one statement — and **not** an Undo/Redo unit: filing a pair changes no
+  priority, exactly like a pin.
 
 ### The task-tree timeline
 

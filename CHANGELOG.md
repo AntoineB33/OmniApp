@@ -11,6 +11,48 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The lateral menu's "Task relations": every (task, relational target) pair, in four sections — 2026-09-03
+
+PRD §5/§7, ADR 0004. `shared` (new `scheduler/domain/TaskRelations.kt` + `ui/TaskRelationsWindow.kt`;
+`TaskModels.kt`, `SchedulerState.kt`, `SchedulerIntent.kt`, `SchedulerReducer.kt`, `SchedulerStateCodec.kt`,
+`SnapshotMerge.kt`, `TaskSchedulerScreen.kt`, `CalendarUi.kt`, `App.kt`) + `docs/PRD_TaskScheduler.md` +
+`docs/adr/0004-relative-priority.md` + `CLAUDE.md`. **Client rebuild only** — no Supabase deploy and no
+SQLite migration (the new field rides inside the existing `app_state.payload` / `scheduler_snapshot`
+document), but it **is** persisted and synced, so a payload written by this build is read by an older one as
+if the field were absent, and one written by an older build decodes to no pairs at all.
+
+Asked for: *"a button in the left-side menu that opens a window showing a vertical list of pairs of a task
+and its relational target, sorted by 4 sections"* — section 1 the pairs put there by hand, section 2 the
+weight-table rows and the relative priorities actually changed, section 3 the ones opened and left alone,
+section 4 the ones an external change has broken; *"each pair that is not in section 1 has a button to set it
+in section 1. Each pair in section 1 has a button to make it disappear from this list."*
+
+- **A relation is the pair `RelativePriorityPinKey` already existed for, asked about the ACCOUNT rather than
+  about one open window** — hence the deliberately separate `TaskRelationKey`. Both of the app's two ways in
+  raise it: a weight table's **optional row** (the task, and the sub-list's own parent task) and the
+  relative-priority window's **`t_r` drop-down**. Until now both threw the pair away when the window closed.
+- **The four sections are a PRECEDENCE, and "broken" outranks even section 1.** Broken is a *status*, not an
+  origin: a pair the user filed by hand is precisely the one that most needs to say it has stopped resolving.
+  The row's button therefore follows `kept` alone and never the section, so a kept-and-broken pair drawn under
+  section 4 still offers the way back out of section 1.
+- **Only the relative-priority window's half is STORED.** The weight-table half is derived from
+  `CellList.optionalTaskIds` every time — which is what makes *"if the user then manually deleted it, it
+  doesn't appear here"* true with no bookkeeping — and section 4 is a question asked of the live tree
+  (`breakOf` → `occurrenceChains`, the same walk the window itself opens on). A pair naming a deleted task is
+  **reported**, never pruned, so no tree edit has to keep the list in step.
+- **`retargeted` is the verdict of the LAST window session, judged on the DISPLAYED number.** The percentage
+  field commits every keystroke, so the window re-reports on every one of them and a value typed then put back
+  demotes the pair to section 3 — the rule is about where the number ends up. The comparison goes through
+  `percentFieldText` (spelled once, shared with the field) because judging the raw `Double` would call a
+  bisection landing one ulp away a change nobody made; and the reducer returns the state **unchanged** when the
+  verdict has not moved, so those keystrokes reach neither the save debounce nor the wire.
+- **`TaskRelationMark` is three independent flags and its mere EXISTENCE is the fourth fact** (an all-false
+  mark is "opened, never changed"), so it is never dropped as empty and the codec round-trips it. `hidden`
+  outranks every source, live weight-table rows included — "disappear from this list" means the list — and only
+  a real retarget lifts it.
+- Authoritative + synced, merged **per pair as a whole value** (three flags, one statement), and **not** an
+  Undo/Redo unit — filing a pair changes no priority, exactly like a relative-priority pin.
+
 ### Edit Mode's id menu shows six rows at a time and scrolls — 2026-09-02
 
 PRD §4. `shared` (`ui/CalendarUi.kt`'s `EditModeMenuBlock` / `EditMenuSection`) +

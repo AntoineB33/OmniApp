@@ -13,6 +13,8 @@ import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
+import org.example.project.scheduler.model.TaskRelationKey
+import org.example.project.scheduler.model.TaskRelationMark
 import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.persistence.EncodedDelta
@@ -555,6 +557,20 @@ data class SchedulerState(
      * cell that no longer exists is simply ignored, so a tree edit never has to prune this.
      */
     val relativePriorityPins: Map<RelativePriorityPinKey, Set<CellId>> = emptyMap(),
+    /**
+     * PRD §5 the **task relations** window (the lateral menu's *Task relations* button): what the user has
+     * done with each (task, relational target) pair — see [TaskRelationMark] and
+     * [org.example.project.scheduler.domain.TaskRelationsDomain], which is the one reading of this map.
+     *
+     * Authoritative user-authored data: which pairs are worth keeping is a judgement nothing can recompute,
+     * so it is persisted **and** synced like the pins beside it, and a payload written before the window
+     * existed decodes to an empty map. Filing a pair changes no priority, so (like a pin) it is not an
+     * Undo/Redo unit. Only the pairs the user has actually touched are held: the window's other source —
+     * the optional rows of the priority-weight tables — is DERIVED from `CellList.optionalTaskIds`, and a
+     * pair naming a task that no longer exists is simply reported as broken rather than pruned, so no tree
+     * edit has to keep this in step.
+     */
+    val taskRelations: Map<TaskRelationKey, TaskRelationMark> = emptyMap(),
     /**
      * PRD §7 **"Switch task"**: the standing refusal the lateral-menu button (and its `Ctrl+Shift+Alt+Z`
      * chord) records — "the now-line is on this task; start something else here". See [ForcedTaskSwitch]

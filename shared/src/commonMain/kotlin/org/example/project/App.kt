@@ -98,6 +98,7 @@ import org.example.project.ui.HistoryManagerWindow
 import org.example.project.ui.IconMenuButton
 import org.example.project.ui.raiseOnPress
 import org.example.project.ui.LateralMenu
+import org.example.project.ui.TaskRelationsWindow
 import org.example.project.ui.CalendarPeriodKind
 import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.MessagePopup
@@ -123,7 +124,8 @@ enum class OmniPage(val label: String) {
 
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
 private enum class FloatingWindow {
-    Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, DefaultSubtree, Shortcuts, TimeSim
+    Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, TaskRelations, DefaultSubtree,
+    Shortcuts, TimeSim
 }
 
 // Debug "simulate pause + leap": pressing a break chip INSTANTLY jumps the sim clock forward by the whole
@@ -419,6 +421,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var taskTreesWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.TaskTrees)) }
         // All tasks: whether the flat, sortable list of every task in the tree is open (local UI state).
         var taskListWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.TaskList)) }
+        // PRD §5 Task relations: whether the list of (task, relational target) pairs is open (local UI
+        // state; the pairs the user has kept or struck off are authoritative synced state).
+        var taskRelationsWindowOpen by
+            remember { mutableStateOf(savedVisible(FloatingWindow.TaskRelations)) }
         // Its sorter configuration. Compose-only state, like the calendar's zoom and the §4 find bar: how a
         // list is ordered on screen is a way of looking at the tree, not a fact about it — so it is never
         // persisted, never synced, and records no history unit.
@@ -445,6 +451,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     FloatingWindow.Alarms,
                     FloatingWindow.TaskTrees,
                     FloatingWindow.TaskList,
+                    FloatingWindow.TaskRelations,
                     FloatingWindow.DefaultSubtree,
                     FloatingWindow.Shortcuts,
                     FloatingWindow.TimeSim,
@@ -463,6 +470,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Alarms -> alarmWindowOpen
             FloatingWindow.TaskTrees -> taskTreesWindowOpen
             FloatingWindow.TaskList -> taskListWindowOpen
+            FloatingWindow.TaskRelations -> taskRelationsWindowOpen
             FloatingWindow.DefaultSubtree -> defaultSubtreeWindowOpen
             FloatingWindow.Shortcuts -> shortcutsWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
@@ -479,6 +487,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Alarms -> null
             FloatingWindow.TaskTrees -> null
             FloatingWindow.TaskList -> null
+            FloatingWindow.TaskRelations -> null
             FloatingWindow.DefaultSubtree -> null
             FloatingWindow.Shortcuts -> null
             FloatingWindow.TimeSim -> null
@@ -511,6 +520,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var alarmOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Alarms, Offset(-120f, 120f))) }
         var taskTreesOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskTrees, Offset(-260f, -60f))) }
         var taskListOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskList, Offset(-60f, 100f))) }
+        var taskRelationsOffset by
+            remember { mutableStateOf(savedOffset(FloatingWindow.TaskRelations, Offset(100f, -100f))) }
         var defaultSubtreeOffset by
             remember { mutableStateOf(savedOffset(FloatingWindow.DefaultSubtree, Offset(260f, -60f))) }
         var shortcutsOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Shortcuts, Offset(60f, 60f))) }
@@ -522,6 +533,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         LaunchedEffect(alarmWindowOpen) { persistPlacement(FloatingWindow.Alarms, alarmOffset, alarmWindowOpen) }
         LaunchedEffect(taskTreesWindowOpen) { persistPlacement(FloatingWindow.TaskTrees, taskTreesOffset, taskTreesWindowOpen) }
         LaunchedEffect(taskListWindowOpen) { persistPlacement(FloatingWindow.TaskList, taskListOffset, taskListWindowOpen) }
+        LaunchedEffect(taskRelationsWindowOpen) {
+            persistPlacement(FloatingWindow.TaskRelations, taskRelationsOffset, taskRelationsWindowOpen)
+        }
         LaunchedEffect(defaultSubtreeWindowOpen) {
             persistPlacement(FloatingWindow.DefaultSubtree, defaultSubtreeOffset, defaultSubtreeWindowOpen)
         }
@@ -1162,6 +1176,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleTaskList = {
                         onMenuWindowClicked(FloatingWindow.TaskList) { taskListWindowOpen = it }
                     },
+                    taskRelationsWindowOpen = taskRelationsWindowOpen,
+                    onToggleTaskRelations = {
+                        onMenuWindowClicked(FloatingWindow.TaskRelations) { taskRelationsWindowOpen = it }
+                    },
                     defaultSubtreeWindowOpen = defaultSubtreeWindowOpen,
                     onToggleDefaultSubtree = {
                         onMenuWindowClicked(FloatingWindow.DefaultSubtree) { defaultSubtreeWindowOpen = it }
@@ -1188,7 +1206,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleAway = { engine.setUserAway(!userAway) },
                     anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen ||
                         alarmWindowOpen || taskTreesWindowOpen || taskListWindowOpen ||
-                        defaultSubtreeWindowOpen || shortcutsWindowOpen,
+                        taskRelationsWindowOpen || defaultSubtreeWindowOpen || shortcutsWindowOpen,
                     onCloseAllWindows = {
                         calendarOpen = false
                         choresManagerOpen = false
@@ -1197,6 +1215,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         alarmWindowOpen = false
                         taskTreesWindowOpen = false
                         taskListWindowOpen = false
+                        taskRelationsWindowOpen = false
                         defaultSubtreeWindowOpen = false
                         shortcutsWindowOpen = false
                     },
@@ -1829,6 +1848,27 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             modifier = Modifier
                                 .align(Alignment.Center)
                                 .zIndex(windowZ(FloatingWindow.TaskList)),
+                        )
+                    }
+
+                    // PRD §5 Task relations: every (task, relational target) pair the priority machinery
+                    // has raised, in four sections. It reads the LIVE state — a relation is a fact about the
+                    // account's own tree — and its two buttons are the only writers of
+                    // `SchedulerState.taskRelations` beside the relative-priority window's own recording.
+                    if (taskRelationsWindowOpen) {
+                        TaskRelationsWindow(
+                            state = schedulerState,
+                            onIntent = { vm.dispatch(it) },
+                            onDismiss = { taskRelationsWindowOpen = false },
+                            initialOffset = taskRelationsOffset,
+                            onOffsetChange = {
+                                taskRelationsOffset = it
+                                persistPlacement(FloatingWindow.TaskRelations, it, true)
+                            },
+                            onRaise = { focusWindow(FloatingWindow.TaskRelations) },
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .zIndex(windowZ(FloatingWindow.TaskRelations)),
                         )
                     }
 

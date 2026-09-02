@@ -32,6 +32,8 @@ import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
+import org.example.project.scheduler.model.TaskRelationKey
+import org.example.project.scheduler.model.TaskRelationMark
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.model.TaskTreeId
@@ -318,6 +320,20 @@ object SchedulerStateCodec {
                             taskId = key.taskId.value,
                             relativeTo = key.relativeTo.value,
                             cellIds = cellIds.map(CellId::value).sorted(),
+                        )
+                    },
+            // PRD §5 the task-relations window: the pairs the user has worked on, sorted for the same
+            // reason the pins above are — the fingerprint must not depend on a map's iteration order.
+            taskRelations =
+                taskRelations.entries
+                    .sortedWith(compareBy({ it.key.taskId.value }, { it.key.relativeTo.value }))
+                    .map { (key, mark) ->
+                        PersistedTaskRelation(
+                            taskId = key.taskId.value,
+                            relativeTo = key.relativeTo.value,
+                            kept = mark.kept,
+                            retargeted = mark.retargeted,
+                            hidden = mark.hidden,
                         )
                     },
             showScreenBreaks = showScreenBreaks,
@@ -795,6 +811,17 @@ object SchedulerStateCodec {
                         RelativePriorityPinKey(TaskId(entry.taskId), TaskId(entry.relativeTo)) to
                             entry.cellIds.map(::CellId).toSet()
                     },
+            // PRD §5: a payload written before the task-relations window existed decodes to no pairs — and
+            // an empty mark is KEPT, since its mere existence is the window's "opened, never changed" fact.
+            taskRelations =
+                taskRelations.associate { entry ->
+                    TaskRelationKey(TaskId(entry.taskId), TaskId(entry.relativeTo)) to
+                        TaskRelationMark(
+                            kept = entry.kept,
+                            retargeted = entry.retargeted,
+                            hidden = entry.hidden,
+                        )
+                },
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             lookAwayVoiceEnabled = lookAwayVoiceEnabled,
@@ -1055,6 +1082,9 @@ private data class PersistedState(
     // PRD §5: the relative-priority window's pinned cells; a missing list decodes to no pins (payloads
     // written before the window existed).
     val relativePriorityPins: List<PersistedRelativePriorityPins> = emptyList(),
+    // PRD §5: the task-relations window's pairs; a missing list decodes to none (payloads written before
+    // the window existed).
+    val taskRelations: List<PersistedTaskRelation> = emptyList(),
     // PRD §15: screen breaks are hidden by default, so payloads written before the display toggle existed
     // (and any that omit the field) decode with the switch off. Migration: DBs written under the old name
     // (the legacy "side tasks") stored this as `showSideTasks`; [JsonNames] lets those still decode into this
@@ -1230,6 +1260,20 @@ private data class PersistedRelativePriorityPins(
     val taskId: String = "",
     val relativeTo: String = "",
     val cellIds: List<String> = emptyList(),
+)
+
+/**
+ * PRD §5 the task-relations window: one (task, relational target) pair and what the user has done with it.
+ * Every flag defaults to false, which is the "opened, never changed" mark — so a row written by an older
+ * shape (or one that only ever recorded the visit) decodes to exactly that.
+ */
+@Serializable
+private data class PersistedTaskRelation(
+    val taskId: String = "",
+    val relativeTo: String = "",
+    val kept: Boolean = false,
+    val retargeted: Boolean = false,
+    val hidden: Boolean = false,
 )
 
 /**
