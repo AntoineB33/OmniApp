@@ -16,6 +16,7 @@ import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.HistoryCategory
+import org.example.project.scheduler.state.NotificationLogEntry
 import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -24,6 +25,7 @@ import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.SelectionNavigate
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
+import org.example.project.ui.FilteredHistoryEntry
 import org.example.project.ui.HistoryFilterConfig
 import org.example.project.ui.filteredHistoryUnits
 
@@ -66,7 +68,8 @@ class SchedulerReducerTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Daily"))
 
         val all = filteredHistoryUnits(s.histories, HistoryFilterConfig())
-        assertTrue(all.any { it.category == HistoryCategory.Main && it.unit.delta.label == "Set title" })
+        val units = all.filterIsInstance<FilteredHistoryEntry.Unit>()
+        assertTrue(units.any { it.category == HistoryCategory.Main && it.unit.delta.label == "Set title" })
 
         val filtered = filteredHistoryUnits(
             s.histories,
@@ -74,10 +77,85 @@ class SchedulerReducerTest {
                 categories = setOf(HistoryCategory.Main),
                 query = "title",
             ),
-        )
+        ).filterIsInstance<FilteredHistoryEntry.Unit>()
         assertEquals(1, filtered.size)
         assertEquals(HistoryCategory.Main, filtered.single().category)
         assertTrue(filtered.single().unit.delta.label.contains("title", ignoreCase = true))
+    }
+
+    @Test
+    fun history_window_row_carries_the_units_position_and_pointer_status() {
+        // PRD §6: a unit does not know its own position, category or applied/current status — the list
+        // does, and each row must show them (the window is one merged list, not a column per category).
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Daily"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cellId))
+
+        val main = filteredHistoryUnits(s.histories, HistoryFilterConfig())
+            .filterIsInstance<FilteredHistoryEntry.Unit>()
+            .filter { it.category == HistoryCategory.Main }
+        // Newest-first, and 1-based positions counted from the bottom of the category's stack.
+        assertEquals(listOf(2, 1), main.map { it.position })
+        assertTrue(main.all { it.applied })
+        assertTrue(main.first().isCurrent) // the pointer sits on the newest unit
+        assertFalse(main.last().isCurrent)
+
+        // Undo: the newest unit is now ahead of the pointer, so the row must read as undone.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        val afterUndo = filteredHistoryUnits(s.histories, HistoryFilterConfig())
+            .filterIsInstance<FilteredHistoryEntry.Unit>()
+            .filter { it.category == HistoryCategory.Main }
+        assertFalse(afterUndo.first().applied)
+        assertTrue(afterUndo.last().isCurrent)
+    }
+
+    @Test
+    fun history_window_filter_can_isolate_the_notifications() {
+        // PRD §7: the History window lists every notification the app decided to send, and the window's
+        // configuration menu must be able to ask for those ALONE — clearing the categories leaves them.
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Daily"))
+        val log = listOf(
+            NotificationLogEntry(timeMillis = 5_000, title = "Look away", message = "20 seconds"),
+            NotificationLogEntry(timeMillis = 9_000, title = "Task to do now", message = "Daily"),
+        )
+
+        // Everything on: the units and the notifications share one newest-first timeline.
+        val merged = filteredHistoryUnits(s.histories, HistoryFilterConfig(), log)
+        assertEquals(2, merged.filterIsInstance<FilteredHistoryEntry.Notification>().size)
+        assertTrue(merged.any { it is FilteredHistoryEntry.Unit })
+        assertEquals(merged.map { it.timeMillis }.sortedDescending(), merged.map { it.timeMillis })
+
+        // Only the notifications: no category selected, the notification source left on.
+        val onlyNotifications = filteredHistoryUnits(
+            s.histories,
+            HistoryFilterConfig(categories = emptySet(), notifications = true),
+            log,
+        )
+        assertEquals(2, onlyNotifications.size)
+        assertTrue(onlyNotifications.all { it is FilteredHistoryEntry.Notification })
+        assertEquals(9_000L, onlyNotifications.first().timeMillis) // newest first
+
+        // The query searches a notification's title AND its message, like a unit's label and details.
+        assertEquals(
+            listOf(5_000L),
+            filteredHistoryUnits(
+                s.histories,
+                HistoryFilterConfig(categories = emptySet(), query = "20 sec"),
+                log,
+            ).map { it.timeMillis },
+        )
+
+        // Notifications off: they are gone even though the log was handed over.
+        assertTrue(
+            filteredHistoryUnits(
+                s.histories,
+                HistoryFilterConfig(notifications = false),
+                log,
+            ).none { it is FilteredHistoryEntry.Notification },
+        )
     }
 
     @Test

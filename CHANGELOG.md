@@ -11,6 +11,41 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The History window lists its sources, and a row says what it is — 2026-09-02
+
+PRD §6/§7. `shared` (`ui/CalendarUi.kt`) + `docs/PRD_TaskScheduler.md`. Client rebuild only — no Supabase
+deploy, no migration.
+
+Asked for: *"In the history window, the configuration menu must allow the user to filter only the
+notifications. Each history unit must display information (it currently only shows a title)."*
+
+The filter refactor that turned the window's per-category columns into one list took the **notification** and
+**Supabase-usage** columns with them: their composables were left in the file with nothing calling them, so
+PRD §7's "the History window still lists every notification the app decided to send" had quietly stopped
+being true. It also dropped everything a row said beyond the label — the single list called
+`HistoryUnitRow(position = 0, applied = true, isCurrent = false)`, so no row carried its position, its
+category, its timestamp or the pointer.
+
+- **The list is one merged timeline over three kinds of source.** `FilteredHistoryEntry` is a sealed
+  interface (`Unit` / `Notification` / `SupabaseUsage`) ordered on `(timeMillis, chronoId)`, and
+  `filteredHistoryUnits` takes the two logs beside the histories. The free-text query matches everything a
+  row *shows*, a notification's title and message included.
+- **The configuration menu selects sources, not just categories.** `HistoryFilterConfig` gains
+  `notifications` (on) and `supabaseUsage` (off — one row per HTTP call would drown the units beside it),
+  each a chip like the five categories, plus **All / None** so isolating one source is a single gesture
+  rather than a click per source the user does not want. Neither log is a sixth `HistoryCategory`: neither is
+  a History Unit, nothing undoes them, and nothing in the app walks them.
+- **A unit's row shows what the unit is.** Its category tag, its timestamp, its 1-based position in that
+  category's stack, its label, and the first three of its `Delta.details` lines with a `+N more` for the
+  rest; undone units are dimmed and the pointer is marked `● current`. Those five facts are list-derived, so
+  they are computed in `filteredHistoryUnits` and carried on the row — the unit still knows none of them, and
+  the information window still shows nothing but the unit's own data.
+- **The list draws its newest 200 matching rows** and says how many older ones matched. ADR 0009: it cannot
+  be a `LazyColumn` (selection holds the composed nodes) and every floating window shares one Compose scene,
+  so with 1000 units per category an unbounded merged list of multi-line rows is tens of thousands of text
+  nodes redrawn on every animated frame. The filter, not the scrollbar, is how the user reaches what is below
+  the bound.
+
 ### Adding a History Unit is one INSERT — 2026-09-02
 
 → ADR 0007. `shared` (`scheduler/persistence/SqlDelightSchedulerStore.kt`, `HistoryDigest.kt`,

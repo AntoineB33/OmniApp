@@ -148,8 +148,6 @@ import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.NotificationLogEntry
 import org.example.project.scheduler.state.SupabaseUsageEntry
 import org.example.project.scheduler.state.SchedulerHistories
-import org.example.project.scheduler.state.SchedulerHistory
-import org.example.project.scheduler.state.SchedulerState
 
 /** PRD §7: visual language shared by the lateral menu and the calendar. */
 private object CalColors {
@@ -1530,53 +1528,147 @@ fun ChoresManagerWindow(
     }
 }
 
+/**
+ * PRD §5/§6: what the History window's configuration menu is currently asking for — which of the history
+ * categories to list, whether the local-only **notification** log is listed alongside them (PRD §7: "the
+ * History window still lists every notification the app decided to send while it was off"), and a free-text
+ * query. Compose-only state, like the calendar's zoom and the task list's sorter: a way of looking at the
+ * history, never a fact about it.
+ *
+ * [notifications] and [supabaseUsage] are sources of their own rather than further [HistoryCategory]s
+ * because neither is a History Unit — they are not undoable, they carry no delta, and nothing in the app
+ * walks them. Clearing every category and leaving [notifications] on is what "only the notifications" means.
+ * [supabaseUsage] starts **off**: it is the free-plan draw-down diagnostic, one row per HTTP call, so it
+ * would drown the units it is listed beside unless the user asks for it.
+ */
 data class HistoryFilterConfig(
     val categories: Set<HistoryCategory> = HistoryCategory.entries.toSet(),
+    val notifications: Boolean = true,
+    val supabaseUsage: Boolean = false,
     val query: String = "",
 )
 
-data class FilteredHistoryEntry(
-    val category: HistoryCategory,
-    val unit: HistoryUnit,
-)
+/**
+ * One row of the History window's single list, newest-first. The two variants are the two things the window
+ * lists: a History Unit out of one category's stack, and a line of the per-device notification log.
+ *
+ * [timeMillis]/[chronoId] are the ordering key — `chronoId` is a History Unit's tie-break inside one
+ * millisecond, and a notification has none, so it sorts as 0.
+ */
+sealed interface FilteredHistoryEntry {
+    val timeMillis: Long
+    val chronoId: Long
 
+    /**
+     * A History Unit, with everything the *list* knows about it and the unit itself does not: which category
+     * holds it, its 1-based position in that category, whether it is applied (units ahead of the pointer are
+     * redoable and drawn dimmed) and whether it is the pointer itself.
+     */
+    data class Unit(
+        val category: HistoryCategory,
+        val unit: HistoryUnit,
+        val position: Int,
+        val applied: Boolean,
+        val isCurrent: Boolean,
+    ) : FilteredHistoryEntry {
+        override val timeMillis: Long get() = unit.timeMillis
+        override val chronoId: Long get() = unit.chronoId
+    }
+
+    /** A line of the local-only notification log (see [NotificationLogEntry]). */
+    data class Notification(val entry: NotificationLogEntry) : FilteredHistoryEntry {
+        override val timeMillis: Long get() = entry.timeMillis
+        override val chronoId: Long get() = 0
+    }
+
+    /** A line of the local-only Supabase free-plan usage log (see [SupabaseUsageEntry]). */
+    data class SupabaseUsage(val entry: SupabaseUsageEntry) : FilteredHistoryEntry {
+        override val timeMillis: Long get() = entry.timeMillis
+        override val chronoId: Long get() = 0
+    }
+}
+
+/**
+ * How many rows the History window draws before it stops and says how many more matched.
+ *
+ * ADR 0009: the list must compose every row it shows — text selection holds references to the composed
+ * nodes, so it cannot be a `LazyColumn` — and every floating window shares one Compose scene, so whatever
+ * this window keeps in the tree is redrawn on every frame anything in the app animates. Each category is
+ * capped at 1000 units and each row is several lines, so an unbounded merged list is tens of thousands of
+ * text nodes on a mature account. The list is newest-first and the filter is how the user reaches what is
+ * below the bound, which is what makes bounding it honest rather than lossy.
+ */
+const val HISTORY_LIST_MAX_ROWS = 200
+
+/**
+ * The History window's list: every source the [filter] admits, merged into one newest-first timeline.
+ *
+ * The free-text query is matched against everything the row *shows* — a unit's label and its detail lines, a
+ * notification's title and message, a Supabase call's resource and operation — so what the user reads in a
+ * row is what they can search for.
+ */
 fun filteredHistoryUnits(
     histories: SchedulerHistories,
     filter: HistoryFilterConfig,
+    notificationLog: List<NotificationLogEntry> = emptyList(),
+    supabaseUsageLog: List<SupabaseUsageEntry> = emptyList(),
 ): List<FilteredHistoryEntry> {
     val needle = filter.query.trim()
-    fun matchesQuery(unit: HistoryUnit): Boolean {
-        if (needle.isBlank()) return true
-        val haystack = (listOf(unit.delta.label) + unit.delta.details).joinToString("\n")
-        return haystack.contains(needle, ignoreCase = true)
-    }
+    fun matches(vararg haystack: String): Boolean =
+        needle.isBlank() || haystack.any { it.contains(needle, ignoreCase = true) }
 
-    return histories.all()
+    val units = histories.all()
         .filter { (category, _) -> category in filter.categories }
         .flatMap { (category, history) ->
-            history.units.map { unit -> FilteredHistoryEntry(category, unit) }
+            history.units.mapIndexed { index, unit ->
+                FilteredHistoryEntry.Unit(
+                    category = category,
+                    unit = unit,
+                    position = index + 1,
+                    applied = index <= history.pointer,
+                    isCurrent = index == history.pointer,
+                )
+            }
         }
-        .filter { matchesQuery(it.unit) }
-        .sortedWith(
-            compareByDescending<FilteredHistoryEntry> { it.unit.timeMillis }
-                .thenByDescending { it.unit.chronoId },
-        )
+        .filter { entry -> matches(entry.unit.delta.label, entry.unit.delta.details.joinToString("\n")) }
+
+    val notifications = if (!filter.notifications) {
+        emptyList()
+    } else {
+        notificationLog
+            .filter { matches(it.title, it.message) }
+            .map { FilteredHistoryEntry.Notification(it) }
+    }
+
+    val supabase = if (!filter.supabaseUsage) {
+        emptyList()
+    } else {
+        supabaseUsageLog
+            .filter { matches(it.resource, it.operation) }
+            .map { FilteredHistoryEntry.SupabaseUsage(it) }
+    }
+
+    return (units + notifications + supabase).sortedWith(
+        compareByDescending<FilteredHistoryEntry> { it.timeMillis }
+            .thenByDescending { it.chronoId },
+    )
 }
 
 /**
  * PRD §5/§6 History Manager: a floating, draggable in-app window that shows a single vertical list of
- * the retained history units. The user can filter the list by category and text, which makes queries like
- * "the recent priority-weight changes on a specific sub-list" straightforward without re-creating the
- * history as separate columns.
+ * everything the app has recorded — the retained history units of every category, and the local-only
+ * notification log beside them. The configuration menu at the top picks the sources and a free-text query,
+ * which makes queries like "the recent priority-weight changes on a specific sub-list", or "only the
+ * notifications", straightforward without re-creating the history as separate columns.
  */
 @Composable
 fun HistoryManagerWindow(
     histories: SchedulerHistories,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-    /** The local-only diagnostic notification log, shown as the "Notifications" column. */
+    /** The local-only diagnostic notification log, listed alongside the units and filterable on its own. */
     notificationLog: List<NotificationLogEntry> = emptyList(),
-    /** The local-only Supabase-usage diagnostic log, shown as the rightmost "Supabase usage" column. */
+    /** The local-only Supabase-usage diagnostic log, listed only when its own source chip is turned on. */
     supabaseUsageLog: List<SupabaseUsageEntry> = emptyList(),
     /** Initial position relative to centered; staggered per window so they open in a clickable cascade. */
     initialOffset: Offset = Offset.Zero,
@@ -1588,7 +1680,7 @@ fun HistoryManagerWindow(
     var offset by remember { mutableStateOf(initialOffset) }
     var infoUnit by remember { mutableStateOf<HistoryUnit?>(null) }
     var filter by remember { mutableStateOf(HistoryFilterConfig()) }
-    val rows = filteredHistoryUnits(histories, filter)
+    val rows = filteredHistoryUnits(histories, filter, notificationLog, supabaseUsageLog)
 
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -1644,46 +1736,80 @@ fun HistoryManagerWindow(
                             value = filter.query,
                             onValueChange = { filter = filter.copy(query = it) },
                             label = { Text("Filter") },
-                            placeholder = { Text("label, details, or task text") },
+                            placeholder = { Text("label, details, or notification text") },
                             singleLine = true,
                             modifier = Modifier.weight(1f),
                         )
                         Button(
-                            onClick = {
-                                filter = HistoryFilterConfig(
-                                    categories = HistoryCategory.entries.toSet(),
-                                    query = "",
-                                )
-                            },
+                            // Back to the default view: every source on, no query.
+                            onClick = { filter = HistoryFilterConfig() },
                         ) {
                             Text("Reset")
                         }
                     }
 
+                    // The configuration menu's source chips: the five history categories plus the two
+                    // local-only diagnostic logs, each toggled on its own. "All" / "None" are there
+                    // because isolating ONE source (PRD §7's "only the notifications") would otherwise
+                    // cost a click per source the user does not want.
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         HistoryCategory.entries.forEach { category ->
-                            val active = category in filter.categories
-                            val label = category.name
-                            val chipColor = if (active) CalColors.accent else CalColors.muted
-                            Text(
-                                text = label,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(999.dp))
-                                    .background(if (active) Color(0xFFEEF3FF) else Color(0xFFF2F3F5))
-                                    .clickable {
-                                        val next = filter.categories.toMutableSet().apply {
-                                            if (contains(category)) remove(category) else add(category)
-                                        }
-                                        filter = filter.copy(categories = next)
+                            HistorySourceChip(
+                                label = category.name,
+                                active = category in filter.categories,
+                                onToggle = {
+                                    val next = filter.categories.toMutableSet().apply {
+                                        if (contains(category)) remove(category) else add(category)
                                     }
-                                    .padding(horizontal = 10.dp, vertical = 5.dp),
-                                color = chipColor,
-                                style = MaterialTheme.typography.labelSmall,
+                                    filter = filter.copy(categories = next)
+                                },
                             )
                         }
+                        HistorySourceChip(
+                            label = "Notifications",
+                            active = filter.notifications,
+                            onToggle = { filter = filter.copy(notifications = !filter.notifications) },
+                        )
+                        HistorySourceChip(
+                            label = "Supabase usage",
+                            active = filter.supabaseUsage,
+                            onToggle = { filter = filter.copy(supabaseUsage = !filter.supabaseUsage) },
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            text = "All",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CalColors.accent,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .clickable {
+                                    filter = filter.copy(
+                                        categories = HistoryCategory.entries.toSet(),
+                                        notifications = true,
+                                        supabaseUsage = true,
+                                    )
+                                }
+                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                        )
+                        Text(
+                            text = "None",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CalColors.accent,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .clickable {
+                                    filter = filter.copy(
+                                        categories = emptySet(),
+                                        notifications = false,
+                                        supabaseUsage = false,
+                                    )
+                                }
+                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                        )
                     }
 
                     Box(
@@ -1695,7 +1821,7 @@ fun HistoryManagerWindow(
                     ) {
                         if (rows.isEmpty()) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text("(no history units match)", color = CalColors.muted)
+                                Text("(nothing matches the filter)", color = CalColors.muted)
                             }
                         } else {
                             SelectionContainer(
@@ -1709,13 +1835,25 @@ fun HistoryManagerWindow(
                                         .padding(8.dp),
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    rows.forEach { row ->
-                                        HistoryUnitRow(
-                                            position = 0,
-                                            unit = row.unit,
-                                            applied = true,
-                                            isCurrent = false,
-                                            onClick = { infoUnit = row.unit },
+                                    rows.take(HISTORY_LIST_MAX_ROWS).forEach { row ->
+                                        when (row) {
+                                            is FilteredHistoryEntry.Unit -> HistoryUnitRow(
+                                                entry = row,
+                                                onClick = { infoUnit = row.unit },
+                                            )
+                                            is FilteredHistoryEntry.Notification ->
+                                                NotificationLogRow(entry = row.entry)
+                                            is FilteredHistoryEntry.SupabaseUsage ->
+                                                SupabaseUsageRow(entry = row.entry)
+                                        }
+                                    }
+                                    if (rows.size > HISTORY_LIST_MAX_ROWS) {
+                                        Text(
+                                            text = "+${rows.size - HISTORY_LIST_MAX_ROWS} older entries " +
+                                                "match — narrow the filter to reach them.",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = CalColors.muted,
+                                            modifier = Modifier.padding(top = 4.dp),
                                         )
                                     }
                                 }
@@ -1733,132 +1871,30 @@ fun HistoryManagerWindow(
 }
 
 /**
- * One column of the history manager: a category's header (with `applied/total`) pinned at the top, then
- * its History Units listed **newest-first** (last at the top, first at the bottom). Each unit is a single
- * row showing its label (PRD §6); clicking it opens an information window with all of the unit's data via
- * [onSelectUnit]. Undone units (ahead of the pointer) are dimmed and the current pointer position is marked.
+ * One notification-log entry in the History window's list: the source tag and the fire time, then the
+ * notification's title and its message text.
+ *
+ * It is drawn beside the History Units on purpose — the app's record of what it decided to say is part of
+ * the same timeline — but it carries no position, no applied/current marker and no click: a notification is
+ * not a History Unit, nothing undoes it, and everything it holds is already on the row.
  */
-@Composable
-private fun HistoryCategorySection(
-    title: String,
-    history: SchedulerHistory,
-    onSelectUnit: (HistoryUnit) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    // Wrap the whole column (header + rows) in a SelectionContainer so all of its text is
-    // selectable/copyable and a single drag can select the whole column. Per the note on
-    // SupabaseUsageSection, the list MUST be a plain scrollable Column, not a LazyColumn:
-    // selection holds references to the composed row nodes, and a LazyColumn disposes rows
-    // scrolled out of view — so the selection can't extend as you scroll and a shift+click onto
-    // a recycled anchor row crashes. Composing every row keeps the whole column selectable
-    // (bounded by SchedulerHistory's MAX_HISTORY_UNITS).
-    SelectionContainer(modifier = modifier) {
-        Column {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(text = title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                // pointer is 0-based on the last applied unit; `pointer + 1` units can be undone.
-                Text(
-                    text = "${history.pointer + 1} / ${history.units.size}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = CalColors.muted,
-                )
-            }
-            if (history.units.isEmpty()) {
-                Text(
-                    text = "(empty)",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = CalColors.muted,
-                )
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    // Newest at the top, oldest at the bottom: walk the units in reverse.
-                    for (row in history.units.indices) {
-                        val index = history.units.lastIndex - row
-                        val unit = history.units[index]
-                        val applied = index <= history.pointer
-                        val isCurrent = index == history.pointer
-                        HistoryUnitRow(
-                            position = index + 1,
-                            unit = unit,
-                            applied = applied,
-                            isCurrent = isCurrent,
-                            onClick = { onSelectUnit(unit) },
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * The History Manager's **Notifications** column: a read-only, local-only diagnostic list of the notification
- * text the app has posted (see [org.example.project.scheduler.state.SchedulerState.notificationLog]). Newest
- * at the top; the header shows how many of the capped
- * [org.example.project.scheduler.state.SchedulerState.MAX_NOTIFICATION_LOG] entries have been recorded. Each
- * row shows the fire time, the notification title, and its message text.
- */
-@Composable
-private fun NotificationLogSection(
-    log: List<NotificationLogEntry>,
-    modifier: Modifier = Modifier,
-) {
-    // Wrap the whole column in a SelectionContainer so all of its text is selectable/copyable and a
-    // single drag can select the whole column. Same constraint as SupabaseUsageSection: the list is a
-    // plain scrollable Column, not a LazyColumn, because selection can't survive row recycling
-    // (composing every row is bounded by MAX_NOTIFICATION_LOG).
-    SelectionContainer(modifier = modifier) {
-        Column {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Notifications",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = "${log.size} / ${SchedulerState.MAX_NOTIFICATION_LOG}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = CalColors.muted,
-                )
-            }
-            if (log.isEmpty()) {
-                Text(text = "(none)", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    // Newest at the top, oldest at the bottom: walk the entries in reverse.
-                    for (row in log.indices) {
-                        NotificationLogRow(entry = log[log.lastIndex - row])
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** One notification-log entry: its fire time above the title, then the message text below (PRD-adjacent diagnostic). */
 @Composable
 private fun NotificationLogRow(entry: NotificationLogEntry) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        verticalArrangement = Arrangement.spacedBy(1.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text(
-            text = formatHistoryTime(entry.timeMillis),
-            style = MaterialTheme.typography.labelSmall,
-            color = CalColors.muted,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            HistorySourceTag("Notification")
+            Text(
+                text = formatHistoryTime(entry.timeMillis),
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.muted,
+            )
+        }
         Text(
             text = entry.title,
             style = MaterialTheme.typography.bodyMedium,
@@ -1875,81 +1911,66 @@ private fun NotificationLogRow(entry: NotificationLogEntry) {
 }
 
 /**
- * The History Manager's **Supabase usage** column: a read-only, local-only diagnostic list of every Supabase
- * HTTP call the app has made (see [org.example.project.scheduler.state.SchedulerState.supabaseUsageLog]) — the
- * account's draw-down on the Supabase **free-plan** limits (egress bandwidth, Auth MAU, request count). Newest
- * at the top; the header shows the count against the rolling cap
- * ([org.example.project.scheduler.state.SchedulerState.MAX_SUPABASE_USAGE_LOG]) plus the total bytes over the
- * kept window. Each row shows the fire time, the resource + operation, and the up/down byte counts with status.
+ * One source chip of the History window's configuration menu — a history category, or one of the two
+ * local-only diagnostic logs. One drawing for all of them, so a source can never look like a different kind
+ * of control from its neighbours.
  */
 @Composable
-private fun SupabaseUsageSection(
-    log: List<SupabaseUsageEntry>,
-    modifier: Modifier = Modifier,
-) {
-    // Wrap the whole column (header + total + rows) in a SelectionContainer so all of its text is
-    // selectable/copyable and a single drag can select the whole column. This MUST be a plain
-    // scrollable Column, not a LazyColumn: text selection holds references to the composed row
-    // nodes, but a LazyColumn disposes rows scrolled out of view — so the selection can't extend as
-    // you scroll, and a shift+click onto a recycled anchor row dereferences a disposed selectable and
-    // crashes. Composing every row keeps the whole column selectable (bounded by MAX_SUPABASE_USAGE_LOG).
-    SelectionContainer(modifier = modifier) {
-        Column {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Supabase usage",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = "${log.size} / ${SchedulerState.MAX_SUPABASE_USAGE_LOG}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = CalColors.muted,
-                )
-            }
-            if (log.isEmpty()) {
-                Text(text = "(none)", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
-            } else {
-                // Running total of the bytes over the kept (rolling) window — a rough egress/ingress gauge.
-                val totalUp = log.sumOf { it.requestBytes }
-                val totalDown = log.sumOf { it.responseBytes }
-                Text(
-                    text = "Σ ↑${formatBytes(totalUp)}  ↓${formatBytes(totalDown)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = CalColors.muted,
-                    modifier = Modifier.padding(bottom = 4.dp),
-                )
-                Column(
-                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    // Newest at the top, oldest at the bottom: walk the entries in reverse.
-                    for (row in log.indices) {
-                        SupabaseUsageRow(entry = log[log.lastIndex - row])
-                    }
-                }
-            }
-        }
-    }
+private fun HistorySourceChip(label: String, active: Boolean, onToggle: () -> Unit) {
+    Text(
+        text = label,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (active) Color(0xFFEEF3FF) else Color(0xFFF2F3F5))
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        color = if (active) CalColors.accent else CalColors.muted,
+        style = MaterialTheme.typography.labelSmall,
+    )
 }
 
-/** One Supabase-usage entry: its fire time above the resource/operation, then the byte counts + status below. */
+/** The small tag naming which source a row of the History window's merged list came out of. */
+@Composable
+private fun HistorySourceTag(label: String) {
+    Text(
+        text = label,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color(0xFFEDEFF3))
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+        color = CalColors.muted,
+        style = MaterialTheme.typography.labelSmall,
+    )
+}
+
+/**
+ * One Supabase-usage entry in the History window's list: the source tag and the call's instant, then the
+ * resource + operation it drew down and the up/down byte counts with the response status (see
+ * [org.example.project.scheduler.state.SupabaseUsageEntry] — the account's draw-down on the Supabase
+ * **free-plan** limits).
+ *
+ * Like a notification row it carries no position, no applied/current marker and no click: a Supabase call is
+ * not a History Unit, nothing undoes it, and everything it holds is already on the row.
+ */
 @Composable
 private fun SupabaseUsageRow(entry: SupabaseUsageEntry) {
     // A non-2xx status is worth flagging (a failed call still spends bandwidth).
     val ok = entry.status in 200..299
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        verticalArrangement = Arrangement.spacedBy(1.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text(
-            text = formatHistoryTime(entry.timeMillis),
-            style = MaterialTheme.typography.labelSmall,
-            color = CalColors.muted,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            HistorySourceTag("Supabase")
+            Text(
+                text = formatHistoryTime(entry.timeMillis),
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.muted,
+            )
+        }
         Text(
             text = "${entry.resource} · ${entry.operation}",
             style = MaterialTheme.typography.bodyMedium,
@@ -1965,7 +1986,7 @@ private fun SupabaseUsageRow(entry: SupabaseUsageEntry) {
     }
 }
 
-/** Human-readable byte count (B / KB / MB) for the Supabase-usage column. */
+/** Human-readable byte count (B / KB / MB) for the Supabase-usage rows. */
 private fun formatBytes(bytes: Long): String =
     when {
         bytes < 1_024 -> "$bytes B"
@@ -1974,45 +1995,89 @@ private fun formatBytes(bytes: Long): String =
     }
 
 /**
- * One History Unit as a **single clickable row** (PRD §6): its position, label, and the current-pointer
- * marker. Clicking it ([onClick]) opens the information window with all of the unit's data — the row itself
- * no longer lists the per-change detail lines.
+ * How many of a unit's [Delta.details] lines the row itself shows before deferring the rest to the
+ * information window. A unit's detail list is unbounded — one line per concrete change, so a tree mutation
+ * over a multi-selection carries dozens — and a row that printed all of them would push its neighbours off
+ * the list. Three is enough to say what the unit actually did; the "+N more" line says there is more and the
+ * click that opens the full list is the same click the row already answered to.
+ */
+private const val HISTORY_ROW_DETAIL_LINES = 3
+
+/**
+ * One History Unit as a **clickable row** (PRD §6). It shows what the unit *is* — its category, its
+ * timestamp, its position in that category's stack, its label and the first of its per-change detail lines
+ * — plus what the list knows about it: undone units (ahead of the pointer, still redoable) are dimmed and
+ * the pointer itself is marked. Clicking it ([onClick]) opens the information window with all of the unit's
+ * data, which is where the detail lines beyond [HISTORY_ROW_DETAIL_LINES] are.
  */
 @Composable
 private fun HistoryUnitRow(
-    position: Int,
-    unit: HistoryUnit,
-    applied: Boolean,
-    isCurrent: Boolean,
+    entry: FilteredHistoryEntry.Unit,
     onClick: () -> Unit,
 ) {
+    val unit = entry.unit
     // Undone units (past the pointer, redoable) are dimmed.
-    val labelColor = if (applied) MaterialTheme.colorScheme.onSurface else CalColors.muted
-    Row(
+    val labelColor = if (entry.applied) MaterialTheme.colorScheme.onSurface else CalColors.muted
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(4.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 4.dp, horizontal = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(vertical = 4.dp, horizontal = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text(
-            text = "$position.",
-            style = MaterialTheme.typography.bodySmall,
-            color = CalColors.muted,
-            modifier = Modifier.width(24.dp),
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            HistorySourceTag(entry.category.name)
+            Text(
+                text = formatHistoryTime(unit.timeMillis),
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.muted,
+            )
+            Text(
+                text = "#${entry.position}",
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.muted,
+            )
+            Spacer(Modifier.weight(1f))
+            when {
+                entry.isCurrent -> Text(
+                    text = "● current",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CalColors.accent,
+                )
+                !entry.applied -> Text(
+                    text = "undone",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CalColors.muted,
+                )
+            }
+        }
         Text(
             text = unit.delta.label,
             style = MaterialTheme.typography.bodyMedium,
             color = labelColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
         )
-        if (isCurrent) {
-            Text(text = "●", style = MaterialTheme.typography.labelSmall, color = CalColors.accent)
+        val details = unit.delta.details
+        details.take(HISTORY_ROW_DETAIL_LINES).forEach { line ->
+            Text(
+                text = line,
+                style = MaterialTheme.typography.bodySmall,
+                color = CalColors.muted,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (details.size > HISTORY_ROW_DETAIL_LINES) {
+            Text(
+                text = "+${details.size - HISTORY_ROW_DETAIL_LINES} more…",
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.accent,
+            )
         }
     }
 }
