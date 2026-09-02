@@ -156,6 +156,7 @@ import org.example.project.ui.printableChar
 import org.example.project.ui.EditMenuItem
 import org.example.project.ui.EditMenuRowActions
 import org.example.project.ui.EditModeMenuBlock
+import org.example.project.ui.TaskCategoryCell
 import org.example.project.ui.EditModeOption
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -262,6 +263,8 @@ fun TaskSchedulerScreen(
     // PRD §13: the same hoisting for the two sort-2 pop-ups the tree opens — the "edit task" window and the
     // "deep copy" depth window. Drawn by the app so they land on the top layer, above every floating window.
     onSetEditTask: (TaskId?) -> Unit = {},
+    /** PRD §5: opens a category's own edit window — hoisted to the app like [onSetEditTask]. */
+    onSetEditCategory: (org.example.project.scheduler.model.CategoryId?) -> Unit = {},
     onSetDeepCopyCell: (CellId?) -> Unit = {},
 ) {
     val state by vm.state.collectAsState()
@@ -357,6 +360,7 @@ fun TaskSchedulerScreen(
             onSetWeightWindow = onSetWeightWindow,
             onSetRelativeWindow = onSetRelativeWindow,
             onSetEditTask = onSetEditTask,
+            onSetEditCategory = onSetEditCategory,
             onSetDeepCopyCell = onSetDeepCopyCell,
             focusRequester = focusRequester,
             // While the selector's field holds focus it owns the keyboard: Enter commits the typed name and
@@ -407,6 +411,8 @@ internal fun CellListSection(
     minTimeEditCellId: CellId?,
     onToggleMinTimeEdit: (CellId) -> Unit,
     onOpenTaskEdit: (TaskId) -> Unit,
+    /** PRD §5: the ✎ on a row of the categories drop-down — opens that category's own window. */
+    onOpenCategoryEdit: (org.example.project.scheduler.model.CategoryId) -> Unit,
     onCopyCell: (CellId) -> Unit,
     onDeepCopyCell: (CellId) -> Unit,
     moveDragActive: Boolean,
@@ -632,6 +638,20 @@ internal fun CellListSection(
                 } else {
                     null
                 },
+            // PRD §5: the categories column. Built here, where the state and the dispatcher are, and
+            // handed to the row as a slot — the row itself stays a drawing of a cell and holds no opinion
+            // about what a category is.
+            categoryCell =
+                cell.taskId?.let { taskId ->
+                    {
+                        TaskCategoryCell(
+                            state = state,
+                            taskId = taskId,
+                            onIntent = onIntent,
+                            onOpenCategoryEdit = onOpenCategoryEdit,
+                        )
+                    }
+                },
             rowTrailing = rowTrailing,
         )
 
@@ -651,6 +671,7 @@ internal fun CellListSection(
                 minTimeEditCellId = minTimeEditCellId,
                 onToggleMinTimeEdit = onToggleMinTimeEdit,
                 onOpenTaskEdit = onOpenTaskEdit,
+                onOpenCategoryEdit = onOpenCategoryEdit,
                 onCopyCell = onCopyCell,
                 onDeepCopyCell = onDeepCopyCell,
                 moveDragActive = moveDragActive,
@@ -2181,6 +2202,12 @@ internal fun TaskRow(
     editMenus: (@Composable () -> Unit)?,
     /** Additional controls rendered after the title and before the task row's trailing spacer. */
     rowContent: (@Composable () -> Unit)? = null,
+    /**
+     * PRD §5: the row's **categories** cell, drawn after the minimum time — the task's labels and the
+     * drop-down that adds and removes them ([org.example.project.ui.TaskCategoryCell]). Null for a cell
+     * holding no task, which has nothing to categorize.
+     */
+    categoryCell: (@Composable () -> Unit)? = null,
     /** PRD §4: one extra cell at the end of the row — the default sub-tree's switch. Null in the tree. */
     rowTrailing: (@Composable (CellId) -> Unit)? = null,
 ) {
@@ -2662,6 +2689,10 @@ internal fun TaskRow(
                         MinTimeDisplayCell(minutes = minMinutes, onClick = onActivateMinTime)
                     }
                 }
+                // PRD §5: the categories field, in its own column after the minimum time. Only a
+                // populated cell has one — an empty placeholder holds no task to label, exactly as it
+                // shows no percentage and no minimum time.
+                if (priorityLabel != null) categoryCell?.invoke()
                 // PRD §4: the default sub-tree's switch, in its own column after the minimum time so both
                 // trees line up down every column they share. Nothing in the account's own tree.
                 rowTrailing?.invoke(cellId)

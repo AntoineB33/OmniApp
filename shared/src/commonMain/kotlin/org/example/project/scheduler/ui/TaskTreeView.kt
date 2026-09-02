@@ -108,6 +108,12 @@ internal fun TaskTreeView(
     onSetWeightWindow: (CellListId?) -> Unit = {},
     onSetRelativeWindow: (CellId?) -> Unit = {},
     onSetEditTask: (TaskId?) -> Unit = {},
+    /**
+     * PRD §5: opens a **category's** own window ([org.example.project.ui.CategoryEditWindow]) — hoisted to
+     * the app for the same reason the four `onSet…` above are: it is a sort-2 pop-up and must draw on the
+     * top layer, not under whatever floating window this tree is inside.
+     */
+    onSetEditCategory: (org.example.project.scheduler.model.CategoryId?) -> Unit = {},
     onSetDeepCopyCell: (CellId?) -> Unit = {},
     /** Focus handle of the tree itself, so a caller's own field can hand the keyboard back. */
     focusRequester: FocusRequester = remember { FocusRequester() },
@@ -609,6 +615,7 @@ internal fun TaskTreeView(
                     }
                 },
                 onOpenTaskEdit = { taskId -> onSetEditTask(taskId) },
+                onOpenCategoryEdit = { categoryId -> onSetEditCategory(categoryId) },
                 // PRD §13 "copy": the cell's own task, with no children, in the same readable format
                 // Ctrl+V pastes back. Right-clicking inside a multi-selection copies the whole block, so
                 // the menu and Ctrl+C never disagree about what "the cell" means.

@@ -11,6 +11,63 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Task categories, and the rule that HOLDS a share of a sub-tree — 2026-09-03
+
+PRD §5, ADR 0004. `shared` (new `scheduler/domain/CategoryRules.kt`, `ui/TaskCategoryField.kt`,
+`ui/CategoryEditWindow.kt`; `TaskModels.kt`, `SchedulerState.kt`, `SchedulerIntent.kt`, `SchedulerReducer.kt`,
+`SchedulerStateCodec.kt`, `SnapshotMerge.kt`, `RelativePriority.kt`, `SchedulerDomain.kt`,
+`TaskSchedulerScreen.kt`, `TaskTreeView.kt`, `TaskListWindow.kt`, `DefaultSubtreeWindow.kt`, `App.kt`) +
+`docs/PRD_TaskScheduler.md` + `docs/adr/0004-relative-priority.md` + `CLAUDE.md`. **Client rebuild only** —
+no Supabase deploy and no SQLite migration (the new fields ride inside the existing `app_state.payload` /
+`scheduler_snapshot` document). Persisted and synced: a payload written by this build is read by an older one
+as if the fields were absent, and one written by an older build decodes to an account with no category at all.
+
+Asked for: *"On a task cell, add a field that contains all the categories of the task"*, with a drop-down of
+the task's categories each carrying a bin and an edit button, an add option that *"acts like a task cell that
+enters in edit mode (without a mode selector) with the title and id suggestion lists"*; and an edit category
+window where *"all tasks with this category in the sub-tree under a specific task cell always represent 33% of
+priority"*, which *"would automatically adjust the priorities evenly when the user makes changes"*, with
+*"an error message"* and *"no contradiction allowed"*.
+
+- **A category is an OBJECT with an id, not a string on each task** — which is exactly what the add option
+  being a task cell demands. Without the id, two tasks typing the same word carry two labels that look
+  identical, a rename has to walk the tree, and a rule can only ever govern one of the spellings. What the
+  field drops is the **Mode selector**: a cell's two modes are "rename my task" and "point at another task",
+  and naming a category *is* pointing at it.
+- **A rule is the relative-priority window's number said once and then kept.** Same quantity, same solve —
+  `RelativePriorityDomain.setChainsShare`, which `setRelativePriority` is now a one-line caller of, so
+  "adjust the priorities evenly" means the same thing in both places (one common factor over the cells on the
+  chains; the rest of the sub-tree keeps its own proportions). The difference is *when*: the window answers
+  when asked, a rule answers after every edit for ever.
+- **The share is measured over the TOP-MOST carriers.** A carrier's whole sub-tree is its own, so a
+  categorized task nested inside another categorized one is not counted twice — otherwise the figure is a sum
+  that can exceed the sub-tree it is a share of, and "33 % of it" stops meaning anything. The downward walk
+  enters a task's sub-list only from the cell that list names as its parent, making it the exact inverse of
+  `occurrenceChains`' upward climb (a mirrored list is entered once — the exponential walk would have arrived
+  as a wrong number first).
+- **The rule is re-established after every intent, never recorded**: `reduce` is now `reduceIntent` followed
+  by `CategoryRules.settle`. The weights ARE the storage, so the rule and the tree cannot say two different
+  things. Enforcing at "the sites that might disturb a rule" was rejected — there is no bounded such set
+  (every tree edit, weight, paste, undo, and a peer's merge). It costs nothing on an account with no rule, or
+  one whose rules are already met.
+- **A contradiction is refused outright** — the state comes back from *before* the intent with the reason in
+  `SchedulerState.categoryRuleError`, drawn as the app's one `MessagePopup`. Two guards keep that from
+  wedging the app: it never refuses what was **already** broken (a merge, an older payload, an earlier
+  build's edit — else the user could not undo their way out), and a **dormant** rule (scope gone, or nothing
+  under it carries the category) is not a contradiction, because deleting the last carrier is an ordinary
+  edit. The four namable impossibilities are checked before anything is scaled, so the message says which two
+  rules disagree; all four are about rules sharing one scope, where the arithmetic is closed.
+- **Which half is undoable is the restrictive periods' split, not a new one**: defining/renaming/deleting a
+  category and setting a rule are account settings and record no unit (as `AddPeriodKind` does not); a task
+  **carrying** a category is a tree edit and records one (as its resilience does).
+- **The clipboard carries the categories by NAME** (`- category: <title>`, one line each so a title may hold
+  a comma), so a paste lands on the category of that name where the account has one and mints it where it
+  has not — the same create-or-attach the row's field does.
+- `CategoryRulesTest` (20 cases): the field's create-or-attach, the bin vs. Delete split, the rule being held
+  through an unrelated edit, the untouched siblings keeping their ratio, the nested-carrier measure, all four
+  refusals leaving the state byte-identical, both dormant statuses, the decode round trip, an older payload,
+  and the clipboard.
+
 ### The lateral menu's "Task relations": every (task, relational target) pair, in four sections — 2026-09-03
 
 PRD §5/§7, ADR 0004. `shared` (new `scheduler/domain/TaskRelations.kt` + `ui/TaskRelationsWindow.kt`;

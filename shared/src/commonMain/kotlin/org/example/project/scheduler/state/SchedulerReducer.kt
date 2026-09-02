@@ -1,11 +1,15 @@
 package org.example.project.scheduler.state
 
 import org.example.project.scheduler.domain.AlarmDomain
+import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.Category
+import org.example.project.scheduler.model.CategoryId
+import org.example.project.scheduler.model.CategoryRule
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
@@ -99,7 +103,25 @@ object SchedulerReducer {
      */
     var scheduleHorizonEndMillis: (Long) -> Long = { SchedulerDomain.scheduleHorizonEndMillis(it, null) }
 
-    fun reduce(state: SchedulerState, intent: SchedulerIntent): SchedulerState {
+    /**
+     * The app's one dispatch point — [reduceIntent] followed by the PRD §5 **category-rule invariant**.
+     *
+     * A category rule ("the tasks carrying this under that cell are worth 33 % of it") is not a fact stored
+     * beside the tree: it is a statement the tree itself has to keep being true of, so it is re-established
+     * after every intent rather than at the sites that might disturb it —
+     * [org.example.project.scheduler.domain.CategoryRules.settle], which returns the reduced state untouched
+     * (the same instance) whenever the account has no rule or every rule is already met, and which refuses
+     * the whole intent with a message when the result could not be scaled back onto them. That is what "no
+     * contradiction would be allowed" means here: the edit does not half-happen.
+     *
+     * The two projections below deliberately reduce through [reduceIntent] instead: the "All tasks" window
+     * and the §4 template are re-rooted trees, so a rule solved against one of them would be solved against
+     * the wrong root list — the settle they need is the one this method runs on the folded-back live state.
+     */
+    fun reduce(state: SchedulerState, intent: SchedulerIntent): SchedulerState =
+        CategoryRules.settle(state, reduceIntent(state, intent))
+
+    private fun reduceIntent(state: SchedulerState, intent: SchedulerIntent): SchedulerState {
         return when (intent) {
             is SchedulerIntent.ClickCell -> reduceClick(state, intent)
             is SchedulerIntent.DragSelectCells -> reduceDragSelect(state, intent)
@@ -223,6 +245,21 @@ object SchedulerReducer {
                     )
                 }
             }
+            is SchedulerIntent.AddTaskCategory -> reduceAddTaskCategory(state, intent.taskId, intent.title)
+            is SchedulerIntent.AttachTaskCategory ->
+                reduceAttachTaskCategory(state, intent.taskId, intent.categoryId)
+            is SchedulerIntent.RemoveTaskCategory ->
+                commitDelta(state, priorityTreeDelta(state, "Task category") {
+                    applyRemoveTaskCategory(it, intent.taskId, intent.categoryId)
+                })
+            is SchedulerIntent.RenameCategory -> reduceRenameCategory(state, intent.categoryId, intent.title)
+            is SchedulerIntent.DeleteCategory -> reduceDeleteCategory(state, intent.categoryId)
+            is SchedulerIntent.SetCategoryRule ->
+                reduceSetCategoryRule(state, intent.categoryId, intent.scopeTaskId, intent.share)
+            is SchedulerIntent.RemoveCategoryRule ->
+                reduceRemoveCategoryRule(state, intent.categoryId, intent.scopeTaskId)
+            SchedulerIntent.DismissCategoryRuleError ->
+                if (state.categoryRuleError == null) state else state.copy(categoryRuleError = null)
             is SchedulerIntent.RecordConductedBreak -> reduceRecordConductedBreak(state, intent)
             is SchedulerIntent.AddPeriodKind -> reduceAddPeriodKind(state, intent.kind)
             is SchedulerIntent.RemovePeriodKind -> reduceRemovePeriodKind(state, intent.kind)
@@ -991,7 +1028,7 @@ object SchedulerReducer {
                 inner
             }
         val projected = state.projectTaskList(rootCells)
-        val reduced = reduce(projected, effective)
+        val reduced = reduceIntent(projected, effective)
         if (reduced === projected) return state
         val folded = state.withTaskListCapturedFrom(reduced)
         val before = state.captureTree()
@@ -1030,7 +1067,7 @@ object SchedulerReducer {
         }
         val before = state.defaultSubtree
         val projected = state.projectDefaultSubtree()
-        val reduced = reduce(projected, inner)
+        val reduced = reduceIntent(projected, inner)
         if (reduced === projected) return state
         val folded = state.withDefaultSubtreeCapturedFrom(reduced)
         // A gesture that only moved the window's own caret/selection changes no template and records no unit
@@ -1094,6 +1131,40 @@ object SchedulerReducer {
             ShortcutBindingDelta(before = before, after = after),
             HistoryCategory.Main,
         )
+    }
+
+    /**
+     * PRD §5: give a task a category by NAME — the create-or-attach the row's naming field raises.
+     *
+     * A title an existing category already carries attaches **that** category, which is the whole reason a
+     * category is an object with an id: without it, two tasks typing the same word would end up carrying two
+     * different labels that look identical, and a rule could only ever govern one of them. Any other non-blank
+     * title mints a new category; a blank one does nothing, exactly as it does in a cell being created.
+     */
+    private fun reduceAddTaskCategory(state: SchedulerState, taskId: TaskId, titleRaw: String): SchedulerState {
+        val title = titleRaw.trim()
+        if (title.isEmpty()) return state
+        if (state.tasks[taskId] == null) return state
+        val existing = state.categories.firstOrNull { it.title.equals(title, ignoreCase = true) }
+        if (existing != null) return reduceAttachTaskCategory(state, taskId, existing.id)
+        val (id, allocated) = state.allocateCategoryId()
+        val minted = allocated.copy(categories = allocated.categories + Category(id = id, title = title))
+        return commitDelta(minted, priorityTreeDelta(minted, "Task category") {
+            applyAttachTaskCategory(it, taskId, id)
+        })
+    }
+
+    /** PRD §5: attach an existing category to a task — what the field's identity rows raise. */
+    private fun reduceAttachTaskCategory(
+        state: SchedulerState,
+        taskId: TaskId,
+        categoryId: CategoryId,
+    ): SchedulerState {
+        if (state.categoryById(categoryId) == null) return state
+        if (applyAttachTaskCategory(state, taskId, categoryId) === state) return state
+        return commitDelta(state, priorityTreeDelta(state, "Task category") {
+            applyAttachTaskCategory(it, taskId, categoryId)
+        })
     }
 
     private fun editTextDelta(state: SchedulerState, text: String): Delta {
@@ -2541,6 +2612,11 @@ private fun pasteNodeInto(
                 )
             ),
         )
+        // PRD §5: the clipboard names categories by TITLE, so they land the way typing a name into the
+        // row's field does — on the category of that name where the account has one, on a new one where it
+        // has not. That is what makes a copy carry the labels between two trees of one account without the
+        // ids having to survive a paste that deliberately re-mints them.
+        working = attachCategoriesByTitle(working, taskId, node.categories)
     }
     // PRD §4/§7 **Default sub-tree**: pasting FOREIGN text onto an empty cell creates a task exactly as
     // typing its title does, so the template is grafted under it. The gate is the clipboard's **id**, not
@@ -3153,6 +3229,151 @@ private fun periodResilienceTargets(
         val task = state.tasks[id]
         task != null && task.resilienceFor(kind) != value
     }
+}
+
+// ----- PRD §5 categories -----------------------------------------------------------------------
+
+/*
+ * How a category divides between the two kinds of write, and why: it is the SAME split the restrictive
+ * periods already make (`AddPeriodKind` / `SetTaskResilience`), so there is one rule and not two.
+ *
+ *  - **The account's category list and its rules are not Undo/Redo units.** Defining a label, renaming it,
+ *    saying what it is worth — like defining a kind of period, these are settings of the account. What they
+ *    change about the schedule they change through the tree, which is undoable in its own right.
+ *  - **A task carrying a category IS a tree edit**, so it is an ordinary content unit, exactly as the
+ *    resilience the task is given to a kind is.
+ *  - **The weights a rule moves are in no unit at all.** They are re-established after every intent from the
+ *    rules themselves ([CategoryRules.settle]), so undoing to an older tree simply settles again — recording
+ *    the adjustment would be recording something the state already implies (CLAUDE.md § *State*).
+ */
+
+/**
+ * PRD §5: give [taskId] the categories named by [titles], minting the ones the account has not got. The
+ * clipboard's route in, and the same create-or-attach the row's naming field takes — never a second rule
+ * about what a category name means.
+ */
+private fun attachCategoriesByTitle(
+    state: SchedulerState,
+    taskId: TaskId,
+    titles: List<String>,
+): SchedulerState {
+    var working = state
+    for (raw in titles) {
+        val title = raw.trim()
+        if (title.isEmpty()) continue
+        val existing = working.categories.firstOrNull { it.title.equals(title, ignoreCase = true) }
+        val id =
+            existing?.id ?: working.allocateCategoryId().let { (newId, allocated) ->
+                working = allocated.copy(categories = allocated.categories + Category(newId, title))
+                newId
+            }
+        working = applyAttachTaskCategory(working, taskId, id)
+    }
+    return working
+}
+
+private fun applyAttachTaskCategory(
+    state: SchedulerState,
+    taskId: TaskId,
+    categoryId: CategoryId,
+): SchedulerState {
+    val task = state.tasks[taskId] ?: return state
+    if (categoryId in task.categoryIds) return state
+    return state.copy(tasks = state.tasks + (taskId to task.copy(categoryIds = task.categoryIds + categoryId)))
+}
+
+/** The bin on a drop-down row: the task stops carrying the category; the category itself is untouched. */
+private fun applyRemoveTaskCategory(
+    state: SchedulerState,
+    taskId: TaskId,
+    categoryId: CategoryId,
+): SchedulerState {
+    val task = state.tasks[taskId] ?: return state
+    if (categoryId !in task.categoryIds) return state
+    return state.copy(tasks = state.tasks + (taskId to task.copy(categoryIds = task.categoryIds - categoryId)))
+}
+
+/**
+ * PRD §5: rename a category. Everything names it by id — the tasks carrying it and its own rules — so this
+ * writes one string and reaches all of them, which is exactly what makes a category an object rather than a
+ * word repeated on twenty tasks. A blank name is refused: the blank title deletes a *task*, and a category is
+ * deleted by its window's own button, which also takes its rules.
+ */
+private fun reduceRenameCategory(
+    state: SchedulerState,
+    categoryId: CategoryId,
+    titleRaw: String,
+): SchedulerState {
+    val title = titleRaw.trim()
+    if (title.isEmpty()) return state
+    val category = state.categoryById(categoryId) ?: return state
+    if (category.title == title) return state
+    return state.copy(
+        categories = state.categories.map { if (it.id == categoryId) it.copy(title = title) else it },
+    )
+}
+
+/**
+ * PRD §5: delete a category — its rules with it, and the id off every task carrying it. The one place a
+ * category is deleted, as the period edit window is the one place a period is: both are the one place their
+ * object is an object. An id left on a task would silently re-attach it if a later category were minted under
+ * that id, which is also why ids are never reused.
+ */
+private fun reduceDeleteCategory(state: SchedulerState, categoryId: CategoryId): SchedulerState {
+    if (state.categoryById(categoryId) == null) return state
+    return state.copy(
+        categories = state.categories.filterNot { it.id == categoryId },
+        tasks = state.tasks.mapValues { (_, t) ->
+            if (categoryId in t.categoryIds) t.copy(categoryIds = t.categoryIds - categoryId) else t
+        },
+    )
+}
+
+/**
+ * PRD §5: set the category's rule about one scope — *the tasks carrying it under [scopeTaskId] are worth
+ * [shareRaw] of it*. At most one rule per scope, so an existing rule about that scope is REPLACED.
+ *
+ * Nothing is enforced here: [SchedulerReducer.reduce] settles every rule after every intent
+ * ([CategoryRules.settle]), so a rule that cannot be held refuses this write along with everything else it
+ * would have dragged with it — the invariant lives in one place, not two.
+ */
+private fun reduceSetCategoryRule(
+    state: SchedulerState,
+    categoryId: CategoryId,
+    scopeTaskId: TaskId,
+    shareRaw: Double,
+): SchedulerState {
+    val category = state.categoryById(categoryId) ?: return state
+    if (!shareRaw.isFinite()) return state
+    val share = shareRaw.coerceIn(0.0, 1.0)
+    if (category.ruleAt(scopeTaskId)?.share == share) return state
+    return state.copy(
+        categories = state.categories.map { c ->
+            if (c.id != categoryId) {
+                c
+            } else {
+                c.copy(
+                    rules = c.rules.filterNot { it.scopeTaskId == scopeTaskId } +
+                        CategoryRule(scopeTaskId = scopeTaskId, share = share),
+                )
+            }
+        },
+    )
+}
+
+/** The bin on a rule row: the category stops claiming anything about that sub-tree. */
+private fun reduceRemoveCategoryRule(
+    state: SchedulerState,
+    categoryId: CategoryId,
+    scopeTaskId: TaskId,
+): SchedulerState {
+    val category = state.categoryById(categoryId) ?: return state
+    if (category.ruleAt(scopeTaskId) == null) return state
+    return state.copy(
+        categories = state.categories.map { c ->
+            if (c.id != categoryId) c else c.copy(rules = c.rules.filterNot { it.scopeTaskId == scopeTaskId })
+        },
+    )
 }
 
 /**

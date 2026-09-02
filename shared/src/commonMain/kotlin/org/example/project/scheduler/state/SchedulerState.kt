@@ -2,6 +2,8 @@ package org.example.project.scheduler.state
 
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.Category
+import org.example.project.scheduler.model.CategoryId
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
@@ -625,6 +627,34 @@ data class SchedulerState(
      * Authoritative user-authored data: persisted, synced, and an ordinary content history unit.
      */
     val periodKinds: List<String> = emptyList(),
+    /**
+     * PRD §5 **the account's categories**: every label a task can carry, in the order they were created,
+     * each with the standing [org.example.project.scheduler.model.CategoryRule]s it imposes.
+     *
+     * A category is an object rather than a string on each task, which is what lets the row's *categories*
+     * field offer the existing ones as identity rows (so a name already taken attaches that category instead
+     * of minting a second one), lets a rename reach every task at once, and gives a rule somewhere to live.
+     *
+     * Authoritative user-authored data — nothing re-derives which labels exist or what they are worth — so it
+     * is persisted, synced, and an ordinary content Undo/Redo unit. A payload written before categories
+     * existed decodes to none. The *effect* of a rule is not stored: it is re-established on the cell weights
+     * after every intent by [org.example.project.scheduler.domain.CategoryRules.settle], which is why the
+     * rule and the tree can never say two different things.
+     */
+    val categories: List<Category> = emptyList(),
+    /** Next `category/user/{n}` suffix; ids are never reused, exactly like the task and cell counters. */
+    val nextCategoryCounter: Int = 0,
+    /**
+     * PRD §5: the message the app has to say back to an edit it **refused** because it would have broken a
+     * category rule — "no contradiction would be allowed", said out loud rather than by silently doing
+     * nothing. The refused intent left the state untouched; this is the only thing it wrote.
+     *
+     * Local-only view state of the most transient kind: it is neither persisted nor synced (it is not in the
+     * encoded payload at all, so it cannot reach a peer or survive a restart) and it is neutralized for the
+     * sync fingerprint like the rest of the view state. The app draws it as the one `MessagePopup` and
+     * clears it with [SchedulerIntent.DismissCategoryRuleError].
+     */
+    val categoryRuleError: String? = null,
     val notificationLog: List<NotificationLogEntry> = emptyList(),
     /**
      * A bounded, local-only diagnostic log of every Supabase HTTP call the app made, shown as the History
@@ -670,6 +700,7 @@ data class SchedulerState(
             showReminders = other.showReminders,
             notificationLog = other.notificationLog,
             supabaseUsageLog = other.supabaseUsageLog,
+            categoryRuleError = other.categoryRuleError,
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, other.histories.forCategory(HistoryCategory.WindowNav))
                 .withCategory(HistoryCategory.Selection, other.histories.forCategory(HistoryCategory.Selection)),
@@ -684,6 +715,7 @@ data class SchedulerState(
             showReminders = true,
             notificationLog = emptyList(),
             supabaseUsageLog = emptyList(),
+            categoryRuleError = null,
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, SchedulerHistory())
                 .withCategory(HistoryCategory.Selection, SchedulerHistory()),
@@ -841,6 +873,18 @@ data class SchedulerState(
         val id = CellId("cell/${listId.value}/$nextCellCounter")
         return id to copy(nextCellCounter = nextCellCounter + 1)
     }
+
+    /**
+     * PRD §5: mint the next category id. Like a task id it is never reused — a rule and a task both name a
+     * category by id, so handing a fresh category an id a deleted one wore would silently re-attach both.
+     */
+    fun allocateCategoryId(): Pair<CategoryId, SchedulerState> {
+        val id = CategoryId("category/user/$nextCategoryCounter")
+        return id to copy(nextCategoryCounter = nextCategoryCounter + 1)
+    }
+
+    /** The account's category with this id, or null — the one lookup, so nothing scans the list by hand. */
+    fun categoryById(id: CategoryId): Category? = categories.firstOrNull { it.id == id }
 
     fun allocatePanelId(): Pair<String, SchedulerState> {
         val id = "panel/$nextPanelCounter"

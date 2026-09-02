@@ -1,5 +1,6 @@
 package org.example.project.scheduler.state
 
+import org.example.project.scheduler.model.CategoryId
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.TaskId
@@ -313,6 +314,68 @@ sealed interface SchedulerIntent {
         val kind: String,
         val value: Double,
     ) : SchedulerIntent
+
+    // ----- PRD §5 categories ---------------------------------------------------------------------
+
+    /**
+     * Give [taskId] a category, named the way a task cell is named: the text the user typed.
+     *
+     * The field is a naming field, so this is the **create-or-attach** intent and not two: a title an
+     * existing category already carries attaches THAT category (the identity rows offer it explicitly, and
+     * typing the name reaches the same answer), and any other non-blank title mints a new one. A blank title
+     * does nothing, exactly as it does in a cell being created.
+     *
+     * A content unit, like every other edit to the task tree.
+     */
+    data class AddTaskCategory(val taskId: TaskId, val title: String) : SchedulerIntent
+
+    /**
+     * Give [taskId] the category [categoryId] — what the field’s **identity rows** raise. Attaching a
+     * category the task already carries is a no-op, as is naming one the account no longer holds.
+     */
+    data class AttachTaskCategory(val taskId: TaskId, val categoryId: CategoryId) : SchedulerIntent
+
+    /**
+     * The bin on a row of the categories drop-down: take [categoryId] off [taskId]. The category itself
+     * survives — it is the account’s, and other tasks may carry it. Deleting the category is
+     * [DeleteCategory], and it lives in the category edit window, which is the one place a category is an
+     * object in its own right.
+     */
+    data class RemoveTaskCategory(val taskId: TaskId, val categoryId: CategoryId) : SchedulerIntent
+
+    /** Rename a category. It is named by id everywhere, so this reaches every task and every rule at once. */
+    data class RenameCategory(val categoryId: CategoryId, val title: String) : SchedulerIntent
+
+    /**
+     * The category edit window’s **Delete**: drop the category, its rules, and the id from every task
+     * carrying it. The one place a category is deleted, for the same reason the period edit window is the one
+     * place a period is.
+     */
+    data class DeleteCategory(val categoryId: CategoryId) : SchedulerIntent
+
+    /**
+     * The category edit window’s rule editor: *the tasks carrying [categoryId] under [scopeTaskId] are
+     * worth [share] of it*. At most one rule per scope, so this REPLACES the rule already there rather than
+     * adding beside it — two rules about one sub-tree would be the plainest contradiction there is.
+     *
+     * The reducer applies it and then re-establishes every rule
+     * ([org.example.project.scheduler.domain.CategoryRules.settle]); a rule that cannot be held is refused
+     * with a message and nothing is written.
+     */
+    data class SetCategoryRule(
+        val categoryId: CategoryId,
+        val scopeTaskId: TaskId,
+        val share: Double,
+    ) : SchedulerIntent
+
+    /** The bin on a rule row: [categoryId] stops making any claim about [scopeTaskId]’s sub-tree. */
+    data class RemoveCategoryRule(val categoryId: CategoryId, val scopeTaskId: TaskId) : SchedulerIntent
+
+    /**
+     * Clear [SchedulerState.categoryRuleError] — the OK of the notice the app raised when it refused an edit
+     * that would have broken a rule. Local-only view state, so this is no history unit and no push.
+     */
+    data object DismissCategoryRuleError : SchedulerIntent
 
     /**
      * PRD §13 Schedule Unit "Save": replace a task's schedule unit with [entries] (empty clears it).

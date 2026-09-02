@@ -64,6 +64,20 @@ data class Task(
      * Authoritative — nothing re-derives it — so it is persisted and synced with the rest of the task.
      */
     val resilience: Map<String, Double> = DEFAULT_RESILIENCE,
+    /**
+     * PRD §5 **the task's categories**: the labels this task carries, in the order the user added them —
+     * the row's *categories* field, and the set a [CategoryRule] quantifies over.
+     *
+     * A category is an object of its own ([Category]), not a string, so renaming one renames it everywhere
+     * at once and two tasks can never drift onto two spellings of the same label. The task holds only the
+     * ids; the titles and the rules live on [org.example.project.scheduler.state.SchedulerState.categories].
+     *
+     * Part of the Task Tree domain object (PRD §6): it travels with Undo/Redo, with a stored task tree and
+     * with the clipboard, exactly as the minimum time and the resilience do. An id naming a category the
+     * account no longer holds is simply **ignored** — it names nothing, so it carries no rule and shows no
+     * row — which is what lets a merge resolve the categories and the tasks that wear them independently.
+     */
+    val categoryIds: List<CategoryId> = emptyList(),
 ) {
     /** This task's multiplier inside a period of [kind]; see [PeriodKinds.resilienceFor]. */
     fun resilienceFor(kind: String): Double = PeriodKinds.resilienceFor(resilience, kind)
@@ -649,6 +663,56 @@ data class TaskRelationMark(
     /** Struck off the list by section 1's own button. Hides the pair whatever else is true of it. */
     val hidden: Boolean = false,
 )
+
+/**
+ * PRD §5 **a category**: a label a task carries, and — through its [rules] — a standing statement about how
+ * much of a sub-tree the tasks carrying it are worth.
+ *
+ * It is an *object*, minted with an id of its own (`category/user/{n}`) rather than stored as a string on
+ * each task, for the same reason a task is: the field that names one offers the account's existing
+ * categories as **identity rows** and its titles as **suggestions**, so typing a name that is already taken
+ * attaches *that* category instead of making a second one under the same spelling. Renaming it therefore
+ * renames it on every task at once, and a rule follows the rename because it never named the title.
+ *
+ * Authoritative user-authored data: persisted, synced, and an ordinary content history unit — a category is
+ * part of the task tree the same way a task's minimum time is.
+ */
+data class Category(
+    val id: CategoryId,
+    val title: String,
+    /**
+     * The standing rules this category imposes, at most one per [CategoryRule.scopeTaskId] — a second rule
+     * about the same sub-tree would be the plainest contradiction there is, so setting one REPLACES the rule
+     * at that scope rather than adding beside it.
+     */
+    val rules: List<CategoryRule> = emptyList(),
+) {
+    /** This category's rule about [scopeTaskId]'s sub-tree, or null while it makes no claim about it. */
+    fun ruleAt(scopeTaskId: TaskId): CategoryRule? = rules.firstOrNull { it.scopeTaskId == scopeTaskId }
+}
+
+/**
+ * PRD §5 **a category rule**: *the tasks carrying this category, inside [scopeTaskId]'s sub-tree, are worth
+ * [share] of it* — the user's own example, "all tasks with this category under that cell always represent
+ * 33 % of priority".
+ *
+ * [share] is a fraction in `[0, 1]` of the scope's sub-tree, which is the same quantity the relative-priority
+ * window edits ([org.example.project.scheduler.domain.RelativePriorityDomain.relativePriority]) — a rule is
+ * that window's number, said once and then held. [scopeTaskId] is a **task**, because a task is what names a
+ * sub-list (`MAIN_TASK` for the root list), exactly as the window's `t_r` and a weight table's parent task
+ * are.
+ *
+ * The app **holds** the rule rather than merely checking it: every edit is followed by a pass that scales the
+ * tree back onto it, and an edit that could not be scaled back is refused with a message
+ * ([org.example.project.scheduler.domain.CategoryRules]).
+ */
+data class CategoryRule(
+    val scopeTaskId: TaskId,
+    val share: Double,
+)
+
+@JvmInline
+value class CategoryId(val value: String)
 
 @JvmInline
 value class CellListId(val value: String)

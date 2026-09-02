@@ -87,6 +87,8 @@ fun DefaultSubtreeWindow(
     onSetWeightWindow: (CellListId?) -> Unit = {},
     onSetRelativeWindow: (CellId?) -> Unit = {},
     onSetEditTask: (TaskId?) -> Unit = {},
+    /** PRD §5: opens a category's own edit window — hoisted to the app like [onSetEditTask]. */
+    onSetEditCategory: (org.example.project.scheduler.model.CategoryId?) -> Unit = {},
     onSetDeepCopyCell: (CellId?) -> Unit = {},
     /** Initial position relative to centered; staggered per window so they open in a clickable cascade. */
     initialOffset: Offset = Offset.Zero,
@@ -195,6 +197,7 @@ fun DefaultSubtreeWindow(
                 onSetWeightWindow = onSetWeightWindow,
                 onSetRelativeWindow = onSetRelativeWindow,
                 onSetEditTask = onSetEditTask,
+                onSetEditCategory = onSetEditCategory,
                 onSetDeepCopyCell = onSetDeepCopyCell,
                 // The window's own raise-on-press is what focuses it, so the tree claims no app-wide focus.
                 refocusWindow = null,

@@ -4671,6 +4671,13 @@ object SchedulerDomain {
         val minMinutes: Int? = null,
         /** `side-dev/README.md`: the task's resilience overrides, kind by kind. Empty = every default. */
         val resilience: Map<String, Double> = emptyMap(),
+        /**
+         * PRD §5: the **titles** of the categories the task carries. Titles rather than ids because the
+         * clipboard is text a person reads, and because a category is attached BY NAME everywhere else in
+         * the app — a paste therefore lands on the category of that name where the account already has one
+         * and mints it where it has not, which is exactly what typing the name into the row's field does.
+         */
+        val categories: List<String> = emptyList(),
         val scheduleUnit: List<ScheduleUnitEntry> = emptyList(),
         val text: String = "",
     )
@@ -4761,6 +4768,11 @@ object SchedulerDomain {
      * <n> %`. The kind is spelled out because it is what a person reading the clipboard needs; the value is a
      * percentage because that is what the multiplier means — 0 % is forbidden, 100 % is unaffected.
      */
+    /**
+     * PRD §5: `- category: <title>`, one line per category the task carries. One line each rather than a
+     * comma-separated list, so a title holding a comma needs no second escaping rule.
+     */
+    private const val ATTR_CATEGORY: String = "category"
     private const val ATTR_RESILIENCE: String = "resilience to"
     private const val ATTR_WEIGHTS: String = "priority weights"
     private const val ATTR_COLUMNS: String = "sub-list weight columns"
@@ -4813,6 +4825,7 @@ object SchedulerDomain {
             childHeader = childHeader,
             minMinutes = task?.minimumMinutes,
             resilience = task?.resilience.orEmpty(),
+            categories = task?.categoryIds.orEmpty().mapNotNull { state.categoryById(it)?.title },
             scheduleUnit = task?.scheduleUnit.orEmpty(),
             text = if (options.includeText) task?.text.orEmpty() else "",
         )
@@ -5021,6 +5034,8 @@ object SchedulerDomain {
                     if (value == PeriodKinds.resilienceFor(Task.DEFAULT_RESILIENCE, kind)) continue
                     attribute(d, "$ATTR_RESILIENCE $kind", "${formatSharePercent(value)} %")
                 }
+                // PRD §5: the categories the task carries, by name and in the order it carries them.
+                for (name in n.categories) attribute(d, ATTR_CATEGORY, escapeField(name))
                 // PRD §13: the whole weight table of every sub-list travels — this cell's value row, and
                 // the weight columns of the sub-list it parents — unless the window's switch asked for the
                 // percentage those two produce instead, which is written on every node (it IS the copy).
@@ -5179,6 +5194,7 @@ object SchedulerDomain {
                 "no" -> node.resilience[PeriodKinds.NO_SCREEN] = 0.0
                 else -> return false
             }
+            ATTR_CATEGORY -> unescapeField(value).trim().takeIf { it.isNotEmpty() }?.let(node.categories::add)
             ATTR_WEIGHTS -> node.rowWeights = parseWeights(value) ?: return false
             ATTR_COLUMNS -> node.childHeader = parseWeights(value) ?: return false
             // The percentage form of the two above (the deep-copy window's "priority tables" switch, off).
@@ -5309,6 +5325,7 @@ object SchedulerDomain {
         var rowWeights: List<Double> = listOf(1.0),
         var childHeader: List<Double> = listOf(1.0),
         val resilience: MutableMap<String, Double> = Task.DEFAULT_RESILIENCE.toMutableMap(),
+        val categories: MutableList<String> = mutableListOf(),
         var taskId: TaskId? = null,
         var minMinutes: Int? = null,
         val scheduleUnit: MutableList<ScheduleUnitEntry> = mutableListOf(),
@@ -5323,6 +5340,7 @@ object SchedulerDomain {
                 childHeader = childHeader,
                 minMinutes = minMinutes,
                 resilience = resilience.toMap(),
+                categories = categories.toList(),
                 scheduleUnit = scheduleUnit.toList(),
                 text = text,
             )

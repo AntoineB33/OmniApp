@@ -168,6 +168,84 @@ pairs are worth keeping is a judgement nothing re-derives — and merges per pai
 the three flags are one statement about one pair (a field-wise merge could hand back a pair that is kept and
 struck off at once).
 
+## Categories, and the rule that HOLDS a share
+
+A **category** is a label a task carries; a **category rule** is a standing statement about a share of a
+sub-tree: *the tasks carrying this category under that task always come to 33 % of it.* It is the same
+quantity this record's window edits, said once and then kept.
+
+### A category is an object, not a string on a task
+
+The field that names one is a task cell in Edit Mode: an identity menu and title suggestions. That is the
+whole argument for the id. If a category were the string on each task, two tasks typing the same word would
+carry two labels that look identical, a rename would have to walk the tree, and a rule could only ever govern
+one of the spellings. With an id: the identity row attaches the category that exists, renaming writes one
+string, and the rule names the object.
+
+What the field has NOT got is the Mode selector. A cell's two modes are "rename my task" and "point at
+another task"; naming a category *is* pointing at it, so there is one answer and no choice to offer.
+
+### The measure is the top-most carriers
+
+A category's share of a scope is `Σ chains Π cell shares`, over the chains that reach the **top-most**
+carrying cells under that scope. The walk stops at a carrier, so a carrier's whole sub-tree is counted once
+as its own and a categorized task nested inside another categorized one is not counted twice. Without that
+rule the figure is a sum that can exceed the sub-tree it is a share of, and "33 % of it" stops meaning
+anything.
+
+The downward walk descends into a task's sub-list **only from the cell that list names as its parent**, which
+makes it the exact inverse of the upward climb `occurrenceChains` does. A mirrored sub-list belongs to the
+task and is entered once; a mirror cell that carries the category is still a chain of its own. Re-walking a
+mirror per occurrence would be exponential (CLAUDE.md), and would arrive as a wrong number first.
+
+### The rule is re-established after every intent, not recorded
+
+`SchedulerReducer.reduce` is `reduceIntent` followed by `CategoryRules.settle`. The weights ARE the storage:
+nothing about the adjustment is written anywhere, so the rule and the tree cannot say two different things
+and there is no second mechanism to keep in step (CLAUDE.md § *State*). Undoing to an older tree simply
+settles again.
+
+The solve is the one this record already describes — `setChainsShare`, which `setRelativePriority` is now a
+one-line caller of. So "adjust the priorities evenly" means what it means in the window: one common factor
+over the cells on the chains, the rest of the sub-tree keeping its own proportions.
+
+**Rejected: enforcing at the sites that might disturb a rule.** There is no bounded such set — every tree
+edit, every weight, every paste, every undo, a peer's merge. One pass after every intent is the only
+formulation with no hole in it, and it costs nothing on an account with no rule (an immediate return) or one
+whose rules are already met (a measure, then the same instance back).
+
+**Rejected: a closed form for nested scopes.** A rule at an outer scope scales cells that lie inside an inner
+scope's list, so the two pull on each other. The pass is iterated to a fixed point (deepest scope first) and
+reports a contradiction if it has not landed — an empirical answer, because no closed form exists.
+
+### A contradiction is refused, and the refusal cannot wedge the app
+
+An edit whose result no scaling can satisfy is not applied at all: `settle` returns the state from **before**
+the intent, carrying the reason in `SchedulerState.categoryRuleError` — local-only view state, neither
+persisted nor synced, drawn as the app's one `MessagePopup`.
+
+Two guards make refusing safe:
+
+- **it never refuses what was already broken.** A state can arrive contradictory from a merge, from an older
+  payload, or from an edit an earlier build allowed. If `before` was already unsatisfiable, `after` is let
+  through untouched — otherwise the user could not even undo their way out;
+- **a dormant rule is not a contradiction.** A rule whose scope is gone, or that nothing under the scope
+  carries, sleeps. Deleting the last carrier of a category is an ordinary edit, and refusing it would be the
+  app holding a promise hostage.
+
+The four impossibilities that *can* be named exactly are checked before anything is scaled, so the message
+says which two rules disagree rather than "it did not converge". All four are about rules sharing one scope,
+because that is where the arithmetic is closed (the shares of one sub-tree sum to 1): overlapping categories,
+more than 100 % asked, 100 % asked while something else is under the scope, and less than 100 % asked while
+nothing else is.
+
+### Which half is an Undo/Redo unit
+
+The same split the restrictive periods already make, so there is one rule and not two: **defining, renaming,
+deleting a category and setting a rule are account settings** and record no unit (as `AddPeriodKind` does
+not), while **a task carrying a category is a tree edit** and records one (as the resilience a task is given
+does). The weights a rule moves are in no unit at all — see above.
+
 ## Known deviation from the spec's wording
 
 A chain cell is drawn as a compact chip (title + its sub-list percentage + the pin), not as a full

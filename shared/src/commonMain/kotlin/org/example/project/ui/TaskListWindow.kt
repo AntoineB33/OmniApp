@@ -104,6 +104,8 @@ fun TaskListWindow(
     onSetWeightWindow: (CellListId?) -> Unit = {},
     onSetRelativeWindow: (CellId?) -> Unit = {},
     onSetEditTask: (TaskId?) -> Unit = {},
+    /** PRD §5: opens a category's own edit window — hoisted to the app like [onSetEditTask]. */
+    onSetEditCategory: (org.example.project.scheduler.model.CategoryId?) -> Unit = {},
     onSetDeepCopyCell: (CellId?) -> Unit = {},
     /** PRD §8 "go to task tree": focus the tree and reveal the task's first cell. */
     onGoToTaskTree: (TaskId) -> Unit = {},
@@ -255,6 +257,7 @@ fun TaskListWindow(
                     onSetWeightWindow = onSetWeightWindow,
                     onSetRelativeWindow = onSetRelativeWindow,
                     onSetEditTask = onSetEditTask,
+                    onSetEditCategory = onSetEditCategory,
                     onSetDeepCopyCell = onSetDeepCopyCell,
                     onGoToTaskTree = onGoToTaskTree,
                     // The root's order is the sorter's: nothing may be dropped into it, and its rows are

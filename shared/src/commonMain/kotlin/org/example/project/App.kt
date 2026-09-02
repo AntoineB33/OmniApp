@@ -45,6 +45,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.ScreenBreak
+import org.example.project.scheduler.model.CategoryId
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
@@ -101,6 +102,7 @@ import org.example.project.ui.LateralMenu
 import org.example.project.ui.TaskRelationsWindow
 import org.example.project.ui.CalendarPeriodKind
 import org.example.project.ui.ManualEntryEditWindow
+import org.example.project.ui.CategoryEditWindow
 import org.example.project.ui.MessagePopup
 import org.example.project.ui.PeriodEditWindow
 import org.example.project.ui.PlacedRecord
@@ -365,6 +367,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The period edit window's subject: one KIND of restrictive period. Opened from a resilience
         // row's pencil in the task edit window; a sort-2 pop-up like that one, so opening it dismisses it.
         var editPeriodKind by remember { mutableStateOf<String?>(null) }
+        // PRD §5: the category whose own window is open — a sort-2 pop-up like the task and period windows,
+        // hoisted here so it draws on the top layer above every floating window.
+        var editCategoryId by remember { mutableStateOf<CategoryId?>(null) }
         var deepCopyCellId by remember { mutableStateOf<CellId?>(null) }
         // The one message the app has to say back to a gesture it could not carry out — today only PRD §8's
         // "go to task tree" on a panel whose task no cell holds. A sort-2 pop-up like the two above.
@@ -1258,6 +1263,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     popupFromDefaultSubtree = false
                                     editTaskId = it
                                 },
+                                onSetEditCategory = {
+                                    popupFromDefaultSubtree = false
+                                    editCategoryId = it
+                                },
                                 onSetDeepCopyCell = {
                                     popupFromDefaultSubtree = false
                                     deepCopyCellId = it
@@ -1375,6 +1384,38 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     onDismiss = { editPeriodKind = null },
                                 )
                             }
+                        }
+                    }
+
+                    // PRD §5: the CATEGORY edit window — one category, its rules and everything carrying
+                    // it. The task cell's categories drop-down opens it from its ✎, exactly as the task
+                    // edit window's resilience row opens the period's. Same top layer and same sort.
+                    editCategoryId?.let { categoryId ->
+                        if (popupState.categoryById(categoryId) == null) {
+                            // Deleted under it (from here, from a peer's sync, or by an undo).
+                            editCategoryId = null
+                        } else {
+                            Box(Modifier.fillMaxSize().zIndex(100f)) {
+                                CategoryEditWindow(
+                                    state = popupState,
+                                    categoryId = categoryId,
+                                    onIntent = popupDispatch,
+                                    onDismiss = { editCategoryId = null },
+                                )
+                            }
+                        }
+                    }
+
+                    // PRD §5: the app's answer to an edit it REFUSED because it would have broken a category
+                    // rule. The same one notice the calendar uses, raised from the state rather than from a
+                    // gesture handler — the refusal happens in the reducer, which is the only place that can
+                    // tell that the edit could not be scaled back onto the rules.
+                    schedulerState.categoryRuleError?.let { message ->
+                        Box(Modifier.fillMaxSize().zIndex(100f)) {
+                            MessagePopup(
+                                message = message,
+                                onDismiss = { vm.dispatch(SchedulerIntent.DismissCategoryRuleError) },
+                            )
                         }
                     }
 
@@ -1827,6 +1868,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 popupFromDefaultSubtree = false
                                 editTaskId = it
                             },
+                            onSetEditCategory = {
+                                popupFromDefaultSubtree = false
+                                editCategoryId = it
+                            },
                             onSetDeepCopyCell = {
                                 popupFromDefaultSubtree = false
                                 deepCopyCellId = it
@@ -1897,6 +1942,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onSetEditTask = {
                                 popupFromDefaultSubtree = true
                                 editTaskId = it
+                            },
+                            onSetEditCategory = {
+                                popupFromDefaultSubtree = true
+                                editCategoryId = it
                             },
                             onSetDeepCopyCell = {
                                 popupFromDefaultSubtree = true

@@ -61,9 +61,9 @@ re-derives something mark the state dirty or trigger a sync push.
 
 | Class | Contents | Rule |
 | --- | --- | --- |
-| **Authoritative** | task tree (task **resilience** included), the account's **period kinds**, named task trees, the default sub-tree + its switch, user-authored/pinned panels and the periods the app conducted, chores/reminders, sleep schedule, alarms, timers (**whether one is running** included), settings, the system-wide chord bindings, the **task relations** the user kept or struck off, Undo/Redo history units, manual record edits | persist + sync |
+| **Authoritative** | task tree (task **resilience** included), the account's **period kinds**, named task trees, the default sub-tree + its switch, user-authored/pinned panels and the periods the app conducted, chores/reminders, sleep schedule, alarms, timers (**whether one is running** included), settings, the system-wide chord bindings, the **task relations** the user kept or struck off, the account's **categories** and their **rules**, Undo/Redo history units, manual record edits | persist + sync |
 | **Derived** | auto/screen-break/sleep panels, task colours, a running timer's remaining time, the dynamic periods' placement (the recurrence bars read their anchors out of the timeline), records the advance banks | persisted locally, **stripped from the wire**, never trigger a push on their own |
-| **Local-only view state** | focused window, tree selection, the "All tasks" window's own expansion/selection/edit session, `showScreenBreaks`/`showReminders`, WindowNav/Selection history, window placement, OS-sleep scan checkpoint | persist locally, **never sync** |
+| **Local-only view state** | focused window, tree selection, the "All tasks" window's own expansion/selection/edit session, `showScreenBreaks`/`showReminders`, WindowNav/Selection history, window placement, OS-sleep scan checkpoint, the refused-edit notice (`categoryRuleError`, not even persisted) | persist locally, **never sync** |
 
 - Local view state is stripped from the fingerprint by `withLocalViewStateNeutralized()` and carried across a
   pull by `withLocalViewStateFrom`.
@@ -604,8 +604,8 @@ pop-up is about.
   focus**.
 
 **The test is whether it could have several instances open at once.** A pop-up about ONE object — a task,
-a cell, a sub-list, a calendar block, a period, a *kind* of period, a reminder, a history unit, a tree entry —
-is sort 2,
+a cell, a sub-list, a calendar block, a period, a *kind* of period, a **category**, a reminder, a history unit,
+a tree entry — is sort 2,
 because "the edit window of task A" and "the edit window of task B" are two different windows and the user
 only ever means the one they just asked for. A pop-up there is exactly one of is sort 1. So sort 1 is
 precisely `windowStack` (Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, TaskRelations,
@@ -692,6 +692,61 @@ open window — so `SchedulerState.taskRelations` is keyed by the deliberately s
   value** — three flags that are one statement — and **not** an Undo/Redo unit: filing a pair changes no
   priority, exactly like a pin.
 
+### Categories, and the rule that HOLDS a share
+
+→ ADR 0004, PRD §5. `CategoryRules` is the whole of the rule; `ui/TaskCategoryField.kt` is the task cell's
+field and `ui/CategoryEditWindow.kt` the category's own window.
+
+A **category** is a label a task carries. A **category rule** is a standing statement about a share of a
+sub-tree — *the tasks carrying this category under that task always come to 33 % of it* — which is the
+relative-priority window's number said once and then **kept**.
+
+- **A category is an OBJECT with an id, never a string on a task.** That is what makes the field a task cell:
+  typing or picking a name the account already holds attaches **that** category rather than minting a second
+  one under the same spelling, a rename writes one string and reaches every task at once, and a rule can name
+  the object. `Task.categoryIds` holds ids only; the titles and the rules are `SchedulerState.categories`. An
+  id naming a category the account no longer holds is **ignored**, which is what lets the merge resolve the
+  categories and the tasks wearing them independently.
+- **The "add" option is a task cell in Edit Mode, minus the Mode selector** — the same `EditModeMenuBlock`,
+  with the account's categories as the **identity** rows and their titles as the **suggestions**. There is no
+  Mode selector because neither of its questions exists here: naming a category IS pointing at it. The row's
+  **bin** is about the TASK; the **✎** opens the category's own window, which is the one place a category is
+  deleted — exactly the pair the resilience row makes with the period edit window, for the same reason.
+- **The measure is the TOP-MOST carriers** (`chainsFor`): a carrier's whole sub-tree is its own, so a
+  categorized task nested inside another is not counted twice — otherwise the figure is a sum that can exceed
+  the sub-tree it is a share of. The downward walk descends into a task's sub-list **only from the cell that
+  list names as its parent**, which makes it the exact inverse of `occurrenceChains`' upward climb; a mirrored
+  list is entered once (re-walking it per occurrence is the exponential walk, arriving as a wrong number
+  first), and a mirror cell that carries the category is still a chain of its own.
+- **The rule is RE-ESTABLISHED after every intent, never recorded.** `reduce` is `reduceIntent` followed by
+  `CategoryRules.settle`; the weights ARE the storage, so the rule and the tree cannot say two different
+  things and there is no second mechanism to keep in step. Do not "fix" this by enforcing at the sites that
+  might disturb a rule — there is no bounded such set. It costs nothing where there is no rule (an immediate
+  return) or where every rule is met (a measure, then the same instance back).
+- **The solve is `RelativePriorityDomain.setChainsShare`, which `setRelativePriority` is now a caller of.** So
+  "adjust the priorities evenly" means here what it means in the window: one common factor over the cells on
+  the chains, the rest of the sub-tree keeping its own proportions. Rules at nested scopes pull on each other,
+  so the pass is iterated to a fixed point (deepest scope first) — there is no closed form.
+- **A contradiction is REFUSED, and the refusal cannot wedge the app.** `settle` returns the state from
+  *before* the intent with the reason in `categoryRuleError` (local-only view state, not even persisted,
+  drawn as the app's one `MessagePopup`). Two guards: it **never refuses what was already broken** (a merge,
+  an older payload, an earlier build's edit — else the user could not undo their way out), and a **dormant**
+  rule is not a contradiction (the scope is gone, or nothing under it carries the category; deleting the last
+  carrier is an ordinary edit). The four namable impossibilities are checked before anything is scaled, and
+  all four are about rules sharing ONE scope, because that is where the arithmetic is closed.
+- **At most one rule per scope.** `SetCategoryRule` replaces; two statements about one sub-tree are the
+  plainest contradiction there is, so the window never lets one be made.
+- **Which half is an Undo/Redo unit is the restrictive periods' split, not a new one**: defining, renaming,
+  deleting a category and setting a rule are account settings and record **no** unit (as `AddPeriodKind` does
+  not); a task **carrying** a category is a tree edit and records one (as its resilience does). The weights a
+  rule moves are in no unit at all.
+- **The two projections reduce through `reduceIntent`, not `reduce`.** The "All tasks" window and the §4
+  template are re-rooted trees, so a rule solved against one of them would be solved against the wrong root
+  list; the settle they need is the one the outer `reduce` runs on the folded-back live state.
+- Authoritative + synced, merged **per category as a whole value** (a title and its rules are one statement),
+  with `categoryIds` merged as a membership list like `childTaskIds`. Not in `schedulingSignature`: a rule
+  only ever acts through the weights, which are already in it.
+
 ### The task-tree timeline
 
 - A dated tree is a **keyframe**; between two, the scheduler follows a linear blend, not the tree on screen.
@@ -762,6 +817,9 @@ writes it, `parseTreeText` reads it, and nothing else parses a clipboard.
   put a form-feed and a `\n`-escaped note in the user's clipboard.
 - **A copy carries everything the cell's Edit window holds** (the screen switch, the schedule unit, the text)
   plus its minimum time and its weight row, so Ctrl+V restores the task and not just its title.
+- **Its CATEGORIES travel by NAME** (`- category: <title>`, one line each so a title may hold a comma). A
+  paste therefore lands on the category of that name where the account has one and mints it where it has not
+  — the same create-or-attach the row's own field does, never a second rule about what a category name means.
 - **The priority-weight TABLE of every sub-list the copy walks travels with it** — the parent node carries the
   sub-list's weight columns, each child carries its own value row. A copy that restored the rows without the
   header would re-normalize every percentage at the destination.

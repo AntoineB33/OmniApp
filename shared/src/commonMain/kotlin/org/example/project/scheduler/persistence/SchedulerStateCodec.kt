@@ -15,6 +15,9 @@ import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.TimerEntry
+import org.example.project.scheduler.model.Category
+import org.example.project.scheduler.model.CategoryId
+import org.example.project.scheduler.model.CategoryRule
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
@@ -255,6 +258,7 @@ object SchedulerStateCodec {
                         onScreen = it.onScreen,
                         doableDuringBreak = false,
                         resilience = it.resilience,
+                        categoryIds = it.categoryIds.map(CategoryId::value),
                     )
                 },
             expanded = expanded.map(CellId::value),
@@ -368,6 +372,22 @@ object SchedulerStateCodec {
             shortcutBindings = shortcutBindings.toPersistedRows(),
             // `side-dev/README.md`: the kinds of restrictive period this account has defined.
             periodKinds = periodKinds,
+            // PRD §5: the account's categories and the rules they impose. The tasks carrying each one are
+            // written on the TASKS (`categoryIds`), so nothing here is a second copy of that; what lives
+            // here is only what a category IS. The rules are sorted by scope so the encoded payload — and
+            // the sync fingerprint with it — cannot depend on the order two devices happened to add them in.
+            categories =
+                categories.map { category ->
+                    PersistedCategory(
+                        id = category.id.value,
+                        title = category.title,
+                        rules =
+                            category.rules
+                                .sortedBy { it.scopeTaskId.value }
+                                .map { PersistedCategoryRule(it.scopeTaskId.value, it.share) },
+                    )
+                },
+            nextCategoryCounter = nextCategoryCounter,
             focusedWindow = focusedWindow.name,
             histories = if (withHistories) histories.toPersisted() else null,
             sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
@@ -646,6 +666,7 @@ object SchedulerStateCodec {
                         onScreen = it.onScreen,
                         doableDuringBreak = false,
                         resilience = it.resilience,
+                        categoryIds = it.categoryIds.map(CategoryId::value),
                     )
                 },
             nextTaskCounter = nextTaskCounter,
@@ -684,6 +705,7 @@ object SchedulerStateCodec {
                         scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
                         text = p.text,
                         resilience = decodeResilience(p),
+                        categoryIds = p.categoryIds.map(::CategoryId).distinct(),
                     )
             }
         val cells =
@@ -854,6 +876,16 @@ object SchedulerStateCodec {
             // defined no kind has none.
             periodKinds =
                 periodKinds.map(PeriodKinds::normalize).filter(PeriodKinds::isUserDefined).distinct(),
+            // PRD §5: a blank-titled category is dropped (a category is named by its title; a blank one
+            // could never be typed or picked), duplicate ids collapse, and a rule's share is healed into
+            // `[0, 1]` — decode heals what an older or hand-edited payload holds rather than surfacing it.
+            // A second rule about one scope is dropped too: at most one rule per scope is the invariant
+            // `SetCategoryRule` keeps, and two would be the plainest contradiction there is.
+            categories = categories.toCategories(),
+            // Never lowered: an id already handed out must not be minted again, so the counter clears
+            // whatever the payload's own categories used even if the field itself is missing or stale.
+            nextCategoryCounter =
+                maxOf(nextCategoryCounter, categories.maxOfOrNull { categoryIdSuffix(it.id) + 1 } ?: 0),
             focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),
             histories = histories?.toHistories() ?: SchedulerHistories(),
             sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
@@ -1000,6 +1032,7 @@ object SchedulerStateCodec {
                         scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
                         text = p.text,
                         resilience = decodeResilience(p),
+                        categoryIds = p.categoryIds.map(::CategoryId).distinct(),
                     )
             }
         val cells =
@@ -1131,6 +1164,10 @@ private data class PersistedState(
     val shortcutBindings: List<PersistedShortcutBinding> = emptyList(),
     // `side-dev/README.md` § Restrictive Period: the account's own period kinds; absent ⇒ none.
     val periodKinds: List<String> = emptyList(),
+    // PRD §5: a payload written before categories existed has neither field, which decodes to an account
+    // with no category at all — exactly what it had.
+    val categories: List<PersistedCategory> = emptyList(),
+    val nextCategoryCounter: Int = 0,
     // PRD §7: the focused window; a missing value decodes to the task tree (payloads written before window
     // focus was persisted).
     val focusedWindow: String = "Tree",
@@ -1597,6 +1634,45 @@ private fun decodeResilience(p: PersistedTask): Map<String, Double> {
     return out
 }
 
+/**
+ * PRD §5: the account's categories as loaded. Everything an older or hand-edited payload could hold that the
+ * current invariants forbid is healed here rather than surfaced — a blank title (a category is named by its
+ * title, so a blank one is unreachable from every field that picks one), a duplicate id, a share outside
+ * `[0, 1]`, and a second rule about one scope (at most one per scope is what the reducer keeps).
+ */
+private fun List<PersistedCategory>.toCategories(): List<Category> {
+    val seen = HashSet<String>()
+    val out = mutableListOf<Category>()
+    for (p in this) {
+        if (p.title.isBlank()) continue
+        if (!seen.add(p.id)) continue
+        val scopes = HashSet<String>()
+        val rules = mutableListOf<CategoryRule>()
+        for (r in p.rules) {
+            if (!scopes.add(r.scopeTaskId)) continue
+            rules += CategoryRule(TaskId(r.scopeTaskId), r.share.coerceIn(0.0, 1.0))
+        }
+        out += Category(id = CategoryId(p.id), title = p.title, rules = rules)
+    }
+    return out
+}
+
+/** The `{n}` of a `category/user/{n}`, so the counter can be walked past ids the payload already used. */
+private fun categoryIdSuffix(id: String): Int = id.substringAfterLast('/').toIntOrNull() ?: -1
+
+@Serializable
+private data class PersistedCategory(
+    val id: String,
+    val title: String,
+    val rules: List<PersistedCategoryRule> = emptyList(),
+)
+
+@Serializable
+private data class PersistedCategoryRule(
+    val scopeTaskId: String,
+    val share: Double,
+)
+
 @Serializable
 private data class PersistedTask(
     val id: String,
@@ -1620,6 +1696,9 @@ private data class PersistedTask(
     // `side-dev/README.md` § Restrictive Period: the task's resilience per period KIND, overrides only.
     // Absent (every payload written before kinds existed) ⇒ migrated from [onScreen] on load.
     val resilience: Map<String, Double>? = null,
+    // PRD §5: the categories the task carries, by id. Absent (every payload written before categories
+    // existed) ⇒ none, which is what a task that has never been given one holds.
+    val categoryIds: List<String> = emptyList(),
 )
 
 @Serializable

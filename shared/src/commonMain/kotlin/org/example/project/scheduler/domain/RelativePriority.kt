@@ -189,6 +189,10 @@ object RelativePriorityDomain {
     fun relativePriority(state: SchedulerState, taskId: TaskId, relativeTo: TaskId): Double =
         occurrenceChains(state, taskId, relativeTo).sumOf { chain -> chainProduct(state, chain) }
 
+    /** The combined share a set of chains holds of their common ancestor: `Σ chains Π cells`. */
+    fun chainsProduct(state: SchedulerState, chains: List<List<CellId>>): Double =
+        chains.sumOf { chain -> chainProduct(state, chain) }
+
     private fun chainProduct(state: SchedulerState, chain: List<CellId>): Double {
         var product = 1.0
         for (cellId in chain) product *= cellShare(state, cellId)
@@ -220,8 +224,29 @@ object RelativePriorityDomain {
         relativeTo: TaskId,
         target: Double,
         pinned: Set<CellId>,
+    ): SchedulerState = setChainsShare(state, occurrenceChains(state, taskId, relativeTo), target, pinned)
+
+    /**
+     * The solve above, over **any** set of chains rather than one task's occurrences: give the chains
+     * `[chains]` — each a list of cells running from just under some common ancestor down to the cell whose
+     * whole sub-tree is being measured — a combined share of [target] of that ancestor, by scaling every cell
+     * on them by one common factor (except those in [pinned], which hold their percentage).
+     *
+     * A chain's contribution is the product of its cells' shares, so the combined share is
+     * `Σ chains Π cells`, and scaling weights never changes which cells are on a chain — which is why the
+     * chains can be measured once, here, instead of re-derived per bisection step.
+     *
+     * PRD §5's relative-priority window is one caller; the other is a **category rule**
+     * ([org.example.project.scheduler.domain.CategoryRules]), whose chains end at the top-most cells under
+     * the scope that carry the category. The two ask exactly the same question of the tree — *this much of
+     * that sub-tree, and the rest shared out as it was* — so they must not be two solves.
+     */
+    fun setChainsShare(
+        state: SchedulerState,
+        chains: List<List<CellId>>,
+        target: Double,
+        pinned: Set<CellId> = emptySet(),
     ): SchedulerState {
-        val chains = occurrenceChains(state, taskId, relativeTo)
         if (chains.isEmpty()) return state
         // A cell shared by two chains is scaled once; a cell with no share at all cannot be scaled into one.
         val onChains = chains.flatten().distinct().filter { cellShare(state, it) > 0.0 }
@@ -247,7 +272,7 @@ object RelativePriorityDomain {
             return result
         }
 
-        fun valueAt(factor: Double): Double = relativePriority(scaled(factor), taskId, relativeTo)
+        fun valueAt(factor: Double): Double = chainsProduct(scaled(factor), chains)
 
         if (abs(valueAt(1.0) - target) <= EPSILON) return state
         // Bracket the factor: 0 shrinks every movable cell as far as it goes, and the ceiling is grown

@@ -2,6 +2,7 @@ package org.example.project.scheduler.sync
 
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellList
@@ -99,6 +100,15 @@ object SnapshotMerge {
             mergeKeyedList(base.taskTrees, local.taskTrees, remote.taskTrees, TaskTreeEntry::id) { b, l, r ->
                 pick(b, l, r)
             }
+        // PRD §5: the account's categories merge PER CATEGORY — defining one on the desktop while the phone
+        // defines another keeps both — but one category resolves as a WHOLE value. Its title and its rules
+        // are one statement about one label ("this is what it is called and this is what it is worth"), and
+        // interleaving them could pair a rule with a scope the other side's edit removed. Deleting a category
+        // on one side while the other only renamed it therefore keeps it, by the ordinary delete-vs-edit rule.
+        val categories =
+            mergeKeyedList(base.categories, local.categories, remote.categories, Category::id) { b, l, r ->
+                pick(b, l, r)
+            }
 
         val merged =
             local.copy(
@@ -117,6 +127,10 @@ object SnapshotMerge {
                 nextCellCounter = maxOf(local.nextCellCounter, remote.nextCellCounter),
                 nextPanelCounter = maxOf(local.nextPanelCounter, remote.nextPanelCounter),
                 nextTaskTreeCounter = maxOf(local.nextTaskTreeCounter, remote.nextTaskTreeCounter),
+                // Ids are never reused, here for the same reason as above: a category is named by id on every
+                // task carrying it, so re-minting one would silently attach a new label to old tasks.
+                nextCategoryCounter = maxOf(local.nextCategoryCounter, remote.nextCategoryCounter),
+                categories = categories,
                 taskTrees = taskTrees,
                 // Which tree is live goes with the live tree itself (which the remote wins on conflict), so
                 // the two can never end up naming different trees.
@@ -226,6 +240,10 @@ object SnapshotMerge {
             // the phone while giving it one to a kind the desktop just defined must keep both. A kind absent
             // from a side is the DEFAULT there, not "unchanged", so a removal on one side is a real edit.
             resilience = mergeResilience(base?.resilience, local.resilience, remote.resilience),
+            // PRD §5: the categories a task carries are a membership list, so they merge like `childTaskIds`
+            // — adding one on the phone while the desktop adds another keeps both, and a removal on one side
+            // is a removal. The category OBJECTS merge separately, above; this is only which tasks wear them.
+            categoryIds = mergeOrdered(base?.categoryIds, local.categoryIds, remote.categoryIds),
         )
 
     /**
