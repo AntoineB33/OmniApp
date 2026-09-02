@@ -11,6 +11,41 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "All tasks" can be sorted by similar titles — 2026-09-02
+
+PRD §7. `shared` (`scheduler/domain/TitleSimilarity.kt`, `SchedulerDomain.taskListEntries`,
+`ui/TaskListWindow.kt`) + `docs/PRD_TaskScheduler.md` + `CLAUDE.md`. Client rebuild only — no Supabase deploy,
+no migration, nothing persisted or synced (the sorter stays Compose-only state).
+
+Asked for: *"In the all tasks window, add the configuration to sort by number of tasks with similar titles.
+The similarity would be a score. If for all task x, the maximum score task a has is greater than the maximum
+for task b, then task a is placed before task b. If the maximums are the same, then they are sorted by the
+number of tasks x that share a similar title with this maximum score."*
+
+- **A third sorter chip, "Similar titles".** The figure is a fact about the *list*, not about a task: every
+  pair of listed titles is scored, and each task carries the **best** score it reaches against any other task
+  plus **how many other tasks it reaches that same best against**. The order is those two, in that order —
+  which is exactly the spec's "greater maximum first, then the number of tasks sharing that maximum". Both
+  follow the direction toggle; the title-then-id fallback beneath them still does not, so flipping the arrow
+  never re-shuffles a block that ties on both.
+- **The score is Sørensen–Dice over character bigrams**, on the case-folded, alphanumerics-only,
+  single-spaced title, expressed as a **whole percent**. Bigrams because the duplicates this is for are
+  near-*spellings* (`Write report` / `Write reports` = 96 %), which a word-set measure calls strangers; Dice
+  rather than an edit distance because it is symmetric, needs no matrix and does not care about word order.
+  The quantization is load-bearing rather than cosmetic: "the same maximum" has to be a real answer, and two
+  `Double` ratios alike in exactly the same way would still differ at the seventeenth digit, so the tie-break
+  would never have fired.
+- **A zero is "not alike", never a tie at zero** — `matches` is 0 exactly when `best` is 0, or an account of
+  strangers would have every task reporting a match against every other one.
+- **Measured only when it is the sort asked for.** `TaskListEntry.similarity` is `null` under the other two,
+  because it is a pass over every pair of titles and `taskListEntries` is also what `periodKindTaskRows`
+  walks (ADR 0009). `TitleSimilarity.of` fills both sides of each pair from one measurement.
+- **The row prints both halves** (`≈96 % (2)`), beside the occurrence count: percentages alone would leave a
+  block of equally-alike tasks looking arbitrarily ordered when the bracket is what ranks them.
+
+`TitleSimilaritySortTest` pins the metric (normalization, symmetry, the short-title and no-alphanumeric edge
+cases) and the two-deep order in both directions.
+
 ### The History window lists its sources, and a row says what it is — 2026-09-02
 
 PRD §6/§7. `shared` (`ui/CalendarUi.kt`) + `docs/PRD_TaskScheduler.md`. Client rebuild only — no Supabase

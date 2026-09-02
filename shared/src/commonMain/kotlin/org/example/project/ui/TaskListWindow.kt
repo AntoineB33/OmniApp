@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.domain.TitleSimilarity
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.TaskId
@@ -51,9 +52,10 @@ private val SORTER_LABEL_WIDTH = 60.dp
 /**
  * **All tasks**: a floating window listing every task the tree holds, flat, under a sorter configuration.
  *
- * The tree answers "how is my work broken down"; this window answers the two questions the tree's *shape*
- * hides — which tasks come back most often across the whole tree (their number of occurrences, mirrors
- * included), and which ones actually carry the priority. Both figures are read straight off the tree on
+ * The tree answers "how is my work broken down"; this window answers the questions the tree's *shape* hides —
+ * which tasks come back most often across the whole tree (their number of occurrences, mirrors included),
+ * which ones actually carry the priority, and **which ones the user has written down twice** under two
+ * spellings of one name ([TitleSimilarity]). Every figure is read straight off the tree on
  * screen ([SchedulerDomain.taskListEntries]), so a row's percentage is the same number that task shows in
  * the tree.
  *
@@ -114,8 +116,9 @@ fun TaskListWindow(
 ) {
     var offset by remember { mutableStateOf(initialOffset) }
 
-    // The two figures and the order they imply. Keyed on what they actually read rather than on the whole
-    // state, which is replaced by every engine tick (records live on the tasks) — ADR 0009.
+    // The figures and the order they imply. Keyed on what they actually read rather than on the whole
+    // state, which is replaced by every engine tick (records live on the tasks) — ADR 0009. `sort` is a key
+    // because it decides which figures are measured at all, not only how they are ordered.
     val entries =
         remember(state.cells, state.lists, state.tasks, sort, descending) {
             SchedulerDomain.taskListEntries(state, sort, descending)
@@ -146,6 +149,10 @@ fun TaskListWindow(
             displayedOrder.mapNotNull { firstOccurrences[it]?.cellId }
         }
     val occurrenceCounts = remember(entries) { entries.associate { it.taskId to it.occurrences } }
+    // Only populated under the similarity sort — the domain measures it only when that sort asks, so a row
+    // shows the figure exactly while it is the one ordering the list.
+    val similarities =
+        remember(entries) { entries.mapNotNull { e -> e.similarity?.let { e.taskId to it } }.toMap() }
 
     val projected =
         remember(
@@ -258,12 +265,12 @@ fun TaskListWindow(
                     // ordered by the sorter.
                     colorSource = state,
                     rowTrailing = { cellId ->
-                        // The window's own second figure: how many cells point at this row's task, mirrors
-                        // included — exactly the number the flat list used to print in its "Occurrences"
-                        // column, and the one the sorter can order by.
-                        projected.cells[cellId]?.taskId?.let { occurrenceCounts[it] }?.let { count ->
-                            TaskOccurrenceCount(count)
-                        }
+                        // The window's own figures, in the order the sorter offers them: how alike this
+                        // row's title is to another task's (only while that is the sort — see `similarities`)
+                        // and how many cells point at this row's task, mirrors included.
+                        val taskId = projected.cells[cellId]?.taskId
+                        taskId?.let { similarities[it] }?.let { TaskSimilarityFigure(it) }
+                        taskId?.let { occurrenceCounts[it] }?.let { TaskOccurrenceCount(it) }
                     },
                 )
             }
@@ -301,6 +308,28 @@ private fun SchedulerIntent.forTaskList(rootCells: List<CellId>): SchedulerInten
 private fun TaskOccurrenceCount(count: Int) {
     Text(
         text = "×$count",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 8.dp),
+    )
+}
+
+/**
+ * The "similar titles" figure, drawn at the end of a row — the best score this task's title reaches against
+ * any other listed task, and, in brackets, how many tasks it reaches it against.
+ *
+ * Both halves are printed because both order the list: percentages alone would leave a block of equally-alike
+ * tasks looking arbitrarily ordered, when in fact the bracket is what ranks them. A task nothing is alike to
+ * prints its `0 %` and no bracket — there is no task to count.
+ */
+@Composable
+private fun TaskSimilarityFigure(similarity: TitleSimilarity) {
+    Text(
+        text = if (similarity.matches == 0) {
+            "≈${similarity.best}%"
+        } else {
+            "≈${similarity.best}% (${similarity.matches})"
+        },
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(start = 8.dp),
@@ -347,6 +376,12 @@ private fun TaskListSorterBar(
                 label = "Priority %",
                 selected = sort == SchedulerDomain.TaskListSort.Priority,
                 onClick = { onSortChange(SchedulerDomain.TaskListSort.Priority) },
+            )
+            Spacer(Modifier.width(8.dp))
+            SorterChip(
+                label = "Similar titles",
+                selected = sort == SchedulerDomain.TaskListSort.Similarity,
+                onClick = { onSortChange(SchedulerDomain.TaskListSort.Similarity) },
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {

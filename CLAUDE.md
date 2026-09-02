@@ -816,6 +816,34 @@ draws them **as task cells**.
 - **The sorter is Compose-only state**, like the calendar's zoom and the find bar: an ordering is a way of
   looking at the tree, never a fact about it. Not persisted, not synced, no history unit.
 
+#### "Similar titles" is a figure about the LIST, not about a task
+
+→ PRD §7, `TitleSimilarity`. The third sorter figure answers *what have I written down twice?* — so what
+matters about a task is its **single closest** neighbour, never its average distance from the tree.
+
+- **The order is two figures deep, and the second is part of the FIGURE, not of the alphabetical fallback**:
+  the **best** score a task reaches against any other listed task leads, and tasks sharing one best score are
+  ranked by **how many other tasks they reach it against**. Both follow the direction toggle; the
+  title-then-id fallback below them still does not.
+- **The score is a whole percent, and that is load-bearing.** The order is defined by "the same maximum", and
+  a Dice ratio is a `Double` — two pairs alike in exactly the same way would compare unequal at the
+  seventeenth digit, so the tie-break would never fire and `matches` would always be 1. Quantizing is what
+  makes "the same maximum" a real answer.
+- **The metric is Sørensen–Dice over character bigrams** of the case-folded, alphanumerics-only, single-spaced
+  title. Bigrams because the near-duplicates this is for are near-*spellings* (`Write report` / `Write
+  reports`), which a word-set measure calls strangers; Dice rather than an edit distance because it is
+  symmetric, needs no matrix, and does not care about the word order two writings of one task rarely share.
+  Titles that normalize to the same non-empty text score `PERFECT`; one with no bigram left matches only its
+  own twin, and one with nothing alphanumeric at all matches nothing.
+- **A zero is "not alike", never a tie at zero.** `matches` is 0 exactly when `best` is 0 — otherwise every
+  task in an account of strangers would report a match against every other one.
+- **It is measured ONLY when it is the sort asked for** (`TaskListEntry.similarity` is `null` otherwise). It
+  is a pass over every PAIR of titles, and `taskListEntries` is also what `periodKindTaskRows` walks — ADR
+  0009: nothing that size belongs on a path something else gets for free. `TitleSimilarity.of` fills both
+  sides of each pair from one measurement, because the relation is symmetric.
+- **The row prints both halves** (`≈96 % (2)`), because both order the list: percentages alone would leave a
+  block of equally-alike tasks looking arbitrarily ordered when the bracket is exactly what ranks them.
+
 #### The rows ARE task cells — the THIRD drawing of the tree
 
 **The window is the task tree — the same code, not the same look**, exactly as the default sub-tree window is

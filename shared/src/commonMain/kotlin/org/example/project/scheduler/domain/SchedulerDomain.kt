@@ -622,9 +622,9 @@ object SchedulerDomain {
     // ----- The task list ("All tasks") ---------------------------------------------------------
 
     /**
-     * PRD §7 lateral menu ("All tasks"): the two figures that window may order its rows by.
+     * PRD §7 lateral menu ("All tasks"): the three figures that window may order its rows by.
      *
-     * Both are readouts of the tree the user is editing, never of the scheduler's blended view — see
+     * All three are readouts of the tree the user is editing, never of the scheduler's blended view — see
      * [TaskListEntry].
      */
     enum class TaskListSort {
@@ -633,6 +633,14 @@ object SchedulerDomain {
 
         /** The task's absolute priority share — the same number its rows show in the tree. */
         Priority,
+
+        /**
+         * How alike the task's title is to another task's — [TitleSimilarity], the answer to "what have I
+         * written down twice?". Unlike the two above it is not a property of the task at all but of the
+         * task *against the rest of the list*, which is why it is the one figure that is computed only when
+         * it is asked for.
+         */
+        Similarity,
     }
 
     /**
@@ -647,6 +655,11 @@ object SchedulerDomain {
         val title: String,
         val occurrences: Int,
         val priority: Double,
+        /**
+         * How alike this title is to the other listed tasks' — `null` unless [TaskListSort.Similarity] asked
+         * for it, since it costs a pass over every pair of tasks and nothing else on this path reads it.
+         */
+        val similarity: TitleSimilarity? = null,
     )
 
     /**
@@ -660,7 +673,14 @@ object SchedulerDomain {
      * parent* — titled, but with no cell pointing at it — is not listed either, since it is not in the tree.
      *
      * Ties fall back to the title and then the id so the order is total: without that, the many tasks
-     * sharing 0 % (or one occurrence) would be free to shuffle between recompositions.
+     * sharing 0 % (or one occurrence) would be free to shuffle between recompositions. That final fallback
+     * is deliberately **not** reversed with [descending], so flipping the direction never re-shuffles a
+     * block sharing one figure.
+     *
+     * [TaskListSort.Similarity] is the one figure that is a fact about the *list* rather than about a task,
+     * so it is measured here and only here — and only when it is the sort asked for, because it costs a pass
+     * over every pair of titles (ADR 0009). Its order is the PRD's: the **best** score first, and among
+     * tasks sharing one best score, the one that **reaches it against the most other tasks**.
      */
     fun taskListEntries(
         state: SchedulerState,
@@ -674,12 +694,16 @@ object SchedulerDomain {
             if (!isPopulatedCell(state, cell.id)) continue
             counts[taskId] = (counts[taskId] ?: 0) + 1
         }
+        val titles = counts.keys.associateWith { state.tasks[it]?.title.orEmpty() }
+        val similarities =
+            if (sort == TaskListSort.Similarity) TitleSimilarity.of(titles) else emptyMap()
         val entries = counts.map { (taskId, count) ->
             TaskListEntry(
                 taskId = taskId,
-                title = state.tasks[taskId]?.title.orEmpty(),
+                title = titles[taskId].orEmpty(),
                 occurrences = count,
                 priority = priorities[taskId] ?: 0.0,
+                similarity = similarities[taskId],
             )
         }
         val byFigure = when (sort) {
@@ -689,6 +713,17 @@ object SchedulerDomain {
             TaskListSort.Priority ->
                 if (descending) compareByDescending<TaskListEntry> { it.priority }
                 else compareBy { it.priority }
+            // Two figures, in the PRD's order: the best score, then how many tasks reach that same best.
+            // Both follow the direction toggle — the tie-break is part of the figure, not part of the
+            // alphabetical fallback below.
+            TaskListSort.Similarity ->
+                if (descending) {
+                    compareByDescending<TaskListEntry> { it.similarity?.best ?: 0 }
+                        .thenByDescending { it.similarity?.matches ?: 0 }
+                } else {
+                    compareBy<TaskListEntry> { it.similarity?.best ?: 0 }
+                        .thenBy { it.similarity?.matches ?: 0 }
+                }
         }
         return entries.sortedWith(
             byFigure.thenBy { it.title.lowercase() }.thenBy { it.taskId.value },
