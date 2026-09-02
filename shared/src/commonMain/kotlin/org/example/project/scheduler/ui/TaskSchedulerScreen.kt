@@ -154,6 +154,7 @@ import org.example.project.ui.taskSheetGuideLines
 import org.example.project.ui.isModifierKey
 import org.example.project.ui.printableChar
 import org.example.project.ui.EditMenuItem
+import org.example.project.ui.EditMenuRowActions
 import org.example.project.ui.EditModeMenuBlock
 import org.example.project.ui.EditModeOption
 import kotlinx.coroutines.withTimeoutOrNull
@@ -813,6 +814,14 @@ private fun TaskTreeSelector(
     }
 }
 
+/**
+ * PRD §4 Edit Mode: the menus under a task cell being edited — the **Mode** selector, the **Tasks** id menu
+ * and the **Title suggestions** menu, in the one order [EditModeMenuBlock] fixes for every naming field.
+ *
+ * The id rows carry one thing the other two menus do not: a **right-click contextual menu** holding
+ * "go to task" (see [EditMenuRowActions]). An id row names one task, so there is one place to go; a title
+ * suggestion names a string several tasks may share, and the Mode selector names no task at all.
+ */
 @Composable
 internal fun EditModeMenus(
     state: SchedulerState,
@@ -871,7 +880,30 @@ internal fun EditModeMenus(
             val selectedIndex =
                 SchedulerDomain.changeTaskMenuSelectedIndex(taskEntries, session.selectedAssignTaskId)
             taskEntries.mapIndexed { index, entry ->
-                EditMenuItem(label = entry.label, selected = index == selectedIndex) {
+                // PRD §4: an id row's right-click menu — "go to task", which reveals that task where it
+                // lives. It goes through [SchedulerIntent.RevealCell], the find bar's own primitive and the
+                // very one PRD §8's "go to task tree" uses, so the way in is expanded as ONE history unit
+                // and the reveal ends this edit session first (a §4 Forced Exit, like clicking another cell).
+                //
+                // Nothing is focused: the surface being edited IS the tree the row is revealed in, whichever
+                // of the three drawings of it this is — the reveal follows `state`/`onIntent`, so in the
+                // "All tasks" window and the §4 template it lands on that window's own rows, not the
+                // account tree's, which is exactly what "go to task" can mean there.
+                //
+                // Greyed (a null handler) wherever no cell shows the task: the "New task" row, a detached
+                // parent, a tombstone kept alive only for its records. That is the same `null` answer
+                // [SchedulerDomain.firstTaskOccurrence] gives the calendar panel's entry, said as a disabled
+                // row rather than as a notice, because here the user is looking straight at the row.
+                val occurrence = entry.taskId?.let { SchedulerDomain.firstTaskOccurrence(state, it) }
+                EditMenuItem(
+                    label = entry.label,
+                    selected = index == selectedIndex,
+                    actions = EditMenuRowActions(
+                        onGoToTask = occurrence?.let { found ->
+                            { onIntent(SchedulerIntent.RevealCell(found.cellId, found.ancestors)) }
+                        },
+                    ),
+                ) {
                     if (entry.taskId == null) {
                         onIntent(SchedulerIntent.SelectCreateAssignTask)
                     } else {
@@ -2641,11 +2673,15 @@ internal fun TaskRow(
 /**
  * A right-click (secondary button) opens a contextual menu — the cell's own ("edit task" / "copy" / "deep copy" /
  * "add default sub-tree")
- * on the row, and the two-option one on the priority-percentage column (PRD §5). Returns a no-op modifier
- * when [enabled] is false (cells with no menu — empty / root-main), so only eligible cells react. [onOpen]
+ * on the row, the two-option one on the priority-percentage column (PRD §5), and the "go to task" one on an
+ * **id row of Edit Mode's Tasks menu** (PRD §4, via `org.example.project.ui.EditMenuRowActions`). Returns a
+ * no-op modifier
+ * when [enabled] is false (cells with no menu — empty / root-main; rows with no menu), so only eligible
+ * targets react. [onOpen]
  * flips the local menu-visible flag. The press is consumed, which both keeps the freshly opened menu from
  * being dismissed by its own click and stops the row's handler re-opening the cell menu underneath the
- * percentage's (children are dispatched to first, so the inner menu wins that column).
+ * percentage's (children are dispatched to first, so the inner menu wins that column) — and, on a menu row,
+ * is what keeps a right-click from also *picking* the id it opened the menu on.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 internal fun contextMenuModifier(

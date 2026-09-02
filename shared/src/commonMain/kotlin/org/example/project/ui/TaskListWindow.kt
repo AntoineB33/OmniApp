@@ -144,6 +144,10 @@ fun TaskListWindow(
     // One walk of the tree for every row's cell, not one walk per row (ADR 0009: the display hot path).
     val firstOccurrences =
         remember(state.cells, state.lists, state.tasks) { SchedulerDomain.firstTaskOccurrences(state) }
+    // `mapNotNull` can no longer drop anything: [SchedulerDomain.taskListEntries] asks this same walk what
+    // "in the tree" means, so every entry it returns has a cell here. It used to be a silent hole — a task
+    // stranded inside a *detached parent's* sub-tree has a cell, so the entries counted it, and then this
+    // line quietly refused it a row. It stays total-by-construction rather than by a `!!`.
     val rootCells: List<CellId> =
         remember(displayedOrder, firstOccurrences) {
             displayedOrder.mapNotNull { firstOccurrences[it]?.cellId }

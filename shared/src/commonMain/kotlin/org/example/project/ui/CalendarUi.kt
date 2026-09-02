@@ -148,6 +148,7 @@ import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.NotificationLogEntry
 import org.example.project.scheduler.state.SupabaseUsageEntry
 import org.example.project.scheduler.state.SchedulerHistories
+import org.example.project.scheduler.ui.contextMenuModifier
 
 /** PRD §7: visual language shared by the lateral menu and the calendar. */
 private object CalColors {
@@ -6299,41 +6300,80 @@ private fun EditMenuSectionLabel(text: String) {
  *    focus off a title field. The reminders manager's editor stays open only while its row has focus, so a
  *    focus change there would collapse it before the pick registered; elsewhere `Modifier.clickable` is used.
  *    [onClick] is read through [rememberUpdatedState] so the once-started tap detector always runs the latest closure.
+ *  - [actions] is the row's own right-click contextual menu (PRD §4), or null where the row has none. The
+ *    secondary press is read by the tree cell's own [contextMenuModifier], which CONSUMES it — so the
+ *    left-click pick ([onClick], whether it runs through `clickable` or the tap detector) never fires on a
+ *    right-click, exactly as a tree row's menu never doubles as a selection.
  */
 @Composable
 private fun EditMenuRow(
     label: String,
     selected: Boolean = false,
     focusPreserving: Boolean = false,
+    actions: EditMenuRowActions? = null,
     onClick: () -> Unit,
 ) {
     val currentOnClick by rememberUpdatedState(onClick)
+    var menuOpen by remember { mutableStateOf(false) }
     val clickModifier =
         if (focusPreserving) Modifier.pointerInput(Unit) { detectTapGestures { currentOnClick() } }
         else Modifier.clickable(onClick = onClick)
-    Text(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(clickModifier)
-            // Selected rows are marked with an obvious outline rather than a (subtle) purple font.
-            .then(
-                if (selected)
-                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
-                else Modifier
-            )
-            .padding(vertical = 4.dp, horizontal = 8.dp),
-        text = label,
-        style =
-            if (selected) MaterialTheme.typography.bodyMedium
-            else MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurface,
-    )
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(clickModifier)
+                // Inside the click modifier, so a secondary press is answered — and consumed — on the Main
+                // pass before the pick handler wrapping it ever sees it.
+                .then(contextMenuModifier(actions != null) { menuOpen = true })
+                // Selected rows are marked with an obvious outline rather than a (subtle) purple font.
+                .then(
+                    if (selected)
+                        Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
+                    else Modifier
+                )
+                .padding(vertical = 4.dp, horizontal = 8.dp),
+            text = label,
+            style =
+                if (selected) MaterialTheme.typography.bodyMedium
+                else MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        if (actions != null) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                // PRD §4: "go to task" is GREYED, never absent, when the row's task is nowhere in the tree.
+                // The row is still a task the field can be pointed at; what it has not got is a place to go,
+                // and a vanishing entry would read as "this row has no menu" instead of saying so.
+                DropdownMenuItem(
+                    text = { Text("go to task") },
+                    enabled = actions.onGoToTask != null,
+                    onClick = {
+                        menuOpen = false
+                        actions.onGoToTask?.invoke()
+                    },
+                )
+            }
+        }
+    }
 }
+
+/**
+ * PRD §4: the right-click contextual menu of an **identity (id) row** of an [EditModeMenuBlock] — one entry
+ * today, "go to task", which reveals the row's task in the tree.
+ *
+ * Three states, and all three are meant: **no [EditMenuRowActions] at all** ⇒ the row has no contextual menu
+ * (a *title suggestion* names a string, not one task, so there is nothing to go to); **[onGoToTask] null** ⇒
+ * the entry is drawn **greyed**, because that task is not in the task tree — a detached parent, a tombstone
+ * kept alive for its records, or the "New task" row, which names no task yet; **non-null** ⇒ it goes there.
+ */
+data class EditMenuRowActions(val onGoToTask: (() -> Unit)?)
 
 /** One row of an [EditModeMenuBlock] menu — an identity row or a title suggestion. */
 data class EditMenuItem(
     val label: String,
     val selected: Boolean = false,
+    /** The row's right-click contextual menu, or null where it has none (every title suggestion). */
+    val actions: EditMenuRowActions? = null,
     val onClick: () -> Unit,
 )
 
@@ -6382,6 +6422,7 @@ private fun EditMenuSection(label: String, rows: List<EditMenuItem>, focusPreser
             label = row.label,
             selected = row.selected,
             focusPreserving = focusPreserving,
+            actions = row.actions,
             onClick = row.onClick,
         )
     }

@@ -572,6 +572,18 @@ Pinned/manual blocks and chores are pre-placed blocks in the reference's sense a
 **Do not read the absence of the reference's dynamic rule list from `SchedulerPlan.kt` as the port being out of date, and
 do NOT answer a sliding period by re-planning per tick.**
 
+**Since 2026-08-30 the affine machinery IS ported** — `SchedulerProgressive.kt`
+(`ProgressiveSchedule`, `Regime`, `RuleSegment`), which answers the README's § *Progressive
+Calculation* and § *Alternative Schedules* directly: `settle()` grows a definitive front one link at a
+time under a budget, `rules()` fits a regime affine in `t_p` and certifies it at positions it was not
+fitted on, `advanceTo()` freezes the past by construction, and `alternativeAt()` names the fallback
+task. It drives `PlanWalk` like everything else and is **not** a second copy of the rules.
+
+**It is not yet wired into the app, and it has no test.** `SchedulerDomain.fillSchedule` still
+materializes panels from the walk directly and nothing calls `ProgressiveSchedule`; the paragraph
+above stays true of what OmniApp *runs*. Treat the file as the ported answer waiting for a driver —
+before wiring it, give it the same slot-for-slot pinning `SchedulerPlanTest` gives the walk.
+
 **Nothing slides any more** (ADR 0003): the recurrence bars pin every break to a fixed instant, so the
 clip's remaining job is the drift *between* fills rather than a period that moves with the now-line. The
 cue keys on the drawn start for the same reason.
@@ -637,3 +649,43 @@ inside its own reducer.
 Removed with this: the per-tick `screenBreakDue → RefreshSchedule` in `dispatchScheduleAdvance` (it
 churned the whole plan continuously while the user was away — `App.kt` projects the break markers for
 display itself, and the cue sweep keys on the **placed** period starts, which the recurrence bars fix).
+
+## 10. Why not a constraint solver (Timefold, OR-Tools CP-SAT)
+
+Recurring suggestion, most recently 2026-09-02: model the README as a receding-horizon optimization —
+discretize the timeline into fine buckets, re-solve a short window every few seconds with a time-boxed
+anytime solver, express the two optimization criteria as weighted soft constraints. **Rejected**, and
+for reasons that are about the specification rather than about taste.
+
+1. **The wrong return type.** The README asks for a *set of rules parameterized by the now-line and its
+   mode*, plus, for every position of the line, the **alternative** task. A solver returns one
+   assignment for one instantiation of those parameters; answering "for every `t_p`" means re-solving
+   per position. That parameterization is the whole of `Regime`/`RuleSegment` (§8) and the reason
+   `_alternative` is read *before* the clocks are charged (`PlanWalk.alternative`).
+2. **The exactness clause forbids an anytime answer where an exact one is reachable.** "If the best
+   possible score is reachable within the required time and acceptable computer power, it must be
+   reached." The walk reaches the shares *constructively* in milliseconds; a metaheuristic returns its
+   best-so-far with no statement about which it did.
+3. **Discretization cannot represent the objects.** The 20 s period is the half-open
+   `(t_p, t_p + 20 s]` against a 168 h horizon, and the line "moves continuously". A bucket fine enough
+   for the shortest dynamic period is ~6·10⁵ buckets × the task count, per solve, on a phone.
+4. **A time-boxed solver is not deterministic across devices, and the schedule is DERIVED state**
+   (ADR 0007): every device recomputes it from the synced rule state and must land on the same answer.
+   An answer that depends on how much CPU a device had would put two calendars on one account.
+   The **resume contract** (§7) — a chain of re-plans equals one long plan — is likewise a statement a
+   constructive walk can hold and a search cannot.
+5. **Re-solving on a clock is exactly what ADR 0009 forbids.** "Time passing must never re-plan
+   continuously"; the plan moves on a `schedulingSignature` change, an `ExtendSchedule`, or the hourly
+   staleness bound. A solve every 10 s is that failure with a solver attached.
+6. **Neither library can live where the scheduler lives.** `SchedulerPlan.kt` is commonMain across
+   `iosArm64`, `iosSimulatorArm64`, `jvm`, `js`, `wasmJs` and the Android library. Timefold is
+   JVM-only; OR-Tools is a native/JNI binary. The scheduler would have to move behind a platform seam
+   or onto a server, which is a far larger change than the one being proposed.
+7. **The parts it offers are already here, and are not the hard parts.** The exponential decay of a
+   priority deficit is the influence field (§3, `tau`/`maxBoost`); the minimum-execution-time
+   preference is the chunk floor (§1); the compute budget is `SettleBudget`. What a solver would add is
+   search over a space the model does not need to search.
+
+The proposal's one accurate observation is that the README's *Progressive Calculation* and *Alternative
+Schedules* clauses want a rule list that improves under a budget. That is `SchedulerProgressive.kt`
+(§8) — already written, in the model the rest of the scheduler is in.

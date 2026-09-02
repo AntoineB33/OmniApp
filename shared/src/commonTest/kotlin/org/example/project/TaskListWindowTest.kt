@@ -3,10 +3,13 @@ package org.example.project
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerDomain.TaskListSort
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.state.CellEditMode
+import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
@@ -148,6 +151,39 @@ class TaskListWindowTest {
         val entries = SchedulerDomain.taskListEntries(state)
         assertTrue(entries.none { it.title == "Draft" }, "a deleted task must not be listed: ${titles(entries)}")
         assertTrue(entries.none { it.title.isBlank() }, "no blank row: ${titles(entries)}")
+    }
+
+    /**
+     * PRD §4/§7: a task **stranded inside a detached parent's sub-tree** still has a cell, and is still
+     * offered by Edit Mode's Tasks menu (picking it is how it is pulled back), but the tree cannot show it
+     * anywhere — so it is not in the list, and its "go to task" is greyed. The two answers are the SAME
+     * walk; before this, "has a populated cell" listed it here and `TaskListWindow` then dropped it again
+     * with no row, so a task could be counted by the sort and be invisible in the window it sorted.
+     */
+    @Test
+    fun aTaskStrandedUnderADetachedParentIsNotInTheList() {
+        val (built, _) = fixture()
+        // Re-point the "Chapter" cell at a brand-new task: Chapter keeps its sub-list (Write, Draft) but
+        // loses its only cell, so it becomes a detached parent and "Draft" is left with nowhere to be shown.
+        val chapterCell = cellOfTitle(built, "Chapter")
+        var s = SchedulerReducer.reduce(built, SchedulerIntent.BeginEdit(chapterCell))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetEditMode(CellEditMode.ChangeTask))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SelectCreateAssignTask)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Stay))
+
+        val draft = built.cells[cellOfTitle(built, "Draft")]!!.taskId!!
+        // The cell survives — this is not a deletion, and the sub-tree comes back with the id...
+        assertTrue(s.cells.values.any { it.taskId == draft }, "the stranded cell must survive")
+        // ...but nothing reachable from the root reaches it, so it is not in the tree and has no row.
+        assertNull(SchedulerDomain.firstTaskOccurrence(s, draft))
+        val entries = SchedulerDomain.taskListEntries(s)
+        assertTrue(entries.none { it.title == "Draft" }, "a stranded task must not be listed: ${titles(entries)}")
+        // Every listed task has the row cell the window asks for: the list can never hold a rowless entry.
+        val occurrences = SchedulerDomain.firstTaskOccurrences(s)
+        assertTrue(
+            entries.all { occurrences[it.taskId] != null },
+            "every listed task must have a first occurrence: ${titles(entries)}",
+        )
     }
 
     @Test

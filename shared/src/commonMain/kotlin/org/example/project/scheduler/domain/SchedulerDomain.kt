@@ -672,6 +672,20 @@ object SchedulerDomain {
      * its title (PRD §4) is gone from the list even while its records keep it alive, and a *detached
      * parent* — titled, but with no cell pointing at it — is not listed either, since it is not in the tree.
      *
+     * **"Not in the tree" is [firstTaskOccurrences], not "has no cell",** and the two are different for a
+     * reason that is easy to miss: a detached parent keeps its whole **sub-tree** alive (that is what
+     * assigning its id back restores), so the tasks inside it still have cells — cells the tree cannot
+     * display anywhere, since nothing reachable from the root descends into that sub-list. Counting "has a
+     * populated cell" listed those, and [org.example.project.ui.TaskListWindow] then dropped them again when
+     * it asked this same walk for their row cells — a row silently missing from a window whose own sort had
+     * already counted it. Membership is therefore this walk, so the list is exactly the set of tasks whose
+     * "go to task" (PRD §4) / "go to task tree" (PRD §8) has somewhere to go.
+     *
+     * Deliberately NOT filtered: the occurrence **count** of a listed task still counts every populated cell
+     * pointing at it, unreachable ones included, because that is the occurrence the percentage is divided
+     * over. A task with one row in the tree and one stranded cell reads as 2 occurrences, and changing that
+     * here would make the two columns disagree.
+     *
      * Ties fall back to the title and then the id so the order is total: without that, the many tasks
      * sharing 0 % (or one occurrence) would be free to shuffle between recompositions. That final fallback
      * is deliberately **not** reversed with [descending], so flipping the direction never re-shuffles a
@@ -688,10 +702,17 @@ object SchedulerDomain {
         descending: Boolean = true,
     ): List<TaskListEntry> {
         val priorities = absoluteTaskPriorities(state)
+        // "In the tree" is ONE predicate, and it is this walk — the same one "go to task" / "go to task
+        // tree" asks, so a task has a row here exactly when the tree has somewhere to take you. Membership
+        // only: the COUNT below still counts every populated cell off `state.cells`, because that is the
+        // occurrence [absoluteTaskPriorities] and [RelativePriority.occurrenceChains] charge, and the
+        // percentage column has to keep agreeing with it.
+        val inTree = firstTaskOccurrences(state)
         val counts = HashMap<TaskId, Int>()
         for (cell in state.cells.values) {
             val taskId = cell.taskId ?: continue
             if (!isPopulatedCell(state, cell.id)) continue
+            if (taskId !in inTree) continue
             counts[taskId] = (counts[taskId] ?: 0) + 1
         }
         val titles = counts.keys.associateWith { state.tasks[it]?.title.orEmpty() }
@@ -3934,25 +3955,66 @@ object SchedulerDomain {
         return true
     }
 
-    /** Shortest path from root through [Task.childTaskIds] links (BFS). */
-    fun shortestTaskTreePath(state: SchedulerState, taskId: TaskId): List<TaskId> {
-        data class Node(val id: TaskId, val path: List<TaskId>)
-        val queue = ArrayDeque(listOf(Node(WellKnownIds.ROOT_TASK, listOf(WellKnownIds.ROOT_TASK))))
-        while (queue.isNotEmpty()) {
-            val node = queue.removeFirst()
-            if (node.id == taskId) return node.path
-            val task = state.tasks[node.id] ?: continue
-            for (child in task.childTaskIds) {
-                queue.add(Node(child, node.path + child))
+    /**
+     * PRD §4 *Presentation*: the shortest path down to every task at once — what a Change Task menu row is
+     * **named** by, and what its rows are sorted by.
+     *
+     * **The walk is the CELL/LIST tree, not [Task.childTaskIds].** That denormalized field only tracks
+     * freshly-typed children and goes stale (the reason [childTitlesLabel] reads the structure instead), so
+     * a BFS over it dies almost at once on a mature account and every row falls back to naming itself: on
+     * the release account, 153 of the 163 tasks that ARE in the tree came out as a bare title, which turned
+     * a menu of 64 tasks all called "planning" into 64 identical rows — the thing the path exists to tell
+     * apart. It also flattened the menu's first sort key to the constant 1.
+     *
+     * Same walk, same rules as [firstTaskOccurrences]: a blank-titled cell is PRD §4's deleted one, so it is
+     * neither named nor descended into, and each LIST is entered once (a sub-list belongs to the task id, so
+     * a mirrored sub-tree is one list under many parents). It is **breadth-first**, which is what makes the
+     * first path reached the SHORTEST one — a mirrored task is named by its shallowest occurrence, where
+     * [firstTaskOccurrences] answers with its first in reading order. The two agree about what is *in* the
+     * tree and are deliberately allowed to differ about which occurrence to name.
+     *
+     * A task with no entry here is not in the tree at all — a detached parent, a task stranded inside one's
+     * sub-tree, a tombstone kept for its records — and [changeTaskMenuLabel] names those by what they hold.
+     */
+    fun shortestTaskTreePaths(state: SchedulerState): Map<TaskId, List<TaskId>> {
+        // The two well-known tasks above the root list, so a row reads "root / main / …" exactly as it did
+        // when the path was walked through the task links. [taskPathLabel] drops whichever is absent.
+        val prefix = listOf(WellKnownIds.ROOT_TASK, WellKnownIds.MAIN_TASK)
+        val shortest = HashMap<TaskId, List<TaskId>>()
+        val visitedLists = mutableSetOf(state.rootListId)
+        var frontier = listOf(state.rootListId to prefix)
+        while (frontier.isNotEmpty()) {
+            val next = mutableListOf<Pair<CellListId, List<TaskId>>>()
+            for ((listId, path) in frontier) {
+                val list = state.lists[listId] ?: continue
+                for (cellId in list.cellIds) {
+                    val taskId = state.cells[cellId]?.taskId ?: continue
+                    if (isTextuallyEmptyCell(state, cellId)) continue
+                    val here = path + taskId
+                    if (isSelectableCell(state, cellId) && taskId !in shortest) shortest[taskId] = here
+                    val childListId = state.tasks[taskId]?.childListId ?: continue
+                    if (visitedLists.add(childListId)) next.add(childListId to here)
+                }
             }
+            frontier = next
         }
-        return listOf(taskId)
+        return shortest
     }
 
+    /**
+     * [shortestTaskTreePaths] for one task, falling back to the task alone when the tree does not hold it.
+     *
+     * Prefer the map wherever more than one task is asked about: this walks the whole tree per call, and the
+     * menu asks it once per row **and** once per comparison while sorting.
+     */
+    fun shortestTaskTreePath(state: SchedulerState, taskId: TaskId): List<TaskId> =
+        shortestTaskTreePaths(state)[taskId] ?: listOf(taskId)
+
     fun taskPathLabel(state: SchedulerState, taskId: TaskId): String =
-        shortestTaskTreePath(state, taskId)
-            .mapNotNull { state.tasks[it]?.title }
-            .joinToString(" / ")
+        taskPathLabel(state, shortestTaskTreePath(state, taskId))
+
+    private fun taskPathLabel(state: SchedulerState, path: List<TaskId>): String =
+        path.mapNotNull { state.tasks[it]?.title }.joinToString(" / ")
 
     /**
      * The titles under [taskId], read from its shared child list — the same structural source of truth
@@ -3980,9 +4042,15 @@ object SchedulerDomain {
         val label: String,
     )
 
+    /**
+     * [paths] is [shortestTaskTreePaths], taken as an argument rather than recomputed: it is a walk of the
+     * whole tree, and the sort below asks it once per COMPARISON. Every entry point that builds a menu
+     * computes it once and hands it down.
+     */
     private fun matchingUserTaskIds(
         state: SchedulerState,
         text: String,
+        paths: Map<TaskId, List<TaskId>>,
         excludeTaskId: TaskId? = null,
     ): List<TaskId> =
         state.tasks.keys
@@ -3996,28 +4064,48 @@ object SchedulerDomain {
                 // appears once the text equals the title exactly. Empty text matches nothing.
                 text.isNotEmpty() && title.equals(text, ignoreCase = true)
             }
-            .sortedWith(taskIdMenuSort(state))
+            .sortedWith(taskIdMenuSort(state, paths))
 
-    private fun taskIdMenuSort(state: SchedulerState) =
+    /**
+     * PRD §4 *Sorting*: shortest path first, then alphabetically by that path, then by child titles — with
+     * every task the tree does NOT hold pushed to the END, ahead of nothing.
+     *
+     * That last clause is the one thing the PRD's three keys cannot answer, because such a task has no path
+     * to be short: it is a detached parent, or a task stranded inside one, and the row exists only as the
+     * way to pull it back. Ranking it by a nominal length of 1 put it FIRST — so on the release account the
+     * four unreachable "planning" tasks led a menu of 64, which is where the user clicks, and every one of
+     * them answers "go to task" with a greyed entry. The rows that are actually in the tree come first.
+     */
+    private fun taskIdMenuSort(state: SchedulerState, paths: Map<TaskId, List<TaskId>>) =
         compareBy<TaskId>(
-            { shortestTaskTreePath(state, it).size },
-            { taskPathLabel(state, it) },
+            { if (paths.containsKey(it)) 0 else 1 },
+            { (paths[it] ?: listOf(it)).size },
+            { taskPathLabel(state, paths[it] ?: listOf(it)) },
             { childTitlesLabel(state, it) },
         )
 
     /**
      * PRD §4 *Presentation*: a menu row shows the task's shortest path in the tree — "**or a list of child
-     * titles if no cells point to it**". A task no cell points at (a detached parent, [isDetachedParentTask],
-     * or a tombstone kept for its records) has no place in the tree to name, and [shortestTaskTreePath] would
-     * still report one off the denormalized [Task.childTaskIds], so name it by what it holds instead. A
-     * cell-less task with nothing under it falls back to its own title, so no row is ever blank.
+     * titles if no cells point to it**".
+     *
+     * "No cells point to it" is read as **not in the tree** ([shortestTaskTreePaths] has no path for it),
+     * which is the same predicate [taskListEntries] uses for membership and the same one "go to task" is
+     * greyed on — one answer, not three. It is wider than `taskHasCells`, deliberately: a task stranded
+     * inside a *detached parent's* sub-tree still has a cell, but there is no path in the tree to name it
+     * by, so it is named by what it holds exactly as the detached parent above it is. A task with nothing
+     * under it falls back to its own title, so no row is ever blank.
      */
-    private fun changeTaskMenuLabel(state: SchedulerState, taskId: TaskId): String {
+    private fun changeTaskMenuLabel(
+        state: SchedulerState,
+        taskId: TaskId,
+        paths: Map<TaskId, List<TaskId>>,
+    ): String {
         val childLabel = childTitlesLabel(state, taskId)
-        if (!taskHasCells(state, taskId)) {
+        val path = paths[taskId]
+        if (path == null) {
             return childLabel.ifEmpty { state.tasks[taskId]?.title.orEmpty() }
         }
-        val pathLabel = taskPathLabel(state, taskId)
+        val pathLabel = taskPathLabel(state, path)
         return if (childLabel.isNotEmpty()) "$pathLabel ($childLabel)" else pathLabel
     }
 
@@ -4033,10 +4121,18 @@ object SchedulerDomain {
         text: String,
         /** Draft task created while "New task" is selected; already represented by that menu row. */
         excludeTaskId: TaskId? = null,
+    ): List<TaskId> = eligibleAssignTaskIds(state, cellId, text, shortestTaskTreePaths(state), excludeTaskId)
+
+    private fun eligibleAssignTaskIds(
+        state: SchedulerState,
+        cellId: CellId,
+        text: String,
+        paths: Map<TaskId, List<TaskId>>,
+        excludeTaskId: TaskId?,
     ): List<TaskId> {
         val siblings = siblingTaskIds(state, cellId)
         val collisionScope = assignCollisionScope(state, cellId)
-        return matchingUserTaskIds(state, text, excludeTaskId).filter { candidate ->
+        return matchingUserTaskIds(state, text, paths, excludeTaskId).filter { candidate ->
             candidate !in siblings &&
                 structuralSubtreeTaskIds(state, candidate, excludeCellId = cellId).none { it in collisionScope }
         }
@@ -4052,14 +4148,16 @@ object SchedulerDomain {
         draftText: String,
         excludeTaskId: TaskId? = null,
     ): List<ChangeTaskMenuEntry> {
-        val matching = eligibleAssignTaskIds(state, cellId, draftText, excludeTaskId)
+        // One walk of the tree for the whole menu — the sort and every row's label read it (ADR 0009).
+        val paths = shortestTaskTreePaths(state)
+        val matching = eligibleAssignTaskIds(state, cellId, draftText, paths, excludeTaskId)
         return buildList {
             add(ChangeTaskMenuEntry(taskId = null, label = "New task"))
             for (taskId in matching) {
                 add(
                     ChangeTaskMenuEntry(
                         taskId = taskId,
-                        label = changeTaskMenuLabel(state, taskId),
+                        label = changeTaskMenuLabel(state, taskId, paths),
                     ),
                 )
             }
@@ -4089,11 +4187,12 @@ object SchedulerDomain {
         draftText: String,
         excludeTaskId: TaskId? = null,
     ): List<ChangeTaskMenuEntry> {
-        val matching = matchingUserTaskIds(state, draftText, excludeTaskId).filter { isCalendarPanelTarget(state, it) }
+        val paths = shortestTaskTreePaths(state)
+        val matching = matchingUserTaskIds(state, draftText, paths, excludeTaskId).filter { isCalendarPanelTarget(state, it) }
         return buildList {
             add(ChangeTaskMenuEntry(taskId = null, label = "New task"))
             for (taskId in matching) {
-                add(ChangeTaskMenuEntry(taskId = taskId, label = changeTaskMenuLabel(state, taskId)))
+                add(ChangeTaskMenuEntry(taskId = taskId, label = changeTaskMenuLabel(state, taskId, paths)))
             }
         }
     }

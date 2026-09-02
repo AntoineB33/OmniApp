@@ -11,6 +11,95 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An id row of Edit Mode's task menu right-clicks to "go to task" — 2026-09-02
+
+PRD §4. `shared` (`ui/CalendarUi.kt`'s `EditMenuRow`/`EditMenuItem` + the new `EditMenuRowActions`,
+`scheduler/ui/TaskSchedulerScreen.kt`'s `EditModeMenus` and `contextMenuModifier`) +
+`shared/src/commonTest/.../GoToTaskTreeTest.kt` + `docs/PRD_TaskScheduler.md` + `CLAUDE.md`. Client rebuild
+only — no Supabase deploy, no migration, no persisted or synced state, no history unit of its own (the reveal
+commits the ordinary `SetExpandedDelta` / `SetSelectionDelta` the find bar's jump does).
+
+Asked for: *"In the edit mode of a task cell, in the id suggestion, if the user right-click on a suggestion,
+it would open a menu with the option 'go to task'. If the task doesn't exist in the task tree, then the
+option is grayed."*
+
+- **The entry is greyed, not dropped, when the task is nowhere in the tree.** That case is the normal one,
+  not an error: the menu exists to offer tasks the tree does not show — a **detached parent**, a task kept
+  alive only by its records, and the "New task" row, which names no task yet — and dropping the entry would
+  read as "this row has no contextual menu". `SchedulerDomain.firstTaskOccurrence` returning `null` is that
+  answer, said as a disabled row here and as the `MessagePopup` notice where the calendar asks it (PRD §8).
+  A new test pins that the case is reachable *from the menu itself*: a detached parent is still listed by
+  `changeTaskMenuEntries` while `firstTaskOccurrence` answers `null`.
+- **Only the id rows have it.** `EditMenuRowActions` is the carrier and its absence is the third state: a
+  **title suggestion** names a string several tasks may share, so there is no one task to go to, and the Mode
+  selector names none at all.
+- **It goes through `RevealCell`** — the find bar's primitive, and the very one §8's "go to task tree" uses —
+  so the way in is expanded as one unit and the reveal ends the edit session first (§4's *Forced Exit*).
+- **The name is "go to task", not "go to task tree", because the reveal follows the surface's own
+  state/intents.** `EditModeMenus` is drawn by all three drawings of the tree, so in the "All tasks" window
+  and the §4 template the jump lands on *that* window's rows — which is what "go to task" can mean there, and
+  what "go to task tree" would have been wrong about.
+- **The secondary press is consumed** by the tree cell's own `contextMenuModifier`, reused here rather than
+  copied, so opening the menu never also *picks* the id underneath it.
+
+**Follow-up the same day — "grayed but the task looks like it IS in the tree".** Reported as: right-clicking
+a suggested id gives a greyed "go to task", yet sorting "All tasks" by occurrences shows no task below 1.
+The greying was **correct**, and the cross-check could not have shown otherwise. Read off the release
+account's own DB (a read-only copy — the live app was untouched): 4 **detached parents** (`m`, `jjj`,
+`intelligence`, `master everything I am supposed to master given my background`) hold sub-trees containing
+**5 titled tasks** (`f`, and four different tasks all titled `planning`). Each has exactly one cell — inside a
+detached sub-list, which nothing reachable from the root descends into — so the tree can show it nowhere. The
+account also holds **60** reachable tasks titled `planning`, which is why typing that word produces an id
+menu with several greyed rows. Picking such a row still works and is the rescue path: assigning the id
+re-points a visible cell at it and the sub-tree comes back, which is exactly why the entry is greyed rather
+than the row hidden.
+
+What that exposed, and what changed: **`SchedulerDomain.taskListEntries` counted "has a populated cell"
+while `TaskListWindow` asked `firstTaskOccurrences` for each row's cell** and `mapNotNull`ed away what it
+could not find — so those 5 tasks were counted by the sort and then silently given no row (168 entries, 163
+rows on that account), and `periodKindTaskRows`, built on the same list, offered them a resilience row.
+"In the tree" is now **one predicate**, `firstTaskOccurrences`, for the rows, the period-kind window and the
+greying alike. The occurrence **count** is deliberately unchanged — still every populated cell, unreachable
+ones included — because that is the occurrence the percentage divides over, and changing it would make the
+two columns disagree (one task on that account, `personal project`, has 2 cells of which 1 is stranded; it
+stays listed with 2). `shared` (`SchedulerDomain.taskListEntries`, `ui/TaskListWindow.kt`) +
+`TaskListWindowTest.aTaskStrandedUnderADetachedParentIsNotInTheList` + `docs/PRD_TaskScheduler.md` §7 +
+`CLAUDE.md`. Client rebuild only.
+
+### The Change Task menu's rows get their paths back — 2026-09-02
+
+PRD §4 *Presentation* / *Sorting*. `shared` (`SchedulerDomain.shortestTaskTreePaths` + the menu's sort and
+label) + `GoToTaskTreeTest` + `docs/PRD_TaskScheduler.md` + `CLAUDE.md`. Client rebuild only.
+
+Found while chasing a second report of the greyed "go to task" (above). The greying was right both times;
+what was wrong is that the user could not tell **which** row they had right-clicked, and kept landing on a
+greyed one. Read off the release account: the id menu for "planning" is **64 rows, every one of them
+labelled just `planning`** — no path — and 4 of those are the unreachable ones, sitting at positions #2, #6,
+#12, #63.
+
+- **`shortestTaskTreePath` BFS'd `Task.childTaskIds`**, the denormalized field the codebase already
+  documents as stale ("only tracks freshly-typed children", which is why `childTitlesLabel` reads the
+  structure instead). `MAIN_TASK` held 8 of ~60 root tasks, so the walk died almost immediately and
+  everything fell back to `listOf(taskId)` — the bare title. Measured on that account: **10 of 172 titled
+  tasks got a path, 162 got a bare title, and 153 of those were perfectly reachable in the tree.** PRD §4's
+  *Presentation* rule had effectively not been in force for the life of the account. It also flattened the
+  menu's first sort key (path length) to the constant 1.
+- **It now walks the cells/lists**, the same structure `firstTaskOccurrences` does and with the same rules
+  (a blank-titled cell is §4's deleted one, each LIST entered once). Breadth-first, so the first path reached
+  is genuinely the *shortest* — a mirrored task is named by its shallowest occurrence, where
+  `firstTaskOccurrences` answers with its first in reading order. The two agree on what is *in* the tree and
+  are allowed to differ on which occurrence to name.
+- **One walk per menu.** `shortestTaskTreePaths` returns every task's path; `changeTaskMenuEntries` computes
+  it once and hands it to the sort and to each row's label. The old per-task front end asked a whole-tree
+  walk *per comparison* — tolerable only because it was returning after one step (ADR 0009).
+- **Not-in-the-tree rows sort LAST.** They have no path to be short, and ranking them at a nominal length of
+  1 put them first — under the cursor, which is exactly why both reports landed on a greyed entry. On the
+  release account the menu now reads `root / main / find a job / planning`, `root / main / motivation /
+  planning`, … for 59 rows, then the 4 bare-titled unreachable ones at the end.
+- `changeTaskMenuLabel`'s "no cells point to it" is now **"the tree does not hold it"** — the same predicate
+  the "All tasks" rows and the greying use, so a task stranded inside a detached parent (which `taskHasCells`
+  calls present) is named by what it holds, exactly like the detached parent above it.
+
 ### "All tasks" can be sorted by similar titles — 2026-09-02
 
 PRD §7. `shared` (`scheduler/domain/TitleSimilarity.kt`, `SchedulerDomain.taskListEntries`,

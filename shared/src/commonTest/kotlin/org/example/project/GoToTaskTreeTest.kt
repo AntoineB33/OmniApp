@@ -7,6 +7,8 @@ import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.state.CellEditMode
+import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
@@ -97,6 +99,85 @@ class GoToTaskTreeTest {
         assertNull(SchedulerDomain.firstTaskOccurrence(s, pieTask))
         // A task id the account never minted is the same answer, not a crash.
         assertNull(SchedulerDomain.firstTaskOccurrence(s, TaskId("task/user/9999")))
+    }
+
+    /**
+     * PRD §4: Edit Mode's **Tasks** (id) menu offers a right-click "go to task", greyed when the row's task
+     * is nowhere in the tree — and that case is REACHABLE, which is the whole reason the entry is greyed
+     * rather than dropped. A **detached parent** is the everyday one: a titled task whose last cell was
+     * re-pointed elsewhere. It is still an ordinary id row (that is how its sub-tree is brought back), and
+     * it has no cell to go to.
+     */
+    @Test
+    fun an_id_row_the_menu_offers_can_still_have_nowhere_to_go() {
+        var s = SchedulerState.empty()
+        val parentCell = s.lists[s.rootListId]!!.cellIds.first()
+        s = r(s, SchedulerIntent.SetCellTitle(parentCell, "abilities"))
+        val abilities = s.cells[parentCell]!!.taskId!!
+        s = r(s, SchedulerIntent.ToggleExpand(parentCell))
+        val subListId = s.tasks[abilities]!!.childListId!!
+        s = r(s, SchedulerIntent.SetCellTitle(s.lists[subListId]!!.cellIds.first(), "drawing"))
+        // Re-point the cell at a brand-new task: "abilities" keeps its sub-tree but loses its last cell.
+        s = r(s, SchedulerIntent.BeginEdit(parentCell))
+        s = r(s, SchedulerIntent.SetEditMode(CellEditMode.ChangeTask))
+        s = r(s, SchedulerIntent.SelectCreateAssignTask)
+        s = r(s, SchedulerIntent.ExitEdit(EditExitNavigation.Stay))
+
+        // The menu still offers it — the row is real, and picking it is how the sub-tree comes back...
+        assertTrue(
+            SchedulerDomain.changeTaskMenuEntries(s, parentCell, "abilities").any { it.taskId == abilities },
+        )
+        // ...but there is no cell showing it, so "go to task" has no destination and is drawn greyed.
+        assertNull(SchedulerDomain.firstTaskOccurrence(s, abilities))
+    }
+
+    /**
+     * PRD §4 *Presentation*: a menu row is named by the task's **shortest path in the tree**, and the path
+     * is walked over the CELLS, not over the denormalized `Task.childTaskIds`. That field only tracks
+     * freshly-typed children, so a task that arrived any other way — moved, pasted, or assigned to a second
+     * cell — used to fall back to naming itself, and a menu of same-titled tasks became a column of
+     * identical rows (64 of them, all "planning", on the release account).
+     */
+    @Test
+    fun a_menu_row_is_named_by_its_path_through_the_cells() {
+        var s = tree()
+        val pieTask = taskWithTitle(s, "Pie")
+        // Mirror "Pie" under "Banana" by ASSIGNING the id — the route that never touches childTaskIds.
+        val bananaCell = cellWithTitle(s, "Banana")
+        s = r(s, SchedulerIntent.ToggleExpand(bananaCell))
+        val bananaList = s.tasks[s.cells[bananaCell]!!.taskId!!]!!.childListId!!
+        s = r(s, SchedulerIntent.AssignTaskId(s.lists[bananaList]!!.cellIds.first(), pieTask))
+
+        // Both parents hold it; the shortest path is the one the BFS reaches first, and it is a real path.
+        assertEquals("root / main / Apple / Pie", SchedulerDomain.taskPathLabel(s, pieTask))
+        assertEquals("root / main / Apple", SchedulerDomain.taskPathLabel(s, taskWithTitle(s, "Apple")))
+    }
+
+    /**
+     * PRD §4 *Sorting*: a task the tree does not hold has no path to be short, so it goes LAST — never
+     * first, which is what a nominal length of 1 did. Those are exactly the rows whose "go to task" is
+     * greyed, so leading with them put the one unusable answer under the user's cursor.
+     */
+    @Test
+    fun rows_the_tree_does_not_hold_sort_after_the_ones_it_does() {
+        var s = tree()
+        // Detach "Apple" (it keeps its sub-list, so it survives cell-less) and give a root cell its title.
+        val appleCell = cellWithTitle(s, "Apple")
+        s = r(s, SchedulerIntent.BeginEdit(appleCell))
+        s = r(s, SchedulerIntent.SetEditMode(CellEditMode.ChangeTask))
+        s = r(s, SchedulerIntent.SelectCreateAssignTask)
+        s = r(s, SchedulerIntent.ExitEdit(EditExitNavigation.Stay))
+
+        // Ask from a cell OUTSIDE the root list, or the live "Apple" would be filtered out as a sibling.
+        val bananaCell = cellWithTitle(s, "Banana")
+        s = r(s, SchedulerIntent.ToggleExpand(bananaCell))
+        val target = freeChildCell(s, bananaCell)
+        val rows = SchedulerDomain.changeTaskMenuEntries(s, target, "Apple").drop(1) // past "New task"
+        val occurrences = SchedulerDomain.firstTaskOccurrences(s)
+        val inTree = rows.map { it.taskId != null && occurrences[it.taskId!!] != null }
+        assertTrue(rows.size >= 2, "both the live Apple and the detached one must be offered: $rows")
+        // Every in-tree row precedes every out-of-tree one.
+        assertEquals(inTree.sortedByDescending { it }, inTree, "not-in-the-tree rows must come last: $rows")
     }
 
     @Test

@@ -675,8 +675,30 @@ Shortcuts, TimeSim) and every other pop-up in the app is sort 2.
   stale the moment it is given a different task's (or a brand-new, empty) sub-list. `applySetCellTitle` drops
   the cell where it **mints** that sub-list — a freshly minted sub-list is never shown expanded. A rename mints
   nothing and keeps its children on screen; the graft re-adds the cell in `endEditSession` once it has rows.
-- A task **no cell points at** is named in the Change Task menu by its child titles, never by a path (PRD §4):
-  `shortestTaskTreePath` reads the denormalized `Task.childTaskIds`, which outlives the detachment.
+- **A Change Task menu row's PATH is walked over the cells, never over `Task.childTaskIds`**
+  (`shortestTaskTreePaths` — one BFS, so the first path reached is the shortest, and each LIST is entered
+  once). That denormalized field only tracks freshly-typed children, so a task that arrived by a move, a
+  paste or an id assignment had no link into it and the BFS died at the root: **153 of the 163 tasks in the
+  release account's tree were named by their bare title**, which turned the 64 tasks called "planning" into
+  64 identical rows and flattened the menu's first sort key to the constant 1. It is asked once per menu and
+  handed to the sort and to every row's label — it is a whole-tree walk, and the sort asks it per comparison.
+- A task **the tree does not hold** is named by its child titles, never by a path (PRD §4) — and sorts
+  **last**, after every row that has one. "Does not hold" is `shortestTaskTreePaths`, the same predicate the
+  "All tasks" rows and the greying of "go to task" use, so it also covers a task stranded *inside* a detached
+  parent (which `taskHasCells` calls present). Those are precisely the rows whose "go to task" is greyed, and
+  ranking them by a nominal path length of 1 put them FIRST — under the cursor, offering the one answer that
+  cannot work.
+- **An id row of the Change Task menu right-clicks to "go to task", and it is GREYED, never dropped, when the
+  task is nowhere in the tree.** The whole point of the menu is that it offers tasks the tree does not show —
+  a detached parent, a task kept alive only by its records — so "there is nothing to go to" is a normal answer
+  about a perfectly real row, and hiding the entry would read as "this row has no menu". `null` from
+  `firstTaskOccurrence` is that answer, said as a disabled row here and as the `MessagePopup` notice on the
+  calendar (`EditMenuRowActions`, the one carrier: no actions ⇒ no menu at all, which is every **title
+  suggestion** — a title several tasks share names no one task to go to). Three things it must not become: it
+  goes through **`RevealCell`** like §8's "go to task tree" and the find bar, never a fresh selection path; the
+  secondary press is **consumed** by `contextMenuModifier`, so opening the menu never also *picks* the id under
+  it; and the reveal follows the surface's own `state`/`onIntent`, so in the "All tasks" window and the §4
+  template it lands on that window's rows — which is why it is named "go to task" and not "go to task tree".
 
 ### Copying a cell
 
@@ -811,6 +833,14 @@ draws them **as task cells**.
 - **A mirrored task is ONE row.** Occurrences are counted off `state.cells` through `isPopulatedCell`, exactly
   as `absoluteTaskPriorities` and `RelativePriority.occurrenceChains` count them, so the two columns can never
   disagree about what an occurrence is. A blank-titled (deleted) task and a detached parent are not in the list.
+- **"In the tree" is `firstTaskOccurrences`, NOT "has a cell" — one predicate, for the rows here, for
+  `periodKindTaskRows`, and for what "go to task" is greyed on.** They are different answers, and the gap is
+  not exotic: a **detached parent keeps its whole sub-tree**, so the tasks inside it still have cells the tree
+  can reach from nowhere. Counting cells listed those, and `TaskListWindow`'s `mapNotNull` — asking this very
+  walk for their row cell — then dropped them again: the sort counted a task the window could not show (5 of
+  them on the release account, all inside 4 detached parents). Membership is the walk; the **count** is still
+  every populated cell, unreachable ones included, because that is the occurrence the percentage divides over
+  and the two columns must agree. Do not "fix" the count to match the walk.
 - **Ties fall back to the title then the id, and the tie-break is NOT reversed with the direction** — otherwise
   a block of tasks sharing one percentage re-shuffles every time the arrow is flipped.
 - **The sorter is Compose-only state**, like the calendar's zoom and the find bar: an ordering is a way of
