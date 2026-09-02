@@ -11,6 +11,81 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Adding a History Unit is one INSERT — 2026-09-02
+
+→ ADR 0007. `shared` (`scheduler/persistence/SqlDelightSchedulerStore.kt`, `HistoryDigest.kt`,
+`SchedulerStateCodec.kt`, `SchedulerStore.kt`, `scheduler/state/SchedulerState.kt`, `Scheduler.sq` +
+**`10.sqm`**). Client rebuild + a release redeploy — no Supabase deploy.
+
+Asked for: *"Each typing must trigger a save and update message on the websocket (with a debounce timing).
+The simple addition of a history unit must be efficient (for example insert of a new row in a DB)."*
+
+The typing → save → push chain already existed (400 ms to SQLite, then 500 ms to `reconcile()`, whose row
+write each peer hears about over the `postgres_changes` websocket). What did not was the *efficiency*:
+`save()` deleted every `history_unit` row of the account and re-inserted the whole list, because the row key
+was the unit's **dense index** and the cap evicts from the **front** — one new unit renumbered all 1000, so
+no row could be reused. ~70 MB rewritten per keystroke burst on the release account.
+
+Four changes, all four needed:
+
+- **`seq` replaces `ordinal` as the row key** — allocated once per unit, never renumbered.
+  `HistoryRow.ordinal` stays the dense index the app speaks in; `load()` derives it from the seq order.
+- **A save diffs the digest** (`selectHistoryDigests` + `HistoryDigest`: length + FNV-1a 64), never the
+  deltas — reading those back to compare them is what the rewrite existed to avoid.
+- **`delta` becomes the LAST column**, which is why 10.sqm rebuilds the table rather than altering it: with
+  the digest columns after it, SQLite walked the delta's overflow pages to reach them and the scan cost
+  36 ms per save instead of 3 ms.
+- **`SchedulerStateCodec` memoizes each unit's JSON on the unit** (seeded on load), because `encodeSnapshot`
+  runs twice per save (once for the write, once for `syncFingerprint`) and re-serialized all 1000 deltas
+  each time. It also stops building the histories into a payload it then strips.
+
+Measured over 1000 units / 54 MB, adding one unit: encode **267 ms → ~2 ms**, DB write **~500–870 ms →
+~25–40 ms**.
+
+Rehearsed against a copy of the real 106 MB release DB: the v10 -> v11 table rebuild costs **842 ms** at the
+first launch after the deploy, the first save **1.4 s** (it heals 2 223 carried-up digests), and every save
+after that **81 ms**.
+
+The digest columns are deliberately **not backfilled** by the migration (SQL cannot compute the hash, and
+its `length()` counts code points where Kotlin counts UTF-16 units): a carried-up row matches on the rest
+and is healed — two integers, no delta rewritten — by the first save that reuses it. So no account pays a
+full rewrite at upgrade.
+
+Still whole-document: the **wire** payload (ADR 0005) — a push ships the entire snapshot, history included.
+
+### The desktop database is opened WAL, with a busy timeout — 2026-09-02
+
+→ ADR 0007. `shared` (`scheduler/persistence/FileSchedulerStore.kt`),
+`scripts/internal/release-launch-acc3.bat`. Client rebuild + a release redeploy
+(`account3-deploy-windows.bat`) — no Supabase deploy.
+
+Reported as: the release app on Windows crashing with a fatal `Error` box reading
+`[SQLITE_BUSY] The database file is locked (database is locked)`.
+
+A file-backed `JdbcSqliteDriver` opens **one connection per thread** (SQLDelight's
+`ThreadedConnectionManager`; only an in-memory URL gets a single shared connection), so the app is a
+multi-connection SQLite client of its own file — the save debounce, `applyRemoteSnapshot`, the UI thread's
+`flush()` and the engine's `saveActiveSessions`/`saveSleepGaps`/`saveSyncMeta`/`saveCheckpoint` all write on
+connections of their own. The driver's defaults are `journal_mode=delete` (a writer takes an EXCLUSIVE lock
+on the whole file and turns away every other connection) and a **3 s** `busy_timeout` that THROWS rather
+than waits. `save()` rewrites the entire Undo/Redo history in one transaction — **~72 MB** on the release
+account (1.4 MB `app_state` + 70.5 MB over 2 219 `history_unit` rows) — which outlives 3 s, and the throw
+escapes an unguarded save site into the packaged launcher's error box. So the crash was a function of how
+long the account had been used.
+
+`FileSchedulerStore.connectionProperties()` now opens every connection with **`journal_mode=WAL`**,
+**`busy_timeout=30000`** and **`synchronous=NORMAL`**. `release-launch-acc3.bat` additionally WAITS for the
+old instance to leave the process list instead of starting the replacement immediately after `taskkill` —
+the schema create/migrate the driver runs at construction is a write transaction and was racing the dying
+instance's file handle.
+
+`DesktopStoreConcurrencyTest` pins both halves (WAL through a second connection; a rival holding the write
+lock past 3 s while the store's write still lands). It is also the only test that exercises the threaded
+connection manager at all — every other jvmTest store is `IN_MEMORY`, which is why this shipped.
+
+**Still open:** `save()` is O(whole history) and rewrites all of it on every quiet 400 ms of editing. WAL
+stops the crash; it does not make that write cheap.
+
 ### "All tasks" is the task tree, drawn a third time — 2026-08-29
 
 → PRD §7. `shared` (`ui/TaskListWindow.kt`, `scheduler/state/TaskListProjection.kt`,

@@ -14,15 +14,34 @@ CREATE TABLE app_state (
     payload TEXT NOT NULL
 );
 
+-- One History Unit. `seq` is a per-(account, category) sequence ALLOCATED ONCE, when the unit is first
+-- written, and never renumbered — the list order is the seq order, and the dense index the rest of the app
+-- speaks in (`HistoryRow.ordinal`, what a `history_pointer` indexes) is derived from that order on load.
+-- That is what makes appending a unit an INSERT of ONE row: the cap evicts from the FRONT, so a dense index
+-- as the key meant every new unit shifted all 1000 of them and the whole history had to be rewritten (~70 MB
+-- per save on a mature account, on a 400 ms typing debounce).
+--
+-- `delta_length` + `delta_hash` are the unit's DIGEST, so a save can tell "the same unit still sits here"
+-- from "a different one does" WITHOUT reading any delta text back — having to read them to compare is what
+-- the rewrite existed to avoid. A unit is immutable once committed, so the digest is written once with it.
+-- `delta_hash` is NULL only on rows a pre-v11 DB carried up (SQL cannot compute the Kotlin hash); those
+-- match on the rest and are healed by the first save that reuses them.
+--
+-- `delta` is the LAST column ON PURPOSE. SQLite reaches a column by walking the record from the front, and
+-- a delta of tens of KB lives in overflow pages - so a digest column placed after it drags that whole chain
+-- in and the scan costs 36 ms per save against a 54 MB history instead of 3 ms. Anything a save must read
+-- goes BEFORE `delta`. Added in migration 10.sqm.
 CREATE TABLE history_unit (
     account_id TEXT NOT NULL,
     category TEXT NOT NULL,
-    ordinal INTEGER NOT NULL,
+    seq INTEGER NOT NULL,
     time_millis INTEGER NOT NULL,
     chrono_id INTEGER NOT NULL,
     debug_tainted INTEGER NOT NULL,
+    delta_length INTEGER NOT NULL DEFAULT -1,
+    delta_hash INTEGER,
     delta TEXT NOT NULL,
-    PRIMARY KEY (account_id, category, ordinal)
+    PRIMARY KEY (account_id, category, seq)
 );
 
 CREATE TABLE history_pointer (
@@ -136,17 +155,33 @@ upsertAppState:
 INSERT OR REPLACE INTO app_state(account_id, payload) VALUES (?, ?);
 
 selectAllHistory:
-SELECT category, ordinal, time_millis, chrono_id, debug_tainted, delta
+SELECT category, seq, time_millis, chrono_id, debug_tainted, delta
 FROM history_unit
 WHERE account_id = ?
-ORDER BY category, ordinal;
+ORDER BY category, seq;
 
-deleteAllHistory:
-DELETE FROM history_unit WHERE account_id = ?;
+-- Every history row EXCEPT its delta: what a save diffs the incoming list against. Reading it costs one
+-- narrow row per unit and touches no delta text, which is the whole point — the digest columns answer
+-- "is this still the same unit?" so the deltas never have to be read back to find out.
+selectHistoryDigests:
+SELECT category, seq, time_millis, chrono_id, debug_tainted, delta_length, delta_hash
+FROM history_unit
+WHERE account_id = ?
+ORDER BY category, seq;
+
+deleteHistoryUnit:
+DELETE FROM history_unit WHERE account_id = ? AND category = ? AND seq = ?;
 
 insertHistoryUnit:
-INSERT INTO history_unit(account_id, category, ordinal, time_millis, chrono_id, debug_tainted, delta)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO
+history_unit(account_id, category, seq, time_millis, chrono_id, debug_tainted, delta_length, delta_hash, delta)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- Fills in the digest of a row a pre-v11 DB carried up, WITHOUT touching its delta. Only ever called for a
+-- row the save has just matched, so the values written are that row's own.
+healHistoryUnitDigest:
+UPDATE history_unit SET delta_length = ?, delta_hash = ?
+WHERE account_id = ? AND category = ? AND seq = ?;
 
 selectAllPointers:
 SELECT category, pointer FROM history_pointer WHERE account_id = ?;

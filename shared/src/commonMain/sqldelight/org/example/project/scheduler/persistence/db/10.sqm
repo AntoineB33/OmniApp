@@ -1,0 +1,55 @@
+-- Schema v10 -> v11: make a history unit's row STABLE, so appending one is an INSERT of one row.
+--
+-- `save()` used to DELETE every `history_unit` row of the account and re-INSERT the whole list on every
+-- call, because the primary key was the unit's dense index in its category's list: the cap evicts from the
+-- FRONT, so one new unit shifted all 1000 indices and nothing could be reused. On the release account that
+-- was ~70 MB of delta text rewritten per save, on a 400 ms typing debounce.
+--
+-- The table is REBUILT rather than altered in place, because all three changes below need it - two of them
+-- are new columns that must land in a particular POSITION, which `ALTER TABLE ADD COLUMN` cannot do.
+--
+-- 1. `ordinal` becomes `seq` - a per-(account, category) sequence ALLOCATED ONCE, when the unit is first
+--    written, and never renumbered. The list order is the seq order (`ORDER BY seq`), and the dense index
+--    the rest of the app speaks in (`HistoryRow.ordinal`, the position a `history_pointer` indexes) is
+--    derived from that order on load. Existing rows carry their old dense ordinal over: it is already a
+--    valid ascending sequence.
+--
+-- 2. `delta_length` / `delta_hash` are the unit's DIGEST, so a save can tell "this row still holds that
+--    unit" from "a different one sits here" without reading a single delta back - having to read them to
+--    compare is exactly what the rewrite existed to avoid. Neither is backfilled: `delta_hash` is a Kotlin
+--    function SQL cannot compute, and SQL's `length()` counts CODE POINTS where Kotlin's `String` counts
+--    UTF-16 units, so a backfilled length would disagree with the app's on any delta holding an emoji. Both
+--    stay "unknown" (-1 / NULL) on a carried-up row: it matches on the remaining columns and is HEALED -
+--    two integers written, its delta untouched - by the first save that reuses it.
+--
+-- 3. `delta` moves LAST, and that is not cosmetic. SQLite reaches a column by walking the record from the
+--    front, and a delta of tens of KB lives in OVERFLOW PAGES - so reading `delta_length` while it sat
+--    after `delta` dragged the whole chain in and cost the digest scan 36 ms per save against a 54 MB
+--    history, where the same scan over the columns before `delta` costs 3 ms. Every column a save reads
+--    must precede the blob it exists to avoid reading.
+--
+-- The dense `ordinal` column is GONE rather than kept beside `seq`: two order columns that must agree is a
+-- bug waiting to happen, and only one of them was ever the primary key.
+
+ALTER TABLE history_unit RENAME TO history_unit_v10;
+
+CREATE TABLE history_unit (
+    account_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    time_millis INTEGER NOT NULL,
+    chrono_id INTEGER NOT NULL,
+    debug_tainted INTEGER NOT NULL,
+    delta_length INTEGER NOT NULL DEFAULT -1,
+    delta_hash INTEGER,
+    delta TEXT NOT NULL,
+    PRIMARY KEY (account_id, category, seq)
+);
+
+INSERT INTO history_unit(
+    account_id, category, seq, time_millis, chrono_id, debug_tainted, delta_length, delta_hash, delta
+)
+SELECT account_id, category, ordinal, time_millis, chrono_id, debug_tainted, -1, NULL, delta
+FROM history_unit_v10;
+
+DROP TABLE history_unit_v10;

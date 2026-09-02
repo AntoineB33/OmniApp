@@ -104,12 +104,16 @@ object SchedulerStateCodec {
      * from the payload blob (it lives in its own per-row table instead).
      */
     fun encodeSnapshot(state: SchedulerState): PersistedSnapshot {
-        val statePayload = json.encodeToString(state.toPersisted().copy(histories = null))
+        // `withHistories = false`, not `.copy(histories = null)`: the copy still BUILT the whole history
+        // into PersistedDelta objects first and then threw it away — ~40 ms per call on a full 1000-unit
+        // stack, and this runs on every save AND again for every syncFingerprint.
+        val statePayload = json.encodeToString(state.toPersisted(withHistories = false))
         val rows = mutableListOf<HistoryRow>()
         val pointers = mutableListOf<HistoryPointerRow>()
         for ((category, history) in state.histories.all()) {
             pointers.add(HistoryPointerRow(category.name, history.pointer))
             history.units.forEachIndexed { index, unit ->
+                val encoded = encodedDeltaOf(unit)
                 rows.add(
                     HistoryRow(
                         category = category.name,
@@ -117,8 +121,8 @@ object SchedulerStateCodec {
                         timeMillis = unit.timeMillis,
                         chronoId = unit.chronoId,
                         debugTainted = unit.debugTainted,
-                        deltaJson = json.encodeToString(unit.delta.toPersisted()),
-                    ),
+                        deltaJson = encoded.json,
+                    ).also { it.deltaHash = encoded.hash },
                 )
             }
         }
@@ -158,6 +162,19 @@ object SchedulerStateCodec {
                 .copy(histories = buildHistories(snapshot.history, snapshot.pointers))
         }.getOrNull()
 
+    /**
+     * [unit]'s delta serialized, computed at most once per unit and kept on the unit itself.
+     *
+     * This is the ONE place [HistoryUnit.encodedDelta] is read or written. `encodeSnapshot` runs on every
+     * save AND again for every [syncFingerprint], so without the memo a mature account re-serialized its
+     * whole Undo/Redo history — tens of MB — twice per keystroke debounce, before the store had even been
+     * asked to write anything. A unit is immutable once committed, so the answer can never go stale.
+     */
+    private fun encodedDeltaOf(unit: HistoryUnit): EncodedDelta =
+        unit.encodedDelta ?: json.encodeToString(unit.delta.toPersisted())
+            .let { EncodedDelta(json = it, hash = HistoryDigest.hash(it)) }
+            .also { unit.encodedDelta = it }
+
     private fun buildHistories(
         rows: List<HistoryRow>,
         pointers: List<HistoryPointerRow>,
@@ -175,7 +192,18 @@ object SchedulerStateCodec {
                             chronoId = row.chronoId,
                             delta = json.decodeFromString<PersistedDelta>(row.deltaJson).toDelta(),
                             debugTainted = row.debugTainted,
-                        )
+                        ).also {
+                            // Seed the memo from the text we were just handed: re-serializing a unit the
+                            // store (or a peer's snapshot) already spelled out would be pure waste, and it
+                            // is what made the first save of every launch re-encode the whole history.
+                            it.encodedDelta =
+                                EncodedDelta(
+                                    json = row.deltaJson,
+                                    hash =
+                                        row.deltaHash.takeIf { hash -> hash != HistoryDigest.UNKNOWN_HASH }
+                                            ?: HistoryDigest.hash(row.deltaJson),
+                                )
+                        }
                     }
             histories =
                 histories.withCategory(
@@ -186,7 +214,11 @@ object SchedulerStateCodec {
         return histories
     }
 
-    private fun SchedulerState.toPersisted(): PersistedState =
+    /**
+     * [withHistories] is false for [encodeSnapshot], which stores the Undo/Redo history as its own rows and
+     * must not pay to build it into the payload blob it would then have to strip out again.
+     */
+    private fun SchedulerState.toPersisted(withHistories: Boolean = true): PersistedState =
         PersistedState(
             rootListId = rootListId.value,
             lists =
@@ -321,7 +353,7 @@ object SchedulerStateCodec {
             // `side-dev/README.md`: the kinds of restrictive period this account has defined.
             periodKinds = periodKinds,
             focusedWindow = focusedWindow.name,
-            histories = histories.toPersisted(),
+            histories = if (withHistories) histories.toPersisted() else null,
             sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
             sleepingUntilMillis = sleepingUntilMillis,
             sleepingSinceMillis = sleepingSinceMillis,

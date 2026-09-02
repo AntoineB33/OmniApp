@@ -11,10 +11,11 @@ import org.example.project.scheduler.model.ForcedTaskStart
 import org.example.project.scheduler.model.ForcedTaskSwitch
 import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.Task
-import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.scheduler.model.WellKnownIds
+import org.example.project.scheduler.persistence.EncodedDelta
 import org.example.project.scheduler.platform.GlobalShortcut
 import org.example.project.scheduler.platform.ShortcutBinding
 
@@ -113,7 +114,24 @@ data class HistoryUnit(
     val chronoId: Long = 0,
     val delta: Delta,
     val debugTainted: Boolean = false,
-)
+) {
+    /**
+     * The serialized form of [delta] plus its digest, computed at most ONCE per unit
+     * (`SchedulerStateCodec.encodedDeltaOf`, which is the only reader and the only writer).
+     *
+     * A unit is immutable once committed, so its JSON is too — and the reducer carries the same unit OBJECT
+     * by reference through every state copy it makes, so this memo survives every edit. Without it, each
+     * save re-serialized every unit in the category: `encodeSnapshot` is called on the 400 ms save debounce
+     * AND again for `syncFingerprint`, and on a mature account that is tens of MB of JSON per keystroke —
+     * which no amount of cleverness in the store could have made cheap, because the store is handed the
+     * strings already built. It is seeded on load from the row just read, so a launch re-serializes nothing.
+     *
+     * Deliberately a `var` outside the constructor: it is a memo of a value already determined by [delta],
+     * so it takes no part in [equals]/[hashCode]/[copy] and two units that differ only here are the same
+     * unit. A race between two threads computing it writes the same answer twice.
+     */
+    internal var encodedDelta: EncodedDelta? = null
+}
 
 /**
  * One line in the History Manager's **Notifications** column: the text of a notification the app posted,

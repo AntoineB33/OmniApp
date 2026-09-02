@@ -20,12 +20,30 @@ if exist "%~dp0acc3.cred" (
     if not "%%K"=="" set "%%K=%%L"
   )
 )
+set "APP_EXE="
 for %%F in ("%~dp0app\*.exe") do (
-  set "APP_EXE=%%~fF"
-  set "APP_EXE_NAME=%%~nxF"
-  REM Prevent duplicate release instances from sharing the same state DB and tripping SQLite locks.
-  taskkill /F /IM "!APP_EXE_NAME!" >nul 2>&1
-  start "" "!APP_EXE!"
+  if not defined APP_EXE (
+    set "APP_EXE=%%~fF"
+    set "APP_EXE_NAME=%%~nxF"
+  )
+)
+if not defined APP_EXE (
+  echo [x] Release app not found under "%~dp0app". Run account3-deploy-windows.bat first.
   goto :eof
 )
-echo [x] Release app not found under "%~dp0app". Run account3-deploy-windows.bat first.
+
+REM Prevent duplicate release instances from sharing the same state DB and tripping SQLite locks.
+REM taskkill only ASKS Windows to end the process: it returns immediately, while the dying instance still
+REM holds its SQLite file lock for a moment. Starting the replacement inside that window is a real race -
+REM the new instance runs its schema create/migrate (a WRITE transaction) against a still-locked file and
+REM dies at startup with "[SQLITE_BUSY] The database file is locked", which the packaged launcher shows
+REM as a fatal "Error" box. So WAIT for the image to actually leave the process list before starting.
+taskkill /F /IM "!APP_EXE_NAME!" /T >nul 2>&1
+for /l %%N in (1,1,30) do (
+  tasklist /FI "IMAGENAME eq !APP_EXE_NAME!" 2>nul | find /i "!APP_EXE_NAME!" >nul || goto :launch
+  ping -n 2 127.0.0.1 >nul
+)
+echo [warn] "!APP_EXE_NAME!" is still running after 30s - starting anyway.
+
+:launch
+start "" "!APP_EXE!"
