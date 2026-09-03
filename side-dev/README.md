@@ -9,6 +9,7 @@ The scheduler returns a set of rules that define the task schedule for a given t
 #### Priority, Granularity and Compensation
 * Each task has a **target priority percentage**. One optimization goal is to match these percentages across the smallest possible time window, avoiding unnecessarily large monolithic blocks (e.g., alternating two 50% tasks in 10-minute intervals rather than 1-hour intervals). The time windows must be as small as possible while still allowing for the task's minimum execution time to be respected (e.g., task A 30min 33%, task B 15min 33%, task C 15min 33% => task A 30min, task B 15min, task C 15min, task B 15min, task C 15min...).
 * Pre-placed tasks or restrictive periods inevitably create priority deficits for excluded tasks. To prevent massive, disruptive overcompensation, the priority optimization uses an **exponential decay** model. The influence of the debt repayment decays over distance from the blockage.
+* The timeline is infinite forward and backward, and the pre-placed tasks and restrictive periods can also be infinite.
 
 #### Soft Minimum Execution Time
 Each task has a defined minimum execution time. Another optimization goal is to reach the minimum execution time for any task appearing in the timeline. The ideal situation is that each task panels spans at least its minimum execution time without interruption.

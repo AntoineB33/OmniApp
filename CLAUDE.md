@@ -140,6 +140,24 @@ what those are worth — one row — and every piece below exists because it did
   `schedulingSignature`, same drop by the advance tick. Offered on a schedulable **leaf** only; asking for a
   task clears an outstanding refusal *of that same task*. It is answered in phase 1 **and** in phase 2 — a
   timeline nothing disturbs freezes before phase 1 places anything, and the request must not vanish there.
+- **EVERY rule the fill makes also names WHO RUNS INSTEAD** (`TaskPanel.alternativeTaskId`,
+  `SchedulerDomain.alternativeTaskAt`). `side-dev/README.md` § *Alternative Schedules*: *"The returned set of
+  rules must also give for every $now line$ the task that must be scheduled if the task scheduled by the
+  scheduler can't be scheduled now."* A panel IS one of those rules, so the answer rides on it — read from
+  `PlanWalk.alternative` **before the clocks are charged** (the reference's `alt = self._alternative(v, cand,
+  name, p_local)`), so it answers at the same instant and against the same claims as the pick it stands in
+  for. `SchedulerPlanner.runRange` has always done this through its `PlacementCollector`; `fillSchedule` is
+  the other driver and must stay in step. Four things it is: **named at the run's START** (the merge keeps the
+  head's, which is the answer one uninterrupted plan would have given); **null where there is nobody** — a
+  stretch only one task was allowed in, "the same task again" being no answer at all; **derived, never
+  persisted and never synced**, recomputed in full by every fill exactly as the panel is; and answered in
+  **both** phases — phase 2's analytic cycle names *the next task the rotation reaches*, said once for the
+  whole repeat because the walk is not advanced through it.
+- **PRD §7's refusal IS the README's use of that answer**, not a second mechanism. *"A program would simply
+  read the rules, set this new task starting at $now line$, and run the scheduler again."* Refuse the
+  scheduled task and the fill's next pick is exactly the one the rules named, because
+  `pickNeediest(…, last = refused)` and `PlanWalk.alternative(…, chosen = refused)` are the same ordering over
+  the same claims. Do not let the two drift into two answers.
 - **The clock replay walks the past EDGE BY EDGE**, applying `relax` where the walk applies it. Its window is
   two `minPeriod`s measured in **schedulable** time, never wall time.
 - **Only obstacles still AHEAD build the influence field.** The boost is capped (`maxBoost` = 6) and decays to

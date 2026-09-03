@@ -549,6 +549,25 @@ data class TaskPanel(
      * payload written before this field existed is healed on decode from those flags.
      */
     val periodKind: String = "",
+    /**
+     * `side-dev/README.md` § *Alternative Schedules*: **the task to run from here instead, if [taskId] turns
+     * out not to be runnable now.** *"The returned set of rules must also give for every $now line$ the task
+     * that must be scheduled if the task scheduled by the scheduler can't be scheduled now."*
+     *
+     * A panel IS one of the rules the scheduler returns, so this is where that answer lives — named at the
+     * run's START, which is the answer one uninterrupted plan would have given (a resumed half of a run names
+     * the alternative its head named; see [org.example.project.scheduler.domain.SchedulerDomain.mergeSameTaskPanels]).
+     * Null on everything that is not a pick the scheduler made: a user-authored panel, a restrictive period,
+     * a reminder tag — and on a stretch only one task was allowed in, where there is nobody to name and
+     * "the same task again" would be no answer at all.
+     *
+     * **Derived, never persisted and never synced** (CLAUDE.md § *State*): it is a function of the walk at
+     * the instant the panel was placed, recomputed in full by every fill exactly as the panel itself is. The
+     * README's own use of it is PRD §7 "Switch task" — refuse the scheduled task and the fill's next pick IS
+     * this one, because [org.example.project.scheduler.domain.PlanWalk.alternative] and the refused pick's
+     * `avoidLast` are the same ordering over the same claims.
+     */
+    val alternativeTaskId: TaskId? = null,
 ) {
     /**
      * The README kind this panel restricts the timeline with, or blank when it restricts nothing. The ONE

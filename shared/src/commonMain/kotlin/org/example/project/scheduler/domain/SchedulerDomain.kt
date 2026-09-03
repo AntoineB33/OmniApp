@@ -3418,7 +3418,12 @@ object SchedulerDomain {
             while ("auto/$idCounter" in keptIds) idCounter++
             return "auto/${idCounter++}"
         }
-        fun emit(taskId: TaskId, start: Long, end: Long) {
+        // `side-dev/README.md` § *Alternative Schedules*: every rule the scheduler makes also names **who runs
+        // from here instead**, and a rule of this fill is a panel — so the alternative is emitted with it,
+        // exactly as `side-dev/scheduler.py`'s `Walk._emit` carries `alt` beside the placement and as
+        // [SchedulerPlanner.runRange] hands it to its [SchedulerPlanner.PlacementCollector]. Keeping the two
+        // drivers in step (CLAUDE.md) means this driver names it too.
+        fun emit(taskId: TaskId, start: Long, end: Long, alternative: TaskId?) {
             generated += TaskPanel(
                 id = nextAutoId(),
                 taskId = taskId,
@@ -3427,6 +3432,7 @@ object SchedulerDomain {
                 endEpochMillis = end,
                 pinned = false,
                 auto = true,
+                alternativeTaskId = alternative,
             )
         }
         // The windows partition the timeline and the cursor only advances, so one monotonic index answers
@@ -3542,7 +3548,10 @@ object SchedulerDomain {
             }
             val end = minOf(cursor + need, limit ?: Long.MAX_VALUE, horizon)
             if (end <= cursor) break
-            emit(taskId, cursor, end)
+            // `side-dev/scheduler.py`: `alt = self._alternative(v, cand, name, p_local)` — read BEFORE the
+            // clocks are charged, so the alternative answers "who instead?" at the same instant, and against
+            // the same claims, as the pick it stands in for.
+            emit(taskId, cursor, end, walk.alternative(candidates, taskId, sharesHere))
             val placed = end - cursor
             // `side-dev/scheduler.py`: `v[name] += served / w[name]` — charged against the task's EFFECTIVE
             // weight, its percentage after resilience, and at the PLAIN rate. The field lengthens the slot
@@ -3584,7 +3593,7 @@ object SchedulerDomain {
                 pending?.takeIf { it.first in allowedHere }?.let { (id, owed) ->
                     val end = minOf(cursor + owed, horizon)
                     if (end > cursor) {
-                        emit(id, cursor, end)
+                        emit(id, cursor, end, walk.alternative(allowedHere, id, sharesHere))
                         walk.serveWeighted(id, (end - cursor).toDouble(), weightsHere[id] ?: 0.0)
                         walk.relax((end - cursor).toDouble(), period, allowedHere)
                         cursor = end
@@ -3606,7 +3615,7 @@ object SchedulerDomain {
                             .roundToLong().coerceAtLeast(1L)
                     val end = minOf(cursor + need, horizon)
                     if (end > cursor) {
-                        emit(forced, cursor, end)
+                        emit(forced, cursor, end, walk.alternative(allowedHere, forced, sharesHere))
                         walk.serveWeighted(forced, (end - cursor).toDouble(), weightsHere[forced] ?: 0.0)
                         walk.relax((end - cursor).toDouble(), period, allowedHere)
                         cursor = end
@@ -3623,7 +3632,7 @@ object SchedulerDomain {
                             .roundToLong().coerceAtLeast(1L)
                     val end = minOf(cursor + need, horizon)
                     if (end <= cursor) break
-                    emit(name, cursor, end)
+                    emit(name, cursor, end, walk.alternative(allowedHere, name, sharesHere))
                     walk.serveWeighted(name, (end - cursor).toDouble(), weightsHere[name] ?: 0.0)
                     walk.relax((end - cursor).toDouble(), period, allowedHere)
                     cursor = end
@@ -3647,12 +3656,25 @@ object SchedulerDomain {
                         walk,
                         allowedHere,
                     )
+                // `side-dev/README.md` § *Alternative Schedules* under the analytic cycle: the cycle is a fixed
+                // rotation the walk has converged on, so "who runs from here instead" is simply **the next
+                // task the rotation reaches** — the same task the greedy's claims would name, said once for
+                // the whole repeat instead of recomputed per slot (the walk is not advanced here). Null where
+                // the rotation holds one task only, which is the cycle's way of saying there is nobody else.
+                fun cycleAlternative(at: Int): TaskId? {
+                    for (step in 1 until cycle.size) {
+                        val other = cycle[(at + step) % cycle.size].taskId
+                        if (other != null && other != cycle[at % cycle.size].taskId) return other
+                    }
+                    return null
+                }
                 var slotIndex = 0
                 while (cursor < horizon && index < maxPanels && cycle.isNotEmpty()) {
-                    val slot = cycle[slotIndex++ % cycle.size]
+                    val at = slotIndex++ % cycle.size
+                    val slot = cycle[at]
                     val end = minOf(cursor + slot.durationMillis, horizon)
                     if (end <= cursor) break
-                    emit(slot.taskId!!, cursor, end)
+                    emit(slot.taskId!!, cursor, end, cycleAlternative(at))
                     cursor = end
                     index++
                 }
@@ -3664,6 +3686,28 @@ object SchedulerDomain {
             kept.filterNot { it.id in elapsedHeadIds } + sidePanels + sleepPanels + beforeBedPanels +
                 mergeSameTaskPanels(kept.filter { it.id in elapsedHeadIds } + generated)
             ).sortedBy { it.startEpochMillis }
+    }
+
+    /**
+     * `side-dev/README.md` § *Alternative Schedules* **at the now-line**: *"the task that must be scheduled if
+     * the task scheduled by the scheduler can't be scheduled now"*, read out of the rules the fill returned.
+     *
+     * `side-dev/scheduler.py`'s `Scheduler.alternative_at`, over the panel list this app's scheduler answers
+     * with. The line in mode 1 sits at the very edge of the period it is dragging, so the instant
+     * [millis] itself is often inside a stretch nobody may run in: the question is then about the **next**
+     * thing scheduled, not about the emptiness the line is standing in. Hence the two passes — the rule
+     * covering the line first, then the first rule ahead of it.
+     *
+     * Null where the rules name nobody: an empty timeline, or a stretch only one task was allowed in. The
+     * README's own use of the answer is [org.example.project.scheduler.model.ForcedTaskSwitch] (PRD §7
+     * "Switch task"): refuse the scheduled task at [millis] and the re-plan starts this one there.
+     */
+    fun alternativeTaskAt(panels: List<TaskPanel>, millis: Long): TaskId? {
+        val rules = panels.filter { it.auto && it.taskId != null && it.alternativeTaskId != null }
+            .sortedBy { it.startEpochMillis }
+        rules.firstOrNull { it.startEpochMillis <= millis && millis < it.endEpochMillis }
+            ?.let { return it.alternativeTaskId }
+        return rules.firstOrNull { it.endEpochMillis > millis }?.alternativeTaskId
     }
 
     /**

@@ -11,6 +11,46 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Alternative Schedules: every rule the fill makes now names who runs instead — 2026-09-03
+
+`shared` (`scheduler/model/TaskModels.kt`, `scheduler/domain/SchedulerDomain.kt`) + `CLAUDE.md` + ADR 0001.
+**Client rebuild only** — no Supabase deploy, no SQLite migration, **no payload change**: the answer is
+derived and deliberately not persisted (it is recomputed in full by every fill, like the panel carrying it).
+
+A fifth README audit fix, in the same sweep as the four below. `side-dev/README.md` § *Alternative Schedules*
+asks for something the app's own scheduler was not answering: *"The returned set of rules must also give for
+every $now line$ the task that must be scheduled if the task scheduled by the scheduler can't be scheduled
+now."*
+
+- **The reference port had it; the app's driver did not.** `SchedulerPlanner.runRange` already read
+  `PlanWalk.alternative` beside each pick and handed it to a `PlacementCollector` (`ProgressiveSchedule`'s
+  `PlannedRun.alternativeId`, `alternativeAt`) — a faithful port of `side-dev/scheduler.py`'s `Placement.alt`
+  and `Scheduler.alternative_at`. But `ProgressiveSchedule` is reference-comparison machinery no app code
+  calls, and `SchedulerDomain.fillSchedule` — the driver the running app actually answers with — never asked
+  the question at all. An unsanctioned divergence between the two drivers, and the README's requirement was
+  simply unmet on the surface that matters.
+- **`TaskPanel.alternativeTaskId`** is where the answer lives now, because a panel IS one of the rules the
+  scheduler returns. `fillSchedule`'s single `emit` funnel carries it, read **before** the clocks are charged
+  (`side-dev/scheduler.py`: `alt = self._alternative(v, cand, name, p_local)`), so it answers "who instead?"
+  at the same instant and against the same claims as the pick it stands in for. Both phases name it: phase 1
+  from the walk; phase 2's settle likewise, and its analytic cycle from **the next task the rotation reaches**
+  (the cycle is a converged rotation the walk is not advanced through, so the answer is said once for the
+  whole repeat).
+- **`SchedulerDomain.alternativeTaskAt(panels, millis)`** reads it back for *every* position of the line —
+  `Scheduler.alternative_at`'s two passes: the rule covering the line, then the first rule ahead of it,
+  because in mode 1 the line sits at the edge of the period it is dragging and the instant itself is often
+  inside a stretch nobody may run in.
+- **Null is a real answer, not a gap**: a stretch only one task was allowed in has nobody to name, and "the
+  same task again" would be no answer at all.
+- **The README's own use of it was already built** — PRD §7 "Switch task" is exactly *"set this new task
+  starting at $now line$, and run the scheduler again"*. The two agree by construction: `ForcedTaskSwitch`
+  hands the refused task to `PlanWalk.setLast`, and `pickNeediest(…, last = refused)` and
+  `PlanWalk.alternative(…, chosen = refused)` are the same ordering over the same claims. `AlternativeScheduleTest`
+  pins that end to end — refuse the scheduled task and the schedule that comes back really does start the
+  named alternative — plus `tests_displayer.py`'s `unnamed_alternatives` invariant (every rule names one,
+  where there is one to name), the merge keeping the alternative named at a run's **start**, and the cycle
+  path.
+
 ### Four README audit fixes: No idling, mode 2's cover, the frozen past, and the whole rule state — 2026-09-03
 
 `shared` (`scheduler/domain/SchedulerDomain.kt`) + `CLAUDE.md` + PRD §8/§9/§15 + ADR 0001/0003. **Client

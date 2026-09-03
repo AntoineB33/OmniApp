@@ -581,10 +581,22 @@ time under a budget, `rules()` fits a regime affine in `t_p` and certifies it at
 fitted on, `advanceTo()` freezes the past by construction, and `alternativeAt()` names the fallback
 task. It drives `PlanWalk` like everything else and is **not** a second copy of the rules.
 
-**It is not yet wired into the app, and it has no test.** `SchedulerDomain.fillSchedule` still
-materializes panels from the walk directly and nothing calls `ProgressiveSchedule`; the paragraph
-above stays true of what OmniApp *runs*. Treat the file as the ported answer waiting for a driver —
-before wiring it, give it the same slot-for-slot pinning `SchedulerPlanTest` gives the walk.
+**The progressive/affine half is not yet wired into the app, and it has no test.**
+`SchedulerDomain.fillSchedule` still materializes panels from the walk directly and nothing calls
+`ProgressiveSchedule`; the paragraph above stays true of what OmniApp *runs*. Treat the file as the
+ported answer waiting for a driver — before wiring it, give it the same slot-for-slot pinning
+`SchedulerPlanTest` gives the walk.
+
+**§ *Alternative Schedules* is the exception, and since 2026-09-03 it is answered by the app's own
+driver.** Leaving it to `ProgressiveSchedule` meant the running app returned rules that named no
+alternative at all, which the README forbids outright — so `fillSchedule` now reads
+`PlanWalk.alternative` beside every pick and carries the answer on the panel
+(`TaskPanel.alternativeTaskId`, read back by `SchedulerDomain.alternativeTaskAt` — the port of
+`Scheduler.alternative_at`). It is derived and deliberately unpersisted, and PRD §7's "Switch task" is
+the README's own use of it: `ForcedTaskSwitch` hands the refused task to `PlanWalk.setLast`, and
+`pickNeediest(…, last = refused)` is the same ordering over the same claims as
+`PlanWalk.alternative(…, chosen = refused)`, so the re-plan starts precisely the task the rules named
+(`AlternativeScheduleTest`).
 
 **Nothing slides any more** (ADR 0003): the recurrence bars pin every break to a fixed instant, so the
 clip's remaining job is the drift *between* fills rather than a period that moves with the now-line. The
