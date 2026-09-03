@@ -184,6 +184,20 @@ private const val ADVANCE_TICK_MILLIS_ACCEL: Long = 1_000
 private const val SCHEDULE_ADVANCE_STEP_MILLIS: Long = 1_000
 
 /**
+ * `side-dev/README.md` § *Progressive Calculation*, the escape clause: **the most steps one journey of the
+ * now-line may be walked in.**
+ *
+ * The line's step is one minimum execution time ([SchedulerDomain.sweepStepMillis]), and that is what the walk
+ * asks for. But the journey's LENGTH is not the app's to choose — a machine asleep for a week, a debug leap of
+ * a month — and an account whose finest minimum is one minute would ask for tens of thousands of commits, on
+ * the dispatcher every sweep and every advance is queued behind (ADR 0009). So the stride is widened, once,
+ * to bring the whole journey inside this many steps: "if exact schedules cannot be found in time, approved
+ * approximation strategies must be used". It only ever bites on a journey no ordinary tick takes — 3 h of
+ * ground at a 15-minute minimum is 12 steps — and it is logged when it does.
+ */
+private const val MAX_SWEEP_STEPS: Int = 2_000
+
+/**
  * PRD §9/§12: how often the engine re-reads the OS lock/standby history that feeds
  * [SchedulerReducer.noScreenEvidence]. Reading it costs a process launch (a PowerShell query on Windows), so it
  * is emphatically NOT on the advance cadence — 10 min, the same bucket the calendar's own layer scan uses.
@@ -379,6 +393,20 @@ class SchedulerEngine(
     // here because the read is a process launch; refreshed by [launchNoScreenEvidenceScan] on a coarse bucket.
     // Derived, device-level and local: never persisted, never synced, never part of any fingerprint.
     private val _noScreenEvidence = MutableStateFlow<List<TaskTimeRange>>(emptyList())
+
+    // The two halves [_noScreenEvidence] is the union of, kept apart because they are refreshed by different
+    // events: what the last OS scan READ ([launchNoScreenEvidenceScan], a process launch on a coarse bucket)
+    // and what the now-line SWEPT in mode 2 ([sweepNowLineTo], an edge — a wake from device sleep). Only the
+    // union is ever published, by [publishNoScreenEvidence]; nothing else writes the flow.
+    private var scannedNoScreen: List<TaskTimeRange> = emptyList()
+    private var sweptNoScreen: List<TaskTimeRange> = emptyList()
+
+    // `side-dev/README.md` § *$now line$ 2 modes*: the mode the JOURNEY is being walked in, held for as long as
+    // the walk lasts and null at every other instant. A wake from device sleep is swept in mode 2 — the README
+    // says so in as many words — and mode 2 is a statement about where the line is, not about where it has
+    // arrived, so every position the walk commits has to be asked in it. Read by [tpModeNow], which is the one
+    // reading of the mode the fills and the display share; never persisted, never synced.
+    private var sweepMode: Int? = null
 
     /**
      * The stretches the devices observed nobody at a screen for — the ONE reading of it in the app.
@@ -1071,7 +1099,104 @@ class SchedulerEngine(
      */
     fun reportTimeGap(sleepStart: Long, sleepEnd: Long) {
         vm.dispatch(SchedulerIntent.ReportDeviceSleep(sleepStart, sleepEnd))
-        advanceTo(sleepEnd)
+        // `side-dev/README.md` § *Progressive Calculation*, direct consequence: *"If the device bearing the
+        // running process is put to sleep, then when the program wakes up, the now line does a fast move
+        // forward (in epsilon time) in mode 2 to the current date."*
+        //
+        // Mode 2 is *"the now line must be covered by the period 'no on-screen task'"*, and the line was in it
+        // at every instant of the journey — so the whole swept stretch is covered by one, which is noted BEFORE
+        // the walk so the walk itself sees it. That is not evidence about a device and does not wait on any: it
+        // is what the mode MEANS, which is why the bars stop counting from the last recorded break the moment
+        // the app wakes instead of ten minutes later when the OS lock scan lands (the drift the funnel exists
+        // to remove).
+        noteSweptNoScreen(sleepStart, sleepEnd)
+        // scripts/collect-diagnostics.bat: a wake is the event that explains most post-wake anomalies (a break
+        // owed at the line, a hole in the records), and nothing logged it at all before. Once per wake.
+        Diagnostics.log(
+            "device sleep ${(sleepEnd - sleepStart) / 60_000}min " +
+                "(${Diagnostics.formatInstant(sleepStart)} → ${Diagnostics.formatInstant(sleepEnd)}): " +
+                "now-line swept in mode 2, the stretch covered as no on-screen task",
+        )
+        sweepNowLineTo(sleepStart, sleepEnd, DynamicPeriods.MODE_AWAY)
+    }
+
+    /**
+     * `side-dev/README.md` § *$now line$*: **move the line to [toMillis], CONTINUOUSLY** — the one way it ever
+     * moves, and the reason nothing in this engine teleports it.
+     *
+     * *"Every t such that t <= now line are the previous values of the now line variable. This means that the
+     * now line moves continuously forward in time."* So a caller asking for a distant position is asking for a
+     * JOURNEY, not a landing, and the line is walked there one [SchedulerDomain.sweepStepMillis] at a time,
+     * freezing what it passes as it passes it. An ordinary tick is far inside the first step and costs exactly
+     * one commit, so this is the same single dispatch it always was where no ground is being covered.
+     *
+     * [mode] is the mode to hold for the WHOLE journey ([sweepMode]) — mode 2 for a wake from device sleep —
+     * or `null` to read the live one at each position, which is what a debug time leap wants (the devices'
+     * state is real there; only the clock moved).
+     *
+     * The journey does **not** re-plan, and that is the README's own answer for it: *"If the current date is
+     * beyond the definitive schedule, then it is similar to a case where no CPU were available during this
+     * period and the current set of rules, parameterized by now line and now line mode, is used to define the
+     * schedule as the now line does its fast move, while no better set of rules was found."* Each step is an
+     * ordinary [SchedulerIntent.AdvanceSchedule] — the plan in force writes the past it passes — and the
+     * re-plan that follows belongs to the landing, through [requestReschedule] like every other one.
+     */
+    private fun sweepNowLineTo(fromMillis: Long, toMillis: Long, mode: Int? = null) {
+        if (toMillis <= fromMillis) return
+        val previous = sweepMode
+        sweepMode = mode
+        var steps = 0
+        var widened = false
+        try {
+            var cursor = fromMillis
+            while (cursor < toMillis) {
+                // The rules at the line, so a journey crossing a task-tree keyframe steps by the minimum in
+                // force there rather than the one it set out with (ADR 0008).
+                val step = SchedulerDomain.sweepStepMillis(vm.state.value, cursor) ?: (toMillis - cursor)
+                val budget = (MAX_SWEEP_STEPS - steps).coerceAtLeast(1)
+                val even = (toMillis - cursor + budget - 1) / budget
+                if (even > step) widened = true
+                cursor = minOf(toMillis, cursor + maxOf(step, even, 1L))
+                advanceTo(cursor)
+                steps++
+            }
+        } finally {
+            sweepMode = previous
+        }
+        if (widened) {
+            Diagnostics.log(
+                "now-line swept ${(toMillis - fromMillis) / 60_000}min in $steps step(s) " +
+                    "(stride widened past the minimum execution time to stay inside $MAX_SWEEP_STEPS)",
+            )
+        }
+    }
+
+    /**
+     * `side-dev/README.md` § *$now line$ 2 modes*, **mode 2's own rule made a fact about the timeline**: the
+     * line was covered by "no on-screen task" at every instant of `[fromMillis, toMillis]`, so that stretch is
+     * covered by one.
+     *
+     * It joins the OS scan's answer in [_noScreenEvidence] — the funnel every placement already reads
+     * ([SchedulerDomain.observedNoScreenPeriods]) — rather than becoming a panel: it is derived, local and
+     * recomputed, exactly like the scan beside it, and CLAUDE.md's rule is that a period is never
+     * manufactured from an observation. Pruned to the same [NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS] window the
+     * scan answers over, so the list cannot grow without bound across a long-running session.
+     */
+    private fun noteSweptNoScreen(fromMillis: Long, toMillis: Long) {
+        if (toMillis <= fromMillis) return
+        sweptNoScreen = sweptNoScreen + TaskTimeRange(fromMillis, toMillis)
+        publishNoScreenEvidence()
+    }
+
+    /** The union of the two halves, pruned to the window the scan answers over — the only writer of the flow. */
+    private fun publishNoScreenEvidence() {
+        val floor = clock.nowMillis() - NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS
+        sweptNoScreen = sweptNoScreen.filter { it.endEpochMillis > floor }
+        val merged =
+            SchedulerDomain.mergeOccupied(
+                scannedNoScreen + sweptNoScreen.map { TaskTimeRange(maxOf(it.startEpochMillis, floor), it.endEpochMillis) },
+            )
+        if (merged != _noScreenEvidence.value) _noScreenEvidence.value = merged
     }
 
     // PRD §9: the advance tick + PRD §12 device-sleep detection (real-time gap → inject a hole).
@@ -1091,21 +1216,26 @@ class SchedulerEngine(
             val realNow = SystemAppClock.nowMillis()
             val now = clock.nowMillis()
             if (realNow - lastRealTick > DEVICE_SLEEP_THRESHOLD_MILLIS) {
-                // The schedule resumes immediately from the coarse tick boundaries (unchanged); separately,
-                // the OS sleep/wake log is queried off-thread for the EXACT pause interval(s) to record and
-                // sync (PRD §15) — so a ping that was due mid-pause but never sent (the machine was down)
-                // becomes an exact gap other devices can pull.
+                // The line is SWEPT from the coarse tick boundary to the wake, in mode 2 ([reportTimeGap]);
+                // separately, the OS sleep/wake log is queried off-thread for the EXACT pause interval(s) to
+                // record and sync (PRD §15) — so a ping that was due mid-pause but never sent (the machine was
+                // down) becomes an exact gap other devices can pull. The journey's own cover is the tick
+                // boundaries, which strictly CONTAIN the suspension, so it can only over-claim the ~30 s before
+                // the machine went down — the same span `ReportDeviceSleep` already treats as the hole.
                 reportTimeGap(lastClockTick, now)
                 recordExactSleepGaps(lastClockTick, now)
                 lastScheduleAdvance = now
             } else {
-                // Display: always glide the now-line to the current clock instant.
-                _nowMillis.value = now
-                // Schedule: bank records / re-derive panels only on the coarser sim-time step.
+                // Schedule: bank records / re-derive panels only on the coarser sim-time step — and reach `now`
+                // by SWEEPING, so a clock that has covered ground (a debug leap) is walked rather than jumped.
+                // At 1x that is one commit, exactly as it was: a tick is far inside one minimum execution time.
+                // It runs BEFORE the glide below, so the display line is never wound back to a swept position.
                 if (now - lastScheduleAdvance >= SCHEDULE_ADVANCE_STEP_MILLIS) {
-                    dispatchScheduleAdvance(now)
+                    sweepNowLineTo(lastScheduleAdvance, now)
                     lastScheduleAdvance = now
                 }
+                // Display: always glide the now-line to the current clock instant.
+                _nowMillis.value = now
             }
             lastRealTick = realNow
             lastClockTick = now
@@ -1417,11 +1547,15 @@ class SchedulerEngine(
      * [SchedulerDomain.anyDeviceUnlockedAt] over the same three flows).
      */
     fun tpModeNow(nowMillis: Long = clock.nowMillis()): Int =
-        SchedulerDomain.tpMode(
-            SchedulerDomain.anyDeviceUnlockedAt(
-                _inactivityGaps.value, _inactiveSince.value, _activeSince.value, nowMillis,
-            ),
-        )
+        // A JOURNEY is walked in the mode the journey is in, not in the mode the arrival is in ([sweepMode]).
+        // Without this the wake from a device sleep would sweep the whole night in mode 1 — the machine is
+        // unlocked again by the time anything asks — which is the one mode the README says it is not.
+        sweepMode
+            ?: SchedulerDomain.tpMode(
+                SchedulerDomain.anyDeviceUnlockedAt(
+                    _inactivityGaps.value, _inactiveSince.value, _activeSince.value, nowMillis,
+                ),
+            )
 
     /**
      * A **mode flip re-plans**, because the mode is part of the environment the three dynamic periods are
@@ -1553,8 +1687,11 @@ class SchedulerEngine(
             val now = clock.nowMillis()
             val since = now - NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS
             val observed = readNoScreenEvidence(since, now)
-            if (observed != _noScreenEvidence.value) {
-                _noScreenEvidence.value = observed
+            if (observed != scannedNoScreen) {
+                scannedNoScreen = observed
+                // Published as the union with what the line SWEPT in mode 2 — a scan that cannot see a
+                // stretch (an unsupported host, a query that came back empty) must not un-say the mode.
+                publishNoScreenEvidence()
                 // scripts/collect-diagnostics.bat: this is what the record bank actually applied, so an
                 // anomaly in a banked past panel is an anomaly in THIS answer. Logged only on change.
                 Diagnostics.log(
@@ -1931,11 +2068,12 @@ class SchedulerEngine(
                     if (speed > 0.0) ((resumeAt - clock.nowMillis()).toDouble() / speed).toLong() else Long.MAX_VALUE
                 delay(remainingReal.coerceIn(1L, LOOK_AWAY_RESUME_POLL_MILLIS))
             }
-            // It happened, wholly — so it is recorded as what it was: a **restrictive period the user placed**
-            // (`side-dev/README.md`'s pre-placed restrictive period), 20 seconds of "no task allowed" ending
-            // here. Nothing else is needed and nothing else is written: the recurrence bars read rest
-            // stretches out of the timeline, so this one bars the next 20 s period for twenty minutes by the
-            // ordinary rule, and the calendar draws it because it is a real panel. A run that was interrupted
+            // It happened, wholly — so it is recorded as what it was: 20 seconds of "no task allowed" ending
+            // here, marked as a dynamic period the app CONDUCTED (`TaskPanel.conductedBreak`). That mark is
+            // what makes the README's first bar fire — no 20 s period in the twenty minutes after it — since
+            // that bar keys on a dynamic *period* and the other two on a rest *stretch* far longer than this.
+            // Nothing else is needed and nothing else is written, and the calendar draws it because it is a
+            // real panel. A run that was interrupted
             // never reaches here, so it leaves no trace at all — the same asymmetry as before, now by
             // construction rather than by an anchor that only moves on completion.
             vm.dispatch(

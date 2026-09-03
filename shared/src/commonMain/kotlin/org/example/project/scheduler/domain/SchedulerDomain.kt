@@ -1941,6 +1941,26 @@ object SchedulerDomain {
         if (anyDeviceUnlocked) DynamicPeriods.MODE_AT_SCREEN else DynamicPeriods.MODE_AWAY
 
     /**
+     * `side-dev/README.md` § *$now line$*: **the coarsest step the line may take without skipping a slot** —
+     * the smallest minimum execution time the rules hold at the line, or `null` when no task has one.
+     *
+     * The line "moves continuously forward in time", so a caller that asks for a distant position is asking
+     * for a JOURNEY, not a landing: it is walked there a step at a time
+     * ([org.example.project.scheduler.engine.SchedulerEngine] sweeps it, `ProgressiveSchedule.advanceTo`
+     * commits it). This is the granularity of that walk, and it is the reference's own
+     * (`side-dev/scheduler.py`'s `Walk._sweep_step`): the finest thing the walk can place is one task's
+     * minimum, so a line that never skips a whole minimum never skips a placement it should have entered.
+     * Stepping on the placement edges instead is the tempting alternative and it is wrong — it never freezes a
+     * partial slot, and it is ENTERING a placement, not landing on its edge, that settles the picks after it.
+     *
+     * An ordinary tick — a frame, a second — is far inside the first step and so costs exactly one commit:
+     * nothing is spent except where a caller really does ask the line to cover ground (a wake from device
+     * sleep, a debug time leap).
+     */
+    fun sweepStepMillis(state: SchedulerState, nowMillis: Long): Long? =
+        planTasksOf(state, nowMillis).asSequence().map { it.minimumMillis }.filter { it > 0L }.minOrNull()
+
+    /**
      * Is any device of the account unlocked at [nowMillis]? — the input [tpMode] is a function of.
      *
      * It is read off the account-wide pause the calendar already draws ([displayInactivityGaps]): the derived
@@ -2213,7 +2233,18 @@ object SchedulerDomain {
             if (panel.screenBreak) return@mapNotNull null
             val kind = panel.restrictiveKind
             if (kind.isEmpty() || panel.endEpochMillis <= panel.startEpochMillis) null
-            else RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, kind, panel.title)
+            else
+                RestrictivePeriod(
+                    panel.startEpochMillis,
+                    panel.endEpochMillis,
+                    kind,
+                    panel.title,
+                    // A break the app CONDUCTED is a dynamic restrictive period that really happened, so it
+                    // fires the README's first bar (no 20 s period for twenty minutes after it) exactly as a
+                    // placed occurrence does. Nothing else about the panel says so - it is a recorded
+                    // `no task allowed` span like any other.
+                    dynamic = panel.conductedBreak,
+                )
         }
 
     /**

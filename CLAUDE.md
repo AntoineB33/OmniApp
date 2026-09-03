@@ -311,7 +311,10 @@ identifiers, persisted keys.
   **ended** left no mark at all and the bars went on counting from the last recorded break. It is
   `PeriodKinds.NO_SCREEN`, because "nobody was at a screen" is the whole of what the evidence says — which is
   also why an account with an off-screen task correctly gets no rest stretch out of it (the README's clause is
-  *covered by "no on-screen task"* **without any task**).
+  *covered by "no on-screen task"* **without any task**). The third carries a **fourth source through the same
+  flow**: a stretch the now-line SWEPT in mode 2 (`noteSweptNoScreen` — a wake from device sleep), which is
+  mode 2's own rule and not an observation, so it is on the timeline the instant the app wakes rather than when
+  the next lock scan lands.
 - **The cue sweep, the published pause-cue due and the calendar ask through that same funnel.** They read
   `restrictivePeriodsOf(state.panels)` alone until 2026-08-29, so the instant the app ANNOUNCED a break at and
   the instant the fill PLACED one at were answers to two different timelines — the drift the whole due/place
@@ -351,6 +354,33 @@ identifiers, persisted keys.
   task` — which the resilient tasks may still fill (`DynamicPeriods.awayCover`, the `Away` panel). Where the
   app has live evidence, that evidence IS the cover: an **ongoing** pause is `closedEnd`, so `liveRestPeriod`
   covers the line and `awayCover` has nothing left to do.
+- **The now-line NEVER JUMPS — a distant position is a JOURNEY, and waking from device sleep is walked in
+  mode 2** (`SchedulerEngine.sweepNowLineTo`, `SchedulerDomain.sweepStepMillis`). The README says both halves in
+  as many words: the line *"moves continuously forward in time"*, and *"if the device bearing the running
+  process is put to sleep, then when the program wakes up, the $now line$ does a fast move forward (in epsilon
+  time) in mode 2 to the current date"*. So `reportTimeGap` walks it from the pre-sleep instant to the wake,
+  **one minimum execution time at a time** (the reference's `Walk._sweep_step`: the finest thing the walk can
+  place, so a line that never skips a whole minimum never skips a placement it should have entered), and
+  `advanceTo` is no longer called with a distant instant from anywhere. Four things it rests on:
+  - **The mode is the JOURNEY's, not the arrival's** (`sweepMode`, read by the one reading `tpModeNow`). A woken
+    machine is unlocked, so anything asking after the fact answers mode 1 — which is the one mode the whole
+    night was not in.
+  - **Mode 2's rule is what covers the swept stretch**, at once: the line must BE covered by `no on-screen
+    task`, so a stretch it swept in mode 2 is covered by one (`noteSweptNoScreen`, unioned into the same
+    `noScreenEvidence` funnel the OS scan publishes through, `publishNoScreenEvidence`). That is a fact about
+    the mode and owes nothing to a device observation — without it the cover waited on the 10-minute lock scan
+    (`NO_SCREEN_EVIDENCE_REFRESH_MILLIS`) and a **break fell due the instant the user came back**, the bars
+    still counting from the last recorded break. A pause that has merely ENDED reaches them by no other route:
+    `liveRestPeriod` only ever holds the one this device is in the middle of.
+  - **The journey does NOT re-plan**, and that is the README's own answer for it: *"it is similar to a case
+    where no CPU were available during this period and the current set of rules … is used to define the
+    schedule as the $now line$ does its fast move, while no better set of rules was found"*. Every step is an
+    ordinary `AdvanceSchedule` — the plan in force writes the past it passes — and the re-plan belongs to the
+    landing, through `requestReschedule` like every other one.
+  - **An ordinary tick is one commit**, so this costs nothing on the hot path (ADR 0009): 30 s is far inside the
+    first step. The one sanctioned approximation is the stride widening to keep a very long journey inside
+    `MAX_SWEEP_STEPS` — the README's *"if exact schedules cannot be found in time, approved approximation
+    strategies must be used"* — and it is logged when it bites.
 - **A mode flip re-plans** (`launchTpModeReschedule` → `requestReschedule`) and that is not "time passing
   re-plans": the flip is an edge the platform announces. It cannot go in `schedulingSignature` — the mode is
   not in `SchedulerState`, being a fact about the devices and not about the account's data, which is also why
@@ -367,6 +397,13 @@ identifiers, persisted keys.
   (a non-Windows JVM, iOS) simply keeps the flag the user set.
 - **A break the app CONDUCTED is recorded as a period** (`RecordConductedBreak`), so the past is a fact and
   not a reconstruction. Only on completion: a manual "Look away now" that was superseded leaves no trace.
+  **It is marked `TaskPanel.conductedBreak`, and that mark is load-bearing**: the README's FIRST bar keys on a
+  dynamic restrictive *period* where the other two key on a rest *stretch*, and 20 seconds is far short of
+  either threshold — so without it a look-away the user had just sat through barred nothing and the owed
+  occurrence went straight back to dragging at the line. It reaches the bars as `RestrictivePeriod.dynamic`
+  through the one funnel. It is **not** `screenBreak` (which means *regenerated*, and is why
+  `restrictivePeriodsOf` drops those); it is the opposite. And it is not "a short `no task allowed` period":
+  a 20-second Inactivity the user drew is a **pre-placed** period, which the README bars nothing after.
 - The **end** of a break is a notification, not only a voice cue.
 - A screen-break panel has **no Edit** (no editable object behind it). A sleep band's menu leads with Edit.
 

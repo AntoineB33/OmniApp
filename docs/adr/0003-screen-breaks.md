@@ -1,7 +1,8 @@
 # ADR 0003 — Screen breaks: the three dynamic restrictive periods
 
 **Status:** active (rewritten 2026-08-27 to `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive
-Period*; the two `t_p` modes wired through 2026-08-28). **Invariant summary:** see `CLAUDE.md` → *Screen breaks*.
+Period*; the two `t_p` modes wired through 2026-08-28; the wake from device sleep made a mode-2 journey of the
+line 2026-09-03). **Invariant summary:** see `CLAUDE.md` → *Screen breaks*.
 
 Terminology: the eye-care breaks are named **"screen breaks"** everywhere (PRD §15) — UI, docs, code
 identifiers (`ScreenBreak`, `screenBreak*`, `showScreenBreaks`, `DEFAULT_SCREEN_BREAKS`, …) and persisted
@@ -189,6 +190,50 @@ Three things that fall out, and each is load-bearing:
 Where the app has live evidence that nobody is at a screen, that evidence *is* mode 2's cover: an **ongoing**
 pause is `closedEnd`, so `liveRestPeriod` covers the now-line and `awayCover` finds nothing left to do. A pause
 the user has come back from stops at the return, exclusive, like every other period.
+
+### The line never jumps, so waking from device sleep is a journey — walked in mode 2
+
+The README's *Progressive Calculation* section states the consequence outright: *"If the device bearing the
+running process is put to sleep, then when the program wakes up, the $now line$ does a fast move forward (in
+epsilon time) in mode 2 to the current date. If the current date is beyond the definitive schedule, then it is
+similar to a case where no CPU were available during this period and the current set of rules, parameterized by
+$now line$ and $now line$ mode, is used to define the schedule as the $now line$ does its fast move, while no
+better set of rules was found."*
+
+The engine used to land instead of travel — `reportTimeGap` was one `advanceTo(sleepEnd)` — and three things
+followed from that, of which only the first is about tidiness:
+
+1. **A jump is not a motion the model admits.** Mode 1's whole rule is *what the line has swept*, so a line
+   that can arrive without having swept is a line the drag cannot be defined against. The walk
+   (`SchedulerEngine.sweepNowLineTo`) restores it, stepping by one minimum execution time
+   (`SchedulerDomain.sweepStepMillis` — the reference's `Walk._sweep_step`, the finest thing the walk can place,
+   so a line that never skips a whole minimum never skips a placement it should have entered). An ordinary tick
+   is far inside the first step and costs exactly one commit, which is what keeps this off ADR 0009's budget;
+   the cost is paid only where the line really does cover ground.
+2. **The mode belongs to the journey, not to the arrival.** A machine that has just woken reports *unlocked*,
+   so anything asking afterwards answers mode 1 — the one mode the suspension was not in. `sweepMode` holds the
+   journey's mode for as long as the journey lasts and `tpModeNow` reads it, so the single reading of the mode
+   stays single.
+3. **Mode 2's cover is a fact about the mode, not an observation to wait for.** Mode 2 says the line *is*
+   covered by `no on-screen task`; a stretch swept in mode 2 is therefore covered by one, and
+   `noteSweptNoScreen` says so at the instant of the wake — into the same `noScreenEvidence` funnel the OS lock
+   scan publishes through (`publishNoScreenEvidence` publishes the union, so a scan that reads nothing cannot
+   un-say the mode). Before this, the app learned about the night only when `launchNoScreenEvidenceScan` next
+   ran: a **10-minute** bucket behind a process launch. A pause that has merely *ended* reaches the recurrence
+   bars by no other route — `liveRestPeriod` holds only the pause this device is in the middle of — so for up to
+   ten minutes after every wake the bars still counted from the last recorded break and the owed chain was
+   dragging at the line, which is the user-visible half of this: a break falling due the instant you come back
+   from a night's sleep.
+
+The journey deliberately does **not** re-plan, and that is the README's own answer for a current date beyond
+the definitive schedule: each step is an ordinary `AdvanceSchedule`, so the set of rules in force writes the
+past the line passes, and the re-plan belongs to the landing (`requestReschedule`). The one approximation is
+the stride widening that keeps a very long journey inside `MAX_SWEEP_STEPS` — the README's *"if exact schedules
+cannot be found in time, approved approximation strategies must be used"* — logged when it bites.
+
+`ProgressiveSchedule.advanceTo` has been the faithful port of the reference's own continuous walk since it was
+written, and it is not what the app runs on: the live path is the engine's tick. A port nothing calls does not
+satisfy anything.
 
 **Consequence, deliberately accepted.** While a device stays unlocked and no rest happens, the owed chain
 parks at the now-line and the fill schedules no task under it — "you owe a break" is a period, not a hint. It

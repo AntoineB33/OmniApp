@@ -3185,9 +3185,12 @@ private fun applySetTaskResilience(
 /**
  * PRD §15: record a dynamic period the app CONDUCTED, exactly where it happened.
  *
- * It is a period of [PeriodKinds.NO_TASK] like any other, so the recurrence bars read it as the rest stretch
- * it is and bar what follows by the ordinary rule — no anchor, no cadence arithmetic, no special case. Its
- * exact span is kept (a 20-second look-away is 20 seconds, not the minute a hand-drawn entry is rounded up
+ * It is a period of [PeriodKinds.NO_TASK] like any other, and it is marked [TaskPanel.conductedBreak] so the
+ * recurrence bars know it was one of the THREE — no anchor, no cadence arithmetic, no special case, but not
+ * nothing either: the README's first bar keys on a dynamic restrictive *period* ("no 20 s period in the next
+ * 20 minutes") where the other two key on a rest *stretch*, and twenty seconds is far too short to be one of
+ * those. Without the mark a look-away the user had just sat through barred nothing at all. Its exact span is
+ * kept (a 20-second look-away is 20 seconds, not the minute a hand-drawn entry is rounded up
  * to): this is a recorded fact, not something the user is drawing.
  *
  * Outside the Undo/Redo history, like every write to the record; idempotent, so a replayed dispatch cannot
@@ -3215,6 +3218,10 @@ private fun reduceRecordConductedBreak(
             endEpochMillis = intent.endEpochMillis,
             inactivity = true,
             periodKind = PeriodKinds.NO_TASK,
+            // What makes it one of the THREE and not a 20-second inactivity span the user drew: the README's
+            // first bar is "after any dynamic restrictive period, no 20 s period in the next 20 minutes", and
+            // this is the only thing on the panel that says this period was one of them.
+            conductedBreak = true,
         ),
     )
 }

@@ -290,6 +290,7 @@ object SchedulerStateCodec {
                         sleep = it.sleep,
                         noScreen = it.noScreen,
                         inactivity = it.inactivity,
+                        conductedBreak = it.conductedBreak,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -603,6 +604,7 @@ object SchedulerStateCodec {
             sleep = sleep,
             noScreen = noScreen,
             inactivity = inactivity,
+            conductedBreak = conductedBreak,
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -804,6 +806,7 @@ object SchedulerStateCodec {
                         sleep = it.sleep,
                         noScreen = it.noScreen,
                         inactivity = it.inactivity,
+                        conductedBreak = it.conductedBreak,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -1027,6 +1030,7 @@ object SchedulerStateCodec {
             sleep = sleep,
             noScreen = noScreen,
             inactivity = inactivity,
+            conductedBreak = conductedBreak,
         )
 
     private fun PersistedTaskTree.toEntry(): TaskTreeEntry =
@@ -1566,6 +1570,10 @@ private data class PersistedPanel(
     // PRD §8/§9: missing flags decode to false (payloads written before no-screen / inactivity panels existed).
     val noScreen: Boolean = false,
     val inactivity: Boolean = false,
+    // PRD §15: a missing conductedBreak flag decodes to false (payloads written before a conducted break said
+    // so). The consequence is bounded and self-healing: such a panel bars the next 20 s period for the twenty
+    // minutes after it only once this build has recorded one.
+    val conductedBreak: Boolean = false,
 )
 
 @Serializable

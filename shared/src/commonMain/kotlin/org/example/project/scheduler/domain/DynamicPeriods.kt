@@ -243,6 +243,13 @@ object DynamicPeriods {
         }
         val blockedSpans = mergeSpans(blocked)
         val restedSpans = mergeSpans(rested)
+        // The README's first bar keys on a dynamic restrictive PERIOD, not on a rest stretch, and the periods
+        // it speaks of are not only the ones this walk is about to place: a break the app already CONDUCTED
+        // is one, and it is on the timeline as a recorded period ([RestrictivePeriod.dynamic]). Without this
+        // the twenty seconds it lasted barred nothing at all — far too short for either stretch bar — so the
+        // instant the user finished a look-away the line went straight back to dragging the next one.
+        val dynamicSpans =
+            mergeSpans(base.periods.filter { it.dynamic }.map { Span(it.startMillis, it.endMillis) })
 
         val byLabel = dynamics.associateBy { it.label }
         val labels = dynamics.map { it.label }
@@ -271,6 +278,15 @@ object DynamicPeriods {
                     val before = HashMap(bars)
                     barStretch(bars, span.startMillis, span.endMillis)
                     if (bars != before) moved = true
+                }
+            }
+            for (span in dynamicSpans) {
+                if (span.endMillis <= start || (span.startMillis <= start && start < span.endMillis)) {
+                    val before = bars[LABEL_20S]
+                    if (before != null) {
+                        bars[LABEL_20S] = maxOf(before, span.endMillis + BAR_20S_AFTER_ANY_MILLIS)
+                        if (bars[LABEL_20S] != before) moved = true
+                    }
                 }
             }
             for (span in blockedSpans) {
@@ -475,6 +491,19 @@ data class RestrictivePeriod(
     val label: String = "",
     val openStart: Boolean = false,
     val closedEnd: Boolean = false,
+    /**
+     * Whether this period IS one of the three dynamic restrictive periods, already on the timeline — a break
+     * the app conducted and recorded (`TaskPanel.conductedBreak`).
+     *
+     * The README's first bar is *"after any **dynamic restrictive period**, no 20 s period in the next 20
+     * minutes"*, and it is the one bar that keys on a PERIOD rather than on a rest stretch — so a 20-second
+     * look-away fires it while being far too short for either stretch bar. [DynamicPeriods.instances] fires
+     * it for the occurrences it places itself; this is how the ones that have already HAPPENED fire it too.
+     *
+     * It is deliberately not "a 20-second period of `no task allowed`": a 20-second inactivity the user drew
+     * by hand is a pre-placed restrictive period, which the README bars nothing after.
+     */
+    val dynamic: Boolean = false,
 ) {
     val durationMillis: Long get() = endMillis - startMillis
 

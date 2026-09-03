@@ -103,6 +103,28 @@ class NoScreenInactivityPanelTest {
         val panel = decoded.panels.single()
         assertFalse(panel.noScreen)
         assertFalse(panel.inactivity)
+        // Same rule for the mark a CONDUCTED dynamic period carries: absent means false, and a payload an
+        // older build wrote simply bars the next 20 s period from the first break THIS build records.
+        assertFalse(panel.conductedBreak)
+    }
+
+    @Test
+    fun codec_round_trips_the_conducted_break_mark() {
+        // PRD §15: the mark that makes a recorded `no task allowed` span one of the THREE rather than a
+        // 20-second inactivity the user drew. It is a fact about the past, so it is persisted and synced -
+        // and the README's first bar reads it, so losing it across a save puts the owed 20 s period straight
+        // back at the now-line.
+        val recorded =
+            SchedulerReducer.reduce(
+                SchedulerState.empty(),
+                SchedulerIntent.RecordConductedBreak("look 20 feet away", NOW, NOW + 20_000),
+            )
+        val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(recorded))
+        assertNotNull(decoded)
+        val panel = decoded.panels.single { it.conductedBreak }
+        assertTrue(panel.inactivity, "it is a recorded `no task allowed` period like any other")
+        assertEquals(NOW, panel.startEpochMillis)
+        assertEquals(NOW + 20_000, panel.endEpochMillis)
     }
 
     @Test

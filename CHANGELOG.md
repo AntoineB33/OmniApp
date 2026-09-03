@@ -11,6 +11,85 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Waking from device sleep is a JOURNEY of the now-line, walked in mode 2 — 2026-09-03
+
+`side-dev/README.md` § *$now line$* + § *Progressive Calculation*'s direct consequence. `shared`
+(`scheduler/domain/SchedulerDomain.kt`, `scheduler/engine/SchedulerEngine.kt`, new
+`commonTest/NowLineSweepTest.kt`) + `CLAUDE.md`. **Client rebuild only** — no Supabase deploy, no SQLite
+migration and no payload change: everything added here is derived, local and recomputed.
+
+The README gained the consequence in as many words: *"If the device bearing the running process is put to
+sleep, then when the program wakes up, the $now line$ does a fast move forward (in epsilon time) in mode 2 to
+the current date. If the current date is beyond the definitive schedule, then it is similar to a case where no
+CPU were available during this period and the current set of rules, parameterized by $now line$ and $now line$
+mode, is used to define the schedule as the $now line$ does its fast move, while no better set of rules was
+found."* The app did none of the three.
+
+- **The line TELEPORTED.** `reportTimeGap` was `dispatch(ReportDeviceSleep) ; advanceTo(sleepEnd)` — one
+  commit for a whole night, which *"the $now line$ moves continuously forward in time"* forbids and which
+  `DynamicPeriods.instances`' own doc already said could not happen (*"never read it as the line having
+  jumped — under the README the line cannot"*). It is now `sweepNowLineTo`, walking **one minimum execution
+  time at a time** (`SchedulerDomain.sweepStepMillis`, the reference's `Walk._sweep_step`). The ordinary tick
+  goes through the same walk and is one commit, so nothing on the hot path changed (ADR 0009); a debug clock
+  leap is walked too, in the live mode, since only the clock moved there.
+- **The mode was read at the ARRIVAL.** A woken machine is unlocked, so `tpModeNow` answered mode 1 for the
+  entire suspension — the one mode it was not in. The journey now holds its own mode (`sweepMode`, read
+  through the same single reading), which is mode 2 for a suspension because that is what a suspension *is*.
+- **Mode 2's cover waited on the OS lock scan, and a break fell due the instant the user came back.** Mode 2
+  is *"the $now line$ must be covered by the period 'no on-screen task'"*, so a stretch swept in mode 2 is
+  covered by one — a fact about the mode, owing nothing to any device observation. The app instead learned
+  about the night only from `launchNoScreenEvidenceScan`, on a **10-minute** bucket behind a PowerShell
+  process launch, and a pause that has merely *ended* reaches the recurrence bars by no other route
+  (`liveRestPeriod` only ever holds the one this device is in the middle of). So for up to ten minutes after
+  every wake the bars still counted from the last recorded break, and the owed chain was dragging at the
+  line. `noteSweptNoScreen` puts the swept stretch into the same `noScreenEvidence` funnel at once
+  (`publishNoScreenEvidence` publishes the union, so a scan that sees nothing can no longer un-say the mode),
+  and the night bars the 20 s for 20 min and the 15 min for 2 h exactly as the README says.
+- **The journey does not re-plan**, which is the README's own answer for a date beyond the definitive
+  schedule: every step is an ordinary `AdvanceSchedule` (the plan in force writes the past it passes) and the
+  re-plan belongs to the landing, through `requestReschedule`.
+- The one approximation is the stride widening to keep a very long journey inside `MAX_SWEEP_STEPS` (2 000) —
+  the README's *"if exact schedules cannot be found in time, approved approximation strategies must be
+  used"* — and it is logged in the diagnostics timeline when it bites. 8 h at a 15-minute minimum is 32 steps.
+- `ProgressiveSchedule.advanceTo` has been the faithful port of the reference's continuous walk all along, but
+  nothing calls it; the live path is the engine's tick, and that is what had to satisfy the README.
+
+### A break the app CONDUCTED bars the next 20 s period, like every other dynamic period — 2026-09-03
+
+`side-dev/README.md` § *$now line$ and 3 Dynamic Restrictive Period*, PRD §15. `shared`
+(`scheduler/model/TaskModels.kt`, `scheduler/domain/DynamicPeriods.kt`,
+`scheduler/domain/SchedulerDomain.kt`, `scheduler/state/SchedulerReducer.kt`,
+`scheduler/engine/SchedulerEngine.kt`, `scheduler/persistence/SchedulerStateCodec.kt`) + `CLAUDE.md`.
+**Client rebuild only** — no Supabase deploy and no SQLite migration; the payload gains one panel flag that
+defaults to `false`, so an older build's DB loads unchanged.
+
+Reported: at 12:40 the user saw the two voice cues for a 20 s break due at 12:39, pressed **"Look away
+now"**, sat through it — and the instant it finished the now-line was dragging *another* 20 s break. (The
+12:39 occurrence correctly showed nothing: mode 1 pushes a break the line reaches ahead of it, so it never
+happened.)
+
+- **The README's FIRST bar keys on a dynamic restrictive PERIOD; the other two key on a rest STRETCH.**
+  *"After any dynamic restrictive period, no 20 s period in the next 20 minutes"* — and twenty seconds is far
+  short of either stretch threshold (>= 5 min, >= 15 min), so a conducted look-away triggered neither of them.
+  The first bar was fired only from `barInstance`, i.e. only for the occurrences the walk was placing itself.
+  A break that had already HAPPENED therefore barred **nothing at all**, and the owed occurrence went straight
+  back to dragging at the line.
+- **`TaskPanel.conductedBreak` is what says a recorded period was one of the three.** Nothing else on the
+  panel could: `RecordConductedBreak` writes an ordinary `no task allowed` span, indistinguishable from a
+  20-second Inactivity the user drew by hand — and that distinction is real, since the README bars nothing
+  after a pre-placed period this short. It is **not** `screenBreak`, which means *regenerated by the
+  placement* and is exactly why `restrictivePeriodsOf` drops those (a break is never an input to its own
+  placement); this is the opposite — a fact about the past, authoritative and synced.
+- **It reaches the bars as `RestrictivePeriod.dynamic`**, through the one funnel (`dynamicPeriodBase` →
+  `restrictivePeriodsOf`), and `DynamicPeriods.instances` applies the 20-minute bar for each such span in
+  chronological order — the same guard the rest stretches get, so a conducted break tomorrow cannot bar a
+  period today.
+- **Only the first bar needs this.** A conducted 5- or 15-minute pose is already a rest stretch of its own
+  length, so `barStretch` gives it both its own cadence and the long-stretch bars; the 20 s look-away is the
+  one period too short to bar itself.
+- An older payload's conducted break decodes with the flag `false` and so bars nothing — bounded and
+  self-healing: the first break *this* build records carries the mark.
+
 ### The lateral menu's "Categories": the account's own list of them — 2026-09-03
 
 PRD §5/§7, ADR 0004. `shared` (new `ui/CategoriesWindow.kt`; `CategoryRules.kt`, `SchedulerIntent.kt`,
