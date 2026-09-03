@@ -2887,13 +2887,19 @@ class SchedulerReducerTest {
         )
         s = SchedulerReducer.reduce(s, SchedulerIntent.CopySelection)
         // PRD §4/§13: a title line per task, each followed by its own named attribute lines — the
-        // task's id first, so pasting the text back lands on that very task.
+        // task's id first, so pasting the text back lands on that very task. Then, after a blank line,
+        // the "Copied tasks:" summary — ADR 0012: the clipboard text is for a PERSON to read, so the tree
+        // is followed by a flat list of every task the copy carried.
         val idA = s.cells[visible[0]]!!.taskId!!.value
         val idB = s.cells[visible[1]]!!.taskId!!.value
         assertEquals(
             listOf(
                 "A", "\t- id: $idA", "\t- minimum time: 45 min",
                 "B", "\t- id: $idB", "\t- minimum time: 45 min",
+                "",
+                SchedulerDomain.COPIED_TASKS_SECTION_HEADER,
+                "- A: minimum time: 45 min, id: $idA",
+                "- B: minimum time: 45 min, id: $idB",
                 "",
             ),
             s.clipboard,
@@ -2906,7 +2912,13 @@ class SchedulerReducerTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.CopySelection)
         val idC = s.cells[visible[2]]!!.taskId!!.value
         assertEquals(
-            listOf("C", "\t- id: $idC", "\t- minimum time: 45 min", ""),
+            listOf(
+                "C", "\t- id: $idC", "\t- minimum time: 45 min",
+                "",
+                SchedulerDomain.COPIED_TASKS_SECTION_HEADER,
+                "- C: minimum time: 45 min, id: $idC",
+                "",
+            ),
             s.clipboard,
         )
     }
@@ -3033,6 +3045,10 @@ class SchedulerReducerTest {
         // PRD §4/§13: a tab-indented title line per task, each followed by its own named attribute
         // lines one level deeper. Everything at its default value is omitted, so an untouched task is a
         // title and its minimum time.
+        //
+        // The tree is then followed by the "Copied tasks:" summary (ADR 0012): the same tasks listed once
+        // each, FLAT and in the tree's own depth-first order. A nested outline is not a list of what was
+        // copied, and this half is the one a person reads.
         fun id(cell: org.example.project.scheduler.model.CellId) = s.cells[cell]!!.taskId!!.value
         assertEquals(
             "A\n" +
@@ -3046,7 +3062,13 @@ class SchedulerReducerTest {
                 "\t\t\t- minimum time: 45 min\n" +
                 "B\n" +
                 "\t- id: ${id(cB)}\n" +
-                "\t- minimum time: 45 min\n",
+                "\t- minimum time: 45 min\n" +
+                "\n" +
+                "${SchedulerDomain.COPIED_TASKS_SECTION_HEADER}\n" +
+                "- A: minimum time: 45 min, id: ${id(cA)}\n" +
+                "- A1: minimum time: 45 min, id: ${id(cA1)}\n" +
+                "- A1a: minimum time: 45 min, id: ${id(cA1a)}\n" +
+                "- B: minimum time: 45 min, id: ${id(cB)}\n",
             text,
         )
     }
@@ -3158,13 +3180,20 @@ class SchedulerReducerTest {
             s,
             org.example.project.scheduler.state.SchedulerSelection(main = cP, selected = setOf(cP)),
         )
+        // Each task's own minimum, in the tree and again in the "Copied tasks:" summary — where the minimum
+        // LEADS, the tree writing the id first: the id is what a paste needs, the minimum is what a reader
+        // wants, so each ordering follows its own reader.
         assertEquals(
             "P\n" +
                 "\t- id: ${pTask.value}\n" +
                 "\t- minimum time: 30 min\n" +
                 "\tC1\n" +
                 "\t\t- id: ${c1Task.value}\n" +
-                "\t\t- minimum time: 90 min\n",
+                "\t\t- minimum time: 90 min\n" +
+                "\n" +
+                "${SchedulerDomain.COPIED_TASKS_SECTION_HEADER}\n" +
+                "- P: minimum time: 30 min, id: ${pTask.value}\n" +
+                "- C1: minimum time: 90 min, id: ${c1Task.value}\n",
             text,
         )
     }

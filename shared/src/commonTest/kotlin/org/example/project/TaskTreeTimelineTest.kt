@@ -455,4 +455,111 @@ class TaskTreeTimelineTest {
             "the timeline is account-wide user data and must push",
         )
     }
+
+    // ---- `side-dev/README.md` § *Rule state evolution*, the Example ----------------------------
+
+    /**
+     * The README's own worked example, which is the one clause of § *Rule state evolution* that is not a
+     * statement about a single instant but about two whole timelines:
+     *
+     * > Scenario 1: Task A goes from 0 to 100% priority from t1 to t2=t1+10min.
+     * > Scenario 2: Task A goes from 0 to 50% priority from t1 to t2=t1+5min.
+     * > It is guaranteed ... that the resulting set of rules on both scenarios gives the same schedule and
+     * > alternative schedule up to t1+5min.
+     *
+     * Two transitions that move A **at the same rate** are the same rule state at every moment they share,
+     * so they must be the same plan there — the transition's *span* may not leak into the numbers, only its
+     * slope. That is exactly what a linear interpolation buys, and it is what would break the instant the
+     * blend acquired an easing curve, a per-span normalization, or a fraction quantized into the value
+     * rather than only into the re-plan trigger ([TASK_TREE_BLEND_STEPS], which the fixed sampling below
+     * deliberately does not exercise).
+     *
+     * "Start" holds B alone; the second keyframe hands A `endPercent` of the share, `spanMinutes` later.
+     * With 100 % / 10 min and 50 % / 5 min, A rises at 10 %/min in both.
+     */
+    private fun rampScenario(endPercent: Int, spanMinutes: Long): SchedulerState {
+        val minute = 60_000L
+        var s = stateWithTasks("B")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Start"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("End"))
+        // "End" is live: give it A. A 50/50 end state keeps B; a 100 % one drops it.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds.last(), "A"))
+        if (endPercent == 100) {
+            val bCell = s.lists[s.rootListId]!!.cellIds.first { s.tasks[s.cells[it]?.taskId]?.title == "B" }
+            s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(bCell, ""))
+        }
+        s = dated(s, "Start", t0)
+        return dated(s, "End", t0 + spanMinutes * minute)
+    }
+
+    /** The plan as a comparable value: what ran, when, under what title. */
+    private fun planAt(state: SchedulerState, now: Long, horizon: Long): List<String> =
+        SchedulerDomain.fillSchedule(state, now, horizonMillis = now + horizon)
+            .filter { it.taskId != null }
+            .sortedBy { it.startEpochMillis }
+            .map { "${it.title}@${it.startEpochMillis}-${it.endEpochMillis}" }
+
+    @Test
+    fun two_transitions_with_the_same_slope_are_the_same_rule_state_while_they_overlap() {
+        val minute = 60_000L
+        val slow = rampScenario(endPercent = 100, spanMinutes = 10) // A: 0 → 100 % over 10 min
+        val fast = rampScenario(endPercent = 50, spanMinutes = 5) //  A: 0 → 50 % over 5 min
+
+        val a = taskIdOf(slow, "A")
+        val b = taskIdOf(slow, "B")
+        assertEquals(a, taskIdOf(fast, "A"), "the two scenarios must differ only in the second keyframe")
+
+        for (tenth in 0..50) {
+            val now = t0 + tenth * minute / 10
+            val slowP = SchedulerDomain.blendedTaskPriorities(slow, now)
+            val fastP = SchedulerDomain.blendedTaskPriorities(fast, now)
+            // 10 %/min in both, whatever the span the keyframes are pinned at.
+            assertEquals(0.1 * tenth / 10.0, slowP[a] ?: 0.0, 1e-9, "slow A at ${tenth / 10.0} min")
+            assertEquals(slowP[a] ?: 0.0, fastP[a] ?: 0.0, 1e-9, "A at ${tenth / 10.0} min")
+            assertEquals(slowP[b] ?: 0.0, fastP[b] ?: 0.0, 1e-9, "B at ${tenth / 10.0} min")
+            // The rest of the rule state travels with the percentages, so it has to agree too.
+            val slowAttrs = SchedulerDomain.blendedTaskAttributes(slow, now)
+            val fastAttrs = SchedulerDomain.blendedTaskAttributes(fast, now)
+            for (id in listOf(a, b)) {
+                assertEquals(
+                    slowAttrs[id]?.minimumMinutes,
+                    fastAttrs[id]?.minimumMinutes,
+                    "minimum of $id at ${tenth / 10.0} min",
+                )
+                assertEquals(
+                    slowAttrs[id]?.resilienceFor(PeriodKinds.NO_SCREEN),
+                    fastAttrs[id]?.resilienceFor(PeriodKinds.NO_SCREEN),
+                    "resilience of $id at ${tenth / 10.0} min",
+                )
+            }
+            assertEquals(
+                SchedulerDomain.blendedSchedulableLeaves(slow, now).toSet(),
+                SchedulerDomain.blendedSchedulableLeaves(fast, now).toSet(),
+                "the placeable set at ${tenth / 10.0} min",
+            )
+        }
+    }
+
+    @Test
+    fun the_same_slope_gives_the_same_schedule_while_the_two_transitions_overlap() {
+        val minute = 60_000L
+        val slow = rampScenario(endPercent = 100, spanMinutes = 10)
+        val fast = rampScenario(endPercent = 50, spanMinutes = 5)
+        val horizon = 6 * 60 * minute
+
+        for (halfMinute in 0..10) {
+            val now = t0 + halfMinute * minute / 2
+            assertEquals(
+                planAt(slow, now, horizon),
+                planAt(fast, now, horizon),
+                "the plan at ${halfMinute / 2.0} min past t1",
+            )
+        }
+        // …and the guarantee stops where the README stops it: past t1+5min the fast scenario has settled on
+        // its final state while the slow one is still climbing, so the two plans are free to diverge.
+        assertTrue(
+            planAt(slow, t0 + 9 * minute, horizon) != planAt(fast, t0 + 9 * minute, horizon),
+            "the guarantee must be about the shared slope, not vacuously true",
+        )
+    }
 }
