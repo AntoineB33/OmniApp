@@ -112,6 +112,19 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         from the top; **Reset** → back to 0:20 and idle.
   - [ ] Type a label while it counts down → the countdown does **not** jump (editing settings must never
         disturb the instant it is due at). A duration typed mid-countdown applies at the next start.
+  - [ ] Start a longer one (say `2:30:45`). Type into the **hours** field → it **stays running**, and the
+        minutes and seconds go on reading down **without a jump** while you type. Same for the **minutes**
+        field: the seconds keep counting. The field being typed into holds still; the others do not.
+  - [ ] Type into the **seconds** field → it **stops**, *Pause* becomes *Resume*, and the countdown holds at
+        the whole second you typed. *Resume* continues from exactly that.
+  - [ ] **−10s / −5s / −1s / +1s / +5s / +10s** on a running timer → the time left moves and it **keeps
+        running** (this is the whole reason the buttons exist beside the seconds field). On a paused row they
+        move it and it stays paused. Run one down to ~3 s and press **−10s** → it is due now and rings.
+  - [ ] After any of the above, **Reset** goes back to the row's **Duration**, not to what was retyped — the
+        countdown and the settings never disturb each other.
+  - [ ] On an **idle** row the three fields show the duration, cannot be typed into, and the ± buttons are
+        disabled (the Duration field beside them is where that number is edited). A blank or out-of-range
+        component shows the error state and changes nothing until it parses.
   - [ ] Let one run out → the guitar loop rings for the configured seconds, the notification is titled
         **Timer**, and the row is back at its full duration (a timer *resets*; it has no on/off switch).
   - [ ] With a timer running, close and relaunch → it is still running, with the right time left (the end

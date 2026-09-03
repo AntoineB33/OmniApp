@@ -1449,9 +1449,40 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
 - **No on/off switch and no repeat switch.** A timer that is not running is already not due (an idle row is not
   a silenced one), and a timer is a one-off by nature: having rung it **resets** to its full duration. A
   one-off *alarm* disarms itself instead precisely because it has a switch to leave off.
-- **Editing a row's settings must not disturb the instant it is due at.** `SetTimers` carries the settings;
-  the run state moves only through `StartTimer` / `PauseTimer` / `ResetTimer`, which take `nowMillis` as an
-  argument so the reducer stays pure — and the window's local row copy deliberately holds no run state.
+- **Editing a row's settings must not disturb the instant it is due at, and a countdown edit must not touch
+  the settings.** One rule, said both ways. `SetTimers` carries the settings; the run state moves only through
+  `StartTimer` / `PauseTimer` / `ResetTimer` / `SetTimerCountdownField` / `NudgeTimerRemaining`, which take
+  `nowMillis` as an argument so the reducer stays pure — and the window's local row copy deliberately holds no
+  run state.
+- **THE COUNTDOWN IS THREE INPUT FIELDS, AND AN EDIT IS A SHIFT BY THAT COMPONENT'S OWN UNIT** — never a
+  rewrite of the countdown (`TimerDomain.withCountdownField`, the one rule behind `SetTimerCountdownField`).
+  That is the whole of why **the finer components carry on reading down through the edit**: setting the hours
+  moves the due instant by `(value − hours) × 1 h`, so the minutes and seconds underneath do not so much as
+  jump; setting the minutes leaves the seconds running. "Make it 2 hours" and "restart it at 2 hours" are
+  different answers and only the first is the one asked for. Each keystroke is measured against the **live**
+  value, which is what makes typing `12` into the minutes (committing `1`, then `12`) land on 12 and not 13.
+- **`SECONDS` is the ONE edit that stops it, and that is not an inconsistency — it is the reason the ± buttons
+  exist.** The seconds are the digit that is itself reading down, so a value typed into a running timer would
+  be consumed by the very next tick; there is no way to *set* it while it moves. So that edit **pauses** the
+  row (Pause becomes Resume) and snaps the countdown to the whole second typed, which is what makes it stick.
+  `NudgeTimerRemaining` — `−10s / −5s / −1s / +1s / +5s / +10s`, `TimerDomain.nudged` — is how the seconds move
+  **without** stopping, and it is the only reason both exist. Do not make the seconds field silently
+  non-stopping (the value would not stick) and do not drop the buttons (the seconds would be unreachable while
+  running).
+- **Each write goes through `withRemaining`, in the state's OWN currency.** A **running** row's time left is
+  `endsAtMillis`, so it moves and the row **stays running**; a **paused** row's is the banked `remainingMillis`,
+  so that is rewritten and the row **stays paused**. Neither ever writes the other's field, which is what keeps
+  the three-state invariant true without `healed` catching it. An **idle** row is returned unchanged and the
+  fields are `readOnly` there: its countdown *is* its `durationSeconds`, which the Duration field beside it
+  edits, and two fields writing one number by two routes is the drift this codebase keeps deleting.
+- **The row holds ONE DRAFT, naming the field it belongs to** (`draft`, seeded on focus and dropped by
+  `onFocusChanged` — only if it is still that field's, since Compose may report the gain before the loss). One,
+  because only one field can hold the focus; and a draft at all because the live countdown changes four times a
+  second, so a field bound straight to it cannot be typed into — every tick overwrites the keystroke. **The
+  fields NOT holding the draft go on reading down**, which is what "editing the hours does not stop the minutes
+  and seconds" looks like on screen. Display-only Compose state, like the poll below it; each keystroke that
+  parses commits, one that does not shows the error state, so a half-typed value never reaches the state.
+  Nothing downstream needs a change: `launchAlarmArming` already re-runs on every `state.timers` change.
 - **The countdown's clock is the window's own**: the engine's now-line ticks once per 30 s production tick, so
   `AlarmWindow` polls `clock.nowMillis()` itself every 250 ms — **only while it is open and something is
   running**. Display-only Compose state, like the calendar's zoom. The transitions dispatch the clock's

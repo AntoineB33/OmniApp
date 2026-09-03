@@ -19,8 +19,10 @@ import org.example.project.scheduler.state.SchedulerState
  * through the alarms' own machinery when it runs out.
  *
  * Covers the [TimerDomain] arithmetic (when a running timer is due, the crossings a moving now-line passed,
- * and the three run transitions), the [SchedulerIntent.SetTimers] / [SchedulerIntent.StartTimer] /
- * [SchedulerIntent.PauseTimer] / [SchedulerIntent.ResetTimer] mutations, and persistence — including that a
+ * the three run transitions, and the countdown's own writes [TimerDomain.withCountdownField] /
+ * [TimerDomain.nudged]), the [SchedulerIntent.SetTimers] / [SchedulerIntent.StartTimer] /
+ * [SchedulerIntent.PauseTimer] / [SchedulerIntent.ResetTimer] / [SchedulerIntent.SetTimerCountdownField] /
+ * [SchedulerIntent.NudgeTimerRemaining] mutations, and persistence — including that a
  * DB written **before** timers existed still loads and that a payload holding a run shape the current
  * invariants forbid is healed rather than surfaced (CLAUDE.md persisted-DB rule). The engine half is in
  * [TimerEngineTest]; the window itself is UI code and not unit-tested here.
@@ -29,6 +31,7 @@ class TimerTest {
 
     private val second = 1_000L
     private val minute = 60 * second
+    private val hour = 60 * minute
 
     /** An arbitrary but fixed "now", so nothing here depends on the wall clock. */
     private val now = 1_800_000_000_000L
@@ -112,6 +115,140 @@ class TimerTest {
             idle.copy(durationSeconds = 0),
             TimerDomain.started(idle.copy(durationSeconds = 0), now),
             "a timer with nothing to count down does not start",
+        )
+    }
+
+    // ----- editing the time left ----------------------------------------------------------------
+
+    @Test
+    fun the_countdown_splits_the_way_the_window_prints_it() {
+        // countdownOf and formatCountdown must agree digit for digit: one is the readout, the other is what an
+        // edit of that readout is measured against.
+        assertEquals(TimerDomain.TimerCountdown(0, 5, 0), TimerDomain.countdownOf(5 * minute))
+        assertEquals(TimerDomain.TimerCountdown(2, 3, 4), TimerDomain.countdownOf(2 * hour + 3 * minute + 4 * second))
+        // Rounded UP, like formatCountdown: a timer 4:59.6 from its end still reads 5:00.
+        assertEquals(TimerDomain.TimerCountdown(0, 5, 0), TimerDomain.countdownOf(5 * minute - 400L))
+        assertEquals(TimerDomain.TimerCountdown(0, 0, 0), TimerDomain.countdownOf(-1L))
+    }
+
+    @Test
+    fun setting_the_hours_leaves_the_minutes_and_seconds_running() {
+        // 2:30:45 left, and the sub-second phase deliberately non-zero so a rewrite would show up as a jump.
+        val running = timer(endsAtMillis = now + 2 * hour + 30 * minute + 45 * second - 400L)
+        val edited = TimerDomain.withCountdownField(running, TimerDomain.TimerField.HOURS, 5, now)
+
+        assertTrue(edited.running, "editing the hours must not stop the timer")
+        assertEquals(
+            running.endsAtMillis!! + 3 * hour,
+            edited.endsAtMillis,
+            "the due instant SHIFTS by the hours delta - it is not rewritten",
+        )
+        // Which is exactly what "the minutes and seconds don't stop" means: they are where they were, and they
+        // go on reading down through the edit.
+        assertEquals(TimerDomain.TimerCountdown(5, 30, 45), TimerDomain.countdownOf(edited.remainingAtMillis(now)))
+        assertEquals(
+            TimerDomain.TimerCountdown(5, 30, 44),
+            TimerDomain.countdownOf(edited.remainingAtMillis(now + second)),
+        )
+    }
+
+    @Test
+    fun setting_the_minutes_leaves_the_seconds_running() {
+        val running = timer(endsAtMillis = now + 5 * minute + 20 * second)
+        val edited = TimerDomain.withCountdownField(running, TimerDomain.TimerField.MINUTES, 2, now)
+
+        assertTrue(edited.running)
+        assertEquals(now + 2 * minute + 20 * second, edited.endsAtMillis, "shifted by -3 minutes; the 20 s stay")
+        assertEquals(
+            TimerDomain.TimerCountdown(0, 2, 19),
+            TimerDomain.countdownOf(edited.remainingAtMillis(now + second)),
+        )
+    }
+
+    @Test
+    fun setting_the_seconds_stops_the_timer_and_snaps_the_countdown() {
+        // The seconds are the digit that is itself reading down, so a typed value could only be consumed by
+        // the next tick. The edit therefore pauses the row - the window's Pause button becomes Resume - and
+        // snaps to the whole second asked for, which is what makes it stick.
+        val running = timer(endsAtMillis = now + 5 * minute + 20 * second - 400L)
+        val edited = TimerDomain.withCountdownField(running, TimerDomain.TimerField.SECONDS, 45, now)
+
+        assertTrue(edited.paused, "typing the seconds is the one countdown edit that stops it")
+        assertNull(edited.endsAtMillis)
+        assertEquals(5 * minute + 45 * second, edited.remainingMillis, "on the second, so the typed value holds")
+        assertEquals(5 * minute + 45 * second, edited.remainingAtMillis(now + hour), "held: it does not read down")
+        // And the row resumes from what was typed.
+        assertEquals(now + hour + 5 * minute + 45 * second, TimerDomain.started(edited, now + hour).endsAtMillis)
+    }
+
+    @Test
+    fun editing_a_paused_timers_components_leaves_it_paused() {
+        val paused = timer(remainingMillis = 5 * minute + 20 * second)
+        val hours = TimerDomain.withCountdownField(paused, TimerDomain.TimerField.HOURS, 1, now)
+        assertTrue(hours.paused)
+        assertEquals(hour + 5 * minute + 20 * second, hours.remainingMillis)
+
+        val seconds = TimerDomain.withCountdownField(paused, TimerDomain.TimerField.SECONDS, 5, now)
+        assertTrue(seconds.paused, "nothing to stop - it is already held")
+        assertEquals(5 * minute + 5 * second, seconds.remainingMillis)
+    }
+
+    @Test
+    fun the_component_edits_never_touch_the_rows_settings() {
+        val running = TimerDomain.started(timer(durationSeconds = 300, soundSeconds = 30, label = "Tea"), now)
+        val edited = TimerDomain.withCountdownField(running, TimerDomain.TimerField.MINUTES, 2, now)
+        assertEquals(300, edited.durationSeconds, "the DURATION is a setting: the next start from idle is 5:00")
+        assertEquals(30, edited.soundSeconds)
+        assertEquals("Tea", edited.label)
+    }
+
+    @Test
+    fun the_nudge_buttons_move_the_seconds_without_stopping_the_timer() {
+        val running = timer(endsAtMillis = now + 5 * minute)
+        val plus = TimerDomain.nudged(running, 10 * second, now)
+        assertTrue(plus.running, "this is the whole point of the buttons: the countdown does not stop")
+        assertEquals(now + 5 * minute + 10 * second, plus.endsAtMillis)
+
+        val minus = TimerDomain.nudged(running, -5 * second, now)
+        assertTrue(minus.running)
+        assertEquals(now + 4 * minute + 55 * second, minus.endsAtMillis)
+
+        // A paused row stays paused, with the new amount banked.
+        val paused = TimerDomain.nudged(timer(remainingMillis = 30 * second), -10 * second, now)
+        assertTrue(paused.paused)
+        assertEquals(20 * second, paused.remainingMillis)
+    }
+
+    @Test
+    fun a_nudge_past_zero_leaves_a_running_timer_due_now() {
+        // The honest answer to "take ten more seconds off a countdown with three left", and the same clamp
+        // every other write here goes through.
+        val edited = TimerDomain.nudged(timer(endsAtMillis = now + 3 * second), -10 * second, now)
+        assertEquals(now, edited.endsAtMillis)
+        assertEquals(0L, edited.remainingAtMillis(now))
+    }
+
+    @Test
+    fun an_idle_timers_countdown_is_its_duration_and_no_countdown_edit_moves_it() {
+        // The idle row is not counting down: the number it shows is durationSeconds, and the duration field
+        // beside it in the window is what edits that. Writing here as well would be two fields for one number.
+        val idle = timer(durationSeconds = 300)
+        assertEquals(idle, TimerDomain.withCountdownField(idle, TimerDomain.TimerField.MINUTES, 2, now))
+        assertEquals(idle, TimerDomain.withCountdownField(idle, TimerDomain.TimerField.SECONDS, 2, now))
+        assertEquals(idle, TimerDomain.nudged(idle, 10 * second, now))
+        assertEquals(idle, TimerDomain.withRemaining(idle, 90 * second, now))
+    }
+
+    @Test
+    fun a_countdown_edit_is_clamped_into_the_allowed_range() {
+        val running = TimerDomain.started(timer(), now)
+        val maxMillis = TimerEntry.MAX_TIMER_SECONDS.toLong() * second
+        assertEquals(now + maxMillis, TimerDomain.withRemaining(running, 99L * 24 * hour, now).endsAtMillis)
+        assertEquals(now, TimerDomain.withRemaining(running, -5_000L, now).endsAtMillis)
+        // The hours field tops out at 24, so the coarsest edit it can make is clamped rather than overflowing.
+        assertEquals(
+            now + maxMillis,
+            TimerDomain.withCountdownField(running, TimerDomain.TimerField.HOURS, 24, now).endsAtMillis,
         )
     }
 
@@ -305,6 +442,86 @@ class TimerTest {
         assertTrue(s === SchedulerReducer.reduce(s, SchedulerIntent.StartTimer("timer-9", now)))
         assertTrue(s === SchedulerReducer.reduce(s, SchedulerIntent.PauseTimer("timer-0", now)))
         assertTrue(s === SchedulerReducer.reduce(s, SchedulerIntent.ResetTimer("timer-0")))
+        assertTrue(
+            s === SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.SetTimerCountdownField("timer-0", TimerDomain.TimerField.MINUTES, 2, now),
+            ),
+            "an idle row has no countdown to move",
+        )
+        assertTrue(s === SchedulerReducer.reduce(s, SchedulerIntent.NudgeTimerRemaining("timer-0", 10 * second, now)))
+        assertTrue(
+            s === SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.SetTimerCountdownField("timer-9", TimerDomain.TimerField.MINUTES, 2, now),
+            ),
+        )
+        assertTrue(s === SchedulerReducer.reduce(s, SchedulerIntent.NudgeTimerRemaining("timer-9", 10 * second, now)))
+    }
+
+    @Test
+    fun a_countdown_edit_moves_only_the_named_timers_countdown() {
+        val s0 = SchedulerReducer.reduce(
+            SchedulerState.empty(),
+            SchedulerIntent.SetTimers(listOf(timer(id = "timer-0"), timer(id = "timer-1"))),
+        )
+        val running = SchedulerReducer.reduce(s0, SchedulerIntent.StartTimer("timer-0", now))
+
+        // Setting the minutes shifts the due instant by the minutes delta and leaves the row running.
+        val edited = SchedulerReducer.reduce(
+            running,
+            SchedulerIntent.SetTimerCountdownField("timer-0", TimerDomain.TimerField.MINUTES, 2, now + minute),
+        )
+        // 4:00 was left, so retyping the minutes as 2 shifts the due instant back by two minutes.
+        assertEquals(now + 3 * minute, edited.timers[0].endsAtMillis)
+        assertEquals(2 * minute, edited.timers[0].remainingAtMillis(now + minute))
+        assertTrue(edited.timers[0].running, "still counting down, just less of it")
+        assertTrue(edited.timers[1].idle, "the other row is untouched")
+
+        // A nudge does the same in seconds, and equally does not stop it.
+        val nudged = SchedulerReducer.reduce(
+            edited,
+            SchedulerIntent.NudgeTimerRemaining("timer-0", -10 * second, now + minute),
+        )
+        assertEquals(now + 3 * minute - 10 * second, nudged.timers[0].endsAtMillis)
+        assertTrue(nudged.timers[0].running)
+        assertTrue(nudged.timers[1].idle)
+    }
+
+    @Test
+    fun typing_the_seconds_pauses_the_row_through_the_reducer() {
+        // What the window shows for it: the Pause button becomes Resume, because the row really is paused.
+        val s0 = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetTimers(listOf(timer())))
+        val running = SchedulerReducer.reduce(s0, SchedulerIntent.StartTimer("timer-0", now))
+        val edited = SchedulerReducer.reduce(
+            running,
+            SchedulerIntent.SetTimerCountdownField("timer-0", TimerDomain.TimerField.SECONDS, 30, now),
+        )
+        assertTrue(edited.timers.single().paused)
+        assertEquals(5 * minute + 30 * second, edited.timers.single().remainingMillis)
+    }
+
+    @Test
+    fun the_countdown_and_the_settings_never_disturb_each_other() {
+        // The two halves of the same rule: SetTimers carries the settings and must not move the due instant;
+        // the countdown writes move the due instant and must not touch the settings.
+        val s0 = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetTimers(listOf(timer())))
+        val running = SchedulerReducer.reduce(s0, SchedulerIntent.StartTimer("timer-0", now))
+        val edited = SchedulerReducer.reduce(
+            running,
+            SchedulerIntent.SetTimerCountdownField("timer-0", TimerDomain.TimerField.MINUTES, 1, now),
+        )
+        assertEquals(300, edited.timers.single().durationSeconds)
+        assertEquals(30, edited.timers.single().soundSeconds)
+
+        // Now the window pushes the row's settings back (a label typed while it counts down): the shortened
+        // countdown rides through untouched, because the push carries the live run fields.
+        val renamed = SchedulerReducer.reduce(
+            edited,
+            SchedulerIntent.SetTimers(listOf(edited.timers.single().copy(label = "Tea"))),
+        )
+        assertEquals(now + minute, renamed.timers.single().endsAtMillis)
+        assertEquals("Tea", renamed.timers.single().label)
     }
 
     @Test

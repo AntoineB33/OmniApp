@@ -4,8 +4,9 @@ import org.example.project.scheduler.model.TimerEntry
 
 /**
  * PRD §18 Timers: the pure arithmetic behind the Alarms window's **Timers** section — when a running
- * [TimerEntry] is due, which timers a moving clock ran past, and the three transitions a timer row can make
- * (start/resume, pause, reset).
+ * [TimerEntry] is due, which timers a moving clock ran past, the three transitions a timer row can make
+ * (start/resume, pause, reset) and the countdown's own writes — [withCountdownField] for the three typed
+ * components and [nudged] for the ± second buttons, both over the [withRemaining] primitive.
  *
  * The counterpart of [AlarmDomain], and deliberately much smaller: an alarm's boundary has to be derived from
  * the local calendar on every day it rings, whereas a timer's boundary IS its stored
@@ -103,6 +104,96 @@ object TimerDomain {
     }
 
     /**
+     * PRD §18 Timers: which of the Alarms window's three countdown fields an edit is about, and how many
+     * millis one of its units is worth. The unit is the whole of what the field means — setting it moves the
+     * countdown by *its own* delta, so the finer components are left exactly where they are.
+     */
+    enum class TimerField(val unitMillis: Long) {
+        HOURS(3_600_000L),
+        MINUTES(60_000L),
+        SECONDS(1_000L),
+    }
+
+    /** A countdown split the way the window shows it: [formatCountdown]'s own arithmetic, as numbers. */
+    data class TimerCountdown(val hours: Int, val minutes: Int, val seconds: Int) {
+        fun component(field: TimerField): Int = when (field) {
+            TimerField.HOURS -> hours
+            TimerField.MINUTES -> minutes
+            TimerField.SECONDS -> seconds
+        }
+
+        /** The whole countdown as millis, on the second — what a snapped seconds edit banks. */
+        val millis: Long get() = (hours.toLong() * 3600L + minutes.toLong() * 60L + seconds.toLong()) * 1_000L
+    }
+
+    /**
+     * [millis] as the hours/minutes/seconds the window prints, rounded **up** to the whole second exactly as
+     * [formatCountdown] does — the two must agree digit for digit, since one is the readout and the other is
+     * what an edit of that readout is measured against.
+     */
+    fun countdownOf(millis: Long): TimerCountdown {
+        val total = (millis.coerceAtLeast(0L) + 999L) / 1_000L
+        return TimerCountdown(
+            hours = (total / 3600).toInt(),
+            minutes = ((total % 3600) / 60).toInt(),
+            seconds = (total % 60).toInt(),
+        )
+    }
+
+    /**
+     * PRD §18 Timers: set one component of [entry]'s countdown to [value] — what the window's three countdown
+     * fields write.
+     *
+     * **The edit is a SHIFT by that component's own delta, not a rewrite of the countdown**, which is the
+     * whole reason the finer components carry on untouched: setting the hours moves the due instant by
+     * `(value − hours) × 1 h`, so the minutes and seconds under it go on reading down through the edit without
+     * so much as a jump; setting the minutes likewise leaves the seconds running. That is the difference
+     * between "make it 2 hours" and "restart it at 2 hours", and only the first is what the user asked for.
+     *
+     * **[TimerField.SECONDS] is the exception, and it PAUSES the row** (the window's Pause button becomes
+     * Resume). The seconds field is the one that is itself reading down, so a value typed into a running timer
+     * would be consumed by the very next tick — there is no way to *set* it while it moves. So that edit
+     * stops the countdown and snaps it to the whole second the user typed, which is what makes the value
+     * stick; the ± buttons ([nudged]) are how the seconds are moved **without** stopping.
+     *
+     * An **idle** row is returned unchanged, for the reason [withRemaining] gives.
+     */
+    fun withCountdownField(
+        entry: TimerEntry,
+        field: TimerField,
+        value: Int,
+        nowMillis: Long,
+    ): TimerEntry {
+        if (entry.idle) return entry
+        val remaining = entry.remainingAtMillis(nowMillis)
+        val shown = countdownOf(remaining)
+        if (field == TimerField.SECONDS) {
+            val snapped = shown.copy(seconds = value).millis
+                .coerceIn(0L, TimerEntry.MAX_TIMER_SECONDS.toLong() * 1_000L)
+            return if (entry.endsAtMillis == null && entry.remainingMillis == snapped) {
+                entry
+            } else {
+                entry.copy(endsAtMillis = null, remainingMillis = snapped)
+            }
+        }
+        val delta = (value - shown.component(field)).toLong() * field.unitMillis
+        return withRemaining(entry, remaining + delta, nowMillis)
+    }
+
+    /**
+     * PRD §18 Timers: shift the time left by [deltaMillis], **leaving the row in the state it is in** — the
+     * window's `−10s / −5s / −1s / +1s / +5s / +10s` buttons, which exist precisely so the seconds can be
+     * moved without the stop [withCountdownField] makes for a typed seconds value.
+     *
+     * A running row stays running and simply becomes due that much sooner or later; a paused one stays paused
+     * with the new amount banked; an idle one is unchanged ([withRemaining]). Driving a running timer below
+     * zero leaves it due **now**, so it rings — the honest answer to "take ten more seconds off a countdown
+     * with three left", and the same clamp every other write here goes through.
+     */
+    fun nudged(entry: TimerEntry, deltaMillis: Long, nowMillis: Long): TimerEntry =
+        withRemaining(entry, entry.remainingAtMillis(nowMillis) + deltaMillis, nowMillis)
+
+    /**
      * Start [entry] (from its full duration) or resume it (from what a pause banked), due at [nowMillis] plus
      * whatever is left. A timer already running is returned unchanged — pressing start twice must not push
      * its end away — and so is one with nothing to count down.
@@ -121,6 +212,30 @@ object TimerDomain {
     fun paused(entry: TimerEntry, nowMillis: Long): TimerEntry {
         val endsAt = entry.endsAtMillis ?: return entry
         return entry.copy(endsAtMillis = null, remainingMillis = (endsAt - nowMillis).coerceAtLeast(0L))
+    }
+
+    /**
+     * PRD §18 Timers: put [remainingMillis] on the clock **without changing which of the three states the row
+     * is in** — the primitive under [withCountdownField] and [nudged], and the one place the run fields are
+     * written for a countdown edit.
+     *
+     * The two states that have something to count down answer it in their own currency, which is the whole of
+     * the rule: a **running** timer's time left is derived from [TimerEntry.endsAtMillis], so it is moved by
+     * moving that instant to `nowMillis + remaining`; a **paused** one's is the banked
+     * [TimerEntry.remainingMillis], so it is moved by writing it. An **idle** row is returned unchanged: it is
+     * not counting down at all, and the number it shows is its [TimerEntry.durationSeconds] — a *setting*, and
+     * the field beside it in the window is what edits that.
+     *
+     * [nowMillis] is passed in rather than read, like [started] and [paused], so this stays a pure function of
+     * its inputs. The value is clamped into `0..`[TimerEntry.MAX_TIMER_SECONDS].
+     */
+    fun withRemaining(entry: TimerEntry, remainingMillis: Long, nowMillis: Long): TimerEntry {
+        val remaining = remainingMillis.coerceIn(0L, TimerEntry.MAX_TIMER_SECONDS.toLong() * 1_000L)
+        return when {
+            entry.running -> entry.copy(endsAtMillis = nowMillis + remaining)
+            entry.paused -> entry.copy(remainingMillis = remaining)
+            else -> entry
+        }
     }
 
     /**

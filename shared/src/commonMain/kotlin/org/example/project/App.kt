@@ -1812,12 +1812,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onChange = { vm.dispatch(SchedulerIntent.SetAlarms(it)) },
                             timers = schedulerState.timers,
                             onTimersChange = { vm.dispatch(SchedulerIntent.SetTimers(it)) },
-                            // The three run transitions are dispatched with the clock's instant, not the
-                            // display now-line: a countdown started at 17:00:00.4 must end 5 minutes after
-                            // that, not after the quantized tick the calendar is drawn against.
+                            // The run-state writes are dispatched with the clock's instant, not the display
+                            // now-line: a countdown started at 17:00:00.4 must end 5 minutes after that, not
+                            // after the quantized tick the calendar is drawn against — and the same holds for
+                            // a minute typed into a running timer's countdown, or a -10s press.
                             onStartTimer = { vm.dispatch(SchedulerIntent.StartTimer(it, clock.nowMillis())) },
                             onPauseTimer = { vm.dispatch(SchedulerIntent.PauseTimer(it, clock.nowMillis())) },
                             onResetTimer = { vm.dispatch(SchedulerIntent.ResetTimer(it)) },
+                            onSetTimerCountdownField = { id, field, value ->
+                                vm.dispatch(
+                                    SchedulerIntent.SetTimerCountdownField(id, field, value, clock.nowMillis()),
+                                )
+                            },
+                            onNudgeTimerRemaining = { id, delta ->
+                                vm.dispatch(SchedulerIntent.NudgeTimerRemaining(id, delta, clock.nowMillis()))
+                            },
                             // Read straight off the clock (simulated under §16), and polled by the window
                             // itself while a timer runs — the engine's now-line only advances once per
                             // production tick, which is far too coarse for a countdown.

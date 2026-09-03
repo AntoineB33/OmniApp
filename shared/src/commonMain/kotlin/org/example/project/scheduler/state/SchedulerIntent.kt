@@ -488,8 +488,9 @@ sealed interface SchedulerIntent {
      * and synced, like the alarms; not part of the tree Undo/Redo history.
      *
      * This carries the rows' **settings** (label, duration, ring length, vibration). Whether a timer is
-     * running is moved only by [StartTimer] / [PauseTimer] / [ResetTimer], so editing a row's text while it
-     * counts down cannot disturb its end instant.
+     * running is moved only by [StartTimer] / [PauseTimer] / [ResetTimer] / [SetTimerCountdownField] /
+     * [NudgeTimerRemaining], so editing a row's settings while it counts down cannot disturb its end
+     * instant.
      */
     data class SetTimers(
         val entries: List<org.example.project.scheduler.model.TimerEntry>,
@@ -521,6 +522,47 @@ sealed interface SchedulerIntent {
      */
     data class ResetTimer(
         val id: String,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §18 Timers: set one component of a timer's countdown — what each of the Alarms window's three
+     * countdown fields dispatches, so the time left can be changed at any moment without stopping and
+     * restarting the countdown.
+     *
+     * The edit is a **shift by that component's own delta**, which is what leaves the finer components
+     * running: typing into the hours leaves the minutes and seconds reading down, typing into the minutes
+     * leaves the seconds reading down. [TimerDomain.TimerField.SECONDS] is the exception and **pauses** the
+     * row — the seconds are the digit that is itself moving, so a typed value could not otherwise stick.
+     * [TimerDomain.withCountdownField] is the whole rule; an idle row is unchanged, its countdown being the
+     * duration that [SetTimers] edits.
+     *
+     * Together with [NudgeTimerRemaining] this is the exact counterpart of [SetTimers]' rule the other way
+     * round: that one carries the settings and never disturbs the due instant, these move the due instant and
+     * never touch the settings.
+     *
+     * [nowMillis] is passed in rather than read, like [StartTimer]'s, so the reducer stays pure. A no-op when
+     * the timer is unknown or nothing moved.
+     */
+    data class SetTimerCountdownField(
+        val id: String,
+        val field: org.example.project.scheduler.domain.TimerDomain.TimerField,
+        val value: Int,
+        val nowMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §18 Timers: shift one timer's time left by [deltaMillis], leaving it in the state it is in — the
+     * Alarms window's `−10s / −5s / −1s / +1s / +5s / +10s` buttons.
+     *
+     * They exist because [SetTimerCountdownField] deliberately **stops** a running timer when the seconds are
+     * typed into: this is how the seconds are moved without stopping it. A running row stays running and just
+     * becomes due sooner or later; a paused one stays paused with the new amount banked; an idle one is
+     * unchanged. See [TimerDomain.nudged]. A no-op when the timer is unknown or nothing moved.
+     */
+    data class NudgeTimerRemaining(
+        val id: String,
+        val deltaMillis: Long,
+        val nowMillis: Long,
     ) : SchedulerIntent
 
     /**

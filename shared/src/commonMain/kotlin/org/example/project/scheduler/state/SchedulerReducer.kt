@@ -281,6 +281,12 @@ object SchedulerReducer {
                 TimerDomain.paused(it, intent.nowMillis)
             }
             is SchedulerIntent.ResetTimer -> reduceTimerTransition(state, intent.id, TimerDomain::reset)
+            is SchedulerIntent.SetTimerCountdownField -> reduceTimerTransition(state, intent.id) {
+                TimerDomain.withCountdownField(it, intent.field, intent.value, intent.nowMillis)
+            }
+            is SchedulerIntent.NudgeTimerRemaining -> reduceTimerTransition(state, intent.id) {
+                TimerDomain.nudged(it, intent.deltaMillis, intent.nowMillis)
+            }
             is SchedulerIntent.SetScreenBreaks ->
                 if (state.screenBreaks == intent.screenBreaks) state
                 else state.copy(screenBreaks = intent.screenBreaks)
@@ -829,10 +835,10 @@ object SchedulerReducer {
     }
 
     /**
-     * PRD §18 Timers: apply one of the three run transitions ([TimerDomain.started] / [TimerDomain.paused] /
-     * [TimerDomain.reset]) to the timer [id]. One helper for all three because each is already a pure
-     * function on the entry — the reducer only has to find the row and skip the write when nothing moved.
-     * A no-op when the id is unknown or the transition changed nothing.
+     * PRD §18 Timers: apply one of the run-state writes ([TimerDomain.started] / [TimerDomain.paused] /
+     * [TimerDomain.reset] / [TimerDomain.withCountdownField] / [TimerDomain.nudged]) to the timer [id]. One helper for all of them because
+     * each is already a pure function on the entry — the reducer only has to find the row and skip the write
+     * when nothing moved. A no-op when the id is unknown or the transition changed nothing.
      */
     private fun reduceTimerTransition(
         state: SchedulerState,

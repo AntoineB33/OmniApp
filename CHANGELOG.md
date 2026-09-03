@@ -11,6 +11,48 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Alarms window's countdown is three input fields, and editing it does not stop the timer — 2026-09-04
+
+`shared` (`scheduler/domain/TimerDomain.kt`, `scheduler/state/SchedulerIntent.kt`,
+`scheduler/state/SchedulerReducer.kt`, `ui/AlarmWindow.kt`, `App.kt`) + `docs/PRD_TaskScheduler.md` §18 +
+`docs/MANUAL_TESTING.md` + ADR 0010. **Client rebuild only** — no Supabase deploy, no SQLite migration, **no
+payload change**: the new intents write fields `TimerEntry` already has.
+
+PRD §18's countdown was a read-only readout, so changing how much was left meant Reset + retype the duration +
+Start — which discards what has elapsed and answers "how long is this timer" when the user asked "how much
+longer". The countdown is now **hours / minutes / seconds as three fields**, plus six ± second buttons, and
+editing it leaves the timer running.
+
+- **An edit is a SHIFT by that component's own unit, never a rewrite of the countdown**
+  (`TimerDomain.withCountdownField`, behind `SchedulerIntent.SetTimerCountdownField`). That one choice is the
+  feature: setting the **hours** moves the due instant by `(value − hours) × 1 h`, so the minutes and seconds
+  underneath go on reading down without a jump; setting the **minutes** leaves the seconds running. A rewrite
+  would have restarted the finer component at zero — "restart it at 2 hours" rather than "make it 2 hours".
+  Each keystroke is measured against the **live** value, so typing `12` into the minutes (committing `1`, then
+  `12`) lands on 12, not 13.
+- **`SECONDS` is the one edit that stops it, and the ± buttons are why that is acceptable.** The seconds are the
+  digit that is itself reading down, so a typed value would be consumed by the next tick; that edit therefore
+  **pauses** the row (Pause becomes Resume) and snaps the countdown to the whole second typed, which is what
+  makes it stick. `SchedulerIntent.NudgeTimerRemaining` — `−10s / −5s / −1s / +1s / +5s / +10s`,
+  `TimerDomain.nudged` — is how the seconds move **without** stopping. The two are a pair: a silently
+  non-stopping seconds field would not hold its value, and without the buttons the seconds would be unreachable
+  on a running timer. A nudge past zero leaves it due now, so it rings.
+- **Both write through `withRemaining`, in each state's own currency** — a running row's `endsAtMillis` moves and
+  it stays running, a paused row's banked `remainingMillis` is rewritten and it stays paused. Neither crosses
+  into the other's field, which keeps the three-state invariant true without `healed` catching it.
+- **An idle row is unchanged, the fields are `readOnly` and the buttons disabled there.** Its countdown *is* its
+  `durationSeconds`, which the Duration field on the same row edits; two fields writing one number by two routes
+  is the drift this codebase keeps deleting.
+- **One draft per row, naming the field it belongs to** (only one field can hold the focus). The live countdown
+  changes four times a second, so a field bound straight to it cannot be typed into — every tick would overwrite
+  the keystroke. Seeded on focus, dropped on focus lost (guarded on still being that field's, since Compose may
+  report the gain before the loss). **The fields not holding it go on reading down**, which is what "editing the
+  hours does not stop the minutes and seconds" looks like. `parseCountdownComponent` is its own parser and
+  deliberately not `parseDurationSeconds`, which still reads the whole `H:MM:SS` of the row's **Duration**.
+- **Nothing downstream needed a change**: `launchAlarmArming` already re-runs on every `state.timers` change, so
+  a retyped or nudged countdown re-arms the phone's one OS slot by itself, and the desktop sweep reads the moved
+  instant like any other.
+
 ### Alternative Schedules: every rule the fill makes now names who runs instead — 2026-09-03
 
 `shared` (`scheduler/model/TaskModels.kt`, `scheduler/domain/SchedulerDomain.kt`) + `CLAUDE.md` + ADR 0001.
