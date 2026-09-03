@@ -171,8 +171,30 @@ struck off at once).
 ## Categories, and the rule that HOLDS a share
 
 A **category** is a label a task carries; a **category rule** is a standing statement about a share of a
-sub-tree: *the tasks carrying this category under that task always come to 33 % of it.* It is the same
+sub-tree: *the tasks carrying this category under that task cell always come to 33 % of it.* It is the same
 quantity this record's window edits, said once and then kept.
+
+### The scope is a cell, and what it names is a list
+
+The scope is a **task cell**, not a task. A task can appear several times in the tree, so "under Book" is not
+a place the user can point at when there are two of them — the window asks *under which task cell* and names
+every offer by its own path. That is also what makes the picker readable at all: two different tasks may
+share a title, and a bare title told them apart no better than it told two occurrences apart.
+
+What a scope cell names is the **sub-list its task owns**, because a sub-list belongs to the task id. Both
+halves are load-bearing and `CategoryRules.scopeKey` is where they meet: "at most one rule per scope" and the
+grouping the structural contradictions are checked over are keyed on that LIST, so two cells of one mirrored
+task are **one** scope. Keying them on the cell would let the user write two rules about one sub-tree — the
+plainest contradiction there is, and one no scaling could even tell apart, since the two cells show the same
+cells with the same weights.
+
+The price is deliberate: a rule sleeps (`Status.ScopeGone`) when the cell it was written about is deleted,
+even where the task still appears elsewhere. The user pointed at a place, and the place is gone; that is the
+same softness a rule whose scope task was deleted already had, and re-pointing it is one gesture.
+
+**Migration.** A payload written while the scope was a task is read through `firstTaskOccurrence` — the cell
+"go to task" lands on — and `task/main` becomes the whole tree. `scopeTaskId` is still WRITTEN beside the
+cell, so a build made before the change reads a rule it understands rather than a payload it cannot decode.
 
 ### A category is an object, not a string on a task
 

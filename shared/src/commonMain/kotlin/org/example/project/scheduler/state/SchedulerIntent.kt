@@ -60,8 +60,11 @@ sealed interface SchedulerIntent {
 
     data class ToggleExpand(val cellId: CellId) : SchedulerIntent
 
-    /** Collapse [cellId] and every cell in its sub-tree, recorded as one expansion-set delta. */
-    data class CollapseSubtree(val cellId: CellId) : SchedulerIntent
+    /**
+     * Collapse the sub-trees UNDER [cellId] — every cell below it, but not [cellId] itself, which stays
+     * open on its own children. Recorded as one expansion-set delta.
+     */
+    data class CollapseSubtrees(val cellId: CellId) : SchedulerIntent
 
     data class SetCellTitle(
         val cellId: CellId,
@@ -354,9 +357,15 @@ sealed interface SchedulerIntent {
     data class DeleteCategory(val categoryId: CategoryId) : SchedulerIntent
 
     /**
-     * The category edit window’s rule editor: *the tasks carrying [categoryId] under [scopeTaskId] are
-     * worth [share] of it*. At most one rule per scope, so this REPLACES the rule already there rather than
-     * adding beside it — two rules about one sub-tree would be the plainest contradiction there is.
+     * The category edit window’s rule editor: *the tasks carrying [categoryId] under the cell
+     * [scopeCellId] are worth [share] of it* (`null` = the whole tree). At most one rule per scope, so this
+     * REPLACES the rule already there rather than adding beside it — two rules about one sub-tree would be
+     * the plainest contradiction there is, and "one sub-tree" is the LIST the scope cell's task owns, so
+     * two cells of one mirrored task are one scope
+     * ([org.example.project.scheduler.domain.CategoryRules.scopeKey]).
+     *
+     * A cell and not a task, because a task can appear several times in the tree: "under Book" names no
+     * place when there are two of them, so the window asks which task CELL.
      *
      * The reducer applies it and then re-establishes every rule
      * ([org.example.project.scheduler.domain.CategoryRules.settle]); a rule that cannot be held is refused
@@ -364,12 +373,12 @@ sealed interface SchedulerIntent {
      */
     data class SetCategoryRule(
         val categoryId: CategoryId,
-        val scopeTaskId: TaskId,
+        val scopeCellId: CellId?,
         val share: Double,
     ) : SchedulerIntent
 
-    /** The bin on a rule row: [categoryId] stops making any claim about [scopeTaskId]’s sub-tree. */
-    data class RemoveCategoryRule(val categoryId: CategoryId, val scopeTaskId: TaskId) : SchedulerIntent
+    /** The bin on a rule row: [categoryId] stops making any claim about [scopeCellId]’s sub-tree. */
+    data class RemoveCategoryRule(val categoryId: CategoryId, val scopeCellId: CellId?) : SchedulerIntent
 
     /**
      * Clear [SchedulerState.categoryRuleError] — the OK of the notice the app raised when it refused an edit

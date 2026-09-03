@@ -12,6 +12,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNames
 import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.TimerDomain
+import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.TimerEntry
@@ -376,6 +377,10 @@ object SchedulerStateCodec {
             // written on the TASKS (`categoryIds`), so nothing here is a second copy of that; what lives
             // here is only what a category IS. The rules are sorted by scope so the encoded payload — and
             // the sync fingerprint with it — cannot depend on the order two devices happened to add them in.
+            //
+            // A rule's scope is a CELL, and `scopeTaskId` is still written beside it: that field is what a
+            // build made before the scope was a cell reads, and the task the cell points at is exactly the
+            // answer such a build gave. A newer build prefers `scopeCellId` and never looks at it.
             categories =
                 categories.map { category ->
                     PersistedCategory(
@@ -383,8 +388,20 @@ object SchedulerStateCodec {
                         title = category.title,
                         rules =
                             category.rules
-                                .sortedBy { it.scopeTaskId.value }
-                                .map { PersistedCategoryRule(it.scopeTaskId.value, it.share) },
+                                .sortedBy { it.scopeCellId?.value ?: "" }
+                                .map { rule ->
+                                    PersistedCategoryRule(
+                                        scopeTaskId =
+                                            rule.scopeCellId?.let { cells[it]?.taskId?.value }
+                                                ?: if (rule.scopeCellId == null) {
+                                                    WellKnownIds.MAIN_TASK.value
+                                                } else {
+                                                    ""
+                                                },
+                                        scopeCellId = rule.scopeCellId?.value,
+                                        share = rule.share,
+                                    )
+                                },
                     )
                 },
             nextCategoryCounter = nextCategoryCounter,
@@ -730,6 +747,19 @@ object SchedulerStateCodec {
                         optionalTaskValues = p.optionalTaskValues.mapKeys { (taskId, _) -> TaskId(taskId) },
                     )
             }
+        // PRD §5: a rule's scope is a CELL, and a payload written when it was a task names one — so the
+        // tree has to be walkable before the categories are decoded, to resolve that task to its first
+        // occurrence. Only the four fields that walk reads are filled in.
+        val scopeSource =
+            SchedulerState(
+                rootListId = CellListId(rootListId),
+                lists = lists,
+                cells = cells,
+                tasks = tasks,
+                titleToTaskIds = emptyMap(),
+                expanded = emptySet(),
+                selection = SchedulerSelection(main = null, selected = emptySet(), rangeAnchor = null, renderVia = null),
+            )
         return SchedulerState(
             rootListId = CellListId(rootListId),
             lists = lists,
@@ -881,7 +911,7 @@ object SchedulerStateCodec {
             // `[0, 1]` — decode heals what an older or hand-edited payload holds rather than surfacing it.
             // A second rule about one scope is dropped too: at most one rule per scope is the invariant
             // `SetCategoryRule` keeps, and two would be the plainest contradiction there is.
-            categories = categories.toCategories(),
+            categories = categories.toCategories(scopeSource),
             // Never lowered: an id already handed out must not be minted again, so the counter clears
             // whatever the payload's own categories used even if the field itself is missing or stale.
             nextCategoryCounter =
@@ -1638,9 +1668,15 @@ private fun decodeResilience(p: PersistedTask): Map<String, Double> {
  * PRD §5: the account's categories as loaded. Everything an older or hand-edited payload could hold that the
  * current invariants forbid is healed here rather than surfaced — a blank title (a category is named by its
  * title, so a blank one is unreachable from every field that picks one), a duplicate id, a share outside
- * `[0, 1]`, and a second rule about one scope (at most one per scope is what the reducer keeps).
+ * `[0, 1]`, and a second rule about one scope (at most one per scope is what the reducer keeps, keyed on the
+ * sub-LIST so two cells of one mirrored task collapse into one rule here as well).
+ *
+ * A rule's scope is **migrated** the same way: a payload written while the scope was a *task* is read
+ * through [SchedulerDomain.firstTaskOccurrence], the same cell "go to task" lands on, and `task/main`
+ * becomes the whole tree. A legacy rule about a task no cell points at names no place the new model can
+ * express, and is dropped — decode heals what an older payload holds rather than surfacing it.
  */
-private fun List<PersistedCategory>.toCategories(): List<Category> {
+private fun List<PersistedCategory>.toCategories(scopeSource: SchedulerState): List<Category> {
     val seen = HashSet<String>()
     val out = mutableListOf<Category>()
     for (p in this) {
@@ -1649,8 +1685,17 @@ private fun List<PersistedCategory>.toCategories(): List<Category> {
         val scopes = HashSet<String>()
         val rules = mutableListOf<CategoryRule>()
         for (r in p.rules) {
-            if (!scopes.add(r.scopeTaskId)) continue
-            rules += CategoryRule(TaskId(r.scopeTaskId), r.share.coerceIn(0.0, 1.0))
+            val legacy = r.scopeTaskId
+            val scope: CellId? =
+                when {
+                    r.scopeCellId != null -> CellId(r.scopeCellId)
+                    legacy.isBlank() || legacy == WellKnownIds.MAIN_TASK.value -> null
+                    else ->
+                        SchedulerDomain.firstTaskOccurrence(scopeSource, TaskId(legacy))?.cellId
+                            ?: continue
+                }
+            if (!scopes.add(CategoryRules.scopeKey(scopeSource, scope))) continue
+            rules += CategoryRule(scope, r.share.coerceIn(0.0, 1.0))
         }
         out += Category(id = CategoryId(p.id), title = p.title, rules = rules)
     }
@@ -1669,7 +1714,14 @@ private data class PersistedCategory(
 
 @Serializable
 private data class PersistedCategoryRule(
-    val scopeTaskId: String,
+    /**
+     * PRD §5: the scope as a build made before it was a cell reads it — the task the scope cell points at,
+     * `task/main` for the whole tree. Still written so such a build keeps holding the rule; never read when
+     * [scopeCellId] is there.
+     */
+    val scopeTaskId: String = "",
+    /** The scope CELL, absent only in a payload written before the scope was one (and for the whole tree). */
+    val scopeCellId: String? = null,
     val share: Double,
 )
 

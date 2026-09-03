@@ -130,7 +130,7 @@ object SchedulerReducer {
             SchedulerIntent.EmptySelectedCells -> reduceEmptySelected(state)
             is SchedulerIntent.ExitEdit -> reduceExitEdit(state, intent.navigation)
             is SchedulerIntent.ToggleExpand -> reduceToggleExpand(state, intent.cellId)
-            is SchedulerIntent.CollapseSubtree -> reduceCollapseSubtree(state, intent.cellId)
+            is SchedulerIntent.CollapseSubtrees -> reduceCollapseSubtrees(state, intent.cellId)
             is SchedulerIntent.RevealCell -> reduceRevealCell(state, intent.cellId, intent.ancestors)
             is SchedulerIntent.ReplaceTaskTitles -> reduceReplaceTaskTitles(state, intent.titles)
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
@@ -255,9 +255,9 @@ object SchedulerReducer {
             is SchedulerIntent.RenameCategory -> reduceRenameCategory(state, intent.categoryId, intent.title)
             is SchedulerIntent.DeleteCategory -> reduceDeleteCategory(state, intent.categoryId)
             is SchedulerIntent.SetCategoryRule ->
-                reduceSetCategoryRule(state, intent.categoryId, intent.scopeTaskId, intent.share)
+                reduceSetCategoryRule(state, intent.categoryId, intent.scopeCellId, intent.share)
             is SchedulerIntent.RemoveCategoryRule ->
-                reduceRemoveCategoryRule(state, intent.categoryId, intent.scopeTaskId)
+                reduceRemoveCategoryRule(state, intent.categoryId, intent.scopeCellId)
             SchedulerIntent.DismissCategoryRuleError ->
                 if (state.categoryRuleError == null) state else state.copy(categoryRuleError = null)
             is SchedulerIntent.RecordConductedBreak -> reduceRecordConductedBreak(state, intent)
@@ -1230,8 +1230,12 @@ object SchedulerReducer {
         return commitDelta(exited, ToggleExpandDelta(cellId))
     }
 
-    /** Collapse [cellId] and every cell in the sub-tree rooted there in one undoable expansion-set delta. */
-    private fun reduceCollapseSubtree(state: SchedulerState, cellId: CellId): SchedulerState {
+    /**
+     * Collapse the sub-trees under [cellId] in one undoable expansion-set delta: every cell below it is
+     * dropped from the expansion set, [cellId] itself is NOT — the gesture trims the branch back to the
+     * cell the user right-clicked, leaving its own children on screen.
+     */
+    private fun reduceCollapseSubtrees(state: SchedulerState, cellId: CellId): SchedulerState {
         val cell = state.cells[cellId] ?: return state
         val taskId = cell.taskId ?: return state
         val childListId = state.tasks[taskId]?.childListId ?: return state
@@ -1250,7 +1254,7 @@ object SchedulerReducer {
         }
 
         walk(childListId)
-        val collapsed = state.expanded - cellId - subtree
+        val collapsed = state.expanded - subtree
         if (collapsed == state.expanded) return state
         return commitDelta(state, SetExpandedDelta(before = state.expanded, after = collapsed))
     }
@@ -3330,8 +3334,12 @@ private fun reduceDeleteCategory(state: SchedulerState, categoryId: CategoryId):
 }
 
 /**
- * PRD §5: set the category's rule about one scope — *the tasks carrying it under [scopeTaskId] are worth
- * [shareRaw] of it*. At most one rule per scope, so an existing rule about that scope is REPLACED.
+ * PRD §5: set the category's rule about one scope — *the tasks carrying it under the cell [scopeCellId] are
+ * worth [shareRaw] of it* (`null` = the whole tree). At most one rule per scope, so an existing rule about
+ * that scope is REPLACED — and "that scope" is the SUB-LIST the cell's task owns
+ * ([CategoryRules.scopeKey]), not the cell, so writing a rule about one occurrence of a mirrored task
+ * replaces the rule written about another. Two statements about one sub-tree is exactly what the invariant
+ * exists to prevent, and mirrored cells show one sub-tree.
  *
  * Nothing is enforced here: [SchedulerReducer.reduce] settles every rule after every intent
  * ([CategoryRules.settle]), so a rule that cannot be held refuses this write along with everything else it
@@ -3340,21 +3348,22 @@ private fun reduceDeleteCategory(state: SchedulerState, categoryId: CategoryId):
 private fun reduceSetCategoryRule(
     state: SchedulerState,
     categoryId: CategoryId,
-    scopeTaskId: TaskId,
+    scopeCellId: CellId?,
     shareRaw: Double,
 ): SchedulerState {
     val category = state.categoryById(categoryId) ?: return state
     if (!shareRaw.isFinite()) return state
     val share = shareRaw.coerceIn(0.0, 1.0)
-    if (category.ruleAt(scopeTaskId)?.share == share) return state
+    if (category.ruleAt(scopeCellId)?.share == share) return state
+    val key = CategoryRules.scopeKey(state, scopeCellId)
     return state.copy(
         categories = state.categories.map { c ->
             if (c.id != categoryId) {
                 c
             } else {
                 c.copy(
-                    rules = c.rules.filterNot { it.scopeTaskId == scopeTaskId } +
-                        CategoryRule(scopeTaskId = scopeTaskId, share = share),
+                    rules = c.rules.filterNot { CategoryRules.scopeKey(state, it.scopeCellId) == key } +
+                        CategoryRule(scopeCellId = scopeCellId, share = share),
                 )
             }
         },
@@ -3365,13 +3374,13 @@ private fun reduceSetCategoryRule(
 private fun reduceRemoveCategoryRule(
     state: SchedulerState,
     categoryId: CategoryId,
-    scopeTaskId: TaskId,
+    scopeCellId: CellId?,
 ): SchedulerState {
     val category = state.categoryById(categoryId) ?: return state
-    if (category.ruleAt(scopeTaskId) == null) return state
+    if (category.ruleAt(scopeCellId) == null) return state
     return state.copy(
         categories = state.categories.map { c ->
-            if (c.id != categoryId) c else c.copy(rules = c.rules.filterNot { it.scopeTaskId == scopeTaskId })
+            if (c.id != categoryId) c else c.copy(rules = c.rules.filterNot { it.scopeCellId == scopeCellId })
         },
     )
 }

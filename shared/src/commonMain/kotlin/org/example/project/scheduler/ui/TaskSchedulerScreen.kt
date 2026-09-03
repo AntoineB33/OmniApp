@@ -531,9 +531,9 @@ internal fun CellListSection(
                             onGoToTaskTree = onGoToTaskTree?.let { go -> { go(taskId) } },
                             onCopy = { onCopyCell(cellId) },
                             onDeepCopy = { onDeepCopyCell(cellId) },
-                            onCollapseSubtree =
+                            onCollapseSubtrees =
                                 if (hasChildren) {
-                                    { onIntent(SchedulerIntent.CollapseSubtree(cellId)) }
+                                    { onIntent(SchedulerIntent.CollapseSubtrees(cellId)) }
                                 } else {
                                     null
                                 },
@@ -2449,12 +2449,12 @@ internal fun TaskRow(
                             cellMenu.onDeepCopy()
                         },
                     )
-                    cellMenu.onCollapseSubtree?.let { collapseSubtree ->
+                    cellMenu.onCollapseSubtrees?.let { collapseSubtrees ->
                         DropdownMenuItem(
-                            text = { Text("collapse subtree") },
+                            text = { Text("collapse sub-trees") },
                             onClick = {
                                 contextMenuOpen = false
-                                collapseSubtree()
+                                collapseSubtrees()
                             },
                         )
                     }
@@ -2783,7 +2783,7 @@ internal class TaskCellMenuActions(
     val onGoToTaskTree: (() -> Unit)?,
     val onCopy: () -> Unit,
     val onDeepCopy: () -> Unit,
-    val onCollapseSubtree: (() -> Unit)?,
+    val onCollapseSubtrees: (() -> Unit)?,
     val onAddDefaultSubtree: (() -> Unit)?,
 )
 

@@ -247,26 +247,31 @@ class TaskListRowsTest {
         assertTrue(rootWrite in moved.cells)
     }
 
-    // ----- collapse a sub-tree -------------------------------------------------------------------
+    // ----- collapse the sub-trees -----------------------------------------------------------------
 
     @Test
-    fun collapsingASubtreeClosesThisCellAndEveryDescendant() {
+    fun collapsingTheSubtreesClosesEveryDescendantButNotTheClickedCell() {
         val state = fixture()
         val bookRow = rowOf(state, "Book")
         val chapterRow = rowOf(state, "Chapter")
         val notesRow = rowOf(state, "Notes")
 
         val expanded = state.copy(expanded = setOf(bookRow, chapterRow))
-        val collapsed = SchedulerReducer.reduce(expanded, SchedulerIntent.CollapseSubtree(bookRow))
+        val collapsed = SchedulerReducer.reduce(expanded, SchedulerIntent.CollapseSubtrees(bookRow))
 
-        assertTrue(bookRow !in collapsed.expanded)
+        // The cell the user right-clicked stays open on its own children; everything below it folds up.
+        assertTrue(bookRow in collapsed.expanded)
         assertTrue(chapterRow !in collapsed.expanded)
-        assertEquals(state.expanded, collapsed.expanded)
+        assertEquals(setOf(bookRow), collapsed.expanded)
         assertEquals(state.captureTree(), collapsed.captureTree())
 
-        val nested = SchedulerReducer.reduce(state.copy(expanded = setOf(notesRow)), SchedulerIntent.CollapseSubtree(notesRow))
-        assertTrue(notesRow !in nested.expanded)
-        assertEquals(state.expanded, nested.expanded)
+        // Nothing below the cell is open ⇒ nothing to collapse, and the cell itself is left alone.
+        val nested =
+            SchedulerReducer.reduce(
+                state.copy(expanded = setOf(notesRow)),
+                SchedulerIntent.CollapseSubtrees(notesRow),
+            )
+        assertTrue(notesRow in nested.expanded)
     }
 
     // ----- collapse all --------------------------------------------------------------------------

@@ -29,7 +29,6 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.model.CategoryId
-import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
 
@@ -45,8 +44,11 @@ import org.example.project.scheduler.state.SchedulerState
  * A **rule** is the whole point of the window: *the tasks carrying this category, under that task, are worth
  * this much of it*. Three things about it are worth knowing from the outside:
  *
- *  - **the scope is a task**, because a task is what names a sub-list — the same thing the relative-priority
- *    window's `t_r` and a weight table's parent task are. `root` is the whole tree;
+ *  - **the scope is a task CELL**, not a task. A task can appear several times in the tree, so "under Book"
+ *    names no place when there are two of them: the window asks *under which task cell*, offers every cell
+ *    by its own path, and a rule row prints that path back. What the cell then names is the sub-list its
+ *    task owns, because a sub-list belongs to the task id — which is why two cells of one mirrored task are
+ *    one scope and not two. `root` is the whole tree;
  *  - **at most one rule per scope.** Adding a rule about a scope that already has one replaces it: two
  *    statements about the same sub-tree would be the plainest contradiction there is, so the window never
  *    lets one be made;
@@ -74,9 +76,11 @@ fun CategoryEditWindow(
     val category = state.categoryById(categoryId) ?: return
     var title by remember(categoryId) { mutableStateOf(category.title) }
     // The rule being added: which sub-tree, and how much of it. Compose-only state, like the calendar's
-    // zoom — a half-typed rule is not a fact about the account until it is added.
+    // zoom — a half-typed rule is not a fact about the account until it is added. The pick is the whole
+    // ROW and not its cell id, because `null` is a real answer there (the whole tree) and "nothing picked
+    // yet" has to stay a different one.
     var scopeDraft by remember(categoryId) { mutableStateOf("") }
-    var scopePick by remember(categoryId) { mutableStateOf<TaskId?>(null) }
+    var scopePick by remember(categoryId) { mutableStateOf<CategoryRules.ScopeEntry?>(null) }
     var newShare by remember(categoryId) { mutableStateOf("") }
 
     val rows = CategoryRules.ruleRows(state, categoryId)
@@ -130,9 +134,9 @@ fun CategoryEditWindow(
 
                 Text("Rules", style = MaterialTheme.typography.labelMedium)
                 Text(
-                    "The tasks carrying this category, inside the sub-tree of the task you name, always " +
-                        "come to the share you give here. The other priorities under it are adjusted " +
-                        "evenly to make room, and an edit that would contradict a rule is refused.",
+                    "The tasks carrying this category, inside the sub-tree of the task cell you name, " +
+                        "always come to the share you give here. The other priorities under it are " +
+                        "adjusted evenly to make room, and an edit that would contradict a rule is refused.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -153,7 +157,7 @@ fun CategoryEditWindow(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Text(
-                                text = "under “${row.scopeTitle}”",
+                                text = "under “${row.scopeLabel}”",
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.weight(1f),
                             )
@@ -163,7 +167,7 @@ fun CategoryEditWindow(
                                     onIntent(
                                         SchedulerIntent.SetCategoryRule(
                                             categoryId,
-                                            row.rule.scopeTaskId,
+                                            row.rule.scopeCellId,
                                             next,
                                         ),
                                     )
@@ -171,7 +175,7 @@ fun CategoryEditWindow(
                             )
                             TextButton(onClick = {
                                 onIntent(
-                                    SchedulerIntent.RemoveCategoryRule(categoryId, row.rule.scopeTaskId),
+                                    SchedulerIntent.RemoveCategoryRule(categoryId, row.rule.scopeCellId),
                                 )
                             }) { Text("🗑") }
                         }
@@ -193,7 +197,9 @@ fun CategoryEditWindow(
                 Text("Add a rule", style = MaterialTheme.typography.labelMedium)
                 // The scope is named the way everything else in the app is named: a field with an identity
                 // menu under it. There are no title suggestions here — an identity row IS the answer, since
-                // a scope is one task and not a string several tasks may share.
+                // a scope is one cell of the tree and not a string several cells may share. Each row is a
+                // PATH for exactly that reason: a task can appear several times, and its bare title would
+                // name every occurrence at once.
                 OutlinedTextField(
                     value = scopeDraft,
                     onValueChange = {
@@ -201,16 +207,16 @@ fun CategoryEditWindow(
                         scopePick = null
                     },
                     singleLine = true,
-                    label = { Text("Under which task") },
+                    label = { Text("Under which task cell") },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 EditModeMenuBlock(
-                    identityLabel = "Tasks",
+                    identityLabel = "Task cells",
                     identityRows =
-                        CategoryRules.scopeEntries(state, scopeDraft).map { (taskId, label) ->
-                            EditMenuItem(label = label, selected = taskId == scopePick) {
-                                scopePick = taskId
-                                scopeDraft = label
+                        CategoryRules.scopeEntries(state, scopeDraft).map { entry ->
+                            EditMenuItem(label = entry.label, selected = entry == scopePick) {
+                                scopePick = entry
+                                scopeDraft = entry.label
                             }
                         },
                 )
@@ -234,7 +240,11 @@ fun CategoryEditWindow(
                         onClick = {
                             val scope = scopePick ?: return@TextButton
                             onIntent(
-                                SchedulerIntent.SetCategoryRule(categoryId, scope, share ?: return@TextButton),
+                                SchedulerIntent.SetCategoryRule(
+                                    categoryId,
+                                    scope.cellId,
+                                    share ?: return@TextButton,
+                                ),
                             )
                             scopeDraft = ""
                             scopePick = null
@@ -242,8 +252,14 @@ fun CategoryEditWindow(
                         },
                     ) {
                         // Saying "Replace" is the window's way of holding the one-rule-per-scope rule in
-                        // front of the user, instead of silently overwriting what is already there.
-                        val exists = scopePick?.let { category.ruleAt(it) } != null
+                        // front of the user, instead of silently overwriting what is already there. It asks
+                        // through the scope KEY, so pointing at another occurrence of a mirrored task says
+                        // "replace" — which is what the reducer will do, the sub-tree being the same one.
+                        val exists =
+                            scopePick?.let { pick ->
+                                val key = CategoryRules.scopeKey(state, pick.cellId)
+                                category.rules.any { CategoryRules.scopeKey(state, it.scopeCellId) == key }
+                            } == true
                         Text(if (exists) "Replace rule" else "Add rule")
                     }
                 }
@@ -259,7 +275,7 @@ fun CategoryEditWindow(
 /** What a rule row says under itself: that it is being held, or the reason it is asleep. */
 private fun ruleStatusLine(row: CategoryRules.RuleRow): String = when (row.status) {
     CategoryRules.Status.Held -> "currently ${formatShare(row.achieved ?: 0.0)} of it"
-    CategoryRules.Status.ScopeGone -> "that task is no longer in the tree — the rule is asleep"
+    CategoryRules.Status.ScopeGone -> "that task cell is no longer in the tree — the rule is asleep"
     CategoryRules.Status.NoCarrier -> "no task under it carries this category — the rule is asleep"
 }
 

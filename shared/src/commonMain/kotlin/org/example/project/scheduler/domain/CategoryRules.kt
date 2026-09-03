@@ -6,7 +6,6 @@ import org.example.project.scheduler.model.CategoryRule
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.TaskId
-import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.state.SchedulerState
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -59,9 +58,31 @@ object CategoryRules {
 
     // ----- Reading the tree ---------------------------------------------------------------------
 
-    /** The sub-list a scope task names: the root list for `MAIN`, the task's own children otherwise. */
-    private fun scopeListId(state: SchedulerState, scope: TaskId): CellListId? =
-        if (scope == WellKnownIds.MAIN_TASK) state.rootListId else state.tasks[scope]?.childListId
+    /** What [scopeKey] answers for the whole tree, which is the one scope that is not a cell. */
+    private const val ROOT_KEY = "scope/root"
+
+    /**
+     * The sub-list a scope names: the root list for the whole tree (`null`), otherwise the list the scope
+     * CELL's task owns.
+     *
+     * The scope the user points at is a cell, because a task can appear several times in the tree and only a
+     * cell is a place; what that cell then names is its task's own sub-list, because a sub-list belongs to
+     * the task id. Both halves are load-bearing, and [scopeKey] is where they meet.
+     */
+    fun scopeListId(state: SchedulerState, scope: CellId?): CellListId? =
+        if (scope == null) state.rootListId
+        else state.cells[scope]?.taskId?.let { state.tasks[it]?.childListId }
+
+    /**
+     * What makes two scopes **the same scope** — the invariant "at most one rule per sub-tree" is keyed on
+     * this, and so is the grouping the structural contradictions are checked over.
+     *
+     * It is the sub-LIST, not the cell: two cells of one mirrored task show the same sub-tree, so a rule
+     * about each of them would be two statements about one thing, which no scaling could tell apart. A
+     * scope whose list cannot be resolved (a leaf, or a cell that is gone) stands only for itself.
+     */
+    fun scopeKey(state: SchedulerState, scope: CellId?): String =
+        scopeListId(state, scope)?.value ?: scope?.value ?: ROOT_KEY
 
     /**
      * The chains that carry [categoryId] under [scope]: one per **top-most** carrying cell, running from the
@@ -75,7 +96,8 @@ object CategoryRules {
      * its own. Without it a mirrored branch would be measured once per occurrence — the exponential walk
      * CLAUDE.md forbids, arriving as a wrong number first.
      */
-    fun chainsFor(state: SchedulerState, categoryId: CategoryId, scope: TaskId): List<List<CellId>> {
+    fun chainsFor(state: SchedulerState, categoryId: CategoryId, scope: CellId?): List<List<CellId>> {
+        if (!scopeExists(state, scope)) return emptyList()
         val rootList = scopeListId(state, scope) ?: return emptyList()
         val out = mutableListOf<List<CellId>>()
         val guard = HashSet<CellListId>()
@@ -102,7 +124,7 @@ object CategoryRules {
     }
 
     /** What [categoryId] is worth inside [scope]'s sub-tree right now, as a fraction in `[0, 1]`. */
-    fun shareOf(state: SchedulerState, categoryId: CategoryId, scope: TaskId): Double =
+    fun shareOf(state: SchedulerState, categoryId: CategoryId, scope: CellId?): Double =
         RelativePriorityDomain.chainsProduct(state, chainsFor(state, categoryId, scope))
 
     /** Every task carrying [categoryId], in the account's task order. */
@@ -116,7 +138,7 @@ object CategoryRules {
         /** It is being held: the carriers under the scope are worth exactly what it says. */
         Held,
 
-        /** The scope task is gone (deleted, or never in this tree), so there is no sub-tree to divide. */
+        /** The scope CELL is gone (deleted, or never in this tree), so there is no sub-tree to divide. */
         ScopeGone,
 
         /** The scope is there, but no task under it carries the category — nothing to give the share to. */
@@ -126,8 +148,8 @@ object CategoryRules {
     /** One rule as the category edit window shows it: what it asks, whether it is live, and what it gets. */
     data class RuleRow(
         val rule: CategoryRule,
-        /** The scope's title, or `root` for the whole tree — the relative-priority window's own naming. */
-        val scopeTitle: String,
+        /** The scope cell's own path, or `root` for the whole tree — which occurrence the rule is about. */
+        val scopeLabel: String,
         val status: Status,
         /** The share the category actually holds of the scope now; `null` when the scope is gone. */
         val achieved: Double?,
@@ -137,16 +159,15 @@ object CategoryRules {
     fun ruleRows(state: SchedulerState, categoryId: CategoryId): List<RuleRow> {
         val category = state.categoryById(categoryId) ?: return emptyList()
         return category.rules.map { rule ->
-            val chains = chainsFor(state, categoryId, rule.scopeTaskId)
+            val chains = chainsFor(state, categoryId, rule.scopeCellId)
             val status = when {
-                !scopeExists(state, rule.scopeTaskId) || scopeListId(state, rule.scopeTaskId) == null ->
-                    Status.ScopeGone
+                !scopeExists(state, rule.scopeCellId) -> Status.ScopeGone
                 chains.isEmpty() -> Status.NoCarrier
                 else -> Status.Held
             }
             RuleRow(
                 rule = rule,
-                scopeTitle = scopeTitle(state, rule.scopeTaskId),
+                scopeLabel = scopeLabel(state, rule.scopeCellId),
                 status = status,
                 achieved =
                     if (status == Status.ScopeGone) null
@@ -155,14 +176,28 @@ object CategoryRules {
         }
     }
 
-    /** PRD §4: the blank title is what deletes, so a titled task is a live one; the root is always there. */
-    private fun scopeExists(state: SchedulerState, scope: TaskId): Boolean =
-        scope == WellKnownIds.MAIN_TASK || state.tasks[scope]?.title?.isNotBlank() == true
+    /**
+     * PRD §4: the blank title is what deletes, so a populated cell is a live one; the root is always there.
+     *
+     * A cell, not a task: a rule written about one occurrence sleeps when THAT occurrence goes, even where
+     * the task still appears elsewhere — the user pointed at a place, and the place is gone.
+     */
+    private fun scopeExists(state: SchedulerState, scope: CellId?): Boolean =
+        scope == null || SchedulerDomain.isPopulatedCell(state, scope)
 
-    /** How a scope is named, the same two answers the relative-priority drop-down gives. */
-    fun scopeTitle(state: SchedulerState, scope: TaskId): String =
-        if (scope == WellKnownIds.MAIN_TASK) TaskRelationsDomain.ROOT_LABEL
-        else state.tasks[scope]?.title.orEmpty().ifBlank { TaskRelationsDomain.UNTITLED_LABEL }
+    /**
+     * How a scope is named: `root` for the whole tree, else the scope cell's own PATH — the titles from
+     * the root down to it. A bare title would not name a scope at all here, which is the whole reason the
+     * window asks for a cell: two occurrences of one task, and two tasks sharing a title, both read the same.
+     */
+    fun scopeLabel(state: SchedulerState, scope: CellId?): String {
+        if (scope == null) return TaskRelationsDomain.ROOT_LABEL
+        val path = RelativePriorityDomain.ancestorCells(state, scope) + scope
+        return path.joinToString(" / ") { cellId ->
+            val title = state.cells[cellId]?.taskId?.let { state.tasks[it]?.title }.orEmpty()
+            title.ifBlank { TaskRelationsDomain.UNTITLED_LABEL }
+        }
+    }
 
     // ----- Holding the rules --------------------------------------------------------------------
 
@@ -177,8 +212,8 @@ object CategoryRules {
     private data class Claim(
         val categoryId: CategoryId,
         val title: String,
-        val scope: TaskId,
-        val scopeTitle: String,
+        val scope: CellId?,
+        val scopeLabel: String,
         val target: Double,
         val chains: List<List<CellId>>,
     )
@@ -254,15 +289,15 @@ object CategoryRules {
         val out = mutableListOf<Claim>()
         for (category in state.categories) {
             for (rule in category.rules) {
-                if (!scopeExists(state, rule.scopeTaskId)) continue
-                if (scopeListId(state, rule.scopeTaskId) == null) continue
-                val chains = chainsFor(state, category.id, rule.scopeTaskId)
+                if (!scopeExists(state, rule.scopeCellId)) continue
+                if (scopeListId(state, rule.scopeCellId) == null) continue
+                val chains = chainsFor(state, category.id, rule.scopeCellId)
                 if (chains.isEmpty()) continue
                 out += Claim(
                     categoryId = category.id,
                     title = category.title,
-                    scope = rule.scopeTaskId,
-                    scopeTitle = scopeTitle(state, rule.scopeTaskId),
+                    scope = rule.scopeCellId,
+                    scopeLabel = scopeLabel(state, rule.scopeCellId),
                     target = rule.share.coerceIn(0.0, 1.0),
                     chains = chains,
                 )
@@ -271,11 +306,10 @@ object CategoryRules {
         return out
     }
 
-    /** How deep a scope sits, so the deepest rule is applied first. `MAIN` is 0. */
-    private fun scopeDepth(state: SchedulerState, scope: TaskId): Int {
-        if (scope == WellKnownIds.MAIN_TASK) return 0
-        val occurrence = SchedulerDomain.firstTaskOccurrence(state, scope) ?: return 0
-        return RelativePriorityDomain.ancestorCells(state, occurrence.cellId).size + 1
+    /** How deep a scope sits, so the deepest rule is applied first. The whole tree is 0. */
+    private fun scopeDepth(state: SchedulerState, scope: CellId?): Int {
+        if (scope == null) return 0
+        return RelativePriorityDomain.ancestorCells(state, scope).size + 1
     }
 
     // ----- Contradictions -----------------------------------------------------------------------
@@ -288,8 +322,11 @@ object CategoryRules {
      * shares of one sub-tree sum to 1.
      */
     private fun structuralContradiction(state: SchedulerState, claims: List<Claim>): String? {
-        for ((_, group) in claims.groupBy { it.scope }) {
-            val scopeName = group.first().scopeTitle
+        // Grouped by the SUB-LIST each scope names, not by the cell: two cells of one mirrored task are
+        // one scope, so rules written about each of them are rules sharing a scope and must be checked as
+        // such.
+        for ((_, group) in claims.groupBy { scopeKey(state, it.scope) }) {
+            val scopeName = group.first().scopeLabel
             // 1. Two categories covering the same task, or one covering a sub-tree the other sits inside.
             //    Their two shares are then claims about overlapping mass, and no scaling can honour both.
             for (i in group.indices) {
@@ -333,7 +370,7 @@ object CategoryRules {
     /** The message for rules the pass could not land — the case no structural check can name in advance. */
     private fun unsatisfiableMessage(missed: List<Claim>): String {
         val named = missed.joinToString(", ") {
-            "“${it.title}” at ${percent(it.target)} of “${it.scopeTitle}”"
+            "“${it.title}” at ${percent(it.target)} of “${it.scopeLabel}”"
         }
         return "That change cannot be made without breaking a category rule ($named). The priorities were " +
             "left as they were."
@@ -374,17 +411,38 @@ object CategoryRules {
             .filter { it.isNotBlank() && !it.equals(input.trim(), ignoreCase = true) }
             .distinct()
 
+    /** One row of the scope picker: the cell the rule would be about (`null` = the whole tree), by its path. */
+    data class ScopeEntry(val cellId: CellId?, val label: String)
+
     /**
-     * The **scope** picker of the category edit window: every task the tree holds, plus the root, ordered
-     * like the "All tasks" list so the same account reads the same way in both. A rule's scope is a task
-     * because a task is what names a sub-list.
+     * The **scope** picker of the category edit window: the root, then every CELL the tree holds, in the
+     * tree's own order and each named by its own path.
+     *
+     * Cells and not tasks, because that is the question the window asks — a task can appear several
+     * times, and "under Book" names no place when there are two of them. The walk is [chainsFor]'s: each
+     * LIST is entered once and only from the cell that list names as its parent, so a mirrored sub-tree is
+     * offered once (under the cell that owns it) while every mirror OCCURRENCE is still a row of its own.
      */
-    fun scopeEntries(state: SchedulerState, input: String): List<Pair<TaskId, String>> {
+    fun scopeEntries(state: SchedulerState, input: String): List<ScopeEntry> {
         val typed = input.trim()
-        val rows = mutableListOf(WellKnownIds.MAIN_TASK to TaskRelationsDomain.ROOT_LABEL)
-        for (entry in SchedulerDomain.taskListEntries(state)) {
-            rows += entry.taskId to entry.title
+        val rows = mutableListOf(ScopeEntry(null, TaskRelationsDomain.ROOT_LABEL))
+        val guard = HashSet<CellListId>()
+
+        fun walk(listId: CellListId, prefix: String) {
+            if (!guard.add(listId)) return
+            val list = state.lists[listId] ?: return
+            for (cellId in list.cellIds) {
+                if (!SchedulerDomain.isPopulatedCell(state, cellId)) continue
+                val task = state.cells[cellId]?.taskId?.let { state.tasks[it] } ?: continue
+                val label = if (prefix.isEmpty()) task.title else "$prefix / ${task.title}"
+                rows += ScopeEntry(cellId, label)
+                val childList = task.childListId ?: continue
+                if (state.lists[childList]?.parentCellId != cellId) continue
+                walk(childList, label)
+            }
         }
-        return rows.filter { (_, title) -> typed.isEmpty() || title.contains(typed, ignoreCase = true) }
+
+        walk(state.rootListId, "")
+        return rows.filter { typed.isEmpty() || it.label.contains(typed, ignoreCase = true) }
     }
 }

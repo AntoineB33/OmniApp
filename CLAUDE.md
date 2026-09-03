@@ -698,7 +698,7 @@ open window — so `SchedulerState.taskRelations` is keyed by the deliberately s
 field and `ui/CategoryEditWindow.kt` the category's own window.
 
 A **category** is a label a task carries. A **category rule** is a standing statement about a share of a
-sub-tree — *the tasks carrying this category under that task always come to 33 % of it* — which is the
+sub-tree — *the tasks carrying this category under that task cell always come to 33 % of it* — which is the
 relative-priority window's number said once and then **kept**.
 
 - **A category is an OBJECT with an id, never a string on a task.** That is what makes the field a task cell:
@@ -734,8 +734,20 @@ relative-priority window's number said once and then **kept**.
   rule is not a contradiction (the scope is gone, or nothing under it carries the category; deleting the last
   carrier is an ordinary edit). The four namable impossibilities are checked before anything is scaled, and
   all four are about rules sharing ONE scope, because that is where the arithmetic is closed.
-- **At most one rule per scope.** `SetCategoryRule` replaces; two statements about one sub-tree are the
-  plainest contradiction there is, so the window never lets one be made.
+- **The scope is a task CELL, and what it names is a LIST** (`CategoryRule.scopeCellId`, `null` = the whole
+  tree). A task can appear several times in the tree, so "under Book" names no place when there are two of
+  them: the window asks *under which task cell* and `CategoryRules.scopeEntries` offers every cell by its own
+  **path** — the same walk `chainsFor` does, so a mirrored sub-tree is offered once while every mirror
+  occurrence is still a row. What the cell then names is the sub-list its task owns (a sub-list belongs to the
+  task id), and `CategoryRules.scopeKey` is that reading — the ONE place two scopes are compared. A rule
+  sleeps once the cell it was written about is gone, even where the task still appears elsewhere: the user
+  pointed at a place. A payload written when the scope was a *task* is migrated on decode through
+  `firstTaskOccurrence` (`task/main` ⇒ the whole tree), and `scopeTaskId` is still written beside the cell so
+  an older build can still read the rule.
+- **At most one rule per scope, and the scope is the LIST** (`scopeKey`, not the cell): `SetCategoryRule`
+  replaces, so a rule written about one occurrence of a mirrored task replaces the rule written about
+  another. Two statements about one sub-tree are the plainest contradiction there is — and two cells of one
+  task show one sub-tree — so the window never lets one be made.
 - **Which half is an Undo/Redo unit is the restrictive periods' split, not a new one**: defining, renaming,
   deleting a category and setting a rule are account settings and record **no** unit (as `AddPeriodKind` does
   not); a task **carrying** a category is a tree edit and records one (as its resilience does). The weights a

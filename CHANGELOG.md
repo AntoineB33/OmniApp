@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "collapse subtree" becomes "collapse sub-trees" — 2026-09-03
+
+PRD §13. `shared` (`SchedulerIntent.kt`, `SchedulerReducer.kt`, `TaskSchedulerScreen.kt`) +
+`docs/PRD_TaskScheduler.md`. **Client rebuild only** — no Supabase deploy, no migration, and the expansion set
+it writes is the same `SetExpandedDelta` it always was.
+
+The cell's menu entry is now **"collapse sub-trees"**, and it leaves the cell the user right-clicked
+**expanded**: only the cells *beneath* it are dropped from the expansion set. Collapsing the clicked cell too
+made the entry a slower way of clicking its own arrow — the row the user was reading disappeared along with
+everything under it. Trimming back to that row is what the gesture is for. `CollapseSubtree` is renamed
+`CollapseSubtrees` so the intent reads as the menu does. A cell with nothing open below it now records no
+history unit at all.
+
 ### Task categories, and the rule that HOLDS a share of a sub-tree — 2026-09-03
 
 PRD §5, ADR 0004. `shared` (new `scheduler/domain/CategoryRules.kt`, `ui/TaskCategoryField.kt`,
@@ -63,10 +76,30 @@ priority"*, which *"would automatically adjust the priorities evenly when the us
 - **The clipboard carries the categories by NAME** (`- category: <title>`, one line each so a title may hold
   a comma), so a paste lands on the category of that name where the account has one and mints it where it
   has not — the same create-or-attach the row's field does.
-- `CategoryRulesTest` (20 cases): the field's create-or-attach, the bin vs. Delete split, the rule being held
+- **The scope of a rule is a task CELL, not a task** (corrected the same day, on the user's report: *"it
+  asks me under which task, but it should ask me under which task cell, since a task can appear several times
+  in the task tree"* — which is what PRD §5's own example had said all along). `CategoryRule.scopeCellId`
+  (`null` = the whole tree) replaces `scopeTaskId`; the window's field reads "Under which task cell" and its
+  identity menu offers every cell by its own **path** ("Notes / Book"), walked exactly as `chainsFor` walks —
+  each list entered once, and only from the cell that owns it, so a mirrored sub-tree is offered once while
+  every mirror occurrence is a row of its own. A rule row prints that path back.
+  - **What the cell names is still a LIST**, because a sub-list belongs to the task id. `CategoryRules.
+    scopeKey` is the one place two scopes are compared, and it answers with that list — so "at most one rule
+    per scope" and the structural-contradiction grouping treat two cells of one mirrored task as ONE scope.
+    Keying them on the cell would have let the user write two rules about one sub-tree, which is the plainest
+    contradiction there is and one no scaling could even tell apart.
+  - Deliberate price: a rule **sleeps** when the cell it was written about is deleted, even where the task
+    still appears elsewhere — the user pointed at a place, and the place is gone.
+  - **Migration**: a payload written when the scope was a task resolves through `firstTaskOccurrence` (the
+    cell "go to task" lands on), `task/main` becomes the whole tree, and a rule about a task no cell points
+    at is dropped. `scopeTaskId` is still WRITTEN beside the cell, so a build made before this change reads a
+    rule it understands instead of a payload it cannot decode.
+- `CategoryRulesTest` (26 cases): the field's create-or-attach, the bin vs. Delete split, the rule being held
   through an unrelated edit, the untouched siblings keeping their ratio, the nested-carrier measure, all four
   refusals leaving the state byte-identical, both dormant statuses, the decode round trip, an older payload,
-  and the clipboard.
+  the clipboard — and, for the cell scope, the picker telling two occurrences apart, two mirrored cells being
+  one scope, a rule sleeping when its own cell goes while the task stays, the row's path label, and both
+  legacy task-scoped payloads.
 
 ### The lateral menu's "Task relations": every (task, relational target) pair, in four sections — 2026-09-03
 
