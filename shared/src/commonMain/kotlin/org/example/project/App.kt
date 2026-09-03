@@ -1324,6 +1324,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 cellId = cellId,
                                 onIntent = popupDispatch,
                                 onDismiss = { relativeWindowCellId = null },
+                                // PRD §5: its chain cells are task cells, so their percentage column does
+                                // what the tree's does — a click opens that sub-list's weight window, a
+                                // right-click re-opens this one on the chain cell. Both windows share this
+                                // layer, so opening either closes the other. `popupFromDefaultSubtree` is
+                                // deliberately left alone: it says which tree the pop-up is about, and the
+                                // chain cell belongs to the same one.
+                                onOpenWeightWindow = { listId ->
+                                    relativeWindowCellId = null
+                                    weightWindowListId = listId
+                                },
+                                onOpenRelativePriority = { chainCellId ->
+                                    weightWindowListId = null
+                                    relativeWindowCellId = chainCellId
+                                },
                                 modifier = Modifier.align(Alignment.Center).zIndex(100f),
                             )
                         }

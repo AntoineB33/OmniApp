@@ -1787,8 +1787,16 @@ internal fun PriorityWeightWindow(
  * right-click menu. At the top, the priority of this cell's task relative to the ancestor picked in the
  * drop-down (root by default, which is the absolute percentage the cell already shows). Below, one
  * horizontal chain per occurrence of the task under that ancestor, reading from the cell just under the
- * ancestor on the left to the occurrence itself on the right — each showing its share of its own sub-list
- * and a **pin**, which holds that share while the number at the top is retargeted.
+ * ancestor on the left to the occurrence itself on the right.
+ *
+ * **A chain link is drawn as a TASK CELL** — [TaskRow], the tree's own row, so a cell reads the same
+ * wherever the app shows one (its colour, its border, its title column and its percentage column). It is
+ * that row minus what has no meaning off the tree: **no expansion arrow** (a chain is a path, not a tree),
+ * **no minimum time** and **no categories** — a chain is about the priorities the window multiplies out and
+ * nothing else. So the percentage column shows the cell's share of its **own sub-list** in place of the
+ * tree's absolute priority, and behaves exactly as it does in the tree: clicking it opens that sub-list's
+ * [PriorityWeightWindow], right-clicking it opens the percentage's own two-option menu. Each cell also
+ * carries a **pin**, which holds that share while the number at the top is retargeted.
  *
  * The pins are per (task, ancestor) pair (see [RelativePriorityPinKey]), so pinning here never affects
  * the window opened for another task or against another ancestor.
@@ -1799,6 +1807,14 @@ internal fun RelativePriorityWindow(
     cellId: CellId,
     onIntent: (SchedulerIntent) -> Unit,
     onDismiss: () -> Unit,
+    /**
+     * PRD §5: clicking a chain cell's percentage opens that sub-list's priority-weight window — the same
+     * answer the tree gives. Hoisted like the tree's own, because both windows are sort-2 pop-ups on the
+     * app's top layer and opening one closes the other.
+     */
+    onOpenWeightWindow: (CellListId) -> Unit = {},
+    /** …and right-clicking it re-opens this very window on that chain cell, as the tree's menu does. */
+    onOpenRelativePriority: (CellId) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val taskId = state.cells[cellId]?.taskId ?: return
@@ -1809,6 +1825,10 @@ internal fun RelativePriorityWindow(
     var relativeToMenuOpen by remember(cellId) { mutableStateOf(false) }
 
     val chains = RelativePriorityDomain.occurrenceChains(state, taskId, relativeTo)
+    // ADR 0013: the chain cells are task cells, so they take the task's own colour — read through the same
+    // memo the tree and the calendar read, which is what makes it the SAME colour and not a second answer.
+    val taskHues = rememberTaskHues(state, TaskHueMemo.account)
+    val taskColors = remember(taskHues) { TaskPalette.sheetColors(taskHues) }
     val value = RelativePriorityDomain.relativePriority(state, taskId, relativeTo)
     val pinned = state.relativePriorityPins[RelativePriorityPinKey(taskId, relativeTo)].orEmpty()
     var offset by remember(cellId) { mutableStateOf(Offset.Zero) }
@@ -1937,6 +1957,7 @@ internal fun RelativePriorityWindow(
                                     RelativePriorityChainCell(
                                         state = state,
                                         cellId = chainCellId,
+                                        taskColors = taskColors,
                                         pinned = chainCellId in pinned,
                                         onTogglePin = {
                                             onIntent(
@@ -1947,6 +1968,8 @@ internal fun RelativePriorityWindow(
                                                 )
                                             )
                                         },
+                                        onOpenWeightWindow = onOpenWeightWindow,
+                                        onOpenRelativePriority = onOpenRelativePriority,
                                     )
                                 }
                             }
@@ -1970,58 +1993,124 @@ private fun relativeToLabel(state: SchedulerState, taskId: TaskId): String =
     }
 
 /**
- * One cell of an occurrence chain: its title, its share of its own sub-list, and the pin that holds that
- * share while the window's number is retargeted. A pinned cell is drawn with the active border so the set
- * is readable at a glance.
+ * One cell of an occurrence chain, drawn as **the tree's own task cell** ([TaskRow]) so a cell reads the
+ * same wherever the app shows one — a second drawing of a row is exactly what drifts.
+ *
+ * Three of the row's columns have no meaning here and are left out: the **expansion arrow** (a chain is a
+ * path, so there is nothing to open under a link), the **minimum time** and the **categories**. What is
+ * left is the title and the percentage, which is the whole of what a chain says: the cell's share of its
+ * **own sub-list**, the factor this link contributes to the number at the top of the window. That column
+ * keeps the tree's behaviour whole — a click opens the sub-list's [PriorityWeightWindow], a right-click the
+ * percentage's own two-option menu.
+ *
+ * The row's remaining column carries the **pin**, which holds this cell's share while the window's number
+ * is retargeted; a pinned cell is drawn with the active border, so the set is readable at a glance.
+ *
+ * The window has no selection and no editing of its own, so the row's selection, drag-move and Edit Mode
+ * callbacks are given nothing to do: this is a *drawing* of the cell, and the only things the user reaches
+ * through it are the pin and the percentage's two windows.
  */
 @Composable
 private fun RelativePriorityChainCell(
     state: SchedulerState,
     cellId: CellId,
+    taskColors: Map<TaskId, Color>,
     pinned: Boolean,
     onTogglePin: () -> Unit,
+    onOpenWeightWindow: (CellListId) -> Unit,
+    onOpenRelativePriority: (CellId) -> Unit,
 ) {
-    val title = state.cells[cellId]?.taskId?.let { state.tasks[it]?.title }.orEmpty()
-    Row(
+    val cell = state.cells[cellId] ?: return
+    val title = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()
+    // PRD §2: the title column is sized to this cell's OWN text (clamped like the tree's). The tree sizes it
+    // per sub-list so that list's percentages line up; a chain link's neighbours are cells of other
+    // sub-lists, so there is no such column to line up with here.
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val bodyStyle = MaterialTheme.typography.bodyMedium
+    val titlePx = if (title.isEmpty()) 0 else textMeasurer.measure(title, bodyStyle).size.width
+    val columnWidth =
+        with(density) { titlePx.toDp() }.coerceIn(PRIORITY_COLUMN_MIN, PRIORITY_COLUMN_MAX)
+    val columnPx = with(density) { columnWidth.toPx() }
+
+    TaskRow(
+        depth = 0,
+        cellId = cellId,
+        renderVia = null,
+        displayTitle = title,
+        // The window has no selection of its own; the active border says "pinned" instead, which is the one
+        // thing about a chain cell the user changes.
+        isMainSelection = pinned,
+        isInSelectionRange = false,
+        selectable = SchedulerDomain.isSelectableCell(state, cellId),
+        isEditing = false,
+        hasChildren = false,
+        expanded = false,
+        moveDropBefore = false,
+        moveDropAfter = false,
+        canMoveFromCell = false,
+        isBeingMoved = false,
+        // PRD §5: in place of the tree's absolute priority, the share of this cell's own sub-list — the
+        // factor this link contributes to the number at the top of the window.
+        priorityLabel = formatPriorityPercent(RelativePriorityDomain.cellShare(state, cellId)),
+        priorityColumnWidth = columnWidth,
+        taskColor = cell.taskId?.let { taskColors[it] },
+        searchRanges = emptyList(),
+        currentSearchRange = null,
+        textOverflow = titlePx > columnPx,
+        minMinutes = 0,
+        minTimeEditing = false,
+        // PRD §13: the cell's own contextual menu belongs to the surfaces that draw the TREE; this window is
+        // about the chain's priorities, and the percentage keeps its own menu below.
+        cellMenu = null,
+        onTogglePriorityWeights = { onOpenWeightWindow(cell.parentListId) },
+        onOpenRelativePriority = { onOpenRelativePriority(cellId) },
+        onSetMinTime = {},
+        onActivateMinTime = {},
+        onClick = { _, _, _, _ -> },
+        onDragSelect = { _, _ -> },
+        moveDragActive = false,
+        resolveRowAt = { null },
+        onRowBounds = { _, _, _ -> },
+        onMoveDragStart = {},
+        onMoveDropHover = { _, _, _ -> },
+        onMoveDragEnd = {},
+        onDoubleClick = {},
+        onTextChange = {},
+        onExitEdit = {},
+        onToggleExpand = {},
+        editMenus = null,
+        showExpandArrow = false,
+        showMinTime = false,
+        // The pin takes the column the minimum time and the categories vacate.
+        rowTrailing = { RelativePriorityPinCell(pinned = pinned, onTogglePin = onTogglePin) },
+    )
+}
+
+/** PRD §5: a chain cell's pin — it holds that cell's share while the window's number is retargeted. */
+@Composable
+private fun RelativePriorityPinCell(pinned: Boolean, onTogglePin: () -> Unit) {
+    Box(
         modifier = Modifier
-            .border(if (pinned) 2.dp else 1.dp, if (pinned) SheetColors.activeBorder else SheetColors.grid)
-            .background(if (pinned) SheetColors.selectionFill else SheetColors.cellBackground)
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(start = 8.dp)
+            .border(1.dp, if (pinned) SheetColors.activeBorder else SheetColors.grid)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onTogglePin,
+            )
+            .padding(horizontal = 4.dp, vertical = 1.dp),
     ) {
         Text(
-            text = title.ifBlank { "(untitled)" },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface,
+            text = if (pinned) "pinned" else "pin",
+            style = MaterialTheme.typography.labelSmall,
+            color =
+                if (pinned) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
         )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = formatPriorityPercent(RelativePriorityDomain.cellShare(state, cellId)),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.width(8.dp))
-        Box(
-            modifier = Modifier
-                .border(1.dp, if (pinned) SheetColors.activeBorder else SheetColors.grid)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onTogglePin,
-                )
-                .padding(horizontal = 4.dp, vertical = 1.dp),
-        ) {
-            Text(
-                text = if (pinned) "pinned" else "pin",
-                style = MaterialTheme.typography.labelSmall,
-                color =
-                    if (pinned) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-            )
-        }
     }
 }
 
@@ -2200,6 +2289,18 @@ internal fun TaskRow(
     onExitEdit: (EditExitNavigation) -> Unit,
     onToggleExpand: () -> Unit,
     editMenus: (@Composable () -> Unit)?,
+    /**
+     * Whether the row opens with the expand/collapse arrow. False only for a row drawn OUTSIDE a tree — the
+     * relative-priority window's occurrence chains (PRD §5) — where there is no sub-tree to open under it
+     * and so nothing for the arrow's fixed 20 dp box to align.
+     */
+    showExpandArrow: Boolean = true,
+    /**
+     * PRD §10: whether the row carries the task's minimum-time column. False for the same rows, and for the
+     * same reason: a chain cell is a drawing of the cell's PRIORITY, so it shows its title and its
+     * percentage and nothing else. (Its categories are left out by passing no [categoryCell].)
+     */
+    showMinTime: Boolean = true,
     /** Additional controls rendered after the title and before the task row's trailing spacer. */
     rowContent: (@Composable () -> Unit)? = null,
     /**
@@ -2470,11 +2571,13 @@ internal fun TaskRow(
                     }
                 }
             }
-            TaskSheetExpandArrow(
-                hasChildren = hasChildren,
-                expanded = expanded,
-                onToggle = onToggleExpand,
-            )
+            if (showExpandArrow) {
+                TaskSheetExpandArrow(
+                    hasChildren = hasChildren,
+                    expanded = expanded,
+                    onToggle = onToggleExpand,
+                )
+            }
             if (isEditing) {
                 var textFieldValue by remember(cellId) { mutableStateOf(TextFieldValue()) }
                 SideEffect {
@@ -2682,7 +2785,7 @@ internal fun TaskRow(
                 // PRD §10: the task's minimum-time field sits just to the right of the percentage. It
                 // shows as a plain label until clicked, then expands into an input field with
                 // increment/decrement arrows.
-                if (priorityLabel != null) {
+                if (showMinTime && priorityLabel != null) {
                     if (minTimeEditing) {
                         MinTimeInputCell(minutes = minMinutes, onSet = onSetMinTime)
                     } else {

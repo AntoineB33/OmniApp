@@ -11,6 +11,33 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A relative-priority chain link is a task cell — 2026-09-03
+
+`shared` (`scheduler/ui/TaskSchedulerScreen.kt`, `App.kt`) + `CLAUDE.md` + ADR 0004 + PRD §5. **Client
+rebuild only** — no Supabase deploy, no SQLite migration, no payload change: this is drawing.
+
+A link of an occurrence chain was a compact chip — a bordered row holding a title, a percentage and the pin —
+while the same cell in the tree is a `TaskRow` carrying the task's own colour (ADR 0013), the active/grid
+border and the shared title and percentage columns. One cell therefore looked like two different things
+depending on which window was showing it, which is the drift `TaskTreeView` exists to prevent, one level
+down. The old reason for the chip argued about the row's *callbacks*; those are parameters, and what the
+user reads is the drawing.
+
+- **The chain link now IS the tree's row.** `RelativePriorityChainCell` calls `TaskRow`, so a cell reads the
+  same wherever the app draws one.
+- **Minus the three columns a chain has no use for**: the expansion arrow (a chain is a path — nothing opens
+  under a link), the minimum time and the categories. `TaskRow` grew `showExpandArrow` and `showMinTime` for
+  the first two; the third was already "no `categoryCell`". Those three are the whole of what a row may
+  leave out.
+- **The percentage is the link's share of its OWN sub-list**, in place of the tree's absolute priority — the
+  factor the chain multiplies out — and keeps the tree's behaviour whole: a click opens that sub-list's
+  weight window, a right-click the percentage's own two-option menu. Both are hoisted to `App.kt`
+  (`onOpenWeightWindow` / `onOpenRelativePriority`), since the two windows are sort-2 pop-ups sharing the top
+  layer and opening either closes the other.
+- **The pin takes the column the minimum time and the categories vacate**, and the row's own active border is
+  what says "pinned" — the window has no selection for it to be confused with. Selection, drag-move and Edit
+  Mode are given nothing to do, and the §13 menu stays with the surfaces that draw the tree.
+
 ### A resize edge keeps its hover bubble, and a shared-width edge gets its own cursor — 2026-09-03
 
 `shared` (`ui/CalendarUi.kt`, `ui/PlatformCursor.kt` + its five actuals, new

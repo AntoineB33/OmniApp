@@ -293,8 +293,33 @@ deleting a category and setting a rule are account settings** and record no unit
 not), while **a task carrying a category is a tree edit** and records one (as the resilience a task is given
 does). The weights a rule moves are in no unit at all — see above.
 
-## Known deviation from the spec's wording
+## A chain link is a task cell
 
-A chain cell is drawn as a compact chip (title + its sub-list percentage + the pin), not as a full
-task-tree row. The tree's row carries selection / drag / Edit-Mode / min-time plumbing that a horizontal
-chain has nowhere to put.
+**Status:** 2026-09-03. It used to be a compact chip — title, sub-list percentage, pin — on the grounds that
+"the tree's row carries selection / drag / Edit-Mode / min-time plumbing that a horizontal chain has nowhere
+to put". That argued about the row's *callbacks* and decided the wrong thing: the callbacks are parameters,
+and what the user reads is the drawing. A chip carried none of what makes a cell recognisable — the task's
+own colour (ADR 0013), the border states, the title/percentage columns — so one cell looked like two
+different things depending on which window was showing it. That is exactly the drift `TaskTreeView` exists
+to prevent, one level down.
+
+`RelativePriorityChainCell` now calls **`TaskRow`**, the tree's own row, with the window's own answers:
+
+- **Three columns are left out**, and they are the whole of what a row may leave out: the **expansion arrow**
+  (`showExpandArrow = false` — a chain is a path, so there is nothing to open under a link, and the arrow's
+  fixed 20 dp box has nothing to align), the **minimum time** (`showMinTime = false`) and the **categories**
+  (no `categoryCell`, which the row already treats as "this cell has none"). A chain is about the priorities
+  the window multiplies out; the rest is the tree's business.
+- **The percentage column shows the cell's share of its own sub-list**, in place of the absolute priority the
+  tree's rows show — the factor this link contributes to the number at the top of the window. Its behaviour
+  is the tree's, unchanged: a click opens that sub-list's weight window, a right-click the percentage's own
+  two-option menu. Both are hoisted to `App.kt` (`onOpenWeightWindow` / `onOpenRelativePriority`) because the
+  two windows are sort-2 pop-ups sharing the top layer, so opening either closes the other.
+- **The pin takes the column the minimum time and the categories vacate**, and the *active border* — the row
+  already has one — is what says "pinned". The window has no selection of its own for it to be confused with.
+- **The selection, drag-move and Edit-Mode callbacks are given nothing to do.** This is a drawing of the
+  cell: the pin and the percentage's two windows are the whole of what the user reaches through it, and the
+  §13 contextual menu stays with the surfaces that draw the *tree*.
+- **The title column is sized to the link's own text** (clamped like the tree's). The tree sizes it per
+  sub-list so that list's percentages line up; a chain link's neighbours are cells of *other* sub-lists, so
+  there is no column here to line up with.

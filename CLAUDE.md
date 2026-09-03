@@ -696,6 +696,18 @@ Categories, DefaultSubtree, Shortcuts, TimeSim) and every other pop-up in the ap
 - **A pin means "hold this percentage", not "leave this weight alone"** — a pinned cell's weight may have to
   rise. Solve each sub-list over every chain cell, pinned included.
 - Pins are authoritative + synced, and **not** an Undo/Redo unit.
+- **A chain link of the relative-priority window IS a task cell** — `TaskRow`, the tree's own row, so a cell
+  reads the same wherever the app draws one (its colour, its border states, its columns). Two drawings of a
+  cell is the drift `TaskTreeView` exists to prevent, and a chip was one. It is that row minus the three
+  columns a chain has no use for: **no expansion arrow** (a chain is a path — there is nothing to open under
+  a link), **no minimum time**, **no categories** (`showExpandArrow` / `showMinTime` / a null `categoryCell`
+  — those three are the whole of what a row may leave out; do not grow a fourth). The **percentage column
+  shows the cell's share of its OWN sub-list** in place of the tree's absolute priority — that is the factor
+  the chain multiplies out — and keeps the tree's behaviour whole: clicking it opens that sub-list's weight
+  window, right-clicking it opens the percentage's own two-option menu. The **pin** takes the column the
+  minimum time and the categories vacate. The window has no selection, no Edit Mode and no §13 menu of its
+  own, so the row's callbacks for those are given nothing to do: it is a *drawing* of the cell, and the pin
+  and the percentage's two windows are the whole of what the user reaches through it.
 - **The weight window's chart is the readout of the table beside it**: each task's share of THAT sub-list
   (`cellShare`), never its absolute priority. The slice sweeps were always normalized by the list total; only
   the legend's number was reading against the whole tree.
