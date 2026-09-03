@@ -100,7 +100,10 @@ class ForcedTaskStartTest {
         val state = s0.copy(panels = listOf(auto("auto/0", a, T0 - 10 * MIN, T0 + 50 * MIN)))
         withClock(T0) {
             val started = SchedulerReducer.reduce(state, SchedulerIntent.ForceTaskStart(b))
-            val autos = started.panels.filter { it.auto }.sortedBy { it.startEpochMillis }
+            // As in [ForcedTaskSwitchTest]: the first slot PLACED is the first one at or after the line. A's
+            // elapsed head behind it is the frozen past, and the request is also what stops A's unfinished
+            // chunk from resuming into this slot.
+            val autos = started.panels.filter { it.auto && it.startEpochMillis >= T0 }.sortedBy { it.startEpochMillis }
             assertEquals(b, autos.first().taskId)
             assertNotNull(autos.firstOrNull { it.taskId == a })
         }
@@ -137,17 +140,21 @@ class ForcedTaskStartTest {
         val (s0, a, b) = stateWithTwoTasks()
         // B was asked for and has been running since; nobody else has been served past the request yet, so a
         // re-plan in between (a rule change, the hourly staleness refresh) must not hand the user another task.
+        // B's effort is a WHOLE minimum (45 min): a chunk still short of its minimum is one the walk is in the
+        // middle of and resumes rather than re-picks (`side-dev/scheduler.py` `Walk.run`'s `pending`), which
+        // would keep B on the line for reasons that have nothing to do with the request and make the control
+        // below say nothing.
         val state =
             s0.copy(
                 forcedStart = ForcedTaskStart(b, T0),
-                tasks = s0.tasks + (b to s0.tasks[b]!!.copy(record = listOf(TaskTimeRange(T0, T0 + 5 * MIN)))),
+                tasks = s0.tasks + (b to s0.tasks[b]!!.copy(record = listOf(TaskTimeRange(T0, T0 + 45 * MIN)))),
             )
-        val replanned = SchedulerReducer.reduce(state, SchedulerIntent.RefreshSchedule(T0 + 5 * MIN))
-        assertEquals(b, taskAt(replanned, T0 + 5 * MIN))
+        val replanned = SchedulerReducer.reduce(state, SchedulerIntent.RefreshSchedule(T0 + 45 * MIN))
+        assertEquals(b, taskAt(replanned, T0 + 45 * MIN))
         assertEquals(ForcedTaskStart(b, T0), replanned.forcedStart)
-        // Without the request the same state is A's — B has just worked, so A is the starved one.
-        val plain = SchedulerReducer.reduce(state.copy(forcedStart = null), SchedulerIntent.RefreshSchedule(T0 + 5 * MIN))
-        assertEquals(a, taskAt(plain, T0 + 5 * MIN))
+        // Without the request the same state is A's — B has just had a full turn, so A is the starved one.
+        val plain = SchedulerReducer.reduce(state.copy(forcedStart = null), SchedulerIntent.RefreshSchedule(T0 + 45 * MIN))
+        assertEquals(a, taskAt(plain, T0 + 45 * MIN))
     }
 
     @Test

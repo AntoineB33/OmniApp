@@ -7,6 +7,7 @@ import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ScreenBreak
+import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -87,6 +88,47 @@ class TpModeTest {
         ).map { it.startEpochMillis }
         assertTrue(bars.isNotEmpty())
         assertTrue(away.containsAll(bars), "mode 2 places the three where the bars do: $away vs $bars")
+    }
+
+    @Test
+    fun mode_two_covers_the_line_with_no_on_screen_task() {
+        // `side-dev/README.md` § *$t_p$ 2 modes*: **"Mode 2: $now line$ must be covered by the period 'no
+        // on-screen task'"**, and its own example — the gap back from the last such period to $t_p$ is covered
+        // by one, *"filled with tasks that have a non-zero resilience to the kind 'no on-screen task', or no
+        // task if none have such resilience"*.
+        //
+        // The regression this pins: `DynamicPeriods.awayCover` was split out so the calendar would stop drawing
+        // a synthetic "Away" band, and the split dropped it from the SCHEDULER too — so mode 2's own rule
+        // reached nothing, and the fill went on starting an on-screen task AT the line while no device of the
+        // account was unlocked. It is an environment period and must stay one: nothing here may become a panel.
+        val (s, solo) = oneTask()
+        // Somebody was observed away until ten minutes ago — the "end of the last such period" the README's
+        // gap is measured from.
+        val evidence = listOf(TaskTimeRange(NOW - 30 * MIN, NOW - 10 * MIN))
+        fun fill(mode: Int) =
+            SchedulerDomain.fillSchedule(s, NOW, noScreenEvidence = evidence, tpMode = mode)
+
+        val atScreen = fill(DynamicPeriods.MODE_AT_SCREEN)
+        assertTrue(
+            atScreen.any { it.auto && it.taskId == solo && it.startEpochMillis <= NOW && NOW < it.endEpochMillis },
+            "mode 1: the line is not covered, so the on-screen task runs there",
+        )
+
+        val away = fill(DynamicPeriods.MODE_AWAY)
+        assertTrue(
+            away.none { it.auto && it.taskId == solo && it.startEpochMillis <= NOW && NOW < it.endEpochMillis },
+            "mode 2: an on-screen task may not be what the line is covered by",
+        )
+        // The plan is not abandoned — it resumes the instant past the covered line.
+        assertTrue(
+            away.any { it.auto && it.taskId == solo && it.startEpochMillis > NOW },
+            "mode 2 covers the line, it does not empty the timeline ahead of it",
+        )
+        // And the cover stays out of `state.panels`: it is read by the fill, never drawn.
+        assertTrue(
+            away.none { it.title.equals("Away", ignoreCase = true) },
+            "mode 2's cover is an environment period, never a panel",
+        )
     }
 
     @Test

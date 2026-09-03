@@ -170,7 +170,12 @@ derive shrinks; that is the same bound the band itself carries.
 - **Mode 2 (no device unlocked).** `t_p` must be covered, so the gap between the last such period's end and
   the line is covered as **`no on-screen task`** — not `no task allowed` — which is what the README's own
   example asks for: the gap is filled with the tasks resilient to that kind, and left empty if none are.
-  `DynamicPeriods.awayCover` is the whole of it, drawn as the `Away` panel.
+  `DynamicPeriods.awayCover` is the whole of it, built by `fillSchedule` straight into its restriction set.
+  It is an **environment period, never a panel**, and the difference is why it went missing for two days: it
+  shipped as an `Away` panel, the calendar drew a synthetic band nobody wanted, and the revert (2026-08-31)
+  took the scheduling effect away with the band — mode 2's rule then reached nothing, and the fill started an
+  on-screen task at the line while no device of the account was unlocked. `dynamicPeriodPanels` answers what
+  the calendar draws; the cover is not that list's business.
 
 Three things that fall out, and each is load-bearing:
 

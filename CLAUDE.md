@@ -161,6 +161,30 @@ what those are worth — one row — and every piece below exists because it did
 Only two things: **pre-placed blocks** (pinned/manual panels ahead of `now`, the kept head on an extension,
 the served past) and **restrictive periods**. Nothing else, by any other route.
 
+### The frozen past includes the block the line is STANDING IN
+
+→ `side-dev/README.md` § *frozen past*: *"the schedule at `t < now line` never changes as `now line`
+increases."*
+
+- **A re-plan cuts the TAIL of the straddling auto panel and keeps its ELAPSED HEAD**, truncated at the line
+  (`fillSchedule`'s `kept`). Cutting the whole panel is what shipped, and the head went nowhere: the advance
+  banks a panel only once it has *wholly* elapsed (deliberately, so an in-progress one stays a panel), so work
+  the app had told the user it was doing vanished from the timeline on every rule change — and, because
+  `pastPeriodsForTask` reads those same panels, from the clock replay that seeds the walk, taking the resume
+  contract with it.
+- **The head is an ordinary auto panel**: the next advance banks it, `mergeSameTaskPanels` fuses it back with
+  the tail (so it is folded into the merge input, not appended beside it), and it is behind the line so it is
+  never a `futureBlocks` obstacle.
+- **The chunk the line is in the middle of RESUMES; it is not re-picked** (`resumedHead` → `pending`, the
+  reference's `Walk.run` `if head is not None and head[1] < minimum[head[0]]`). Without it, restoring the head
+  makes `lastRun` refuse the very task that is running — "never twice in a row" firing on a run that never
+  ended — and the block ends up one minimum *plus* whatever had already elapsed. `headRun` is not required to
+  reach the line, so it is qualified by `lastRun`: a run that stopped an hour ago is history, not a chunk.
+  **Both §7's refusal and §13's request drop the resume**, or the press is swallowed by an unfinished chunk.
+  It is answered in phase 1 **and** phase 2, for the same reason `ForcedTaskStart` is.
+- PRD §10's continuous-effort credit (`scheduledSpanMinutes`) still answers for an effort the **records** alone
+  carry; a resume never reaches it, so the two can never both shorten one slot.
+
 ### Resilience is the whole of "where may this task run"
 
 → `side-dev/README.md` § *Restrictive Period*, `PeriodKinds`.
@@ -238,9 +262,21 @@ model exists to prevent.
   and the compensation owed is that fraction of a flat refusal's (`deprivationsOf`).
 - The **steady cycle inherits the effective shares** of the window it is attached to. Built on the nominal
   ones it would answer 50/50 under a standing period that halves one side.
-- A gap too short for any minimum is left **empty**, never filled with a sub-minimum sliver (PRD §10).
-- A dynamic period and every grey period **suspend** a chunk rather than cutting it, and do not count against
-  "does the minimum fit?" (PRD §15/§17). A screen-zone edge is the other kind — it cuts.
+- **NO IDLING is the hard constraint and the minimum time is the SOFT goal, and only one thing may empty a
+  stretch: that nobody may run in it.** `side-dev/README.md` § *No idling* — *"anywhere that is not covered by
+  restrictive periods which would prevent any task from being scheduled, the scheduler must schedule a task"* —
+  against § *Soft Minimum Execution Time*, which is *"another optimization goal"*. So a gap shorter than every
+  minimum is **worked**, and the panel there is simply short. `fillSchedule` idles exactly where
+  `SchedulerPlanner.runRange` and the reference do (`if not cand: emit(IDLE)`), and nowhere else. It carried
+  two extra reasons until 2026-09-03 — a `_fits_from` candidate filter and a sub-minute `crumb` rule with a
+  `free_tail` stretch beside it — both citing `scheduler_logic.py`, a reference file that no longer exists,
+  and both unsanctioned divergences from the other driver. Do not put either back: PRD §9 now states the
+  soft/hard split, and the chunk floor in `PlanWalk.chunkMillis` is what serves the soft goal.
+- **The one panel shorter than a minute is at `t_p` itself**, and it is the README's: mode 1 pushes the swept
+  period onto the line as the half-open `(t_p, t_p + d]`, so the line's own instant is uncovered and *"the
+  passing of the $now line$ creates task panels not covered by the period"*.
+- A dynamic period and every grey period **suspend** a chunk rather than cutting it (PRD §15/§17), where a
+  screen-zone edge cuts it. That is about the chunk's REMAINDER, never about whether anything is placed.
 
 ### `plan()` is the reference; `fillSchedule` is the app
 
@@ -351,9 +387,17 @@ identifiers, persisted keys.
   turns from a period into a task panel. Deliberate consequence: while a device stays unlocked and no rest
   happens, the owed chain parks at the now-line and no task is scheduled under it.
 - **Mode 2: `t_p` is covered**, so the gap back to the last such period's end is covered as `no on-screen
-  task` — which the resilient tasks may still fill (`DynamicPeriods.awayCover`, the `Away` panel). Where the
-  app has live evidence, that evidence IS the cover: an **ongoing** pause is `closedEnd`, so `liveRestPeriod`
-  covers the line and `awayCover` has nothing left to do.
+  task` — which the resilient tasks may still fill (`DynamicPeriods.awayCover`). Where the app has live
+  evidence, that evidence IS the cover: an **ongoing** pause is `closedEnd`, so `liveRestPeriod` covers the
+  line and `awayCover` has nothing left to do.
+- **The cover is an ENVIRONMENT period, never a panel, and that distinction is the whole of why it was
+  missing.** It shipped as an `Away` panel, the calendar drew a synthetic band nobody wanted, and the revert
+  (2026-08-31) took the scheduling effect away with the band — so mode 2's own rule reached nothing at all and
+  the fill went on starting an on-screen task AT the line while no device of the account was unlocked. It is
+  built in `fillSchedule`, straight into `restrictions`; `dynamicPeriodPanels` answers what the calendar draws
+  and must not carry it. Its forward reach is `[now, now + 1)` — the README's end is CLOSED, so in discrete
+  time it covers the line's own instant, where any other period clipped to the line would collapse and be
+  dropped.
 - **The now-line NEVER JUMPS — a distant position is a JOURNEY, and waking from device sleep is walked in
   mode 2** (`SchedulerEngine.sweepNowLineTo`, `SchedulerDomain.sweepStepMillis`). The README says both halves in
   as many words: the line *"moves continuously forward in time"*, and *"if the device bearing the running
@@ -843,6 +887,13 @@ relative-priority window's number said once and then **kept**.
 - A dated tree is a **keyframe**; between two, the scheduler follows a linear blend, not the tree on screen.
 - Identity is the `TaskId`; a task absent from a keyframe is **0 %** there. The leaves are the **union** of
   both keyframes.
+- **The whole RULE STATE blends, not just the percentages**: `side-dev/README.md` names *"priority percentages,
+  minimum execution time and resilience values"*, and all three travel (`blendedTaskAttributes`). The other two
+  used to be read off the LIVE tree at every instant, so a task sitting exactly ON a keyframe was scheduled with
+  a minimum that keyframe does not state. Two rules the blend needs: a resilience is read through
+  `PeriodKinds.resilienceFor`, so a kind **absent** from one side is at that kind's *default* there and not at
+  zero (blending the raw maps drags every untouched kind towards 0); and a task only ONE keyframe holds keeps
+  that side's minimum and resilience throughout — only its **percentage** fades.
 - `datedTaskTrees` **flushes** the active tree first. Dated trees are in `schedulingSignature`; undated ones
   deliberately are not.
 - **The one sanctioned exception to "time never re-plans"** — and only because the cursor is **quantized**

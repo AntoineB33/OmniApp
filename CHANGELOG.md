@@ -11,6 +11,61 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Four README audit fixes: No idling, mode 2's cover, the frozen past, and the whole rule state — 2026-09-03
+
+`shared` (`scheduler/domain/SchedulerDomain.kt`) + `CLAUDE.md` + PRD §8/§9/§15 + ADR 0001/0003. **Client
+rebuild only** — no Supabase deploy, no SQLite migration, no payload change: all four are derivations.
+
+Found by auditing the running app against `side-dev/README.md` clause by clause.
+
+- **No idling had two exceptions the README does not allow.** *"Anywhere that is not covered by restrictive
+  periods which would prevent any task from being scheduled, the scheduler must schedule a task"* is a hard
+  constraint; reaching the minimum execution time is *"another optimization goal"*, i.e. soft. `fillSchedule`
+  had the priority backwards: a `_fits_from` filter dropped every task whose minimum did not fit the room
+  ahead, and a sub-minute `crumb` rule (with a `free_tail` stretch beside it) emptied anything shorter. Both
+  cited `scheduler_logic.py` — a reference file that no longer exists — and both were divergences from
+  `SchedulerPlanner.runRange`, which always idled only on an empty candidate set, as `side-dev/scheduler.py`
+  does. Measured before: a 45-minute task and a pinned block twenty minutes out left `[now, now + 20 min)`
+  empty with nothing restricting it. After: 168 h filled with **zero** unexplained gaps, and the only panel
+  shorter than a minute is the 1 ms at `t_p` itself — which is the README's, mode 1 leaving the line's own
+  instant uncovered so that *"the passing of the $now line$ creates task panels not covered by the period"*.
+  **PRD §9 now states the soft/hard split explicitly**, and the three other places that stated the old rule
+  (§8's calendar edit window, §9's "two consequences", §15's screen breaks) were corrected with it, as were
+  CLAUDE.md and ADR 0001. Two tests that pinned the removed rule were rewritten: the gap before a pinned block
+  is now worked (and the obstacle still *cuts* the chunk — the block after it is a fresh whole minimum, not
+  the remainder a screen break would give back), and the week-long fill now asserts the No-idling property
+  itself instead of "no panel shorter than a minute".
+
+- **Mode 2's cover reached nothing.** *"Mode 2: $now line$ must be covered by the period 'no on-screen
+  task'"*. `DynamicPeriods.awayCover` was split out of `periods()` so the calendar would stop drawing a
+  synthetic **Away** band, and the split (2026-08-31, in a commit about clipping records) dropped it from the
+  **scheduler** too: nothing called it but tests, `dynamicPeriodPanels` returned only the three periods, and
+  `tpMode` reached `screenBreakPanels` and nowhere else. Measured: one on-screen task, mode 2, `RefreshSchedule`
+  ⇒ the task was scheduled AT the line and nothing covered it. The cover is now built in `fillSchedule`
+  straight into `restrictions` — an environment period, never a panel, so the band stays gone. Its forward
+  reach is `[now, now + 1)`: the README's end is CLOSED, so in discrete time it covers the line's own instant.
+- **The frozen past was not frozen.** *"The schedule at t < $now line$ never changes as $now line$ increases."*
+  A re-plan cut the whole straddling auto panel and regenerated from `now`, and the advance banks a panel only
+  once it has *wholly* elapsed — so the elapsed head was neither a panel nor a record. Measured: plan, advance
+  ten minutes, change a minimum ⇒ `t ∈ [now-10min, now)` went from a task to nothing, and the walk's clock
+  replay lost the service with it. The head is now kept, truncated at the line, and the chunk the line is in
+  the middle of **resumes** (`resumedHead` → `pending`, the reference's `Walk.run`) instead of being re-picked:
+  the block is one minimum long where a fresh pick made it a minimum plus the elapsed head, and `lastRun` no
+  longer refuses the very task that is running.
+- **Only the percentages blended.** The rule state is *"tasks and their associated priority percentages,
+  minimum execution time and resilience values"*, all of which *"transforms evenly"*. `blendedTaskAttributes`
+  took whole `Task` objects with the LIVE map preferred, so a task on a keyframe stating a 30-minute minimum
+  was scheduled with the 90 the tree on screen happened to hold. Both now interpolate. A resilience is read
+  through `PeriodKinds.resilienceFor`, so an absent kind is at its *default* on that side, not at zero; a task
+  only one keyframe holds keeps that side's values throughout and only its percentage fades — the reference's
+  `RuleStates.at`.
+
+Four tests that pinned the old behaviour were rewritten (`SchedulerSchedulerTest`, `SchedulerPlanTest`,
+`ForcedTaskStartTest`, `ForcedTaskSwitchTest`): three read "the first slot the fill places" as "the first auto
+panel", which the retained head is now; the fourth asserted outright that nothing survives across the line.
+Two control cases used a recorded effort *shorter* than the task's minimum — which is now a chunk that resumes
+— and were given a whole minimum so the contrast they draw is real again.
+
 ### A relative-priority chain link is a task cell — 2026-09-03
 
 `shared` (`scheduler/ui/TaskSchedulerScreen.kt`, `App.kt`) + `CLAUDE.md` + ADR 0004 + PRD §5. **Client

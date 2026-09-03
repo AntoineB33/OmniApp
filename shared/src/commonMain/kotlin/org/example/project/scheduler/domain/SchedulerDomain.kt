@@ -926,6 +926,40 @@ object SchedulerDomain {
                 if (live == null || (live.title.isBlank() && task.title.isNotBlank())) merged[id] = task
             }
         }
+        // `side-dev/README.md` § *Rule State Definition*: the rule state is *"the set of tasks and their
+        // associated priority percentages, **minimum execution time and resilience values**"*, and § *Rule
+        // State Evolution* says the whole of it *"transforms evenly from the first state to the second one"*.
+        // So the two numeric facts a keyframe holds about a task travel with the percentage, and neither is
+        // read off the live tree while a blend is in force.
+        //
+        // Only these two: everything else on a [Task] — its title, its records, its schedule unit — is not a
+        // rule-state quantity and has no midpoint, so the merge above still answers for it.
+        val from = blend.from.tree.tasks
+        val to = blend.to.tree.tasks
+        val f = blend.fraction.coerceIn(0.0, 1.0)
+        for (id in from.keys + to.keys) {
+            val base = merged[id] ?: continue
+            // A task the OTHER keyframe does not hold is not half-defined there: the identity is what carries
+            // across, so only its percentage fades (to 0%) and the side that HAS it states its minimum and its
+            // resilience throughout — `side-dev/scheduler.py`'s `RuleStates.at`, *"its minimum is taken from
+            // the side that has it"*.
+            val a = from[id] ?: to[id] ?: continue
+            val b = to[id] ?: a
+            val minimum = a.minimumMinutes + (b.minimumMinutes - a.minimumMinutes) * f
+            // A resilience is read through [PeriodKinds.resilienceFor], so a kind ABSENT from one side is at
+            // that kind's default there and not at zero — blending the raw maps would silently drag every
+            // untouched kind towards 0. A kind neither side mentions is at one default on both sides, so it
+            // interpolates to itself and needs no override.
+            val kinds = a.resilience.keys + b.resilience.keys
+            val resilience =
+                if (kinds.isEmpty()) a.resilience
+                else kinds.associateWith { kind ->
+                    val ra = PeriodKinds.resilienceFor(a.resilience, kind)
+                    val rb = PeriodKinds.resilienceFor(b.resilience, kind)
+                    PeriodKinds.clamp(ra + (rb - ra) * f)
+                }
+            merged[id] = base.copy(minimumMinutes = minimum.roundToInt(), resilience = resilience)
+        }
         return merged
     }
 
@@ -2375,9 +2409,10 @@ object SchedulerDomain {
                         indexOfTitle[title] ?: 0, title, inst.coveredFromMillis, inst.coveredUntilMillis,
                     )
                 }
-        // Mode 2's cover, the other half of the two modes: the line must BE covered, so the gap back to the
-        // last period that turns the on-screen tasks away is one — as `no on-screen task`, which the tasks
-        // resilient to that kind may still fill. Only ever asked of the line itself.
+        // Mode 2's cover is deliberately NOT here. It is a period the SCHEDULER reads and the calendar must
+        // not draw (a synthetic "Away" band shipped once and was reverted), and this function's answer is the
+        // panel list — what the calendar draws and what `state.panels` carries. [fillSchedule] builds the
+        // cover for its own environment through [DynamicPeriods.awayCover] instead.
         return breaks.sortedBy { it.startEpochMillis }
     }
 
@@ -3053,18 +3088,44 @@ object SchedulerDomain {
         // they never accumulate — but MATERIALIZED past-sleep panels (PRD §17, allocated id) are a recorded
         // fact and kept, like the materialized Inactivity panels. The §17 wind-down periods
         // (`before-bed/{day}`) are derived from those same windows and are cut and regenerated with them.
-        val kept = state.panels.filter {
-            when {
-                it.screenBreak -> false
-                it.sleep -> !it.id.startsWith("sleep/")
-                it.id.startsWith(BEFORE_BED_PANEL_ID_PREFIX) -> false
+        // The ids of the elapsed heads kept below — they are ordinary auto panels, so PRD §9's "two
+        // consecutive auto panels of the same task are one block" has to see them beside the generated tail.
+        val elapsedHeadIds = HashSet<String>()
+        val kept = state.panels.mapNotNull { panel ->
+            val survives = when {
+                panel.screenBreak -> false
+                panel.sleep -> !panel.id.startsWith("sleep/")
+                panel.id.startsWith(BEFORE_BED_PANEL_ID_PREFIX) -> false
                 else ->
                     // `side-dev/README.md`: EVERY restrictive period is kept, whatever its kind — the two
                     // built-in ones and the account's own alike, read through the single [TaskPanel.restrictiveKind].
-                    isSchedulerFixed(it) || it.chore || it.isRestrictivePeriod ||
-                        it.endEpochMillis <= nowMillis || it.startEpochMillis > horizon ||
+                    isSchedulerFixed(panel) || panel.chore || panel.isRestrictivePeriod ||
+                        panel.endEpochMillis <= nowMillis || panel.startEpochMillis > horizon ||
                         // An EXTENSION keeps the already-materialized head of the plan (see the parameter).
-                        (keepExistingUntilMillis != null && it.auto && it.startEpochMillis < keepExistingUntilMillis)
+                        (keepExistingUntilMillis != null && panel.auto && panel.startEpochMillis < keepExistingUntilMillis)
+            }
+            when {
+                survives -> panel
+                // `side-dev/README.md` § *frozen past*: **"the schedule at t < $now line$ never changes as
+                // $now line$ increases."** An auto panel the line is standing IN is cut by the branch above
+                // and the plan is regenerated from `now` — so without this its ELAPSED HEAD, work the app has
+                // already told the user it was doing, silently disappears from the timeline on every re-plan
+                // (and, because [pastPeriodsForTask] reads these same panels, from the clock replay that seeds
+                // the walk, which is the resume contract going with it). It is not banked as a record either:
+                // [org.example.project.scheduler.state.SchedulerReducer]'s advance banks a panel only once it
+                // has wholly elapsed, precisely so an in-progress one stays a panel.
+                //
+                // So the head is KEPT, truncated at the line, and the tail alone is re-planned. It stays an
+                // ordinary auto panel: the next advance banks it like any other, [mergeSameTaskPanels] fuses
+                // it back with the new panel when the re-plan picks the same task again, and it is behind the
+                // line so it is never a [futureBlocks] obstacle.
+                panel.auto && !panel.chore && panel.taskId != null &&
+                    panel.startEpochMillis < nowMillis && panel.endEpochMillis > nowMillis -> {
+                    elapsedHeadIds += panel.id
+                    panel.copy(endEpochMillis = nowMillis)
+                }
+
+                else -> null
             }
         }
         // The user's sleep windows. PRD §8: a sleep window IS an inactivity period — one labelled "Sleep" —
@@ -3140,6 +3201,33 @@ object SchedulerDomain {
                 tasks = planTasks,
                 mode = tpMode,
             )
+        // `side-dev/README.md` § *$t_p$ 2 modes*, **mode 2**: *"$now line$ must be covered by the period 'no
+        // on-screen task'"*, and its own consequence example — *"the gap between the end of the 15min period
+        // and $t_p$ is covered by a period 'no on-screen task', filled with tasks that have a non-zero
+        // resilience to the kind 'no on-screen task', or no task if none have such resilience"*.
+        //
+        // It is an **environment period, never a panel**. Emitting it as one is what shipped and was reverted
+        // (2026-08-31): the calendar drew a synthetic "Away" band the user did not want, and the revert took
+        // the scheduling effect away with the band — mode 2's own rule then reached nothing at all, and the
+        // fill went on placing an on-screen task AT the line while no device of the account was unlocked.
+        // Built here rather than in [dynamicPeriodPanels] for exactly that reason: what the fill reads and
+        // what the calendar draws are two different lists, and only the first of them wants this.
+        //
+        // Where the app already has evidence the line is covered — this device's ongoing pause
+        // ([liveRestPeriod], `closedEnd`), a standing no-screen period, a dynamic period the line is inside —
+        // [DynamicPeriods.awayCover] finds nothing left to do and answers null.
+        val awayCover =
+            DynamicPeriods.awayCover(
+                base = DynamicPeriods.Base(dynamicBase, dynamicBlocks, planTasks),
+                placed =
+                    sidePanels.mapNotNull { panel ->
+                        val kind = panel.restrictiveKind
+                        if (kind.isEmpty()) null
+                        else RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, kind, panel.title)
+                    },
+                tpMillis = nowMillis,
+                mode = tpMode,
+            )
         if (leaves.isEmpty()) {
             return (kept + sidePanels + sleepPanels + beforeBedPanels).sortedBy { it.startEpochMillis }
         }
@@ -3158,7 +3246,18 @@ object SchedulerDomain {
                 val from = maxOf(panel.startEpochMillis, nowMillis)
                 val to = panel.endEpochMillis
                 if (to <= from) null else RestrictivePeriod(from, to, kind, panel.title)
-            }
+            } +
+                // Mode 2's cover, clipped into the half-open form the rest of the fill measures in. It is the
+                // one period whose end is CLOSED — the README covers `t_p` itself — so in discrete time it
+                // reaches `now + 1`, where every other period clipped to the line would collapse to nothing
+                // and be dropped. That single millisecond IS the rule: what runs at the line must be resilient
+                // to "no on-screen task". Everything the cover holds behind the line is already the frozen
+                // past, which the fill does not place.
+                listOfNotNull(
+                    awayCover?.let {
+                        RestrictivePeriod(nowMillis, nowMillis + 1L, it.kind, it.label)
+                    },
+                )
         // The two regions the *display* and the record bank still ask about by name. They are derived from
         // the periods rather than collected separately, so a user-defined kind that happens to refuse
         // everybody behaves exactly like a hand-drawn inactivity period.
@@ -3266,10 +3365,9 @@ object SchedulerDomain {
         // and inherits the right escape: a task nothing can replace still runs rather than the period being
         // left empty. It costs the refused task nothing else — its clock is untouched, and from the second
         // slot on it is an ordinary candidate again.
-        walk.setLast(
-            liveForcedSwitchTask(state.forcedSwitch, pastBlocks, nowMillis)
-                ?: planner.lastRun(pastBlocks, nowMillis),
-        )
+        val refusedHere = liveForcedSwitchTask(state.forcedSwitch, pastBlocks, nowMillis)
+        val runningAtLine = planner.lastRun(pastBlocks, nowMillis)
+        walk.setLast(refusedHere ?: runningAtLine)
 
         // PRD §13 "start this task now": the mirror image of the refusal above — the user named the task the
         // plan must place, so it takes the FIRST slot this fill picks rather than being kept out of it. It is
@@ -3280,16 +3378,42 @@ object SchedulerDomain {
         // was asked; the request then dies the ordinary way, as soon as another task has been served past it.
         var forcedStartTask = liveForcedStartTask(state.forcedStart, pastBlocks, nowMillis)
 
+        // `side-dev/scheduler.py` `Walk.run`: *"if head is not None and head[1] < minimum[head[0]] → pending"*
+        // — **the chunk the timeline is in the MIDDLE of resumes; it is not re-picked.** So `last` never gets
+        // to refuse it and the never-twice-in-a-row rule does not fire on a run that never ended, and the
+        // block the user is looking at ends up exactly one minimum long instead of one minimum PLUS whatever
+        // had already elapsed.
+        //
+        // This could not be seeded while the straddling panel's elapsed head was being thrown away (see the
+        // `kept` filter above): with nothing behind the line there was no run in progress to find, and PRD
+        // §10's continuous-effort credit shortened the fresh pick after the fact instead. That credit still
+        // answers for an effort the records alone carry; here it is simply never reached, so the two cannot
+        // both apply to one slot.
+        //
+        // [SchedulerPlanner.headRun] is the run at the end of the past and is not required to reach the line,
+        // so it is qualified by [SchedulerPlanner.lastRun], which is: a run that stopped an hour ago is
+        // history, not a chunk to resume. Both §7's refusal and §13's request are the user overriding what
+        // the plan would do at the line, so either of them drops the resume — otherwise the press would be
+        // silently swallowed by a chunk that happened to be unfinished.
+        val resumedHead =
+            planner.headRun(pastBlocks, nowMillis)
+                ?.takeIf { (id, _) ->
+                    id == runningAtLine && id != refusedHere &&
+                        (forcedStartTask == null || forcedStartTask == id)
+                }
+                ?.let { (id, served) ->
+                    val owed = (minimumMillisOf[id] ?: 0L) - served
+                    // Under a minute is the fill's own unplaceable crumb, not a chunk worth resuming.
+                    if (owed >= MILLIS_PER_MINUTE) id to owed else null
+                }
+
         val generated = mutableListOf<TaskPanel>()
         var cursor = nowMillis
         var index = 0
         var idCounter = 0
-        // `side-dev/scheduler_logic.py` `free_tail`: whether the last thing placed was a freely-chosen slot, and so may be
-        // stretched over a crumb too short for any minimum.
-        var freeTail = false
         // PRD §15: the task whose chunk is mid-placement, split across a screen break, with the work it still
         // owes. Carried across iterations so it resumes after the break rather than being re-picked mid-chunk.
-        var pending: Pair<TaskId, Long>? = null
+        var pending: Pair<TaskId, Long>? = resumedHead
         fun nextAutoId(): String {
             while ("auto/$idCounter" in keptIds) idCounter++
             return "auto/${idCounter++}"
@@ -3347,7 +3471,6 @@ object SchedulerDomain {
                 walk.relax(0.0, period, allowedHere) // no forgetting here: the block is not ours
                 cursor = block.endMillis
                 pending = null
-                freeTail = false
                 continue
             }
 
@@ -3359,7 +3482,6 @@ object SchedulerDomain {
                 frozen = true // nothing left to disturb → phase 2
                 break
             }
-            val gap = limit?.minus(cursor)
             val insideBreak = covers(sideRegions, cursor)
             val insideSuspend = insideBreak || covers(blockedRegions, cursor)
             if (pending != null && !insideSuspend && pending.first !in allowedHere) pending = null
@@ -3371,61 +3493,46 @@ object SchedulerDomain {
             // in `allowedHere` inside a break only if it has DELIBERATELY been given a non-zero resilience to
             // "no task allowed", which is precisely the statement "I can do this during a break".
             val candidates = allowedHere
-            // `side-dev/scheduler_logic.py` `_fits_from`: a task is a candidate only while its minimum fits
-            // the room ahead of it, and that room COUNTS THE INSTANTS IT MAY ACTUALLY RUN — an interval nobody
-            // may run in only suspends a run, so it is stepped over. The boundary that decides is therefore the
-            // next **cutting** one — a fixed block or a screen-zone edge, and inside a break the break's own
-            // end. A screen break's START is deliberately NOT one (PRD §15: it only suspends a chunk, which
-            // resumes on the far side with its minimum intact). A break refuses everybody end to end, so that
-            // IS the reference's own rule for an interval belonging to nobody (`_fits_from` steps over it);
-            // where this still parts company with the reference is the resumption itself, which keeps the
-            // chunk's minimum where the reference would end the run at the edge. Inside a break the gap IS
-            // what remains of it, so PRD §9's "never when its minimum exceeds the break's length" needs no
-            // special case.
-            val nextZoneEdge =
-                noScreenRegions.asSequence()
-                    .flatMap { sequenceOf(it.startEpochMillis, it.endEpochMillis) }
-                    .filter { it > cursor }.minOrNull()
-            val breakEnd =
-                if (insideSuspend) suspendRegions.first { it.endEpochMillis > cursor }.endEpochMillis else null
-            val fitGap = listOfNotNull(nextBlock, nextZoneEdge, breakEnd).minOrNull()?.minus(cursor)
-            val fitting = candidates.filter { fitGap == null || (minimumMillisOf[it] ?: 0L) <= fitGap }
-            // `side-dev/scheduler_logic.py` steady_cycle's "no unplaceable crumb", applied to the walk: minimum times are
-            // authored in whole minutes, so anything shorter than one is not a slot, it is a seam — e.g. the
-            // 20-second look-away, or what is left of a chunk when a break lands a few seconds before it ends.
-            val crumb = gap != null && gap < MILLIS_PER_MINUTE
 
-            if (crumb || (resume == null && fitting.isEmpty())) {
-                if (gap == null) break
-                val tail = generated.lastOrNull()
-                if (!insideSuspend && allowedHere.isNotEmpty() && freeTail && tail?.endEpochMillis == cursor) {
-                    // A crumb too short for any minimum: the previous slot stretches over it (`free_tail`)
-                    // rather than leaving a sliver the calendar cannot use. A screen break is never such a
-                    // crumb — PRD §9/§15 already decided nobody whose minimum exceeds it may work there, so
-                    // the surrounding task must not creep into it either.
-                    generated[generated.size - 1] = tail.copy(endEpochMillis = limit)
-                    walk.serveWeighted(tail.taskId, gap.toDouble(), tail.taskId?.let { weightsHere[it] ?: 0.0 } ?: 0.0)
-                } else {
-                    // Nothing may occupy this stretch at all — a no-screen span with no off-screen task, or a
-                    // screen break nobody can work through. Leave it empty; it is idle time for every clock.
-                    walk.idle()
-                    freeTail = false
-                }
+            // `side-dev/README.md` § *No idling*: **"Anywhere that is not covered by restrictive periods which
+            // would prevent any task from being scheduled, the scheduler must schedule a task, for any $now
+            // line$ and $now line$ mode."** So the ONLY thing that empties a stretch is that nobody may run in
+            // it — the reference's `if not cand: emit(IDLE)`, and exactly what [SchedulerPlanner.runRange]
+            // does. There is no second reason, and there must not be one: the minimum execution time is a
+            // **soft** optimization goal (§ *Soft Minimum Execution Time* — *"another optimization goal"*),
+            // and a soft goal may not create idle time a hard constraint forbids.
+            //
+            // What used to be here were two extra reasons to idle, and both were divergences from
+            // [SchedulerPlanner.runRange] that CLAUDE.md's "keep the two drivers in step" did not sanction:
+            // a `_fits_from` filter that dropped every task whose minimum did not fit the room ahead, and a
+            // sub-minute `crumb` rule (with a `free_tail` stretch beside it). Both cited `scheduler_logic.py`,
+            // a reference file that no longer exists — the current `side-dev/scheduler.py` has neither, and
+            // clips the chunk at the next environment bound instead. Measured before the change: a 45-minute
+            // task and a pinned block twenty minutes out left `[now, now + 20 min)` empty with nothing
+            // restricting it at all.
+            //
+            // The soft goal is still served everywhere it can be: [PlanWalk.chunkMillis] floors a chunk at the
+            // task's minimum, so a slot is short only where the timeline itself is.
+            if (candidates.isEmpty()) {
+                // Nothing may occupy this stretch at all — a grey period, or a break nobody is resilient to.
+                // Idle time for every clock, and the run in progress is SUSPENDED rather than ended (the
+                // reference leaves `pending` standing here for exactly that reason).
+                if (limit == null) break
+                walk.idle()
                 cursor = limit
-                if (!insideSuspend) pending = null
                 continue
             }
 
             // PRD §13 "start this task now" — asked once, at the first slot the fill actually places.
             // A suspended chunk is never preempted (PRD §15 — it is mid-placement, not a fresh pick); at the
             // FIRST pick, which is the only one this can be, there is none.
-            val forcedHere = forcedStartTask?.takeIf { resume == null && it in fitting }
+            val forcedHere = forcedStartTask?.takeIf { resume == null && it in candidates }
             forcedStartTask = null
-            val taskId = forcedHere ?: resume?.first ?: walk.pick(fitting, shares = sharesHere) ?: break
+            val taskId = forcedHere ?: resume?.first ?: walk.pick(candidates, shares = sharesHere) ?: break
             val boost = planner.boostAt(taskId, cursor)
             var need =
                 resume?.second
-                    ?: walk.chunkMillis(taskId, fitting, boost, shares = sharesHere).roundToLong().coerceAtLeast(1L)
+                    ?: walk.chunkMillis(taskId, candidates, boost, shares = sharesHere).roundToLong().coerceAtLeast(1L)
             // PRD §10: a task whose continuous effort is still running at the now-line is scheduled for the
             // REMAINDER of its minimum, not a fresh one, so the block it merges into is exactly one minimum
             // long. Only the first chunk can have such an effort behind it, and only when the walk did not
@@ -3456,7 +3563,6 @@ object SchedulerDomain {
                     }
             }
             cursor = end
-            freeTail = true
             index++
         }
 
@@ -3471,6 +3577,23 @@ object SchedulerDomain {
             val sharesHere = localShares[hereIndex]
             if (allowedHere.isNotEmpty()) {
                 val period = planner.periodOf(allowedHere, sharesHere)
+                // `side-dev/scheduler.py` `Walk.run`'s `pending`, reaching phase 2 for the same reason §13's
+                // request does just below: a timeline nothing disturbs freezes before phase 1 places anything,
+                // and the chunk the line is in the MIDDLE of must not be dropped there. Charged like any other
+                // slot, so the settle and the cycle after it go on from the state the walk would have been in.
+                pending?.takeIf { it.first in allowedHere }?.let { (id, owed) ->
+                    val end = minOf(cursor + owed, horizon)
+                    if (end > cursor) {
+                        emit(id, cursor, end)
+                        walk.serveWeighted(id, (end - cursor).toDouble(), weightsHere[id] ?: 0.0)
+                        walk.relax((end - cursor).toDouble(), period, allowedHere)
+                        cursor = end
+                        index++
+                        // A §13 request naming the resumed task has just been answered by the resume itself.
+                        if (forcedStartTask == id) forcedStartTask = null
+                    }
+                }
+                pending = null
                 // PRD §13 "start this task now": the request is answered wherever the fill's first slot falls,
                 // and on a timeline nothing disturbs (no screen breaks, no fixed blocks) that is HERE — phase 1
                 // freezes before placing anything. Same act as there: the named task is emitted and charged
@@ -3537,8 +3660,10 @@ object SchedulerDomain {
         }
         // PRD §9: two consecutive auto panels of the same task merge into one block. Screen-break and sleep
         // panels are added as-is (they split the run, so adjacent same-task pieces don't touch and stay apart).
-        return (kept + sidePanels + sleepPanels + beforeBedPanels + mergeSameTaskPanels(generated))
-            .sortedBy { it.startEpochMillis }
+        return (
+            kept.filterNot { it.id in elapsedHeadIds } + sidePanels + sleepPanels + beforeBedPanels +
+                mergeSameTaskPanels(kept.filter { it.id in elapsedHeadIds } + generated)
+            ).sortedBy { it.startEpochMillis }
     }
 
     /**

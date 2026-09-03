@@ -644,11 +644,29 @@ class SchedulerPlanTest {
             autos.maxOf { it.endEpochMillis } >= NOW + 160 * HOUR,
             "the fill stopped short of the horizon: ${(autos.maxOf { it.endEpochMillis } - NOW) / HOUR}h",
         )
-        // Every auto panel is at least one minimum long, except the one the horizon itself clips.
-        val interior = autos.sortedBy { it.startEpochMillis }.dropLast(1)
+        // `side-dev/README.md` § *No idling*, over the whole week: every gap between two consecutive blocks
+        // is covered by a restrictive period that refuses everybody. Nothing else may empty a stretch — this
+        // replaces an assertion that no panel could be shorter than a minute, which was the removed `crumb`
+        // rule stated as a test and is exactly what No idling forbids.
+        val ordered = autos.sortedBy { it.startEpochMillis }
+        val periods = panels.filter { it.restrictiveKind.isNotEmpty() }
+            .map { it.startEpochMillis to it.endEpochMillis }
+        for (i in 0 until ordered.size - 1) {
+            val from = ordered[i].endEpochMillis
+            val until = ordered[i + 1].startEpochMillis
+            if (until <= from) continue
+            assertTrue(
+                periods.any { (start, end) -> start <= from && until <= end },
+                "an idle stretch nothing restricts: ${(from - NOW) / MIN}min..${(until - NOW) / MIN}min",
+            )
+        }
+        // The one stretch shorter than a minute is the instant `t_p` itself: mode 1 pushes the swept period
+        // onto the line as the half-open `(t_p, t_p + d]`, which leaves that instant uncovered, and the
+        // README says in as many words that the line's passing "creat[es] task panels" there.
+        val slivers = ordered.filter { it.endEpochMillis - it.startEpochMillis < MIN }
         assertTrue(
-            interior.all { it.endEpochMillis - it.startEpochMillis >= 1 * MIN },
-            "a degenerate sliver was placed",
+            slivers.all { it.startEpochMillis == NOW },
+            "a degenerate sliver away from the now-line: $slivers",
         )
     }
 
@@ -752,13 +770,23 @@ class SchedulerPlanTest {
             extended.filter { it.auto }.maxOf { it.endEpochMillis } >
                 near.filter { it.auto }.maxOf { it.endEpochMillis },
         )
-        // A plain refill, by contrast, IS free to re-plan: nothing survives across the now-line (the past
-        // panels stay as the record of what was planned, but the whole future is regenerated from `now`).
+        // A plain refill, by contrast, IS free to re-plan the FUTURE: none of the blocks it had materialized
+        // ahead of the line survives it. What does survive is the elapsed head of the block the line is
+        // standing in — `side-dev/README.md` § *frozen past*, and the reason a refill's first block may span
+        // the line rather than start at it.
         val replanned = SchedulerDomain.fillSchedule(s, NOW + HOUR, horizonMillis = NOW + 36 * HOUR)
-        assertTrue(
-            replanned.filter { it.auto }
-                .none { it.startEpochMillis < NOW + HOUR && it.endEpochMillis > NOW + HOUR },
-        )
+        val keptAcrossTheLine = replanned.filter { it.auto }
+            .filter { it.startEpochMillis < NOW + HOUR && it.endEpochMillis > NOW + HOUR }
+        assertTrue(keptAcrossTheLine.size <= 1, "at most the block the line is standing in: $keptAcrossTheLine")
+        // …and it is the very block the line was standing in, continued rather than replaced. (That a refill
+        // and an extension may otherwise agree about the future is not a defect but the resume contract — a
+        // chain of re-plans is the same schedule as one long plan — so this deliberately asserts nothing
+        // about the blocks ahead of the line.)
+        val wasOnTheLine = near.first {
+            it.auto && it.startEpochMillis <= NOW + HOUR && NOW + HOUR < it.endEpochMillis
+        }
+        assertEquals(wasOnTheLine.taskId, keptAcrossTheLine.single().taskId)
+        assertEquals(wasOnTheLine.startEpochMillis, keptAcrossTheLine.single().startEpochMillis)
     }
 
     @Test

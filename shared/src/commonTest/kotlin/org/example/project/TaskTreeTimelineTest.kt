@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTreeId
@@ -372,6 +373,77 @@ class TaskTreeTimelineTest {
         assertNull(decoded.taskTrees[0].dateMillis)
         assertTrue(SchedulerDomain.datedTaskTrees(decoded).isEmpty())
         assertNull(SchedulerDomain.taskTreeBlendAt(decoded, t0))
+    }
+
+    // ---- the rest of the rule state ------------------------------------------------------------
+
+    /**
+     * `side-dev/README.md` § *Rule State Definition*: a rule state is *"the set of tasks and their associated
+     * priority percentages, **minimum execution time and resilience values**"*, and § *Rule State Evolution*
+     * says the whole of it *"transforms evenly from the first state to the second one"*.
+     *
+     * Only the percentages travelled. The other two were read off the LIVE tree at every instant — so a task
+     * sitting exactly ON a keyframe was scheduled with a minimum that keyframe does not state, and a
+     * transition between a 30-minute task and a 90-minute one was a step, not a transformation.
+     */
+    private fun twoMinimumKeyframes(): Pair<SchedulerState, TaskId> {
+        var s = stateWithTasks("A")
+        val a = taskIdOf(s, "A")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(a, 30))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Summer"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Autumn"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SelectTaskTree(treeIdOf(s, "Autumn")))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(a, 90))
+        s = dated(s, "Summer", t0)
+        return dated(s, "Autumn", t0 + 10 * day) to a
+    }
+
+    @Test
+    fun the_minimum_execution_time_travels_with_the_percentage() {
+        val (s, a) = twoMinimumKeyframes()
+        fun minimumAt(now: Long) = SchedulerDomain.blendedTaskAttributes(s, now)[a]!!.minimumMinutes
+        // On each keyframe the rule state is that keyframe's, not the tree the user happens to be editing.
+        assertEquals(30, minimumAt(t0))
+        assertEquals(90, minimumAt(t0 + 10 * day))
+        // And it transforms evenly in between.
+        for (step in 0..10) {
+            assertEquals(30 + 6 * step, minimumAt(t0 + step * day), "day $step")
+        }
+        // Outside the dated range the nearest keyframe holds, exactly as the percentages do.
+        assertEquals(30, minimumAt(t0 - 30 * day))
+        assertEquals(90, minimumAt(t0 + 400 * day))
+    }
+
+    @Test
+    fun a_resilience_travels_with_it_too() {
+        // "On screen" is a resilience of 0 to "no on-screen task", so a task that goes off screen between two
+        // keyframes crosses over evenly rather than flipping on the date.
+        var s = stateWithTasks("A")
+        val a = taskIdOf(s, "A")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Summer"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Autumn"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SelectTaskTree(treeIdOf(s, "Autumn")))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(a, PeriodKinds.NO_SCREEN, 1.0))
+        s = dated(s, "Summer", t0)
+        s = dated(s, "Autumn", t0 + 10 * day)
+        fun resilienceAt(now: Long) =
+            SchedulerDomain.blendedTaskAttributes(s, now)[a]!!.resilienceFor(PeriodKinds.NO_SCREEN)
+        assertEquals(0.0, resilienceAt(t0), 1e-9)
+        assertEquals(0.5, resilienceAt(t0 + 5 * day), 1e-9)
+        assertEquals(1.0, resilienceAt(t0 + 10 * day), 1e-9)
+    }
+
+    @Test
+    fun a_task_only_one_keyframe_holds_keeps_that_keyframes_minimum_throughout() {
+        // Only the PERCENTAGE fades to zero on the side that has no such task: the identity is what carries
+        // across, so the side that HAS it states its minimum for the whole transition
+        // (`side-dev/scheduler.py` `RuleStates.at`).
+        val s = twoKeyframes()
+        val a = taskIdOf(s, "A") // only in "Summer"
+        val live = s.taskTrees.first { it.title == "Summer" }.tree.tasks[a]!!.minimumMinutes
+        for (step in 0..10) {
+            assertEquals(live, SchedulerDomain.blendedTaskAttributes(s, t0 + step * day)[a]!!.minimumMinutes)
+        }
     }
 
     @Test

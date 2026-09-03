@@ -204,8 +204,17 @@ class SchedulerSchedulerTest {
 
     @Test
     fun fill_schedule_re_derives_the_current_task_from_now() {
-        // PRD §9: the in-progress non-pinned panel is cut and the window re-filled from now; the current
-        // task is re-picked deterministically (continuity), now starting exactly at `now`.
+        // PRD §9: the in-progress non-pinned panel's TAIL is cut and the window re-filled from now.
+        //
+        // `side-dev/README.md` § *frozen past* — *"the schedule at t < $now line$ never changes as $now line$
+        // increases"* — is what decides the other half: the panel's ELAPSED HEAD is kept. It used to be cut
+        // with the tail and banked as nothing, so ten minutes of work the app had told the user it was doing
+        // vanished from the timeline on every re-plan, and the walk's clock replay lost them with it.
+        //
+        // So A resumes rather than being re-picked (`side-dev/scheduler.py` `Walk.run`'s `pending`: a chunk
+        // still short of its minimum is one the walk is in the middle of), and PRD §9's merge makes the head
+        // and the resumed remainder ONE block — exactly one minimum long, where a fresh pick would have made
+        // it a minimum plus the ten minutes already spent.
         val (s0, a, _) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val current = auto("auto/0", a, now - 10 * MIN, now + 35 * MIN)
@@ -213,10 +222,14 @@ class SchedulerSchedulerTest {
 
         val panels = SchedulerDomain.fillSchedule(s, now)
 
-        assertTrue(panels.none { it.startEpochMillis < now }) // the stale (non-pinned) panel is gone
-        val firstAuto = panels.first { it.auto }
-        assertEquals(now, firstAuto.startEpochMillis) // the fresh fill starts at now
-        assertEquals(a, firstAuto.taskId) // A and B tie → A re-picked first (continuity)
+        val firstAuto = panels.filter { it.auto }.minBy { it.startEpochMillis }
+        assertEquals(now - 10 * MIN, firstAuto.startEpochMillis) // the elapsed head is still there
+        assertEquals(a, firstAuto.taskId) // and it is still A's
+        // One block, one minimum: the head plus what A still owes of it.
+        val minimum = s.tasks[a]!!.minimumMinutes * MIN
+        assertEquals(now - 10 * MIN + minimum, firstAuto.endEpochMillis)
+        // Nothing PLANNED survives past the line: everything from `now` on is regenerated.
+        assertTrue(panels.filter { it.auto }.none { it.startEpochMillis > now && it.id == "auto/0" })
     }
 
     @Test
@@ -528,12 +541,18 @@ class SchedulerSchedulerTest {
     }
 
     @Test
-    fun a_pinned_panel_by_contrast_leaves_the_gap_before_it_empty() {
+    fun a_pinned_panel_cuts_the_chunk_where_a_screen_break_suspends_it() {
         // Control for the test above: a *pinned* obstacle 20 min ahead is NOT a screen break, so nothing
-        // resumes across it. The 20 minutes before it are shorter than any task's minimum, so — per
-        // `side-dev/scheduler_logic.py`'s `fitting` rule and PRD §10 ("a task panel can't be shorter than its minimum") —
-        // they are left empty rather than filled with a 20-minute sliver of A. The plan starts on the far
-        // side of the obstacle. (Earlier revisions truncated A to 20 min here; that violated §10.)
+        // resumes across it — PRD §9/§10, and the one place the app's driver is deliberately unlike the
+        // reference is the screen break, never this.
+        //
+        // The 20 minutes before it are shorter than any task's minimum, and they are FILLED all the same:
+        // `side-dev/README.md` § *No idling* — *"anywhere that is not covered by restrictive periods which
+        // would prevent any task from being scheduled, the scheduler must schedule a task"* — and the minimum
+        // execution time is a **soft** optimization goal beside it (*"another optimization goal"*), so it
+        // yields. Earlier revisions left the gap empty, citing a `fitting` rule from `scheduler_logic.py`, a
+        // reference file that no longer exists; the current `side-dev/scheduler.py` idles only where the
+        // candidate set is empty, and so does [SchedulerPlanner.runRange].
         val (s0, a, b) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val pin = pinned("panel/0", b, now + 20 * MIN, now + 25 * MIN)
@@ -541,16 +560,16 @@ class SchedulerSchedulerTest {
 
         val autos = SchedulerDomain.fillSchedule(s, now).filter { it.auto }.sortedBy { it.startEpochMillis }
 
-        assertTrue(
-            autos.none { it.startEpochMillis < now + 20 * MIN },
-            "the sub-minimum gap before the pinned block must stay empty: $autos",
-        )
+        // No idling: the stretch before the obstacle is worked, short though it is.
+        assertEquals(now, autos[0].startEpochMillis)
+        assertEquals(now + 20 * MIN, autos[0].endEpochMillis)
         assertEquals(a, autos[0].taskId)
-        assertEquals(now + 25 * MIN, autos[0].startEpochMillis) // the plan resumes after the obstacle
-        assertTrue(
-            autos[0].endEpochMillis - autos[0].startEpochMillis >= 45 * MIN,
-            "and it gets at least its whole minimum: ${autos[0]}",
-        )
+
+        // …and the obstacle CUT that chunk rather than suspending it: what follows is a fresh whole minimum,
+        // not the 25 minutes A would still have owed. (A screen break, above, gives back the remainder.)
+        assertEquals(now + 25 * MIN, autos[1].startEpochMillis) // the plan resumes after the obstacle
+        assertEquals(a, autos[1].taskId)
+        assertEquals(45 * MIN, autos[1].endEpochMillis - autos[1].startEpochMillis)
     }
 
     // ----- §9 RefreshSchedule (calculation event) --------------------------------------------

@@ -75,7 +75,9 @@ class ForcedTaskSwitchTest {
         val (s0, a, _) = stateWithTwoTasks()
         val state = s0.copy(panels = listOf(auto("auto/0", a, T0 - 10 * MIN, T0 + 50 * MIN)))
         val switched = SchedulerReducer.reduce(state, SchedulerIntent.ForceTaskSwitch(T0))
-        val autos = switched.panels.filter { it.auto }.sortedBy { it.startEpochMillis }
+        // The first slot the fill PLACES, which is the first one at or after the line — A's elapsed head
+        // behind it is the frozen past (`side-dev/README.md`), not something this fill chose.
+        val autos = switched.panels.filter { it.auto && it.startEpochMillis >= T0 }.sortedBy { it.startEpochMillis }
         assertNotEquals(a, autos.first().taskId)
         assertNotNull(autos.firstOrNull { it.taskId == a })
     }
@@ -122,13 +124,18 @@ class ForcedTaskSwitchTest {
         val (s0, a, b) = stateWithTwoTasks()
         // Same shape, except B has now genuinely worked past the refusal: the request was granted, so A is an
         // ordinary candidate again — and, being the starved one, the one the walk picks.
+        //
+        // B's effort is a WHOLE minimum (45 min), not a part of one: a chunk still short of its minimum is one
+        // the walk is in the middle of and resumes rather than re-picks (`side-dev/scheduler.py` `Walk.run`'s
+        // `pending`), so a 30-minute record would hand the line back to B for the missing quarter of an hour
+        // and say nothing about whether the refusal is still standing.
         val state =
             s0.copy(
                 forcedSwitch = ForcedTaskSwitch(a, T0),
-                tasks = s0.tasks + (b to s0.tasks[b]!!.copy(record = listOf(TaskTimeRange(T0, T0 + 30 * MIN)))),
+                tasks = s0.tasks + (b to s0.tasks[b]!!.copy(record = listOf(TaskTimeRange(T0, T0 + 45 * MIN)))),
             )
-        val filled = SchedulerDomain.fillSchedule(state, T0 + 30 * MIN, horizonMillis = T0 + 6 * 60 * MIN)
-        assertEquals(a, taskAt(state.copy(panels = filled), T0 + 30 * MIN))
+        val filled = SchedulerDomain.fillSchedule(state, T0 + 45 * MIN, horizonMillis = T0 + 6 * 60 * MIN)
+        assertEquals(a, taskAt(state.copy(panels = filled), T0 + 45 * MIN))
     }
 
     @Test

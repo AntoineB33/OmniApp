@@ -409,16 +409,19 @@ every task in the account, and it is also how the reference's binary form is exp
 
 ### Consequences worth knowing
 
-- A gap too short for any minimum is left **empty** (or absorbed by the previous slot, the reference's
-  `free_tail`) rather than filled with a sub-minimum sliver — PRD §10 says a panel can never be shorter
-  than its minimum.
+- A gap too short for any minimum is **worked all the same**, and the panel there is short. `side-dev/README.md`
+  § *No idling* is a hard constraint and § *Soft Minimum Execution Time* is *"another optimization goal"*, so
+  the minimum yields where the two meet. This reverses what this ADR said until 2026-09-03 — "left empty (or
+  absorbed by the previous slot, the reference's `free_tail`)" — which was read off `scheduler_logic.py`, a
+  reference file that no longer exists; `side-dev/scheduler.py` idles only where the candidate set is empty,
+  and `SchedulerPlanner.runRange` always did. PRD §9/§10 were amended to match.
 - A period that refuses everybody deprives everyone equally and so creates **no field** (§3).
-- A dynamic period — like every grey period (`suspendRegions` / `suspendStarts`) — is a boundary that
-  does NOT count against "does the minimum fit?", because PRD §15 (and §17 for sleep, in the same words)
-  suspends the chunk and resumes it on the far side. Load-bearing: without it the 20-min look-away
-  cadence would make the default 45-min minimum permanently unschedulable. That is the reference's own
-  rule for a period belonging to NOBODY (`_fits_from`), which all three breaks now are — so the
-  divergence §6 used to record here has narrowed to the suspension itself.
+- A dynamic period — like every grey period (`suspendRegions` / `suspendStarts`) — **suspends** the chunk it
+  meets and resumes it on the far side, where a screen-zone edge or a fixed block **cuts** it (PRD §15, and
+  §17 for sleep in the same words). Load-bearing: without it the 20-min look-away cadence would make the
+  default 45-min minimum permanently unschedulable. Note this is a rule about the chunk's REMAINDER only —
+  since 2026-09-03 nothing asks "does the minimum fit?" at all, that question having been the candidate
+  filter No idling forbids.
 
 ## 5. A window bounds only the tasks it turns away
 
@@ -473,8 +476,7 @@ example, pinned by
 `SchedulerPlanTest.the_readme_s_atomic_block_example_schedules_the_whole_period_with_nothing`).
 
 Also: an idle stretch **suspends** a run rather than ending it; a resuming task is floored at what it
-still **owes** (not a fresh whole minimum); the `free_tail` may only absorb a gap it is itself allowed
-to run in; a pre-placed block is **walked edge by edge** — where a period refuses the block's own task
+still **owes** (not a fresh whole minimum); a pre-placed block is **walked edge by edge** — where a period refuses the block's own task
 the block is suspended and resumes on the far side instead of running through it (`side-dev` commit
 `48a8a69`; `a_pre_placed_block_is_suspended_where_a_period_refuses_its_own_task`).
 
