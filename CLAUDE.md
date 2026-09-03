@@ -483,6 +483,22 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   `orderedBubbleSections`, applied in the one funnel `Modifier.calendarTitleHover` — never at a call site.
 - **Hover is TILED, never nested**: two reporters at one position race (the parent's Move wins). Cut the
   element at every covering section's boundary (`bubbleHoverZones`) and give each tile one reporter.
+- **A CURSOR SHAPE rides the hover tile; it is never a lid over it.** A Box carrying only
+  `pointerHoverIcon` is still a pointer-input node, so it wins the hit test against the tile underneath and
+  that tile stops receiving Enter/Move — the bubble blinks out on exactly the edge the user is aiming at.
+  So a resize strip is a **cut of the element's own tiling** (`bubbleHoverZones`' `extraCuts`,
+  `CalendarHoverTiles`), carrying the same sections as the rest of it, never a second layer. Three surfaces
+  do this and they are the whole of it: a panel's true **top** and **bottom** grab strips (the vertical
+  resize cursor, `RESIZE_EDGE_DP` — an interior slice edge is not one, it moves the block) and, where
+  overlapping panels **share the column's width**, the boundary between two of them (the horizontal resize
+  cursor, the Overlap-Mode `WeightHandle`, whose two halves each report the neighbour they lie on through
+  the block's own `blockBubbleOverlays`).
+- **The strip the cursor promises is the strip the press grabs** — one `edgePx`, read by the gesture and by
+  the tiles (`rememberUpdatedState`, because the gesture coroutine outlives a zoom). A cursor over a strip
+  that would not start a resize is a lie the user only finds out by pressing.
+- **The drag/resize gesture and the right-click menu are unaffected by all of this**, and that is structural,
+  not luck: both live on **ancestors** of the tiles (the block's slice, the day column), and an ancestor stays
+  on the hit path of whatever descendant is hit. `calendarTitleHover` never consumes.
 - **GREY = the scheduler places nothing here** — inactivity period, sleep window, the §17 **"Before bed"
   hour** (`before bed`, whose default resilience is `0` like theirs), and **all three screen
   breaks end to end** (they are `no task allowed`; there is no closed head and no hollow tail any more). It is

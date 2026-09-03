@@ -8,3 +8,10 @@ import androidx.compose.ui.input.pointer.PointerIcon
  * a crosshair (no OS resize cursor concept).
  */
 expect fun verticalResizePointerIcon(): PointerIcon
+
+/**
+ * PRD §8 Overlap Mode: the "grab this edge to re-divide the shared width" cursor, shown on the vertical
+ * boundary between two panels sharing a column's width (a [WeightHandle]). The horizontal counterpart of
+ * [verticalResizePointerIcon] — a width edge is dragged sideways, so it must not read as a time edge.
+ */
+expect fun horizontalResizePointerIcon(): PointerIcon

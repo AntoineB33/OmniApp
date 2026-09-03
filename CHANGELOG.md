@@ -11,6 +11,33 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A resize edge keeps its hover bubble, and a shared-width edge gets its own cursor — 2026-09-03
+
+`shared` (`ui/CalendarUi.kt`, `ui/PlatformCursor.kt` + its five actuals, new
+`commonTest/CalendarHoverTilingTest.kt`) + `CLAUDE.md` + ADR 0002. **Client rebuild only** — no Supabase
+deploy, no SQLite migration, no payload change: this is drawing and pointer input.
+
+Hovering a panel's top or bottom edge showed the resize cursor and the info bubble **disappeared**. The strip
+was a second layer — a 6 dp `Box` holding nothing but `pointerHoverIcon` — and a `pointerHoverIcon` node is a
+pointer-input node, so it won the hit test and the hover tile beneath it stopped receiving `Enter`/`Move`. The
+bubble was not flickering there; it was never reported. The same layer, with the same effect, was the
+Overlap-Mode **width handle**: a 10 dp `Box` over the boundary between two width-sharing panels, blanking both
+their bubbles along every shared edge, and carrying **no** cursor at all — the one edge in the calendar that is
+dragged sideways was the one that never said so.
+
+- **The cursor now rides the hover tile itself.** `bubbleHoverZones` takes `extraCuts`, so the grab strip is a
+  tile of the element's OWN tiling (same sections as the rest of it) with `pointerHoverIcon` on it;
+  `CalendarHoverTiles` is the single drawing of that, used by the block's slices and by the handle's two
+  halves alike, and `blockBubbleOverlays` is the one reading of what a panel says about itself — so a handle
+  lying over a panel reports exactly what the panel would have.
+- **A shared-width edge shows the horizontal resize cursor** (`horizontalResizePointerIcon`, desktop
+  `E_RESIZE`), the counterpart of the vertical one; the platforms with no OS resize cursor keep the crosshair.
+- **The strip the cursor promises is the strip the press grabs**: one `edgePx`, read by the gesture and by the
+  tiles through `rememberUpdatedState` (the gesture coroutine outlives a zoom, and used to keep a stale one).
+- **The drag/resize gesture and the right-click menu are unchanged and never were at risk** — both live on
+  ancestors of these tiles (the block's slice, the day column), which stay on the hit path of whatever tile is
+  hit, and `calendarTitleHover` consumes nothing.
+
 ### Waking from device sleep is a JOURNEY of the now-line, walked in mode 2 — 2026-09-03
 
 `side-dev/README.md` § *$now line$* + § *Progressive Calculation*'s direct consequence. `shared`

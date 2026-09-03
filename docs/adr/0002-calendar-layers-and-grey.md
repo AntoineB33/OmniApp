@@ -464,6 +464,45 @@ on screen still re-runs — and then measures a zero delta.
 
 Tests: `GoToTaskTreeTest` (the reading order, the mirror, the blanked task, the reveal).
 
+## A cursor shape rides the hover tile — 2026-09-03
+
+Hovering a panel's top or bottom edge showed the resize cursor and **lost the bubble**. Two things drawn at
+one place, and only one of them could be true at a time.
+
+The edge was a second layer: a full-width 6 dp `Box` aligned to the slice's top/bottom, carrying nothing but
+`pointerHoverIcon`. But a `pointerHoverIcon` node is a **pointer-input node** — Compose stops hit-testing a
+node's children as soon as one of them is hit, so the strip won against the hover tile beneath it and that
+tile never saw another `Enter`/`Move`. The bubble did not "flicker": on that strip it was never reported at
+all. The same shape, from the same cause, was on the Overlap-Mode **width handle**: a 10 dp `Box` over the
+boundary between two width-sharing panels, holding the weight drag, blanking the bubble of both panels along
+every shared edge — and showing no resize cursor at all, so the one edge in the calendar that IS dragged
+sideways was the one that never said so.
+
+The fix is the tiling rule this ADR already states, applied one step further: **the cursor is a property of
+the tile, not a layer over it**. `bubbleHoverZones` takes `extraCuts` — boundaries that cut the tiling
+without contributing a section — so the grab strip becomes a tile of the element's OWN tiling, carrying the
+element's own section stack, with `pointerHoverIcon` on it. `CalendarHoverTiles` is that one drawing (the
+block's slices and the width handle's two halves both go through it), and `blockBubbleOverlays` is the one
+reading of what a panel says about itself, so the handle lying on top of a panel reports exactly what the
+panel would have.
+
+Three consequences worth keeping:
+
+- **The strip the cursor promises is the strip the press grabs.** `edgePx` (6 dp, capped at a third of a
+  short slice) is computed once and read by both the gesture and the tiles — through `rememberUpdatedState`,
+  because the gesture coroutine is keyed on the block's position and outlives a zoom. It used to be computed
+  inside the gesture from a captured slice height, so after a zoom the two could disagree.
+- **The gesture and the right-click menu never depended on the strip.** They live on ANCESTORS of these tiles
+  — the block's slice and the day column — and an ancestor stays on the hit path of whatever descendant is
+  hit. That is why the resize drag and the Edit/Remove menu worked on the edge all along, and why they still
+  do now that the tile there reports a bubble: `calendarTitleHover` observes at the Main pass and consumes
+  nothing.
+- **A width edge gets its own shape.** `horizontalResizePointerIcon` (desktop `E_RESIZE`) beside the existing
+  vertical one; the platforms with no OS resize cursor keep the crosshair fallback.
+
+Tests: `CalendarHoverTilingTest` (a cut never costs a tile its sections — the whole safety of building the
+strip out of the tiling).
+
 ## Known gap
 
 The phone's contextual menu still names only the panel it was opened on — a phone has no hover bubble, and

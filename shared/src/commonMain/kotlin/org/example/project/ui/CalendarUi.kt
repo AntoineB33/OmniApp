@@ -93,6 +93,7 @@ import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed as pointerMetaPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -4305,7 +4306,13 @@ private fun DayColumn(
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val colWidth = maxWidth
                 val colWidthPx = with(density) { colWidth.toPx() }
-                val handleWidth = 10.dp
+                val handleWidth = WEIGHT_HANDLE_WIDTH
+                // The handle is drawn OVER the two panels it divides, so it is the thing the cursor is on
+                // there: it owes them their hover bubble (a panel whose bubble died along every shared-width
+                // edge would be the resize strips' bug by another route). Each half reports the neighbour it
+                // covers — [BubbleOverlay]s built by the block's own [blockBubbleOverlays], never a second
+                // reading of what a panel says.
+                fun recordFor(ids: List<String>): PlacedRecord? = effRecords.firstOrNull { it.entryIds == ids }
                 handles.forEach { handle ->
                     // Never culled while one is being dragged: the handle holds that gesture.
                     if (weightDrag == null && !onScreen(handle.topHour, handle.bottomHour)) return@forEach
@@ -4345,7 +4352,30 @@ private fun DayColumn(
                                         }
                                 }
                             },
-                    )
+                    ) {
+                        // The handle's two halves, each tiled over the neighbour it lies on: the
+                        // east/west resize cursor for the whole strip, the covered panel's own section
+                        // stack for the bubble. The drag lives on the parent Box and the contextual menu on
+                        // the day column — both ancestors of these tiles, so both still see every press.
+                        Row(Modifier.fillMaxSize()) {
+                            listOf(handle.leftIds, handle.rightIds).forEach { ids ->
+                                Box(Modifier.weight(1f).fillMaxHeight()) {
+                                    val covered = recordFor(ids)?.let {
+                                        blockBubbleOverlays(it, handle.topHour, handle.bottomHour, tz)
+                                    } ?: emptyList()
+                                    CalendarHoverTiles(
+                                        top = handle.topHour,
+                                        bottom = handle.bottomHour,
+                                        overlays = covered + contextOverlays,
+                                        hourHeight = hourHeight,
+                                        hoverScope = hoverScope,
+                                        resizeCursor = horizontalResizePointerIcon(),
+                                        resizeSpans = listOf(handle.topHour..handle.bottomHour),
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -4601,6 +4631,22 @@ private val ALARM_MARKER_HEIGHT = 18.dp
  * up to a size that holds its name and takes a cursor.
  */
 private val SCREEN_BREAK_MIN_HEIGHT = 2.dp
+
+/**
+ * PRD §8 extend/shorten: how deep the grab strip on a panel's true top/bottom edge is — where the pointer
+ * takes the vertical-resize shape and a press starts a resize instead of a move.
+ *
+ * One constant for both halves of that sentence: [CalendarBlock] measures the gesture's edge with it and
+ * hangs the cursor on the very same strip, so the shape the user sees is the answer the press will give.
+ * A short slice caps it at a third of its height, or a thin panel would be all edge and could not be moved.
+ */
+private val RESIZE_EDGE_DP = 6.dp
+
+/**
+ * PRD §8 Overlap Mode: how wide the draggable boundary between two width-sharing panels is (centred on the
+ * boundary, so half of it lies over each neighbour). The horizontal counterpart of [RESIZE_EDGE_DP].
+ */
+private val WEIGHT_HANDLE_WIDTH = 10.dp
 
 /**
  * PRD §15: the rendered height at which a screen-break band shows its own name — one line of it.
@@ -4875,19 +4921,30 @@ fun orderedBubbleSections(sections: List<CalendarBubbleSection>): List<CalendarB
  * PRD §8: a bubble section covering the hour-of-day sub-range `[top, bottom]` of the element being tiled.
  * Feeding these to [bubbleHoverZones] cuts the element into sub-ranges of CONSTANT section stack.
  */
-private class BubbleOverlay(val top: Float, val bottom: Float, val section: CalendarBubbleSection)
+internal class BubbleOverlay(val top: Float, val bottom: Float, val section: CalendarBubbleSection)
 
 /** One hover tile of an element: the sub-range `[top, bottom]` and the sections covering all of it. */
-private class BubbleHoverZone(val top: Float, val bottom: Float, val sections: List<CalendarBubbleSection>)
+internal class BubbleHoverZone(val top: Float, val bottom: Float, val sections: List<CalendarBubbleSection>)
 
 /**
- * Tiles `[top, bottom]` at every [overlays] boundary strictly inside it, so each tile is covered by one
- * constant set of sections and can carry a single hover reporter.
+ * Tiles `[top, bottom]` at every [overlays] boundary strictly inside it — plus every [extraCuts] boundary,
+ * which cut the tiling without contributing a section — so each tile is covered by one constant set of
+ * sections and can carry a single hover reporter.
  *
  * Tiling rather than nesting is the calendar's rule for hover (see [deviceHoverZones]): two hover reporters
  * at the same position race unpredictably, because a parent's Move overwrites the child's report.
+ *
+ * [extraCuts] is what a resize edge is made of: the grab strip needs a tile of its own to hang the resize
+ * cursor on, and it must be a tile of THIS tiling — carrying the same sections as the rest of the element —
+ * because a cursor-only Box laid over the element would win the hit test and the bubble would vanish on
+ * exactly the edge the user is aiming at (see [CalendarHoverTiles]).
  */
-private fun bubbleHoverZones(top: Float, bottom: Float, overlays: List<BubbleOverlay>): List<BubbleHoverZone> {
+internal fun bubbleHoverZones(
+    top: Float,
+    bottom: Float,
+    overlays: List<BubbleOverlay>,
+    extraCuts: List<Float> = emptyList(),
+): List<BubbleHoverZone> {
     fun sectionsAt(instant: Float) =
         overlays.filter { it.top <= instant && it.bottom >= instant }.map { it.section }
     // A zero-length span still has to report: a sub-minute look-away is drawn at a coerced minimum height
@@ -4898,6 +4955,9 @@ private fun bubbleHoverZones(top: Float, bottom: Float, overlays: List<BubbleOve
         if (o.top > top && o.top < bottom) cuts.add(o.top)
         if (o.bottom > top && o.bottom < bottom) cuts.add(o.bottom)
     }
+    for (c in extraCuts) {
+        if (c > top && c < bottom) cuts.add(c)
+    }
     cuts.sort()
     val zones = mutableListOf<BubbleHoverZone>()
     for (i in 0 until cuts.size - 1) {
@@ -4907,6 +4967,78 @@ private fun bubbleHoverZones(top: Float, bottom: Float, overlays: List<BubbleOve
         zones += BubbleHoverZone(a, b, sectionsAt((a + b) / 2f))
     }
     return zones
+}
+
+/**
+ * PRD §8: draws one element's hover tiles — [bubbleHoverZones] over `[top, bottom]`, each tile a Box
+ * reporting its own section stack — and hangs [resizeCursor] on the tiles falling inside [resizeSpans].
+ *
+ * **The cursor rides the hover tile itself; it is never a lid over it.** A Box carrying only
+ * `pointerHoverIcon` is still a pointer-input node, so it wins the hit test against the tile underneath and
+ * that tile stops receiving Enter/Move — which is how the resize strips used to swallow the bubble on the
+ * very edge the user was aiming at. One element, one reporter, one cursor: the tiling is what makes the
+ * shape a property of the tile instead of a second layer.
+ *
+ * The right-click menu and the drag/resize gesture are unaffected either way: both live on ANCESTORS of
+ * these tiles (the day column and the block's slice), which stay on the hit path of whatever tile is hit.
+ */
+@Composable
+private fun CalendarHoverTiles(
+    top: Float,
+    bottom: Float,
+    overlays: List<BubbleOverlay>,
+    hourHeight: Dp,
+    hoverScope: CalendarTitleHoverScope,
+    resizeCursor: PointerIcon? = null,
+    /** The sub-ranges of `[top, bottom]` that grab a resize edge — see [CalendarBlock] / [WeightHandle]. */
+    resizeSpans: List<ClosedFloatingPointRange<Float>> = emptyList(),
+) {
+    val cuts = resizeSpans.flatMap { listOf(it.start, it.endInclusive) }
+    bubbleHoverZones(top, bottom, overlays, cuts).forEach { zone ->
+        val mid = (zone.top + zone.bottom) / 2f
+        val cursor = resizeCursor?.takeIf { resizeSpans.any { span -> mid in span } }
+        // A tile with neither a section to report nor a cursor to show would be an empty hit-test node
+        // over whatever is underneath — emit nothing.
+        if (zone.sections.isEmpty() && cursor == null) return@forEach
+        Box(
+            Modifier
+                .offset(y = hourHeight * (zone.top - top))
+                .fillMaxWidth()
+                .height(hourHeight * (zone.bottom - zone.top))
+                .then(if (cursor != null) Modifier.pointerHoverIcon(cursor) else Modifier)
+                .then(
+                    if (zone.sections.isEmpty()) Modifier
+                    else Modifier.calendarTitleHover(zone.sections, hoverScope),
+                ),
+        )
+    }
+}
+
+/**
+ * PRD §8: the bubble overlays a placed block contributes over the hour range `[top, bottom]` — its own
+ * section, cut into one overlay per device-set segment so the "Open: …" line follows the cursor.
+ *
+ * Shared by the block's own tiles and by the [WeightHandle] drawn ON TOP of the block (a handle must report
+ * the panel it covers, or the bubble would blink out along every shared-width edge); a second reading is how
+ * the two would start naming a panel differently.
+ */
+private fun blockBubbleOverlays(
+    record: PlacedRecord,
+    top: Float,
+    bottom: Float,
+    tz: TimeZone,
+): List<BubbleOverlay> {
+    val timeRange = "${formatHm(record.fullStartMillis, tz)} – ${formatHm(record.fullEndMillis, tz)}"
+    return deviceHoverZones(record.deviceSegments, top, bottom).map { zone ->
+        val line = zone.devices?.let { d ->
+            if (d.isEmpty()) "Open: no device" else "Open: ${d.joinToString(", ")}"
+        }
+        BubbleOverlay(
+            zone.top,
+            zone.bottom,
+            panelBubbleSection(record, tz, if (line == null) timeRange else "$timeRange\n$line"),
+        )
+    }
 }
 
 /** PRD §8: which bubble section one of the two decorative [SchedulerDomain.ActivityLayer]s contributes. */
@@ -5224,6 +5356,15 @@ private fun CalendarBlock(
             val sliceTop = hourHeight * slice.topHour
             val sliceHeight = hourHeight * (slice.bottomHour - slice.topHour)
             val sliceHeightPx = with(density) { sliceHeight.toPx() }.coerceAtLeast(minPx)
+            // PRD §8 extend/shorten: the grab strip on the block's true top/bottom edge — 6 dp, capped at a
+            // third of the slice so a short slice keeps a central "move" region the press can land in. ONE
+            // value: the gesture below decides its resize edge with it and the hover tiles hang the resize
+            // cursor on exactly the same strip, so the cursor can never promise a resize the press would not
+            // start. Read through [rememberUpdatedState] because the gesture coroutine outlives a zoom.
+            val edgePx = minOf(with(density) { RESIZE_EDGE_DP.toPx() }, sliceHeightPx / 3f)
+            val edgeHours = if (hourHeightPx > 0f) edgePx / hourHeightPx else 0f
+            val currentEdgePx = rememberUpdatedState(edgePx)
+            val currentSliceHeightPx = rememberUpdatedState(sliceHeightPx)
             Box(
                 modifier = Modifier
                     .offset(x = colWidth * slice.xFraction, y = sliceTop)
@@ -5238,9 +5379,6 @@ private fun CalendarBlock(
                     // a commit; on slice role so edge zones recompute when the layout changes.
                     .pointerInput(key, record.fullStartMillis, record.fullEndMillis, isFirst, isLast) {
                         val touchSlop = viewConfiguration.touchSlop
-                        // Cap the resize edge zone at a third of the slice so a short slice still has a
-                        // central "move" region the press can land in.
-                        val edgePx = minOf(with(density) { 6.dp.toPx() }, sliceHeightPx / 3f)
                         // PRD §8 double-click → open the edit window. Track the previous no-drag tap's
                         // press time across gestures so a second tap within the platform double-tap
                         // window is recognised here (a tap doesn't move/commit, so this is additive).
@@ -5263,9 +5401,11 @@ private fun CalendarBlock(
                             // Resize only on the block's true top (first slice) / bottom (last slice);
                             // an interior slice edge is just a slice boundary, so it moves the block.
                             val localY = down.position.y
+                            val grab = currentEdgePx.value
+                            val height = currentSliceHeightPx.value
                             val edge = when {
-                                isFirst && localY <= edgePx -> CalendarEdge.Start
-                                isLast && localY >= sliceHeightPx - edgePx -> CalendarEdge.End
+                                isFirst && localY <= grab -> CalendarEdge.Start
+                                isLast && localY >= height - grab -> CalendarEdge.End
                                 else -> null
                             }
                             down.consume()
@@ -5323,8 +5463,6 @@ private fun CalendarBlock(
                 // the elapsed part with activity data — which devices were open under the cursor. The slice is
                 // tiled into hover zones (one per device-set segment + plain leftovers) instead of nesting
                 // hover handlers, because a parent hover Move would overwrite a child's report.
-                val timeRange = "${formatHm(record.fullStartMillis, tz)} – ${formatHm(record.fullEndMillis, tz)}"
-                val hoverZones = deviceHoverZones(record.deviceSegments, slice.topHour, slice.bottomHour)
                 Box(Modifier.fillMaxSize()) {
                     // The title is written only on the topmost slice so a stepped block reads as one.
                     CalendarBlockBody(
@@ -5336,28 +5474,26 @@ private fun CalendarBlock(
                         titleColor = taskColor ?: CalColors.event,
                     )
                     // The block's own section, one overlay per device-set segment, then re-tiled together
-                    // with the grey periods and layers covering it so each tile reports one whole stack.
-                    val ownOverlays = hoverZones.map { zone ->
-                        val line = zone.devices?.let { d ->
-                            if (d.isEmpty()) "Open: no device" else "Open: ${d.joinToString(", ")}"
-                        }
-                        BubbleOverlay(
-                            zone.top,
-                            zone.bottom,
-                            panelBubbleSection(record, tz, if (line == null) timeRange else "$timeRange\n$line"),
-                        )
-                    }
-                    bubbleHoverZones(slice.topHour, slice.bottomHour, ownOverlays + contextOverlays)
-                        .forEach { zone ->
-                            if (zone.sections.isEmpty()) return@forEach
-                            Box(
-                                Modifier
-                                    .offset(y = hourHeight * (zone.top - slice.topHour))
-                                    .fillMaxWidth()
-                                    .height(hourHeight * (zone.bottom - zone.top))
-                                    .calendarTitleHover(zone.sections, hoverScope),
-                            )
-                        }
+                    // with the grey periods and layers covering it so each tile reports one whole stack —
+                    // and the tiles falling inside the top/bottom grab strip carry the resize cursor
+                    // THEMSELVES. A cursor-only Box laid over the edge is still a pointer-input node, so it
+                    // won the hit test and the tile beneath stopped reporting: the bubble blinked out on
+                    // exactly the edge the user was aiming at (PRD §8 extend/shorten).
+                    CalendarHoverTiles(
+                        top = slice.topHour,
+                        bottom = slice.bottomHour,
+                        overlays = blockBubbleOverlays(record, slice.topHour, slice.bottomHour, tz) +
+                            contextOverlays,
+                        hourHeight = hourHeight,
+                        hoverScope = hoverScope,
+                        resizeCursor = verticalResizePointerIcon(),
+                        // Resize only on the block's TRUE top/bottom — an interior slice edge just moves the
+                        // block — and on exactly the strip the gesture above grabs on ([edgeHours]).
+                        resizeSpans = listOfNotNull(
+                            if (isFirst) slice.topHour..(slice.topHour + edgeHours) else null,
+                            if (isLast) (slice.bottomHour - edgeHours)..slice.bottomHour else null,
+                        ),
+                    )
                     // A dashed separator at every interior boundary where the device set changed (two
                     // adjacent segments always differ — equal neighbours were merged in the sweep).
                     record.deviceSegments.forEachIndexed { segIndex, seg ->
@@ -5382,20 +5518,6 @@ private fun CalendarBlock(
                                 },
                         )
                     }
-                }
-                // PRD §8 extend/shorten: a thin hover zone on the block's true top/bottom edge shows the
-                // standard resize cursor, indicating the user can grab the edge to resize.
-                if (isFirst) {
-                    Box(
-                        Modifier.align(Alignment.TopCenter).fillMaxWidth().height(6.dp)
-                            .pointerHoverIcon(verticalResizePointerIcon()),
-                    )
-                }
-                if (isLast) {
-                    Box(
-                        Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(6.dp)
-                            .pointerHoverIcon(verticalResizePointerIcon()),
-                    )
                 }
             }
         }
