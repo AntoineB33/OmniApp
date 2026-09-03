@@ -333,6 +333,20 @@ sealed interface SchedulerIntent {
     data class AddTaskCategory(val taskId: TaskId, val title: String) : SchedulerIntent
 
     /**
+     * PRD §5/§7 the **categories window**'s naming field: define a category the account has not got, carried
+     * by no task at all.
+     *
+     * The same create-or-attach rule as [AddTaskCategory] with the attach half missing — there is no task
+     * here — so a title an existing category already carries is a **no-op**: that category is already a row
+     * of the list above the field, and minting a second one under the same spelling is the very thing the id
+     * exists to prevent. A blank title does nothing, as everywhere else a thing is named.
+     *
+     * An account setting, like renaming and deleting one: it records **no** history unit (as `AddPeriodKind`
+     * does not), because no task's priority moves.
+     */
+    data class CreateCategory(val title: String) : SchedulerIntent
+
+    /**
      * Give [taskId] the category [categoryId] — what the field’s **identity rows** raise. Attaching a
      * category the task already carries is a no-op, as is naming one the account no longer holds.
      */

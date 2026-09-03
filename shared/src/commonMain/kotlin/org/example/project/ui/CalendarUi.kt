@@ -842,6 +842,9 @@ fun LateralMenu(
     /** PRD §5 Task relations: whether the (task, relational target) pair list is open + toggle callback. */
     taskRelationsWindowOpen: Boolean = false,
     onToggleTaskRelations: () -> Unit = {},
+    /** PRD §5 Categories: whether the account's list of categories is open + toggle callback. */
+    categoriesWindowOpen: Boolean = false,
+    onToggleCategories: () -> Unit = {},
     /** PRD §4 Default sub-tree: whether that window is open + toggle callback. */
     defaultSubtreeWindowOpen: Boolean = false,
     onToggleDefaultSubtree: () -> Unit = {},
@@ -1084,6 +1087,15 @@ fun LateralMenu(
             label = "Task relations",
             active = taskRelationsWindowOpen,
             onClick = onToggleTaskRelations,
+        )
+
+        // PRD §5 Categories: every category the account holds, in title order, each saying what carries it
+        // and what its rules ask. It is also the second place a category is created — the first being a task
+        // cell's own categories field, which can only ever reach the ones a task already carries.
+        MenuButton(
+            label = "Categories",
+            active = categoriesWindowOpen,
+            onClick = onToggleCategories,
         )
 
         // PRD §4 Default sub-tree: the template grafted under every newly created task. The switch to the

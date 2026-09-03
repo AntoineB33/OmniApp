@@ -261,6 +261,31 @@ because that is where the arithmetic is closed (the shares of one sub-tree sum t
 more than 100 % asked, 100 % asked while something else is under the scope, and less than 100 % asked while
 nothing else is.
 
+### The account's own list of them (the categories window)
+
+Two of the three questions about categories had a surface: *which categories does this task carry* (the cell's
+field) and *which tasks carry this category* (the edit window). The third — **which categories does this
+account have at all** — had none, and the gap was not cosmetic: a category was reachable only THROUGH a task
+carrying it, so one that nothing carried was invisible and unreachable, and the only way to define one was to
+give it to a task first. The lateral menu's **Categories** button is that third surface
+(`ui/CategoriesWindow.kt` over `CategoryRules.overview`).
+
+- **Title order is the WINDOW's answer, not the account's.** `state.categories` is in minting order, which is
+  what the merge and the codec preserve and what `menuEntries` deliberately ignores (it ranks by how well a
+  row matches what is typed). This list is where a category is looked up by the name it is known by, so it
+  sorts by title; nothing else reads that order.
+- **A row says what the category is DOING** — its carriers, its rules, and how many of those are asleep —
+  because that is what the tree cannot show. `ruleRows` is the same reading its own window prints, so the two
+  cannot disagree about a rule's status.
+- **No bin, and that is the same rule the task cell's row follows.** Deleting a category takes the label off
+  every task carrying it and every rule about it; it belongs where all of them are on screen, which is the
+  edit window the **✎** opens. The pair (a row about the object, a **✎** onto the object's own window) is the
+  resilience row's pair with `PeriodKindEditWindow`, for the same reason.
+- **Creating here is the field's create-or-attach with the attach half missing.** There is no task, so the
+  identity rows **open** the category they name instead of attaching it, and `CreateCategory` is a no-op on a
+  title the account already holds — a second object under one spelling being precisely what the id exists to
+  prevent. It records no history unit, like every other account setting below.
+
 ### Which half is an Undo/Redo unit
 
 The same split the restrictive periods already make, so there is one rule and not two: **defining, renaming,

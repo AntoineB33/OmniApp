@@ -176,6 +176,44 @@ object CategoryRules {
         }
     }
 
+    // ----- The account's own list (the categories window) ---------------------------------------
+
+    /** One row of the categories window: a category, what carries it, and what its rules are doing. */
+    data class OverviewRow(
+        val category: Category,
+        /** How many tasks carry it — [tasksWith]'s count, so the window and the tree agree by construction. */
+        val carriers: Int,
+        /** Its rules as [ruleRows] draws them, so the list and the category's own window cannot disagree. */
+        val rules: List<RuleRow>,
+    ) {
+        /** How many of those rules are asleep — the scope is gone, or nothing under it carries the category. */
+        val dormant: Int get() = rules.count { it.status != Status.Held }
+    }
+
+    /**
+     * PRD §5/§7 **the categories window**: every category the account holds, each with the two figures that
+     * say whether it is doing anything — how many tasks carry it, and what its rules are up to.
+     *
+     * In **title order**, and that is the window's own answer rather than a fact about the account: the
+     * categories are stored in the order they were minted, which is an order the user cannot predict and
+     * that changes under them as they type; this list is a place to *find* a category by the name they know
+     * it by. Nothing else reads this order — the task cell's field ranks by how well a row matches what is
+     * typed ([menuEntries]), which is a different question.
+     *
+     * A walk of the tree per rule ([ruleRows]), so this is asked once per change to the tree and never on a
+     * tick (ADR 0009) — the window keys its `remember` on the cells/lists/tasks/categories alone.
+     */
+    fun overview(state: SchedulerState): List<OverviewRow> =
+        state.categories
+            .map { category ->
+                OverviewRow(
+                    category = category,
+                    carriers = tasksWith(state, category.id).size,
+                    rules = ruleRows(state, category.id),
+                )
+            }
+            .sortedWith(compareBy({ it.category.title.lowercase() }, { it.category.id.value }))
+
     /**
      * PRD §4: the blank title is what deletes, so a populated cell is a live one; the root is always there.
      *

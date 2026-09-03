@@ -245,6 +245,7 @@ object SchedulerReducer {
                     )
                 }
             }
+            is SchedulerIntent.CreateCategory -> reduceCreateCategory(state, intent.title)
             is SchedulerIntent.AddTaskCategory -> reduceAddTaskCategory(state, intent.taskId, intent.title)
             is SchedulerIntent.AttachTaskCategory ->
                 reduceAttachTaskCategory(state, intent.taskId, intent.categoryId)
@@ -3295,6 +3296,22 @@ private fun applyRemoveTaskCategory(
     val task = state.tasks[taskId] ?: return state
     if (categoryId !in task.categoryIds) return state
     return state.copy(tasks = state.tasks + (taskId to task.copy(categoryIds = task.categoryIds - categoryId)))
+}
+
+/**
+ * PRD §5/§7: mint a category nothing carries yet — the categories window's naming field.
+ *
+ * The create half of [SchedulerReducer.reduceAddTaskCategory] with nothing to attach it to. A title an
+ * existing category already carries is left alone rather than minted a second time: the account is a SET of
+ * named objects, and two of them under one spelling is what the id exists to prevent. No history unit —
+ * defining a category is an account setting, and no priority has moved.
+ */
+private fun reduceCreateCategory(state: SchedulerState, titleRaw: String): SchedulerState {
+    val title = titleRaw.trim()
+    if (title.isEmpty()) return state
+    if (state.categories.any { it.title.equals(title, ignoreCase = true) }) return state
+    val (id, allocated) = state.allocateCategoryId()
+    return allocated.copy(categories = allocated.categories + Category(id = id, title = title))
 }
 
 /**

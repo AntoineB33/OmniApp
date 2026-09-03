@@ -609,7 +609,7 @@ a tree entry — is sort 2,
 because "the edit window of task A" and "the edit window of task B" are two different windows and the user
 only ever means the one they just asked for. A pop-up there is exactly one of is sort 1. So sort 1 is
 precisely `windowStack` (Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, TaskRelations,
-DefaultSubtree, Shortcuts, TimeSim) and every other pop-up in the app is sort 2.
+Categories, DefaultSubtree, Shortcuts, TimeSim) and every other pop-up in the app is sort 2.
 
 - **A notice the app says back to a gesture is sort 2 too** (`MessagePopup` — today only the calendar's "go
   to task tree" on a task no cell holds): "the error about this panel" and "the error about that one" are two
@@ -707,6 +707,20 @@ relative-priority window's number said once and then **kept**.
   the object. `Task.categoryIds` holds ids only; the titles and the rules are `SchedulerState.categories`. An
   id naming a category the account no longer holds is **ignored**, which is what lets the merge resolve the
   categories and the tasks wearing them independently.
+- **The lateral menu's *Categories* window is the account's own list, and the SECOND place a category is
+  created** (`ui/CategoriesWindow.kt`, `CategoryRules.overview`). The task cell's field is *one task, every
+  category* and the category edit window is *one category, every task*; this is the question neither asks —
+  *which categories does this account have at all?* — and without it a category was reachable only THROUGH a
+  task carrying it, so one carrying nothing (its last carrier deleted, a rule written before the tasks it is
+  about) could be neither seen nor made. Four things it is: **title order**, which is the window's answer and
+  not a fact about the account (the categories are stored in minting order, which the user cannot predict);
+  a row saying what the category is *doing* — the carriers, the rules, and how many of those are **asleep**;
+  a row's **✎** onto `CategoryEditWindow` and **no bin**, because a delete takes the label off every task and
+  every rule at once and so belongs where all of them are shown — the same pair the task cell's category row
+  and the resilience row both make; and the **same naming field** the "add" option is, whose identity rows
+  here **open** a category (there is no task to attach one to) so that `CreateCategory` only ever mints a
+  name the account has not got. Sort 1, like every other lateral-menu window; the row's ✎ opens a sort-2
+  window, which is why pressing it on another row replaces it.
 - **The "add" option is a task cell in Edit Mode, minus the Mode selector** — the same `EditModeMenuBlock`,
   with the account's categories as the **identity** rows and their titles as the **suggestions**. There is no
   Mode selector because neither of its questions exists here: naming a category IS pointing at it. The row's

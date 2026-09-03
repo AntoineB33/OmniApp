@@ -520,4 +520,76 @@ class CategoryRulesTest {
         assertEquals(listOf(deep), s.tasks[pasted]!!.categoryIds, "the same category, not a second one")
         assertEquals(1, s.categories.size, "a paste must not mint a second category under one name")
     }
+
+    // ----- PRD §7 the categories window: the account's own list ----------------------------------
+
+    @Test
+    fun the_window_creates_a_category_no_task_carries() {
+        val f = fixture()
+        // The whole reason the window can create one: until it existed, a category could only be minted by
+        // giving it to a task, so one carrying nothing could neither be made nor reached.
+        val s = SchedulerReducer.reduce(f.state, SchedulerIntent.CreateCategory("  deep  "))
+
+        assertEquals(1, s.categories.size)
+        assertEquals("deep", s.categories.single().title, "the name is trimmed, as everywhere else")
+        assertTrue(
+            s.tasks.values.none { it.categoryIds.isNotEmpty() },
+            "creating a category attaches it to nothing",
+        )
+    }
+
+    @Test
+    fun creating_a_category_under_a_name_the_account_already_holds_changes_nothing() {
+        val f = fixture()
+        val s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
+        // Same create-or-attach rule as the task cell's field, minus the attach half: the account is a set
+        // of named objects, and the id exists precisely so one name never means two of them.
+        val again = SchedulerReducer.reduce(s, SchedulerIntent.CreateCategory("DEEP"))
+
+        assertEquals(1, again.categories.size)
+        assertEquals(s, again, "a name already held is a no-op, not a second category")
+        assertEquals(s, SchedulerReducer.reduce(s, SchedulerIntent.CreateCategory("   ")))
+    }
+
+    @Test
+    fun creating_a_category_records_no_history_unit() {
+        val f = fixture()
+        // An account setting, like defining a kind of restrictive period: no task's priority has moved.
+        val s = SchedulerReducer.reduce(f.state, SchedulerIntent.CreateCategory("deep"))
+        assertEquals(f.state.histories, s.histories)
+    }
+
+    @Test
+    fun the_window_lists_every_category_in_title_order_with_what_it_is_doing() {
+        val f = fixture()
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.CreateCategory("zeal"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.read, "deep"))
+        val deep = categoryNamed(s, "deep")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, null, 0.5))
+
+        val rows = CategoryRules.overview(s)
+        // Title order, not minting order — the list is where a category is found by the name it is known by.
+        assertEquals(listOf("deep", "zeal"), rows.map { it.category.title })
+        assertEquals(2, rows[0].carriers)
+        assertEquals(1, rows[0].rules.size)
+        assertEquals(0, rows[0].dormant)
+        // A category carried by nothing is still a row: that is exactly the one the tree cannot show.
+        assertEquals(0, rows[1].carriers)
+        assertEquals(emptyList(), rows[1].rules)
+    }
+
+    @Test
+    fun the_window_counts_a_rule_that_governs_nothing_as_asleep() {
+        val f = fixture()
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
+        val deep = categoryNamed(s, "deep")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.notesCell, 0.5))
+
+        // The rule is about Notes' sub-tree, which nothing under it carries — dormant, not contradictory.
+        val row = CategoryRules.overview(s).single { it.category.id == deep }
+        assertEquals(1, row.rules.size)
+        assertEquals(1, row.dormant)
+        assertEquals(CategoryRules.Status.NoCarrier, row.rules.single().status)
+    }
 }

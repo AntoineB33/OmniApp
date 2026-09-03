@@ -11,6 +11,43 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The lateral menu's "Categories": the account's own list of them — 2026-09-03
+
+PRD §5/§7, ADR 0004. `shared` (new `ui/CategoriesWindow.kt`; `CategoryRules.kt`, `SchedulerIntent.kt`,
+`SchedulerReducer.kt`, `CalendarUi.kt`, `App.kt`) + `docs/PRD_TaskScheduler.md` +
+`docs/adr/0004-relative-priority.md` + `CLAUDE.md`. **Client rebuild only** — no Supabase deploy, no SQLite
+migration and no payload change: a category created here is the same object the task cell's field mints, and
+it rides the `categories` field that already existed.
+
+Asked for: *"a button in the left-side menu to open the categories window that displays all the categories
+the user created"*, the user being able to create one *"through the edit mode of the drop-down menu of a task
+cell in the task tree, but also in the categories window"*.
+
+- **It is the third question about categories, and the only one that had no surface.** The cell's field is
+  *one task, every category*; the edit window is *one category, every task*; nothing asked *which categories
+  does this account have at all*. That gap was not cosmetic — a category was reachable only THROUGH a task
+  carrying it, so one whose last carrier had been deleted (or one defined for a rule before the tasks it is
+  about exist) was invisible and unreachable, and the only way to define one was to give it to a task first.
+- **Title order is the window's answer, not the account's.** `state.categories` is in minting order — what
+  the codec and the merge preserve, and what `menuEntries` deliberately ignores in favour of match quality.
+  A list you look a name up in sorts by the name; nothing else reads this order (`CategoryRules.overview`).
+- **A row says what the category is doing**: its carriers, its rules, and how many of those are **asleep** —
+  the figure the tree cannot show at all. The rules come from `ruleRows`, the same reading the category's own
+  window prints, so the two cannot disagree.
+- **No bin here.** Deleting a category takes the label off every task carrying it and every rule about it, so
+  it stays in the window the row's **✎** opens — the same pair the task cell's category row makes, and the
+  one the resilience row makes with `PeriodKindEditWindow`.
+- **Creating is the field's create-or-attach minus the attach half.** New intent `CreateCategory`, a no-op on
+  a title the account already holds (one name, one object — the whole argument for the id) and on a blank
+  one; the naming field's identity rows **open** the category they name rather than attaching it, there being
+  no task here to attach it to. An account setting, so it records **no** Undo/Redo unit, exactly as renaming
+  and deleting one do not.
+- Sort 1 (`ui/PopupWindows.kt`): there is one of it, so it stacks like every other lateral-menu window, and
+  the sort-2 category window a row opens is replaced — not stacked — when the ✎ of another row is pressed.
+- `CategoryRulesTest` (+5): the create with nothing carrying it, the duplicate/blank no-ops, the missing
+  history unit, the title order with a rule-less and carrier-less category still listed, and a dormant rule
+  counted as asleep.
+
 ### "collapse subtree" becomes "collapse sub-trees" — 2026-09-03
 
 PRD §13. `shared` (`SchedulerIntent.kt`, `SchedulerReducer.kt`, `TaskSchedulerScreen.kt`) +

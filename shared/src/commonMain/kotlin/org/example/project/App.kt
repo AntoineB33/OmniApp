@@ -102,6 +102,7 @@ import org.example.project.ui.LateralMenu
 import org.example.project.ui.TaskRelationsWindow
 import org.example.project.ui.CalendarPeriodKind
 import org.example.project.ui.ManualEntryEditWindow
+import org.example.project.ui.CategoriesWindow
 import org.example.project.ui.CategoryEditWindow
 import org.example.project.ui.MessagePopup
 import org.example.project.ui.PeriodEditWindow
@@ -126,8 +127,8 @@ enum class OmniPage(val label: String) {
 
 /** The z-stackable floating windows; the currently focused one is drawn on top (see [App]'s windowStack). */
 private enum class FloatingWindow {
-    Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, TaskRelations, DefaultSubtree,
-    Shortcuts, TimeSim
+    Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, TaskRelations, Categories,
+    DefaultSubtree, Shortcuts, TimeSim
 }
 
 // Debug "simulate pause + leap": pressing a break chip INSTANTLY jumps the sim clock forward by the whole
@@ -430,6 +431,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // state; the pairs the user has kept or struck off are authoritative synced state).
         var taskRelationsWindowOpen by
             remember { mutableStateOf(savedVisible(FloatingWindow.TaskRelations)) }
+        // PRD §5 Categories: whether the account's list of categories is open (local UI state; the
+        // categories and their rules are authoritative synced state).
+        var categoriesWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Categories)) }
         // Its sorter configuration. Compose-only state, like the calendar's zoom and the §4 find bar: how a
         // list is ordered on screen is a way of looking at the tree, not a fact about it — so it is never
         // persisted, never synced, and records no history unit.
@@ -457,6 +461,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     FloatingWindow.TaskTrees,
                     FloatingWindow.TaskList,
                     FloatingWindow.TaskRelations,
+                    FloatingWindow.Categories,
                     FloatingWindow.DefaultSubtree,
                     FloatingWindow.Shortcuts,
                     FloatingWindow.TimeSim,
@@ -476,6 +481,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.TaskTrees -> taskTreesWindowOpen
             FloatingWindow.TaskList -> taskListWindowOpen
             FloatingWindow.TaskRelations -> taskRelationsWindowOpen
+            FloatingWindow.Categories -> categoriesWindowOpen
             FloatingWindow.DefaultSubtree -> defaultSubtreeWindowOpen
             FloatingWindow.Shortcuts -> shortcutsWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
@@ -493,6 +499,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.TaskTrees -> null
             FloatingWindow.TaskList -> null
             FloatingWindow.TaskRelations -> null
+            FloatingWindow.Categories -> null
             FloatingWindow.DefaultSubtree -> null
             FloatingWindow.Shortcuts -> null
             FloatingWindow.TimeSim -> null
@@ -527,6 +534,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var taskListOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskList, Offset(-60f, 100f))) }
         var taskRelationsOffset by
             remember { mutableStateOf(savedOffset(FloatingWindow.TaskRelations, Offset(100f, -100f))) }
+        var categoriesOffset by
+            remember { mutableStateOf(savedOffset(FloatingWindow.Categories, Offset(-100f, 60f))) }
         var defaultSubtreeOffset by
             remember { mutableStateOf(savedOffset(FloatingWindow.DefaultSubtree, Offset(260f, -60f))) }
         var shortcutsOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Shortcuts, Offset(60f, 60f))) }
@@ -540,6 +549,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         LaunchedEffect(taskListWindowOpen) { persistPlacement(FloatingWindow.TaskList, taskListOffset, taskListWindowOpen) }
         LaunchedEffect(taskRelationsWindowOpen) {
             persistPlacement(FloatingWindow.TaskRelations, taskRelationsOffset, taskRelationsWindowOpen)
+        }
+        LaunchedEffect(categoriesWindowOpen) {
+            persistPlacement(FloatingWindow.Categories, categoriesOffset, categoriesWindowOpen)
         }
         LaunchedEffect(defaultSubtreeWindowOpen) {
             persistPlacement(FloatingWindow.DefaultSubtree, defaultSubtreeOffset, defaultSubtreeWindowOpen)
@@ -1185,6 +1197,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleTaskRelations = {
                         onMenuWindowClicked(FloatingWindow.TaskRelations) { taskRelationsWindowOpen = it }
                     },
+                    categoriesWindowOpen = categoriesWindowOpen,
+                    onToggleCategories = {
+                        onMenuWindowClicked(FloatingWindow.Categories) { categoriesWindowOpen = it }
+                    },
                     defaultSubtreeWindowOpen = defaultSubtreeWindowOpen,
                     onToggleDefaultSubtree = {
                         onMenuWindowClicked(FloatingWindow.DefaultSubtree) { defaultSubtreeWindowOpen = it }
@@ -1211,7 +1227,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleAway = { engine.setUserAway(!userAway) },
                     anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen ||
                         alarmWindowOpen || taskTreesWindowOpen || taskListWindowOpen ||
-                        taskRelationsWindowOpen || defaultSubtreeWindowOpen || shortcutsWindowOpen,
+                        taskRelationsWindowOpen || categoriesWindowOpen || defaultSubtreeWindowOpen ||
+                        shortcutsWindowOpen,
                     onCloseAllWindows = {
                         calendarOpen = false
                         choresManagerOpen = false
@@ -1221,6 +1238,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         taskTreesWindowOpen = false
                         taskListWindowOpen = false
                         taskRelationsWindowOpen = false
+                        categoriesWindowOpen = false
                         defaultSubtreeWindowOpen = false
                         shortcutsWindowOpen = false
                     },
@@ -1914,6 +1932,33 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             modifier = Modifier
                                 .align(Alignment.Center)
                                 .zIndex(windowZ(FloatingWindow.TaskRelations)),
+                        )
+                    }
+
+                    // PRD §5 Categories: every category the account holds — the question neither the task
+                    // cell's field (one task, every category) nor the category edit window (one category,
+                    // every task) asks. It reads the LIVE state, and a row's ✎ opens that category's own
+                    // sort-2 window, which stays the one place a category is renamed, ruled or deleted.
+                    if (categoriesWindowOpen) {
+                        CategoriesWindow(
+                            state = schedulerState,
+                            onIntent = { vm.dispatch(it) },
+                            onOpenCategoryEdit = {
+                                // The account's own categories, never the template's projection — this
+                                // window is about the live state, so the pop-up it opens must be too.
+                                popupFromDefaultSubtree = false
+                                editCategoryId = it
+                            },
+                            onDismiss = { categoriesWindowOpen = false },
+                            initialOffset = categoriesOffset,
+                            onOffsetChange = {
+                                categoriesOffset = it
+                                persistPlacement(FloatingWindow.Categories, it, true)
+                            },
+                            onRaise = { focusWindow(FloatingWindow.Categories) },
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .zIndex(windowZ(FloatingWindow.Categories)),
                         )
                     }
 
