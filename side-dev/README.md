@@ -21,7 +21,11 @@ Restrictive periods are objects with a start and end time, and a kind.
 
 ### Rule state evolution
 * **Rule State Definition:** A rule state is the set of tasks and their associated priority percentages, minimum execution time and resilience values for every periods at a given moment in time.
-* **Rule State Evolution:** When there is one defined rule state, it stays the same forever. When multiple rule states are defined for specific moments in time, that means that between two consecutive rule states, the rule state transforms evenly from the first state to the second one.
+* **Rule State Evolution:** When $now line$ is before the first rule state or after the last rule state, then this rule state is applied. When $now line$ is between two rule state, the rule state being applied is the one found at this moment in the transition. In a transition between two rule state, the priority percentages, minimum execution time and resilience values of each task change at a constant rate and over the same timeframe, which is the time difference of the two rule states. If a task is missing in the other rule state, the priority starts or ends at 0, but the minimum execution time and the resilience value don't change.
+* **Example:** Only two rule states at t1 and t2 and both only have the two same tasks A and B. The only difference between the two scenarios is the priority of A at the second rule state and the time t2.
+Scenario 1: Task A goes from 0 to 100% priority from t1 to t2=t1+10min.
+Scenario 2: Task A goes from 0 to 50% priority from t1 to t2=t1+5min.
+It is guaranteed, with infinite compute resources, that the resulting set of rules on both scenarios gives the same schedule and alternative schedule up to t1+5min.
 
 
 ### $now line$ and 3 Dynamic Restrictive Period
