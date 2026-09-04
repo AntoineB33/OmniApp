@@ -2984,6 +2984,86 @@ object SchedulerDomain {
     }
 
     /**
+     * PRD §15: **what the user is free to go on doing when a screen break ENDS** — the stretch the break runs
+     * out into, when that stretch is one the break did not begin in.
+     *
+     * A break the user is told about is a break they have to come back from, so the one thing worth adding to
+     * that sentence is that they do not: the break ends inside a period no on-screen work happens in anyway,
+     * and it started outside it. Two things can say so and they are the two named cases —
+     * [UserPeriod] (a restrictive period the user drew themselves) and [BeforeBed] (§17's wind-down hour).
+     */
+    enum class ScreenBreakFollowOn {
+        /** A restrictive period the user drew — the break runs out into it. */
+        UserPeriod,
+
+        /** §17's `before bed` hour ([PeriodKinds.BEFORE_BED]) — the break runs out into the wind-down. */
+        BeforeBed,
+    }
+
+    /**
+     * The [ScreenBreakFollowOn] for a break occupying `[startMillis, endMillis]`, or `null` where there is
+     * nothing to add.
+     *
+     * The rule, exactly: the break's START is covered by no qualifying period and its END is
+     * (half-open coverage `start <= t < end`, so a period beginning at the break's own end instant IS the
+     * stretch that follows it — the case this exists for). A break wholly inside such a period says nothing:
+     * the user was already off the screen when it began.
+     *
+     * What qualifies is what the calendar already draws as a period the user is away from the screen for —
+     * a period the USER drew (never a derived one) and the §17 wind-down hour. The three dynamic periods are
+     * excluded because a break is not the freedom that follows a break, and a §17 **sleep window** because the
+     * wind-down hour always precedes one: a break reaching a sleep window started inside `before bed` and is
+     * already refused by the first clause. Where both qualify at the end instant the user's own period is
+     * named first, being the one they asked for.
+     */
+    fun screenBreakFollowOn(
+        panels: List<TaskPanel>,
+        startMillis: Long,
+        endMillis: Long,
+    ): ScreenBreakFollowOn? {
+        fun coveringAt(instant: Long): List<ScreenBreakFollowOn> =
+            panels.mapNotNull { panel ->
+                val kind = followOnKindOf(panel) ?: return@mapNotNull null
+                if (instant >= panel.startEpochMillis && instant < panel.endEpochMillis) kind else null
+            }
+        if (coveringAt(startMillis).isNotEmpty()) return null
+        val ending = coveringAt(endMillis)
+        return when {
+            ScreenBreakFollowOn.UserPeriod in ending -> ScreenBreakFollowOn.UserPeriod
+            ScreenBreakFollowOn.BeforeBed in ending -> ScreenBreakFollowOn.BeforeBed
+            else -> null
+        }
+    }
+
+    /** Which side of [screenBreakFollowOn]'s qualifying set this panel is on, or `null` for neither. */
+    private fun followOnKindOf(panel: TaskPanel): ScreenBreakFollowOn? = when {
+        !panel.isRestrictivePeriod -> null
+        // A dynamic period, taken or conducted, is a break — never the stretch a break runs out into.
+        panel.screenBreak || panel.conductedBreak -> null
+        panel.id.startsWith(BEFORE_BED_PANEL_ID_PREFIX) -> ScreenBreakFollowOn.BeforeBed
+        // Derived §17 sleep, and the recorded sessions it materializes, are not what this announces (above).
+        panel.sleep -> null
+        else -> ScreenBreakFollowOn.UserPeriod
+    }
+
+    /**
+     * PRD §15: the BODY of a screen break's start notification — the break's [title], plus what the break
+     * runs out into where [screenBreakFollowOn] has something to say.
+     *
+     * One function, so the automatic cue sweep and the manual "Look away now" cannot word one break two ways.
+     */
+    fun screenBreakStartNotificationMessage(
+        panels: List<TaskPanel>,
+        title: String,
+        startMillis: Long,
+        endMillis: Long,
+    ): String = when (screenBreakFollowOn(panels, startMillis, endMillis)) {
+        ScreenBreakFollowOn.UserPeriod -> "$title — followed by a no screen period"
+        ScreenBreakFollowOn.BeforeBed -> "$title — followed by the hour before bed"
+        null -> title
+    }
+
+    /**
      * `side-dev/README.md`: **when [title]'s dynamic period next begins** at or after [nowMillis], or null
      * within the search window. The one reading of "the next break", shared by the calendar, the cue sweep and
      * the pause-cue publication — all three ask the placement rather than an anchor, so the three cannot

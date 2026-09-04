@@ -2187,7 +2187,18 @@ class SchedulerEngine(
                                                 "sim now=${Diagnostics.formatInstant(simNow)})",
                                         )
                                         else -> {
-                                            notifyUser("Screen break", title)
+                                            // PRD §15: a break that runs out into a period the user does
+                                            // not have to be at a screen for says so, so the user knows they
+                                            // need not come back at the end of it.
+                                            notifyUser(
+                                                "Screen break",
+                                                SchedulerDomain.screenBreakStartNotificationMessage(
+                                                    panels = st.panels,
+                                                    title = title,
+                                                    startMillis = start,
+                                                    endMillis = end,
+                                                ),
+                                            )
                                             if (voice) speakCue(VoiceCue.LookAway)
                                             // Resume fires at `end`: same tick if the whole break was leaped
                                             // (queued below, sorted after this start); else armed for later.
@@ -2225,7 +2236,20 @@ class SchedulerEngine(
                                         )
                                     } else {
                                         sidePoseNotifiedDue = sidePoseNotifiedDue + (title to due)
-                                        notifyUser("Screen break", title)
+                                        // The pose is announced at its DUE and taken from there, so the
+                                        // window it runs out of is `[due, due + duration)` — the same
+                                        // reading the calendar's undragged run places it with.
+                                        val poseEnd = due +
+                                            (st.screenBreaks.firstOrNull { it.title == title }?.durationMillis ?: 0L)
+                                        notifyUser(
+                                            "Screen break",
+                                            SchedulerDomain.screenBreakStartNotificationMessage(
+                                                panels = st.panels,
+                                                title = title,
+                                                startMillis = due,
+                                                endMillis = poseEnd,
+                                            ),
+                                        )
                                     }
                                 }
                             }
@@ -2329,10 +2353,20 @@ class SchedulerEngine(
         manualLookAwayJob?.cancel()
         val voice = st.lookAwayVoiceEnabled
         manualLookAwayJob = scope.launch {
-            notifyUser("Screen break", lookAway.title)
+            // The break is the full duration counted from when the user was TOLD — but the message says what
+            // it runs out into (PRD §15), so the window is measured before the cue rather than after it, and
+            // `resumeAt` is re-read from the clock below so the recorded occurrence is unchanged.
+            val startedAt = clock.nowMillis()
+            notifyUser(
+                "Screen break",
+                SchedulerDomain.screenBreakStartNotificationMessage(
+                    panels = st.panels,
+                    title = lookAway.title,
+                    startMillis = startedAt,
+                    endMillis = startedAt + lookAway.durationMillis,
+                ),
+            )
             if (voice) speakCue(VoiceCue.LookAway)
-            // The break is the full duration counted from when the user was TOLD, so `resumeAt` is read after
-            // the cue, and it is the end this occurrence is recorded at if it gets there.
             val resumeAt = clock.nowMillis() + lookAway.durationMillis
             while (clock.nowMillis() < resumeAt) {
                 val speed = (clock as? SimAppClock)?.speed ?: 1.0

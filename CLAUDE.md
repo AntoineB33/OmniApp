@@ -578,6 +578,21 @@ instant it is waiting for; read off an anchor instead, it found no next boundary
 pause cue's `nextScreenBreakStartMillis` is the pose half of that reading, so the server and this device key
 on one instant.
 
+**A break's start notification says what the break RUNS OUT INTO** — one function,
+`SchedulerDomain.screenBreakStartNotificationMessage` over `screenBreakFollowOn`, so the cue sweep and the
+manual "Look away now" cannot word one break two ways. The rule is a pair of coverage questions asked of
+`state.panels`: the break's START is covered by no qualifying period and its END is (half-open, so a period
+beginning at the break's own end instant IS what follows it — the case this exists for). Qualifying is what
+the calendar already draws as *the user is away from the screen here* and only in the two shapes PRD §15
+names: a period the **USER** drew (`ScreenBreakFollowOn.UserPeriod`) and §17's **`before bed`** hour
+(`BeforeBed`). Four exclusions, each a rule: a **dynamic period** and a **conducted break** are breaks, never
+the freedom after one; a **derived sleep window** is not announced because the wind-down hour always precedes
+it, so a break reaching one started inside `before bed` and the first clause has already refused it; and a
+break wholly inside a qualifying period says nothing at all — the user was off the screen when it began. The
+window asked about is the break's own in the run **its own cue keys on**: a look-away's placed
+`[start, end]`, a **pose's DUE and one duration after it** (it is announced at its due and taken from there,
+so the placed at-line drag is not what the user is being told about).
+
 Staleness is judged only by the crossing's REAL age (`BoundarySweep`, 2-s budget), never by sim distance or
 scan-window position. Consecutive scans must tile the timeline with no gaps (`scanFloorMillis`), so no
 crossing can be silently clipped by a clock jump.

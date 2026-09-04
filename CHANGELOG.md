@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A break's start notification says what the break runs out into — 2026-09-05
+
+`shared` (`domain/SchedulerDomain.kt`, `engine/SchedulerEngine.kt`) + `ScreenBreakFollowOnTest`,
+`CLAUDE.md`, `docs/PRD_TaskScheduler.md` §15. **Client only — an app rebuild
+(`account{1,2,3}-*deploy*.bat`); no Supabase deploy and no DB migration.**
+
+A screen break whose start is **outside** a period the user is away from the screen for but whose end is
+**inside** one no longer reads as a break to come back from: its start notification now adds *"followed by a
+no screen period"* (the period is one the **user** drew) or *"followed by the hour before bed"* (§17's
+wind-down hour). Before this the user learned it only by reaching the end of the break and finding nothing
+scheduled.
+
+`SchedulerDomain.screenBreakFollowOn` is the whole rule and
+`screenBreakStartNotificationMessage` the one wording, so the automatic cue sweep and the manual
+"Look away now" cannot word one break two ways. A break already inside such a period when it began adds
+nothing; a dynamic period, a conducted break and a derived sleep window do not qualify (the reasons are in
+`CLAUDE.md` § *Notification / voice-cue triggers*). The window asked about is the break's own in the run its
+cue keys on — a look-away's placed `[start, end]`, a pose's **due** and one duration after it.
+
 ### The now-line has a THIRD mode — 2026-09-04
 
 `shared` (`domain/DynamicPeriods.kt`, `domain/SchedulerDomain.kt`, `engine/SchedulerEngine.kt`,
