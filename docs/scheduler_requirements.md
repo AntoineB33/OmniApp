@@ -36,9 +36,8 @@ It is guaranteed, with infinite compute resources, that the resulting set of rul
     * After any dynamic restrictive period, no 20s period in the next **20 minutes**.
     * After any $\ge 5$-minute stretch covered by the period "no on-screen task" without any task (whether caused by dynamic periods, pre-placed restrictive periods, or a combination), no 5min period in the next 1 hour.
     * After a $\ge 15$-minute stretch covered by the period "no on-screen task" without any task, no 20s restrictive period in the next **20 minutes**, and no 15min period in the next **2 hours**.
-    * The start of the 
     * If the rules above make dynamic restrictive periods overlapping, the whole chain is replaced by the longest period of the chain starting at the earliest point, and the others are removed. The rules above prevent any situation where two dynamic restrictive periods of the same length are overlapping.
-* **$now line$ 2 modes:** There are two "$now line$ modes". In the tests, the switch between modes is done with a button.
+* **$now line$ 3 modes:** There are three "$now line$ modes". In the tests, the switch between modes is done with a button.
     * **Mode 1:** $now line$ must not be covered by the period "no on-screen task". This means that if it reaches one of those periods, the passing of the $now line$ line creates task panels not covered by the period. **The 20s period is the exception:** it is assumed to be taken as soon as it is reached (looking away costs no working time), so it is never delayed — the $now line$ is in mode 2 for the duration of that 20s period, crosses it, and is back in mode 1 at its end.
     * **Mode 2:** $now line$ must be covered by the period "no on-screen task" but not one of the three dynamic periods.
     * **Mode 3:** $now line$ must be covered by the period "no on-screen task".
@@ -49,7 +48,7 @@ It is guaranteed, with infinite compute resources, that the resulting set of rul
     * If $now line$ is in mode 2 and reaches the end of a 15min period, the gap between the end of the 15min period and $now line$ is covered by a period "no on-screen task", filled with tasks that have a non-zero resilience to the kind "no on-screen task", or no task if none have such resilience.
 
 ### Starting timeline
-The starting timeline can have pre-placed tasks and restrictive periods. They never change except for dynamic restrictive periods or the two modes of $now line$.
+The starting timeline can have pre-placed tasks and restrictive periods. They never change except for dynamic restrictive periods or the three modes of $now line$.
 
 ### Alternative Schedules:
 The returned set of rules must also give for every $now line$ the task that must be scheduled if the task scheduled by the scheduler can't be scheduled now. When it happens, a program would simply read the rules, set this new task starting at $now line$, and run the scheduler again with this new schedule (because this alternative schedule doesn't say what happens next if this alternative task is chosen).
