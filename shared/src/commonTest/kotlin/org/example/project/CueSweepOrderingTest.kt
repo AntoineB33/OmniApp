@@ -14,14 +14,15 @@ import org.example.project.scheduler.model.ScreenBreak
  * that could race.
  *
  * Both are answered by one sentence now: **every cue boundary is the START of a placed dynamic period**
- * ([SchedulerDomain.screenBreakOccurrencesBetween]), and [SchedulerDomain.cueCrossings] merges them into one
- * list sorted by instant. The reconstruction cannot drop a crossing because it is a pure function of the
- * recurrence bars over the window, and the two cues cannot race because there is one list.
+ * ([SchedulerDomain.screenBreakCueOccurrencesBetween] — a pose's undragged due, a look-away's at-line
+ * placement), and [SchedulerDomain.cueCrossings] merges them into one list sorted by instant. The
+ * reconstruction cannot drop a crossing because it is a pure function of the recurrence bars over the window,
+ * and the two cues cannot race because there is one list.
  *
  * What changed with `side-dev/README.md`: a break's drawn start used to slide to the now-line while it was
  * owed, so it was never a crossable boundary and the cue had to key on a separate anchored due
- * (`lastRest + interval`). Nothing slides any more — the bars put each period at a fixed instant — so the
- * drawn start IS the boundary, and what is announced is what is drawn by construction.
+ * (`lastRest + interval`). Only a POSE slides now, so only a pose's cue keys on a due; the 20 s look-away is
+ * announced where it is drawn.
  */
 class CueSweepOrderingTest {
     private val MIN = 60_000L
@@ -45,7 +46,7 @@ class CueSweepOrderingTest {
         val sides = listOf(lookAway, pose5)
         val from = 0L
         val to = 4 * HOUR
-        val placed = SchedulerDomain.screenBreakOccurrencesBetween(sides, from, to)
+        val placed = SchedulerDomain.screenBreakCueOccurrencesBetween(sides, from, to, nowMillis = to)
         assertTrue(placed.isNotEmpty(), "the case needs periods to be about")
         val out = crossings(sides, from, to)
         assertEquals(

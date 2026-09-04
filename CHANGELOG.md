@@ -11,6 +11,35 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The 20 s look-away's cue keys on the AT-LINE run, not on the undragged due — 2026-09-04
+
+`shared` (`scheduler/domain/SchedulerDomain.kt` — new `screenBreakCueOccurrencesBetween`, `cueCrossings` gains
+a `mode`; `scheduler/engine/SchedulerEngine.kt` — the sweep and its self-delay) + `CLAUDE.md` + ADR 0003 +
+tests (`DynamicPeriodsTest`, `ScreenBreakCueRuleTest`, `CueSweepOrderingTest`). **Client rebuild only** — no
+Supabase deploy, no SQLite migration, no payload change (both readings are derived).
+
+Reported on account 3: the calendar drew a **20 s look-away at 12:52–12:53** that was never announced — the
+last notification in the History window was the **15-min pose at 12:51**, still owed and dragging at the line.
+Confirmed against the release DB (read-only probe) and `~/.omniapp-release/diagnostics.log`: over 12:30–12:56
+the undragged run held one 5-min pose and **no look-away at all**, while the at-line run the calendar draws
+held look-aways at 12:33:40 and 12:54:00.
+
+Cause: **the two runs of the recurrence bars are not the same sequence of look-aways**, and the cue read the
+wrong one. The drag re-anchors the bar it fires on, so an owed pose is a *placed dynamic period* in the
+undragged run (barring the 20 s for twenty minutes after itself) and has been dragged onto the now-line in the
+at-line run (barring nothing where it was owed). `cueCrossings` asked the undragged run for all three, so it
+drew look-aways it never announced — and would have announced one where it draws none as soon as a dragged
+pose landed on the line and barred the 20 s ahead of it.
+
+Fix: each of the three is announced from the run its own placement rule makes crossable — a **pose** on its
+undragged **due** (it is dragged, so its place rides the line and is never crossed), the **20 s look-away** on
+its **at-line placement** (nothing drags it, so that start is already a fixed instant, and it is the one the
+calendar draws). `screenBreakCueOccurrencesBetween` is the single reading; `cueCrossings` and the cue sweep's
+self-delay both go through it, and the sweep now passes the `t_p` mode as well as the environment and the
+anchor. Both runs are still asked with the *whole* break list and the answer selected afterwards: the chain
+merge collapses a look-away that touches a pose into the pose, so a spec dropped from the list would move the
+starts of the ones left behind.
+
 ### The 20 s look-away is assumed taken — the now-line crosses it instead of dragging it — 2026-09-04
 
 `shared` (`scheduler/domain/DynamicPeriods.kt`, KDoc in `scheduler/domain/SchedulerDomain.kt` and `App.kt`) +

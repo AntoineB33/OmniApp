@@ -343,28 +343,66 @@ class DynamicPeriodsTest {
     }
 
     @Test
-    fun a_break_is_announced_at_its_DUE_not_where_the_line_leaves_it() {
-        // The cue keys on the due - where the bars put the break - because in mode 1 the period itself has no
+    fun a_POSE_is_announced_at_its_DUE_not_where_the_line_leaves_it() {
+        // A pose's cue keys on the due - where the bars put it - because in mode 1 the period itself has no
         // crossable start: the line pushes it, so it is always "starting now" and a sweep keyed on it would
         // announce a break at every scan for as long as one is owed.
+        val line = NOW + 2 * HOUR
         val crossings = SchedulerDomain.cueCrossings(
             screenBreaks = breaks,
             windDownInstants = emptyList(),
             automaticSchedule = true,
             alreadyNotifiedPoseDues = emptyMap(),
             fromMillis = NOW,
-            toMillis = NOW + 2 * HOUR,
+            toMillis = line,
         )
         assertEquals(
-            dues(toMillis = NOW + 2 * HOUR)
-                .filter { it.startEpochMillis in NOW..(NOW + 2 * HOUR) }
+            dues(toMillis = line)
+                .filter { it.title != lookAway && it.startEpochMillis in NOW..line }
                 .map { it.startEpochMillis },
-            crossings.filter { it.kind != SchedulerDomain.CueKind.WindDown }.map { it.instant },
+            crossings.filter { it.kind == SchedulerDomain.CueKind.RestPoseDue }.map { it.instant },
         )
         // ...and those dues are NOT where mode 1 leaves the periods: the swept ones are all on the line.
         assertTrue(
-            place(toMillis = NOW + 2 * HOUR).any { it.startEpochMillis == NOW + 1 },
+            place(toMillis = line).any { it.startEpochMillis == NOW + 1 },
             "the swept chain is owed at the line",
+        )
+    }
+
+    @Test
+    fun a_LOOK_AWAY_is_announced_where_the_line_actually_puts_it() {
+        // The other half of the same rule, and the anomaly it was written for (account 3, 2026-09-04): a
+        // look-away is never dragged, so its cue keys on the AT-LINE run - the one the calendar draws.
+        //
+        // The two runs are NOT the same sequence of look-aways, which is why this cannot be folded into the
+        // pose assertion above. An owed pose is a placed dynamic period in the undragged run (so it bars the
+        // 20 s for twenty minutes after itself) and is dragged onto the line in the at-line run (so it bars
+        // nothing where it was owed). Read off the undragged run, the app drew look-aways it never announced
+        // and would have announced ones it never draws.
+        val line = NOW + 2 * HOUR
+        val crossings = SchedulerDomain.cueCrossings(
+            screenBreaks = breaks,
+            windDownInstants = emptyList(),
+            automaticSchedule = true,
+            alreadyNotifiedPoseDues = emptyMap(),
+            fromMillis = NOW,
+            toMillis = line,
+        )
+        val drawn =
+            SchedulerDomain.takenScreenBreakPanels(
+                breaks, NOW, line, anchorMillis = line, tpMillis = line,
+                mode = DynamicPeriods.MODE_AT_SCREEN,
+            ).filter { it.title == lookAway }.map { it.startEpochMillis }
+        assertTrue(drawn.isNotEmpty(), "the case needs look-aways to be about")
+        assertEquals(
+            drawn,
+            crossings.filter { it.kind == SchedulerDomain.CueKind.LookAwayStart }.map { it.instant },
+            "every look-away the line draws is announced, and nothing else is",
+        )
+        // ...and it really is a different set from the undragged run's, or this test proves nothing.
+        assertTrue(
+            drawn != dues(toMillis = line).filter { it.title == lookAway }.map { it.startEpochMillis },
+            "the two runs must disagree here, or the case does not exercise the drag",
         )
     }
 

@@ -1857,7 +1857,7 @@ class SchedulerEngine(
     // look-away's boundary came first. Here they share one [cueSweep] window and one sorted firing list.
     //
     // Leap-safety per cue is preserved and unified in [SchedulerDomain.cueCrossings]: look-away starts come
-    // from the mathematical [SchedulerDomain.screenBreakOccurrencesBetween] reconstruction (NOT `state.panels`,
+    // from the mathematical [SchedulerDomain.screenBreakCueOccurrencesBetween] reconstruction (NOT `state.panels`,
     // whose forward projection drops an occurrence the instant `now` passes it — the earlier look-away that
     // vanished in the report), and the rest-pose is the level `now >= due` reach that a jump can't skip.
     // Real-age staleness ([BoundarySweep.realLatenessMillis]), the screen-active gate, resume-cue arming and
@@ -1898,6 +1898,10 @@ class SchedulerEngine(
                         toMillis = simNow,
                         basePeriods = dynamicPeriodBaseNow(st),
                         tasks = SchedulerDomain.planTasksOf(st, simNow),
+                        // ...and the mode, because half that reading is the AT-LINE run: the 20 s look-away
+                        // is never dragged, so its cue keys on where it really falls, and where a POSE the
+                        // line is dragging falls is what decides that.
+                        mode = tpModeNow(simNow),
                     )
 
                     // Each fire as (instant, tie, action); executed in boundary order below. `tie` only
@@ -2068,24 +2072,27 @@ class SchedulerEngine(
 
                     // Self-delay to the next boundary across every cue kind, so a cue fires at its instant and
                     // not up to a tick late (the outer collectLatest also re-keys each tick). EVERY screen
-                    // break's next boundary is the START of its next placed period — one derivation, the same
-                    // one the calendar draws and the sweep above announces. The pose starts are gated on the §7
-                    // switch; the look-away's cue is not (it has never been).
+                    // break's next boundary is the START its own cue keys on — the SAME derivation the sweep
+                    // above announces from ([SchedulerDomain.screenBreakCueOccurrencesBetween]: a pose's
+                    // undragged due, a look-away's at-line placement), or the sweep would sleep past the very
+                    // instant it is waiting for. The pose starts are gated on the §7 switch; the look-away's
+                    // cue is not (it has never been).
                     val nextEnd = pendingEnds.filter { it > simNow }.minOrNull()
                     val nextWind = windDownInstants.filter { it > simNow && it !in announcedWindDowns }.minOrNull()
-                    // `side-dev/README.md`: the next boundary is the START of the next placed dynamic period
-                    // — the same placement the sweep announces and the calendar draws. Read off an anchor
-                    // instead, this went looking for `lastRest + interval`, which the bars no longer put
-                    // anything at: the sweep found no next boundary at all and stopped.
+                    // `side-dev/README.md`: the next boundary is the START of the next dynamic period, read
+                    // exactly as the sweep reads it. Read off an anchor instead, this went looking for
+                    // `lastRest + interval`, which the bars no longer put anything at: the sweep found no next
+                    // boundary at all and stopped.
                     val eligible = st.screenBreaks.filter { st.automaticSchedule || !it.restBreak }
                     val nextBreak =
-                        SchedulerDomain.screenBreakOccurrencesBetween(
+                        SchedulerDomain.screenBreakCueOccurrencesBetween(
                             screenBreaks = eligible,
                             fromMillis = simNow,
                             toMillis = simNow + SchedulerDomain.NEXT_BREAK_SEARCH_MILLIS,
+                            nowMillis = simNow,
                             basePeriods = dynamicPeriodBaseNow(st),
                             tasks = SchedulerDomain.planTasksOf(st, simNow),
-                            anchorMillis = simNow,
+                            mode = tpModeNow(simNow),
                         )
                             .map { it.startEpochMillis }
                             .filter { it > simNow && it !in announcedStarts }

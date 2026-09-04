@@ -373,14 +373,23 @@ identifiers, persisted keys.
   `restrictivePeriodsOf(state.panels)` alone until 2026-08-29, so the instant the app ANNOUNCED a break at and
   the instant the fill PLACED one at were answers to two different timelines — the drift the whole due/place
   split exists to remove.
-- **A break has a DUE and a PLACE, and only the due is a boundary.** The due is where the recurrence bars put
-  it — a fixed instant derived from the rules, crossed once, and the only thing a trigger may key on
-  (`screenBreakOccurrencesBetween`, `dynamicPeriodPanels`' `atLine = false`). Where the period *sits* is the
-  due unless the line is dragging it (`screenBreakPanels` / `takenScreenBreakPanels`, `atLine = true`) — that
-  is what the calendar draws and what the fill obstructs on. Never key a cue on the second: a period the line
-  pushes is always "starting now", so it is never crossed and a sweep would fire at every scan. Only a **pose**
-  is ever dragged, so for the look-away the two are the same instant — which is not a licence to collapse
-  them, because the split is what keeps the pose's cue honest.
+- **A break has a DUE and a PLACE, and each of the three is announced from the run its own rule makes
+  crossable** (`screenBreakCueOccurrencesBetween`, the ONE reading the cue sweep and its self-delay share).
+  The due is where the recurrence bars put it with nothing dragged (`screenBreakOccurrencesBetween`,
+  `dynamicPeriodPanels`' `atLine = false`); the place is where the line leaves it (`screenBreakPanels` /
+  `takenScreenBreakPanels`, `atLine = true`) — what the calendar draws and what the fill obstructs on. A
+  **POSE** is announced on its DUE: the line pushes it, so its place is always "starting now", is never
+  crossed, and a sweep keyed on it would fire at every scan. The **20 s look-away** is announced on its
+  PLACE, because nothing drags it — its at-line start is already a fixed instant, and it is the one the
+  calendar draws.
+- **The two runs are NOT one run filtered, and that is why the look-away is read off the at-line one.** The
+  drag re-anchors the bar it fires on, so an owed pose is a placed dynamic period in the undragged run — and
+  therefore bars the 20 s for twenty minutes after itself — while at the line it has been dragged away and
+  bars nothing there. Read off the undragged run, the app **drew a look-away it never announced** (account 3,
+  12:54 on 2026-09-04, with a 15-min pose owed since 12:51) and would announce one where it draws none as
+  soon as a dragged pose lands on the line. Both runs are still asked with the WHOLE break list and the
+  answer selected afterwards: the chain merge collapses a look-away that touches a pose into the pose, so a
+  spec dropped from the list moves the starts of the ones left behind.
 - **The placement's origin is anchored on the NOW-LINE, quantized to the day**
   (`dynamicPlacementOriginMillis`), never on the query window's own left edge. The bars are a walk from the
   origin, so the grid is a function of it: the fill asks from `now`, the cue sweep from its scan floor and the
@@ -413,8 +422,8 @@ identifiers, persisted keys.
   precisely what mode 1 forbids of a pose — and once the line is past, it goes on being drawn where it
   happened. A pose is the opposite case and that is the whole of the split: five or fifteen minutes away from
   the screen is something the user must actually *do*, so an untaken one is **owed** and parks at the line.
-  Three things follow. The **due and the place are one instant** for this one of the three, so the cue, the
-  calendar and the fill cannot drift about it. It stays **DERIVED, never recorded** — `takenScreenBreakPanels`
+  Three things follow. Its **cue keys on its PLACE**, not on a due — the at-line run, the same one the
+  calendar and the fill read, so those three cannot drift about it. It stays **DERIVED, never recorded** — `takenScreenBreakPanels`
   re-derives it from the same bars over the recorded past, which is what keeps the past frozen (the
   environment behind the line is a fact), and also why a later change to that environment can still move it:
   press "Look away now" less than twenty minutes later and the bar re-anchors off the break actually taken
@@ -509,13 +518,16 @@ identifiers, persisted keys.
 Must be **mathematically accurate** — a pure function of which boundary instants the clock crossed (each
 fires exactly once, in order), never of how a sweep/heartbeat happens to align with the calendar.
 
-**Every break cue keys on the break's DUE** (`cueCrossings` → `screenBreakOccurrencesBetween`) — where the
-recurrence bars put it, with nothing dragged. The instant the line reaches that slot is the instant the break
-falls due, which is exactly when the app should say so, and it is crossed once. The sweep must be handed the
-**same environment the fill was** (the standing periods and the tasks) and the same now-line anchor; asked
-without them the bars answer a different timeline. The sweep's self-delay reads the next due too — read off an
-anchor it found no next boundary at all and stopped. The pause cue's `nextScreenBreakStartMillis` is the same
-reading, so the server and this device key on one instant.
+**Every break cue keys on the START its own placement rule makes crossable** (`cueCrossings` →
+`screenBreakCueOccurrencesBetween`): a **pose** on its undragged DUE, the **20 s look-away** on its AT-LINE
+placement (§ *the three dynamic restrictive periods* above). The instant the line reaches that slot is the
+instant the break falls due, which is exactly when the app should say so, and it is crossed once. The sweep
+must be handed the **same environment the fill was** (the standing periods and the tasks), the same now-line
+anchor and — because half the reading is the at-line run — the same `t_p` **mode**; asked without them the
+bars answer a different timeline. The sweep's **self-delay reads the same function**, or it sleeps past the
+instant it is waiting for; read off an anchor instead, it found no next boundary at all and stopped. The
+pause cue's `nextScreenBreakStartMillis` is the pose half of that reading, so the server and this device key
+on one instant.
 
 Staleness is judged only by the crossing's REAL age (`BoundarySweep`, 2-s budget), never by sim distance or
 scan-window position. Consecutive scans must tile the timeline with no gaps (`scanFloorMillis`), so no

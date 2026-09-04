@@ -2545,9 +2545,8 @@ object SchedulerDomain {
      * rules, crossed once. What is *drawn* from there on is the owed pose sliding at the line
      * ([takenScreenBreakPanels] / [screenBreakPanels]) — the same placement, asked with the line in it.
      *
-     * For the **20 s look-away** the two readings answer the same instant, because nothing drags it
-     * (`DynamicPeriods.dragsAtLine`): it is announced where it is drawn and drawn where it is announced. Do
-     * not collapse the two functions on the strength of that — the split is what keeps a pose's cue honest.
+     * It is the right reading for a POSE and the wrong one for the **20 s look-away**, which is never dragged
+     * — ask [screenBreakCueOccurrencesBetween] for the cue boundaries rather than this directly.
      */
     fun screenBreakOccurrencesBetween(
         screenBreaks: List<ScreenBreak>,
@@ -2569,6 +2568,75 @@ object SchedulerDomain {
             tasks = tasks,
             anchorMillis = anchorMillis,
         ).filter { it.startEpochMillis in fromMillis..toMillis }
+
+    /**
+     * `side-dev/README.md`: **the boundary instants the app announces a break at** — the one reading the cue
+     * sweep and its self-delay share, and the answer to "which run is this break's start crossable in".
+     *
+     * There are two runs of the recurrence bars and they are not the same sequence, because the drag
+     * re-anchors the bar it fires on. Each of the three is read from the run its own rules make crossable:
+     *
+     *  * a **POSE is dragged** (mode 1 pushes an owed one onto the line), so where it sits rides the now-line
+     *    and is never crossed. Its cue keys on its **due** — [screenBreakOccurrencesBetween], nothing dragged
+     *    — which is a fixed instant crossed once.
+     *  * the **20 s look-away is never dragged** (`DynamicPeriods.dragsAtLine`), so its start is already a
+     *    fixed instant in the run that is actually happening. Its cue therefore keys on the **at-line** run —
+     *    the very placement the calendar draws and [fillSchedule] obstructs on.
+     *
+     * Reading the look-away off the undragged run instead is what shipped until 2026-09-04, and it drifted in
+     * BOTH directions, because an owed pose is a dynamic period in one run and not in the other: the
+     * undragged run places the pose and so bars the 20 s for twenty minutes after it, while the at-line run
+     * drags that pose to the line and leaves the bar where the environment put it. So the calendar drew a
+     * look-away the app had never announced (account 3, 12:54 on 2026-09-04, with a 15-min pose owed since
+     * 12:51 — the last cue logged), and the sweep would announce one at an instant the calendar never draws
+     * one at as soon as the dragged pose lands on the line and bars the 20 s ahead of it. That is exactly the
+     * drift the due/place split exists to remove; it is removed by asking each break the question its own
+     * placement rule can answer, not by asking both of them one question.
+     *
+     * [nowMillis] is the now-line — the grid's shared anchor ([dynamicPlacementOriginMillis]) and the `t_p`
+     * the at-line run is read at. The window may sit behind it (the sweep's scan window) or ahead of it (the
+     * self-delay's search).
+     */
+    fun screenBreakCueOccurrencesBetween(
+        screenBreaks: List<ScreenBreak>,
+        fromMillis: Long,
+        toMillis: Long,
+        nowMillis: Long,
+        basePeriods: List<RestrictivePeriod> = emptyList(),
+        blocks: List<PlanBlock> = emptyList(),
+        tasks: List<PlanTask> = emptyList(),
+        mode: Int = DynamicPeriods.MODE_AT_SCREEN,
+    ): List<TaskPanel> {
+        // Both runs are asked with the WHOLE list of breaks and the answer is selected from them afterwards.
+        // Dropping the look-away from the due run (or the poses from the at-line one) would be a different
+        // walk, not a filtered one: the chain merge collapses a look-away that touches a pose into the pose,
+        // so a spec removed from the list moves the starts of the ones left behind.
+        val dragged = screenBreaks.filter { it.restBreak }.mapTo(HashSet()) { it.title }
+        val poseDues =
+            screenBreakOccurrencesBetween(
+                screenBreaks = screenBreaks,
+                fromMillis = fromMillis,
+                toMillis = toMillis,
+                basePeriods = basePeriods,
+                blocks = blocks,
+                tasks = tasks,
+                anchorMillis = nowMillis,
+            ).filter { it.title in dragged }
+        val lookAwayStarts =
+            dynamicPeriodPanels(
+                screenBreaks = screenBreaks,
+                fromMillis = fromMillis,
+                toMillis = toMillis,
+                tpMillis = nowMillis,
+                basePeriods = basePeriods,
+                blocks = blocks,
+                tasks = tasks,
+                mode = mode,
+                anchorMillis = nowMillis,
+                atLine = true,
+            ).filter { it.title !in dragged && it.startEpochMillis in fromMillis..toMillis }
+        return (poseDues + lookAwayStarts).sortedBy { it.startEpochMillis }
+    }
 
     /**
      * PRD §15 / `side-dev/scheduler_logic.py` tests 10–11: the work plan as it must be **displayed** while a screen break
@@ -2761,12 +2829,10 @@ object SchedulerDomain {
      * sweep window, as a single list sorted by their true boundary [CueCrossing.instant]. This is the pure
      * core the engine's one cue sweep drives.
      *
-     * **Every break keys on the START of its placed occurrence** ([screenBreakOccurrencesBetween]). The
-     * recurrence bars put each of the three at a fixed instant derived from the rules, so the drawn start is
-     * the boundary — CLAUDE.md's older rule ("no break has a drawn start anything may key on") existed
-     * because breaks SLID to the now-line while owed, and nothing slides any more. What is announced and what
-     * is drawn are therefore the same instant by construction, rather than two derivations that have to be
-     * kept in step.
+     * **Every break keys on the START of the run its own placement rule makes crossable**
+     * ([screenBreakCueOccurrencesBetween]): a pose on its undragged **due**, the 20 s look-away on the
+     * **at-line** run the calendar draws. Both are fixed instants crossed once, and the look-away's is the
+     * same instant the calendar draws it at — which is what asking one run for both had stopped being true.
      *
      * A pose start already in [alreadyNotifiedPoseDues] is omitted, so a sweep that revisits a window
      * announces once; a look-away carries its resume instant (start + duration) as [CueCrossing.endInstant].
@@ -2784,11 +2850,14 @@ object SchedulerDomain {
         basePeriods: List<RestrictivePeriod> = emptyList(),
         blocks: List<PlanBlock> = emptyList(),
         tasks: List<PlanTask> = emptyList(),
+        /** The `t_p` mode the line is in — the at-line run's half of the reading above is a function of it. */
+        mode: Int = DynamicPeriods.MODE_AT_SCREEN,
     ): List<CueCrossing> {
         val out = mutableListOf<CueCrossing>()
         val byTitle = screenBreaks.associateBy { it.title }
-        for (panel in screenBreakOccurrencesBetween(
-            screenBreaks, fromMillis, toMillis, basePeriods, blocks, tasks, anchorMillis = toMillis,
+        // The window's right edge IS the now-line here: the sweep asks about `[scanFloor, now]`.
+        for (panel in screenBreakCueOccurrencesBetween(
+            screenBreaks, fromMillis, toMillis, toMillis, basePeriods, blocks, tasks, mode,
         )) {
             val side = byTitle[panel.title] ?: continue
             val start = panel.startEpochMillis

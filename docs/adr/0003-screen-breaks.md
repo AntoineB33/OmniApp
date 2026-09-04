@@ -89,26 +89,50 @@ anchor.
 
 ---
 
-## A break has a DUE, and in mode 1 it also slides — and the cue keys on the due
+## A break has a DUE and a PLACE, and each of the three is announced from the run its own rule makes crossable
 
 Two instants, and keeping them apart is the point:
 
-- **The due** — where the recurrence bars put the period. A fixed instant derived from the rules, crossed
-  once, and therefore the only thing a trigger may key on. `screenBreakOccurrencesBetween` is the one reading
-  of it (`dynamicPeriodPanels` with `atLine = false`), and the pause cue's `nextScreenBreakStartMillis` and
-  the local `cueCrossings` both go through it.
+- **The due** — where the recurrence bars put the period with nothing dragged. `screenBreakOccurrencesBetween`
+  is the one reading of it (`dynamicPeriodPanels` with `atLine = false`), and the pause cue's
+  `nextScreenBreakStartMillis` goes through it.
 - **Where the period sits** — the due, unless the line is dragging it. `screenBreakPanels` /
   `takenScreenBreakPanels` (`atLine = true`) is that reading: it is what the calendar draws and what the fill
   treats as an obstacle.
 
-They are the same instant except under the mode-1 drag — which only a **pose** is subject to — and that is
-exactly why the cue may not key on the second one: a period the line is pushing is always "starting now", so it
-is never crossed, and a sweep keyed on it would announce a break at every scan for as long as one is owed. (That is not hypothetical — it is the
+Only a **pose** is subject to the mode-1 drag, and that is exactly why a pose's cue may not key on the second
+one: a period the line is pushing is always "starting now", so it is never crossed, and a sweep keyed on it
+would announce a break at every scan for as long as one is owed. (That is not hypothetical — it is the
 2026-07-12 "spammed every frame" incident, from the era when breaks slid unconditionally.)
 
 This is a **partial reversal** of the intermediate rule "nothing slides, so the cue may key on the drawn
 start". Nothing slides *on its own* — the bars pin every due — but the README's mode 1 does slide the period
 the line has reached, so the two questions came apart again and now have two functions instead of one flag.
+
+### The look-away is announced from the AT-LINE run, and the two runs are not one run filtered
+
+Reading *both* halves off the due run was the natural next step and it is wrong, because the two runs are not
+the same sequence of look-aways. The drag re-anchors the bar it fires on: an owed pose is a **placed dynamic
+period** in the undragged run, so it bars the 20 s for twenty minutes after itself; at the line that same
+pose has been dragged onto the now-line and bars nothing where it was owed. So the at-line run places
+look-aways the due run has none of, and the due run has look-aways the at-line run bars.
+
+Both directions are user-visible, and one of them was the report (account 3, 2026-09-04): the calendar drew a
+20 s look-away at **12:52–12:53** whose cue never fired — the last notification logged being the 15-min pose
+that had fallen due at **12:51** and was still owed, dragging at the line. The other direction is a cue for a
+break the calendar never draws, which happens as soon as a dragged pose lands on the line and bars the 20 s
+ahead of it.
+
+The look-away is never dragged, so its **at-line start is already a fixed instant derived from the rules,
+crossed once** — the boundary rule below is satisfied by it. So it is announced from the run that is actually
+happening: the one the calendar draws and the fill obstructs on. `screenBreakCueOccurrencesBetween` is that
+one reading — a pose's undragged due, a look-away's at-line placement — and both `cueCrossings` and the cue
+sweep's own **self-delay** go through it, or the sweep sleeps past the instant it is waiting for.
+
+Two things it must not become. It is **not** a filter over one run: both runs are asked with the whole break
+list and the answer selected afterwards, because the chain merge collapses a look-away that touches a pose
+into the pose, so a spec dropped from the list moves the starts of the ones left behind. And the sweep now
+needs the **`t_p` mode** as well as the environment and the anchor, since half the reading is the at-line run.
 
 The rule that survives every revision of this ADR, unchanged and load-bearing:
 
@@ -241,9 +265,9 @@ line until a real rest discharges it.
 
 Three consequences:
 
-- **The due and the place are one instant** for the look-away, so the cue, the calendar and the fill cannot
-  drift about it. That is not a licence to collapse the two readings: the split above is what keeps a *pose's*
-  cue honest.
+- **Its cue keys on its PLACE**, not on a due — the at-line run, the same one the calendar and the fill read,
+  so those three cannot drift about it. That is not a licence to collapse the two readings: the split above is
+  what keeps a *pose's* cue honest, and the two runs disagree about which look-aways exist at all.
 - **It stays derived, never recorded.** `takenScreenBreakPanels` asks the same bars over the recorded past, so
   the past stays frozen for the reason it always did — the environment behind the line is a fact. Which is
   also why the past placement can still move when that environment does: press **Look away now** less than

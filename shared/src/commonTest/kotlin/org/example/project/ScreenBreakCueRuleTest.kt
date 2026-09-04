@@ -47,19 +47,41 @@ class ScreenBreakCueRuleTest {
     )
 
     @Test
-    fun a_cue_fires_at_the_instant_the_period_is_drawn_at() {
-        // The whole rule in one assertion: every crossing sits on a placed occurrence's start.
+    fun a_look_away_cue_fires_at_the_instant_the_calendar_draws_it_at() {
+        // The whole rule for the one break that is never dragged: what the app SAYS and what it DRAWS are one
+        // instant, in both directions. The window is behind the line (`to` IS the now-line, as the sweep's
+        // own window is), so the calendar's reading of it is the at-line past placement.
+        //
+        // The anomaly this pins (account 3, 2026-09-04): the cue read the UNDRAGGED run, in which an owed pose
+        // is a placed period barring the 20 s for twenty minutes after it. At the line that pose is dragged
+        // away and bars nothing there, so the calendar drew a look-away at 12:54 that was never announced —
+        // the last cue logged being the 15-min pose that had fallen due at 12:51.
         val to = NOW + 6 * HOUR
-        val drawn = SchedulerDomain.screenBreakPanelsInWindow(breaks, NOW, to, anchorMillis = to)
-            .map { it.title to it.startEpochMillis }.toSet()
+        val drawn =
+            SchedulerDomain.takenScreenBreakPanels(breaks, NOW, to, anchorMillis = to, tpMillis = to)
+                .filter { it.title == lookAway.title }
+                .map { it.startEpochMillis }
         val fired = crossings(NOW, to)
-        assertTrue(fired.isNotEmpty(), "the case needs breaks to be about")
-        for (c in fired) {
-            assertTrue(
-                (c.title to c.instant) in drawn,
-                "${c.title} announced at ${c.instant}, which the calendar draws nothing at",
-            )
-        }
+            .filter { it.kind == SchedulerDomain.CueKind.LookAwayStart }
+            .map { it.instant }
+        assertTrue(drawn.isNotEmpty(), "the case needs look-aways to be about")
+        assertEquals(drawn, fired, "every look-away drawn is announced, and every one announced is drawn")
+    }
+
+    @Test
+    fun a_pose_cue_fires_at_its_undragged_due() {
+        // ...and the other half: a pose the line is dragging has no crossable start of its own, so its cue
+        // keys on the due the bars give it with nothing dragged.
+        val to = NOW + 6 * HOUR
+        val dues =
+            SchedulerDomain.screenBreakOccurrencesBetween(breaks, NOW, to, anchorMillis = to)
+                .filter { it.title != lookAway.title }
+                .map { it.startEpochMillis }
+        val fired = crossings(NOW, to)
+            .filter { it.kind == SchedulerDomain.CueKind.RestPoseDue }
+            .map { it.instant }
+        assertTrue(dues.isNotEmpty(), "the case needs poses to be about")
+        assertEquals(dues, fired)
     }
 
     @Test
