@@ -30,6 +30,28 @@ object RelativePriorityDomain {
     /** Largest share a single cell may be given; 1.0 is unreachable (it would need an infinite weight). */
     private const val MAX_SHARE = 0.999_999
 
+    /**
+     * [MAX_SHARE] said as a WEIGHT: how many times its siblings' weight one cell may carry.
+     *
+     * A share is `w / (w + Σ siblings)`, so `MAX_SHARE` is reached at exactly this ratio — and it is the
+     * bound that makes the two statements one. It exists because [setCellShare]'s bracket is grown by
+     * DOUBLING until it covers the target, and the target is not always reachable: a cell whose weight lives
+     * only in a column of absolute weight `0.9` can never hold more than 90 % of its list however large the
+     * weight is. Asked for more, the doubling ran its full guard and the bisection returned the top of the
+     * bracket, so the cell's stored weight was multiplied by up to `2^60` — and, because [setCellShare]
+     * scales the weight it already has, every further impossible ask multiplied it again.
+     *
+     * That is not a cosmetic overflow. It reaches the scheduler through the priority percentages, and
+     * `SchedulerPlanner`'s whole scale is `max(mᵢ / pᵢ)`: on the release account one weight had reached
+     * `4.99e42`, which put its sibling's absolute priority at `8.4e-44`, the minimal period at `9e42` HOURS
+     * and the influence field's decay length far past any horizon the app plans — so the compensation the
+     * requirements ask to decay with distance no longer decayed at all, and the analytic cycle's slots
+     * saturated at `Long.MAX_VALUE` (see `SchedulerPlanner.advance`).
+     *
+     * Capping the ratio caps the reachable share at [MAX_SHARE], which is what it was capped at anyway.
+     */
+    private const val MAX_WEIGHT_RATIO = 1e6
+
     /** Convergence tolerance / iteration cap of the two numeric solves (both are 1-D and monotone). */
     private const val EPSILON = 1e-12
     private const val MAX_ITERATIONS = 200
@@ -322,13 +344,44 @@ object RelativePriorityDomain {
             return cellShare(state.copy(cells = state.cells + (cellId to scaled)), cellId)
         }
 
-        // Grow the bracket until it covers the target (the share tends to its column ceiling, not to 1).
+        // Grow the bracket until it covers the target (the share tends to its column ceiling, not to 1) —
+        // but never past [MAX_WEIGHT_RATIO], or an UNREACHABLE target leaves the bisection returning the top
+        // of a bracket it doubled sixty times. See [MAX_WEIGHT_RATIO].
+        val ceiling = maxScaleFor(state, cellId)
         var hi = 1.0
         var guard = 0
-        while (shareWith(hi) < target && guard++ < 60) hi *= 2.0
+        while (hi < ceiling && shareWith(hi) < target && guard++ < 60) hi *= 2.0
+        hi = hi.coerceAtMost(ceiling)
         val scale = solveMonotone(lo = 0.0, hi = hi, target = target, f = ::shareWith)
         val scaled = cell.copy(priorityWeights = cell.priorityWeights.map { it * scale })
         return state.copy(cells = state.cells + (cellId to scaled))
+    }
+
+    /**
+     * The largest factor [setCellShare] may scale a cell's weight vector by: the one that leaves it carrying
+     * [MAX_WEIGHT_RATIO] times its siblings in every column it has a weight in.
+     *
+     * A cell alone in its list already holds the whole of it, so nothing is gained by growing its weight and
+     * the ceiling is 1. A cell whose weights are all zero never reaches here ([setCellShare] returns first).
+     */
+    private fun maxScaleFor(state: SchedulerState, cellId: CellId): Double {
+        val cell = state.cells[cellId] ?: return 1.0
+        val list = state.lists[cell.parentListId] ?: return 1.0
+        val siblings = list.cellIds.filter { it != cellId && SchedulerDomain.isPopulatedCell(state, it) }
+        var ceiling = Double.MAX_VALUE
+        for (column in cell.priorityWeights.indices) {
+            val own = cell.priorityWeights[column]
+            if (own <= 0.0) continue
+            val rivals =
+                siblings.sumOf { id ->
+                    state.cells[id]?.priorityWeights?.getOrElse(column) {
+                        SchedulerDomain.defaultWeightAt(column)
+                    } ?: 0.0
+                }
+            if (rivals <= 0.0) continue
+            ceiling = minOf(ceiling, MAX_WEIGHT_RATIO * rivals / own)
+        }
+        return if (ceiling == Double.MAX_VALUE) 1.0 else ceiling.coerceAtLeast(1.0)
     }
 
     /** Bisection on a non-decreasing [f] over `[lo, hi]`; returns the argument whose value is [target]. */

@@ -257,7 +257,7 @@ class Plan(
         var t = startMillis
         fun place(slot: PlanSlot): Boolean {
             if (t >= untilMillis) return false
-            val end = minOf(t + slot.durationMillis, untilMillis)
+            val end = SchedulerPlanner.advance(t, slot.durationMillis, untilMillis)
             if (end > t) out += PlanBlock(slot.taskId, t, end)
             t = end
             return true
@@ -1685,6 +1685,25 @@ class SchedulerPlanner(
     companion object {
         /** An end that never comes — the `FOREVER` of `side-dev/scheduler_logic.py`, kept in `Long` arithmetic. */
         const val FOREVER: Long = Long.MAX_VALUE
+
+        /**
+         * `docs/scheduler_requirements.md` § *No idling*: **advance a cursor by a span without ever wrapping
+         * round.**
+         *
+         * A slot's length is bounded by nothing the timeline knows about. [periodOf] is `max(mᵢ / pᵢ)`, so a
+         * single leaf with a near-zero share makes the minimal period — and therefore `pᵢ · period`, the slot
+         * [coarseCycle] hands out — astronomically large, and `roundToLong` saturates it at [FOREVER]. Every
+         * `cursor + span` after that overflows to a NEGATIVE instant; the `end <= cursor` guard that follows
+         * reads that as "this slot places nothing" and the materialization stops dead, leaving the rest of the
+         * horizon EMPTY — the one thing § *No idling* forbids outright. Measured on the release account: the
+         * analytic cycle's first slot came back as [FOREVER] and every fill left the stretch between the last
+         * period edge and the horizon unscheduled (5 h 11 min of a 24 h horizon).
+         *
+         * A span reaching past [bound] simply lands ON it: once the timeline has an end, "longer than what is
+         * left" and "forever" are the same answer.
+         */
+        fun advance(cursorMillis: Long, spanMillis: Long, bound: Long): Long =
+            if (spanMillis >= bound - cursorMillis) bound else cursorMillis + spanMillis
 
         /** `side-dev/scheduler.py` `MAX_RULES`: the strict rule limit of `side-dev/README.md`. */
         const val MAX_RULES: Int = 50

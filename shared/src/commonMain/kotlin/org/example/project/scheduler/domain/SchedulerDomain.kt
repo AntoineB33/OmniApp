@@ -3633,7 +3633,11 @@ object SchedulerDomain {
             if (resume == null && cursor == nowMillis && need <= (minimumMillisOf[taskId] ?: 0L)) {
                 need = (scheduledSpanMinutes(working, taskId, nowMillis) * MILLIS_PER_MINUTE).coerceAtLeast(1L)
             }
-            val end = minOf(cursor + need, limit ?: Long.MAX_VALUE, horizon)
+            val end =
+                minOf(
+                    SchedulerPlanner.advance(cursor, need, horizon),
+                    limit ?: Long.MAX_VALUE,
+                )
             if (end <= cursor) break
             // `side-dev/scheduler.py`: `alt = self._alternative(v, cand, name, p_local)` — read BEFORE the
             // clocks are charged, so the alternative answers "who instead?" at the same instant, and against
@@ -3678,7 +3682,7 @@ object SchedulerDomain {
                 // and the chunk the line is in the MIDDLE of must not be dropped there. Charged like any other
                 // slot, so the settle and the cycle after it go on from the state the walk would have been in.
                 pending?.takeIf { it.first in allowedHere }?.let { (id, owed) ->
-                    val end = minOf(cursor + owed, horizon)
+                    val end = SchedulerPlanner.advance(cursor, owed, horizon)
                     if (end > cursor) {
                         emit(id, cursor, end, walk.alternative(allowedHere, id, sharesHere))
                         walk.serveWeighted(id, (end - cursor).toDouble(), weightsHere[id] ?: 0.0)
@@ -3700,7 +3704,7 @@ object SchedulerDomain {
                     val need =
                         walk.chunkMillis(forced, allowedHere, boost, shares = sharesHere)
                             .roundToLong().coerceAtLeast(1L)
-                    val end = minOf(cursor + need, horizon)
+                    val end = SchedulerPlanner.advance(cursor, need, horizon)
                     if (end > cursor) {
                         emit(forced, cursor, end, walk.alternative(allowedHere, forced, sharesHere))
                         walk.serveWeighted(forced, (end - cursor).toDouble(), weightsHere[forced] ?: 0.0)
@@ -3710,14 +3714,17 @@ object SchedulerDomain {
                     }
                 }
                 forcedStartTask = null
-                val settleEnd = minOf(cursor + (SchedulerPlanner.SETTLE_PERIODS * period).roundToLong(), horizon)
+                val settleEnd =
+                    SchedulerPlanner.advance(
+                        cursor, (SchedulerPlanner.SETTLE_PERIODS * period).roundToLong(), horizon,
+                    )
                 while (cursor < settleEnd && index < maxPanels && walk.spread(allowedHere) > period) {
                     val name = walk.pick(allowedHere, shares = sharesHere) ?: break
                     val boost = planner.boostAt(name, cursor)
                     val need =
                         walk.chunkMillis(name, allowedHere, boost, shares = sharesHere)
                             .roundToLong().coerceAtLeast(1L)
-                    val end = minOf(cursor + need, horizon)
+                    val end = SchedulerPlanner.advance(cursor, need, horizon)
                     if (end <= cursor) break
                     emit(name, cursor, end, walk.alternative(allowedHere, name, sharesHere))
                     walk.serveWeighted(name, (end - cursor).toDouble(), weightsHere[name] ?: 0.0)
@@ -3759,7 +3766,7 @@ object SchedulerDomain {
                 while (cursor < horizon && index < maxPanels && cycle.isNotEmpty()) {
                     val at = slotIndex++ % cycle.size
                     val slot = cycle[at]
-                    val end = minOf(cursor + slot.durationMillis, horizon)
+                    val end = SchedulerPlanner.advance(cursor, slot.durationMillis, horizon)
                     if (end <= cursor) break
                     emit(slot.taskId!!, cursor, end, cycleAlternative(at))
                     cursor = end
