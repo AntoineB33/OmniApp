@@ -452,11 +452,14 @@ class SchedulerEngine(
     private var lastKnownSignedIn = false
 
     // PRD §15: the user manually declared they are AWAY from this device via the left-menu "I'm away" button.
-    // While set, the device reads screen-inactive regardless of the platform sensor, so its active session is
-    // finalized and its `t_a` presence tick stopped + reported as a screen-off — telling the server this device
-    // is no longer being worked on. Purely local runtime state: never persisted, never synced,
-    // so a restart returns the device to active. Toggled by [setUserAway], cleared by an unlock
-    // ([noteScreenSignal]); the menu reads it via [userAway].
+    // While set, the device reads screen-inactive to the PRESENCE reading ([effectiveScreenActive]) regardless
+    // of the platform sensor, so its active session is finalized and its `t_a` presence tick stopped +
+    // reported as a screen-off — telling the server this device is no longer being worked on. It says nothing
+    // about the app's OUTPUT: the notifications and voice cues keep firing, because the screen is still
+    // unlocked and the user can still act on them ([deviceUnlocked] is what gates those, and it does not read
+    // this flag). Purely local runtime state: never persisted, never synced, so a restart returns the device
+    // to active. Toggled by [setUserAway], cleared by an unlock ([noteScreenSignal]); the menu reads it via
+    // [userAway].
     private val _userAway = MutableStateFlow(false)
 
     /** PRD §15: whether the user declared they are away from this device (drives the left-menu button label). */
@@ -723,8 +726,10 @@ class SchedulerEngine(
      * and for the same reason: it is late in real time, and a countdown that ran out while the process was
      * down is not worth sounding at the wrong moment.
      *
-     * No screen-active gate, unlike the §15 break cues: an alarm exists precisely to be heard by a user who
-     * is not at the screen.
+     * No lock gate, unlike the §15 break cues ([deviceUnlocked]): an alarm exists precisely to be heard by a
+     * user who is not at the screen — a locked machine is the case it is FOR, which is why the phone arms it
+     * with the OS and rings it with the app killed (ADR 0010). It is the one deliberate exception to "a
+     * locked device says nothing", and it is an exception about alarms, never about a break cue.
      */
     private fun launchAlarmSweep() = scope.launch {
         if (deviceKind == DeviceKind.Phone) return@launch
@@ -986,6 +991,16 @@ class SchedulerEngine(
      * `false` so the heartbeat resumes — rather than waiting for the next beat. A
      * same-value call is a no-op. This device's own Inactivity band then derives the resulting pause on the next
      * refresh, exactly like an observed walk-away.
+     *
+     * **It declares an empty SCREEN, not a silent app.** The one thing it says is "count this device as
+     * locked when asking whether anybody is at a screen" — the no-screen periods the calendar draws, the
+     * evidence the §9 record bank reads, the `t_p` mode, the account-wide idleness the pause cue is judged
+     * on. It deliberately does NOT silence this device: the notifications and the voice cues go on firing,
+     * because the machine is still unlocked and the user is still able to see and act on them. That is the
+     * case the button exists for — a user who has to leave the screen unlocked for a program to keep running,
+     * and who still wants the "task to do now" notification when the plan moves on. A real LOCK is the
+     * opposite: it silences this device outright ([deviceUnlocked]), and the break-over message then comes
+     * from the server's push instead ([onPauseCueFire], `docs/PAUSE_CUE_DELIVERY.md`).
      */
     fun setUserAway(away: Boolean) {
         if (_userAway.value == away) return
@@ -1048,9 +1063,22 @@ class SchedulerEngine(
         }
     }
 
-    // The screen-activity sample every engine site reads: the real platform sensor, overridden to inactive
-    // while the debug leap forces it ([setDebugForcedInactive]) or the user declared they are away ([setUserAway]).
+    // PRD §15: "is anybody WORKING AT this device" — the presence reading. The real platform sensor,
+    // overridden to inactive while the debug leap forces it ([setDebugForcedInactive]) or the user declared
+    // they are away ([setUserAway]). It answers the active session, the `t_a` presence heartbeat, the
+    // no-screen evidence the calendar's layers and the §9 record bank read, and through them the `t_p` mode.
     private fun effectiveScreenActive(): Boolean = !debugForcedInactive && !_userAway.value && screenActive()
+
+    // PRD §15: "may this device SAY anything" — the output reading, and the one thing "I'm away" deliberately
+    // does NOT mask. A LOCKED device says nothing: its user cannot see a notification or be spoken to, which
+    // is why the break-over cue for a locked device is the server's push and not the app's own sweep
+    // (`docs/PAUSE_CUE_DELIVERY.md`). "I'm away" says something else entirely — *nobody is at this screen*,
+    // which is a statement about the no-screen periods and about nothing else. The user who presses it is
+    // routinely still at the machine with it unlocked (a program is running, they are reading off a second
+    // screen), so silencing the app there would take away the very notifications — "task to do now" above all
+    // — that they pressed it while still able to act on. The debug leap DOES mask, because it simulates a
+    // machine that went to sleep, which is a lock.
+    private fun deviceUnlocked(): Boolean = !debugForcedInactive && screenActive()
 
     // Diagnostics-instrumented seams for every user-audible output: each posted notification and played voice
     // cue lands in the cross-device timeline with the sim instant it fired at, so "this device stayed silent
@@ -1890,8 +1918,21 @@ class SchedulerEngine(
                         ) { deadline -> formatClockTime(Instant.fromEpochMilliseconds(deadline).toLocalDateTime(tz)) }
                         if (message != null) {
                             firings += Firing(currentPanel.startEpochMillis, 0) {
-                                lastNotifiedTaskId = currentTaskId
-                                notifyUser("Task to do now", message)
+                                // A LOCKED device says nothing (PRD §15): nobody can read it. It is
+                                // deliberately not de-duped here — [lastNotifiedTaskId] is left untouched, so
+                                // the task the user comes back to is announced the moment they unlock,
+                                // instead of being lost to a level that had already moved on. "I'm away" is
+                                // NOT this: it leaves the screen unlocked and this cue is the main thing it
+                                // must not take away ([deviceUnlocked]).
+                                if (deviceUnlocked()) {
+                                    lastNotifiedTaskId = currentTaskId
+                                    notifyUser("Task to do now", message)
+                                } else {
+                                    Diagnostics.log(
+                                        "task switch notification suppressed: device locked (sim now=" +
+                                            "${Diagnostics.formatInstant(simNow)})",
+                                    )
+                                }
                             }
                         }
                     }
@@ -1917,11 +1958,14 @@ class SchedulerEngine(
                                 val title = crossing.title
                                 // Decide the start's fate now (reads are synchronous and stable across this
                                 // sweep): a crossing older than the real-age budget was slept through, and a
-                                // screen-inactive user is already resting (no cue, no resume armed).
+                                // LOCKED device says nothing at all — its user cannot hear it and is already
+                                // away from the screen the break is about. The gate is [deviceUnlocked], not
+                                // the presence reading: "I'm away" leaves the screen unlocked, and a user who
+                                // declared it is still there to be told to look away.
                                 val lateness = cueSweep.realLatenessMillis(start)
                                 val stale = lateness > LOOK_AWAY_START_FRESH_MILLIS
-                                val screenActive = effectiveScreenActive()
-                                val startFires = !stale && screenActive
+                                val unlocked = deviceUnlocked()
+                                val startFires = !stale && unlocked
                                 firings += Firing(start, 1) {
                                     announcedStarts = announcedStarts + start
                                     when {
@@ -1930,10 +1974,10 @@ class SchedulerEngine(
                                                 "crossed ~$lateness ms (real) ago — process was suspended or engine " +
                                                 "just started (budget $LOOK_AWAY_START_FRESH_MILLIS ms, speed ${speed}x)",
                                         )
-                                        !screenActive -> Diagnostics.log(
+                                        !unlocked -> Diagnostics.log(
                                             "look-away start ${Diagnostics.formatInstant(start)} suppressed: " +
-                                                "screen inactive at crossing (user already resting; sim now=" +
-                                                "${Diagnostics.formatInstant(simNow)})",
+                                                "device locked at crossing (user already away from the screen; " +
+                                                "sim now=${Diagnostics.formatInstant(simNow)})",
                                         )
                                         else -> {
                                             notifyUser("Screen break", title)
@@ -1947,7 +1991,7 @@ class SchedulerEngine(
                                 if (startFires && end <= simNow) {
                                     firings += Firing(end, 2) {
                                         if (cueSweep.realLatenessMillis(end) <= LOOK_AWAY_START_FRESH_MILLIS &&
-                                            effectiveScreenActive()
+                                            deviceUnlocked()
                                         ) {
                                             announceResumeWork(voice)
                                         }
@@ -1961,8 +2005,21 @@ class SchedulerEngine(
                                 val due = crossing.instant
                                 val title = crossing.title
                                 firings += Firing(due, 3) {
-                                    sidePoseNotifiedDue = sidePoseNotifiedDue + (title to due)
-                                    notifyUser("Screen break", title)
+                                    // A LOCKED device says nothing (PRD §15), and — unlike the look-away
+                                    // above — the due is NOT marked announced: a pose stays due until a rest
+                                    // discharges it, so the break is announced on the next sweep after the
+                                    // user unlocks, which is the first moment there is anybody to tell. "I'm
+                                    // away" does not suppress it: that screen is unlocked and its user asked
+                                    // for exactly these.
+                                    if (!deviceUnlocked()) {
+                                        Diagnostics.log(
+                                            "rest-pose due ${Diagnostics.formatInstant(due)} ($title) " +
+                                                "suppressed: device locked (still due when it unlocks)",
+                                        )
+                                    } else {
+                                        sidePoseNotifiedDue = sidePoseNotifiedDue + (title to due)
+                                        notifyUser("Screen break", title)
+                                    }
                                 }
                             }
                             SchedulerDomain.CueKind.WindDown -> {
@@ -1970,7 +2027,12 @@ class SchedulerEngine(
                                 if (wd in announcedWindDowns) continue
                                 firings += Firing(wd, 4) {
                                     announcedWindDowns = announcedWindDowns + wd
-                                    if (cueSweep.realLatenessMillis(wd) <= LOOK_AWAY_START_FRESH_MILLIS) {
+                                    // Crossed once, so it is marked either way — a locked device says
+                                    // nothing (PRD §15) and "stop work" an hour late is not worth saying.
+                                    // "I'm away" is not a lock: it still hears this.
+                                    if (cueSweep.realLatenessMillis(wd) <= LOOK_AWAY_START_FRESH_MILLIS &&
+                                        deviceUnlocked()
+                                    ) {
                                         notifyUser("Stop work", "Wind down — bedtime in 1 hour")
                                     }
                                 }
@@ -1988,9 +2050,9 @@ class SchedulerEngine(
                                     "look-away end ${Diagnostics.formatInstant(end)} resume cue swallowed: " +
                                         "crossed ~$lateness ms (real) ago (budget $LOOK_AWAY_START_FRESH_MILLIS ms)",
                                 )
-                                !effectiveScreenActive() -> Diagnostics.log(
+                                !deviceUnlocked() -> Diagnostics.log(
                                     "look-away end ${Diagnostics.formatInstant(end)} resume cue suppressed: " +
-                                        "screen inactive at crossing",
+                                        "device locked at crossing",
                                 )
                                 else -> announceResumeWork(voice)
                             }
@@ -2257,19 +2319,24 @@ class SchedulerEngine(
      * `UNNotification`) calls this — the server cron already decided the whole account was inactive when it
      * scheduled the cue, so the phone only re-checks its OWN screen (the user may have picked the phone up)
      * and speaks if it is still off. Inert unless this is a signed-in phone with its screen off.
+     *
+     * The re-check is the LOCK ([deviceUnlocked]), not the presence reading: this is the cue for a device
+     * whose user cannot see a notification, so a phone the user is holding must stay silent even while "I'm
+     * away" says nobody is working at it (PRD §15 — that button is about the no-screen periods, not about
+     * whether the app may speak).
      */
     suspend fun onPauseCueFire() {
         if (poseFinishEligible(
                 isPhone = deviceKind == DeviceKind.Phone,
                 signedIn = pauseCue?.signedIn == true,
-                screenActive = effectiveScreenActive(),
+                screenActive = deviceUnlocked(),
             )
         ) {
             speakCue(pendingPauseCue)
         } else {
             Diagnostics.log(
                 "OS pause-cue alarm fired but suppressed (phone=${deviceKind == DeviceKind.Phone}, " +
-                    "signedIn=${pauseCue?.signedIn == true}, screenActive=${effectiveScreenActive()})",
+                    "signedIn=${pauseCue?.signedIn == true}, screenActive=${deviceUnlocked()})",
             )
         }
     }

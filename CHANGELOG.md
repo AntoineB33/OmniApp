@@ -11,6 +11,38 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "I'm away" declares an empty screen, not a silent app — a LOCK is what silences the device — 2026-09-04
+
+`shared` (`scheduler/engine/SchedulerEngine.kt`) + `CLAUDE.md` + `ARCHITECTURE.md` §8/§9 +
+`docs/PRD_TaskScheduler.md` §15 + ADR 0003 + `README.md` + `docs/MANUAL_TESTING.md`. **Client rebuild only** —
+no Supabase deploy, no SQLite migration, no payload change (the away flag was already local runtime state).
+
+One flag was answering two different questions. `effectiveScreenActive()` masked the platform sensor with
+both the debug leap and the "I'm away" button, and every §11/§15 cue gated on it — so pressing the button
+silenced this device. That is not what the button means: it says *nobody is at this screen*, which is a
+statement about the no-screen periods, the `t_p` mode and the account-wide idleness the break-over cue is
+judged on. Its user is routinely still sitting at the machine, which has to stay unlocked for a program to
+keep running, and the "task to do now" notification is precisely what they are still able to act on.
+
+- **Two readings, split.** `effectiveScreenActive()` keeps the presence question (active session, `t_a`
+  heartbeat, no-screen evidence, `t_p` mode) and keeps the away mask; the new `deviceUnlocked()` answers *may
+  this device say anything* off the raw lock alone. The debug leap masks both — it simulates a machine that
+  went to sleep, which is a lock.
+- **A LOCKED device now says nothing at all**, which the app only half did before: the look-away's start and
+  its resume were gated, while the task-switch, rest-pose-due and wind-down notifications fired at a lock
+  screen nobody was reading. All of them now gate on `deviceUnlocked()`. The end of a break on a locked
+  device is the **server's** push, exactly as before (ADR 0006) — that path is untouched, and
+  `onPauseCueFire`'s own re-check now reads the lock too, so a phone in the user's hand stays silent even
+  while "I'm away" says nobody is working at it.
+- **Suppressed is not spent.** The task switch and a pose due leave their level/de-dupe untouched while
+  locked, so what could not be said is said at the unlock; the look-away start and the wind-down are marked
+  either way (a crossing worth nothing late).
+- **An ALARM keeps ringing** — a locked machine is what an alarm is for (ADR 0010). It is the one deliberate
+  exception, and it is about alarms, never about a cue.
+- A break due while the user is *away* still does not fire, and needs no gate to: the pause covers the line,
+  so the bars place no period inside it (`AwayVersusLockedCueTest` pins the pair — away still announces the
+  task, a lock announces nothing and then announces it at the unlock).
+
 ### The Alarms window's countdown is three input fields, and editing it does not stop the timer — 2026-09-04
 
 `shared` (`scheduler/domain/TimerDomain.kt`, `scheduler/state/SchedulerIntent.kt`,

@@ -124,6 +124,37 @@ Two consequences the implementation must honour:
   `lastRest + interval`, which the bars no longer put anything at: the sweep found no next boundary and
   stopped altogether.
 
+### Who the cue is FOR: a locked device says nothing, an "away" one still speaks
+
+The boundary decides *when*; whether anybody is there to hear it is a separate question, and the engine now
+answers it with a separate reading of the screen.
+
+- `effectiveScreenActive()` — **is anybody working at this device.** The active session, the `t_a` presence
+  heartbeat, the no-screen evidence, and through them the `t_p` mode above. The "I'm away" button masks it;
+  that is the whole of what the button does.
+- `deviceUnlocked()` — **may this device say anything.** The raw platform lock alone. Every §11/§15 output
+  gates on it: the task-switch notice, the look-away's start and its resume, a pose falling due, the
+  wind-down.
+
+Only the second one silences. A user at a lock screen can neither read a notification nor be spoken to —
+which is the whole reason the break-over message for a locked device is the **server's** push (ADR 0006) and
+not this device's sweep. The button is not that: its user is routinely still at the machine, having left it
+unlocked so a program keeps running, and the "task to do now" notification is exactly what they are still
+able to act on. Reading one flag for both questions took it away from them.
+
+Two details that are rules:
+
+- **Suppressed is not spent.** The task switch and a pose due are left unmarked when the device is locked
+  (`lastNotifiedTaskId`, `sidePoseNotifiedDue` untouched), so what was owed is said at the unlock instead of
+  being lost to a de-dupe nobody heard. The look-away start and the wind-down are marked either way: they are
+  crossings worth nothing late.
+- **An alarm has no such gate** (ADR 0010). A locked machine is the case an alarm is *for*, and that
+  exception is about alarms, never about a cue.
+
+A break due while the user is *away* is a different matter again, and it needs no gate: the pause covers the
+line, so the bars place no period inside it — there is nothing to announce, by the placement rule and not by
+a mute.
+
 ### The placement origin is anchored on the now-line
 
 The bars are a walk from an origin forward, so the grid they produce is a **function of that origin**: two

@@ -457,6 +457,23 @@ identifiers, persisted keys.
   that edge clears: a lock while away leaves it on (locking is not returning), an unlock with no lock behind
   it is not a return, the first sample after start is no edge at all, and a host whose signal never flips
   (a non-Windows JVM, iOS) simply keeps the flag the user set.
+- **A LOCK silences this device; "I'm away" does NOT — they are two readings of the screen, and one is not
+  the other.** `SchedulerEngine.effectiveScreenActive()` answers *is anybody working at this device* — the
+  active session, the `t_a` presence heartbeat, the no-screen evidence, and through them the `t_p` mode — and
+  the away flag masks it, which is the whole of what the button does. `SchedulerEngine.deviceUnlocked()`
+  answers *may this device say anything*, and reads the raw lock alone: a user at a lock screen can neither
+  read a notification nor be spoken to, which is exactly why the break-over message for a locked device is
+  the **server's** push (ADR 0006) and not this device's sweep. The button's user is routinely still at the
+  machine — they left it unlocked so a program keeps running — so silencing them would take away the "task to
+  do now" notification they pressed it while still able to act on. **Every §11/§15 output gates on
+  `deviceUnlocked`** (the task switch, the look-away's start and its resume, a pose falling due, the
+  wind-down) and **no presence site does**; the debug leap masks both, because it simulates a machine that
+  went to sleep, which is a lock. Two consequences that are rules, not details: the task switch and the pose
+  due are **suppressed, not spent** — the level (`lastNotifiedTaskId`) and the de-dupe (`sidePoseNotifiedDue`)
+  are left untouched, so what was owed is announced at the unlock instead of being lost to a de-dupe nobody
+  heard — while the look-away and the wind-down are marked either way, being crossings worth nothing late.
+  **An ALARM is the one deliberate exception** (ADR 0010): a locked machine is the case it is *for*, so it
+  rings ungated, and that exception is about alarms and never about a cue.
 - **A break the app CONDUCTED is recorded as a period** (`RecordConductedBreak`), so the past is a fact and
   not a reconstruction. Only on completion: a manual "Look away now" that was superseded leaves no trace.
   **It is marked `TaskPanel.conductedBreak`, and that mark is load-bearing**: the README's FIRST bar keys on a
@@ -506,6 +523,11 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   raised before the action, so on the un-mute press it is still muted and swallowed; this is that press's
   receipt, posted from the far side of the flip. Turning them *off* announces nothing extra — the receipt for
   that press goes out normally, just before the mute takes hold.
+- **The LOCK gate is not a second mute, and that is why it is not here.** The switch answers *may the app
+  speak at all*, which is one question with one funnel; `deviceUnlocked()` answers *is there anybody at this
+  device to say it to*, which is asked per cue, before the funnel, and decides whether the cue happens — the
+  look-away's start has always been asked it. Do not fold it into `notifyUser`: an alarm rings a locked
+  machine on purpose (ADR 0010), and a funnel with an exception is what this section forbids.
 - It says nothing about the **voice cues** (`lookAwayVoiceEnabled` is their switch) and nothing about the
   **schedule**: a break still starts and ends where it did, silently.
 

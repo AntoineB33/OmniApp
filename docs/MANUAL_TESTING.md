@@ -162,6 +162,14 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
       back to **I'm away** within a moment, with no click, and `diagnostics.log` must show
       `desktop session unlock` followed by `"I'm away" cleared: this device was unlocked`. Locking and
       unlocking *without* having pressed the button must change nothing.
+- [ ] **"I'm away" does not silence the app; a lock does (PRD §15).** With the machine **unlocked**, press
+      **I'm away** and leave the app running: the ordinary notifications must keep arriving — wait for the
+      schedule to move to another task and check the **"Task to do now"** notification appears (the History
+      window's Notifications column lists it either way, so judge this on the OS notification itself, not on
+      the column). Then lock the session (`Win+L`) over the same kind of boundary: nothing must be shown at
+      the lock screen, and `diagnostics.log` must carry a `suppressed: device locked` line for it. Unlock:
+      the task the app could not announce must arrive within a tick, without the schedule having changed.
+      An **alarm** set to ring while the session is locked must still ring — that exception is deliberate.
 
 ---
 
