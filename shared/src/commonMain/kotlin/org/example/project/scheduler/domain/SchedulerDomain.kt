@@ -2049,20 +2049,42 @@ object SchedulerDomain {
             observedNoScreenPeriods(noScreenEvidence)
 
     /**
-     * `side-dev/README.md` § *$t_p$ 2 modes* — **which mode the line is in**, and the one place it is decided.
+     * `side-dev/README.md` § *$t_p$ 3 modes* — **which mode the line is in**, and the one place it is decided.
      *
-     * The rule is the user's: mode 1 while ANY device of the account is unlocked, mode 2 otherwise. It is not
-     * the Sleep/Work toggle (which is a statement about the night, not about a screen) and it is not the "I'm
-     * away" button on its own — that button reaches this through [anyDeviceUnlockedAt] like everything else,
-     * by declaring this device idle, which is exactly why an unlock clears it (`SchedulerEngine.noteScreenSignal`).
+     * The rule is the user's, and it is two questions asked in order:
+     *  * **mode 1** while ANY device of the account is unlocked — somebody is at a screen;
+     *  * otherwise **mode 3** if the user has pressed **"I'm away"**, and **mode 2** if they have not.
+     *
+     * The second question is what mode 3 adds, and it is the difference between *no screen is in use* and *a
+     * break is being taken*. A locked machine says only the first: the user may be reading at their desk, or
+     * the screen may have locked itself while they thought. So mode 2 goes on pushing a pose ahead of the line
+     * exactly as mode 1 does — what makes that pose go away there is the ordinary bar rule, a locked stretch
+     * being a rest stretch — while mode 3 lets the pose elapse under the line, because the user said so.
+     *
+     * It is not the Sleep/Work toggle (which is a statement about the night, not about a screen). The "I'm
+     * away" button reaches BOTH halves: it declares its own device idle, which is how it reaches
+     * [anyDeviceUnlockedAt] like a lock does, and it is [awayDeclared] here — which is why pressing it on the
+     * one device of a single-device account lands in mode 3 rather than mode 2, and why pressing it while a
+     * phone is still unlocked leaves the account in mode 1. An unlock clears it
+     * (`SchedulerEngine.noteScreenSignal`), so the mode comes back on its own.
+     *
+     * **[awayDeclared] is the ACCOUNT's answer, not this device's flag**: *at least one device with the button
+     * on*. That is the spec's own wording, and it is why the flag is published and read back
+     * (`PauseCueGateway.syncDeviceAway`) instead of staying local — a peer that is merely locked has to reach
+     * the same mode as the device the button was pressed on, or the two place the dynamic periods differently.
+     * It arrives with the same reconcile-bounded staleness as that peer's activity does for the other half.
      */
     /*
      * Note: the mode is a fact about the DEVICES, so it says nothing about the 20 s look-away. That one is
-     * never dragged in either mode (`DynamicPeriods.dragsAtLine`), which is the same thing as saying the line
-     * is in mode 2 for the twenty seconds it takes to cross one.
+     * never dragged in any mode (`DynamicPeriods.dragsAtLine`), which is the same thing as saying the line is
+     * in mode 3 for the twenty seconds it takes to cross one.
      */
-    fun tpMode(anyDeviceUnlocked: Boolean): Int =
-        if (anyDeviceUnlocked) DynamicPeriods.MODE_AT_SCREEN else DynamicPeriods.MODE_AWAY
+    fun tpMode(anyDeviceUnlocked: Boolean, awayDeclared: Boolean = false): Int =
+        when {
+            anyDeviceUnlocked -> DynamicPeriods.MODE_AT_SCREEN
+            awayDeclared -> DynamicPeriods.MODE_ON_BREAK
+            else -> DynamicPeriods.MODE_AWAY
+        }
 
     /**
      * `side-dev/README.md` § *$now line$*: **the coarsest step the line may take without skipping a slot** —
@@ -2987,11 +3009,66 @@ object SchedulerDomain {
         ).firstOrNull { it.title == title && it.startEpochMillis >= nowMillis }?.startEpochMillis
 
     /**
-     * How far ahead [nextScreenBreakStartMillis] looks. A day is far past every bar the README states (the
-     * longest is two hours), so a break that is not found inside it is one the environment has suspended
-     * indefinitely — a night, a hand-drawn inactivity period without end — and has no next start to name.
+     * How far ahead [nextScreenBreakStartMillis] and [poseWindowsBetween] look. A day is far past every bar the
+     * README states (the longest is two hours), so a break that is not found inside it is one the environment
+     * has suspended indefinitely — a night, a hand-drawn inactivity period without end — and has no next start
+     * to name.
      */
     const val NEXT_BREAK_SEARCH_MILLIS: Long = 24L * 60L * 60L * 1000L
+
+    /** One placed pose: `[startMillis, endMillis)`, named by its [ScreenBreak.key]. */
+    data class PoseWindow(val key: String, val startMillis: Long, val endMillis: Long)
+
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **THE SET OF RULES the scheduler returns for the
+     * two poses** — where every 5- and 15-minute dynamic restrictive period falls over the next
+     * [NEXT_BREAK_SEARCH_MILLIS], as the recurrence bars place them with **nothing dragged**.
+     *
+     * This is the one query the server's whole copy of the schedule comes out of, and both readings of it are
+     * taken here so they cannot name different breaks:
+     *  * the **windows** themselves, which the mode-3 evaluation compares the now-line against — legitimate
+     *    there and only there, because mode 3 is the mode in which nothing drags a pose, so where the bars put
+     *    one IS where it happens;
+     *  * the **two dues**, which are the first window of each kind (`SchedulerEngine.restPoseDueMillisByKey`),
+     *    and which the walk-away gate asks a question about the PAST with.
+     *
+     * It is the undragged run (`atLine = false`), like every other question that is not about the line itself.
+     * A window straddling [nowMillis] is kept — the line may be inside a break right now, which is precisely
+     * what the server is being asked — while one wholly elapsed is not.
+     *
+     * The 20 s look-away is excluded ([ScreenBreak.restBreak]): it is assumed taken as it falls due, so it is
+     * never cued, and its 20-minute cadence would rewrite the published set for an answer nothing reads.
+     */
+    fun poseWindowsBetween(
+        screenBreaks: List<ScreenBreak>,
+        nowMillis: Long,
+        basePeriods: List<RestrictivePeriod> = emptyList(),
+        blocks: List<PlanBlock> = emptyList(),
+        tasks: List<PlanTask> = emptyList(),
+    ): List<PoseWindow> {
+        val keyOfTitle =
+            screenBreaks.filter {
+                it.restBreak && it.intervalMillis > 0 && it.durationMillis > 0 &&
+                    it.title.isNotBlank() && it.key.isNotBlank()
+            }.associate { it.title to it.key }
+        if (keyOfTitle.isEmpty()) return emptyList()
+        return dynamicPeriodPanels(
+            screenBreaks = screenBreaks,
+            fromMillis = nowMillis,
+            toMillis = nowMillis + NEXT_BREAK_SEARCH_MILLIS,
+            tpMillis = nowMillis,
+            basePeriods = basePeriods,
+            blocks = blocks,
+            tasks = tasks,
+            anchorMillis = nowMillis,
+        )
+            .mapNotNull { panel ->
+                val key = keyOfTitle[panel.title] ?: return@mapNotNull null
+                if (panel.endEpochMillis <= nowMillis) return@mapNotNull null
+                PoseWindow(key, panel.startEpochMillis, panel.endEpochMillis)
+            }
+            .sortedBy { it.startMillis }
+    }
 
     private fun screenBreakPanel(index: Int, title: String, start: Long, end: Long): TaskPanel =
         TaskPanel(

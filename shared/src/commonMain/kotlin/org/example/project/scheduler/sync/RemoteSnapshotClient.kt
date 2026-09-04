@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.ActiveSessionRecord
 
 /** A signed-in Supabase session: the bearer token plus enough to refresh it and identify the user. */
@@ -453,6 +454,73 @@ class RemoteSnapshotClient(
         }
     }
 
+    // ---- README 3 modes: the away flag and the rule set (migration 20260904000000) ----
+
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* — **this device's "I'm away" flag, out and back**
+     * through the `sync_device_away` RPC. The account comes from the JWT, so the body is this device and the
+     * flag; [away] `null` reads without writing.
+     *
+     * An RPC rather than a plain upsert because one call has to do three things atomically: write the flag,
+     * answer the ACCOUNT's question (mode 3 is a quantifier over every device's flag, not this one's), and
+     * open or close the mode-3 episode the answer implies — which is what [fetchAwaySpans] reads back.
+     */
+    suspend fun syncDeviceAway(session: SupabaseSession, deviceId: String, away: Boolean?): Boolean {
+        val response =
+            http.post("${config.restUrl}/rpc/sync_device_away") {
+                authHeaders(session)
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(SyncDeviceAwayArgs(deviceId, away)))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        // The function returns a bare scalar (`true`/`false`); a blank body is "nothing said", i.e. not away.
+        return response.bodyAsText().trim().equals("true", ignoreCase = true)
+    }
+
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* — **the scheduler's SET OF RULES for the two
+     * poses**, replaced whole through the `publish_break_rules` RPC (`screen_break_rule`).
+     *
+     * This is the only thing the server is given about where breaks fall, and all it does with it is compare
+     * `now()` against the windows: in mode 3 nothing drags a pose, so where the scheduler placed it is where it
+     * happens. The server never places one.
+     */
+    suspend fun publishBreakRules(session: SupabaseSession, rules: List<BreakWindow>) {
+        val response =
+            http.post("${config.restUrl}/rpc/publish_break_rules") {
+                authHeaders(session)
+                contentType(ContentType.Application.Json)
+                setBody(
+                    json.encodeToString(
+                        PublishBreakRulesArgs(rules.map { BreakRuleRow(it.key, it.startMillis, it.endMillis) }),
+                    ),
+                )
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
+    /**
+     * The account's **mode-3 stretches** overlapping `[fromMillis, toMillis]`, oldest first — what a waking app
+     * asks for so its fast-forward move of the now-line is walked in mode 3 where the account really was on a
+     * declared break. A still-open span is returned with its end clamped to [toMillis] by the server.
+     */
+    suspend fun fetchAwaySpans(
+        session: SupabaseSession,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<TaskTimeRange> {
+        val response =
+            http.post("${config.restUrl}/rpc/away_spans") {
+                authHeaders(session)
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(AwaySpanArgs(fromMillis, toMillis)))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        return json.decodeFromString<List<AwaySpanRow>>(response.bodyAsText())
+            .map { TaskTimeRange(it.startMs, it.endMs) }
+            .filter { it.endEpochMillis > it.startEpochMillis }
+    }
+
     fun close() = http.close()
 
     private fun io.ktor.client.request.HttpRequestBuilder.authHeaders(session: SupabaseSession) {
@@ -580,6 +648,44 @@ private data class ActiveSessionUpsert(
     @SerialName("end_ms") val endMs: Long,
     @SerialName("updated_at") val updatedAt: Long,
     val kind: String,
+)
+
+/**
+ * Arguments of the `sync_device_away` RPC — this device's away flag. The account is the JWT's; `p_away` is null
+ * to read the account's answer without writing.
+ */
+@Serializable
+private data class SyncDeviceAwayArgs(
+    @SerialName("p_device_id") val deviceId: String,
+    @SerialName("p_away") val away: Boolean?,
+)
+
+/** Arguments of the `publish_break_rules` RPC — the whole rule set, replaced. */
+@Serializable
+private data class PublishBreakRulesArgs(
+    @SerialName("p_rules") val rules: List<BreakRuleRow>,
+)
+
+/** One published rule: a placed pose on the REAL wall clock. Short keys — the array is the request body. */
+@Serializable
+private data class BreakRuleRow(
+    @SerialName("k") val kind: String,
+    @SerialName("s") val startMs: Long,
+    @SerialName("e") val endMs: Long,
+)
+
+/** Arguments of the `away_spans` RPC — the window a waking app is asking about. */
+@Serializable
+private data class AwaySpanArgs(
+    @SerialName("p_from_ms") val fromMs: Long,
+    @SerialName("p_to_ms") val toMs: Long,
+)
+
+/** One row of it: a stretch the account was in mode 3 for, clipped to the asked window. */
+@Serializable
+private data class AwaySpanRow(
+    @SerialName("start_ms") val startMs: Long,
+    @SerialName("end_ms") val endMs: Long,
 )
 
 @Serializable

@@ -336,13 +336,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // the hatching, which are asked over the whole scrolled span; the bars deliberately share the engine's,
         // or the calendar would draw a break at an instant the app does not announce one at.
         val observedNoScreenEvidence by engine.noScreenEvidence.collectAsState()
-        // `side-dev/README.md` § *$t_p$ 2 modes*: mode 1 while a device of the account is unlocked, mode 2
-        // otherwise. The SAME reading the reducer's fills use (`SchedulerReducer.tpMode`, injected by the
-        // engine over these three flows) — the display and the plan must not answer it differently, or the
-        // calendar would draw the three dynamic periods somewhere the schedule did not put them.
+        // `side-dev/README.md` § *$t_p$ 3 modes*: mode 1 while a device of the account is unlocked; otherwise
+        // mode 3 if the user pressed "I'm away" (a break is being TAKEN) and mode 2 if they did not. The SAME
+        // reading the reducer's fills use (`SchedulerReducer.tpMode`, injected by the engine over these same
+        // flows) — the display and the plan must not answer it differently, or the calendar would draw the
+        // three dynamic periods somewhere the schedule did not put them.
         val tpMode =
             SchedulerDomain.tpMode(
                 SchedulerDomain.anyDeviceUnlockedAt(inactivityGaps, inactiveSince, activeSince, nowMillis),
+                awayDeclared = userAway,
             )
         // PRD §7/§15: what claim the OS granted the system-wide chords — shown in the keyboard-shortcuts window,
         // since a chord another application already owns is otherwise indistinguishable from a broken app.

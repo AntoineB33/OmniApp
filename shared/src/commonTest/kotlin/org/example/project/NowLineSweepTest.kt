@@ -106,13 +106,17 @@ class NowLineSweepTest {
             )
 
         /** Every position the line was seen at, with the mode it was asked in there. */
-        fun walk(fromMillis: Long, toMillis: Long): List<Pair<Long, Int>> {
+        fun walk(
+            fromMillis: Long,
+            toMillis: Long,
+            awaySpans: List<TaskTimeRange> = emptyList(),
+        ): List<Pair<Long, Int>> {
             val seen = mutableListOf<Pair<Long, Int>>()
             val job =
                 CoroutineScope(Dispatchers.Unconfined).launch {
                     engine.nowMillis.collect { seen += it to engine.tpModeNow(it) }
                 }
-            engine.reportTimeGap(fromMillis, toMillis)
+            engine.reportTimeGap(fromMillis, toMillis, awaySpans)
             job.cancel()
             // The flow replays its current value to a fresh collector, so the first entry is where the line
             // already was; the journey is everything after it.
@@ -160,6 +164,40 @@ class NowLineSweepTest {
 
         // …and the arrival is back on the live reading, or the app would stay away after the user came back.
         assertEquals(DynamicPeriods.MODE_AT_SCREEN, h.engine.tpModeNow(NOW))
+    }
+
+    @Test
+    fun a_stretch_the_account_declared_away_for_is_swept_in_mode_three() {
+        // `side-dev/README.md` § *Progressive Calculation*, direct consequence, as amended by mode 3: *"When
+        // the app wakes up, it asks the server for any changes. If there was a period of $now line$ mode 3,
+        // then the fast forward move of the $now line$ ... will get in mode 3 at those periods, instead of
+        // always mode 2."*
+        //
+        // The ask is the caller's (the tick loop is a coroutine; the journey is not), so what is pinned here
+        // is the journey's own half: handed the account's mode-3 stretches, the walk holds mode 3 over exactly
+        // them and mode 2 everywhere else — and no single step straddles an edge, or a placement would be
+        // committed in a mode that did not hold for half of itself.
+        val h = Harness(now = NOW, initial = oneTask(45))
+        val sleepStart = NOW - 8 * HOUR
+        val declared = TaskTimeRange(NOW - 6 * HOUR, NOW - 4 * HOUR)
+
+        val walk = h.walk(sleepStart, NOW, listOf(declared))
+        assertTrue(walk.isNotEmpty())
+        // Each entry is where the line ARRIVED, so the mode that held for the step ending there is the one
+        // asked at its interior — read the position back against the span it landed in or just left.
+        for ((at, mode) in walk) {
+            val inside = at > declared.startEpochMillis && at <= declared.endEpochMillis
+            val expected = if (inside) DynamicPeriods.MODE_ON_BREAK else DynamicPeriods.MODE_AWAY
+            assertEquals(expected, mode, "the line at $at (declared away = $inside)")
+        }
+        // The edges are positions the line really took: a step is cut at each of them.
+        val positions = walk.map { it.first }
+        assertTrue(declared.startEpochMillis in positions, "a step must end at the start of the mode-3 span")
+        assertTrue(declared.endEpochMillis in positions, "…and another at its end")
+
+        // With no spans at all it is the plain mode-2 journey it always was.
+        val plain = Harness(now = NOW, initial = oneTask(45)).walk(sleepStart, NOW)
+        assertTrue(plain.all { it.second == DynamicPeriods.MODE_AWAY })
     }
 
     @Test

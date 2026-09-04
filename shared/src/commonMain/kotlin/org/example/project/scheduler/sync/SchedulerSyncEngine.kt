@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.ActiveSessionStore
 import org.example.project.scheduler.persistence.PersistedSnapshot
 import org.example.project.scheduler.persistence.SyncMeta
@@ -703,6 +704,9 @@ open class SchedulerSyncEngine(
     override suspend fun publishNextBreak(state: NextBreakState) {
         val current = session ?: return
         withAuth(current) {
+            // The rule set first: it is what the mode-3 evaluation reads, and the two dues below are its own
+            // projection. Both are sent under one caller so a retry re-sends the pair together.
+            client.publishBreakRules(session = it, rules = state.rules)
             client.publishNextBreak(
                 session = it,
                 fiveMinDueMs = state.fiveMinDueMillis,
@@ -716,5 +720,22 @@ open class SchedulerSyncEngine(
         runCatching { withAuth(current) { client.notifyScreenOff(it, meta().deviceId) } }
             .onSuccess { Diagnostics.log("screen off reported to pause-cue function") }
             .onFailure { Diagnostics.log("screen-off report FAILED: ${it.message}") }
+    }
+
+    // Best-effort like the beat, not like the break write: the flag is re-asserted by the next edge and by
+    // every sync moment, and a lost call costs at most one cue. A signed-out device answers "nobody is away",
+    // which is what a device with no account to ask about should say.
+    override suspend fun syncDeviceAway(away: Boolean?): Boolean {
+        val current = session ?: return false
+        return runCatching { withAuth(current) { client.syncDeviceAway(it, meta().deviceId, away) } }
+            .onFailure { Diagnostics.log("away flag sync FAILED: ${it.message}") }
+            .getOrDefault(false)
+    }
+
+    override suspend fun fetchAwaySpans(fromMillis: Long, toMillis: Long): List<TaskTimeRange> {
+        val current = session ?: return emptyList()
+        return runCatching { withAuth(current) { client.fetchAwaySpans(it, fromMillis, toMillis) } }
+            .onFailure { Diagnostics.log("mode-3 span fetch FAILED: ${it.message}") }
+            .getOrDefault(emptyList())
     }
 }

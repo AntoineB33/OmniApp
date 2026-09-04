@@ -11,6 +11,70 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The now-line has a THIRD mode — 2026-09-04
+
+`shared` (`domain/DynamicPeriods.kt`, `domain/SchedulerDomain.kt`, `engine/SchedulerEngine.kt`,
+`sync/PauseCueGateway.kt` + `DeviceHeartbeatPublisher.kt` + `RemoteSnapshotClient.kt` +
+`SchedulerSyncEngine.kt`, `App.kt`) +
+`supabase/migrations/20260904000000_now_line_mode_3.sql` + `supabase/functions/pause-cue-cron` +
+`docs/scheduler_requirements.md`, `CLAUDE.md`, ADR 0003, ADR 0006, `docs/PAUSE_CUE_DELIVERY.md`.
+**Both surfaces: `deploy-supabase.bat` AND an app rebuild (`account{1,2,3}-*deploy*.bat`).** No client DB
+migration — the new state is server-only and the client's own record of it is in memory.
+
+The spec added **mode 3**: no computer and no phone of the account unlocked **and** the "I'm away" button on.
+Its rule is *"$now line$ must be covered by the period 'no on-screen task'"* with nothing else attached, where
+mode 2 says *"…but not one of the three dynamic periods"* — so mode 3 is the one mode in which the line may be
+covered by a 5- or 15-minute pose.
+
+**What actually changed, and it is not only an added case.** Mode 2 used to behave the way mode 3 does now:
+nothing was dragged there, so a locked screen meant every pose the line reached simply elapsed. Reading the two
+definitions apart is what makes mode 3 mean anything, and the reading is right on its own terms — a locked
+screen says *no screen is in use*, which is not *a break is being taken*; the user may be reading at their
+desk. So **mode 2 now drags an owed pose exactly as mode 1 does** (`DynamicPeriods.breaksAreTakenAt`, the one
+predicate telling the modes apart), and what makes that pose go away while the machine is locked is the
+ordinary bar rule — a locked stretch is a rest stretch, and a rest stretch bars the breaks after it. The
+practical difference is therefore confined to the first minutes of a lock and to accounts with off-screen
+tasks; the deliberate new behaviour is that pressing "I'm away" now lets the poses actually happen.
+
+**The mode is an ACCOUNT-wide condition**: *at least one device with the "I'm away" button clicked and every
+other device locked*. So the flag leaves the device it was pressed on — `sync_device_away` writes it and
+returns "is any device of this account away", read on every away edge and every sync moment — and
+`SchedulerDomain.tpMode`'s second argument is that account answer, not a local flag. A device reading only its
+own would put a merely-locked peer in mode 2 while the machine the button was pressed on is in mode 3, and the
+two would place the three dynamic periods differently. The away device drops out of the *first* question by
+itself (the button stops its beat and finalizes its session), which is what makes the conjunction come out
+right without a third question. The engine reads `own || account`, so the button still works at the press,
+offline.
+
+Three consequences that needed code of their own:
+
+* **`awayCover` may no longer answer null for want of a preceding period.** Mode 2 drags the pose onto the line
+  as `(t_p, t_p + d]`, which leaves `t_p` itself uncovered by construction, so there is often nothing behind
+  the line to measure the README's gap from; the cover is then the line's own instant. `fillSchedule`
+  re-expresses whatever comes back as `[now, now + 1)` regardless, so what was lost was the *existence* of
+  mode 2's cover, not its reach.
+* **The scheduler's SET OF RULES is published, and the server READS it** (`SchedulerDomain.poseWindowsBetween`
+  → `publish_break_rules` → `screen_break_rule`). For the whole of a mode-3 episode every screen of the account
+  is off, so nothing local is watching the line cross a break: `tick_pause_cues()` pass (c) moves the line over
+  the published rules, asks the one comparison `start <= now < end`, and hands an account whose line is inside
+  a rule to **e2** with `action: 'mode3'`. `claim_mode3_break_cue` anchors the cue at the break's own END,
+  which the rule states exactly. The server **never runs the scheduler** — it places nothing and knows no
+  recurrence, and reading the rules this literally is legitimate *because* it is mode 3, where nothing drags a
+  pose. `account_in_mode3()` is the server's own reading of the mode (an away device, no beat within `2·t_a`),
+  so nothing trusts a client-computed one. The two `device_break` dues are unchanged and come out of the SAME
+  placement query as the rule set — a projection, not a second derivation — so the walk-away gate and this pass
+  can never name different breaks. Pass (c) is deliberately not folded into pass (a): different question,
+  different anchor, and its own de-dupe key `pause_cue_schedule.break_start_ms`, which is also what stops the
+  two paths cueing one pose twice.
+* **A wake asks the server for the account's mode-3 stretches and walks them in mode 3**
+  (`away_spans` → `SchedulerEngine.awaySpansFor` → `sweepNowLineTo`, the log kept by the away flag and the
+  presence beats themselves rather than by any device's opinion of the mode), the spec's own amendment to the
+  fast-forward move. The ask belongs to the tick loop, which is already a coroutine, so the journey stays the
+  single synchronous walk it was; a step never straddles a span's bound. Two records are merged because neither
+  alone will do: this device's own covers a journey the clock made while the app ran, the server's covers the
+  episode the app slept through — which is exactly the journey a wake has to walk. Time-bounded and
+  best-effort: an unreachable server leaves the whole journey in mode 2, as before.
+
 ### A reminder tag is the TOP-MOST thing the day column draws — 2026-09-04
 
 `shared` (`ui/CalendarUi.kt` — `DayColumn`'s emission order) + `CLAUDE.md`. **Client rebuild only** — no

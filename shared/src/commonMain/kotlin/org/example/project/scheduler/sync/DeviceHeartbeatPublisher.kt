@@ -43,6 +43,34 @@ data class PresenceState(val deviceId: String)
 data class NextBreakState(
     val fiveMinDueMillis: Long?,
     val fifteenMinDueMillis: Long?,
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **the SET OF RULES** — the future 5- and
+     * 15-minute dynamic restrictive periods, on the REAL wall clock (`screen_break_rule`, migration
+     * 20260904000000).
+     *
+     * The scheduler returns a set of rules and nothing else, and this is that set as far as the server is
+     * concerned. In **mode 3** nothing drags a pose, so where the scheduler placed it is where it happens, and
+     * the server's whole question — *is the now-line inside a 5- or 15-minute break?* — is a comparison against
+     * these windows. It never places one, and nothing here lets it: `PlanWalk` stays the only copy of the
+     * scheduling rules.
+     *
+     * The two dues above are a **projection of this same list** (the client reads both out of one placement
+     * query), not a second derivation — which is what stops the walk-away gate and the mode-3 evaluation ever
+     * disagreeing about where a break is. They are kept because they answer a different question: *was a break
+     * already due when the account went dark*, which is about the past and cannot be read off future windows.
+     *
+     * The 20 s look-away is deliberately not in it: it is assumed taken as it falls due, so it is never cued,
+     * and its 20-minute cadence would rewrite the whole set for an answer nothing reads.
+     */
+    val rules: List<BreakWindow> = emptyList(),
+)
+
+/** One rule of [NextBreakState.rules]: a placed pose, `[startMillis, endMillis)` on the REAL wall clock. */
+data class BreakWindow(
+    /** [org.example.project.scheduler.model.ScreenBreak.key] — `"5min_break"` / `"15min_break"`. */
+    val key: String,
+    val startMillis: Long,
+    val endMillis: Long,
 )
 
 /**

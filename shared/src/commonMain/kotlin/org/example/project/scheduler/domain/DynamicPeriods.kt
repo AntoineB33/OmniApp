@@ -31,11 +31,13 @@ package org.example.project.scheduler.domain
  * it. A pre-placed hour of maintenance is not a rest: the user was at the screen the whole time.
  *
  * ### The look-away is assumed taken; a pose is owed
- * When the line reaches a **pose** the user has not taken, mode 1 drags it: `t_p` may not be covered, so the
- * period is pushed onto the line and goes on being pushed until a real rest happens. When the line reaches the
- * **20 s look-away** nothing is dragged ([dragsAtLine]) — looking twenty feet away costs no working time, so
- * the app assumes it is being done. The occurrence stays where the bars put it, the line walks across it in
- * [MODE_AWAY] for its twenty seconds, and behind the line it goes on being drawn where it happened.
+ * When the line reaches a **pose** the user has not taken, modes 1 and 2 drag it: `t_p` may not be covered by
+ * a dynamic period there, so the period is pushed onto the line and goes on being pushed until a real rest
+ * happens. [MODE_ON_BREAK] is the one mode that does not — the user said they are away, so the pose is being
+ * taken and the line walks through it. When the line reaches the **20 s look-away** nothing is dragged in any
+ * mode ([dragsAtLine]) — looking twenty feet away costs no working time, so the app assumes it is being done.
+ * The occurrence stays where the bars put it, the line walks across it (in mode 3, for those twenty seconds),
+ * and behind the line it goes on being drawn where it happened.
  *
  * The timeline is taken to **start rested**, so the first 20 s may fall one bar after `t_pstart`, the first
  * 5 min an hour after it and the first 15 min two hours after it. Placing all three at the origin instead
@@ -85,16 +87,54 @@ object DynamicPeriods {
      * screen, so a POSE the line reaches is pushed ahead of it and never happens until it is taken.
      *
      * The 20 s look-away is exempt ([dragsAtLine]): it is assumed done as it falls due, so the line crosses it
-     * in [MODE_AWAY] for its twenty seconds and it stays on the timeline behind the line.
+     * in [MODE_ON_BREAK] for its twenty seconds and it stays on the timeline behind the line.
      */
     const val MODE_AT_SCREEN: Int = 1
 
     /**
-     * `t_p` mode 2: *"$t_p$ must be covered by the period 'no on-screen task'"* — the user is away, so the
-     * gap between the last period's end and the line is covered by a "no on-screen task" period, filled with
-     * whatever tasks are resilient to that kind (and left empty if none are).
+     * `t_p` mode 2: *"$t_p$ must be covered by the period 'no on-screen task' **but not one of the three
+     * dynamic periods**"* — no device of the account is unlocked, but nobody has SAID they are taking a
+     * break. The gap between the last such period's end and the line is covered by a "no on-screen task"
+     * period, filled with whatever tasks are resilient to that kind (and left empty if none are) — and a POSE
+     * the line reaches is still pushed ahead of it exactly as in mode 1 ([dragsAtLine]), because a locked
+     * screen is not a break taken: the user may be reading, or merely have let the machine lock itself.
+     * What makes the pose go away here is the ordinary bar rule — a locked stretch is a rest stretch, and a
+     * rest stretch bars the breaks after it — not the line walking through the period.
      */
     const val MODE_AWAY: Int = 2
+
+    /**
+     * `t_p` mode 3: *"$t_p$ must be covered by the period 'no on-screen task'"*, and that is the WHOLE of the
+     * rule — the one mode in which the line may be covered by one of the three dynamic periods.
+     *
+     * It is mode 2 plus a statement by the user: no computer and no phone is unlocked **and** the "I'm away"
+     * button is on ([SchedulerDomain.tpMode]). That statement is what turns "no screen is in use" into "a
+     * break is being TAKEN", so a pose the line reaches is not dragged: it elapses under the line, becomes an
+     * ordinary fact of the frozen past, and re-anchors the bars off itself like any other rest. It is also
+     * the mode the server announces the END of a break from (`docs/PAUSE_CUE_DELIVERY.md`): the app is not the
+     * one watching — its screen is off — so the server moves the line over the rules it was last given and
+     * pushes the phone a cue for the instant the break the line is inside finishes.
+     *
+     * The 20 s look-away is *always* answered this way whatever the mode says, which is the same sentence read
+     * from the other end: looking twenty feet away costs no working time, so it is assumed taken as it falls
+     * due and the line crosses it — the line is in mode 3 for those twenty seconds ([dragsAtLine]).
+     */
+    const val MODE_ON_BREAK: Int = 3
+
+    /**
+     * **May the line be COVERED by one of the three dynamic periods in this mode?** — the one predicate the
+     * three modes differ by, and the only place mode 3 is told from the other two.
+     *
+     * Mode 1 forbids it because the user is at the screen; mode 2 forbids it because a locked screen is not a
+     * break the user took; mode 3 allows it because the user said they are away, which is what a pose IS.
+     */
+    fun breaksAreTakenAt(mode: Int): Boolean = mode == MODE_ON_BREAK
+
+    /**
+     * **Is the line covered by "no on-screen task" in this mode?** — true of mode 2 and mode 3 alike, which is
+     * the half of their definition they share (and what [awayCover] exists to make true).
+     */
+    fun lineIsCoveredAt(mode: Int): Boolean = mode != MODE_AT_SCREEN
 
     /** One of the three: a label, how long it lasts, and its own recurrence bar. */
     data class Spec(val label: String, val durationMillis: Long, val cadenceMillis: Long)
@@ -311,18 +351,23 @@ object DynamicPeriods {
                 }
             }
             if (moved) continue
-            // Mode 1: `t_p` may not be covered by "no on-screen task". A period whose slot the line has SWEPT
-            // — travelled continuously through, from where its motion began up to here — is therefore pushed
-            // onto the line and becomes the half-open `(t_p, t_p + duration]`; the line goes on delaying it,
-            // placing tasks where it stood.
+            // Modes 1 and 2: `t_p` may not be covered by one of the three dynamic periods
+            // ([breaksAreTakenAt]). A period whose slot the line has SWEPT — travelled continuously through,
+            // from where its motion began up to here — is therefore pushed onto the line and becomes the
+            // half-open `(t_p, t_p + duration]`; the line goes on delaying it, placing tasks where it stood
+            // (mode 1) or leaving the cover to hold the line (mode 2).
             //
-            // **The look-away is the one exception, and it is not dragged at all** ([dragsAtLine]). Looking
+            // **Mode 3 is the one that does not drag**: no device is unlocked AND the user pressed "I'm away",
+            // which is the account SAYING the break is being taken — so the pose elapses under the line, is
+            // frozen into the past like any other placement, and re-anchors the bars off itself.
+            //
+            // **The look-away is exempt in every mode, and is not dragged at all** ([dragsAtLine]). Looking
             // twenty feet away for twenty seconds is not something the user has to stop working to do, so the
             // app takes it as done the moment the line reaches it: the period stays where the bars put it, the
-            // line crosses it in mode 2 — covered, which is exactly what mode 1 forbids and what the drag
-            // exists to prevent — and twenty seconds later it is an ordinary fact of the past, still drawn
-            // where it happened. A pose is the opposite: five or fifteen minutes away from the screen is
-            // something the user must actually do, so an untaken one is still OWED and goes on being dragged.
+            // line crosses it in mode 3 — covered, which is exactly what the drag exists to prevent elsewhere —
+            // and twenty seconds later it is an ordinary fact of the past, still drawn where it happened. A
+            // pose is the opposite: five or fifteen minutes away from the screen is something the user must
+            // actually do, so an untaken one it never declared is still OWED and goes on being dragged.
             //
             // Pushing it is a move like any other, so the loop goes round again and the ordinary rules get
             // their say at the new position: the line may be standing inside a stretch nobody can run in (a
@@ -330,21 +375,21 @@ object DynamicPeriods {
             // having been dragged than for having been placed there. A drag strictly increases the bar, so it
             // cannot spin — and it re-anchors that bar AT the line, which is what bounds the whole thing: at
             // most one occurrence per bar is ever swept, and the chain merge collapses those into one.
-            if (mode == MODE_AT_SCREEN && dragsAtLine(label) && start >= sweepFromMillis && start < tpMillis) {
+            if (!breaksAreTakenAt(mode) && dragsAtLine(label) && start >= sweepFromMillis && start < tpMillis) {
                 bars[label] = tpMillis
                 continue
             }
             // It sits ON the line, and the line got here by SWEEPING (`sweepFrom < t_p`): this is the period
             // the line is dragging, and the half-open form is what keeps the instant `t_p` itself free. A
             // look-away never is, so it keeps the ordinary closed `[start, start + 20 s)` even when it lands
-            // exactly on the line: the line is INSIDE it, in mode 2, and is meant to be.
+            // exactly on the line: the line is INSIDE it, in mode 3, and is meant to be.
             //
             // The sweep test is not decoration. A caller whose `t_p` is a window edge rather than the line
             // sweeps nothing (`sweepFrom == t_p`), and must not get the half-open form for the accident of a
             // slot falling on that edge: the cue sweep would then read one break's due as `floor` in one scan
             // and `floor + 1` in the next, and fire it twice.
             val openStart =
-                mode == MODE_AT_SCREEN && dragsAtLine(label) && start == tpMillis && sweepFromMillis < tpMillis
+                !breaksAreTakenAt(mode) && dragsAtLine(label) && start == tpMillis && sweepFromMillis < tpMillis
             val inst = Instance(spec, start, openStart)
             out += inst
             barInstance(bars, byLabel, restedSpans, inst)
@@ -353,10 +398,11 @@ object DynamicPeriods {
     }
 
     /**
-     * The periods the three make at this position of the line — [instances] rendered, plus mode 2's cover.
+     * The periods the three make at this position of the line — [instances] rendered, plus the away cover.
      *
-     * Mode 2 wants `t_p` COVERED BY "no on-screen task". The period that just ended is the one the line came
-     * out of, so it is extended to reach `t_p` — as [PeriodKinds.NO_SCREEN] rather than [PeriodKinds.NO_TASK],
+     * Modes 2 and 3 both want `t_p` COVERED BY "no on-screen task" ([lineIsCoveredAt]). The period that just
+     * ended is the one the line came out of, so it is extended to reach `t_p` — as [PeriodKinds.NO_SCREEN]
+     * rather than [PeriodKinds.NO_TASK],
      * which is what the README's own example asks for: *"the gap between the end of the 15min period and
      * $t_p$ is covered by a period 'no on-screen task', filled with tasks that have a non-zero resilience to
      * the kind 'no on-screen task', or no task if none have such resilience"*.
@@ -377,9 +423,14 @@ object DynamicPeriods {
     }
 
     /**
-     * Mode 2's cover, on its own — a logic-only no-screen period that represents the line being covered
-     * while away. It is kept for the scheduler's environment, but never rendered as a visible synthetic
-     * "Away" band in the calendar UI.
+     * The away cover, on its own — a logic-only no-screen period that represents the line being covered while
+     * away. It is kept for the scheduler's environment, but never rendered as a visible synthetic "Away" band
+     * in the calendar UI.
+     *
+     * Both away modes have it ([lineIsCoveredAt]): mode 2 and mode 3 differ over whether a DYNAMIC period may
+     * cover the line, never over whether it is covered at all. In mode 3 it is usually a no-op — the pose the
+     * line is inside already covers it — and that is exactly the shape of the test below, which asks whether
+     * anything covers `t_p` before manufacturing anything.
      */
     fun awayCover(
         base: Base,
@@ -387,14 +438,20 @@ object DynamicPeriods {
         tpMillis: Long,
         mode: Int,
     ): RestrictivePeriod? {
-        if (mode != MODE_AWAY) return null
+        if (!lineIsCoveredAt(mode)) return null
         val all = placed + base.periods
         if (all.any { it.covers(tpMillis) && PeriodKinds.coversNoScreen(it.kind) }) return null
         val ends =
             all.filter { PeriodKinds.coversNoScreen(it.kind) && it.endMillis <= tpMillis }
                 .maxOfOrNull { it.endMillis }
-        val from = ends ?: tpMillis
-        if (from >= tpMillis) return null
+        // Nothing precedes: the cover is the line's own INSTANT, `[t_p, t_p]`, and that is not a degenerate
+        // case to be dropped — it is the rule. Mode 2 drags a pose onto the line, so the period the line came
+        // out of may not exist at all (the pose covers `(t_p, t_p + d]` and leaves `t_p` itself uncovered by
+        // construction), and answering null there would leave mode 2's own rule reaching nothing exactly where
+        // it matters most. `SchedulerDomain.fillSchedule` re-expresses whatever this returns as `[now, now+1)`
+        // — the one millisecond the walk reads as "what runs AT the line must be resilient to no on-screen
+        // task" — so the reach behind the line is documentation, never a scheduling input.
+        val from = (ends ?: tpMillis).coerceAtMost(tpMillis)
         return RestrictivePeriod(from, tpMillis, PeriodKinds.NO_SCREEN, "no screen", closedEnd = true)
     }
 

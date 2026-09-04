@@ -272,22 +272,50 @@ class DynamicPeriodsTest {
     }
 
     @Test
-    fun mode_two_covers_the_line_with_a_no_on_screen_task_period() {
+    fun mode_three_covers_the_line_with_a_no_on_screen_task_period() {
         // "$t_p$ must be covered by the period 'no on-screen task'": the gap between the last period's end
         // and the line is covered, and as NO_SCREEN rather than NO_TASK — so a task resilient to that kind
         // may still fill it, which is exactly what the README's own example asks for.
+        //
+        // The example is *"if $now line$ is in mode 2 and reaches the END of a 15min period"*, and reaching
+        // the end of one means having gone THROUGH it — which is mode 3's rule, not mode 2's, now that the two
+        // are told apart by whether a dynamic period may cover the line. Mode 2 drags the pose instead, and
+        // its own half of this is the test below.
         val base = DynamicPeriods.Base(emptyList(), emptyList(), emptyList())
         val specs = listOf(DynamicPeriods.Spec(DynamicPeriods.LABEL_15MIN, 15 * MIN, 2 * HOUR))
         val out = DynamicPeriods.periods(
             base, specs, 0L, 6 * HOUR,
             tpMillis = 2 * HOUR + 20 * MIN,
-            mode = DynamicPeriods.MODE_AWAY,
+            mode = DynamicPeriods.MODE_ON_BREAK,
         )
         val cover = out.single { it.kind == PeriodKinds.NO_SCREEN }
         assertEquals(2 * HOUR + 15 * MIN, cover.startMillis, "the cover starts where the last period ended")
         assertEquals(2 * HOUR + 20 * MIN, cover.endMillis)
         assertTrue(cover.covers(cover.endMillis), "and the line itself is covered")
         assertTrue(!cover.label.equals("Away", ignoreCase = true), "the scheduler period is no-screen logic, not an Away band label")
+        // The pose itself elapsed where the bars put it: mode 3 is the one mode the line walks through one in.
+        assertTrue(
+            out.any { it.kind == PeriodKinds.NO_TASK && it.startMillis == 2 * HOUR },
+            "mode 3: the pose is taken where it fell due, not dragged: $out",
+        )
+    }
+
+    @Test
+    fun mode_two_drags_the_pose_and_still_covers_the_line() {
+        // Mode 2 is *"covered by 'no on-screen task' BUT NOT one of the three dynamic periods"*. So the same
+        // 15-minute pose that mode 3 walks through is pushed onto the line here, as the half-open
+        // `(t_p, t_p + d]` — and `t_p` itself, which the pose therefore leaves free, is covered by the away
+        // cover. Both halves of the rule, in one placement.
+        val base = DynamicPeriods.Base(emptyList(), emptyList(), emptyList())
+        val specs = listOf(DynamicPeriods.Spec(DynamicPeriods.LABEL_15MIN, 15 * MIN, 2 * HOUR))
+        val tp = 2 * HOUR + 20 * MIN
+        val out = DynamicPeriods.periods(base, specs, 0L, 6 * HOUR, tpMillis = tp, mode = DynamicPeriods.MODE_AWAY)
+        val pose = out.filter { it.kind == PeriodKinds.NO_TASK }.minBy { it.startMillis }
+        assertEquals(tp, pose.startMillis, "mode 2 drags the pose onto the line, exactly as mode 1 does")
+        assertTrue(pose.openStart, "…as the half-open (t_p, t_p + d], so t_p itself is not covered by it")
+        assertTrue(!pose.covers(tp))
+        val cover = out.single { it.kind == PeriodKinds.NO_SCREEN }
+        assertTrue(cover.covers(tp), "mode 2: t_p must still be covered by 'no on-screen task': $cover")
     }
 
     // ----- what follows from the bars -----------------------------------------------------------
@@ -409,24 +437,32 @@ class DynamicPeriodsTest {
     // ----- the two modes, as the app asks them -------------------------------------------------
 
     @Test
-    fun mode_one_leaves_the_line_uncovered_and_mode_two_covers_it() {
-        // The two modes, applied at the one place they bite: the placement asked AT the line.
+    fun modes_one_and_two_keep_a_pose_off_the_line_and_mode_three_lets_it_run() {
+        // The three modes, applied at the one place they bite: the placement asked AT the line.
         val atScreen = place(mode = DynamicPeriods.MODE_AT_SCREEN)
         assertTrue(atScreen.isNotEmpty(), "there must be periods for this to be about")
         assertTrue(
             atScreen.none { it.startEpochMillis <= NOW && NOW < it.endEpochMillis },
             "mode 1: nothing the line placed may cover t_p itself",
         )
-        // Mode 2's cover lies BEHIND the line (it is the gap the line has already crossed while away), so it
-        // is the elapsed window that holds it, not the forward projection. Whatever the grid happens to put
-        // near the line, the invariant is the README's: t_p is covered, by something the on-screen tasks are
-        // turned away by.
+        // Mode 2 answers the same question the same way — a locked screen is not a break TAKEN, so an owed
+        // pose is pushed ahead of the line there too. That is the whole of what mode 3 was added to tell it
+        // apart from.
+        val locked = place(mode = DynamicPeriods.MODE_AWAY)
+        assertTrue(
+            locked.none { it.startEpochMillis <= NOW && NOW < it.endEpochMillis },
+            "mode 2: a pose may not cover t_p either — only mode 3 lets one",
+        )
+        // Mode 3's cover lies BEHIND the line (it is the gap the line has already crossed while on a declared
+        // break), so it is the elapsed window that holds it, not the forward projection. Whatever the grid
+        // happens to put near the line, the invariant is the README's: t_p is covered, by something the
+        // on-screen tasks are turned away by.
         val away =
             SchedulerDomain.takenScreenBreakPanels(
-                breaks, NOW - 6 * HOUR, NOW - 1, tpMillis = NOW, mode = DynamicPeriods.MODE_AWAY,
+                breaks, NOW - 6 * HOUR, NOW - 1, tpMillis = NOW, mode = DynamicPeriods.MODE_ON_BREAK,
             )
         val covering = away.filter { it.startEpochMillis <= NOW && NOW <= it.endEpochMillis }
-        assertTrue(covering.isNotEmpty(), "mode 2: t_p must be covered")
+        assertTrue(covering.isNotEmpty(), "mode 3: t_p must be covered")
         assertTrue(
             covering.all { PeriodKinds.coversNoScreen(it.restrictiveKind) },
             "…by a period that turns the on-screen tasks away",
@@ -442,7 +478,7 @@ class DynamicPeriodsTest {
                 rare, NOW - 6 * HOUR, NOW - 1,
                 basePeriods = listOf(standing),
                 tpMillis = NOW,
-                mode = DynamicPeriods.MODE_AWAY,
+                mode = DynamicPeriods.MODE_ON_BREAK,
             )
         assertTrue(
             gap.none { it.title.equals("Away", ignoreCase = true) },
@@ -452,16 +488,24 @@ class DynamicPeriodsTest {
 
     @Test
     fun the_mode_follows_whether_any_device_is_unlocked() {
-        // The rule, and the whole of it: mode 1 while a device of the account is unlocked, mode 2 otherwise -
-        // read off the same account-wide pause the calendar draws as its Inactivity band.
+        // The rule, and the whole of it: mode 1 while a device of the account is unlocked; otherwise mode 3 if
+        // the user declared they are away and mode 2 if they did not - read off the same account-wide pause
+        // the calendar draws as its Inactivity band.
         val unlocked = SchedulerDomain.anyDeviceUnlockedAt(emptyList(), null, null, NOW)
         assertTrue(unlocked, "no pause anywhere means somebody is at a screen")
         assertEquals(DynamicPeriods.MODE_AT_SCREEN, SchedulerDomain.tpMode(unlocked))
+        assertEquals(
+            DynamicPeriods.MODE_AT_SCREEN,
+            SchedulerDomain.tpMode(unlocked, awayDeclared = true),
+            "a device is still unlocked, so saying 'I'm away' on another one does not make it a break",
+        )
 
         // An OPEN pause on this device - the lock signal, or the "I'm away" button - reaches up to the line.
         val locked = SchedulerDomain.anyDeviceUnlockedAt(emptyList(), NOW - 10 * MIN, null, NOW)
         assertTrue(!locked, "an ongoing pause covers the line, so no device is unlocked")
         assertEquals(DynamicPeriods.MODE_AWAY, SchedulerDomain.tpMode(locked))
+        // …and the second question: nothing is unlocked AND the user said so, which is mode 3.
+        assertEquals(DynamicPeriods.MODE_ON_BREAK, SchedulerDomain.tpMode(locked, awayDeclared = true))
 
         // Once the user is back the pause is capped at the return, and the line is outside it again.
         assertTrue(SchedulerDomain.anyDeviceUnlockedAt(emptyList(), NOW - 10 * MIN, NOW - MIN, NOW))

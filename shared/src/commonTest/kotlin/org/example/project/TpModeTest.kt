@@ -88,11 +88,12 @@ class TpModeTest {
     }
 
     @Test
-    fun the_seam_is_what_the_fill_reads_so_mode_two_stops_the_dragging() {
-        // The seam the engine injects over the lock signal. In mode 2 nothing is swept — the line is not at a
-        // screen — so the three sit where the recurrence bars put them, which is the bars' own answer.
+    fun the_seam_is_what_the_fill_reads_so_mode_three_stops_the_dragging() {
+        // The seam the engine injects over the lock signal and the "I'm away" button. In mode 3 nothing is
+        // dragged — the user declared they are away, so a pose the line reaches is BEING TAKEN — and the three
+        // sit where the recurrence bars put them, which is the bars' own answer.
         val (s, _) = oneTask()
-        SchedulerReducer.tpMode = { DynamicPeriods.MODE_AWAY }
+        SchedulerReducer.tpMode = { DynamicPeriods.MODE_ON_BREAK }
         val away = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(NOW)).panels
             .filter { it.screenBreak }
             .map { it.startEpochMillis }
@@ -100,11 +101,45 @@ class TpModeTest {
             s.screenBreaks, NOW, away.max(), anchorMillis = NOW,
         ).map { it.startEpochMillis }
         assertTrue(bars.isNotEmpty())
-        assertTrue(away.containsAll(bars), "mode 2 places the three where the bars do: $away vs $bars")
+        assertTrue(away.containsAll(bars), "mode 3 places the three where the bars do: $away vs $bars")
     }
 
     @Test
-    fun mode_two_covers_the_line_with_no_on_screen_task() {
+    fun mode_two_is_not_mode_three_and_the_pose_is_what_tells_them_apart() {
+        // The reason mode 3 exists at all. Both modes agree that no device is unlocked and that the line is
+        // covered by "no on-screen task"; they disagree about the ONE thing the README makes their definitions
+        // differ by — whether the line may be covered by a dynamic period.
+        //
+        // A LOCKED screen is not a break taken (the user may be reading at their desk), so mode 2 goes on
+        // pushing an owed pose ahead of the line exactly as mode 1 does. Pressing "I'm away" is the statement
+        // that turns the same silence into a break, and mode 3 then lets the pose elapse under the line.
+        val (s, _) = oneTask()
+
+        SchedulerReducer.tpMode = { DynamicPeriods.MODE_AWAY }
+        val locked = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(NOW)).panels
+            .filter { it.screenBreak && it.title == "5min" }
+        assertTrue(locked.isNotEmpty(), "there must be poses for this to be about")
+        assertTrue(
+            locked.none { it.startEpochMillis <= NOW && NOW < it.endEpochMillis },
+            "mode 2: an owed pose is still pushed ahead of the line",
+        )
+        assertEquals(
+            NOW + 1,
+            locked.minOf { it.startEpochMillis },
+            "…as the half-open (t_p, t_p + duration], exactly as in mode 1",
+        )
+
+        SchedulerReducer.tpMode = { DynamicPeriods.MODE_ON_BREAK }
+        val onBreak = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(NOW)).panels
+            .filter { it.screenBreak && it.title == "5min" }
+        assertTrue(
+            onBreak.none { it.startEpochMillis == NOW + 1 },
+            "mode 3: nothing is dragged — the pose is where the bars put it: $onBreak",
+        )
+    }
+
+    @Test
+    fun both_away_modes_cover_the_line_with_no_on_screen_task() {
         // `side-dev/README.md` § *$t_p$ 2 modes*: **"Mode 2: $now line$ must be covered by the period 'no
         // on-screen task'"**, and its own example — the gap back from the last such period to $t_p$ is covered
         // by one, *"filled with tasks that have a non-zero resilience to the kind 'no on-screen task', or no
@@ -127,21 +162,24 @@ class TpModeTest {
             "mode 1: the line is not covered, so the on-screen task runs there",
         )
 
-        val away = fill(DynamicPeriods.MODE_AWAY)
-        assertTrue(
-            away.none { it.auto && it.taskId == solo && it.startEpochMillis <= NOW && NOW < it.endEpochMillis },
-            "mode 2: an on-screen task may not be what the line is covered by",
-        )
-        // The plan is not abandoned — it resumes the instant past the covered line.
-        assertTrue(
-            away.any { it.auto && it.taskId == solo && it.startEpochMillis > NOW },
-            "mode 2 covers the line, it does not empty the timeline ahead of it",
-        )
-        // And the cover stays out of `state.panels`: it is read by the fill, never drawn.
-        assertTrue(
-            away.none { it.title.equals("Away", ignoreCase = true) },
-            "mode 2's cover is an environment period, never a panel",
-        )
+        // Both away modes cover the line: they differ over whether a DYNAMIC period may, never over this.
+        for (mode in listOf(DynamicPeriods.MODE_AWAY, DynamicPeriods.MODE_ON_BREAK)) {
+            val away = fill(mode)
+            assertTrue(
+                away.none { it.auto && it.taskId == solo && it.startEpochMillis <= NOW && NOW < it.endEpochMillis },
+                "mode $mode: an on-screen task may not be what the line is covered by",
+            )
+            // The plan is not abandoned — it resumes the instant past the covered line.
+            assertTrue(
+                away.any { it.auto && it.taskId == solo && it.startEpochMillis > NOW },
+                "mode $mode covers the line, it does not empty the timeline ahead of it",
+            )
+            // And the cover stays out of `state.panels`: it is read by the fill, never drawn.
+            assertTrue(
+                away.none { it.title.equals("Away", ignoreCase = true) },
+                "the away cover is an environment period, never a panel",
+            )
+        }
     }
 
     @Test

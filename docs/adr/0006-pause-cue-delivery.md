@@ -34,7 +34,8 @@ over the stored active-sessions (own + reconcile-pulled peers).
 ## Two detections, two Edge Functions
 
 Migration `20260729000000`. The account stops being present in exactly two ways, and each has its own
-function; they differ only in what is *known* about the walk-away instant.
+function; they differ only in what is *known* about the walk-away instant. A **third** detection was added
+2026-09-04 and is not about a walk-away at all — see *Mode 3* below; it rides e2 with its own action.
 
 Delivery (token lookup + FCM v1 / APNs) is shared in `supabase/functions/_shared/push.ts`, and so is the
 cue computation (`build_pause_cue(user, anchor)`), so the two can never disagree on which break governs,
@@ -93,6 +94,68 @@ reversal.
 e2 does not re-test liveness between the cron's scan and pg_net's asynchronous dispatch. An account that
 comes back inside that window is cued anyway; the cron's cancel pass retracts it within one `t_b` — the same
 backstop that already covers "the user came back before the break ended".
+
+## Mode 3 — the account SAYS it is on a break, so the server reads the rules for it
+
+Migration `20260904000000`. The now-line's third mode (`docs/scheduler_requirements.md`, ADR 0003) is *at least
+one device with the "I'm away" button clicked and every other device locked*. It is the one mode in which a 5-
+or 15-minute pose is not dragged ahead of the line but **taken** — it elapses under the line — and therefore
+the one case in which no screen of the account is on while a break is genuinely running. Nothing local can
+watch that break end, so the server does.
+
+### The away flag is per device; the mode is per account
+
+The condition is a quantifier over the account's devices, so no device can read it off its own button. Each
+device publishes its own flag and reads the account's answer back in the same round trip:
+
+* `sync_device_away(device, away)` → writes `device_away {user, device, away}` when `away` is given (`null`
+  reads), and returns **"is any device of this account away"**. Called on every away edge and every sync
+  moment, never on a timer.
+
+The second half — *every other device locked* — is the liveness test this path has always used: an unlocked,
+signed-in device beats every `t_a`, so no beat within `2·t_a` means none is unlocked. The away device is
+**included** in that test rather than excluded, and must be: turning the button on stops its own beat, which is
+exactly how it stops counting as unlocked. `account_in_mode3()` is the two halves together, and it is the
+server's own reading — nothing here trusts a client-computed mode.
+
+### The server reads the rules; it does not run the scheduler
+
+The scheduler returns a **set of rules** determining the future dynamic restrictive periods, and the client
+publishes it:
+
+* `publish_break_rules(rules)` → `screen_break_rule {user, break_kind, start_ms, end_ms}`, replaced whole. The
+  set is the placed 5- and 15-minute periods over the next day, on the real wall clock
+  (`SchedulerDomain.poseWindowsBetween`).
+
+`tick_pause_cues()` gains pass **(c)**: an account in mode 3, not sleeping, whose line is inside a published
+rule window that has not been cued, is handed to e2 with `action: 'mode3'`. `claim_mode3_break_cue()` claims
+and computes, anchoring at **the break's own end** — the rule says exactly where that is, so unlike the
+dirty-kill path nothing is estimated. The server's whole share of the scheduling model is the comparison
+`start <= now < end`; it places nothing and knows no recurrence, and `PlanWalk` stays the only copy of the
+rules. The reading is legitimate *because* it is mode 3: nothing drags a pose there, so where the scheduler
+placed one is where it happens.
+
+**The two `device_break` dues are a projection of the same set, not a second answer.** The client reads both
+out of one `poseWindowsBetween` call — the windows for this pass, the first window of each kind for the
+walk-away gate — so the two paths can never name different breaks. They are kept because they answer a
+different question: *was a break already due when the account went dark*, which is about the past and cannot be
+read off future windows.
+
+**Pass (c) is not pass (a) with a different filter, and merging them would break one of the two.** (a) fires
+once per idle EPISODE, for a break that was *already overdue when the last device vanished* — "the user walked
+away with a break owed" — and claims `data_payload_sent`. (c) fires per break WINDOW the line is actually
+inside while the account has said it is on a break, and claims `pause_cue_schedule.break_start_ms`. Different
+question, different anchor, different key. The key is shared with `build_pause_cue`, which now records it too,
+and that is what stops the two paths cueing the same pose twice; one away spell can legitimately contain
+several poses, which a single per-episode flag could not express.
+
+**The second use of the away flag.** `away_spans(from, to)` gives a *waking* app the stretches the account was
+in mode 3 for, so its fast-forward move of the now-line is walked in mode 3 over them instead of always in mode
+2 (ADR 0003). A device that was asleep for the whole episode has no other way to learn it happened. The log is
+opened and closed by the signals the mode is derived from — `sync_device_away`, `publish_presence` (a beating
+device means somebody is unlocked, so the episode is over) and the cron's own pass — never by a device's
+opinion of the mode, or two devices would write two episodes for one away spell. It is pruned to a week, longer
+than any journey a client sweeps (whose own no-screen evidence window is 24 h).
 
 ## Only an OVERDUE break fires a cue
 

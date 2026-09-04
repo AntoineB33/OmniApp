@@ -195,17 +195,47 @@ next, and the grid walks away from itself on every pass.
 
 ---
 
-## The two `t_p` modes
+## The three `t_p` modes
 
-**The mode is which devices are unlocked, and nothing else: mode 1 while ANY device of the account is
-unlocked, mode 2 otherwise.** `SchedulerDomain.tpMode` is the one place it is decided and
-`anyDeviceUnlockedAt` the one place the input is read.
+**The mode is two questions asked in order, and both are about the ACCOUNT** — `SchedulerDomain.tpMode` is the
+one place it is decided and `anyDeviceUnlockedAt` the one place the first input is read:
+
+1. **is any device of the account unlocked?** If so, **mode 1**.
+2. otherwise, **has at least one device said it is away?** If so, **mode 3**; if not, **mode 2**.
+
+Read together those are the spec's own sentence: *mode 3 when and only when at least one device has the "I'm
+away" button clicked and all the other devices are locked.* The away device drops out of question 1 by itself —
+turning the button on stops its beat and finalizes its session — which is what makes the conjunction come out
+right without a third question.
+
+Mode 3 was added 2026-09-04, with the third mode in the spec. Question 2 is what it is for, and the difference
+between the two answers is the difference between *no screen is in use* and *a break is being taken*. A locked
+screen says only the first — the user may be reading at their desk, or the machine may have locked itself
+while they thought — so **mode 2 goes on pushing an owed pose ahead of the line exactly as mode 1 does**, and
+what makes that pose go away there is the ordinary bar rule (a locked stretch is a rest stretch, and a rest
+stretch bars the breaks after it), never the line walking through it. Mode 3 is the account *saying* the break
+is being taken, so the pose elapses under the line.
 
 It is *not* the Sleep/Work toggle, which is what the code read until 2026-08-28 — that toggle says the user
 has gone to bed, not that no screen is in use, and a machine left unlocked while its owner naps is squarely
-mode 1. It is not the "I'm away" button on its own either: that button reaches the mode the same way a lock
-does, by declaring this device idle, which is precisely why an unlock clears it
-(`SchedulerEngine.noteScreenSignal`).
+mode 1. The "I'm away" button reaches **both** questions: it declares this device idle the way a lock does,
+which is how it answers the first, and it *is* the second — so on a single-device account pressing it lands in
+mode 3, and pressing it while a phone is still unlocked leaves the account in mode 1. An unlock clears it
+(`SchedulerEngine.noteScreenSignal`), so the mode comes back on its own.
+
+**The away flag has to LEAVE the device it was pressed on**, or question 2 is unanswerable: it quantifies over
+the account, and a device reading only its own flag would put a merely-locked peer in mode 2 while the machine
+the button was pressed on is in mode 3 — two devices placing the three dynamic periods differently, which is
+the drift every other rule here exists to prevent. So each device writes its own flag and reads back one
+boolean, "is any device of this account away" (`PauseCueGateway.syncDeviceAway` → `device_away`, ADR 0006), on
+every away edge and every sync moment. It arrives with the same reconcile-bounded staleness that question 1's
+input already carries. The engine's reading is `own || account`, and the `or` is not redundancy: the account's
+answer includes this device only once the publish has landed, and the button must work at the press, offline.
+
+The server keeps the mode-3 episode log the same way — from the away flags and the presence beats, never from
+a device's opinion of the mode — which is what a *waking* app reads back so its fast-forward move is walked in
+mode 3 where the account really was in it (`SchedulerEngine.awaySpansFor`, and § *the line never jumps* below).
+That is the only way a device that was asleep for a whole episode can learn it happened.
 
 "Unlocked" is read off the **account-wide pause the calendar already draws** — `displayInactivityGaps`: the
 derived gaps (the complement of every device's active intervals, this device's own rows plus the peers' the
@@ -216,21 +246,36 @@ tail ends *at* the now-line, and a half-open test would report the device unlock
 asked about. Peers arrive with reconcile-bounded staleness and the live tail is a local presumption a later
 derive shrinks; that is the same bound the band itself carries.
 
-- **Mode 1 (a device is unlocked).** `t_p` may not be covered, so every **pose** whose slot the line has
+- **Modes 1 and 2 — the line may not be covered by a dynamic period.** Every **pose** whose slot the line has
   **swept** — travelled continuously through, from where its motion began up to here — is pushed onto the line
   and becomes the half-open `(t_p, t_p + duration]`. In the app's discrete millisecond time that is
   `[t_p + 1, t_p + duration + 1)`, which is how it becomes an ordinary `TaskPanel` with no extra field:
-  `Instance.coveredFromMillis`. The line goes on delaying it, placing tasks where it stood, so a stretch
-  crossed at the screen holds task panels and no pose. **The 20 s look-away is exempt** — see below.
-- **Mode 2 (no device unlocked).** `t_p` must be covered, so the gap between the last such period's end and
-  the line is covered as **`no on-screen task`** — not `no task allowed` — which is what the README's own
-  example asks for: the gap is filled with the tasks resilient to that kind, and left empty if none are.
+  `Instance.coveredFromMillis`. The line goes on delaying it: in mode 1 it places tasks where it stood, in
+  mode 2 the away cover holds it, and either way a stretch crossed like that holds no pose. **The 20 s
+  look-away is exempt in both** — see below. `DynamicPeriods.breaksAreTakenAt` is the ONE predicate that says
+  which modes drag.
+- **Modes 2 and 3 — the line must be covered by `no on-screen task`.** The gap between the last such period's
+  end and the line is covered as **`no on-screen task`** — not `no task allowed` — which is what the README's
+  own example asks for: the gap is filled with the tasks resilient to that kind, and left empty if none are.
   `DynamicPeriods.awayCover` is the whole of it, built by `fillSchedule` straight into its restriction set.
   It is an **environment period, never a panel**, and the difference is why it went missing for two days: it
   shipped as an `Away` panel, the calendar drew a synthetic band nobody wanted, and the revert (2026-08-31)
   took the scheduling effect away with the band — mode 2's rule then reached nothing, and the fill started an
   on-screen task at the line while no device of the account was unlocked. `dynamicPeriodPanels` answers what
   the calendar draws; the cover is not that list's business.
+
+  **"Nothing precedes" is not a reason to answer null.** Mode 2 drags the pose onto the line, which leaves
+  `t_p` itself uncovered by construction, so there may be no earlier no-screen period at all to measure the
+  gap from; the cover is then the line's own instant, `[t_p, t_p]`. That is not a degenerate case worth
+  dropping — the fill re-expresses whatever comes back as `[now, now + 1)` regardless, so the reach behind the
+  line is documentation and the *existence* of the answer is the rule.
+- **Mode 3 alone lets a dynamic period cover the line.** Nothing is dragged: the pose is where the bars put
+  it, the line walks through it, and behind the line it is an ordinary frozen fact that re-anchors the bars
+  off itself like any other rest. That is also what makes the server's job possible. The scheduler returns a
+  **set of rules** and the client publishes it (`SchedulerDomain.poseWindowsBetween` → `screen_break_rule`,
+  ADR 0006); because nothing drags a pose in mode 3, each rule's window is where that break really happens, so
+  the server's whole question is `start <= now < end`. It reads the rules; it never runs the scheduler, and
+  `PlanWalk` stays the only copy of them.
 
 Three things that fall out, and each is load-bearing:
 
@@ -249,15 +294,17 @@ Three things that fall out, and each is load-bearing:
 
 ### The look-away is assumed taken; only a pose is owed
 
-**The 20 s look-away is never dragged** (`DynamicPeriods.dragsAtLine` — the one predicate, keyed on the
-positional bar label, never on a title). Everything above about mode 1 is about the two poses.
+**The 20 s look-away is never dragged in any mode** (`DynamicPeriods.dragsAtLine` — the one predicate, keyed
+on the positional bar label, never on a title). Everything above about modes 1 and 2 dragging is about the two
+poses. Said the other way round, which is the spec's own wording: the line is in **mode 3** for the twenty
+seconds it takes to cross a look-away, whatever mode it is in either side of it.
 
 The reason is not a scheduling one, it is what the break *is*. Looking twenty feet away for twenty seconds
 costs the user no working time and needs no decision: they are still at the desk, still on the same task, and
 the app has already told them to do it. So the app assumes they are doing it. The occurrence stays exactly
 where the recurrence bars put it, the now-line walks **through** it — covered by `no task allowed` for those
-twenty seconds, which is mode 2's condition and precisely what mode 1 forbids of a pose — and comes out the
-other side. Behind the line the break is still there, drawn where it happened.
+twenty seconds, which is mode 3's condition and precisely what modes 1 and 2 forbid of a pose — and comes out
+the other side. Behind the line the break is still there, drawn where it happened.
 
 A pose is the opposite case, and the contrast is the whole of the split: five or fifteen minutes away from the
 screen is something the user has to actually *do*, so an untaken one is **owed**, not spent, and parks at the
@@ -277,11 +324,11 @@ Three consequences:
   dynamic restrictive period, and now the ones the line simply crossed are on the timeline too, firing it as
   the walk's own placements always did.
 
-Where the app has live evidence that nobody is at a screen, that evidence *is* mode 2's cover: an **ongoing**
+Where the app has live evidence that nobody is at a screen, that evidence *is* the away cover: an **ongoing**
 pause is `closedEnd`, so `liveRestPeriod` covers the now-line and `awayCover` finds nothing left to do. A pause
 the user has come back from stops at the return, exclusive, like every other period.
 
-### The line never jumps, so waking from device sleep is a journey — walked in mode 2
+### The line never jumps, so waking from device sleep is a journey — walked in mode 2, or mode 3 where the account said so
 
 The README's *Progressive Calculation* section states the consequence outright: *"If the device bearing the
 running process is put to sleep, then when the program wakes up, the $now line$ does a fast move forward (in
@@ -304,6 +351,18 @@ followed from that, of which only the first is about tidiness:
    so anything asking afterwards answers mode 1 — the one mode the suspension was not in. `sweepMode` holds the
    journey's mode for as long as the journey lasts and `tpModeNow` reads it, so the single reading of the mode
    stays single.
+
+   Since 2026-09-04 the journey is not one mode throughout. The spec's own amendment: *"When the app wakes up,
+   it asks the server for any changes. If there was a period of $now line$ mode 3, then the fast forward move
+   … will get in mode 3 at those periods, instead of always mode 2."* So `sweepNowLineTo` takes the account's
+   mode-3 stretches and switches `sweepMode` as it passes them, cutting a step at every one of their bounds —
+   a step that straddled one would commit half a placement in a mode that did not hold for it. **The ask is
+   the caller's**, not `reportTimeGap`'s: the tick loop that detects the wake is already a coroutine, so
+   `awaySpansFor` is asked there and the journey itself stays the single synchronous walk it has always been.
+   It merges two records because neither alone will do — this device's own (a journey the clock made while the
+   app was running, i.e. a debug leap) and the server's (the app was asleep or dead for the whole episode,
+   which is exactly the journey a wake has to walk). It is time-bounded and best-effort: a wake never waits on
+   the network, and an unreachable server leaves the journey in mode 2 exactly as before.
 3. **Mode 2's cover is a fact about the mode, not an observation to wait for.** Mode 2 says the line *is*
    covered by `no on-screen task`; a stretch swept in mode 2 is therefore covered by one, and
    `noteSweptNoScreen` says so at the instant of the wake — into the same `noScreenEvidence` funnel the OS lock

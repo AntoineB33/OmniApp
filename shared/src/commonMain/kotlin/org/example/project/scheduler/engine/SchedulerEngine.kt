@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -58,6 +59,7 @@ import org.example.project.scheduler.platform.VoiceCue
 import org.example.project.scheduler.platform.playVoiceCue as platformPlayVoiceCue
 import org.example.project.scheduler.platform.stopSpeaking
 import org.example.project.scheduler.sync.DeviceHeartbeatPublisher
+import org.example.project.scheduler.sync.BreakWindow
 import org.example.project.scheduler.sync.NextBreakState
 import org.example.project.scheduler.sync.PauseCueGateway
 import org.example.project.scheduler.sync.PresenceState
@@ -211,6 +213,11 @@ private const val NO_SCREEN_EVIDENCE_REFRESH_MILLIS: Long = 10L * 60 * 1000
  * asks over the display window instead, once.
  */
 private const val NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS: Long = 24L * 60 * 60 * 1000
+
+// `side-dev/README.md` § *Progressive Calculation*: how long a wake may wait on the server for the account's
+// mode-3 stretches before walking the line anyway. The line's own motion is not the network's to hold up, so
+// this is short and its failure mode is the previous behaviour exactly: the whole journey in mode 2.
+private const val AWAY_SPAN_FETCH_TIMEOUT_MILLIS: Long = 3_000L
 
 // PRD §18 Alarms: how late (in REAL time, measured by [BoundarySweep] like every other boundary) a crossed
 // alarm instant may be and still ring on a device that has no OS alarm clock (see [launchAlarmSweep]). That
@@ -401,12 +408,37 @@ class SchedulerEngine(
     private var scannedNoScreen: List<TaskTimeRange> = emptyList()
     private var sweptNoScreen: List<TaskTimeRange> = emptyList()
 
-    // `side-dev/README.md` § *$now line$ 2 modes*: the mode the JOURNEY is being walked in, held for as long as
+    // `side-dev/README.md` § *$now line$ 3 modes*: the mode the JOURNEY is being walked in, held for as long as
     // the walk lasts and null at every other instant. A wake from device sleep is swept in mode 2 — the README
-    // says so in as many words — and mode 2 is a statement about where the line is, not about where it has
-    // arrived, so every position the walk commits has to be asked in it. Read by [tpModeNow], which is the one
-    // reading of the mode the fills and the display share; never persisted, never synced.
+    // says so in as many words — except over the stretches the account was in MODE 3 for, which
+    // [sweepNowLineTo] switches this to as it passes them ([awaySpansFor]). Both are statements about where
+    // the line IS, not about where it has arrived, so every position the walk commits has to be asked in the
+    // one that held there. Read by [tpModeNow], which is the one reading of the mode the fills and the display
+    // share; never persisted, never synced.
     private var sweepMode: Int? = null
+
+    // `side-dev/README.md` § *$now line$ 3 modes*: the stretches THIS device was in mode 3 for — the user had
+    // pressed "I'm away" and no device of the account was unlocked. Appended to by [noteTpMode] at every mode
+    // edge, pruned to the same window the no-screen evidence answers over, and read by [awaySpansFor] so a
+    // journey the line has to walk (a debug time leap, a wake) is walked in mode 3 where the account really was
+    // in it. It is this device's own record; the account's is the server's ([publishAway]), which the
+    // same reader unions in — a device that was ASLEEP for a mode-3 episode has no record of it at all, and
+    // that episode is exactly the one a wake has to sweep.
+    private var mode3Spans: List<TaskTimeRange> = emptyList()
+
+    // The instant this device entered mode 3, or null while it is not in it — the open half of [mode3Spans].
+    private var mode3Since: Long? = null
+
+    // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **is any device of the ACCOUNT away?** — the
+    // second half of the mode-3 condition, and the half no device can answer from its own flag.
+    //
+    // The rule is *at least one device with "I'm away" ON and every OTHER device locked*, so the quantifier is
+    // over the account, not over this install. Each device publishes its own flag and reads this back
+    // ([PauseCueGateway.syncDeviceAway]) on every away edge and every sync moment; it reaches a peer with the
+    // same reconcile-bounded staleness as that peer's activity already does, which is the bound
+    // [SchedulerDomain.anyDeviceUnlockedAt] documents for the other half. It is a fact about the DEVICES, so
+    // like the mode itself it is never persisted and never synced in the snapshot.
+    private val _accountAway = MutableStateFlow(false)
 
     /**
      * The stretches the devices observed nobody at a screen for — the ONE reading of it in the app.
@@ -615,6 +647,10 @@ class SchedulerEngine(
             scope.launch {
                 moments.collect {
                     refreshDerivedPausesNow()
+                    // …and re-read whether any device of the account is away. A sync moment is the one
+                    // event-driven instant at which a PEER's state can have changed here, which is exactly the
+                    // staleness bound the other half of the mode already carries.
+                    publishAway(null)
                     // PRD §15: the presence tick must start as soon as the app is LOGGED IN, not at the next
                     // 30-s activity beat. A reconcile is what carries a sign-in, so sample the beat here on the
                     // signed-out→signed-in edge; [updatePresence] then starts the `t_a` loop (and publishes the
@@ -1015,6 +1051,26 @@ class SchedulerEngine(
         _userAway.value = away
         scope.launch {
             advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended = false)
+            publishAway(away)
+        }
+    }
+
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **publish this device's away flag and adopt the
+     * ACCOUNT's answer** ([_accountAway]).
+     *
+     * Mode 3 is *at least one device away and every other one locked*, so the flag has to leave this device:
+     * a peer that is merely locked must reach the same mode as the one the button was pressed on, or the two
+     * place the dynamic periods differently. [away] `null` reads without writing, which is what a sync moment
+     * does. Best-effort — an unreachable server leaves this device answering the mode from its own flag alone,
+     * exactly as it did before this existed.
+     */
+    private suspend fun publishAway(away: Boolean?) {
+        val gateway = pauseCue ?: return
+        val any = runCatching { gateway.syncDeviceAway(away) }.getOrNull() ?: return
+        if (_accountAway.value != any) {
+            _accountAway.value = any
+            Diagnostics.log("account-wide \"I'm away\" is now $any")
         }
     }
 
@@ -1068,6 +1124,9 @@ class SchedulerEngine(
         val wasLocked = lastScreenSignal.getAndUpdate { signal } == false
         if (signal && wasLocked && _userAway.compareAndSet(expect = true, update = false)) {
             Diagnostics.log("\"I'm away\" cleared: this device was unlocked")
+            // The flag is the account's business, not this device's ([publishAway]): a peer still holding the
+            // account in mode 3 has to learn this device came back.
+            scope.launch { publishAway(false) }
         }
     }
 
@@ -1132,8 +1191,16 @@ class SchedulerEngine(
     /**
      * PRD §12: a gap in time `[sleepStart, sleepEnd]` — the process was suspended (real device sleep) or a
      * debug leap jumped the clock over it.
+     *
+     * [awaySpans] are the stretches of it the ACCOUNT was in mode 3 for, which the caller asks the server for
+     * before waking the line ([awaySpansFor]) — `side-dev/README.md` § *Progressive Calculation*: *"When the
+     * app wakes up, it asks the server for any changes. If there was a period of $now line$ mode 3, then the
+     * fast forward move ... will get in mode 3 at those periods, instead of always mode 2."* The ask is the
+     * caller's and not this function's on purpose: it is the one part of a wake that can go to the network,
+     * and the tick loop it is made from is already a coroutine, so the journey itself stays the single
+     * synchronous walk it has always been. Empty ⇒ the whole journey is mode 2, exactly as before.
      */
-    fun reportTimeGap(sleepStart: Long, sleepEnd: Long) {
+    fun reportTimeGap(sleepStart: Long, sleepEnd: Long, awaySpans: List<TaskTimeRange> = emptyList()) {
         vm.dispatch(SchedulerIntent.ReportDeviceSleep(sleepStart, sleepEnd))
         // `side-dev/README.md` § *Progressive Calculation*, direct consequence: *"If the device bearing the
         // running process is put to sleep, then when the program wakes up, the now line does a fast move
@@ -1151,9 +1218,10 @@ class SchedulerEngine(
         Diagnostics.log(
             "device sleep ${(sleepEnd - sleepStart) / 60_000}min " +
                 "(${Diagnostics.formatInstant(sleepStart)} → ${Diagnostics.formatInstant(sleepEnd)}): " +
-                "now-line swept in mode 2, the stretch covered as no on-screen task",
+                "now-line swept in mode 2, the stretch covered as no on-screen task" +
+                (if (awaySpans.isEmpty()) "" else " (${awaySpans.size} stretch(es) of it in mode 3: a declared break)"),
         )
-        sweepNowLineTo(sleepStart, sleepEnd, DynamicPeriods.MODE_AWAY)
+        sweepNowLineTo(sleepStart, sleepEnd, DynamicPeriods.MODE_AWAY, awaySpans)
     }
 
     /**
@@ -1166,9 +1234,12 @@ class SchedulerEngine(
      * freezing what it passes as it passes it. An ordinary tick is far inside the first step and costs exactly
      * one commit, so this is the same single dispatch it always was where no ground is being covered.
      *
-     * [mode] is the mode to hold for the WHOLE journey ([sweepMode]) — mode 2 for a wake from device sleep —
-     * or `null` to read the live one at each position, which is what a debug time leap wants (the devices'
-     * state is real there; only the clock moved).
+     * [mode] is the mode to hold for the journey ([sweepMode]) — mode 2 for a wake from device sleep — or
+     * `null` to read the live one at each position, which is what a debug time leap wants (the devices' state
+     * is real there; only the clock moved). [awaySpans] carves mode 3 out of it: the stretches the account
+     * really was on a declared break for ([awaySpansFor]), which the README's own wording asks for — the fast
+     * move is in mode 2 *except* where the app can be told otherwise. A step never straddles one of their
+     * edges, or a placement would be committed in the wrong mode for half of itself.
      *
      * The journey does **not** re-plan, and that is the README's own answer for it: *"If the current date is
      * beyond the definitive schedule, then it is similar to a case where no CPU were available during this
@@ -1177,22 +1248,37 @@ class SchedulerEngine(
      * ordinary [SchedulerIntent.AdvanceSchedule] — the plan in force writes the past it passes — and the
      * re-plan that follows belongs to the landing, through [requestReschedule] like every other one.
      */
-    private fun sweepNowLineTo(fromMillis: Long, toMillis: Long, mode: Int? = null) {
+    private fun sweepNowLineTo(
+        fromMillis: Long,
+        toMillis: Long,
+        mode: Int? = null,
+        awaySpans: List<TaskTimeRange> = emptyList(),
+    ) {
         if (toMillis <= fromMillis) return
         val previous = sweepMode
-        sweepMode = mode
         var steps = 0
         var widened = false
         try {
             var cursor = fromMillis
             while (cursor < toMillis) {
+                // The mode HERE, not the mode the journey set out in: a stretch the account spent on a declared
+                // break is mode 3, and the poses in it were taken rather than dragged.
+                val onBreak = awaySpans.any { it.startEpochMillis <= cursor && cursor < it.endEpochMillis }
+                sweepMode = if (mode == null) null else if (onBreak) DynamicPeriods.MODE_ON_BREAK else mode
                 // The rules at the line, so a journey crossing a task-tree keyframe steps by the minimum in
                 // force there rather than the one it set out with (ADR 0008).
                 val step = SchedulerDomain.sweepStepMillis(vm.state.value, cursor) ?: (toMillis - cursor)
                 val budget = (MAX_SWEEP_STEPS - steps).coerceAtLeast(1)
                 val even = (toMillis - cursor + budget - 1) / budget
                 if (even > step) widened = true
-                cursor = minOf(toMillis, cursor + maxOf(step, even, 1L))
+                // A step never crosses a mode edge: the next one starts there instead, so every position is
+                // committed in the mode that actually held at it.
+                val edge =
+                    awaySpans.asSequence()
+                        .flatMap { sequenceOf(it.startEpochMillis, it.endEpochMillis) }
+                        .filter { it > cursor }
+                        .minOrNull() ?: toMillis
+                cursor = minOf(toMillis, edge, cursor + maxOf(step, even, 1L))
                 advanceTo(cursor)
                 steps++
             }
@@ -1258,7 +1344,10 @@ class SchedulerEngine(
                 // down) becomes an exact gap other devices can pull. The journey's own cover is the tick
                 // boundaries, which strictly CONTAIN the suspension, so it can only over-claim the ~30 s before
                 // the machine went down — the same span `ReportDeviceSleep` already treats as the hole.
-                reportTimeGap(lastClockTick, now)
+                // The ask before the journey: the account may have spent part of the gap on a DECLARED break
+                // (mode 3), and the app's own screen was off for it, so the server is the only witness. Time-
+                // bounded and best-effort inside [awaySpansFor] — a wake never waits on the network.
+                reportTimeGap(lastClockTick, now, awaySpansFor(lastClockTick, now))
                 recordExactSleepGaps(lastClockTick, now)
                 lastScheduleAdvance = now
             } else {
@@ -1384,24 +1473,41 @@ class SchedulerEngine(
         presence.setPresence(if (active) PresenceState(gateway.deviceId) else null)
         if (!active) return
 
-        // Ask the RECURRENCE BARS where each pose next falls, over the same environment the fill and the cue
-        // sweep are handed — never the stored `state.panels`, whose forward projection is a frozen snapshot
-        // (the short fast-break now-line break vanished from it the moment its window elapsed and was replaced
-        // by a far-future sleep-anchored occurrence, so the cue aimed hours out; see
-        // RestPosePresenceWindowTest).
+        // Ask the RECURRENCE BARS where the poses fall, over the same environment the fill and the cue sweep
+        // are handed — never the stored `state.panels`, whose forward projection is a frozen snapshot (the
+        // short fast-break now-line break vanished from it the moment its window elapsed and was replaced by a
+        // far-future sleep-anchored occurrence, so the cue aimed hours out; see RestPosePresenceWindowTest).
+        //
+        // **ONE query, two readings.** `docs/scheduler_requirements.md` § *$now line$ 3 modes*: the scheduler
+        // returns a SET OF RULES, and both things the server is told are that set — the windows themselves,
+        // which the mode-3 evaluation compares the line against, and the two dues, which are the first of each
+        // kind and which the walk-away gate asks about the past with. Deriving them separately is how the two
+        // would start naming different breaks.
         val now = clock.nowMillis()
         val st = vm.state.value
-        val dues = restPoseDueMillisByKey(
+        val windows = SchedulerDomain.poseWindowsBetween(
             screenBreaks = st.screenBreaks,
             nowMillis = now,
             basePeriods = dynamicPeriodBaseNow(st),
             tasks = SchedulerDomain.planTasksOf(st, now),
         )
+        // On the REAL wall clock, like every other instant the server is given: a device on an accelerated
+        // debug clock must not report sim-ahead windows against server-stamped `now()`.
+        val rules = windows.map { BreakWindow(it.key, realInstantFor(it.startMillis), realInstantFor(it.endMillis)) }
+        fun dueOf(key: String): Long? =
+            windows.asSequence()
+                .filter { it.key == key && it.startMillis >= now }
+                .minOfOrNull { it.startMillis }
+                ?.let { publishableDueMillis(it, now) }
+                // The line is INSIDE one right now: it fell due at or before this instant, which the server's
+                // `due <= beat_at` gate reads off the constant.
+                ?: windows.firstOrNull { it.key == key && it.startMillis <= now && now < it.endMillis }
+                    ?.let { ALREADY_DUE_MILLIS }
         presence.setNextBreak(
             NextBreakState(
-                fiveMinDueMillis = dues[SchedulerDomain.FIVE_MIN_BREAK_KEY]?.let { publishableDueMillis(it, now) },
-                fifteenMinDueMillis =
-                    dues[SchedulerDomain.FIFTEEN_MIN_BREAK_KEY]?.let { publishableDueMillis(it, now) },
+                fiveMinDueMillis = dueOf(SchedulerDomain.FIVE_MIN_BREAK_KEY),
+                fifteenMinDueMillis = dueOf(SchedulerDomain.FIFTEEN_MIN_BREAK_KEY),
+                rules = rules,
             ),
         )
     }
@@ -1578,20 +1684,27 @@ class SchedulerEngine(
         )
 
     /**
-     * `side-dev/README.md` § *$t_p$ 2 modes*: **the mode the now-line is in, right now** — the one reading,
+     * `side-dev/README.md` § *$t_p$ 3 modes*: **the mode the now-line is in, right now** — the one reading,
      * shared by the reducer's fills ([SchedulerReducer.tpMode]) and by the display (`App.kt` asks
-     * [SchedulerDomain.anyDeviceUnlockedAt] over the same three flows).
+     * [SchedulerDomain.anyDeviceUnlockedAt] over the same flows, with the same "I'm away" flag).
      */
     fun tpModeNow(nowMillis: Long = clock.nowMillis()): Int =
         // A JOURNEY is walked in the mode the journey is in, not in the mode the arrival is in ([sweepMode]).
         // Without this the wake from a device sleep would sweep the whole night in mode 1 — the machine is
         // unlocked again by the time anything asks — which is the one mode the README says it is not.
-        sweepMode
-            ?: SchedulerDomain.tpMode(
-                SchedulerDomain.anyDeviceUnlockedAt(
-                    _inactivityGaps.value, _inactiveSince.value, _activeSince.value, nowMillis,
-                ),
-            )
+        sweepMode ?: liveTpMode(nowMillis)
+
+    /** The mode as the DEVICES report it — [tpModeNow] with no journey in progress. */
+    private fun liveTpMode(nowMillis: Long = clock.nowMillis()): Int =
+        SchedulerDomain.tpMode(
+            SchedulerDomain.anyDeviceUnlockedAt(
+                _inactivityGaps.value, _inactiveSince.value, _activeSince.value, nowMillis,
+            ),
+            // This device's own flag OR the account's ([_accountAway]). The `or` is not redundancy: the
+            // account's answer includes this device, but only once the publish has landed, and the button must
+            // take effect at the press even offline.
+            awayDeclared = _userAway.value || _accountAway.value,
+        )
 
     /**
      * A **mode flip re-plans**, because the mode is part of the environment the three dynamic periods are
@@ -1606,18 +1719,99 @@ class SchedulerEngine(
      * the devices, not about the account's data — which is also why it is not synced.
      */
     private fun launchTpModeReschedule() = scope.launch {
-        combine(_inactivityGaps, _inactiveSince, _activeSince) { gaps, inactive, active ->
+        combine(
+            _inactivityGaps, _inactiveSince, _activeSince, _userAway, _accountAway,
+        ) { gaps, inactive, active, away, accountAway ->
             SchedulerDomain.tpMode(
                 SchedulerDomain.anyDeviceUnlockedAt(gaps, inactive, active, clock.nowMillis()),
+                awayDeclared = away || accountAway,
             )
         }
             .distinctUntilChanged()
-            // The first emission is the mode the app started in, which the start-up fill already used.
+            // The first emission is the mode the app started in, which the start-up fill already used — but it
+            // still has to be RECORDED, or an app that starts up already in mode 3 opens no span for it.
+            .onEach { noteTpMode(it) }
             .drop(1)
             .collect {
-                Diagnostics.log("t_p mode is now $it (${if (it == DynamicPeriods.MODE_AT_SCREEN) "a device is unlocked" else "no device unlocked"})")
+                Diagnostics.log("t_p mode is now $it (${tpModeReason(it)})")
                 requestReschedule()
             }
+    }
+
+    private fun tpModeReason(mode: Int): String =
+        when (mode) {
+            DynamicPeriods.MODE_AT_SCREEN -> "a device is unlocked"
+            DynamicPeriods.MODE_ON_BREAK -> "no device unlocked and away declared: a break is being taken"
+            else -> "no device unlocked"
+        }
+
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **this device's own record of when it was in
+     * mode 3** ([mode3Spans]), so a journey it has to walk later knows which of its stretches were.
+     *
+     * It records only; nothing is published from here. The account's mode-3 history is the SERVER's, opened and
+     * closed by the away flag and the presence beats it is derived from ([publishAway]) rather than by any
+     * device's opinion of the mode — which is what keeps two devices from writing two different episodes for
+     * one away spell.
+     */
+    private fun noteTpMode(mode: Int) {
+        val now = clock.nowMillis()
+        val wasInMode3 = mode3Since
+        if (mode == DynamicPeriods.MODE_ON_BREAK) {
+            if (wasInMode3 == null) mode3Since = now
+        } else if (wasInMode3 != null) {
+            mode3Since = null
+            if (now > wasInMode3) mode3Spans = pruneAwaySpans(mode3Spans + TaskTimeRange(wasInMode3, now))
+        }
+    }
+
+    /** The same window the no-screen evidence answers over, so neither record grows without bound. */
+    private fun pruneAwaySpans(spans: List<TaskTimeRange>): List<TaskTimeRange> {
+        val floor = clock.nowMillis() - NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS
+        return spans.filter { it.endEpochMillis > floor }
+    }
+
+    /**
+     * `side-dev/README.md` § *Progressive Calculation*, direct consequence: **which stretches of a journey are
+     * walked in mode 3 rather than mode 2.**
+     *
+     * *"When the app wakes up, it asks the server for any changes. If there was a period of $now line$ mode 3,
+     * then the fast forward move of the $now line$ ... will get in mode 3 at those periods, instead of always
+     * mode 2."* So the answer is the union of two records and neither alone will do: this device's own
+     * ([mode3Spans]) covers a journey the clock made while the app was running (a debug time leap), and the
+     * SERVER's covers the one case a local record cannot — the app was asleep or dead for the whole episode,
+     * which is precisely the journey a wake has to walk.
+     *
+     * Best-effort and time-bounded: a wake must not wait on the network to move its own line, so a server that
+     * is slow, unreachable or signed out simply leaves the journey in mode 2, exactly as it was before.
+     */
+    private suspend fun awaySpansFor(fromMillis: Long, toMillis: Long): List<TaskTimeRange> {
+        val open = mode3Since?.let { listOf(TaskTimeRange(it, maxOf(it, toMillis))) } ?: emptyList()
+        val local = mode3Spans + open
+        val remote =
+            pauseCue?.let { gateway ->
+                withTimeoutOrNull(AWAY_SPAN_FETCH_TIMEOUT_MILLIS) {
+                    runCatching { gateway.fetchAwaySpans(fromMillis, toMillis) }
+                        .onFailure { Diagnostics.log("mode-3 spans NOT fetched: ${it.message}") }
+                        .getOrNull()
+                }
+            } ?: emptyList()
+        val clipped =
+            (local + remote)
+                .map { TaskTimeRange(maxOf(it.startEpochMillis, fromMillis), minOf(it.endEpochMillis, toMillis)) }
+                .filter { it.endEpochMillis > it.startEpochMillis }
+        if (clipped.isEmpty()) return emptyList()
+        val merged = mutableListOf<TaskTimeRange>()
+        for (span in clipped.sortedBy { it.startEpochMillis }) {
+            val last = merged.lastOrNull()
+            if (last != null && span.startEpochMillis <= last.endEpochMillis) {
+                merged[merged.lastIndex] =
+                    TaskTimeRange(last.startEpochMillis, maxOf(last.endEpochMillis, span.endEpochMillis))
+            } else {
+                merged += span
+            }
+        }
+        return merged
     }
 
     /**
@@ -2382,6 +2576,12 @@ class SchedulerEngine(
          * **Both dues are published; the SELECTION is the server's** (migration 20260728000000). Among the
          * breaks already due at the last beat the LONGEST governs, because resting the 15-min pose also
          * discharges a 5-min one due at the same instant.
+         *
+         * Since 2026-09-05 it is a **projection of the published SET OF RULES**
+         * ([SchedulerDomain.poseWindowsBetween]) — the first window of each kind — rather than a second
+         * placement query of its own. That is what keeps the walk-away gate and the mode-3 evaluation from ever
+         * naming different breaks: they read one answer two ways. [updatePresence] takes both readings off one
+         * call; this stays for the tests that ask the projection directly.
          */
         internal fun restPoseDueMillisByKey(
             screenBreaks: List<ScreenBreak>,
@@ -2389,28 +2589,14 @@ class SchedulerEngine(
             basePeriods: List<RestrictivePeriod> = emptyList(),
             blocks: List<PlanBlock> = emptyList(),
             tasks: List<PlanTask> = emptyList(),
-        ): Map<String, Long> {
-            val poses = screenBreaks.filter {
-                it.restBreak && it.intervalMillis > 0 && it.durationMillis > 0 &&
-                    it.title.isNotBlank() && it.key.isNotBlank()
-            }
-            if (poses.isEmpty()) return emptyMap()
-            val out = HashMap<String, Long>()
-            for (pose in poses) {
-                val start = SchedulerDomain.nextScreenBreakStartMillis(
-                    screenBreaks = screenBreaks,
-                    title = pose.title,
-                    nowMillis = nowMillis,
-                    basePeriods = basePeriods,
-                    blocks = blocks,
-                    tasks = tasks,
-                ) ?: continue
+        ): Map<String, Long> =
+            SchedulerDomain.poseWindowsBetween(screenBreaks, nowMillis, basePeriods, blocks, tasks)
+                .asSequence()
+                .filter { it.startMillis >= nowMillis }
                 // Several configs sharing one key would be one break as far as the server is concerned; the
                 // soonest is the one the user reaches first.
-                out[pose.key] = minOf(out[pose.key] ?: Long.MAX_VALUE, start)
-            }
-            return out
-        }
+                .groupBy { it.key }
+                .mapValues { (_, w) -> w.minOf { it.startMillis } }
 
         /**
          * The `break_due_ms` a device publishes for a pose that is ALREADY due (PRD §15, migration

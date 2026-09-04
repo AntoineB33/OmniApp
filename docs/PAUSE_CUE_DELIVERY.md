@@ -13,10 +13,16 @@ how often the server polls for accounts that stopped (1 min by default).
 unlocked clients ──(publish_presence RPC every t_a: {device_id} only) ──▶ device_heartbeat {user, device, beat_at}
         │                       └────────────────────────────────────▶ data_payload_sent {user, false}
         │                                                                            │
-        └──(publish_next_break RPC, ONLY when the two dues change: ─────▶ device_break│  (the break table)
-            {break_5min_due_ms, break_15min_due_ms} — account-keyed)                  │
+        ├──(publish_next_break RPC, ONLY when the two dues change: ─────▶ device_break│  (the break table)
+        │   {break_5min_due_ms, break_15min_due_ms} — account-keyed)                  │
+        │                                                                            │
+        ├──(publish_break_rules RPC, with the pair above: ─────▶ screen_break_rule {user, kind, start, end}
+        │   THE SET OF RULES the scheduler returned)            (the two dues are its own projection)
+        │
+        └──(sync_device_away RPC, on every away EDGE ──────────▶ device_away {user, device, away}
+            and every sync moment; replies "any away?")         away_span {user, started_at, ended_at}
                                                                                      │
-   CLEAN LOCK (the app is alive)            DIRTY KILL (the phone "exploded")
+   CLEAN LOCK (the app is alive)            DIRTY KILL / MODE 3 (nobody is watching)
    screen-off ──▶ POST pause-cue ("e1")     nothing is sent ──▶ polled every t_b:
         stop the t_a tick, own user JWT       pg_cron tick_pause_cues() — one fast grouped query:
                     │                         every beat older than 2·t_a, unclaimed, not sleeping,
@@ -24,9 +30,12 @@ unlocked clients ──(publish_presence RPC every t_a: {device_id} only) ──
                     │   DECIDES + CLAIMS                    │ omni_edge_push (pg_net, service role)
                     │   cue at now() + break_length         ▼
                     │                         POST pause-cue-cron Edge Function ("e2")
-                    │                                       │ rpc claim_pause_cue()
+                    │                                       │ action 'push'  → rpc claim_pause_cue()
                     │                                       │   CLAIMS + computes directly
                     │                                       │   cue at t2 + break_length
+                    │                                       │ action 'mode3' → rpc claim_mode3_break_cue()
+                    │                                       │   mode 3 + line inside [due, due+len)
+                    │                                       │   cue at the break's own END
                     └───────────────┬───────────────────────┘
                                     │ FCM / APNs, high-priority DATA, all phones
                      phone: onPauseCuePush → OS alarm at due_at
@@ -48,7 +57,32 @@ unlocked clients ──(publish_presence RPC every t_a: {device_id} only) ──
   disappeared in. Because `t2` comes from the server-stamped row (not from when the poll happened to notice),
   `t_b` is pure *detection* latency: making the cron slower never moves the cue, it only delays arming it.
 
-**Exactly once, either way.** Both paths claim the episode with the *same conditional* update
+* **The declared break — the `t_b` cron again, e2 with `action: 'mode3'`** (migration `20260904000000`). The
+  third detection, and the only one that is not about a walk-away at all. The now-line's **mode 3** is *at
+  least one device with the "I'm away" button clicked and every other device locked* — the account saying a
+  break is being TAKEN — so a 5- or 15-minute pose is not dragged onto the line but elapses under it. Every
+  screen of the account is off for the whole of that, so nothing local is watching the line cross the break.
+
+  Two publishes make it answerable, both event-driven. **The away flag** (`sync_device_away`) goes out per
+  device and the account's answer comes back in the same call — the condition quantifies over the account, so
+  no device can read it off its own button, and a merely-locked peer must reach the same mode as the machine
+  the button was pressed on. **The set of rules** (`publish_break_rules`) is what the scheduler returned: the
+  placed 5- and 15-minute periods over the next day. The cron then moves the line over that set and asks one
+  comparison — `start <= now < end`. Finding the line inside a rule, it hands the account to e2, and
+  `claim_mode3_break_cue` anchors the cue at **the break's own end**, which the rule states exactly.
+
+  Two things it deliberately is not. It is **not a second scheduler**: the server reads the published rules and
+  never derives one (`PlanWalk` is the only copy of the scheduling rules), and reading them this literally is
+  legitimate *because* it is mode 3 — nothing drags a pose there, so where the scheduler placed one is where it
+  happens. And it is **not pass (a) with a different filter**: (a) fires once per idle EPISODE for a break that
+  was already overdue at the walk-away, keyed on `data_payload_sent`; this fires per break WINDOW the line is
+  actually inside, keyed on `pause_cue_schedule.break_start_ms`. One away spell can legitimately contain
+  several poses, and the shared `break_start_ms` is what stops the two paths cueing one pose twice.
+
+  The two dues in `device_break` are unchanged and remain the walk-away gate's input; the client reads them out
+  of the *same* placement query as the rule set, so the two paths can never name different breaks.
+
+**Exactly once, either way.** Both walk-away paths claim the episode with the *same conditional* update
 (`data_payload_sent = true where not data_payload_sent`), so a lock report that raced a tick — or two ticks —
 push one cue between them; the loser finds nothing to claim and sends nothing. A device coming back clears the
 flag on its next `t_a` beat, re-arming the next episode. What each path computes is shared

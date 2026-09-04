@@ -1,5 +1,7 @@
 package org.example.project.scheduler.sync
 
+import org.example.project.scheduler.model.TaskTimeRange
+
 /**
  * PRD §15 pause-end voice cue delivery (pg_cron + `device_heartbeat` model): the seam the
  * [org.example.project.scheduler.engine.SchedulerEngine] and the app use to keep the server reachable for the
@@ -63,11 +65,15 @@ interface PauseCueGateway {
     suspend fun publishPresence(state: PresenceState): Int?
 
     /**
-     * PRD §15: writes **when both screen breaks next come due** to the account's `device_break` row
-     * (`publish_next_break` RPC, migrations 20260726000000 + 20260728000000). Called **only when the app
-     * calculates a different pair**, so it costs nothing in steady state — and, unlike the old per-beat
-     * piggyback, the server's copy is current the instant the schedule changes rather than up to one
-     * active-session beat later. Throws on failure so the caller can retry.
+     * PRD §15 + `docs/scheduler_requirements.md` § *$now line$ 3 modes*: writes **the scheduler's set of rules
+     * for the two poses, and the two dues projected out of it** — `publish_break_rules` (migration
+     * 20260904000000) and `publish_next_break` (migrations 20260726000000 + 20260728000000), in that order and
+     * in one call, because they are one answer and a server holding half of each would time a cue to a break
+     * the user never sees.
+     *
+     * Called **only when the app calculates a different set**, so it costs nothing in steady state — and,
+     * unlike the old per-beat piggyback, the server's copy is current the instant the schedule changes rather
+     * than up to one active-session beat later. Throws on failure so the caller can retry.
      */
     suspend fun publishNextBreak(state: NextBreakState)
 
@@ -95,4 +101,38 @@ interface PauseCueGateway {
      * wake instant while sleeping (null when working). Best-effort; a no-op while signed out.
      */
     suspend fun publishAccountState(sleeping: Boolean, wakeAtMillis: Long?)
+
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (migration 20260904000000): **this device's "I'm
+     * away" flag, out and back in one round trip** — `sync_device_away(device, away)`.
+     *
+     * Mode 3 is *at least one device with the button ON and every other device locked*, so it is a question
+     * about the ACCOUNT that no device can answer from its own flag. Each device publishes its own; the reply
+     * is the account's answer, **"is any device of this account away"**, which the caller combines with the
+     * account-wide "is any device unlocked" it already derives locally. The away device itself stops beating
+     * the moment the button goes on, which is exactly how it stops counting as unlocked — that is what makes
+     * the two questions compose into the rule above.
+     *
+     * [away] `null` READS without writing (every sync moment does that, so a peer's flag reaches this device
+     * with the same reconcile-bounded staleness as its activity). A value WRITES this device's flag: pressing
+     * the button, and an unlock clearing it. An edge and a sync moment, never a timer — nothing here is on the
+     * traffic budget's timer path.
+     *
+     * The same call maintains the account's mode-3 episode log, which is what makes an episode a fact a device
+     * that was ASLEEP for it can still learn ([fetchAwaySpans]).
+     *
+     * Returns `false` while signed out or when the call fails — the device then answers the mode from its own
+     * flag alone, which is what it did before this existed.
+     */
+    suspend fun syncDeviceAway(away: Boolean?): Boolean
+
+    /**
+     * `side-dev/README.md` § *Progressive Calculation*, direct consequence: **the stretches of
+     * `[fromMillis, toMillis]` the account was in mode 3 for** — what a waking app asks the server for so its
+     * fast-forward move of the now-line is walked in mode 3 over them instead of always in mode 2.
+     *
+     * Returns an empty list while signed out or when the call fails: the journey then falls back to mode 2
+     * throughout, which is exactly what it did before this existed.
+     */
+    suspend fun fetchAwaySpans(fromMillis: Long, toMillis: Long): List<TaskTimeRange>
 }

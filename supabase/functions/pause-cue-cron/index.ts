@@ -15,6 +15,12 @@
 // `action: 'cancel'` is the cron's second pass: an account that came back to life while a pushed cue was still
 // in the future — the user is already at another device, so the phone lying face-down must not speak.
 //
+// `action: 'mode3'` is the cron's THIRD pass (migration 20260904000000) — the $now line$'s third mode. The
+// account has said it is away ("I'm away" with no unlocked device), so a 5- or 15-minute pose is not dragged but
+// TAKEN, and moving the line over the rules the app last published puts it inside one. The cron has already
+// decided; `claim_mode3_break_cue()` claims that BREAK (not the idle episode — one away spell can contain both
+// poses) and anchors the cue at the break's own END, which mode 3 knows exactly rather than estimating.
+//
 // The CLEAN-LOCK path is a different function, `pause-cue` ("e1"): there the app reports the lock itself and the
 // cue is anchored at the observed walk-away instant instead of an estimate.
 //
@@ -25,7 +31,7 @@ import { adminClient, bearerClaims, cancelData, CueDecision, fanOut, scheduleDat
 
 interface CronPayload {
   user_id?: string;
-  action?: "push" | "cancel";
+  action?: "push" | "cancel" | "mode3";
 }
 
 const admin = adminClient();
@@ -47,10 +53,13 @@ Deno.serve(async (req) => {
     return await fanOut(admin, userId, cancelData());
   }
 
-  const { data, error } = await admin.rpc("claim_pause_cue", { p_user_id: userId });
+  // Same claim/compute/push shape as the dirty-kill path; only the RPC — and so the anchor — differs.
+  const rpc = body.action === "mode3" ? "claim_mode3_break_cue" : "claim_pause_cue";
+  const { data, error } = await admin.rpc(rpc, { p_user_id: userId });
   if (error) return new Response(error.message, { status: 500 });
   const decision = (data as CueDecision[] | null)?.[0] ?? null;
-  // Nothing to claim: a clean-lock report beat this tick to the episode and already pushed.
+  // Nothing to claim: a clean-lock report beat this tick to the episode and already pushed — or, on the mode-3
+  // path, this very break window has already been cued.
   if (!decision) return new Response("no cue owed", { status: 200 });
 
   return await fanOut(admin, userId, scheduleData(decision));

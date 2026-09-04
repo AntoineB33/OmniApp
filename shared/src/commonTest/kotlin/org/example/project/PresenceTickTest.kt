@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.example.project.scheduler.sync.DeviceHeartbeatPublisher
 import org.example.project.scheduler.sync.NextBreakState
+import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.sync.PauseCueGateway
 import org.example.project.scheduler.sync.PresenceState
 
@@ -71,6 +72,18 @@ class PresenceTickTest {
         }
 
         override suspend fun publishAccountState(sleeping: Boolean, wakeAtMillis: Long?) = Unit
+
+        /** Every away-flag call: `null` is a read, a value is a write. Replies with the last written value. */
+        val awayCalls = mutableListOf<Boolean?>()
+        var accountAway = false
+
+        override suspend fun syncDeviceAway(away: Boolean?): Boolean {
+            awayCalls += away
+            if (away != null) accountAway = away
+            return accountAway
+        }
+
+        override suspend fun fetchAwaySpans(fromMillis: Long, toMillis: Long): List<TaskTimeRange> = emptyList()
     }
 
     @Test

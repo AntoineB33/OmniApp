@@ -290,7 +290,7 @@ model exists to prevent.
   `free_tail` stretch beside it — both citing `scheduler_logic.py`, a reference file that no longer exists,
   and both unsanctioned divergences from the other driver. Do not put either back: PRD §9 now states the
   soft/hard split, and the chunk floor in `PlanWalk.chunkMillis` is what serves the soft goal.
-- **The one panel shorter than a minute is at `t_p` itself**, and it is the README's: mode 1 pushes the swept
+- **The one panel shorter than a minute is at `t_p` itself**, and it is the README's: modes 1 and 2 push the swept
   period onto the line as the half-open `(t_p, t_p + d]`, so the line's own instant is uncovered and *"the
   passing of the $now line$ creates task panels not covered by the period"*.
 - A dynamic period and every grey period **suspend** a chunk rather than cutting it (PRD §15/§17), where a
@@ -398,14 +398,33 @@ identifiers, persisted keys.
 - **A materialized break is never an input to its own placement.** `restrictivePeriodsOf` drops
   `screenBreak` panels for that reason; feeding last fill's output back in makes each break a blocked stretch
   that absorbs the next, and the grid walks away from itself.
-- **The `t_p` mode is WHICH DEVICES ARE UNLOCKED, and nothing else**: mode 1 while any device of the account
-  is unlocked, mode 2 otherwise. `SchedulerDomain.tpMode` decides it once and `anyDeviceUnlockedAt` reads the
-  input once — off the **account-wide pause the calendar already draws** (`displayInactivityGaps`, right edge
-  inclusive because an ongoing pause's tail ends *at* the line), so the mode and the Inactivity band can never
-  disagree: what the user sees is the mode. It is **not** the Sleep/Work toggle (that says "gone to bed", not
-  "no screen in use" — it was what the code read until 2026-08-28) and not the "I'm away" button on its own —
-  that button reaches the mode by declaring this device idle, like a lock does.
-- **Mode 1: `t_p` is never covered by a POSE.** Every pose whose slot the line has SWEPT is pushed onto the
+- **The `t_p` mode is TWO QUESTIONS, asked in order, and BOTH are about the ACCOUNT** (`SchedulerDomain.tpMode`,
+  the one place it is decided). **Which devices are unlocked** — mode 1 while any device of the account is,
+  `anyDeviceUnlockedAt` reading the input once off the **account-wide pause the calendar already draws**
+  (`displayInactivityGaps`, right edge inclusive because an ongoing pause's tail ends *at* the line), so the
+  mode and the Inactivity band can never disagree: what the user sees is the mode. And, where none is, **has a
+  device SAID it is away**: mode 3 if at least one has the "I'm away" button on, mode 2 if none has. It is
+  **not** the Sleep/Work toggle (that says "gone to bed", not "no screen in use" — it was what the code read
+  until 2026-08-28). The "I'm away" button reaches **both** halves: it declares its own device idle, like a
+  lock does, *and* it is the second question — so on a single-device account pressing it lands in mode 3, and
+  pressing it while a phone is still unlocked leaves the account in mode 1.
+- **The away flag LEAVES the device it was pressed on, or the second question is unanswerable**
+  (`PauseCueGateway.syncDeviceAway` → `device_away`, migration 20260904000000). The spec's rule is *at least one
+  device with the button on and every other one locked*, which is a quantifier over the account; a device
+  reading only its own flag would put a merely-locked peer in mode 2 while the machine the button was pressed
+  on is in mode 3, and the two would then place the three dynamic periods differently. So each device writes
+  its own flag and reads back one boolean — "is any device of this account away" — on every away edge and every
+  sync moment, never on a timer. The engine's reading is `own || account`: the `or` is not redundancy, it is
+  what makes the button take effect at the press, offline or before the round trip lands.
+- **Mode 2 is not mode 3, and the difference is the POSE.** Both cover the line with `no on-screen task`; only
+  mode 3 lets a **dynamic period** cover it (`DynamicPeriods.breaksAreTakenAt`, the ONE predicate that tells
+  them apart, and `lineIsCoveredAt` the one that says what they share). A locked screen says "no screen is in
+  use", which is not "a break is being taken" — the user may be reading at their desk — so **mode 2 drags an
+  owed pose exactly as mode 1 does**, and what makes that pose go away there is the ordinary bar rule (a locked
+  stretch is a rest stretch, and a rest stretch bars the breaks after it), never the line walking through it.
+  Mode 3 is the account SAYING the break is being taken, so the pose elapses under the line, is frozen into the
+  past, and re-anchors the bars off itself. Collapsing the two is what makes mode 3 pointless; do not.
+- **Modes 1 and 2: `t_p` is never covered by a POSE.** Every pose whose slot the line has SWEPT is pushed onto the
   line as the half-open `(t_p, t_p + duration]` — in discrete time `[t_p + 1, t_p + duration + 1)`
   (`Instance.coveredFromMillis`), which is how it stays an ordinary `TaskPanel`. Three things this rests on:
   the drag **re-anchors the bar at the line**, so at most one occurrence per bar is swept and the chain merge
@@ -418,8 +437,8 @@ identifiers, persisted keys.
 - **The 20 s LOOK-AWAY IS NEVER DRAGGED — it is assumed taken** (`DynamicPeriods.dragsAtLine`, the ONE
   predicate; the two poses are dragged, the look-away is not). Looking twenty feet away costs the user no
   working time, so the app takes it as done the moment it falls due: the period stays exactly where the
-  recurrence bars put it, the line walks **through** it in mode 2 for its twenty seconds — covered, which is
-  precisely what mode 1 forbids of a pose — and once the line is past, it goes on being drawn where it
+  recurrence bars put it, the line walks **through** it in mode 3 for its twenty seconds — covered, which is
+  precisely what modes 1 and 2 forbid of a pose — and once the line is past, it goes on being drawn where it
   happened. A pose is the opposite case and that is the whole of the split: five or fifteen minutes away from
   the screen is something the user must actually *do*, so an untaken one is **owed** and parks at the line.
   Three things follow. Its **cue keys on its PLACE**, not on a due — the at-line run, the same one the
@@ -430,10 +449,14 @@ identifiers, persisted keys.
   (`RecordConductedBreak`, `RestrictivePeriod.dynamic`). And the labels are **positional** (the shortest of
   the three is the look-away), so an account configured with one break has that break in the look-away's role
   — never key the exemption on a title.
-- **Mode 2: `t_p` is covered**, so the gap back to the last such period's end is covered as `no on-screen
+- **Modes 2 and 3: `t_p` is covered**, so the gap back to the last such period's end is covered as `no on-screen
   task` — which the resilient tasks may still fill (`DynamicPeriods.awayCover`). Where the app has live
   evidence, that evidence IS the cover: an **ongoing** pause is `closedEnd`, so `liveRestPeriod` covers the
-  line and `awayCover` has nothing left to do.
+  line and `awayCover` has nothing left to do; in mode 3 the pose the line is inside usually covers it too.
+  **"Nothing precedes" is not a reason to answer null**: mode 2 drags the pose onto the line as
+  `(t_p, t_p + d]`, which leaves `t_p` itself uncovered by construction, so the cover is then the line's own
+  instant `[t_p, t_p]` — and since the fill re-expresses whatever comes back as `[now, now + 1)` anyway, the
+  reach behind the line is documentation and the existence of the answer is the rule.
 - **The cover is an ENVIRONMENT period, never a panel, and that distinction is the whole of why it was
   missing.** It shipped as an `Away` panel, the calendar drew a synthetic band nobody wanted, and the revert
   (2026-08-31) took the scheduling effect away with the band — so mode 2's own rule reached nothing at all and
@@ -443,7 +466,8 @@ identifiers, persisted keys.
   time it covers the line's own instant, where any other period clipped to the line would collapse and be
   dropped.
 - **The now-line NEVER JUMPS — a distant position is a JOURNEY, and waking from device sleep is walked in
-  mode 2** (`SchedulerEngine.sweepNowLineTo`, `SchedulerDomain.sweepStepMillis`). The README says both halves in
+  mode 2 except where the account was in MODE 3** (`SchedulerEngine.sweepNowLineTo`,
+  `SchedulerDomain.sweepStepMillis`). The README says both halves in
   as many words: the line *"moves continuously forward in time"*, and *"if the device bearing the running
   process is put to sleep, then when the program wakes up, the $now line$ does a fast move forward (in epsilon
   time) in mode 2 to the current date"*. So `reportTimeGap` walks it from the pre-sleep instant to the wake,
@@ -469,10 +493,35 @@ identifiers, persisted keys.
     first step. The one sanctioned approximation is the stride widening to keep a very long journey inside
     `MAX_SWEEP_STEPS` — the README's *"if exact schedules cannot be found in time, approved approximation
     strategies must be used"* — and it is logged when it bites.
+  - **A stretch the ACCOUNT declared away for is walked in mode 3, and the app ASKS THE SERVER for it**
+    (`away_spans`, maintained by `sync_device_away` / `publish_presence` / the cron pass, never by a device's
+    opinion of the mode) — the
+    README's own amendment: *"When the app wakes up, it asks the server for any changes. If there was a period
+    of $now line$ mode 3, then the fast forward move … will get in mode 3 at those periods, instead of always
+    mode 2."* The ask belongs to the CALLER, not to `reportTimeGap`: the tick loop is already a coroutine, so
+    `awaySpansFor` (this device's own record ∪ the server's, merged, time-bounded, best-effort) is asked there
+    and the journey itself stays the single synchronous walk it has always been. A step never straddles a
+    span's bound, or half a placement is committed in a mode that did not hold for it. Both records are
+    needed: the local one covers a journey the clock made while the app ran (a debug leap), the server's the
+    one case a local record cannot — the app was asleep for the whole episode, which is exactly the journey a
+    wake has to walk.
 - **A mode flip re-plans** (`launchTpModeReschedule` → `requestReschedule`) and that is not "time passing
   re-plans": the flip is an edge the platform announces. It cannot go in `schedulingSignature` — the mode is
   not in `SchedulerState`, being a fact about the devices and not about the account's data, which is also why
   it is never synced. The reducer reads it through the injected `SchedulerReducer.tpMode` seam.
+- **The SCHEDULER RETURNS A SET OF RULES, and that set is the whole of what the server is told about where
+  breaks fall** (`SchedulerDomain.poseWindowsBetween` → `publish_break_rules` → `screen_break_rule`, migration
+  20260904000000). For the whole of a mode-3 episode every screen of the account is off, so nothing local is
+  watching the line cross a break; the `t_b` cron moves the line over the published rules and pushes the phone
+  a cue for the END of the one it is inside (`tick_pause_cues` pass (c) → `claim_mode3_break_cue`, ADR 0006).
+  **The server never runs the scheduler** — its whole question is `start <= now < end`, and that reading is
+  legitimate only because mode 3 is the mode nothing drags a pose in, so where the scheduler placed one is
+  where it happens. `PlanWalk` stays the only copy of the rules.
+  **One query, two readings**: the windows the mode-3 evaluation compares against, and the two `device_break`
+  dues the walk-away gate asks about the past with, are the same `poseWindowsBetween` call projected two ways
+  — never two derivations, which is how the two paths would start naming different breaks. The 20 s look-away
+  is not in the set: it is assumed taken, so it is never cued, and its 20-minute cadence would rewrite the set
+  for an answer nothing reads.
 - **An UNLOCK clears "I'm away", and it is an EDGE, not a poll** (`SchedulerEngine.noteScreenSignal`). The
   toggle overrides the platform screen sensor, so nothing but this would ever take it off by itself — and a
   flag left standing across a return holds this device's session finalized and its presence heartbeat closed
@@ -1466,17 +1515,36 @@ permanently unprotected.
 - **`break_due_ms` is the pose's next DUE** (`nextScreenBreakStartMillis`) — a fixed instant the recurrence
   bars derive, so it moves only when the rules or the environment do and can still be written event-driven. It
   is the same reading the local cue keys on, so the server and the client key on one instant; publishing where
-  the *period* sits would be publishing an instant that moves with the now-line whenever mode 1 is dragging
-  one. An already-due pose publishes the constant `ALREADY_DUE_MILLIS`.
+  the *period* sits would be publishing an instant that moves with the now-line whenever a dragging mode
+  (1 or 2) is dragging one. An already-due pose publishes the constant `ALREADY_DUE_MILLIS`. It is also what
+  the server reads as the break's START in **mode 3**, where nothing drags and `[due, due + length)` therefore
+  IS where the break happens — the whole reason the server can answer "is the line inside a break" from two
+  instants and a length instead of a second copy of the placement.
 - A device belongs to exactly **one** account — every per-device table needs a server-side eviction trigger
   **paired with** a client re-assertion when the row is written event-driven.
 - The Sleep/Work toggle writes `account_state` immediately, which suppresses the cue.
+- **Two more things the client publishes, both event-driven** (migration 20260904000000): `sync_device_away`
+  (this device's away flag out, the account's answer back — an edge and a sync moment) and
+  `publish_break_rules` (the scheduler's SET OF RULES for the two poses, replaced whole, sent in the same call
+  as the two dues it is projected into so the server can never hold half of each). `account_in_mode3` is the
+  server's own reading of the mode — an away device and no beat within `2·t_a` — so nothing trusts a
+  client-computed mode. `tick_pause_cues` pass (c) is the cue they feed: an account in mode 3 whose line is
+  inside a published rule window is handed to **e2** with `action: 'mode3'`, and `claim_mode3_break_cue`
+  anchors at the break's own END rather than at an estimate, because the rule says exactly where it ends.
+  **Pass (c) is not folded into pass (a)**: (a) fires once per idle EPISODE for a break already overdue at the
+  walk-away and claims `data_payload_sent`; (c) fires per break WINDOW the line is inside and claims
+  `pause_cue_schedule.break_start_ms` — a different question, a different anchor, a different key. The shared
+  `break_start_ms` is also what stops the two paths cueing one pose twice. `away_span` logs each mode-3 episode
+  (pruned to a week, read back by a waking app through `away_spans`), opened and closed by the away flag and
+  the presence beats themselves — never by a device's opinion of the mode, or two devices would write two
+  episodes for one away spell.
 
 ### Traffic budget
 
 Steady state is the `t_a` RPC while unlocked — a DB write, not an Edge invocation, and nothing while locked.
 Everything else is event-driven REST (reconcile, `account_state`, push-token registration, the
-`publish_next_break` change write, the screen-off call, the logout check). **Never add a timer-driven
+`publish_next_break` + `publish_break_rules` change write, the **`sync_device_away` edge/sync-moment call** and
+the **mode-3 span read a wake makes once**, the screen-off call, the logout check). **Never add a timer-driven
 request.**
 
 Free-plan metering is **egress** + Edge invocations, not request count — request count is the wrong axis to
