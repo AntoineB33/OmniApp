@@ -11,6 +11,51 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The schedule horizon IS $t_{goal}$ — 2026-09-04
+
+`docs/scheduler_requirements.md` § *Progressive Calculation*'s stopping clause, answered with a concrete
+instant. `shared` (`scheduler/domain/SchedulerDomain.kt` — new `weekStartDate`,
+`endOfFirstDayOfNextWeekMillis`, `endOfDayAfterMillis`, `scheduleGoalEndMillis`, and
+`scheduleHorizonEndMillis` rebuilt over them;
+`scheduler/domain/SchedulerProgressive.kt` — `goalMillis` / `setGoal` / `isSettled` and `settle` stopping
+there; `scheduler/engine/SchedulerEngine.kt`, `scheduler/state/SchedulerReducer.kt`, `App.kt`,
+`ui/CalendarUi.kt` — `weekAnchorDay` now delegates so "which day a week starts on" exists once) +
+`CLAUDE.md` + PRD §9 + ADR 0001 + ADR 0009 + `ScheduleHorizonTest` rewritten. **Client rebuild only** — no
+Supabase deploy, no SQLite migration, no payload change: the horizon is a local runtime bound, never
+persisted and never synced.
+
+The requirement gained a line (*"The scheduler can have a time $t goal$ such as when definitive schedule is
+found for any t < $t goal$ the scheduler can stop"*) and names it:
+
+> $t_{goal}$ = **max(** end of the first day that does not appear in the calendar, end of the first day of
+> the week after the current week **)**
+
+So the calendar half is **one day past the bottom of the grid** and follows the SCROLL, not the week the
+scroll is in: open the calendar on the current week, scroll down until the next week's Monday is on screen,
+and the goal becomes the end of that week's Tuesday. (An earlier draft that day read the calendar half as
+"the week after the week shown"; it moved a week at a time where the user's rule moves a day at a time.)
+
+It replaces "the displayed day span, clamped into [24 h, 168 h]". Three things change with it, and each is
+why it is better than what it replaces:
+
+- **It is a MAX, so the calendar can only ever push it out.** The old horizon *followed* the span, so
+  scrolling into the past collapsed the plan to the 24 h floor and closing the calendar did the same — the
+  headless §11/§13/§15 paths ran on a day of schedule. They now always get the current week's own goal.
+- **Neither half moves with the CLOCK.** `now + 24 h` moved with every tick, so a fill was short again the
+  instant it finished — the self-feeding shape `HORIZON_REFILL_MARGIN_MILLIS` exists to damp (2026-07-28's
+  hot loop). The current week's goal is an absolute staircase that steps once a week; the calendar's moves
+  only on a scroll, which is an event the grid reports.
+- **The 168 h ceiling now caps the CALENDAR half alone.** The current week's goal is up to eight days out (a
+  Monday's is the end of the following Monday) and clipping it would leave the app short of the very instant
+  the requirement names. A calendar-driven goal past the ceiling is still computed to the goal — off the UI
+  thread, for display, never retained (`App.kt`'s far-week `LaunchedEffect`, which now fills to the goal
+  rather than to the visible span's end; the goal is never nearer, so it reaches at least as far as the
+  screen).
+
+The rest of § *Progressive Calculation* was already met and is unchanged: one fill computes the whole span far
+inside the ten-minutes-per-ten-seconds pace, and reaching further out **extends** (`ExtendSchedule`) rather
+than re-planning, so everything below the front stays definitive.
+
 ### The 20 s look-away's cue keys on the AT-LINE run, not on the undragged due — 2026-09-04
 
 `shared` (`scheduler/domain/SchedulerDomain.kt` — new `screenBreakCueOccurrencesBetween`, `cueCrossings` gains

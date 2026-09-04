@@ -490,28 +490,35 @@ class SchedulerEngine(
     internal var lastRescheduleMillis: Long? = null
         private set
 
-    // PRD §9: the end of the week the calendar window is DISPLAYING, published by the UI
-    // ([setCalendarHorizon]); null when no calendar is open. It is what makes the fill horizon follow the
-    // screen instead of unconditionally materializing 168h — see [scheduleHorizonEndMillis]. Local runtime
+    // PRD §9: the end of the day span the calendar window is DISPLAYING, published by the UI
+    // ([setCalendarHorizon]); null when no calendar is open. It is the calendar half of $t_{goal}$ — see
+    // [scheduleHorizonEndMillis] and [SchedulerDomain.scheduleGoalEndMillis]. Local runtime
     // view state: never persisted, never synced, never part of the schedule's inputs (it only bounds HOW FAR
     // the same deterministic plan is computed, so two devices on different weeks still agree where they
     // overlap).
     private val _calendarHorizonEndMillis = MutableStateFlow<Long?>(null)
 
     /**
-     * PRD §9: tell the engine which week the calendar is showing, so the §9 fill materializes the plan out to
-     * exactly that week and no further ([SchedulerDomain.scheduleHorizonEndMillis] clamps it into
-     * `[24h, 168h]`). Pass null when no calendar is open — the plan then shrinks to the 24 h floor the
-     * headless notification/cue paths need. Growing it triggers one refill (see [launchCalendarHorizonReschedule]);
-     * shrinking it triggers none (the schedule already covers the smaller span).
+     * PRD §9: tell the engine which days the calendar is showing — the EXCLUSIVE end of the displayed day
+     * span, which is also the start of the first day that does NOT appear — so the §9 fill materializes the
+     * plan out to the $t_{goal}$ it implies ([SchedulerDomain.scheduleGoalEndMillis]). Pass null when no
+     * calendar is open: the goal then falls back to the current week's own, which is what the headless
+     * notification/cue paths read. Growing it triggers one refill (see [launchCalendarHorizonReschedule]);
+     * shrinking it triggers none — the goal is a MAX, so scrolling back never shortens the schedule below
+     * what the current week asks for.
      */
     fun setCalendarHorizon(endMillis: Long?) {
         _calendarHorizonEndMillis.value = endMillis
     }
 
-    /** The §9 fill horizon in force at [now] — the displayed week, clamped to `[24h, 168h]` ahead. */
+    /**
+     * The §9 fill horizon in force at [now]: **$t_{goal}$**
+     * ([SchedulerDomain.scheduleGoalEndMillis] — the end of the first day that does not appear in the
+     * calendar, or of the first day of the week after the current week, whichever is further), capped for a
+     * calendar-driven far week.
+     */
     private fun scheduleHorizonEndMillis(now: Long): Long =
-        SchedulerDomain.scheduleHorizonEndMillis(now, _calendarHorizonEndMillis.value)
+        SchedulerDomain.scheduleHorizonEndMillis(now, _calendarHorizonEndMillis.value, tz)
 
     // PRD §11/§15 notification de-dupe (see the long-form rationale in git history of App.kt).
     private var lastNotifiedTaskId: TaskId? = null
@@ -569,8 +576,9 @@ class SchedulerEngine(
         // `side-dev/README.md` § *$t_p$ 2 modes*: mode 1 while a device of the account is unlocked, mode 2
         // otherwise. Read at fill time from the same account-wide pause the calendar draws ([tpModeNow]).
         SchedulerReducer.tpMode = { tpModeNow() }
-        // PRD §9: every refill materializes the plan out to the DISPLAYED week (24h floor when no calendar is
-        // open), never unconditionally 168h — so staying on the current week computes no later day.
+        // PRD §9 / `docs/scheduler_requirements.md` § *Progressive Calculation*: every refill materializes the
+        // plan out to $t_{goal}$ — the end of the first day that does not appear in the calendar, or of the
+        // first day of the week after the current week, whichever is further.
         SchedulerReducer.scheduleHorizonEndMillis = { now -> scheduleHorizonEndMillis(now) }
         launchNoScreenEvidenceScan()
         launchRetroactiveNoScreenStrip()
@@ -1772,11 +1780,12 @@ class SchedulerEngine(
         }
     }
 
-    // PRD §9 calculation event #1 (calendar change / rolling horizon): refill as `now` reaches
+    // PRD §9 calculation event #1 (calendar change / the goal stepping forward): refill as `now` reaches
     // [SchedulerDomain.horizonRefillDueMillis] — the point where the materialized schedule has fallen a
-    // whole [SchedulerDomain.HORIZON_REFILL_MARGIN_MILLIS] short of the horizon IN FORCE (the displayed
-    // week, [scheduleHorizonEndMillis] — not a fixed 168h). The margin (and the rate floor below) exist
-    // because this loop feeds itself: the refill rewrites the very `panels` it watches.
+    // whole [SchedulerDomain.HORIZON_REFILL_MARGIN_MILLIS] short of the horizon IN FORCE ($t_goal$,
+    // [scheduleHorizonEndMillis] — not a fixed 168h). The margin (and the rate floor below) exist
+    // because this loop feeds itself: the refill rewrites the very `panels` it watches. The goal being an
+    // ABSOLUTE staircase, this now fires about once a week — when the week rolls over — rather than daily.
     private fun launchHorizonReschedule() = scope.launch {
         // Last instant a refill was dispatched, kept OUTSIDE `collectLatest` so it survives the restart the
         // refill itself causes — it is what floors the refill rate (below).
@@ -1785,8 +1794,8 @@ class SchedulerEngine(
         // refill isn't reached late when `now` races ahead; the phone keys off the clock's actual speed too.
         fun pollInterval(): Long = if (timeAccelerated()) ADVANCE_TICK_MILLIS_ACCEL else ADVANCE_TICK_MILLIS_PROD
         vm.state.map { it.panels }.distinctUntilChanged().collectLatest { panels ->
-            // Re-evaluated every pass rather than pinned once: when the horizon is an ABSOLUTE instant (the
-            // end of the displayed week) its remaining span shrinks as `now` advances, so the due instant
+            // Re-evaluated every pass rather than pinned once: the horizon is an ABSOLUTE instant
+            // ($t_goal$), so its remaining span shrinks as `now` advances and the due instant
             // moves — and a target computed once would fire early, refill to no effect, and (since `panels`
             // would not change) park this collector for good.
             fun refillDue(): Boolean {
@@ -1813,11 +1822,11 @@ class SchedulerEngine(
         }
     }
 
-    // PRD §9 "schedule the whole week displayed": the user navigating the calendar to a further-out week
-    // GROWS the horizon, so the plan must extend to cover it — and promptly, not at the next 30-s poll of
-    // [launchHorizonReschedule]. Shrinking it (navigating back) dispatches nothing: the schedule already
-    // covers the smaller span, and re-filling would only throw the extra days away for no gain (they are
-    // simply left in `panels` until the next fill that genuinely reaches past them).
+    // PRD §9 "schedule the whole span displayed": the user navigating the calendar to a further-out week
+    // GROWS $t_goal$, so the plan must extend to cover it — and promptly, not at the next 30-s poll of
+    // [launchHorizonReschedule]. Navigating back dispatches nothing: the goal is a MAX, so a nearer week
+    // does not shorten it at all, and even a genuinely smaller horizon is already covered (the extra days
+    // are simply left in `panels` until the next fill that genuinely reaches past them).
     //
     // This cannot self-retrigger the way the rolling-horizon loop can: a refill never writes the calendar
     // horizon, so the flow only emits on a user navigation.
@@ -1825,7 +1834,7 @@ class SchedulerEngine(
         // StateFlow already conflates and de-duplicates, so re-publishing the same week emits nothing.
         _calendarHorizonEndMillis.collect { end ->
             val now = clock.nowMillis()
-            val horizon = SchedulerDomain.scheduleHorizonEndMillis(now, end)
+            val horizon = SchedulerDomain.scheduleHorizonEndMillis(now, end, tz)
             if (SchedulerDomain.horizonRefillDueMillis(vm.state.value.panels, now, horizon) > now) return@collect
             // Navigating the calendar shows more days; it does not change any scheduling rule, so this too
             // extends the plan's tail rather than re-planning it.

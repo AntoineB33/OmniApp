@@ -5,8 +5,10 @@ import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 import kotlin.time.Instant
 import kotlinx.datetime.DatePeriod
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.isoDayNumber
 import kotlinx.datetime.minus
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
@@ -1515,11 +1517,15 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §9 Scheduling: the FURTHEST ahead of `now` the auto fill will ever materialize panels into
-     * `state.panels` (168 hours). This is the **ceiling** of the horizon, not a fixed target — the horizon
-     * actually used is [scheduleHorizonEndMillis], which follows the week the calendar is DISPLAYING. A week
-     * further out than this ceiling is never materialized into the state at all: it is filled asynchronously
-     * for display only (see [fillSchedule]'s `horizonMillis`) and dropped when the user navigates away.
+     * `docs/scheduler_requirements.md` § *Progressive Calculation*: **the ceiling on how far a CALENDAR-driven
+     * $t_{goal}$ may pull the materialized fill** (168 hours). It is not the goal, and it is not a target — the
+     * goal is [scheduleGoalEndMillis], and [scheduleHorizonEndMillis] is what the fill honours.
+     *
+     * The current week's own goal is NEVER clipped by it (a Monday's goal is the end of the following Monday,
+     * eight days out): the headless engine must always hold the goal it would compute with no calendar open.
+     * What this bounds is the other half of the max — a week the user has scrolled to. Beyond it that week is
+     * still computed to the goal, but asynchronously and for display only (see [fillSchedule]'s `horizonMillis`
+     * and `App.kt`'s far-week `LaunchedEffect`), never materialized into `state.panels`.
      */
     const val SCHEDULE_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1000
 
@@ -1534,32 +1540,110 @@ object SchedulerDomain {
     const val SCHEDULE_PAST_LOOKBACK_MILLIS: Long = 168L * 60 * 60 * 1000
 
     /**
-     * PRD §9 Scheduling: the **floor** of the schedule horizon (24 hours) — how far the plan is materialized
-     * when nothing further out is being displayed (the calendar window closed, or showing a week that ends
-     * sooner than this).
+     * PRD §9 Scheduling: the **floor** under the goal (24 hours) — how far the plan is materialized when the
+     * goal itself would somehow fall short of a day.
      *
      * The plan is not only a calendar drawing: the engine reads it headlessly for the §11/§13 task-switch
      * notifications, the §15 wind-down cue and the schedule-unit deadlines, so the horizon can never collapse
-     * to zero. One day is the smallest span that keeps every one of those correct across a phone left in the
-     * background overnight, while costing 1/7 of what the old unconditional 168 h fill cost.
+     * to zero. [scheduleGoalEndMillis] is already at least a day out for every position of the clock inside a
+     * week (a Sunday 23:59 goal is the end of the following Tuesday); this only guards the arithmetic against
+     * a DST-shortened week, and is what a caller with no time zone at all falls back on.
      */
     const val MIN_SCHEDULE_HORIZON_MILLIS: Long = 24L * 60 * 60 * 1000
 
     /**
-     * PRD §9 Scheduling: the instant the auto fill materializes the work plan out to — **the horizon follows
-     * what is displayed**, so the app never computes days the user is not looking at.
-     *
-     * [displayedEndMillis] is the end of the week the calendar window is currently showing (null when no
-     * calendar is open), clamped into `[now + MIN_SCHEDULE_HORIZON_MILLIS, now + SCHEDULE_HORIZON_MILLIS]`:
-     * - staying on the current week fills only to the end of THAT week (on a Sunday, ~24 h — not 168 h);
-     * - the floor keeps the headless engine correct with the calendar closed (see
-     *   [MIN_SCHEDULE_HORIZON_MILLIS]);
-     * - the ceiling keeps a far week out of the persisted state — a week past it is filled for display only,
-     *   off the UI thread, and never retained (`App.kt`'s far-week `LaunchedEffect`).
+     * The **Monday** the week holding [date] starts on. The app is Monday-first everywhere — the side menu's
+     * month rail, the calendar's `weekAnchorDay` (which delegates here) and, now, $t_{goal}$ — and "which day
+     * a week starts on" is exactly the kind of rule that must exist once.
      */
-    fun scheduleHorizonEndMillis(nowMillis: Long, displayedEndMillis: Long?): Long =
-        (displayedEndMillis ?: (nowMillis + MIN_SCHEDULE_HORIZON_MILLIS))
-            .coerceIn(nowMillis + MIN_SCHEDULE_HORIZON_MILLIS, nowMillis + SCHEDULE_HORIZON_MILLIS)
+    fun weekStartDate(date: LocalDate): LocalDate =
+        date.minus(DatePeriod(days = date.dayOfWeek.isoDayNumber - 1))
+
+    /**
+     * **The end of the first day of the week AFTER the week holding [date]** — the CURRENT-WEEK half of
+     * $t_{goal}$.
+     *
+     * The week after starts on `weekStart(date) + 7 days`; the END of that first day is the midnight closing
+     * it, i.e. `weekStart(date) + 8 days` at 00:00. Computed through the calendar, never as `+ 8 × 24 h`, so a
+     * DST change inside the span does not move it off midnight.
+     */
+    fun endOfFirstDayOfNextWeekMillis(date: LocalDate, timeZone: TimeZone): Long =
+        weekStartDate(date).plus(DatePeriod(days = 8)).atStartOfDayIn(timeZone).toEpochMilliseconds()
+
+    /**
+     * **The end of the day AFTER [date]** — the CALENDAR half of $t_{goal}$, given the last day the grid
+     * shows: the first day that does not appear is the one after it, and the goal is the midnight closing
+     * that day, i.e. `date + 2 days` at 00:00. Through the calendar, never `+ 48 h`, for the DST reason above.
+     */
+    fun endOfDayAfterMillis(date: LocalDate, timeZone: TimeZone): Long =
+        date.plus(DatePeriod(days = 2)).atStartOfDayIn(timeZone).toEpochMilliseconds()
+
+    /**
+     * `docs/scheduler_requirements.md` § *Progressive Calculation*: **$t_{goal}$ — the instant the scheduler
+     * may stop at.** *"The scheduler can have a time $t goal$ such as when definitive schedule is found for
+     * any t < $t goal$ the scheduler can stop."*
+     *
+     * It is `max(` end of **the first day that does not appear in the calendar** `,` end of the first day of
+     * the week after **the current week** `)`.
+     *
+     * So the calendar half is **one day past the bottom of the grid**, and it moves with the SCROLL rather
+     * than with the week the scroll happens to be in: open the calendar on the current week and scroll down
+     * far enough to see the Monday of the next week, and the goal becomes the end of that next week's
+     * Tuesday.
+     *
+     * Three things it is, and each one is load-bearing:
+     * - **It is a MAX, so the calendar can only ever push it further out.** Scrolling back — or closing the
+     *   calendar altogether ([displayedEndMillis] `null`) — never shortens the schedule below what the current
+     *   week asks for, which is what the headless §11/§13/§15 paths read.
+     * - **The current-week half is an ABSOLUTE staircase.** It holds still for a whole week and then steps a
+     *   week forward, so a schedule that has reached it stays complete instead of falling a millisecond short
+     *   on every tick — the rolling `now + 24 h` horizon it replaces made [horizonRefillDueMillis] true again
+     *   the instant a fill finished, which is the self-retriggering shape HORIZON_REFILL_MARGIN_MILLIS exists
+     *   to damp. The calendar half moves only when the user scrolls, which is an event, not a tick.
+     * - **"The first day that does not appear" is read off the LAST day displayed**, so a scroll that reveals
+     *   one more day extends the goal by exactly that day — which is what makes "everything on screen is
+     *   scheduled, and a day past it" true however the grid is scrolled or zoomed.
+     *
+     * [displayedEndMillis] is the EXCLUSIVE end of the displayed day span (what `App.kt` publishes through
+     * [org.example.project.scheduler.engine.SchedulerEngine.setCalendarHorizon]), so the last day displayed is
+     * the one holding `displayedEndMillis - 1`.
+     */
+    fun scheduleGoalEndMillis(
+        nowMillis: Long,
+        displayedEndMillis: Long?,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    ): Long {
+        fun dateOf(millis: Long): LocalDate =
+            Instant.fromEpochMilliseconds(millis).toLocalDateTime(timeZone).date
+
+        val current = endOfFirstDayOfNextWeekMillis(dateOf(nowMillis), timeZone)
+        // A grid scrolled entirely into the past shows no day the plan has to reach, so it is clamped to the
+        // now-line — where its answer (the end of tomorrow) is never above the current week's own.
+        val shown =
+            displayedEndMillis?.let { endOfDayAfterMillis(dateOf(maxOf(it - 1, nowMillis)), timeZone) }
+                ?: current
+        return maxOf(current, shown)
+    }
+
+    /**
+     * PRD §9 Scheduling: the instant the auto fill materializes the work plan out to — **$t_{goal}$**
+     * ([scheduleGoalEndMillis]), with the one bound that keeps a far week out of the persisted state.
+     *
+     * The goal of the CURRENT week is always honoured, whatever the calendar is showing; a goal the calendar
+     * has pushed past `now + `[SCHEDULE_HORIZON_MILLIS] is capped here and computed for display only, off the
+     * UI thread, and never retained (`App.kt`'s far-week `LaunchedEffect`). The [MIN_SCHEDULE_HORIZON_MILLIS]
+     * floor is the arithmetic guard described on that constant.
+     */
+    fun scheduleHorizonEndMillis(
+        nowMillis: Long,
+        displayedEndMillis: Long?,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    ): Long {
+        val currentWeekGoal = scheduleGoalEndMillis(nowMillis, null, timeZone)
+        val goal = scheduleGoalEndMillis(nowMillis, displayedEndMillis, timeZone)
+        return maxOf(currentWeekGoal, minOf(goal, nowMillis + SCHEDULE_HORIZON_MILLIS))
+            .coerceAtLeast(nowMillis + MIN_SCHEDULE_HORIZON_MILLIS)
+    }
 
     /**
      * PRD §9 calculation event #1: how far the materialized schedule may fall short of the horizon in force
@@ -1579,9 +1663,10 @@ object SchedulerDomain {
      * HORIZON_REFILL_MARGIN_MILLIS` of coverage left ahead of [nowMillis].
      *
      * [horizonEndMillis] is the horizon in force ([scheduleHorizonEndMillis]) — the caller passes the one it
-     * fills with, so a schedule that already reaches the end of the displayed week is *not* considered short
-     * just because it stops before `now + 168h`. That is the whole point: sitting on the current week must not
-     * keep re-filling the days after it.
+     * fills with, so a schedule that already reaches $t_{goal}$ is *not* considered short just because it
+     * stops before `now + 168h`. That is the whole point: a plan that has reached the instant the requirement
+     * lets the scheduler stop at must not keep re-filling the days after it. Since the goal is an ABSOLUTE
+     * staircase this stays false for a whole week and then turns true once, when the week rolls.
      *
      * Coverage is measured by [firstFreeMoment] — the end of the contiguous chain of panels covering `now`.
      * Because a fill reaches at most the horizon, this instant is in the FUTURE right after a successful fill

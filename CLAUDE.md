@@ -750,8 +750,17 @@ to panels.
   hit-testing, the contextual menu and the drag snap set all still see the whole day — a partner scrolled out
   of view must still narrow the block on screen. A block mid-gesture is exempt: its slices hold the gesture.
 - **Test against a large, realistic DB**, not just an emptied one — an empty account hides the cost entirely.
-- **The schedule horizon follows the displayed day span**, clamped into [24 h, 168 h]. 168 h is a ceiling,
-  not a target. There is no "focused week".
+- **The schedule horizon is $t_{goal}$** (`SchedulerDomain.scheduleGoalEndMillis`): **max(end of the first day
+  that does not appear in the calendar; end of the first day of the week after the current week)** —
+  `docs/scheduler_requirements.md` § *Progressive Calculation*, the instant the scheduler may stop at. The
+  calendar half is **one day past the bottom of the grid**, so it follows the SCROLL and not the week the scroll
+  is in: seeing the next week's Monday makes the goal the end of that week's Tuesday. Neither half moves with
+  the clock — the current week's is an absolute **staircase** that steps once a week, so a plan that reached it
+  stays complete instead of falling short on every tick; the calendar's moves only on a scroll, which is an
+  event. It is a **max**, so scrolling back never shortens it and a closed calendar still gets the current
+  week's. Only the CALENDAR half is capped (168 h, `scheduleHorizonEndMillis`) to keep a far week out of the
+  persisted state — the current week's own goal is up to eight days out and is never clipped. There is no
+  "focused week".
 - Beyond the ceiling, the far fill runs off the UI thread keyed **only on the span** and is **never stored in
   `state.panels`**.
 - Horizon growth dispatches `ExtendSchedule`, not `RefreshSchedule`.

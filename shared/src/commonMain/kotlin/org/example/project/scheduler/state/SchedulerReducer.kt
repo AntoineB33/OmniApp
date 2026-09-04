@@ -94,12 +94,12 @@ object SchedulerReducer {
     var tpMode: () -> Int = { DynamicPeriods.MODE_AT_SCREEN }
 
     /**
-     * PRD §9: the instant every refill materializes the work plan out to, given `now` — **the horizon follows
-     * the week the calendar is DISPLAYING** ([SchedulerDomain.scheduleHorizonEndMillis]) so the app never
-     * computes days the user is not looking at. The engine injects a provider over the focused week `App.kt`
-     * publishes (`SchedulerEngine.setCalendarHorizon`); the default (no engine / tests) is the calendar-closed
-     * floor, [SchedulerDomain.MIN_SCHEDULE_HORIZON_MILLIS], which is all a headless app needs for its
-     * notifications and cues.
+     * PRD §9: the instant every refill materializes the work plan out to, given `now` — **$t_{goal}$**
+     * ([SchedulerDomain.scheduleHorizonEndMillis] over [SchedulerDomain.scheduleGoalEndMillis]): the end of
+     * the first day of the week after the week the calendar is showing, or after the current week, whichever
+     * is further. The engine injects a provider over the day span `App.kt` publishes
+     * (`SchedulerEngine.setCalendarHorizon`); the default (no engine / tests) is the calendar-closed goal,
+     * which is all a headless app needs for its notifications and cues.
      */
     var scheduleHorizonEndMillis: (Long) -> Long = { SchedulerDomain.scheduleHorizonEndMillis(it, null) }
 
@@ -1989,7 +1989,7 @@ object SchedulerReducer {
 
     /**
      * PRD §9 calculation event: [advanceSchedule] then refill the non-pinned panels out to the horizon in
-     * force ([scheduleHorizonEndMillis] — the end of the DISPLAYED week, not a fixed +168h) with
+     * force ([scheduleHorizonEndMillis] — $t_{goal}$, not a fixed +168h) with
      * [SchedulerDomain.fillSchedule]. Gated by PRD §7: while [SchedulerState.automaticSchedule] is off
      * the refill is skipped (the event waits) — but the advance still runs so completed work is
      * recorded. The refill is NOT recorded as a History Unit (PRD §9): a schedule is derived from the

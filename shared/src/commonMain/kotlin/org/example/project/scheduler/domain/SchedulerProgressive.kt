@@ -22,7 +22,9 @@ import org.example.project.scheduler.model.TaskId
  *    seconds later the definitive schedule must be found for any t < t_1 + 10 minutes... As time passes, the
  *    scheduler returns one set of rule after the other to satisfy this pace." [settle] is that: it extends
  *    [frontMillis] one LINK at a time for as long as the budget lasts, and everything below the front is
- *    definitive — later settling never rewrites it.
+ *    definitive — later settling never rewrites it. **And it stops at $t_{goal}$** ([goalMillis]): "the
+ *    scheduler can have a time $t goal$ such as when definitive schedule is found for any t < $t goal$ the
+ *    scheduler can stop".
  *
  * These two requirements are not local increments; they are the account-wide schedule contract. The scheduler
  * does not decide from a device-local opinion: its input is the shared rule state of the account — the current
@@ -60,7 +62,38 @@ class ProgressiveSchedule(
     private val linkMillis: Long = LINK_MILLIS,
     private val lookaheadMillis: Long = LOOKAHEAD_MILLIS,
     private val maxRules: Int = SchedulerPlanner.MAX_RULES,
+    goalMillis: Long = horizonMillis,
 ) {
+    /**
+     * **$t_{goal}$ — where the scheduler is allowed to STOP.** `docs/scheduler_requirements.md` §
+     * *Progressive Calculation*: *"The scheduler can have a time $t goal$ such as when definitive schedule is
+     * found for any t < $t goal$ the scheduler can stop."*
+     *
+     * It is not the horizon. The horizon is how far this schedule can speak about at all; the goal is how far
+     * it must, and [settle] returns as soon as [frontMillis] reaches it however much budget is left — which is
+     * the whole point, since [isSettled] is then what tells a driver there is no more work to hand it.
+     *
+     * The app's value is [SchedulerDomain.scheduleGoalEndMillis]: the end of the first day that does not
+     * appear in the calendar, or of the first day of the week after the current week, whichever is further.
+     * Neither half moves with the clock — the current week's is a **staircase** that holds still for a whole
+     * week and then steps forward, and the calendar's moves only when the user scrolls, which can only ever
+     * push it further out — so [setGoal] is how a driver hands over the new one when the user scrolls or the
+     * week rolls. Lowering it is honoured too and settles nothing further; the front already
+     * reached is never given back, the definitive schedule being definitive.
+     */
+    var goalMillis: Long = goalMillis
+        private set
+
+    /** Move $t_{goal}$ — the calendar navigated, or the week rolled over. */
+    fun setGoal(millis: Long) {
+        goalMillis = millis
+    }
+
+    /** Whether the definitive schedule already reaches $t_{goal}$, i.e. the scheduler may stop. */
+    val isSettled: Boolean get() = frontMillis >= settleEndMillis()
+
+    /** How far [settle] will grow the front: $t_{goal}$, and never past what this schedule covers at all. */
+    private fun settleEndMillis(): Long = minOf(horizonMillis, maxOf(goalMillis, commitPointMillis))
     /** The now-line this schedule is drawn for, and its mode. */
     var tpMillis: Long = startMillis
         private set
@@ -107,6 +140,12 @@ class ProgressiveSchedule(
      * starts a fresh chain, because the rules the line is parameterised by have changed. The pace the README
      * asks for — ten minutes of definitive schedule per ten seconds — is met with an enormous margin, one
      * [LINK_MILLIS] being four hours of timeline.
+     *
+     * It stops at **$t_{goal}$** ([goalMillis]), not at the horizon: past the goal there is nothing the
+     * requirement asks for, so budget spent there is budget taken from the answer the user is actually going
+     * to read. A caller with nothing else to do can simply ask again — [isSettled] says when there is no more
+     * work — or move the goal ([setGoal]) and get the continuation, never a re-plan of what is below the
+     * front.
      */
     fun settle(budget: SettleBudget = SettleBudget.of(DEFAULT_BUDGET_MILLIS)): Long {
         if (chainKey != key()) resetChain()
@@ -127,8 +166,9 @@ class ProgressiveSchedule(
             chainPending = seeded.pending
             chainAhead = seeded.ahead
         }
-        while (frontMillis < horizonMillis) {
-            val end = minOf(frontMillis + linkMillis, horizonMillis)
+        val settleEnd = settleEndMillis()
+        while (frontMillis < settleEnd) {
+            val end = minOf(frontMillis + linkMillis, settleEnd)
             val placed = mutableListOf<PlannedRun>()
             val result = planner.runRange(
                 walk = walk,

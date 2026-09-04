@@ -3067,13 +3067,13 @@ internal const val OPENING_SPAN_MINUTES = 90
 
 /**
  * PRD §7 date pick: the day that must sit in the LEFTMOST column so the picked [date] is shown with its
- * whole WEEK around it — the Monday of that week, matching the side menu's Monday-first month rail. The
+ * whole WEEK around it — the Monday of that week ([SchedulerDomain.weekStartDate], the one place the app
+ * says which day a week starts on: the side menu's month rail and $t_goal$ read the same rule). The
  * columns are consecutive days ([rollingDayAt]), so anchoring on the picked day itself would put it at the
  * left edge and show the six days AFTER it: picking Friday would hide Monday-Thursday, which is not "go to
  * that week" but "start the timeline there". Pure, so the week fit is unit-tested independently of Compose.
  */
-internal fun weekAnchorDay(date: LocalDate): LocalDate =
-    date.minus(date.dayOfWeek.isoDayNumber - 1, DateTimeUnit.DAY)
+internal fun weekAnchorDay(date: LocalDate): LocalDate = SchedulerDomain.weekStartDate(date)
 
 /**
  * PRD §8 infinite scroll: the day drawn in column [column] of day-row [row], anchored at [anchorDay] — the

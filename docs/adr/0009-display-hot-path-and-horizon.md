@@ -66,39 +66,61 @@ drag carries it, because its slices are what hold the gesture.
 Tests: `RollingCalendarTest` — the safety property (the window never clips anything on screen, swept over every
 offset × zoom × viewport × row), the quantization bound, and that it actually culls.
 
-## The schedule horizon follows the DISPLAYED DAY SPAN, in both directions
+## The schedule horizon is $t_{goal}$, and the DISPLAYED DAY SPAN is one half of it
 
-The engine does **not** systematically materialize 168 h.
+The engine does **not** systematically materialize 168 h, and since 2026-09-04 it does not follow the displayed
+span directly either: it fills to **$t_{goal}$**, the instant `docs/scheduler_requirements.md` §
+*Progressive Calculation* lets the scheduler stop at — *"The scheduler can have a time $t goal$ such as when
+definitive schedule is found for any t < $t goal$ the scheduler can stop."*
+
+**$t_{goal}$ = `max(` end of the first day that does not appear in the calendar `,` end of the first day of the
+week after the current week `)`** (`SchedulerDomain.scheduleGoalEndMillis`).
+
+The calendar half is **one day past the bottom of the grid**. Open the calendar on the current week and scroll
+down far enough to see the Monday of the next week, and the goal becomes the end of that next week's Tuesday —
+it follows the SCROLL, a day at a time, not the week the scroll happens to have landed in.
 
 **There is no "focused week" any more** (2026-08-20): the calendar scrolls through the days ENDLESSLY, so the grid
 reports the span its scroll has landed on (`CalendarFloatingWindow(onVisibleDaysChanged = …)` → `App.kt`'s
-`visibleFirstDay` / `visibleDayCount` → `visibleSpanStartMillis` / `visibleSpanEndMillis`) and everything below
-follows THAT. A day-by-day version of the same rule, not a new one.
+`visibleFirstDay` / `visibleDayCount` → `visibleSpanStartMillis` / `visibleSpanEndMillis`) and the calendar half
+of the goal is read off THAT — the day after the **last day displayed**. `visibleSpanEndMillis` is exclusive, so
+it already *is* the start of the first day that does not appear.
 
-`App.kt` publishes it to the engine (`engine.setCalendarHorizon(visibleSpanEndMillis)`, null when the calendar is
-closed), the engine feeds the reducer seam `SchedulerReducer.scheduleHorizonEndMillis`, and every §9 refill fills
-to `SchedulerDomain.scheduleHorizonEndMillis(now, displayedEnd)` = the displayed span clamped into
-**[`MIN_SCHEDULE_HORIZON_MILLIS` = 24 h, `SCHEDULE_HORIZON_MILLIS` = 168 h]`**.
+`App.kt` publishes the span to the engine (`engine.setCalendarHorizon(visibleSpanEndMillis)`, null when the
+calendar is closed), the engine feeds the reducer seam `SchedulerReducer.scheduleHorizonEndMillis`, and every §9
+refill fills to `SchedulerDomain.scheduleHorizonEndMillis(now, displayedEnd, tz)` = the goal, with a
+**cap on the CALENDAR half alone** at `now + SCHEDULE_HORIZON_MILLIS` (168 h).
 
 So:
 
-- sitting on today computes ~a week of columns and **no later day**;
-- scrolling back into the past falls to the 24 h floor;
-- a closed calendar keeps only the 24 h floor the headless notification/cue/deadline paths need;
-- **168 h is a ceiling, not a target**.
+- **the goal is a MAX, so the calendar can only ever push it further out** — scrolling back, or closing the
+  calendar, never shortens the plan below what the current week asks for, which is what the headless
+  notification/cue/deadline paths read;
+- **neither half moves with the CLOCK.** The current week's is an absolute staircase: it holds still for a whole
+  week and then steps a week forward, so a schedule that has reached it stays complete instead of falling short
+  again on every tick. The rolling `now + 24 h` horizon it replaces was what made the refill trigger fire the
+  instant a fill finished, which is the shape `HORIZON_REFILL_MARGIN_MILLIS` exists to damp. The calendar half
+  moves only on a scroll, which is an event the grid reports, not a tick;
+- **the current week's own goal is NEVER capped** — it is up to eight days out (a Monday's goal is the end of the
+  following Monday), and clipping it would leave the headless engine short of the instant the requirement names;
+- **168 h is a ceiling on the calendar half, not a target**, and beyond it that week is still computed to the goal
+  — for display, off the UI thread (below).
 
 Everything the fill projects is bounded with it — `fillSchedule` passes its own `horizon` to `screenBreakPanels`
-(it used to project a week of break panels whatever horizon it was filling), and `App.kt`'s display sleep
-projection uses `max(now + 24h, visibleSpanEnd)`.
+(it used to project a week of break panels whatever horizon it was filling). What is *drawn* is a different
+question and stays bounded by the visible window (above): `App.kt`'s display sleep projection still uses
+`max(now + 24h, visibleSpanEnd)`.
 
 ### The two engine loops that keep it honest
 
 **`launchHorizonReschedule`** re-evaluates `horizonRefillDueMillis(panels, now, horizonInForce)` **every poll**. An
-ABSOLUTE week-end horizon's remaining span shrinks as `now` advances, so a target pinned once would fire early,
-refill to no effect, and — `panels` unchanged — park the collector for good.
+ABSOLUTE horizon's remaining span shrinks as `now` advances, so a target pinned once would fire early,
+refill to no effect, and — `panels` unchanged — park the collector for good. With the goal it fires when the
+staircase steps (once a week) rather than once a day; a scroll is `launchCalendarHorizonReschedule`'s job.
 
-**`launchCalendarHorizonReschedule`** fires one refill when the scroll **grows** the horizon. A shrink dispatches
-nothing: the plan already covers the smaller span.
+**`launchCalendarHorizonReschedule`** fires one refill when the scroll **grows** the goal — which, the calendar
+half being one day past the bottom of the grid, is now a day at a time rather than a week at a time. Scrolling
+back dispatches nothing: the goal is a MAX, so it does not shrink at all.
 
 **Both dispatch `ExtendSchedule`, not `RefreshSchedule`** (ADR 0001 §9): a horizon that grew is not a rule change,
 so the plan already on screen is kept and only its tail is materialized.
@@ -111,9 +133,11 @@ Tests: `ScheduleHorizonTest`, `HorizonRefillRuleTest`.
 
 ### Beyond the 168 h ceiling: compute for display, never store
 
-When the scrolled-to span reaches past the ceiling, `App.kt` computes the plan for DISPLAY from the now-line out to
-it — `SchedulerDomain.fillSchedule(state, now, horizonMillis = visibleSpanEndMillis)` (the horizon is a parameter
-whose default — the 168 h ceiling — is now only for tests and max-span callers).
+When the goal reaches past the ceiling, `App.kt` computes the plan for DISPLAY from the now-line out to
+**the goal** — `SchedulerDomain.fillSchedule(state, now, horizonMillis = goalEndMillis)` (the horizon is a
+parameter whose default — the 168 h ceiling — is now only for tests and max-span callers). The goal is never
+nearer than the displayed span's end, so this reaches at least as far as what is on screen, and the requirement's
+$t_{goal}$ is computed whether or not it is allowed into `state.panels`.
 
 It runs inside a `LaunchedEffect` keyed **only on the displayed span** (not `nowMillis`, so it doesn't rerun every
 tick), on `Dispatchers.Default`. So a distant day "simply takes time to display" behind a **"Calculating…"** header

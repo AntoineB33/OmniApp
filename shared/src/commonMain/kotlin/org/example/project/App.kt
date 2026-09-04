@@ -588,6 +588,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val screenBreakHorizonMillis =
             maxOf(nowMillis + SchedulerDomain.MIN_SCHEDULE_HORIZON_MILLIS, visibleSpanEndMillis)
 
+        // `docs/scheduler_requirements.md` § *Progressive Calculation*: **$t_goal$**, the instant the
+        // scheduler may stop at — `max(end of the first day that does not appear in the calendar, end of the
+        // first day of the week after the current week)`. Its calendar half is one day past the bottom of the
+        // grid, so it follows the SCROLL: it is what the whole plan is computed out to, while the displayed
+        // span above only bounds what is DRAWN (ADR 0009).
+        val goalEndMillis = SchedulerDomain.scheduleGoalEndMillis(nowMillis, visibleSpanEndMillis, tz)
+
         // PRD §9: tell the ENGINE which days are on screen, so its §9 refills materialize the work plan out
         // to exactly that span (clamped to [24h, 168h]) instead of unconditionally computing 168h of schedule
         // the user is not looking at. Closing the calendar drops it back to the 24h floor the headless
@@ -596,19 +603,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             engine.setCalendarHorizon(if (calendarOpen) visibleSpanEndMillis else null)
         }
 
-        // PRD §9/§17 "schedule the whole span displayed": the engine materializes the work plan out to the
-        // displayed days, but never past its 168h CEILING. When the scroll reaches past that, compute the plan
-        // from the now-line out to there for DISPLAY — off the UI thread (Dispatchers.Default) so a distant
-        // day "simply takes time to be displayed" instead of freezing, keyed only on the displayed span so it
-        // doesn't rerun every now-tick. The result is never stored in the state, so scrolling back to a near
-        // day just uses the near panels again and this far fill is dropped ("erased") — no retained
-        // multi-week memory. Nearer days need none of this: the engine already fills exactly to them
-        // (`engine.setCalendarHorizon` above), so `schedulerState.panels` covers the whole displayed span.
-        val nearHorizonEndMillis = nowMillis + SchedulerDomain.SCHEDULE_HORIZON_MILLIS
-        val visibleSpanBeyondNearHorizon = visibleSpanEndMillis > nearHorizonEndMillis
+        // PRD §9/§17 "schedule the whole span displayed": the engine materializes the work plan out to
+        // $t_goal$, but a CALENDAR-driven goal never past its 168h CEILING
+        // ([SchedulerDomain.scheduleHorizonEndMillis] — the current week's own goal is never capped). When the
+        // scroll reaches past that, compute the plan from the now-line out to the goal for DISPLAY — off the
+        // UI thread (Dispatchers.Default) so a distant day "simply takes time to be displayed" instead of
+        // freezing, keyed only on the displayed span so it doesn't rerun every now-tick. The result is never
+        // stored in the state, so scrolling back to a near day just uses the near panels again and this far
+        // fill is dropped ("erased") — no retained multi-week memory. Nearer days need none of this: the
+        // engine already fills exactly to the goal (`engine.setCalendarHorizon` above), so
+        // `schedulerState.panels` covers the whole displayed span.
+        val nearHorizonEndMillis =
+            SchedulerDomain.scheduleHorizonEndMillis(nowMillis, visibleSpanEndMillis, tz)
+        val visibleSpanBeyondNearHorizon = goalEndMillis > nearHorizonEndMillis
         var farWeekPlan by remember { mutableStateOf<List<TaskPanel>?>(null) }
         var farWeekCalculating by remember { mutableStateOf(false) }
-        LaunchedEffect(visibleSpanStartMillis, visibleSpanBeyondNearHorizon) {
+        LaunchedEffect(visibleSpanStartMillis, visibleSpanBeyondNearHorizon, goalEndMillis) {
             if (!visibleSpanBeyondNearHorizon) {
                 farWeekPlan = null
                 farWeekCalculating = false
@@ -619,7 +629,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val fill =
                 withContext(Dispatchers.Default) {
                     SchedulerDomain.fillSchedule(
-                        schedulerState, nowMillis, timeZone = tz, horizonMillis = visibleSpanEndMillis,
+                        schedulerState, nowMillis, timeZone = tz, horizonMillis = goalEndMillis,
                         noScreenEvidence = observedNoScreenEvidence,
                     )
                 }

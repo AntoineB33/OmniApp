@@ -587,6 +587,19 @@ task. It drives `PlanWalk` like everything else and is **not** a second copy of 
 ported answer waiting for a driver — before wiring it, give it the same slot-for-slot pinning
 `SchedulerPlanTest` gives the walk.
 
+**$t_{goal}$ is the exception: it is answered by the app's own driver too** (2026-09-04).
+`docs/scheduler_requirements.md` § *Progressive Calculation* — *"The scheduler can have a time $t goal$
+such as when definitive schedule is found for any t < $t goal$ the scheduler can stop"* — is the one
+clause of that section a horizon can answer, and the app's horizon **is** that goal:
+`SchedulerDomain.scheduleGoalEndMillis` = **max(end of the first day that does not appear in the
+calendar, end of the first day of the week after the current week)**, honoured by every fill through
+`scheduleHorizonEndMillis` (ADR 0009). `ProgressiveSchedule.settle` stops at the same thing
+(`goalMillis` / `isSettled`), so a driver that wires it later inherits the stop rather than inventing a
+second one. The rest of the clause — the ten-minutes-per-ten-seconds pace and the front that is never
+rewritten — the running app meets by computing the whole span in one fill and *extending* rather than
+re-planning (`ExtendSchedule`); `ProgressiveSchedule` is what would be needed if one fill ever stopped
+fitting in the budget.
+
 **§ *Alternative Schedules* is the exception, and since 2026-09-03 it is answered by the app's own
 driver.** Leaving it to `ProgressiveSchedule` meant the running app returned rules that named no
 alternative at all, which the README forbids outright — so `fillSchedule` now reads
