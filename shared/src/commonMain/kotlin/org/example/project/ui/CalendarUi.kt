@@ -4462,8 +4462,8 @@ private fun DayColumn(
         // PRD §8 calendar LAYERS: the two decorative "nobody unlocked" hatches — "/" where no computer was
         // unlocked, "\\" (opposite slope) where no phone was. Drawn OVER the panels, because a layer
         // displaces nothing (PRD §8 panel taxonomy: decorative elements pattern the calendar rather than
-        // occupying it), and UNDER the now-line / reminder / alarm / screen-break markers, which have to stay
-        // crisp. A stretch carrying BOTH slopes is a no-screen period — the user's definition, and the same
+        // occupying it), and UNDER the now-line / alarm / screen-break markers and the reminder tags, which
+        // have to stay crisp — the tags top everything, being the one marker that is clicked. A stretch carrying BOTH slopes is a no-screen period — the user's definition, and the same
         // set §9 places the off-screen tasks in. Non-interactive: a plain drawing Box registers no pointer
         // input, so every block underneath keeps its own hover, drag and right-click.
         layerBands.forEach { band ->
@@ -4500,38 +4500,6 @@ private fun DayColumn(
             )
         }
 
-        // PRD §14 Reminders: zero-duration checkable tags, placed by three rules. A still-future, unchecked
-        // reminder sits at its scheduled time. An unchecked reminder whose time has passed is *overdue* and
-        // accumulates on the live now-line, stacked top-down (so it tracks the clock until dealt with). A
-        // checked reminder FREEZES at the moment it was checked ([checkedAtMillis]): it neither snaps back to
-        // its scheduled slot nor keeps following the now-line. Clicking a tag toggles its checked state.
-        val nowHour = now?.hourOfDay()
-        fun checkedAtHour(tag: PlacedRecord): Float? =
-            tag.checkedAtMillis?.let {
-                Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay()
-            }
-        fun onNowLine(tag: PlacedRecord) = nowHour != null && !tag.checked && tag.startHour <= nowHour
-        // PRD §14: scheduled reminders that fall at the same time — or close enough that their fixed-height
-        // tags would overlap — stack downward instead of drawing on top of each other. Sweep them in time
-        // order, pushing each tag below the previous one whenever its natural slot would collide.
-        var lastScheduledBottom: Dp? = null
-        reminderTags.filterNot(::onNowLine)
-            .sortedBy { checkedAtHour(it) ?: it.startHour }
-            .forEach { tag ->
-                val naturalY = hourHeight * (checkedAtHour(tag) ?: tag.startHour)
-                val y = lastScheduledBottom?.let { maxOf(naturalY, it) } ?: naturalY
-                lastScheduledBottom = y + REMINDER_TAG_HEIGHT
-                // The sweep must run over the WHOLE day — each tag's slot depends on the one above it —
-                // so it is the emission that is culled, never the list.
-                if (!onScreenDp(y, y + REMINDER_TAG_HEIGHT)) return@forEach
-                ReminderTag(tag, Modifier.offset(y = y)) { onToggleReminder(tag) }
-            }
-        reminderTags.filter(::onNowLine).forEachIndexed { i, tag ->
-            val y = hourHeight * (nowHour ?: 0f) + REMINDER_TAG_HEIGHT * i
-            if (!onScreenDp(y, y + REMINDER_TAG_HEIGHT)) return@forEachIndexed
-            ReminderTag(tag, Modifier.offset(y = y)) { onToggleReminder(tag) }
-        }
-
         // PRD §18 Alarms and Timers: each ring is drawn at its own instant — a fixed-height marker, since a
         // ring has no duration. Unlike a reminder it is never checked off and never follows the now-line: an
         // alarm's instant is a fixed wall-clock boundary, so a past ring stays where it went off, and a
@@ -4560,8 +4528,9 @@ private fun DayColumn(
         val visibleScreenBreaks = screenBreakMarkers.filter { onScreen(it.startHour, it.endHour) }
         if (visibleScreenBreaks.isNotEmpty()) {
             val sideLayout = overlapLayout(screenBreakMarkers)
-            // PRD §8: a screen break is drawn on top of everything else, so whatever sits under it is
-            // otherwise hidden — the grey periods and the layers ([contextOverlays]), plus, rarely (the fill
+            // PRD §8: a screen break is drawn on top of every panel and band (only the reminder tags go
+            // above it), so whatever sits under it is otherwise hidden — the grey periods and the layers
+            // ([contextOverlays]), plus, rarely (the fill
             // normally carves an exact gap for the break), a real panel. A TASK panel under a break is
             // dropped by the user's rule ("when there is a break, there can't be a task"); every other panel
             // still stacks. See [orderedBubbleSections].
@@ -4584,9 +4553,10 @@ private fun DayColumn(
             }
         }
 
-        // The "Sleep"/"Inactivity" band label, drawn ON TOP of everything so it stays legible at the start
-        // of the band even though the work plan now projects tinted blocks through the window. Non-
+        // The "Sleep"/"Inactivity" band label, drawn over the panels and the markings so it stays legible at
+        // the start of the band even though the work plan now projects tinted blocks through the window. Non-
         // interactive (a plain Text Box consumes no pointer events), so the blocks beneath stay clickable.
+        // Only the reminder tags go above it — they are the one element that must stay hittable.
         (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to decorativeBandLabel(it) })
             .forEach { (band, label) ->
             if (!onScreen(band.startHour, band.endHour)) return@forEach
@@ -4609,6 +4579,48 @@ private fun DayColumn(
                     modifier = Modifier.padding(top = inset + 2.dp),
                 )
             }
+        }
+
+        // PRD §14 Reminders: zero-duration checkable tags, placed by three rules. A still-future, unchecked
+        // reminder sits at its scheduled time. An unchecked reminder whose time has passed is *overdue* and
+        // accumulates on the live now-line, stacked top-down (so it tracks the clock until dealt with). A
+        // checked reminder FREEZES at the moment it was checked ([checkedAtMillis]): it neither snaps back to
+        // its scheduled slot nor keeps following the now-line. Clicking a tag toggles its checked state.
+        //
+        // **A REMINDER IS THE TOP-MOST THING THE COLUMN DRAWS, and that is a rule, not an emission order.**
+        // It is the one marker the user has to be able to HIT — every other element here is decorative
+        // (the layers, the grey marks, the band labels, an alarm ring) or reports only hover (a screen-break
+        // band's tiles). Drawn earlier, the tag was covered by two of them at exactly the position it matters
+        // most: the now-line, where the overdue stack accumulates and where mode 1 parks an owed pose. An
+        // opaque alarm marker hid it, and — worse — the break band's hover tiles are pointer-input nodes, so
+        // they won the hit test against the tag underneath and the click that would check the reminder off
+        // never reached it (the same "a lid over the tile" mistake [CalendarHoverTiles] exists to prevent).
+        // So nothing is emitted after this block.
+        val nowHour = now?.hourOfDay()
+        fun checkedAtHour(tag: PlacedRecord): Float? =
+            tag.checkedAtMillis?.let {
+                Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay()
+            }
+        fun onNowLine(tag: PlacedRecord) = nowHour != null && !tag.checked && tag.startHour <= nowHour
+        // PRD §14: scheduled reminders that fall at the same time — or close enough that their fixed-height
+        // tags would overlap — stack downward instead of drawing on top of each other. Sweep them in time
+        // order, pushing each tag below the previous one whenever its natural slot would collide.
+        var lastScheduledBottom: Dp? = null
+        reminderTags.filterNot(::onNowLine)
+            .sortedBy { checkedAtHour(it) ?: it.startHour }
+            .forEach { tag ->
+                val naturalY = hourHeight * (checkedAtHour(tag) ?: tag.startHour)
+                val y = lastScheduledBottom?.let { maxOf(naturalY, it) } ?: naturalY
+                lastScheduledBottom = y + REMINDER_TAG_HEIGHT
+                // The sweep must run over the WHOLE day — each tag's slot depends on the one above it —
+                // so it is the emission that is culled, never the list.
+                if (!onScreenDp(y, y + REMINDER_TAG_HEIGHT)) return@forEach
+                ReminderTag(tag, Modifier.offset(y = y)) { onToggleReminder(tag) }
+            }
+        reminderTags.filter(::onNowLine).forEachIndexed { i, tag ->
+            val y = hourHeight * (nowHour ?: 0f) + REMINDER_TAG_HEIGHT * i
+            if (!onScreenDp(y, y + REMINDER_TAG_HEIGHT)) return@forEachIndexed
+            ReminderTag(tag, Modifier.offset(y = y)) { onToggleReminder(tag) }
         }
     }
 }

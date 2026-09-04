@@ -11,6 +11,49 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A reminder tag is the TOP-MOST thing the day column draws — 2026-09-04
+
+`shared` (`ui/CalendarUi.kt` — `DayColumn`'s emission order) + `CLAUDE.md`. **Client rebuild only** — no
+Supabase deploy, no migration, no payload change: this is a z-order rule.
+
+A reminder could not be checked off on the calendar. Every marker the column drew after the tags sat over
+them, and one of those kinds is not merely decorative: a `ScreenBreakBand`'s hover tiles are pointer-input
+nodes, so a band covering a tag won the hit test and the click that would check the reminder off never
+reached the chip — the same "a lid over the tile" mistake `CalendarHoverTiles` exists to prevent, from the
+other side. It bit hardest at exactly the position that matters most, the now-line: that is where the
+overdue stack accumulates AND where mode 1 parks an owed pose. The bubble said as much — hovering a tag
+named the break and the two "nobody unlocked" LAYERS instead of the reminder.
+
+The tags are now emitted last, so nothing is drawn or hit-tested over them: the grey marks, the layers, the
+now-line, the alarm markers, the screen-break bands and the "Sleep"/"Inactivity" labels all go under. A
+reminder is the one marker on the calendar the user has to be able to HIT; every other element there is
+decorative or reports only hover.
+
+### A selected / edited cell is marked by its OUTLINE, never by a fill — 2026-09-04
+
+`shared` (`scheduler/ui/TaskSchedulerScreen.kt` — `TaskRow`'s `cellBackground` / `cellBorder`;
+`ui/TaskSheetChrome.kt`, `ui/TaskTreeFindBar.kt` — comments only) + `CLAUDE.md` + ADR 0013. **Client rebuild
+only** — no Supabase deploy, no migration, no payload change: this is a paint rule, and colours are derived.
+
+The main selection, every other cell of the selection and the cell in Edit Mode used to be painted
+`SheetColors.selectionFill`, which meant the tree's task colours were repainted on exactly the rows the user
+was working on — a selected block went uniformly pale blue, and a rename hid the colour of the very task
+being renamed. The fill is gone; the state is now said in the border alone, told apart by its weight:
+
+| State | Border |
+| --- | --- |
+| main selection, or in Edit Mode | 2 dp `activeBorder` |
+| among the selection | 1 dp `activeBorder` |
+| neither | 1 dp `grid` |
+
+The background is now the task's own colour (or `cellBackground` where it has none) in all three. Drag-move
+(`moveDragFill`) and non-selectable (`nonSelectableFill`) still win the background outright — those two are
+about whether the row can be acted on at all, not about what the user has picked. `selectionFill` survives as
+the find bar's latching-toggle fill and nothing else.
+
+Applies to all three drawings of the tree — the task tree, the "All tasks" window and the default sub-tree
+template — because `TaskRow` is the one row.
+
 ### The schedule horizon IS $t_{goal}$ — 2026-09-04
 
 `docs/scheduler_requirements.md` § *Progressive Calculation*'s stopping clause, answered with a concrete

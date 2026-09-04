@@ -123,8 +123,13 @@ per keystroke.
   measured, which is why an arc can wrap round the circle.)
 - **Only populated cells take part** — an empty placeholder row and a blank-titled (deleted) task take no
   colour and no room.
-- **The tree's tint is the row's RESTING background only.** Drag-move, selection and non-selectable win
-  outright — plain white is the strongest possible marker on a coloured tree.
+- **The tree's tint is the row's RESTING background only.** Drag-move and non-selectable win outright — plain
+  white is the strongest possible marker on a coloured tree.
+- **Selection and Edit Mode are said in the OUTLINE alone**, so a cell that is the main selection, is among
+  the selection, or is being edited keeps its task colour. They are told apart by the border's weight: 2 dp
+  `activeBorder` for the main selection and the edited cell, 1 dp of the same colour for the rest of the
+  selection, the ordinary 1 dp `grid` line otherwise. A selection fill repainted exactly the rows the user is
+  working on — the one place the colours earn their keep — which is why it was removed rather than lightened.
 - **The uniform §8 event blue is the fallback**, for a panel whose task the tree gives no colour. A no-screen
   or inactivity period takes no task colour at all: it is not a task.
 - **Colours are DERIVED, never persisted or synced.**

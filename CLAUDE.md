@@ -613,6 +613,15 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
 - **The drag/resize gesture and the right-click menu are unaffected by all of this**, and that is structural,
   not luck: both live on **ancestors** of the tiles (the block's slice, the day column), and an ancestor stays
   on the hit path of whatever descendant is hit. `calendarTitleHover` never consumes.
+- **A REMINDER TAG IS THE TOP-MOST THING THE DAY COLUMN DRAWS**, and that is the same rule as the one above
+  read from the other side. It is the one marker on the calendar the user has to be able to **hit**; every
+  other element there is decorative (the grey marks, the layers, the now-line, the band labels, an alarm
+  ring) or reports only hover. So the tags are emitted LAST and nothing goes after them. Drawn earlier they
+  were covered at exactly the position that matters most — the now-line, where the overdue stack accumulates
+  and where mode 1 parks an owed pose: an opaque alarm marker hid one, and a `ScreenBreakBand`'s hover tiles,
+  being pointer-input nodes, won the hit test against the tag underneath so the click that checks a reminder
+  off never reached it. The bubble said so — hovering a tag named the break and the two "nobody unlocked"
+  layers instead of the reminder.
 - **GREY = the scheduler places nothing here** — inactivity period, sleep window, the §17 **"Before bed"
   hour** (`before bed`, whose default resilience is `0` like theirs), and **all three screen
   breaks end to end** (they are `no task allowed`; there is no closed head and no hollow tail any more). It is
@@ -1142,9 +1151,17 @@ disagreeing about what colour a task is.
   its own sub-tree holds. `TaskHue` still carries it and the palette still spends it on lightness, because a
   parent and the leaf it was placed beside are *neighbouring* hues by design. Do not go back to averaging an
   arc (that made `Book` and `Draft` the identical hue), and do not "fix" a collision by perturbing a hue.
-- **The tree's tint is the row's RESTING background only.** Drag-move, selection and non-selectable still win
-  outright — a tint under each of them would be one more thing to read them against, and plain white is the
-  strongest possible marker on a coloured tree.
+- **The tree's tint is the row's RESTING background only.** Drag-move and non-selectable still win outright —
+  a tint under either of them would be one more thing to read them against, and plain white is the strongest
+  possible marker on a coloured tree.
+- **SELECTION AND EDIT MODE ARE SAID IN THE OUTLINE ALONE**, and that is what keeps the tint readable where it
+  matters most. A cell that is the main selection, is among the selection, or is in Edit Mode keeps its own
+  background — its task colour — and is marked by its border's **weight**: the main selection and the edited
+  cell take a 2 dp `activeBorder`, every other cell of the selection a 1 dp one of the same colour, and an
+  unselected cell the ordinary 1 dp `grid` line. A fill repainted precisely the rows the user is working on,
+  so "which task is this" was unreadable in the middle of a rename and a whole selected block lost its
+  colours at once. `SheetColors.selectionFill` is now the find bar's latching-toggle fill and nothing else —
+  do not put it back behind a cell.
 - **The uniform §8 event blue survives as the fallback**, for a panel whose task the tree gives no colour. A
   no-screen / inactivity period takes no task colour at all: it is not a task.
 - **Colours are DERIVED, never persisted or synced** — recomputed from the tree, like the percentages.

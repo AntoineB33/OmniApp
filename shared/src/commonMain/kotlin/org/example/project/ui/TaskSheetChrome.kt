@@ -37,6 +37,11 @@ import androidx.compose.ui.unit.dp
 internal object SheetColors {
     val grid = Color(0xFFDADCE0)
     val cellBackground = Color.White
+    /**
+     * The "on" fill of a latching toggle (the find bar's). **Not** a task cell's selection: a selected,
+     * main-selected or edited cell is marked by its OUTLINE alone, so its background stays whatever the
+     * task's own colour is.
+     */
     val selectionFill = Color(0xFFE8F0FE)
     val activeBorder = Color(0xFF1A73E8)
     val nonSelectableFill = Color(0xFFF8F9FA)

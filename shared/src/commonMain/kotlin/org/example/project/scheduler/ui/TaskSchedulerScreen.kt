@@ -2335,20 +2335,28 @@ internal fun TaskRow(
         when {
             // PRD §3: a cell being drag-moved gets a grey background (not mirrored elsewhere).
             isBeingMoved -> SheetColors.moveDragFill
-            isInSelectionRange || isEditing -> SheetColors.selectionFill
             !selectable -> SheetColors.nonSelectableFill
-            // The task's own colour is the row's RESTING background only: the three states above are the
-            // ones the user is being told about, and a tint under each of them would be one more thing to
-            // read them against. Falling back to plain white is itself the strongest possible marker on a
+            // The task's own colour is the row's RESTING background only: the two states above are the ones
+            // the user is being told about, and a tint under each of them would be one more thing to read
+            // them against. Falling back to plain white is itself the strongest possible marker on a
             // coloured tree, so nothing is lost by letting them win outright.
+            //
+            // Selection and Edit Mode are deliberately NOT in this list: they are said in the OUTLINE alone
+            // (below), so a cell keeps its task colour while it is selected, is the main selection, or is
+            // being edited. A fill there repainted exactly the rows the user is working on — the one place
+            // the tree's colours matter most — and made "which task is this" unreadable in the middle of a
+            // rename.
             taskColor != null -> taskColor
             else -> SheetColors.cellBackground
         }
+    // The three selection states are told apart by the outline's WEIGHT, not by a fill: the main selection
+    // and the cell being edited take the thick active border, every other cell of the selection a thin one
+    // of the same colour, and an unselected cell the ordinary grid line.
     val cellBorder =
-        if (isMainSelection || isEditing) {
-            Modifier.border(2.dp, SheetColors.activeBorder)
-        } else {
-            Modifier.border(1.dp, SheetColors.grid)
+        when {
+            isMainSelection || isEditing -> Modifier.border(2.dp, SheetColors.activeBorder)
+            isInSelectionRange -> Modifier.border(1.dp, SheetColors.activeBorder)
+            else -> Modifier.border(1.dp, SheetColors.grid)
         }
     val textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface)
 

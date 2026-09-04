@@ -284,7 +284,7 @@ private fun FindBarIconButton(
     }
 }
 
-/** A latching toggle — [SheetColors.selectionFill] behind the active border is "on", as a selected cell is. */
+/** A latching toggle — [SheetColors.selectionFill] behind the active border is "on". */
 @Composable
 private fun FindBarToggle(
     label: String,
