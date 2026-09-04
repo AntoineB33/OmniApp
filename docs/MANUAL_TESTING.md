@@ -303,19 +303,28 @@ rows, and re-derive right after each reconcile.
 
 ---
 
-## 4b. The two `t_p` modes — an owed break slides at the screen, happens when you leave
+## 4b. The two `t_p` modes — an owed POSE slides at the screen, happens when you leave
 
 The mode is **which devices are unlocked** (mode 1 = at least one; mode 2 = none), read off the same
 account-wide pause §4 draws as its Inactivity band — so the two can never disagree, and the band is how you
 read the mode off the screen. Enable the screen-break display switch in the calendar window first, and use a
 fast-break script (`*-fast-break*.bat`) so the bars fire in seconds rather than in hours.
 
-- [ ] **Mode 1: the owed period parks at the now-line and nothing is scheduled under it.** Sit at the
-      unlocked desktop past a break's due → the band sits **on** the now-line and stays there as the line
-      advances (it never falls behind it), and the plan shows **no task** under it. That is "you owe a break"
-      as a period, not a hint — it is the README's mode 1 and it is intended.
-- [ ] **…and the past behind it is task panels, not breaks.** Scroll back over the stretch you just worked
-      through → no break bands in it. A period the line reached was pushed ahead of it and never happened.
+- [ ] **Mode 1: the owed POSE parks at the now-line and nothing is scheduled under it.** Sit at the
+      unlocked desktop past a 5- or 15-minute pose's due → the band sits **on** the now-line and stays there as
+      the line advances (it never falls behind it), and the plan shows **no task** under it. That is "you owe a
+      break" as a period, not a hint — it is the README's mode 1 and it is intended.
+- [ ] **The 20-second look-away is the exception: the line goes THROUGH it.** Sit at the unlocked desktop past
+      a look-away's due → the 20 s band stays exactly where it fell due, the now-line crosses it over about
+      twenty seconds (nothing is scheduled under it while it does), and it is then **behind** the line. It must
+      never park on the line, and it must never be the half-open form that starts one millisecond after it.
+- [ ] **…and it stays on the calendar afterwards.** Scroll back over the stretch you just worked through → the
+      20 s bands you crossed are still drawn where they happened, while the stretch holds task panels and **no
+      pose** (a pose the line reached was pushed ahead of it and never happened).
+- [ ] **…unless "Look away now" moves it.** Press `Ctrl+Shift+Alt+E` less than twenty minutes after a crossed
+      look-away and let it complete → the conducted break is recorded where it happened and the 20-second bar
+      re-anchors off it, so what the bars draw over that stretch may change. That is the one everyday way a
+      crossed look-away moves.
 - [ ] **The cue still fires once, at the due.** Each break is still announced (notification + voice cue)
       exactly once as the line reaches its slot — **not** repeatedly while the period is parked. Repeats here
       mean something started keying on the drawn start instead of the due (the 2026-07-12 failure).
@@ -326,7 +335,7 @@ fast-break script (`*-fast-break*.bat`) so the bars fire in seconds rather than 
       the Inactivity band opens at the now-line, the mode flips, the plan **re-plans once** (not per tick) and
       the periods sit where the bars put them instead of on the line.
 - [ ] **Unlocking returns to mode 1**, because the unlock clears "I'm away" (§15) and closes the pause. One
-      re-plan, then the owed period is back on the line.
+      re-plan, then the owed pose is back on the line.
 - [ ] **The Sleep/Work toggle changes none of this.** Switching to Sleep with the machine unlocked must leave
       the placement identical — it says the user has gone to bed, not that no screen is in use. (It was what
       the mode was wrongly read from until 2026-08-28.)

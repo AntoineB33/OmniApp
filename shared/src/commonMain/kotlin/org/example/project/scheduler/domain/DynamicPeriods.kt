@@ -30,6 +30,13 @@ package org.example.project.scheduler.domain
  * period is pointless and is pushed past; only the part of that which is a rest stretch bars what comes after
  * it. A pre-placed hour of maintenance is not a rest: the user was at the screen the whole time.
  *
+ * ### The look-away is assumed taken; a pose is owed
+ * When the line reaches a **pose** the user has not taken, mode 1 drags it: `t_p` may not be covered, so the
+ * period is pushed onto the line and goes on being pushed until a real rest happens. When the line reaches the
+ * **20 s look-away** nothing is dragged ([dragsAtLine]) — looking twenty feet away costs no working time, so
+ * the app assumes it is being done. The occurrence stays where the bars put it, the line walks across it in
+ * [MODE_AWAY] for its twenty seconds, and behind the line it goes on being drawn where it happened.
+ *
  * The timeline is taken to **start rested**, so the first 20 s may fall one bar after `t_pstart`, the first
  * 5 min an hour after it and the first 15 min two hours after it. Placing all three at the origin instead
  * would be legal and useless — the chain merge would collapse them into one 15-minute period there.
@@ -75,7 +82,10 @@ object DynamicPeriods {
 
     /**
      * `t_p` mode 1: *"$t_p$ must not be covered by the period 'no on-screen task'"* — the user is at the
-     * screen, so a period the line reaches is pushed ahead of it and never happens at all.
+     * screen, so a POSE the line reaches is pushed ahead of it and never happens until it is taken.
+     *
+     * The 20 s look-away is exempt ([dragsAtLine]): it is assumed done as it falls due, so the line crosses it
+     * in [MODE_AWAY] for its twenty seconds and it stays on the timeline behind the line.
      */
     const val MODE_AT_SCREEN: Int = 1
 
@@ -218,10 +228,15 @@ object DynamicPeriods {
      *
      * [sweepFromMillis] is the floor of the drag. The line itself has no such floor: it moves CONTINUOUSLY,
      * so every instant below it is one it has already stood on, and the placement path passes the timeline's
-     * own origin — mode 1 **drags**, a period the line reached is pushed ahead of it and goes on being pushed,
-     * so it never happens at all. The floor exists for the callers that are NOT the line: asking where the
-     * bars put a break with nothing dragged (the break's **due**) is `sweepFrom = t_p`, which makes the drag's
-     * condition unsatisfiable. Never read it as the line having jumped — under the README the line cannot.
+     * own origin — mode 1 **drags**, a pose the line reached is pushed ahead of it and goes on being pushed,
+     * so it never happens until it is taken. The floor exists for the callers that are NOT the line: asking
+     * where the bars put a break with nothing dragged (the break's **due**) is `sweepFrom = t_p`, which makes
+     * the drag's condition unsatisfiable. Never read it as the line having jumped — under the README the line
+     * cannot.
+     *
+     * Only the two poses are dragged ([dragsAtLine]). The 20 s look-away is placed at its due whatever the line
+     * is doing, so for a look-away the answer is the same at the line and away from it — which is what makes
+     * the break's **due** and where it is **drawn** one instant for that one of the three.
      */
     fun instances(
         base: Base,
@@ -301,24 +316,35 @@ object DynamicPeriods {
             // onto the line and becomes the half-open `(t_p, t_p + duration]`; the line goes on delaying it,
             // placing tasks where it stood.
             //
+            // **The look-away is the one exception, and it is not dragged at all** ([dragsAtLine]). Looking
+            // twenty feet away for twenty seconds is not something the user has to stop working to do, so the
+            // app takes it as done the moment the line reaches it: the period stays where the bars put it, the
+            // line crosses it in mode 2 — covered, which is exactly what mode 1 forbids and what the drag
+            // exists to prevent — and twenty seconds later it is an ordinary fact of the past, still drawn
+            // where it happened. A pose is the opposite: five or fifteen minutes away from the screen is
+            // something the user must actually do, so an untaken one is still OWED and goes on being dragged.
+            //
             // Pushing it is a move like any other, so the loop goes round again and the ordinary rules get
             // their say at the new position: the line may be standing inside a stretch nobody can run in (a
             // hand-drawn inactivity period, a night), and a period must no more fall inside one of those for
             // having been dragged than for having been placed there. A drag strictly increases the bar, so it
             // cannot spin — and it re-anchors that bar AT the line, which is what bounds the whole thing: at
             // most one occurrence per bar is ever swept, and the chain merge collapses those into one.
-            if (mode == MODE_AT_SCREEN && start >= sweepFromMillis && start < tpMillis) {
+            if (mode == MODE_AT_SCREEN && dragsAtLine(label) && start >= sweepFromMillis && start < tpMillis) {
                 bars[label] = tpMillis
                 continue
             }
             // It sits ON the line, and the line got here by SWEEPING (`sweepFrom < t_p`): this is the period
-            // the line is dragging, and the half-open form is what keeps the instant `t_p` itself free.
+            // the line is dragging, and the half-open form is what keeps the instant `t_p` itself free. A
+            // look-away never is, so it keeps the ordinary closed `[start, start + 20 s)` even when it lands
+            // exactly on the line: the line is INSIDE it, in mode 2, and is meant to be.
             //
             // The sweep test is not decoration. A caller whose `t_p` is a window edge rather than the line
             // sweeps nothing (`sweepFrom == t_p`), and must not get the half-open form for the accident of a
             // slot falling on that edge: the cue sweep would then read one break's due as `floor` in one scan
             // and `floor + 1` in the next, and fire it twice.
-            val openStart = mode == MODE_AT_SCREEN && start == tpMillis && sweepFromMillis < tpMillis
+            val openStart =
+                mode == MODE_AT_SCREEN && dragsAtLine(label) && start == tpMillis && sweepFromMillis < tpMillis
             val inst = Instance(spec, start, openStart)
             out += inst
             barInstance(bars, byLabel, restedSpans, inst)
@@ -371,6 +397,27 @@ object DynamicPeriods {
         if (from >= tpMillis) return null
         return RestrictivePeriod(from, tpMillis, PeriodKinds.NO_SCREEN, "no screen", closedEnd = true)
     }
+
+    /**
+     * **Does the line DRAG this one when it reaches it?** — the two poses yes, the 20 s look-away no.
+     *
+     * Mode 1's rule is that `t_p` must not be covered, and the drag is how a period the line reaches obeys it:
+     * the period is pushed onto the line and goes on being pushed, so it never happens until the user actually
+     * rests. That is right for a pose — five or fifteen minutes away from the screen is a thing the user has
+     * to *do*, and an untaken one is owed, not spent.
+     *
+     * It is wrong for the look-away. Looking twenty feet away for twenty seconds costs no working time, so the
+     * app assumes it is being done the moment it falls due: the occurrence stays where the bars put it, the
+     * line walks across it in **mode 2** (covered, for those twenty seconds), and once the line is past, the
+     * break stays on the calendar as what really happened — the placement is a function of the environment, so
+     * asking about that stretch again puts it back in the same place. It is derived, not recorded, so a later
+     * change to the environment can still move it: a manual "Look away now" less than twenty minutes later
+     * re-anchors the 20 s bar off the break the user actually took ([RestrictivePeriod.dynamic]).
+     *
+     * Keyed on the label, like every other bar rule here: [LABEL_20S] is the role of the shortest of the three,
+     * not a title, so a retitled or debug-retimed account still answers this the same way.
+     */
+    private fun dragsAtLine(label: String): Boolean = label != LABEL_20S
 
     /**
      * The README's stretch, at one instant: covered by "no on-screen task", and no task there — a pre-placed

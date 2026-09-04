@@ -38,7 +38,7 @@ Everything in this section belongs to the Task Scheduler page. Additional pages 
 
 **A calendar.** A week view in the style of Google Calendar showing what is scheduled and what you actually did. Drag panels to move them, grab an edge to resize, pin a block so the scheduler works around it, and mark periods as away-from-screen or inactive.
 
-**Screen breaks for eye health.** Three recurring breaks — a 20-second look-away every 20 minutes, a 5-minute pose every hour, a 15-minute pose every two hours — placed on the calendar as real time, announced by notification and by voice. The app knows whether you actually took one from your devices' activity, so an untaken break stays owed instead of silently expiring. If you walk away from every device with a break due, your phone tells you when the break is over, even with the app closed.
+**Screen breaks for eye health.** Three recurring breaks — a 20-second look-away every 20 minutes, a 5-minute pose every hour, a 15-minute pose every two hours — placed on the calendar as real time, announced by notification and by voice. The app knows from your devices' activity whether you actually took a pose, so an untaken one stays owed instead of silently expiring — while the 20-second look-away, which costs you no working time, is simply assumed done as it comes up and stays on the calendar where it happened. If you walk away from every device with a break due, your phone tells you when the break is over, even with the app closed.
 
 **Reminders.** Recurring check-off items at any cadence (including formulas like `31/21` and rates like "2.5 per week"), which stack on the current-time line when overdue and can be constrained to occur only on another reminder's days.
 

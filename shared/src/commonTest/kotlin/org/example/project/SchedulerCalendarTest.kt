@@ -849,14 +849,21 @@ class SchedulerCalendarTest {
         assertEquals(5 * MIN, first.endEpochMillis - first.startEpochMillis)
         assertTrue(first.startEpochMillis > start, "the period is ahead of the line, never on it")
 
-        // `side-dev/README.md` mode 1 (the default: a device is unlocked): every dynamic period is strictly
-        // AHEAD of the line, at every position of the line. That is what makes the frozen past hold while a
-        // period is being dragged — the elapsed timeline never held it, so nothing behind the line changes
-        // from a period into a task panel; it was a task panel all along.
+        // `side-dev/README.md` mode 1: a POSE the line reaches is pushed ahead of it. The 20 s look-away is
+        // not — the app takes it as done the moment it falls due — so it stays exactly where the bars put it
+        // and the line simply walks across it (in mode 2, for its twenty seconds). The bar labels are
+        // positional, so this account's single break stands in the shortest-of-three role and is that one:
+        // twelve minutes later it has not moved, and the line is now inside it.
         val t2 = SchedulerReducer.reduce(t1, SchedulerIntent.RefreshSchedule(start + 12 * MIN))
+        val same = t2.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
+        assertEquals(
+            first.startEpochMillis,
+            same.startEpochMillis,
+            "a look-away does not move with the line",
+        )
         assertTrue(
-            t2.panels.filter { it.screenBreak }.all { it.startEpochMillis > start + 12 * MIN },
-            "no dynamic period may sit at or behind the line in mode 1",
+            same.startEpochMillis <= start + 12 * MIN && start + 12 * MIN < same.endEpochMillis,
+            "…the line crosses it instead of dragging it",
         )
 
         // And no task panel overlaps one — the fill leaves it a clean place (PRD §15).

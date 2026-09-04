@@ -28,6 +28,7 @@ import org.example.project.scheduler.state.SchedulerState
  */
 class TpModeTest {
 
+    private val SEC = 1_000L
     private val MIN = 60_000L
     private val HOUR = 60 * MIN
     private val NOW = 1_000_000_000_000L
@@ -38,7 +39,13 @@ class TpModeTest {
         SchedulerReducer.tpMode = { DynamicPeriods.MODE_AT_SCREEN }
     }
 
-    /** One on-screen task with a 45-minute minimum, and the account's three breaks. */
+    /**
+     * One on-screen task with a 45-minute minimum, and two breaks — a 20 s look-away and a 5-minute pose.
+     *
+     * Both roles have to be there, because only one of them is dragged: the bar labels are POSITIONAL (the
+     * shortest of the three is the README's look-away), so an account configured with the pose alone would
+     * have it stand in the look-away's role and never be dragged at all.
+     */
     private fun oneTask(): Pair<SchedulerState, TaskId> {
         var s = SchedulerState.empty()
         val c0 = s.lists[s.rootListId]!!.cellIds[0]
@@ -48,28 +55,34 @@ class TpModeTest {
         s = SchedulerReducer.reduce(
             s,
             SchedulerIntent.SetScreenBreaks(
-                listOf(ScreenBreak("5min", intervalMillis = HOUR, durationMillis = 5 * MIN, restBreak = true)),
+                listOf(
+                    ScreenBreak("20s", intervalMillis = 20 * MIN, durationMillis = 20 * SEC),
+                    ScreenBreak("5min", intervalMillis = HOUR, durationMillis = 5 * MIN, restBreak = true),
+                ),
             ),
         )
         return s to solo
     }
 
     @Test
-    fun the_default_is_mode_one_and_it_keeps_every_dynamic_period_off_the_line() {
+    fun the_default_is_mode_one_and_it_keeps_every_pose_off_the_line() {
         // Mode 1 is what a shell with no device signal assumes — somebody is at a screen — and it is what the
-        // reducer's seam defaults to. Its rule: `t_p` is never covered.
+        // reducer's seam defaults to. Its rule: `t_p` is never covered by a POSE.
+        //
+        // The 20 s look-away is deliberately not part of this: it is taken as done as it falls due, so it is
+        // never dragged and may sit on or behind the line. That exemption is pinned in [DynamicPeriodsTest].
         val (s, _) = oneTask()
         val filled = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(NOW))
-        val periods = filled.panels.filter { it.screenBreak }
-        assertTrue(periods.isNotEmpty(), "there must be periods for this to be about")
+        val poses = filled.panels.filter { it.screenBreak && it.title == "5min" }
+        assertTrue(poses.isNotEmpty(), "there must be poses for this to be about")
         assertTrue(
-            periods.none { it.startEpochMillis <= NOW && NOW < it.endEpochMillis },
-            "mode 1: no dynamic period may cover the line — it is pushed ahead of it instead",
+            poses.none { it.startEpochMillis <= NOW && NOW < it.endEpochMillis },
+            "mode 1: a pose may not cover the line — it is pushed ahead of it instead",
         )
         // …and the one the line has swept is owed AT the line, which is where the drag leaves it.
         assertEquals(
             NOW + 1,
-            periods.minOf { it.startEpochMillis },
+            poses.minOf { it.startEpochMillis },
             "the swept chain sits on the line, as the half-open (t_p, t_p + duration]",
         )
     }

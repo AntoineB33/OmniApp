@@ -101,9 +101,9 @@ Two instants, and keeping them apart is the point:
   `takenScreenBreakPanels` (`atLine = true`) is that reading: it is what the calendar draws and what the fill
   treats as an obstacle.
 
-They are the same instant except under the mode-1 drag, which is exactly why the cue may not key on the second
-one: a period the line is pushing is always "starting now", so it is never crossed, and a sweep keyed on it
-would announce a break at every scan for as long as one is owed. (That is not hypothetical — it is the
+They are the same instant except under the mode-1 drag — which only a **pose** is subject to — and that is
+exactly why the cue may not key on the second one: a period the line is pushing is always "starting now", so it
+is never crossed, and a sweep keyed on it would announce a break at every scan for as long as one is owed. (That is not hypothetical — it is the
 2026-07-12 "spammed every frame" incident, from the era when breaks slid unconditionally.)
 
 This is a **partial reversal** of the intermediate rule "nothing slides, so the cue may key on the drawn
@@ -192,12 +192,12 @@ tail ends *at* the now-line, and a half-open test would report the device unlock
 asked about. Peers arrive with reconcile-bounded staleness and the live tail is a local presumption a later
 derive shrinks; that is the same bound the band itself carries.
 
-- **Mode 1 (a device is unlocked).** `t_p` may not be covered, so every period whose slot the line has
+- **Mode 1 (a device is unlocked).** `t_p` may not be covered, so every **pose** whose slot the line has
   **swept** — travelled continuously through, from where its motion began up to here — is pushed onto the line
   and becomes the half-open `(t_p, t_p + duration]`. In the app's discrete millisecond time that is
   `[t_p + 1, t_p + duration + 1)`, which is how it becomes an ordinary `TaskPanel` with no extra field:
   `Instance.coveredFromMillis`. The line goes on delaying it, placing tasks where it stood, so a stretch
-  crossed at the screen holds task panels and no break.
+  crossed at the screen holds task panels and no pose. **The 20 s look-away is exempt** — see below.
 - **Mode 2 (no device unlocked).** `t_p` must be covered, so the gap between the last such period's end and
   the line is covered as **`no on-screen task`** — not `no task allowed` — which is what the README's own
   example asks for: the gap is filled with the tasks resilient to that kind, and left empty if none are.
@@ -218,10 +218,40 @@ Three things that fall out, and each is load-bearing:
   their say at the new position: the line may be standing inside a stretch nobody can run in (a hand-drawn
   inactivity period, a night), and a period must no more fall inside one for having been dragged than for
   having been placed there.
-- **The frozen past holds *because* of the drag, not despite it.** A dragged period is ahead of the line at
+- **The frozen past holds *because* of the drag, not despite it.** A dragged pose is ahead of the line at
   every position of the line, so the elapsed timeline never held it and nothing behind the line ever changes
   from a period into a task panel — it was a task panel all along. That is the README's "the passing of the
   `t_p` line creates task panels not covered by the period", read exactly.
+
+### The look-away is assumed taken; only a pose is owed
+
+**The 20 s look-away is never dragged** (`DynamicPeriods.dragsAtLine` — the one predicate, keyed on the
+positional bar label, never on a title). Everything above about mode 1 is about the two poses.
+
+The reason is not a scheduling one, it is what the break *is*. Looking twenty feet away for twenty seconds
+costs the user no working time and needs no decision: they are still at the desk, still on the same task, and
+the app has already told them to do it. So the app assumes they are doing it. The occurrence stays exactly
+where the recurrence bars put it, the now-line walks **through** it — covered by `no task allowed` for those
+twenty seconds, which is mode 2's condition and precisely what mode 1 forbids of a pose — and comes out the
+other side. Behind the line the break is still there, drawn where it happened.
+
+A pose is the opposite case, and the contrast is the whole of the split: five or fifteen minutes away from the
+screen is something the user has to actually *do*, so an untaken one is **owed**, not spent, and parks at the
+line until a real rest discharges it.
+
+Three consequences:
+
+- **The due and the place are one instant** for the look-away, so the cue, the calendar and the fill cannot
+  drift about it. That is not a licence to collapse the two readings: the split above is what keeps a *pose's*
+  cue honest.
+- **It stays derived, never recorded.** `takenScreenBreakPanels` asks the same bars over the recorded past, so
+  the past stays frozen for the reason it always did — the environment behind the line is a fact. Which is
+  also why the past placement can still move when that environment does: press **Look away now** less than
+  twenty minutes later and the 20 s bar re-anchors off the break actually taken (`RecordConductedBreak`, which
+  reaches the bars as `RestrictivePeriod.dynamic`).
+- **A break the app conducted still bars what follows it**, unchanged — the README's first bar keys on any
+  dynamic restrictive period, and now the ones the line simply crossed are on the timeline too, firing it as
+  the walk's own placements always did.
 
 Where the app has live evidence that nobody is at a screen, that evidence *is* mode 2's cover: an **ongoing**
 pause is `closedEnd`, so `liveRestPeriod` covers the now-line and `awayCover` finds nothing left to do. A pause

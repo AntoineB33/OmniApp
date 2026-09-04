@@ -11,6 +11,38 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The 20 s look-away is assumed taken — the now-line crosses it instead of dragging it — 2026-09-04
+
+`shared` (`scheduler/domain/DynamicPeriods.kt`, KDoc in `scheduler/domain/SchedulerDomain.kt` and `App.kt`) +
+`CLAUDE.md` + `ARCHITECTURE.md` + `docs/PRD_TaskScheduler.md` §15 + ADR 0003 + `side-dev/README.md` +
+`README.md` + `docs/MANUAL_TESTING.md`. **Client rebuild only** — no Supabase deploy, no SQLite migration, no
+payload change (the placement is derived; nothing new is persisted or synced).
+
+`t_p` mode 1 says the now-line may not be covered, and the app answered that for all three dynamic periods by
+**dragging** the one the line reached: it parked on the line and went on being pushed until a real rest
+happened. That is right for a **pose** — five or fifteen minutes away from the screen is something the user
+has to actually do, so an untaken one is owed, not spent — and wrong for the **20-second look-away**, which
+costs no working time, needs no decision, and which the app already assumed was done everywhere else (the
+voice cue advances to the next one regardless, PRD §15). So a look-away could sit parked on the line for
+hours, refusing to schedule anything under it, and the stretch behind the line showed no break at all.
+
+- **`DynamicPeriods.dragsAtLine` is the one predicate**, keyed on the positional bar label (`LABEL_20S` — the
+  shortest of the three), never on a title: the two poses are dragged, the look-away is not. It gates both the
+  drag and the half-open `(t_p, t_p + d]` form the drag produces.
+- **The line walks THROUGH a look-away, in mode 2** — covered for its twenty seconds, which is exactly what
+  mode 1 forbids of a pose — and comes out the other side. Nothing is scheduled under it while it does.
+- **It stays on the calendar afterwards**, drawn where it happened: `takenScreenBreakPanels` asks the same
+  bars over the recorded past, so the past stays frozen for the reason it always did (the environment behind
+  the line is a fact). It is still **derived, never recorded**, so it can still move when that environment
+  does — the everyday case being "Look away now" pressed less than twenty minutes later, which re-anchors the
+  20-second bar off the break actually taken (`RecordConductedBreak`).
+- **The due and the place are one instant** for this one of the three, so its cue, its band and the fill it
+  obstructs cannot drift. The two readings stay separate functions anyway: that split is what keeps a *pose's*
+  cue keyed on a boundary that is crossed exactly once.
+- `side-dev/README.md` § *$now line$ 2 modes* carries the exception now, so the model and the app still say
+  one thing. Tests: `DynamicPeriodsTest` (the pose is dragged, the look-away is crossed and stays where it
+  fell due, and the past draws it at its due), `TpModeTest`, `SchedulerCalendarTest`.
+
 ### "I'm away" declares an empty screen, not a silent app — a LOCK is what silences the device — 2026-09-04
 
 `shared` (`scheduler/engine/SchedulerEngine.kt`) + `CLAUDE.md` + `ARCHITECTURE.md` §8/§9 +

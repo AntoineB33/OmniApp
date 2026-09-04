@@ -190,19 +190,85 @@ class DynamicPeriodsTest {
     // ----- the two t_p modes --------------------------------------------------------------------
 
     @Test
-    fun mode_one_drags_a_period_the_line_has_reached_ahead_of_it() {
-        // "$t_p$ must not be covered by the period 'no on-screen task'": a period the line stands on is pushed
-        // to the line and becomes the half-open (t_p, t_p + duration], so the instant t_p itself is free.
+    fun mode_one_drags_a_pose_the_line_has_reached_ahead_of_it() {
+        // "$t_p$ must not be covered by the period 'no on-screen task'": a POSE the line stands on is pushed
+        // to the line and becomes the half-open (t_p, t_p + duration], so the instant t_p itself is free. It
+        // is a thing the user has to actually do, so an untaken one is owed, not spent.
+        val base = DynamicPeriods.Base(emptyList(), emptyList(), emptyList())
+        val specs = listOf(DynamicPeriods.Spec(DynamicPeriods.LABEL_5MIN, 5 * MIN, 60 * MIN))
+        // The line has swept from the origin up to the first period's own slot.
+        val out = DynamicPeriods.instances(base, specs, 0L, 6 * HOUR, tpMillis = 70 * MIN, sweepFromMillis = 0L)
+        val dragged = out.first()
+        assertEquals(70 * MIN, dragged.startMillis, "the reached period is pushed onto the line")
+        assertTrue(dragged.openStart, "and becomes the half-open (t_p, t_p + 5min]")
+        assertTrue(!dragged.toPeriod().covers(70 * MIN), "so t_p itself is NOT covered")
+        assertTrue(dragged.toPeriod().covers(70 * MIN + 1), "while every instant after it is")
+        assertTrue(dragged.toPeriod().covers(70 * MIN + 5 * MIN), "up to and including its end")
+    }
+
+    @Test
+    fun mode_one_never_drags_the_look_away_the_line_crosses_it_instead() {
+        // The look-away is the ONE exception to the drag (`DynamicPeriods.dragsAtLine`). Looking twenty feet
+        // away for twenty seconds costs no working time, so the app assumes it is being done the moment it
+        // falls due: the period stays where the bars put it, the line walks across it in mode 2 (covered,
+        // which is exactly what mode 1 forbids of a pose), and behind the line it stays on the timeline as
+        // what really happened.
         val base = DynamicPeriods.Base(emptyList(), emptyList(), emptyList())
         val specs = listOf(DynamicPeriods.Spec(DynamicPeriods.LABEL_20S, 20 * SEC, 20 * MIN))
-        // The line has swept from the origin up to the first period's own slot.
-        val out = DynamicPeriods.instances(base, specs, 0L, 2 * HOUR, tpMillis = 25 * MIN, sweepFromMillis = 0L)
-        val dragged = out.first()
-        assertEquals(25 * MIN, dragged.startMillis, "the reached period is pushed onto the line")
-        assertTrue(dragged.openStart, "and becomes the half-open (t_p, t_p + 20s]")
-        assertTrue(!dragged.toPeriod().covers(25 * MIN), "so t_p itself is NOT covered")
-        assertTrue(dragged.toPeriod().covers(25 * MIN + 1), "while every instant after it is")
-        assertTrue(dragged.toPeriod().covers(25 * MIN + 20 * SEC), "up to and including its end")
+
+        // The line is INSIDE the first occurrence's own slot: it is not pushed onto the line, and it covers it.
+        val inside =
+            DynamicPeriods.instances(base, specs, 0L, 2 * HOUR, tpMillis = 20 * MIN + 10 * SEC, sweepFromMillis = 0L)
+                .first()
+        assertEquals(20 * MIN, inside.startMillis, "the look-away sits where the bars put it, not on the line")
+        assertTrue(!inside.openStart, "so it keeps the ordinary closed [start, start + 20s)")
+        assertTrue(inside.toPeriod().covers(20 * MIN + 10 * SEC), "and the line is inside it - mode 2, for 20 s")
+
+        // The line has gone PAST it: it is still there, at the same instant. The past is drawn from the same
+        // placement, so a look-away goes on being drawn where it happened.
+        val passed =
+            DynamicPeriods.instances(base, specs, 0L, 2 * HOUR, tpMillis = 25 * MIN, sweepFromMillis = 0L)
+        assertEquals(20 * MIN, passed.first().startMillis, "and it stays there once the line is past it")
+        assertTrue(passed.first().endMillis < 25 * MIN, "wholly behind the line, an ordinary fact of the past")
+
+        // Which is exactly the bars' own answer - so for the look-away, the DUE and where it is DRAWN are one
+        // instant, whether the question is asked at the line or away from it.
+        val undragged =
+            DynamicPeriods.instances(base, specs, 0L, 2 * HOUR, tpMillis = 25 * MIN, sweepFromMillis = 25 * MIN)
+        assertEquals(
+            undragged.map { it.startMillis },
+            passed.map { it.startMillis },
+            "the line changes nothing about where a look-away falls",
+        )
+    }
+
+    @Test
+    fun a_look_away_the_line_has_crossed_stays_drawn_where_it_happened() {
+        // What the calendar shows behind the line ([SchedulerDomain.takenScreenBreakPanels]) is the same
+        // placement asked about a window that has gone by, at the line, in the line's own mode. Because the
+        // look-away is never dragged, the elapsed timeline really did hold it - so it goes on being drawn
+        // there, and it is a fact of the past like any other.
+        val only = listOf(ScreenBreak("20s", intervalMillis = 20 * MIN, durationMillis = 20 * SEC))
+        val past =
+            SchedulerDomain.takenScreenBreakPanels(
+                only,
+                fromMillis = NOW - 2 * HOUR,
+                toMillis = NOW - 1,
+                anchorMillis = NOW,
+                tpMillis = NOW,
+                mode = DynamicPeriods.MODE_AT_SCREEN,
+            )
+        assertTrue(past.isNotEmpty(), "a look-away the line crossed at the screen is still on the calendar")
+        assertTrue(past.all { it.title == "20s" && it.screenBreak })
+        assertTrue(
+            past.all { it.endEpochMillis - it.startEpochMillis == 20 * SEC },
+            "each one lasts exactly as long as it was asked to",
+        )
+        // And it is where the bars put it, with nothing dragged - the cue's own due.
+        val due =
+            SchedulerDomain.screenBreakOccurrencesBetween(only, NOW - 2 * HOUR, NOW - 1, anchorMillis = NOW)
+                .map { it.startEpochMillis }
+        assertEquals(due, past.map { it.startEpochMillis }, "the break is drawn at the instant it fell due")
     }
 
     @Test
@@ -521,21 +587,26 @@ class DynamicPeriodsTest {
     @Test
     fun a_break_the_app_conducted_bars_the_20s_period_for_twenty_minutes() {
         // The reported anomaly (2026-09-03): the user missed the 12:39 look-away, pressed "Look away now" at
-        // 12:40, and the instant it finished the now-line was dragging ANOTHER 20 s period.
+        // 12:40, and the instant it finished ANOTHER 20 s period was owed at the now-line.
         //
         // The README's first bar is "after ANY dynamic restrictive period, no 20 s period in the next 20
         // minutes", and a break the app CONDUCTED is one of the three. It reached the bars as an ordinary
         // `no task allowed` period, which is right - but twenty seconds is neither of the two STRETCH bars
         // (>= 5 min, >= 15 min), and the first bar was only ever fired for the occurrences the walk placed
-        // itself. So the conducted break barred nothing, and the owed occurrence went on being dragged.
+        // itself. So the conducted break barred nothing, and the next occurrence fell straight after it.
+        //
+        // This is also what the user's own exception rests on: a look-away the line has crossed stays on the
+        // calendar where it happened, unless pressing "Look away now" less than twenty minutes later
+        // re-anchors the bar off the break they actually took.
         //
         // The scenario is the user's: a rest half an hour back has the 5 min and the 15 min barred, so the
-        // 20 s is the only one owed and the line really is dragging one.
+        // 20 s is the only one in play, and one falls due inside the next twenty minutes.
         val onScreen = listOf(PlanTask(TaskId("task/user/0"), 1.0, 15 * MIN, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
         val earlierRest = RestrictivePeriod(NOW - 50 * MIN, NOW - 30 * MIN, PeriodKinds.NO_TASK, "Inactivity")
         assertTrue(
-            starts(place(periods = listOf(earlierRest), tasks = onScreen), lookAway).contains(1L),
-            "the scenario must be one where the line IS dragging a 20 s period",
+            starts(place(periods = listOf(earlierRest), tasks = onScreen), lookAway)
+                .any { it in 0 until DynamicPeriods.BAR_20S_AFTER_ANY_MILLIS },
+            "the scenario must be one where a 20 s period falls due inside the next twenty minutes",
         )
 
         val conducted =

@@ -1971,6 +1971,11 @@ object SchedulerDomain {
      * away" button on its own — that button reaches this through [anyDeviceUnlockedAt] like everything else,
      * by declaring this device idle, which is exactly why an unlock clears it (`SchedulerEngine.noteScreenSignal`).
      */
+    /*
+     * Note: the mode is a fact about the DEVICES, so it says nothing about the 20 s look-away. That one is
+     * never dragged in either mode (`DynamicPeriods.dragsAtLine`), which is the same thing as saying the line
+     * is in mode 2 for the twenty seconds it takes to cross one.
+     */
     fun tpMode(anyDeviceUnlocked: Boolean): Int =
         if (anyDeviceUnlocked) DynamicPeriods.MODE_AT_SCREEN else DynamicPeriods.MODE_AWAY
 
@@ -2217,10 +2222,13 @@ object SchedulerDomain {
      * drawn from what really happened ([takenScreenBreakPanels]), never re-derived.
      *
      * [mode] is the README's `t_p` mode, and it lands on a control the app already has: the "I'm away"
-     * toggle. At the screen ([DynamicPeriods.MODE_AT_SCREEN]) the now-line may not be covered by a
-     * "no on-screen task" period, so a break it has reached is pushed ahead of it and goes on being pushed;
-     * away ([DynamicPeriods.MODE_AWAY]) it must be covered, so the gap back to the last period's end is
-     * covered by a "no on-screen task" period the resilient tasks may still fill.
+     * toggle. At the screen ([DynamicPeriods.MODE_AT_SCREEN]) the now-line may not be covered by a POSE, so a
+     * pose it has reached is pushed ahead of it and goes on being pushed; away ([DynamicPeriods.MODE_AWAY]) it
+     * must be covered, so the gap back to the last period's end is covered by a "no on-screen task" period the
+     * resilient tasks may still fill.
+     *
+     * The 20 s look-away is dragged by neither mode (`DynamicPeriods.dragsAtLine`): it is assumed taken as it
+     * falls due, so it stays where the bars put it and the line crosses it.
      */
     fun screenBreakPanels(
         screenBreaks: List<ScreenBreak>,
@@ -2378,10 +2386,12 @@ object SchedulerDomain {
         val indexOfTitle = screenBreaks.withIndex().associate { (i, side) -> side.title to i }
         // What the line has SWEPT, which is the whole of mode 1: from the placement origin up to the line.
         // The line moves CONTINUOUSLY, so there is no instant below it that it did not stand on, and the
-        // sweep gets no floor of its own — it starts where the timeline does. Every period whose slot falls
+        // sweep gets no floor of its own — it starts where the timeline does. Every POSE whose slot falls
         // in that stretch was therefore reached by the line and
         // is therefore pushed ahead of it, and the chain merge then collapses the ones that pile up into the
-        // longest, exactly as the README says. It is bounded, and that is not an accident: the drag re-anchors
+        // longest, exactly as the README says. (The 20 s look-away is never dragged —
+        // `DynamicPeriods.dragsAtLine` — so the sweep says nothing about it: it is assumed taken as it falls
+        // due, and the line simply crosses it.) It is bounded, and that is not an accident: the drag re-anchors
         // each bar at the line, so at most one occurrence per bar can be swept and the merge leaves ONE period
         // owed at the now-line, never four hours of them.
         //
@@ -2484,12 +2494,16 @@ object SchedulerDomain {
      * simply the placement* — the same function, asked about a window that has already gone by, at the line
      * ([dynamicPeriodPanels]' `atLine`) because that is where the two modes are read from.
      *
-     * Which is why a stretch the line crossed in **mode 1** holds none of the three: a period the line reached
-     * was pushed ahead of it and never happened, and "the passing of the $t_p$ line creates task panels not
-     * covered by the period" is the README's own account of what is drawn there instead. A break shows in the
-     * past when it really was one — the stretch was crossed in mode 2 (no device unlocked), or the app
-     * CONDUCTED it and recorded it as an ordinary period (`RecordConductedBreak`), which is a pre-placed
-     * period and so is never dragged by anything.
+     * Which is why a stretch the line crossed in **mode 1** holds no POSE: a pose the line reached was pushed
+     * ahead of it and never happened, and "the passing of the $t_p$ line creates task panels not covered by
+     * the period" is the README's own account of what is drawn there instead. A pose shows in the past when it
+     * really was one — the stretch was crossed in mode 2 (no device unlocked).
+     *
+     * A **20 s look-away always shows**, in either mode. It is never dragged (`DynamicPeriods.dragsAtLine`):
+     * the app assumes the user looked away as it fell due, so the line crossed it and it is a fact of the past
+     * like any other. The same is true of one the app CONDUCTED and recorded (`RecordConductedBreak`), which is
+     * a pre-placed period and so is never dragged by anything either — and which re-anchors the 20 s bar, so
+     * pressing "Look away now" less than twenty minutes after a crossed one moves what the bars draw there.
      */
     fun takenScreenBreakPanels(
         screenBreaks: List<ScreenBreak>,
@@ -2522,14 +2536,18 @@ object SchedulerDomain {
      *
      * These are the **dues** — where the recurrence bars put each of the three, with nothing dragged
      * ([dynamicPeriodPanels]' `atLine` is false here). That is deliberately not always where the period ends
-     * up sitting: in mode 1 the line pushes a period it reaches ahead of itself, and a start that moves with
+     * up sitting: in mode 1 the line pushes a POSE it reaches ahead of itself, and a start that moves with
      * the line is never crossed, so it is no boundary at all and a sweep keyed on it would announce a break at
      * every scan for as long as one is owed.
      *
      * The due is the boundary, and it is the right one: the instant the line reaches a slot is the instant the
      * break falls due, which is exactly when the app should say so. It is a fixed instant derived from the
-     * rules, crossed once. What is *drawn* from there on is the owed period sliding at the line
+     * rules, crossed once. What is *drawn* from there on is the owed pose sliding at the line
      * ([takenScreenBreakPanels] / [screenBreakPanels]) — the same placement, asked with the line in it.
+     *
+     * For the **20 s look-away** the two readings answer the same instant, because nothing drags it
+     * (`DynamicPeriods.dragsAtLine`): it is announced where it is drawn and drawn where it is announced. Do
+     * not collapse the two functions on the strength of that — the split is what keeps a pose's cue honest.
      */
     fun screenBreakOccurrencesBetween(
         screenBreaks: List<ScreenBreak>,

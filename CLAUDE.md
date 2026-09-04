@@ -170,7 +170,7 @@ what those are worth — one row — and every piece below exists because it did
   running has no such choice.
 - **The resume contract:** a chain of re-plans is the SAME schedule as one long plan. Anything new the walk
   carries must be reconstructible from the history, or this breaks silently.
-- **Do not answer a sliding period by re-planning per tick.** A mode-1 drag moves the owed period with the
+- **Do not answer a sliding period by re-planning per tick.** A mode-1 drag moves the owed pose with the
   line, and the plan under it was materialized at the last rule change: the answer is a display clip
   (`clipPlanForPinnedScreenBreak`), cutting what a break **refuses** — not what it covers.
 
@@ -378,7 +378,9 @@ identifiers, persisted keys.
   (`screenBreakOccurrencesBetween`, `dynamicPeriodPanels`' `atLine = false`). Where the period *sits* is the
   due unless the line is dragging it (`screenBreakPanels` / `takenScreenBreakPanels`, `atLine = true`) — that
   is what the calendar draws and what the fill obstructs on. Never key a cue on the second: a period the line
-  pushes is always "starting now", so it is never crossed and a sweep would fire at every scan.
+  pushes is always "starting now", so it is never crossed and a sweep would fire at every scan. Only a **pose**
+  is ever dragged, so for the look-away the two are the same instant — which is not a licence to collapse
+  them, because the split is what keeps the pose's cue honest.
 - **The placement's origin is anchored on the NOW-LINE, quantized to the day**
   (`dynamicPlacementOriginMillis`), never on the query window's own left edge. The bars are a walk from the
   origin, so the grid is a function of it: the fill asks from `now`, the cue sweep from its scan floor and the
@@ -394,16 +396,31 @@ identifiers, persisted keys.
   disagree: what the user sees is the mode. It is **not** the Sleep/Work toggle (that says "gone to bed", not
   "no screen in use" — it was what the code read until 2026-08-28) and not the "I'm away" button on its own —
   that button reaches the mode by declaring this device idle, like a lock does.
-- **Mode 1: `t_p` is never covered.** Every period whose slot the line has SWEPT is pushed onto the line as the
-  half-open `(t_p, t_p + duration]` — in discrete time `[t_p + 1, t_p + duration + 1)`
+- **Mode 1: `t_p` is never covered by a POSE.** Every pose whose slot the line has SWEPT is pushed onto the
+  line as the half-open `(t_p, t_p + duration]` — in discrete time `[t_p + 1, t_p + duration + 1)`
   (`Instance.coveredFromMillis`), which is how it stays an ordinary `TaskPanel`. Three things this rests on:
   the drag **re-anchors the bar at the line**, so at most one occurrence per bar is swept and the chain merge
   collapses what piled up (it is bounded — do not "fix" it by disabling the sweep, which is what
   `sweepFromMillis = t_p` was); a drag is a **move like any other**, put back through the loop so the ordinary
   rules still refuse to place it inside a stretch nobody can run in; and the **frozen past holds because of
-  it** — a dragged period is ahead of the line at every position of the line, so nothing behind the line ever
+  it** — a dragged pose is ahead of the line at every position of the line, so nothing behind the line ever
   turns from a period into a task panel. Deliberate consequence: while a device stays unlocked and no rest
   happens, the owed chain parks at the now-line and no task is scheduled under it.
+- **The 20 s LOOK-AWAY IS NEVER DRAGGED — it is assumed taken** (`DynamicPeriods.dragsAtLine`, the ONE
+  predicate; the two poses are dragged, the look-away is not). Looking twenty feet away costs the user no
+  working time, so the app takes it as done the moment it falls due: the period stays exactly where the
+  recurrence bars put it, the line walks **through** it in mode 2 for its twenty seconds — covered, which is
+  precisely what mode 1 forbids of a pose — and once the line is past, it goes on being drawn where it
+  happened. A pose is the opposite case and that is the whole of the split: five or fifteen minutes away from
+  the screen is something the user must actually *do*, so an untaken one is **owed** and parks at the line.
+  Three things follow. The **due and the place are one instant** for this one of the three, so the cue, the
+  calendar and the fill cannot drift about it. It stays **DERIVED, never recorded** — `takenScreenBreakPanels`
+  re-derives it from the same bars over the recorded past, which is what keeps the past frozen (the
+  environment behind the line is a fact), and also why a later change to that environment can still move it:
+  press "Look away now" less than twenty minutes later and the bar re-anchors off the break actually taken
+  (`RecordConductedBreak`, `RestrictivePeriod.dynamic`). And the labels are **positional** (the shortest of
+  the three is the look-away), so an account configured with one break has that break in the look-away's role
+  — never key the exemption on a title.
 - **Mode 2: `t_p` is covered**, so the gap back to the last such period's end is covered as `no on-screen
   task` — which the resilient tasks may still fill (`DynamicPeriods.awayCover`). Where the app has live
   evidence, that evidence IS the cover: an **ongoing** pause is `closedEnd`, so `liveRestPeriod` covers the
@@ -478,8 +495,9 @@ identifiers, persisted keys.
   not a reconstruction. Only on completion: a manual "Look away now" that was superseded leaves no trace.
   **It is marked `TaskPanel.conductedBreak`, and that mark is load-bearing**: the README's FIRST bar keys on a
   dynamic restrictive *period* where the other two key on a rest *stretch*, and 20 seconds is far short of
-  either threshold — so without it a look-away the user had just sat through barred nothing and the owed
-  occurrence went straight back to dragging at the line. It reaches the bars as `RestrictivePeriod.dynamic`
+  either threshold — so without it a look-away the user had just sat through barred nothing and the next
+  occurrence fell straight after it. It is also what the "unless they press Look away now within twenty
+  minutes" half of the look-away rule above rests on. It reaches the bars as `RestrictivePeriod.dynamic`
   through the one funnel. It is **not** `screenBreak` (which means *regenerated*, and is why
   `restrictivePeriodsOf` drops those); it is the opposite. And it is not "a short `no task allowed` period":
   a 20-second Inactivity the user drew is a **pre-placed** period, which the README bars nothing after.

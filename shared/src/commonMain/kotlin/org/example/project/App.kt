@@ -709,10 +709,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         //
         // It is the same placement, asked about a window that has gone by, with the same environment the
         // forward call gets (the live pause included) and the real now-line as $t_p$ — which is what decides
-        // whether anything is there at all. In mode 1 a period the line reached was pushed ahead of it and
-        // never happened, so a stretch crossed at the screen holds task panels and no break; a break shows
-        // where the line crossed it in mode 2, or where the app CONDUCTED one and recorded it as an ordinary
-        // period (which is pre-placed, and so is never dragged).
+        // whether anything is there at all. In mode 1 a POSE the line reached was pushed ahead of it and never
+        // happened, so a stretch crossed at the screen holds task panels and no pose; a pose shows where the
+        // line crossed it in mode 2. A 20 s LOOK-AWAY always shows: it is never dragged
+        // (`DynamicPeriods.dragsAtLine`) because the app assumes the user looked away as it fell due, so the
+        // line crossed it and it stays drawn where it happened — as does one the app CONDUCTED and recorded
+        // (which is pre-placed, and so is never dragged either).
         //
         // Bounded to the VISIBLE days (CLAUDE.md: hot-path display derivations scale with the screen, not with
         // total history) and stopping one millisecond short of `now`, so this and the forward projection below
