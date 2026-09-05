@@ -637,7 +637,7 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   sessions or from banked panels. Both of those were shipped and both were wrong.
 - **`WindowsPowerLog` is the ONLY reading of that history** — the ids, the debounce, the pairing, the query.
   All three `SleepHistory` actuals go through it; a second copy is how the layer and the record bank start
-  disagreeing about whether the user was there. Three rules it exists to hold: **a shut-down machine logs no
+  disagreeing about whether the user was there. Four rules it exists to hold: **a shut-down machine logs no
   sleep event** (so the boot/shutdown ids are in the set, or a power-off overnight reads as time at the
   desk); **an id means nothing without its provider** (`1` is Kernel-Power "resumed" *and* Kernel-General
   "the system time has changed" — each provider is asked for its own ids, and the sets are disjoint); and **a
@@ -646,7 +646,13 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   to have returned to proves the return never happened, so the pair is restored and re-tested (two wakes with
   no sleep between them is not something the machine can do; dropping the pair lost a real standby and banked
   records straight through it). Both window edges are handled: an open absence clips to `until`, and the state the window
-  *opens* in comes from events fetched BEFORE it.
+  *opens* in comes from events fetched BEFORE it. A fourth rule is about the QUERY rather than the
+  answer: **the child's stdout is DRAINED while the process runs**, never after it exits — a pipe holds
+  4 KB on Windows and a process that fills it blocks until somebody reads, so waiting first deadlocks the
+  moment the answer outgrows the buffer, and the timeout that follows is indistinguishable from "the log
+  cannot be read". It can only get worse, because the answer grows with the log: the 168 h window crossed
+  4 KB on 2026-08-30 and every scan hung for a week, hatching both layers over the whole displayed past
+  while `observedNoScreenRegions` stayed empty — so the panels the pairing exists to cut survived.
 - **A device that cannot be asked was LOCKED** (`null` ⇒ the layer hatches the whole asked past; an empty
   list ⇒ nothing drawn — the same default as `derivePauses`, and `null` and an empty list stay different
   answers). "Not asked yet" is a third state: the own layer draws nothing until its first scan lands.

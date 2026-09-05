@@ -223,4 +223,28 @@ class WindowsPowerLogTest {
         assertTrue(unbounded.contains("Read-Power 'EventLog' @(6005,6006,6008) \$null \$null 240"))
         assertTrue(!unbounded.contains("\$since"))
     }
+
+    // --- the query itself -------------------------------------------------------------------------------
+
+    /**
+     * A child's stdout is a pipe with a small fixed buffer (4 KB on Windows), and a process that fills it
+     * blocks on its next write until somebody reads. [WindowsPowerLog.run] therefore drains the stream WHILE
+     * the process runs; waiting for the exit first deadlocks as soon as the answer outgrows the buffer, and
+     * the timeout that follows reads — through [WindowsPowerLog.transitions]' sentinel — as "the log cannot
+     * be read at all".
+     *
+     * That is not hypothetical: the release machine's 168 h window crossed 4 KB on 2026-08-30 (72 h still
+     * answered in 1.3 s at 1.6 KB; 168 h hung at 4.2 KB), so every layer scan timed out for a week. The
+     * answer only grows with the log, so this is pinned against a payload far past any buffer.
+     */
+    @Test
+    fun an_answer_larger_than_the_pipe_buffer_still_comes_back() {
+        if (!System.getProperty("os.name").orEmpty().startsWith("Windows")) return
+        // ~64 KB, sixteen times the Windows pipe buffer, printed by a script that exits as soon as it can.
+        val script = "'OK'" + "\n" + "1..4000 | ForEach-Object { '' + \$_ + ',42' }"
+        val lines = WindowsPowerLog.run(script, timeoutSeconds = 20)
+        assertTrue(lines != null, "a large answer timed out — the output is not being drained while it runs")
+        assertTrue(lines.any { it == "OK" }, "the sentinel is missing from a large answer")
+        assertEquals(4000, lines.count { it.endsWith(",42") }, "the answer was truncated")
+    }
 }

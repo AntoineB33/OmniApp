@@ -136,20 +136,44 @@ internal object WindowsPowerLog {
         return "$body\n$reads\nif (${'$'}global:ok) { 'OK' }\n${'$'}global:out"
     }
 
+    /** How long the drain thread is given to finish once the process itself has exited. */
+    private const val DRAIN_JOIN_MILLIS = 5_000L
+
     /**
      * Run [script] and return its lines, or **null** when the query could not be answered at all — no
      * `powershell` (a non-Windows desktop), a timeout, or a launch failure.
+     *
+     * **The output is drained WHILE the process runs, and that is a rule, not a style.** A child's stdout is
+     * an OS pipe with a small fixed buffer (4 KB on Windows); a process that fills it BLOCKS on its next
+     * write until somebody reads. Waiting for the exit before reading a word therefore deadlocks the moment
+     * the answer outgrows the buffer — the query has already finished, and the query is not what timed out.
+     *
+     * Observed on the release machine (2026-08-30 → 2026-09-05): the 168 h window's answer crossed 4 KB as
+     * the machine accumulated power events (72 h = 1.6 KB, still fine; 168 h = 4.2 KB, hung), so every scan
+     * timed out after 20 s and [transitions] read the empty result as "the log cannot be read". A null there
+     * means assumed-locked to the CALENDAR and no evidence at all to the record bank, so both layers hatched
+     * the whole displayed past while `SchedulerDomain.observedNoScreenRegions` stayed empty — the on-screen
+     * task panels went on being drawn straight across the hatch, which is the one thing that pairing exists
+     * to deny. The failure grows with the log, so it can only ever get worse: never wait before reading.
      */
     fun run(script: String, timeoutSeconds: Long): List<String>? = runCatching {
         val process =
             ProcessBuilder("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
                 .redirectErrorStream(true)
                 .start()
+        var output: String? = null
+        val drain =
+            Thread { output = runCatching { process.inputStream.bufferedReader().readText() }.getOrNull() }
+        drain.isDaemon = true
+        drain.start()
         if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
             process.destroyForcibly()
             return@runCatching null
         }
-        process.inputStream.bufferedReader().readText().lines().map { it.trim() }
+        // The pipe is closed by the exit, so this returns at once; the bound is only there so a wedged
+        // reader cannot hold the scan thread. `join` is what publishes the write to this thread.
+        drain.join(DRAIN_JOIN_MILLIS)
+        (output ?: return@runCatching null).lines().map { it.trim() }
     }.getOrNull()
 
     /**

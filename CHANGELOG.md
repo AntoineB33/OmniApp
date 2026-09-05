@@ -11,6 +11,36 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The lock-history query deadlocked once its answer passed 4 KB — 2026-09-05
+
+`shared` (`jvmMain/scheduler/platform/WindowsPowerLog.kt`) + `WindowsPowerLogTest`, `CLAUDE.md`.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy and no DB migration.**
+
+Reported on the release account: **past task panels of tasks that are not resilient to a no-screen period
+were drawn straight across a stretch hatched with BOTH layers** — "no computer unlocked" and "no phone
+unlocked" — which is exactly the reading `SchedulerDomain.clipPanelsForObservedNoScreen` exists to deny.
+
+The clip was right; it was never given anything to clip with. `WindowsPowerLog.run` waited for the
+PowerShell process to exit **before** reading a word of its stdout, and a child's stdout is an OS pipe with a
+4 KB buffer on Windows: a process that fills it blocks on its next write until somebody reads. So the query
+finished and the process could not, `waitFor` hit its 20 s timeout, and `run` returned null — which
+`transitions` reads through its `OK` sentinel as *the log cannot be read at all*. That null then means two
+different things by design (ADR 0002): assumed-**locked** to the calendar layer, and **no evidence** to
+`observedNoScreenRegions`. Both layers therefore hatched the whole displayed past while the clip set stayed
+empty, and the panels underneath survived.
+
+It is a threshold, not a regression, which is why it started mid-life and only got worse: the answer grows
+with the machine's power-event log. Measured on the release machine — 6 h = 480 B, 24 h = 879 B, 72 h =
+1.6 KB all answered in ~1.2 s; the 168 h window's 4.2 KB hung for the full 20 s. `diagnostics.log` dates the
+first failure to **2026-08-30 01:01** and the last success to 2026-08-30 12:30; every scan since 2026-08-31
+15:15 failed (`device lock history unavailable — NoComputerUnlocked assumed locked over the whole window`,
+230 consecutive lines).
+
+`run` now drains the stream on a thread while the process runs and joins it after the exit. All three
+`SleepHistory` actuals go through it, so the calendar layer, the record-bank evidence, the screen-break seed
+and the exact pause recorder are fixed together. `WindowsPowerLogTest` pins it against a ~64 KB answer —
+sixteen times the buffer — and fails against the old code.
+
 ### A break's start notification says what the break runs out into — 2026-09-05
 
 `shared` (`domain/SchedulerDomain.kt`, `engine/SchedulerEngine.kt`) + `ScreenBreakFollowOnTest`,
