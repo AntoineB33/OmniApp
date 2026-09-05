@@ -310,10 +310,13 @@ account-wide pause §4 draws as its Inactivity band — so the two can never dis
 read the mode off the screen. Enable the screen-break display switch in the calendar window first, and use a
 fast-break script (`*-fast-break*.bat`) so the bars fire in seconds rather than in hours.
 
-- [ ] **Mode 1: the owed POSE parks at the now-line and nothing is scheduled under it.** Sit at the
+- [ ] **Mode 1: the owed POSE parks at the now-line, and the line leaves TASK PANELS behind it.** Sit at the
       unlocked desktop past a 5- or 15-minute pose's due → the band sits **on** the now-line and stays there as
-      the line advances (it never falls behind it), and the plan shows **no task** under it. That is "you owe a
-      break" as a period, not a hint — it is the README's mode 1 and it is intended.
+      the line advances (it never falls behind it). That is "you owe a break" as a period, not a hint. But the
+      stretch the line has swept while dragging it must be **solid task panels**: a dragged pose never happens,
+      so the plan runs straight through it (the requirements' *"creating task panels in its passing"*, and
+      § *No idling*). A grey **"Inactivity" band growing behind the now-line** while the machine is unlocked is
+      the 2026-09-05 failure and means the drag has gone back to being an obstacle.
 - [ ] **The 20-second look-away is the exception: the line goes THROUGH it.** Sit at the unlocked desktop past
       a look-away's due → the 20 s band stays exactly where it fell due, the now-line crosses it over about
       twenty seconds (nothing is scheduled under it while it does), and it is then **behind** the line. It must

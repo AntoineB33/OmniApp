@@ -150,7 +150,11 @@ class BreaksAndSlidingPrioritiesTest {
         val stretch = taskId(s, "Stretch")
         val now = T0 + DAY / 2 // mid-transition: both arrangements are in force at once
         val panels = SchedulerDomain.fillSchedule(s, now, horizonMillis = now + DAY)
-        val bands = panels.filter { it.screenBreak }
+        // The period the line is DRAGGING is deliberately not one of these ([SchedulerDomain.isDraggedScreenBreak]):
+        // mode 1 pushes it ahead of the line at every position of the line, so it never happens and the plan
+        // is built straight through it — the requirements' *"creating task panels in its passing"*. What this
+        // test is about is a break that really is a stretch of the timeline.
+        val bands = panels.filter { it.screenBreak && !SchedulerDomain.isDraggedScreenBreak(it) }
         assertTrue(bands.isNotEmpty(), "the break grid must be materialized")
         val work = panels.filter { it.auto }
         fun overlaps(p: TaskPanel, b: TaskPanel) =

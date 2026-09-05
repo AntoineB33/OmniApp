@@ -2566,6 +2566,31 @@ object SchedulerDomain {
     const val DYNAMIC_PLACEMENT_LOOKBACK_MILLIS: Long = 4L * 60L * 60L * 1000L
 
     /**
+     * The suffix a dynamic period's panel id carries when the now-line is **DRAGGING** it — the half-open
+     * `(t_p, t_p + d]` that modes 1 and 2 push ahead of the line ([DynamicPeriods.Instance.openStart]).
+     *
+     * It is in the id and not in a field of its own because a dynamic period's panel is DERIVED: every fill
+     * cuts the three and regenerates them ([fillSchedule]'s `kept` filter), so nothing persisted ever has to
+     * carry it, and every reader already has the id in hand. Read it through [isDraggedScreenBreak].
+     */
+    const val DRAGGED_BREAK_ID_SUFFIX: String = "/dragged"
+
+    /**
+     * Whether [panel] is one of the three dynamic periods that the now-line is **dragging**, rather than one
+     * simply placed where the recurrence bars put it.
+     *
+     * The distinction matters for exactly one reason, and it is a rule of the plan rather than of the
+     * drawing: **a dragged period never happens.** Mode 1 says `t_p` may not be covered by one of the three,
+     * so a pose the line reached is pushed to `(t_p, t_p + d]` and goes on being pushed at every position of
+     * the line — no instant of the timeline is ever inside it, and `docs/scheduler_requirements.md` says what
+     * the line does instead in as many words: it *"would continuously delay that period (while creating task
+     * panels in its passing)"*. So [fillSchedule] draws it and does not plan around it. Everything else — the
+     * calendar, the cue sweep, the recurrence bars themselves — treats it exactly like any other placement.
+     */
+    fun isDraggedScreenBreak(panel: TaskPanel): Boolean =
+        panel.screenBreak && panel.id.endsWith(DRAGGED_BREAK_ID_SUFFIX)
+
+    /**
      * `side-dev/README.md`: the three dynamic periods over an arbitrary window — the engine behind both
      * [screenBreakPanels] (the window containing the now-line) and [screenBreakPanelsInWindow] (a week the
      * user has navigated to).
@@ -2636,6 +2661,11 @@ object SchedulerDomain {
                     val title = titleOfLabel[inst.spec.label] ?: inst.spec.label
                     screenBreakPanel(
                         indexOfTitle[title] ?: 0, title, inst.coveredFromMillis, inst.coveredUntilMillis,
+                        // `openStart` IS the drag: the line pushed this period ahead of itself, so it is the
+                        // one period in the window no instant of the timeline will ever be inside. The chain
+                        // merge keeps the flag of the chain it collapses, so a look-away absorbed into a
+                        // dragged pose comes back as the dragged pose and not as two answers.
+                        dragged = inst.openStart,
                     )
                 }
         // Mode 2's cover is deliberately NOT here. It is a period the SCHEDULER reads and the calendar must
@@ -2868,19 +2898,25 @@ object SchedulerDomain {
      * scheduler may not use a period it is in fact filling. (This was a per-SHAPE reading until 2026-08-28: a
      * closed head cut, an open tail left alone. There are no shapes now — ADR 0003.)
      *
-     * The break's start is fixed, but the plan under it does not follow it: the plan is materialized by [fillSchedule], which by CLAUDE.md's trigger rule runs on a **rule
-     * change**, not on time passing. So the fill correctly leaves the break's span empty at the instant it
-     * runs, and every tick after that the marker slides forward over auto panels the fill placed past it. That
-     * is the sliding-period case the reference answers with its dynamic rule list (`MovingWindow`): between
+     * The break's start is fixed, but the plan under it does not follow it: the plan is materialized by
+     * [fillSchedule], which by CLAUDE.md's trigger rule runs on a **rule change**, not on time passing — and
+     * every tick after that the marker slides forward over auto panels the fill placed past it. That is the
+     * sliding-period case the reference answers with its dynamic rule list (`MovingWindow`): between
      * breakpoints the plan is *affine* in the period's position, so a display can follow the period without
      * re-scheduling. Here the period is pinned to the plan's own origin (the now-line), which is that rule's
      * simplest regime — the disturbed slot is the one the cursor is in, and nothing else changes shape.
      *
+     * For a period the line is **DRAGGING** the panels underneath are there on purpose
+     * ([isDraggedScreenBreak]): a dragged pose never happens, so the fill plans straight through it and this
+     * clip is the whole of what makes it read as a period on screen. That is also why the clip may only ever
+     * reach FORWARD. Every refusing region begins at or after the now-line, so a panel straddling it keeps its
+     * **elapsed** head — and for a dragged pose that head is the requirements' *"creating task panels in its
+     * passing"*: the drag recedes as the line advances and reveals the plan it was drawn over. A clip that
+     * reached behind the line would put the empty stretch straight back (§ *No idling*, 2026-09-05).
+     *
      * Only [isRegeneratedPanel] panels are cut: a pinned/manual block and a chore are pre-placed blocks in the
-     * reference's sense and cannot be moved by a period. Every refusing region begins at or after the now-line,
-     * so a panel straddling it keeps its **elapsed** head (that time really was worked) and resumes past the
-     * refusal — the cut is a hole, never a rewrite of the past. Each resumed piece takes a distinct id so two
-     * display blocks never share one.
+     * reference's sense and cannot be moved by a period. The cut is a hole, never a rewrite of the past. Each
+     * resumed piece takes a distinct id so two display blocks never share one.
      */
     fun clipPlanForPinnedScreenBreak(
         panels: List<TaskPanel>,
@@ -3262,9 +3298,15 @@ object SchedulerDomain {
             .sortedBy { it.startMillis }
     }
 
-    private fun screenBreakPanel(index: Int, title: String, start: Long, end: Long): TaskPanel =
+    private fun screenBreakPanel(
+        index: Int,
+        title: String,
+        start: Long,
+        end: Long,
+        dragged: Boolean = false,
+    ): TaskPanel =
         TaskPanel(
-            id = "side/$index/$start",
+            id = "side/$index/$start" + if (dragged) DRAGGED_BREAK_ID_SUFFIX else "",
             taskId = null,
             title = title,
             startEpochMillis = start,
@@ -3642,6 +3684,38 @@ object SchedulerDomain {
                 tasks = planTasks,
                 mode = tpMode,
             )
+        // `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**, and § *No idling*: **a period
+        // the line is DRAGGING obstructs nothing** ([isDraggedScreenBreak]).
+        //
+        // Mode 1 says `t_p` may not be covered by one of the three, so a pose the line reached is pushed to
+        // `(t_p, t_p + d]` and goes on being pushed at every position of the line — no instant of the
+        // timeline is ever inside it. The requirements say what happens instead in as many words: the line
+        // *"would continuously delay that period (while creating task panels in its passing)"*. Planning
+        // around it as though it were a fixed block is planning around something that cannot happen, and it
+        // broke both of those rules at once. The half-open form leaves exactly the single millisecond
+        // `[t_p, t_p + 1)` free, so that was the whole of what the fill could place; every later re-plan
+        // regenerated the pose at the NEW line and left the entire stretch the line had swept since the pose
+        // fell due with no panel at all. The calendar then drew it as a derived "Inactivity" band while a
+        // device was unlocked and tasks were free to run — § *No idling*, reported on account 3 — and `d` of
+        // the horizon went on a block that recedes.
+        //
+        // So the dragged instances are dropped from the environment the plan is built over. They are still
+        // DRAWN, still cued and still re-anchor the recurrence bars (which is where they belong: the drag is
+        // a statement about a break being OWED, not about the timeline being blocked); only [restrictions]
+        // loses them, so the walk runs straight through and the passing line leaves task panels behind it. A
+        // pose the user actually takes is a different object — a break the app CONDUCTED
+        // (`RecordConductedBreak`), a pre-placed period nothing drags — so nothing is lost by refusing to
+        // obstruct on one that never happened.
+        //
+        // Modes 2 and 3 keep the drag as an obstacle, each for its own reason. **Mode 3** does not drag at
+        // all: the account said the break is being taken, so the pose elapses under the line and really
+        // happens. **Mode 2** drags exactly as mode 1 does, but its rule is that `t_p` IS covered by "no
+        // on-screen task" — the passing there creates COVERAGE, not task panels, so the stretch behind the
+        // line is the grey band that no device being unlocked is supposed to look like, and an on-screen
+        // task must not be planned into it.
+        val obstructingSidePanels =
+            if (tpMode == DynamicPeriods.MODE_AT_SCREEN) sidePanels.filterNot { isDraggedScreenBreak(it) }
+            else sidePanels
         // `side-dev/README.md` § *$t_p$ 3 modes*, **mode 2**: *"$now line$ must be covered by the period 'no
         // on-screen task'"*, and its own consequence example — *"the gap between the end of the 15min period
         // and $t_p$ is covered by a period 'no on-screen task', filled with tasks that have a non-zero
@@ -3679,7 +3753,8 @@ object SchedulerDomain {
         // behaviour inside one is its own resilience to that kind ([Task.resilience]). So there is no longer a
         // list of accepted sets to assemble per sort of band: the grey regions, the no-screen zones and the
         // three dynamic periods all become periods of a kind, and the walk asks [PeriodKinds.multiplier].
-        val periodPanels = kept.filter { it.isRestrictivePeriod } + sleepPanels + beforeBedPanels + sidePanels
+        val periodPanels =
+            kept.filter { it.isRestrictivePeriod } + sleepPanels + beforeBedPanels + obstructingSidePanels
         val restrictions =
             periodPanels.mapNotNull { panel ->
                 val kind = panel.restrictiveKind
@@ -3721,7 +3796,8 @@ object SchedulerDomain {
             )
         // PRD §15: the screen-break regions — now ordinary [PeriodKinds.NO_TASK] periods, kept as their own
         // list only because a break SUSPENDS a chunk rather than cutting it.
-        val sideRegions = mergeOccupied(sidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
+        val sideRegions =
+            mergeOccupied(obstructingSidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
         // The regions that SUSPEND a chunk instead of cutting it: the §15 screen breaks and the §8 grey
         // periods (a hand-added inactivity period, a §17 sleep window). PRD §17 says it in as many words — a
         // task that meets a sleep window is "split and resumes at wake, not charged for the sleep time, like

@@ -525,7 +525,11 @@ class SchedulerSchedulerTest {
         s0 = SchedulerReducer.reduce(s0, SchedulerIntent.SetTaskMinimumTime(solo, 45))
         s0 = s0.copy(screenBreaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS)
         val panels = SchedulerDomain.fillSchedule(s0, now, horizonMillis = now + 4 * HOUR_MS)
-        val breaks = panels.filter { it.screenBreak }
+        // The period the line is DRAGGING is deliberately not one of these ([SchedulerDomain.isDraggedScreenBreak]):
+        // mode 1 pushes it ahead of the line at every position of the line, so it never happens and the plan
+        // is built straight through it — the requirements' *"creating task panels in its passing"*. What this
+        // test is about is a break that really is a stretch of the timeline.
+        val breaks = panels.filter { it.screenBreak && !SchedulerDomain.isDraggedScreenBreak(it) }
         assertTrue(breaks.isNotEmpty(), "the case needs a break to be about")
         val mine = panels.filter { it.taskId == solo && it.auto }.sortedBy { it.startEpochMillis }
         assertTrue(mine.isNotEmpty())

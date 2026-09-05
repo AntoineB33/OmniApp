@@ -71,7 +71,11 @@ class ScreenBreakKindTest {
         // been given that resilience, which is the same sentence — and the same code path — as any other kind.
         val (state, resilient) = stateWithResilientTask()
         val panels = SchedulerDomain.fillSchedule(state, NOW, horizonMillis = NOW + 4 * HOUR)
-        val bands = panels.filter { it.screenBreak }
+        // The period the line is DRAGGING is deliberately not one of these ([SchedulerDomain.isDraggedScreenBreak]):
+        // mode 1 pushes it ahead of the line at every position of the line, so it never happens and the plan
+        // is built straight through it — the requirements' *"creating task panels in its passing"*. What this
+        // test is about is a break that really is a stretch of the timeline.
+        val bands = panels.filter { it.screenBreak && !SchedulerDomain.isDraggedScreenBreak(it) }
         assertTrue(bands.isNotEmpty(), "the case needs a break to be about")
         val inside = panels.filter { p ->
             p.auto && bands.any { p.startEpochMillis < it.endEpochMillis && p.endEpochMillis > it.startEpochMillis }
