@@ -58,8 +58,14 @@ import org.example.project.scheduler.state.SchedulerState
  * section 1). That holds in section 4 too, where a kept-and-broken pair is drawn — it is one gesture and its
  * inverse, not a property of the section the row happens to be under.
  *
- * Read-only about the tree: filing a pair changes no priority, so nothing here re-plans and nothing here is
- * an Undo/Redo unit. The pairs themselves are authoritative synced state (`SchedulerState.taskRelations`).
+ * The **✕ also removes the priority-weight-table row** the pair was made of, where that is how it got here:
+ * an optional row of the target sub-list's table *is* the relation, so "this is not a relation of mine" has
+ * to reach it. This window is therefore the one place a row comes back out of a table, which is why the row
+ * says so before it goes.
+ *
+ * Almost read-only about the tree: filing a pair changes no priority, so nothing here re-plans and the marks
+ * are no Undo/Redo unit — only that table row's removal is one, exactly as its creation was. The pairs
+ * themselves are authoritative synced state (`SchedulerState.taskRelations`).
  *
  * Mirrors the other floating windows' drag-title / dismiss / raise-on-press pattern.
  */
@@ -290,7 +296,14 @@ private fun rowReason(row: TaskRelationsDomain.Row): String {
         }
     }
     val reasons = buildList {
-        if (row.inWeightTable) add("a row of the target's priority-weight table")
+        // A kept pair's ✕ takes this row out of the table with it, so the row says so while it can still
+        // be read — the strike-off is the only gesture in the app that removes one.
+        if (row.inWeightTable) {
+            add(
+                if (row.kept) "a row of the target's priority-weight table — ✕ removes it from the table too"
+                else "a row of the target's priority-weight table",
+            )
+        }
         if (row.retargeted) add("its relative priority was changed")
         if (isEmpty()) add("the relative-priority window was opened on it")
     }

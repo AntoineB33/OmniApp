@@ -33,6 +33,18 @@ import org.example.project.scheduler.state.SchedulerState
  * A **hidden** mark ([TaskRelationMark.hidden]) drops the pair from every section — that is what section
  * 1's button does — and touching the pair again from the relative-priority window brings it back.
  *
+ * **Striking a pair off takes the WEIGHT-TABLE ROW it was made of with it** ([withoutWeightTableRows]).
+ * Section 1's ✕ says *this is not a relation of mine*, and where the pair got onto the list by being an
+ * optional row of the target sub-list's priority-weight table, that row **is** the relation — so a mark
+ * alone would leave the table still asserting it. The mark is still written, because a pair reaches the list
+ * by two routes and only one of them is a table.
+ *
+ * Which is why the mark does **not** outrank a live weight-table row: a row standing under a `hidden` mark
+ * was put back after the strike-off — added again, or restored by the Undo of that very removal (the row is
+ * a history unit, the mark is not) — and either way the user is asserting the pair again. It outranked the
+ * row while the ✕ left the row standing, because a pair struck off then would have come straight back on the
+ * next composition; that reason went with the removal.
+ *
  * Nothing here is stored that can be recomputed: the weight-table half of section 2 is read straight off
  * `CellList.optionalTaskIds`, so a row the user removes from a table stops being listed by itself, and the
  * whole of section 4 is a question asked of the live tree.
@@ -82,10 +94,15 @@ object TaskRelationsDomain {
         val rows = mutableListOf<Row>()
         for (key in keys) {
             val mark = state.taskRelations[key]
-            if (mark?.hidden == true) continue
+            val inWeightTable = key in fromTables
+            // A LIVE weight-table row outranks `hidden`: it is the user's own table asserting the relation
+            // right now, and striking the pair off is what takes that row out (see [withoutWeightTableRows]),
+            // so a row standing here was added — or restored by an Undo — AFTER the strike-off. Both are the
+            // user saying it again. The mark still holds every other source off the list, which is the whole
+            // of what it is for now that a row cannot outlive it.
+            if (mark?.hidden == true && !inWeightTable) continue
             val kept = mark?.kept == true
             val retargeted = mark?.retargeted == true
-            val inWeightTable = key in fromTables
             val broken = breakOf(state, key)
             val section =
                 when {
@@ -136,6 +153,34 @@ object TaskRelationsDomain {
             }
         }
         return result
+    }
+
+    /**
+     * The inverse of [weightTableRelations]: strike [key] off every priority-weight table that is putting it
+     * on this list, and return the state with those optional rows gone.
+     *
+     * Section 1's **✕** means *this pair is not a relation of mine* — so where the pair got onto the list by
+     * being an **optional row** of the target sub-list's weight table, that row is what has to go: it is the
+     * relation, and a mark alone would leave the user's own table still asserting it, listing the pair again
+     * the moment the strike-off is lifted. It is the exact inverse of the derivation above — the same walk
+     * over the lists and the same `parentTaskIdOfList` reading — so the two can never disagree about which
+     * rows a pair is made of.
+     *
+     * Removing an optional row moves no priority (a row is a *reading* of the sub-tree the table shows, and
+     * its own value lives beside it in `optionalTaskValues`), so this cuts nothing else loose. It touches no
+     * mark: the caller's own strike-off does that.
+     */
+    fun withoutWeightTableRows(state: SchedulerState, key: TaskRelationKey): SchedulerState {
+        var lists = state.lists
+        for ((listId, list) in state.lists) {
+            if (key.taskId !in list.optionalTaskIds) continue
+            if (SchedulerDomain.parentTaskIdOfList(state, listId) != key.relativeTo) continue
+            lists = lists + (listId to list.copy(
+                optionalTaskIds = list.optionalTaskIds - key.taskId,
+                optionalTaskValues = list.optionalTaskValues - key.taskId,
+            ))
+        }
+        return if (lists === state.lists) state else state.copy(lists = lists)
     }
 
     /**

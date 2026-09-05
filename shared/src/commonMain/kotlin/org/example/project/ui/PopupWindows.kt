@@ -65,15 +65,28 @@ class TransientPopupHost {
 
     private val entries = LinkedHashMap<Any, Entry>()
 
+    /**
+     * Whether a sort-2 pop-up is open at all — **observable**, because the task tree reads it.
+     *
+     * A pop-up is what the user is working in, so the tree behind it must not own the keyboard. PRD §4's
+     * "type a letter on the selected cell to start renaming it" would otherwise rename a cell nobody is
+     * looking at — and, because the weight and relative-priority windows close the moment any cell enters
+     * Edit Mode, the pop-up being typed into would vanish under the very keystroke meant for it.
+     */
+    var anyOpen: Boolean by mutableStateOf(false)
+        private set
+
     /** Registers a newly opened pop-up, dismissing every sort-2 pop-up already open (see the class doc). */
     fun open(key: Any, onDismiss: () -> Unit) {
         dismissAll()
         entries[key] = Entry(onDismiss)
+        anyOpen = true
     }
 
     /** Forgets a pop-up that left the composition. Never calls its `onDismiss` — it is already gone. */
     fun close(key: Any) {
         entries.remove(key)
+        anyOpen = entries.isNotEmpty()
     }
 
     fun setBounds(key: Any, bounds: Rect) {
@@ -92,6 +105,7 @@ class TransientPopupHost {
                 entry.onDismiss()
             }
         }
+        anyOpen = entries.isNotEmpty()
     }
 
     private fun dismissAll() {
@@ -100,6 +114,7 @@ class TransientPopupHost {
             entries.remove(key)
             entry.onDismiss()
         }
+        anyOpen = false
     }
 }
 

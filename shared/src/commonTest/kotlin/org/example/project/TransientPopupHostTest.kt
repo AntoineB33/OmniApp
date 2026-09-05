@@ -4,6 +4,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.example.project.ui.TransientPopupHost
 
@@ -113,5 +114,47 @@ class TransientPopupHostTest {
         val host = TransientPopupHost()
         host.onPress(Offset(50f, 50f))
         assertTrue(true)
+    }
+
+    // ----- `anyOpen`: what the TASK TREE reads to know it does not own the keyboard ------------------
+    //
+    // `TaskTreeView`'s `keyboardOwned`. Every way a pop-up can leave has to keep the flag in step, or the
+    // tree stays deaf with nothing on screen — so each of the three is checked here.
+
+    @Test
+    fun `anyOpen follows a pop-up opening and leaving the composition`() {
+        val host = TransientPopupHost()
+        assertFalse(host.anyOpen)
+
+        val key = Any()
+        host.open(key) {}
+        assertTrue(host.anyOpen)
+
+        host.close(key)
+        assertFalse(host.anyOpen)
+    }
+
+    @Test
+    fun `anyOpen stays true when one pop-up replaces another`() {
+        val host = TransientPopupHost()
+        val keyA = Any()
+        host.open(keyA) {}
+        host.open(Any()) {}
+        // At most one is open at a time — but one still is, so the tree must stay deaf.
+        assertTrue(host.anyOpen)
+    }
+
+    @Test
+    fun `anyOpen falls back to false when a press dismisses the last pop-up`() {
+        val host = TransientPopupHost()
+        val key = Any()
+        host.open(key) {}
+        host.setBounds(key, cardA)
+
+        host.onPress(Offset(150f, 150f))
+        assertTrue(host.anyOpen)
+
+        host.onPress(Offset(50f, 50f))
+        assertFalse(host.anyOpen)
     }
 }

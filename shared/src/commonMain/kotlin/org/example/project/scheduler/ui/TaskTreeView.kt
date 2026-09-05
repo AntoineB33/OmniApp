@@ -62,6 +62,7 @@ import org.example.project.ui.TaskPalette
 import org.example.project.ui.rememberTaskHues
 import org.example.project.ui.TaskTreeFindBar
 import org.example.project.ui.isModifierKey
+import org.example.project.ui.LocalTransientPopupHost
 import org.example.project.ui.printableChar
 
 /**
@@ -350,18 +351,27 @@ internal fun TaskTreeView(
         }
     }
 
+    // A sort-2 pop-up is what the user is working in, so the tree behind it does not own the keyboard —
+    // one rule, read here rather than passed down by each of the three surfaces that draw this tree.
+    // Without it, typing a letter with the priority-weight window open began a RENAME of the selected tree
+    // cell, and entering Edit Mode is exactly what closes that window: the keystroke aimed at the pop-up
+    // dismissed it. The tree is only deaf, never blind: the pop-up is not modal, and a press still reaches
+    // the tree (and dismisses the pop-up) as before.
+    val keyboardOwned = keyboardActive && LocalTransientPopupHost.current?.anyOpen != true
+
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
     }
 
-    LaunchedEffect(state.editSession, state.selection.main) {
+    // `keyboardOwned` is a key so the tree takes the keyboard BACK when the pop-up closes.
+    LaunchedEffect(state.editSession, state.selection.main, keyboardOwned) {
         // PRD §10: don't pull focus to the tree root while a min-time input is open — that field
         // auto-focuses itself, and grabbing focus here would steal its caret. Same while anything above
         // the tree holds the keyboard (the task-tree selector's field, whose menus close the moment it
         // loses focus) — [keyboardActive] is what says so.
         // ... nor while the find bar holds it: a match navigation moves selection.main, which is exactly
         // what re-runs this effect.
-        if (state.editSession == null && minTimeEditCellId == null && keyboardActive &&
+        if (state.editSession == null && minTimeEditCellId == null && keyboardOwned &&
             !findFieldFocused
         ) {
             focusRequester.requestFocus()
@@ -553,8 +563,9 @@ internal fun TaskTreeView(
                         event.printableChar() ?: return@onPreviewKeyEvent false
                     }
                 // PRD §7/§8 focus: while something else is focused, this tree must not hijack letter
-                // typing into Edit Mode — whatever holds focus owns the keyboard then.
-                if (!keyboardActive) return@onPreviewKeyEvent false
+                // typing into Edit Mode — whatever holds focus owns the keyboard then. A sort-2 pop-up
+                // counts as something else, which is what `keyboardOwned` adds.
+                if (!keyboardOwned) return@onPreviewKeyEvent false
                 onIntent(SchedulerIntent.BeginEdit(main, typed))
                 true
             }

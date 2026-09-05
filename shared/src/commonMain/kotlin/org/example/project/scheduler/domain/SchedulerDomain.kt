@@ -4746,6 +4746,46 @@ object SchedulerDomain {
     }
 
     /**
+     * PRD §5: the tasks a sub-list's **priority-weight table** may take as an **optional row** while its add
+     * row shows [text] — the identity menu of that row, exactly as [eligibleAssignTaskIds] is the identity
+     * menu of a cell of the tree.
+     *
+     * The question a weight table asks is not the one a cell asks, so this is not that filter with a
+     * different argument: an optional row is a task **somewhere under this list's own parent task** whose
+     * share of that sub-tree the table is being asked to state. So the predicate is the one
+     * `SetPriorityWeightTableRow` itself enforces — a live occurrence chain under the parent
+     * ([RelativePriorityDomain.optionalTaskPath]) — asked here so the menu can never offer a row the intent
+     * would then refuse. A task already in the table is left out either way: a **member** cell has its own
+     * row with its own weight, and an existing **optional** row is already that row.
+     *
+     * [replacing] is the task the row being edited names TODAY, and it is exempt from "already in the
+     * table" — it is the answer the row is already giving, so it has to stay a live one: the menu offers it
+     * back (picking it is a no-op the reducer drops), and the row keeps ITS COLOUR while its own title sits
+     * in the field. Without the exemption a row went colourless the instant its editor opened.
+     *
+     * Title matching, ordering and the exclusion of the root/main tasks are [eligibleAssignTaskIds]' own, so
+     * the two menus read the same way (an exact title match, shortest path first).
+     */
+    fun eligibleWeightTableTaskIds(
+        state: SchedulerState,
+        listId: CellListId,
+        text: String,
+        replacing: TaskId? = null,
+    ): List<TaskId> {
+        val list = state.lists[listId] ?: return emptyList()
+        val parentTask = parentTaskIdOfList(state, listId) ?: return emptyList()
+        val members = list.cellIds.mapNotNull { state.cells[it]?.taskId }.toSet()
+        return matchingUserTaskIds(state, text, shortestTaskTreePaths(state)).filter { candidate ->
+            candidate != parentTask &&
+                (
+                    candidate == replacing ||
+                        (candidate !in members && candidate !in list.optionalTaskIds)
+                    ) &&
+                RelativePriorityDomain.optionalTaskPath(state, listId, candidate).isNotEmpty()
+        }
+    }
+
+    /**
      * All rows in the Change Task menu; first row is always "New task" (PRD §4).
      * Impossible IDs (same list / ancestor path) are hidden, per PRD §4 Filtering.
      */

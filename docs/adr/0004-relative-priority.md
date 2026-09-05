@@ -128,10 +128,36 @@ worth writing down:
   would hide the only thing about it that has changed. The row still shows section 1's own button, because
   the button follows `kept` and nothing else — filing a pair and un-filing it stay one gesture and its
   inverse, wherever the row is drawn.
-- **`hidden` outranks every source of a pair, the weight table's live rows included.** "Make it disappear
-  from this list" means the list, not one of its sources; a pair struck off while it is a table row would
-  otherwise come straight back on the next composition. Only a real retarget lifts it — looking at it again
-  is not working on it again.
+- **`hidden` outranks every source of a pair — except a live weight-table row.** "Make it disappear from
+  this list" means the list, not one of its sources, and only a real retarget lifts it: looking at a pair
+  again is not working on it again. The row is the exception, and only became one when the ✕ started
+  removing it (below): while the ✕ left the row standing, a pair struck off as a table row would have come
+  straight back on the next composition, so the mark had to win. Now a row cannot outlive the strike-off, so
+  one standing under a `hidden` mark was put back after it — re-added, or restored by the Undo of that very
+  removal (the row is a history unit, the mark is not) — and that is the user asserting the pair again. The
+  rule was left behind when the removal shipped, and the release account showed what that costs: a row live
+  in the root table with no line in this window, and no gesture that would bring it back.
+
+### The ✕ removes the weight-table row the pair was made of
+
+**Status:** added 2026-09-05.
+
+The mark above is only half the answer, and shipping only that half was wrong. An **optional row** of the
+target sub-list's weight table is not a trace the pair left behind — it *is* the relation, the user's own
+table saying "measure this task inside this sub-tree". Striking the pair off while the row stands leaves the
+table asserting a relation the user has just disowned, with nothing but `hidden` holding it off the list; and
+because no other gesture in the app removes an optional row, the row would then have been unremovable.
+
+So `DropTaskRelation` also removes those rows. `TaskRelationsDomain.withoutWeightTableRows` is written as the
+exact inverse of `weightTableRelations` — the same walk over the lists, the same `parentTaskIdOfList` reading
+— so the derivation and its undoing can never disagree about which rows a pair is made of. The mark is still
+written, because a pair reaches the list by two routes and only one of them is a table.
+
+The row's own line says so before it goes. It is the second way a row leaves a table — the weight table's
+own emptied row is the first (below) — and both go through the same reducer rule. It does not make the ✕ a
+priority change: an optional row carries its value beside itself (`optionalTaskValues`) and no cell weight
+moves, and `treeSignature` reads a list's `cellIds` and `weightColumns` and never its `optionalTaskIds`, so
+nothing re-plans.
 
 ### What is stored is only what cannot be recomputed
 
@@ -161,12 +187,87 @@ never reach the save debounce or the wire.
 The comparison is against `percentFieldText`, the string the field itself shows. Comparing the raw `Double`
 would call a bisection landing one ulp from where it started a change the user never made.
 
-### It is not an Undo/Redo unit
+### The marks are not an Undo/Redo unit; the row a ✕ removes is one
 
 Same reason the pins are not: filing a pair changes no priority. It *is* authoritative and synced — which
 pairs are worth keeping is a judgement nothing re-derives — and merges per pair as a **whole value**, since
 the three flags are one statement about one pair (a field-wise merge could hand back a pair that is kept and
 struck off at once).
+
+The **weight-table row** a ✕ removes is the one thing here that is a history unit, and that is not an
+exception to the rule above but the other side of it: the row is part of the *tree*, and adding it has always
+committed one. An add that is undoable and a removal that is not would be the asymmetry, not the rule. A
+strike-off that finds no such row commits nothing at all, so Ctrl+Z never walks back over an empty unit.
+
+## The weight table's rows are task cells too
+
+**Status:** added 2026-09-05, after three symptoms on the release account that were one bug each.
+
+The priority-weight window's table has two kinds of row: the **member** rows, which are the sub-list's own
+cells, and the **optional** rows, which name a task somewhere under the list's parent task whose share of
+that sub-tree the table is being asked to state. Both are drawn with `TaskRow` — the tree's own row, the
+fourth surface it serves — and the optional ones were configured wrongly in three separate ways.
+
+### The add row was borrowing a cell of the tree
+
+The trailing "add a row" placeholder was a real EMPTY CELL of the sub-list. That is two mistakes:
+
+- **It is not the tree's placeholder.** PRD §4's auto-expansion keeps one at the bottom of every list, but
+  "empty" there means *not populated* — and a cell whose task has a **blank title** is exactly what §4's
+  deletion leaves behind. The borrow asked for `taskId == null` and found none: on the release account's root
+  list all fourteen cells carried a task, the last one deleted, so the root table offered no way to add a row
+  at all.
+- **The id is not free.** It keys `TaskRow`'s per-row state and it was compared against the tree's live edit
+  session, so the table's placeholder could answer for a cell the user was renaming somewhere else.
+
+`PriorityWeightTableRow.isAddRow` is the row, `priorityWeightRowId` its synthetic id, and it is offered
+whenever the list has a parent task to measure a share of — nothing about the tree can take it away.
+
+### An optional row could not be edited, and had no colour
+
+It was drawn `selectable = false`, which the row reads as "this is not something you can act on": it hands
+the row the non-selectable fill — the one background that wins over the task's own colour (ADR 0013) — and
+installs no pointer gestures at all. So the one kind of row in the table that names a task the user chose was
+the one row with no colour and no way to change it. Every row is selectable now, and the table keeps a
+one-row selection of its own to feed it: Compose-only, like the pins beside it, because there is no move, no
+copy and no keyboard walk here for a range to serve.
+
+### The gestures are the tree's, and so is the colour
+
+Two follow-ups the same day, both cases of the table answering *nearly* like the tree:
+
+- **A press selects; only a double-click on the title edits.** The add row opened on a single press for a
+  while, on the argument that it carries no columns and so a press there can only mean "add a row". That is
+  reasoning about this table when the whole point is that a row is a task cell — in the tree, a press on the
+  empty placeholder selects it and nothing more. `TaskRow`'s own `onTitle` gate already tells a press on the
+  title from one on the columns, so there was never anything to invent.
+- **Typing on the selected row opens it, which meant taking the keyboard.** The tree's third gesture is that
+  a printable character on the selected cell starts renaming it — and with the weight window open that fired
+  on the *tree's* selected cell, behind the pop-up. Worse, entering Edit Mode is what closes this window, so
+  the keystroke meant for it dismissed it. A sort-2 pop-up is non-modal about the **pointer**; the keyboard
+  belongs to whatever the user is working in. `TransientPopupHost.anyOpen` says one is open, `TaskTreeView`
+  reads it (so all three drawings of the tree go deaf together, and take the keyboard back when it closes),
+  and the window takes focus for itself so the character reaches the row it was typed at.
+- **A row being typed into wears the colour of the task the draft resolves to.** In the tree every keystroke
+  commits the title (`commitEditText`), so a cell takes its task's colour as it is named. A weight-table row
+  cannot: it names an existing task and creates none. The nearest true answer is the one the tree's Change
+  Task mode already gives — `selectedAssignTaskId`, the first eligible task the text matches — so the row
+  shows that task's colour, and none while the text matches nothing. The row's **current** task had to be
+  exempted from "already in the table" for that lookup, or opening a row's own editor blanked its colour
+  before a key was pressed.
+
+### A row's identity is one intent
+
+`SetPriorityWeightTableRow(listId, replacing, taskId)` is add, re-point and remove — the same question a cell
+of the tree answers with `SetCellTitle`/`AssignTaskId`, asked once so each gesture is one history unit.
+Removing is **emptying the row's title**, PRD §4's rule read here rather than a button invented for it, and
+it is what makes an optional row removable at all: before this there was no gesture anywhere that took one
+back out of a table.
+
+The commit is the identity menu's **pick**, never the typed text, and the menu is
+`SchedulerDomain.eligibleWeightTableTaskIds` — the intent's own predicate (a live occurrence chain under the
+list's parent) asked of the menu, so a pick the intent would refuse is never offered. Typing at it and
+walking away therefore changes nothing, which is the sort-2 pop-up's rule about drafts anyway.
 
 ## Categories, and the rule that HOLDS a share
 

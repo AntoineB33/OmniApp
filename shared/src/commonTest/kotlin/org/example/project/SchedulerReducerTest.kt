@@ -1051,7 +1051,9 @@ class SchedulerReducerTest {
 
         val initially = org.example.project.scheduler.ui.priorityWeightTableRows(s, childList)
         assertTrue(initially.none { it.isOptional && it.taskId != null })
-        assertTrue(initially.any { it.isOptional && it.cellId != null && it.taskId == null })
+        // The trailing add row is the TABLE's own placeholder: it names no cell of the tree, so it is there
+        // whatever the sub-list's bottom cell happens to be.
+        assertTrue(initially.any { it.isAddRow && it.cellId == null && it.taskId == null })
 
         val rows = org.example.project.scheduler.ui.priorityWeightTableRows(s, childList, setOf(bTask))
         val titles = rows.map { it.title }
@@ -1074,7 +1076,7 @@ class SchedulerReducerTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(childCell, "Child"))
         val childTask = s.cells[childCell]!!.taskId!!
 
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddPriorityWeightTableTask(childList, childTask))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeightTableRow(childList, taskId = childTask))
         assertTrue(s.lists[childList]!!.optionalTaskIds.contains(childTask))
 
         val rows = org.example.project.scheduler.ui.priorityWeightTableRows(s, childList, s.lists[childList]!!.optionalTaskIds)

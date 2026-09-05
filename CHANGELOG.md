@@ -11,6 +11,99 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The priority-weight table's rows are task cells, and its add row is its own — 2026-09-05
+
+`shared` (`ui/TaskSchedulerScreen.kt`, `domain/SchedulerDomain.kt`, `state/SchedulerIntent.kt`,
+`state/SchedulerReducer.kt`) + `PriorityWeightTableRowTest`, `CLAUDE.md`, PRD §5, ADR 0004.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy and no DB migration.**
+
+Reported on the release account (account 3): the **root** sub-list's weight table offered no way to add a
+row, the optional row added earlier could not be typed into, and it was the one row with no task colour. One
+cause each, and all three in how the table configured `TaskRow`.
+
+**The add row was borrowing an empty cell of the sub-list.** It asked for a cell with `taskId == null`, but
+PRD §4's deletion leaves a cell holding a **blank-titled** task — which is what a placeholder often is. A
+read-only probe of the release DB: the root list holds 14 cells, every one of them carrying a task, the last
+`task/user/241` with an empty title. No `taskId == null` cell ⇒ no add row. It is now the table's own
+placeholder (`PriorityWeightTableRow.isAddRow`), offered whenever the list has a parent task, with a
+synthetic id (`priorityWeightRowId`) — a borrowed one also keyed `TaskRow`'s per-row state and was compared
+against the tree's live edit session, so the placeholder could answer for a cell being renamed elsewhere.
+
+**An optional row was `selectable = false`.** That is the one background that wins over the task's own colour
+(ADR 0013) *and* it installs no pointer gestures, so the row was grey and inert. Every row is selectable now,
+and the table keeps a one-row selection of its own to feed it (Compose-only, like the pins beside it).
+
+**The gestures and the live colour are the tree's** (a same-day follow-up, from three more reports): a press
+**selects** the row and only a **double-click on the title** opens Edit Mode — the add row included, which
+had briefly opened on a single press — and a row being typed into wears **the colour of the task the draft
+resolves to**, the tree's own Change Task rule (`selectedAssignTaskId`, the first eligible task the text
+matches) said for a row that names an existing task instead of creating one. The row's current task is exempt
+from "already in the table" for that lookup (`eligibleWeightTableTaskIds`' `replacing`), or opening a row's
+editor blanked its colour before a key was pressed.
+
+**And the third gesture, which took the keyboard with it.** Typing a letter on the selected row must open it
+seeded with that letter (PRD §4). With the window open that letter reached the TREE instead: a sort-2 pop-up
+is non-modal, so the tree kept the keyboard, began renaming its own selected cell — and entering Edit Mode is
+exactly what closes this window, so the keystroke aimed at the pop-up dismissed it. Non-modal is now stated
+as being about the **pointer**: `TransientPopupHost.anyOpen` (observable) says a sort-2 pop-up is open,
+`TaskTreeView` reads it as `keyboardOwned` so all three drawings of the tree go deaf together and take the
+keyboard back when it closes, and the weight window takes focus for itself. `TransientPopupHostTest` pins the
+flag against every way a pop-up leaves.
+
+**A row's identity is one intent.** `AddPriorityWeightTableTask` is replaced by
+`SetPriorityWeightTableRow(listId, replacing, taskId)` — add, re-point, remove — so each gesture is one
+history unit ("Add table row" / "Change table row" / "Remove table row") and a pick that changes nothing
+commits none. Removing is **emptying the row's title**, §4's rule read here, which is what makes an optional
+row removable in the table at all; the task-relations ✕ (entry below) is now the second way rather than the
+only one. The identity menu is `SchedulerDomain.eligibleWeightTableTaskIds` — the intent's own predicate (a
+live occurrence chain under the list's parent) asked of the menu, so a pick the intent would refuse is never
+offered; the cell's `eligibleAssignTaskIds` was answering a different question and offering rows the reducer
+then dropped on the floor.
+
+### A struck-off pair comes back when its weight-table row does — 2026-09-05
+
+`shared` (`domain/TaskRelations.kt`) + `TaskRelationsTest`, `CLAUDE.md`, PRD §5, ADR 0004.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy and no DB migration.**
+
+Reported on the release account: a row added to the root sub-list's weight table never appeared in the Task
+relations window. A read-only probe of the release DB found the pair exactly as suspected — `wc > root`
+carrying `hidden = true` **and** a live optional row of `list/main`, with the window's own `rows()` skipping
+it.
+
+`hidden` outranked every source of a pair, weight-table rows included, and the reason it had to was that the
+✕ left the row standing: a pair struck off while it was a table row would have come back on the next
+composition. The entry below gave the ✕ the row's removal and left that rule in place, which made it wrong in
+exactly the two ways it can now be reached — the row is re-added, or **Ctrl+Z of the strike-off** restores it
+(the row is a history unit, the mark is not). Both are the user's own table asserting the pair again, and
+neither had any way to say so.
+
+So a **live weight-table row now outranks `hidden`**. The mark still holds every other source off the list,
+which is the whole of what it is for now that a row cannot outlive it. Nothing is written to heal the stale
+mark: the row is derived, and this is the derivation reading it.
+
+### Striking a task relation off takes its weight-table row with it — 2026-09-05
+
+`shared` (`domain/TaskRelations.kt`, `state/SchedulerReducer.kt`, `state/SchedulerIntent.kt`,
+`ui/TaskRelationsWindow.kt`) + `TaskRelationsTest`, `CLAUDE.md`, PRD §5.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy and no DB migration.**
+
+Section 1's **✕** used to write a `hidden` mark and nothing else. Where the pair had reached the list by
+being an **optional row** of the target sub-list's priority-weight table, that left the user's own table
+still asserting the relation they had just struck off, the only thing keeping the pair off the list being the
+mark hiding it. (The entry above then gave the table a removal of its own; both go through the same reducer
+rule.)
+
+`DropTaskRelation` now also removes those rows (`TaskRelationsDomain.withoutWeightTableRows`, written as the
+exact inverse of `weightTableRelations`: the same walk over the lists and the same `parentTaskIdOfList`
+reading, so the two cannot disagree about which rows a pair is made of). The mark is still written — a pair
+reaches the list by two routes and only one of them is a table.
+
+The removal is a **tree** change, so it commits one history unit, exactly as the row's creation does: the add
+and its inverse are undoable the same way.
+The marks stay outside history as before, and a pair with no such row commits nothing at all — no empty unit
+for Ctrl+Z to walk over. Nothing re-plans: `treeSignature` reads a list's `cellIds` and `weightColumns`,
+never its `optionalTaskIds`. The row's own line says what the ✕ will do while it can still be read.
+
 ### The display is a piecewise function of the now-line, so it is no longer polled — 2026-09-05
 
 `shared` (`App.kt`, `ui/CalendarUi.kt`, `domain/SchedulerDomain.kt`) + `DisplayResampleBoundaryTest`,

@@ -117,10 +117,31 @@ sealed interface SchedulerIntent {
         val value: Double,
     ) : SchedulerIntent
 
-    /** PRD §5: add a task row to this sub-list's priority-weight table, seeded at zero in every column. */
-    data class AddPriorityWeightTableTask(
+    /**
+     * PRD §5: **what task an optional row of this sub-list's priority-weight table names** — the row's whole
+     * identity, in one intent, exactly as a cell of the tree has one ([SetCellTitle] / [AssignTaskId]).
+     *
+     * The three gestures the table's rows offer are the three shapes of this one question, so each is one
+     * history unit and none of them can be half-done:
+     *
+     * - [replacing] `null`, [taskId] set — the **add row** names a task: a new optional row, seeded at zero
+     *   in every column.
+     * - [replacing] set, [taskId] set — an existing row is **re-pointed** at another task, its own value
+     *   going with the row it replaces (a row is a reading of a sub-tree, not a number the user typed).
+     * - [replacing] set, [taskId] `null` — the row is **removed**. PRD §4's rule read here: emptying a row's
+     *   title is what deletes it, the same gesture as emptying a cell of the tree.
+     *
+     * [taskId] must have a live occurrence chain under the list's own parent task
+     * ([RelativePriorityDomain.optionalTaskPath]) — the row states its share of *that* sub-tree, so a task
+     * sitting nowhere under it states nothing. [SchedulerDomain.eligibleWeightTableTaskIds] is the same
+     * predicate asked of the menu, so a refused pick is never offered.
+     */
+    data class SetPriorityWeightTableRow(
         val listId: CellListId,
-        val taskId: TaskId,
+        /** The task the row names today, or null when this is the table's trailing **add** row. */
+        val replacing: TaskId? = null,
+        /** The task the row is to name, or null to remove the row. */
+        val taskId: TaskId? = null,
     ) : SchedulerIntent
 
     /** PRD §5: scale one column of an optional task row's path weights by [factor]. */
@@ -190,7 +211,17 @@ sealed interface SchedulerIntent {
     /**
      * PRD §5 the task-relations window: section 1's own button — strike this pair off the list entirely,
      * whichever section would otherwise hold it. Touching the pair again from the relative-priority window
-     * brings it back. Not undoable.
+     * brings it back.
+     *
+     * **It also removes the priority-weight-table row the pair was made of**, where that is how it got onto
+     * the list: an **optional row** of the target sub-list's table *is* the relation, so striking the pair
+     * off has to take the row with it — otherwise the user's own table goes on asserting a pair they have
+     * just said is not theirs, and there would be no gesture anywhere that takes a row back out of a table.
+     *
+     * So this is the one relations intent that is **partly undoable**: the mark is not a history unit (it
+     * changes no priority, like a pin), and the row's removal is one — a tree change, the exact inverse of
+     * [SetPriorityWeightTableRow], which is a unit for the same reason. A pair with no such row commits
+     * nothing at all.
      */
     data class DropTaskRelation(
         val taskId: TaskId,

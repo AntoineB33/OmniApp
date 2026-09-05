@@ -7,6 +7,7 @@ import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.domain.TaskRelationsDomain
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CategoryId
 import org.example.project.scheduler.model.CategoryRule
@@ -142,10 +143,15 @@ object SchedulerReducer {
             is SchedulerIntent.DeleteTaskTree -> reduceDeleteTaskTree(state, intent.id)
             is SchedulerIntent.SetPriorityWeight ->
                 commitDelta(state, priorityTreeDelta(state, "Priority weight") { applySetPriorityWeight(it, intent.cellId, intent.column, intent.value) })
-            is SchedulerIntent.AddPriorityWeightTableTask ->
-                commitDelta(state, priorityTreeDelta(state, "Add optional table task") {
-                    applyAddPriorityWeightTableTask(it, intent.listId, intent.taskId)
-                })
+            is SchedulerIntent.SetPriorityWeightTableRow -> {
+                val apply = { s: SchedulerState ->
+                    applySetPriorityWeightTableRow(s, intent.listId, intent.replacing, intent.taskId)
+                }
+                // A pick the table already holds (or one the parent sub-tree does not) changes nothing, and
+                // an empty history unit is not something Ctrl+Z should have to walk back over.
+                if (apply(state) === state) state
+                else commitDelta(state, priorityTreeDelta(state, weightTableRowLabel(intent), apply))
+            }
             is SchedulerIntent.SetOptionalTaskPathWeight ->
                 commitDelta(state, priorityTreeDelta(state, "Optional task priority weight") {
                     RelativePriorityDomain.scaleOptionalTaskPath(
@@ -185,9 +191,7 @@ object SchedulerReducer {
                     it.copy(kept = true, hidden = false)
                 }
             is SchedulerIntent.DropTaskRelation ->
-                reduceMarkTaskRelation(state, TaskRelationKey(intent.taskId, intent.relativeTo)) {
-                    it.copy(kept = false, hidden = true)
-                }
+                reduceDropTaskRelation(state, TaskRelationKey(intent.taskId, intent.relativeTo))
             is SchedulerIntent.SetPriorityColumnWeight ->
                 commitDelta(state, priorityTreeDelta(state, "Column weight") { applySetPriorityColumnWeight(it, intent.listId, intent.column, intent.weight) })
             is SchedulerIntent.AddPriorityColumn ->
@@ -2379,6 +2383,35 @@ object SchedulerReducer {
         )
     }
 
+    /**
+     * PRD §5 the task-relations window: section 1's own **✕** — strike the pair off the list entirely.
+     *
+     * Two halves, because a pair reaches the list by two routes:
+     *
+     * - the **mark** is struck off ([TaskRelationMark.hidden]), which is what silences the half the marks carry
+     *   — a pair the relative-priority window has been opened on or retargeted. Not undoable, like every other
+     *   mark: it changes no priority.
+     * - the **weight-table rows** the pair is made of are removed ([TaskRelationsDomain.withoutWeightTableRows]).
+     *   An optional row of the target sub-list's priority-weight table IS the relation, so leaving it standing
+     *   would leave the user's own table asserting a pair they have just said is not theirs — and there is no
+     *   other gesture in the app that takes a row back out of a table. That half is a **tree change**, so it
+     *   commits one history unit, exactly as [SchedulerIntent.SetPriorityWeightTableRow] does for the row's
+     *   creation: the add and its inverse must be undoable the same way.
+     *
+     * A pair with no such row commits nothing — no empty history unit for Ctrl+Z to walk back over (the same
+     * rule the weight window's Cancel follows).
+     */
+    private fun reduceDropTaskRelation(state: SchedulerState, key: TaskRelationKey): SchedulerState {
+        val marked = reduceMarkTaskRelation(state, key) { it.copy(kept = false, hidden = true) }
+        if (TaskRelationsDomain.withoutWeightTableRows(marked, key) === marked) return marked
+        return commitDelta(
+            marked,
+            priorityTreeDelta(marked, "Remove optional table task") {
+                TaskRelationsDomain.withoutWeightTableRows(it, key)
+            },
+        )
+    }
+
     private fun commitDelta(
         state: SchedulerState,
         forward: Delta,
@@ -3680,20 +3713,50 @@ private fun applyRestorePriorityWeights(
     return state.copy(cells = cells, lists = lists)
 }
 
-private fun applyAddPriorityWeightTableTask(
+/** The history unit's name for each of the three shapes of [SchedulerIntent.SetPriorityWeightTableRow]. */
+private fun weightTableRowLabel(intent: SchedulerIntent.SetPriorityWeightTableRow): String = when {
+    intent.replacing == null -> "Add table row"
+    intent.taskId == null -> "Remove table row"
+    else -> "Change table row"
+}
+
+/**
+ * PRD §5: set what an **optional row** of [listId]'s priority-weight table names — add, re-point or remove,
+ * the three shapes of one question (see [SchedulerIntent.SetPriorityWeightTableRow]).
+ *
+ * A new row is seeded at **zero** in every column: it states a share of the parent sub-tree the user has yet
+ * to give it, and zero is the only value that asserts nothing. A re-pointed row is seeded the same way — the
+ * value belonged to the task the row named, not to the row's position in the table.
+ */
+private fun applySetPriorityWeightTableRow(
     state: SchedulerState,
     listId: CellListId,
-    taskId: TaskId,
+    replacing: TaskId?,
+    taskId: TaskId?,
 ): SchedulerState {
     val list = state.lists[listId] ?: return state
-    if (taskId in list.optionalTaskIds) return state
-    val parentTaskId = SchedulerDomain.parentTaskIdOfList(state, listId) ?: return state
-    if (RelativePriorityDomain.optionalTaskPath(state, listId, taskId).isEmpty()) return state
-    val zeroed = List(list.weightColumns.size.coerceAtLeast(1)) { 0.0 }
+    // A row the table no longer holds is a stale press (a peer removed it, or an Undo did) — never a
+    // silent add under another name.
+    if (replacing != null && replacing !in list.optionalTaskIds) return state
+    var optionalIds = list.optionalTaskIds
+    var optionalValues = list.optionalTaskValues
+    if (replacing != null) {
+        optionalIds = optionalIds - replacing
+        optionalValues = optionalValues - replacing
+    }
+    if (taskId != null) {
+        if (taskId in optionalIds) return state
+        val parentTaskId = SchedulerDomain.parentTaskIdOfList(state, listId) ?: return state
+        if (taskId == parentTaskId) return state
+        if (RelativePriorityDomain.optionalTaskPath(state, listId, taskId).isEmpty()) return state
+        optionalIds = optionalIds + taskId
+        optionalValues = optionalValues + (taskId to List(list.weightColumns.size.coerceAtLeast(1)) { 0.0 })
+    }
+    if (optionalIds == list.optionalTaskIds && optionalValues == list.optionalTaskValues) return state
     return state.copy(
         lists = state.lists + (listId to list.copy(
-            optionalTaskIds = list.optionalTaskIds + taskId,
-            optionalTaskValues = list.optionalTaskValues + (taskId to zeroed),
+            optionalTaskIds = optionalIds,
+            optionalTaskValues = optionalValues,
         )),
     )
 }

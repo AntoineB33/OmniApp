@@ -914,6 +914,18 @@ Categories, DefaultSubtree, Shortcuts, TimeSim) and every other pop-up in the ap
 - **A sort-2 pop-up is NOT modal: no scrim, blocks nothing.** The press that dismisses it still does its
   normal job (focusing the calendar, selecting a cell). The full-screen scrims that shipped before ate that
   press, which cost a second click and made "it leaves when something else is focused" unobservable.
+- **NOT MODAL IS ABOUT THE POINTER; THE KEYBOARD IS THE POP-UP'S** (`TransientPopupHost.anyOpen`, read by
+  `TaskTreeView` as `keyboardOwned`). A pop-up is what the user is working in, so the tree behind it goes
+  **deaf** while one is open — and takes the keyboard back when it closes, which is why `keyboardOwned` is
+  one of that effect's keys. PRD §4's "type a letter on the selected cell and it starts renaming" otherwise
+  fires behind the pop-up, and since entering Edit Mode is exactly what closes the weight and
+  relative-priority windows, the keystroke aimed at the pop-up **dismissed** it. Deaf, never blind: a press
+  still reaches the tree and still dismisses the pop-up. Read in `TaskTreeView`, so all three drawings of
+  the tree get it at once — never a flag threaded down by each surface.
+- **A pop-up that answers keystrokes must therefore TAKE the focus** (the priority-weight window is today's
+  one: its rows are task cells, so a letter typed on the selected row opens its Edit Mode). Taking focus
+  does not dismiss anything — dismissal is a press, watched at the app root — and the pop-up hands the
+  keyboard on to a row's own field while one is being edited, and takes it back when that closes.
 - **Dismissal discards** whatever was half-typed in it. That is the sort's price, not an oversight — the
   old scrim click did the same.
 - **One observer, at the app root** (`transientPopupDismissRoot`), watching the **Initial** pass without
@@ -937,7 +949,8 @@ Categories, DefaultSubtree, Shortcuts, TimeSim) and every other pop-up in the ap
 - **A pin means "hold this percentage", not "leave this weight alone"** — a pinned cell's weight may have to
   rise. Solve each sub-list over every chain cell, pinned included.
 - Pins are authoritative + synced, and **not** an Undo/Redo unit.
-- **A chain link of the relative-priority window IS a task cell** — `TaskRow`, the tree's own row, so a cell
+- **A chain link of the relative-priority window IS a task cell** — `TaskRow`, the tree's own row (the
+  priority-weight table's rows are the same, below), so a cell
   reads the same wherever the app draws one (its colour, its border states, its columns). Two drawings of a
   cell is the drift `TaskTreeView` exists to prevent, and a chip was one. It is that row minus the three
   columns a chain has no use for: **no expansion arrow** (a chain is a path — there is nothing to open under
@@ -952,6 +965,51 @@ Categories, DefaultSubtree, Shortcuts, TimeSim) and every other pop-up in the ap
 - **The weight window's chart is the readout of the table beside it**: each task's share of THAT sub-list
   (`cellShare`), never its absolute priority. The slice sweeps were always normalized by the list total; only
   the legend's number was reading against the whole tree.
+- **EVERY ROW OF THE WEIGHT TABLE IS A TASK CELL** — `TaskRow` again, the tree's own row, the FOURTH place it
+  is drawn. So a row is coloured by the task it names, opens the same Edit Mode, and renders its identity
+  menu through the same `EditModeMenuBlock`. Configured, never re-implemented, and the configuration is three
+  things: **`selectable = true` on every row** — `selectable` is what installs the row's gestures AND the one
+  background that WINS over the task colour (ADR 0013), so the optional rows it was false on were both inert
+  and the one kind of row that could not be told apart by its colour; **no Mode selector**, because a row
+  names an existing task and naming it *is* pointing at it (the category field's reason, and there is no
+  "New task" row either — a row states the share of a task that exists); and the weight fields, which ride
+  `rowContent`.
+- **The gestures are the TREE'S, not this table's own**: a press **selects** the row (the add row included —
+  it is the tree's empty placeholder by another name), only a **double-click on the TITLE** opens Edit Mode,
+  gated by `TaskRow`'s own `onTitle`, and **typing a printable character on the selected row opens it seeded
+  with that character** — for which the window takes the keyboard while it is open (§ *Pop-up windows*; a
+  dead key opens it empty, the tree's own reasoning). A press on a row that is not the one being edited
+  closes that editor (PRD §4 Forced Exit). The selection is one row, Compose-only (there is no move, no copy
+  and no keyboard walk here for a range to serve) — a way of looking at the table, never a fact about the
+  account.
+- **A row being typed into takes the colour of the task the draft RESOLVES to**, and none while it resolves
+  to nothing. In the tree every keystroke commits the title, so a cell wears its task's colour as it is
+  named; a weight-table row names an **existing** task and creates none, so the nearest true answer is the
+  tree's own Change Task rule — the first eligible task the text matches, `selectedAssignTaskId` by another
+  name. The row's CURRENT task is exempt from "already in the table" for that lookup
+  (`eligibleWeightTableTaskIds`' `replacing`), or a row went colourless the instant its own editor opened.
+  One measurement per keystroke, shared by the colour and the menu.
+- **The table's identity menu is `eligibleWeightTableTaskIds`, NOT the cell's `eligibleAssignTaskIds`.** A
+  row states a task's share of THIS list's parent sub-tree, so the predicate is a live occurrence chain under
+  that parent (`optionalTaskPath`) — the one `SetPriorityWeightTableRow` itself enforces, asked of the menu
+  so a refused pick can never be offered. A member cell (it has its own row) and an existing optional row are
+  out either way.
+- **The trailing ADD ROW is the TABLE's placeholder, not the tree's** (`PriorityWeightTableRow.isAddRow`, and
+  `priorityWeightRowId` gives it and every optional row a synthetic id). It used to borrow an empty cell of
+  the sub-list and was therefore missing wherever the list had none — and "empty" was read as `taskId ==
+  null`, where PRD §4's deletion leaves a cell holding a **blank-titled** task instead. Every one of the 14
+  cells of the release account's root list carried a task, the last a deleted one, so the root table offered
+  no way to add a row at all. A borrowed id is wrong twice over: it keys `TaskRow`'s per-row state and it was
+  compared against the tree's live edit session, so the placeholder answered for a cell the user might be
+  renaming elsewhere.
+- **A row's identity is ONE intent, `SetPriorityWeightTableRow(listId, replacing, taskId)`** — add
+  (`replacing = null`), re-point (both), remove (`taskId = null`) — so each gesture is one history unit and
+  none can be half-done. **Emptying a row's title is what removes it**, PRD §4's rule read here, which is why
+  the weight table is the first place an optional row can be taken back out at all; the task-relations ✕ is
+  the second. A pick that changes nothing (a task the table holds, one with no chain under the parent, a
+  `replacing` the table no longer has) commits **no** unit.
+- **The commit is the identity menu's pick, never the typed text.** A weight-table row names an existing
+  task, so a draft that matches nothing is dropped when the editor closes — and a blank one removes the row.
 - **Its Cancel restores the table the window OPENED on** — every header and every weight row, in one step,
   never one edit back — as one ordinary `priorityTreeDelta`, which is what makes Ctrl+Z undo the cancel. A
   cancel that changes nothing records no unit. It rewrites that one sub-list's weights and nothing else: a cell
@@ -991,12 +1049,30 @@ open window — so `SchedulerState.taskRelations` is keyed by the deliberately s
   `CellList.optionalTaskIds` (`weightTableRelations`), so a row the user removes from a table leaves this list
   by itself, and section 4 is a question asked of the live tree. A pair naming a deleted task is **reported**,
   never pruned — no tree edit has to keep this in step.
-- **`hidden` outranks every source**, weight-table rows included: "make it disappear from this list" means the
-  list. Only a real **retarget** lifts it — merely looking at a struck-off pair again is not working on it
-  again.
+- **`hidden` outranks every source EXCEPT a live weight-table row.** "Make it disappear from this list" means
+  the list, and only a real **retarget** lifts it — merely looking at a struck-off pair again is not working
+  on it again. A **row** is the exception because the ✕ now takes the row with it (below): a row standing
+  under a `hidden` mark was put back *after* the strike-off — added again, or restored by the Undo of that
+  very removal, the row being a history unit where the mark is not — and either way it is the user's own
+  table asserting the pair again. It outranked rows too while the ✕ left them standing, because a pair struck
+  off then came back on the next composition; that reason went with the removal, and keeping the rule cost a
+  row on the release account's root table no line in this window at all.
+- **THE ✕ ALSO REMOVES THE WEIGHT-TABLE ROW the pair was made of** (`withoutWeightTableRows`, the exact
+  inverse of `weightTableRelations` — the same walk and the same `parentTaskIdOfList` reading, so the two can
+  never disagree about which rows a pair is made of). An optional row of the target sub-list's table **is**
+  the relation, so a mark alone would leave the user's own table asserting a pair they have just said is not
+  theirs. The mark is still written: a pair reaches the list by two routes and only one of them is a table.
+  It is the **second** way a row leaves a table, the weight table's own emptied row being the first, and the
+  two go through the same reducer rule.
+- **That row's removal is the ONE Undo/Redo unit this window has**, and it is not an exception — it is a
+  **tree** change, the exact inverse of the `SetPriorityWeightTableRow` that added the row, which is a unit
+  for the same reason.
+  The marks stay outside history (they change no priority, exactly like a pin), and a pair with no such row
+  commits **nothing** — no empty unit for Ctrl+Z to walk back over. It re-plans nothing either:
+  `treeSignature` reads a list's `cellIds` and `weightColumns`, never its `optionalTaskIds`.
 - Authoritative + synced (which pairs matter is a judgement nothing re-derives), merged **per pair as a whole
-  value** — three flags that are one statement — and **not** an Undo/Redo unit: filing a pair changes no
-  priority, exactly like a pin.
+  value** — three flags that are one statement — and, the marks themselves, **not** an Undo/Redo unit: filing
+  a pair changes no priority, exactly like a pin.
 
 ### Categories, and the rule that HOLDS a share
 

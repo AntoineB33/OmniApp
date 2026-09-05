@@ -126,7 +126,7 @@ class TaskRelationsTest {
     @Test
     fun a_task_added_to_a_priority_weight_table_is_an_edited_pair_and_is_never_stored() {
         val f = fixture()
-        val s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddPriorityWeightTableTask(f.bookList, f.write))
+        val s = SchedulerReducer.reduce(f.state, SchedulerIntent.SetPriorityWeightTableRow(f.bookList, taskId = f.write))
         val key = TaskRelationKey(f.write, f.book)
 
         val row = rowOf(s, key)
@@ -155,11 +155,45 @@ class TaskRelationsTest {
     }
 
     @Test
-    fun a_dropped_pair_survives_a_weight_table_row_and_comes_back_only_when_it_is_retargeted() {
+    fun striking_a_pair_off_removes_the_weight_table_row_it_was_made_of() {
         val f = fixture()
         val key = TaskRelationKey(f.write, f.book)
-        // Struck off while it IS a live weight-table row: "disappear from this list" outranks every source.
-        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddPriorityWeightTableTask(f.bookList, f.write))
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.SetPriorityWeightTableRow(f.bookList, taskId = f.write))
+        assertEquals(setOf(f.write), s.lists[f.bookList]!!.optionalTaskIds)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.DropTaskRelation(f.write, f.book))
+        // The optional row IS the relation, so "not a relation of mine" has to reach the table itself —
+        // otherwise the user's own table goes on asserting the pair, and no gesture removes a row at all.
+        assertEquals(emptySet(), s.lists[f.bookList]!!.optionalTaskIds)
+        assertEquals(emptyMap(), s.lists[f.bookList]!!.optionalTaskValues)
+        assertNull(rowOf(s, key))
+        assertEquals(emptySet(), TaskRelationsDomain.weightTableRelations(s))
+    }
+
+    @Test
+    fun the_weight_table_row_removal_is_one_history_unit_and_a_pair_without_one_records_none() {
+        val f = fixture()
+        // The row's creation is a tree change, so its inverse must be undoable the same way.
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.SetPriorityWeightTableRow(f.bookList, taskId = f.write))
+        val afterAdd = s.histories.main.units.size
+        s = SchedulerReducer.reduce(s, SchedulerIntent.DropTaskRelation(f.write, f.book))
+        assertEquals(afterAdd + 1, s.histories.main.units.size)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertEquals(setOf(f.write), s.lists[f.bookList]!!.optionalTaskIds)
+
+        // A pair that never was a table row leaves the tree alone — no empty unit for Ctrl+Z to walk over.
+        var marks = SchedulerReducer.reduce(f.state, SchedulerIntent.RecordTaskRelation(f.write, f.book, true))
+        val before = marks.histories
+        marks = SchedulerReducer.reduce(marks, SchedulerIntent.DropTaskRelation(f.write, f.book))
+        assertEquals(before, marks.histories)
+    }
+
+    @Test
+    fun a_dropped_pair_comes_back_only_when_it_is_retargeted() {
+        val f = fixture()
+        val key = TaskRelationKey(f.write, f.book)
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.RecordTaskRelation(f.write, f.book, true))
         s = SchedulerReducer.reduce(s, SchedulerIntent.DropTaskRelation(f.write, f.book))
         assertNull(rowOf(s, key))
 
@@ -169,6 +203,38 @@ class TaskRelationsTest {
 
         // Actually retargeting it is.
         s = SchedulerReducer.reduce(s, SchedulerIntent.RecordTaskRelation(f.write, f.book, true))
+        assertEquals(TaskRelationsDomain.Section.Edited, rowOf(s, key)?.section)
+    }
+
+    @Test
+    fun a_weight_table_row_added_after_a_strike_off_brings_the_pair_back() {
+        val f = fixture()
+        val key = TaskRelationKey(f.write, f.book)
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.SetPriorityWeightTableRow(f.bookList, taskId = f.write))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.DropTaskRelation(f.write, f.book))
+        // The strike-off took the row with it, so there is nothing left asserting the pair.
+        assertEquals(emptySet(), s.lists[f.bookList]!!.optionalTaskIds)
+        assertNull(rowOf(s, key))
+
+        // Adding the row again IS the user saying it again — the mark cannot outrank a live row, which is
+        // what left the row on the release account's root table with no line in this window.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeightTableRow(f.bookList, taskId = f.write))
+        assertEquals(TaskRelationsDomain.Section.Edited, rowOf(s, key)?.section)
+        assertTrue(rowOf(s, key)!!.inWeightTable)
+    }
+
+    @Test
+    fun undoing_a_strike_off_brings_the_pair_back_with_its_row() {
+        val f = fixture()
+        val key = TaskRelationKey(f.write, f.book)
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.SetPriorityWeightTableRow(f.bookList, taskId = f.write))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.DropTaskRelation(f.write, f.book))
+        assertNull(rowOf(s, key))
+
+        // The row's removal is a history unit; the mark is not. So an undo restores the row alone — and a
+        // pair whose row is back must be back, or Ctrl+Z would leave the two disagreeing for good.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertEquals(setOf(f.write), s.lists[f.bookList]!!.optionalTaskIds)
         assertEquals(TaskRelationsDomain.Section.Edited, rowOf(s, key)?.section)
     }
 

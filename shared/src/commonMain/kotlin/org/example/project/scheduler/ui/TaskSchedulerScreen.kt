@@ -958,16 +958,33 @@ internal fun EditModeMenus(
     }
 }
 
-/** Change-task-only menus for the priority window's local, empty placeholder editor. */
+/**
+ * PRD §5: the identity menus of an **optional row** of a priority-weight table — the same
+ * [EditModeMenuBlock] every naming field in the app renders through, so a row of this table reads and
+ * behaves like a cell of the tree in Edit Mode.
+ *
+ * Two configured differences, and both follow from what a weight-table row IS:
+ *
+ * - **no Mode selector**, because neither of its questions exists here — a row names an existing task and
+ *   nothing else, so naming it *is* pointing at it (the same reason the category field has none); and
+ * - the identity rows are [SchedulerDomain.eligibleWeightTableTaskIds], not the tree cell's
+ *   [SchedulerDomain.eligibleAssignTaskIds]: the row must name a task with an occurrence **under this
+ *   list's parent task**, which is exactly what the intent behind the pick enforces. Asked the cell's
+ *   question instead, the menu offered tasks the intent then silently refused.
+ *
+ * There is deliberately **no "New task" row**: a weight-table row states the share of an existing task, so
+ * a name the account has not got names nothing to measure.
+ */
 @Composable
 private fun OptionalTaskEditMenus(
     state: SchedulerState,
-    cellId: CellId,
+    /** [SchedulerDomain.eligibleWeightTableTaskIds] for the row and its draft — measured once by the row. */
+    eligibleTaskIds: List<TaskId>,
     draftText: String,
     onDraftChange: (String) -> Unit,
     onPickTask: (TaskId) -> Unit,
 ) {
-    val taskRows = SchedulerDomain.eligibleAssignTaskIds(state, cellId, draftText).map { taskId ->
+    val taskRows = eligibleTaskIds.map { taskId ->
         EditMenuItem(
             label = state.tasks[taskId]?.title.orEmpty(),
             onClick = { onPickTask(taskId) },
@@ -1409,7 +1426,24 @@ internal data class PriorityWeightTableRow(
     val taskId: TaskId? = null,
     val title: String = "",
     val isOptional: Boolean = false,
+    /**
+     * The table's trailing **add** row. It is this table's own placeholder, not a cell of the tree — see
+     * [priorityWeightTableRows] — so it is the one row with neither a cell nor a task.
+     */
+    val isAddRow: Boolean = false,
 )
+
+/**
+ * The identity every row of the table is drawn under. A member row is a real cell of the sub-list and uses
+ * its own id, so an edit there is an edit to the tree with no translation; an **optional** row and the
+ * **add** row are readings of the table and get a synthetic id of their own.
+ *
+ * They must not borrow a cell of the tree, which is what the add row used to do: the id keys [TaskRow]'s
+ * per-row state and is compared against the tree's live edit session, so a borrowed one made the table's
+ * placeholder answer for a cell the user might be renaming somewhere else.
+ */
+internal fun priorityWeightRowId(listId: CellListId, row: PriorityWeightTableRow): CellId =
+    row.cellId ?: CellId("priority-weight/${listId.value}/${row.taskId?.value ?: "add"}")
 
 internal fun priorityWeightTableRows(
     state: SchedulerState,
@@ -1436,12 +1470,16 @@ internal fun priorityWeightTableRows(
         .sortedWith(compareBy<PriorityWeightTableRow> { it.title.lowercase() }.thenBy { it.taskId?.value ?: "" })
 
     val rows = currentMembers + optional
-    val emptyCell = list.cellIds.firstOrNull { state.cells[it]?.taskId == null }
-    return if (parentTaskId != null && rows.any { it.taskId != null } && emptyCell != null) {
-        rows + PriorityWeightTableRow(cellId = emptyCell, isOptional = true)
-    } else {
-        rows
-    }
+    // PRD §5: the trailing **add** row, offered whenever this list has a parent task to measure a share of.
+    //
+    // It used to be a real EMPTY CELL of the sub-list, borrowed from the tree — and so it was missing
+    // wherever the list had none. It usually has one (PRD §4's auto-expansion keeps a placeholder at the
+    // bottom), but a placeholder is a cell whose task has a BLANK TITLE as readily as one with no task at
+    // all — that is what §4's deletion leaves behind — and the borrow only recognised the second. On the
+    // release account's root list every one of the 14 cells carried a task, the last one a deleted
+    // (blank-titled) task, so the root table offered no way to add a row at all. The table's own
+    // placeholder is not the tree's: it names no cell, and nothing about the tree can take it away.
+    return if (parentTaskId != null) rows + PriorityWeightTableRow(isOptional = true, isAddRow = true) else rows
 }
 
 internal fun priorityWeightTableValue(
@@ -1504,8 +1542,29 @@ internal fun PriorityWeightWindow(
     val taskHues = rememberTaskHues(state, TaskHueMemo.account)
     val taskColors = remember(taskHues) { TaskPalette.sheetColors(taskHues) }
     val optionalTaskIds = list.optionalTaskIds
-    var emptyRowEditing by remember(listId) { mutableStateOf(false) }
-    var emptyRowDraft by remember(listId) { mutableStateOf("") }
+    // PRD §5: which row of this table is in Edit Mode, the task that row names, and what is typed in it.
+    // Compose-only state, like the window's pins and the calendar's zoom: an optional row is a reading of
+    // the tree, so editing one is not a fact about the account until the pick is made. The tree's own
+    // `state.editSession` is deliberately NOT read here — it belongs to the tree behind this pop-up.
+    //
+    // The task is held here rather than looked back up when the editor closes, because a row's gesture
+    // handler lives in a `pointerInput` keyed on the row and so captures the table it was composed with:
+    // anything the close reads must be state, or it answers about a table one edit old.
+    var editingRowId by remember(listId) { mutableStateOf<CellId?>(null) }
+    var editingRowTask by remember(listId) { mutableStateOf<TaskId?>(null) }
+    var editingRowDraft by remember(listId) { mutableStateOf("") }
+    // PRD §3: a press selects the row, exactly as it does in the tree. One row at a time — this table has
+    // no move, no copy and no keyboard walk for a range to be of any use to — and Compose-only, like the
+    // pins beside it: which row the user last pressed is a way of looking at the table, never a fact about
+    // the account.
+    var selectedRowId by remember(listId) { mutableStateOf<CellId?>(null) }
+    // PRD §4: the tree's "type a letter on the selected cell and it starts renaming" applies to these rows
+    // too, so this window has to OWN the keyboard while it is open — a sort-2 pop-up is not modal, but it
+    // is what the user is working in (TaskTreeView reads the same fact off the pop-up host and goes deaf).
+    // Focus is taken when it opens, taken back on every press on a row, and handed to the row's own field
+    // while one is being edited.
+    val keyboardFocus = remember(listId) { FocusRequester() }
+    LaunchedEffect(listId) { keyboardFocus.requestFocus() }
     val tableRows = priorityWeightTableRows(state, listId, optionalTaskIds)
     var offset by remember(listId) { mutableStateOf(Offset.Zero) }
     var draggedColumn by remember(listId) { mutableStateOf<Int?>(null) }
@@ -1528,7 +1587,33 @@ internal fun PriorityWeightWindow(
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
             .transientPopupCard(onDismiss)
             .widthIn(max = 760.dp)
-            .heightIn(max = 600.dp),
+            .heightIn(max = 600.dp)
+            .focusRequester(keyboardFocus)
+            .focusable()
+            // PRD §4, the tree's own rule: a printable character typed on the selected row opens its Edit
+            // Mode seeded with that character. Only the rows this table owns can be typed into — a member
+            // row is a cell of the TREE, drawn here and edited there.
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (event.isCtrlPressed || event.isMetaPressed || event.isAltPressed) {
+                    return@onPreviewKeyEvent false
+                }
+                // A row already in Edit Mode owns its own field; the weight inputs own theirs.
+                if (editingRowId != null) return@onPreviewKeyEvent false
+                val selected = selectedRowId ?: return@onPreviewKeyEvent false
+                val row =
+                    tableRows.firstOrNull { priorityWeightRowId(listId, it) == selected }
+                        ?: return@onPreviewKeyEvent false
+                if (!row.isOptional) return@onPreviewKeyEvent false
+                // A dead key (^, ¨, ~ …) carries no character of its own, so Edit Mode opens empty and the
+                // composed letter lands in the field — the tree's reasoning, verbatim.
+                val typed =
+                    if (event.isDeadKey()) "" else event.printableChar() ?: return@onPreviewKeyEvent false
+                editingRowDraft = typed
+                editingRowTask = row.taskId
+                editingRowId = selected
+                true
+            },
     ) {
         Column {
             Row(
@@ -1586,16 +1671,56 @@ internal fun PriorityWeightWindow(
                             onDeleteColumn = { c -> onIntent(SchedulerIntent.DeletePriorityColumn(listId, c)) },
                             onMoveColumn = { f, t -> onIntent(SchedulerIntent.MovePriorityColumn(listId, f, t)) },
                         )
+                        // PRD §4: emptying a row's title is what deletes it, here as in the tree — so an
+                        // optional row left blank is removed as the editor closes. The add row has nothing
+                        // to remove, and a draft that names no task is simply dropped: a weight-table row
+                        // states an EXISTING task's share, so it is only ever committed by picking one out
+                        // of the identity menu.
+                        val closeRowEditor = closeRowEditor@{
+                            val editedTask = editingRowTask
+                            val draft = editingRowDraft
+                            editingRowId = null
+                            editingRowTask = null
+                            editingRowDraft = ""
+                            keyboardFocus.requestFocus()
+                            if (editedTask == null || draft.isNotBlank()) return@closeRowEditor
+                            onIntent(SchedulerIntent.SetPriorityWeightTableRow(listId, replacing = editedTask))
+                        }
                         tableRows.forEach { row ->
-                            key(row.taskId ?: row.cellId ?: "empty") {
+                            val rowId = priorityWeightRowId(listId, row)
+                            key(rowId.value) {
                             val cellId = row.cellId
                             val cell = cellId?.let { state.cells[it] }
                             val taskId = row.taskId ?: cell?.taskId
-                            val isEditing = state.editSession?.cellId == cellId ||
-                                (row.isOptional && taskId == null && emptyRowEditing)
+                            // The two rows this table owns — an optional row and the add row — are the ones
+                            // it can edit. A member row is a cell of the TREE and is only drawn here.
+                            val editable = row.isOptional
+                            val isEditing = editable && editingRowId == rowId
                             val title = taskId?.let { state.tasks[it]?.title }.orEmpty()
-                            val displayedTitle =
-                                if (row.isOptional && taskId == null && emptyRowEditing) emptyRowDraft else title
+                            val displayedTitle = if (isEditing) editingRowDraft else title
+                            // What the draft names right now — the row's identity menu, measured once for
+                            // the menu AND for the colour below. It is the tree's own Change Task rule
+                            // (`selectedAssignTaskId` = the first eligible task the text matches), which is
+                            // what makes a row answer while it is being typed into.
+                            val eligibleTaskIds =
+                                if (isEditing) {
+                                    remember(state.cells, state.lists, state.tasks, editingRowDraft, taskId) {
+                                        SchedulerDomain.eligibleWeightTableTaskIds(
+                                            state,
+                                            listId,
+                                            editingRowDraft,
+                                            replacing = taskId,
+                                        )
+                                    }
+                                } else {
+                                    emptyList()
+                                }
+                            // PRD §4: in the tree every keystroke commits the title, so the cell takes its
+                            // task's colour as it is typed. A weight-table row cannot do that — it names an
+                            // EXISTING task and creates none — so it shows the colour of the task the draft
+                            // currently resolves to, and none while it resolves to nothing. Same question,
+                            // same instant, the only answer this row can give.
+                            val colorTaskId = if (isEditing) eligibleTaskIds.firstOrNull() else taskId
                             val path =
                                 if (row.isOptional && taskId != null) {
                                     RelativePriorityDomain.optionalTaskPath(state, listId, taskId)
@@ -1605,14 +1730,18 @@ internal fun PriorityWeightWindow(
                             val representative = path.lastOrNull()?.let { state.cells[it] }
                             TaskRow(
                                 depth = 0,
-                                cellId = cellId ?: CellId("priority-weight-$listId-${row.taskId?.value ?: "empty"}"),
+                                cellId = rowId,
                                 renderVia = null,
                                 displayTitle = displayedTitle,
-                                isMainSelection = false,
+                                isMainSelection = selectedRowId == rowId,
                                 isInSelectionRange = false,
-                                // Optional rows with a task id are virtual readouts; the optional row without
-                                // one is the real trailing placeholder and must remain editable.
-                                selectable = cellId != null && (taskId == null || !row.isOptional),
+                                // Every row of the table is a live row, so every row is selectable. It is
+                                // what installs the row's gestures AND the one background that wins over
+                                // the task colour (ADR 0013), so the optional rows this was false on were
+                                // both inert and the only rows that could not be told apart by their
+                                // colour. The selection it feeds is the table's own, one row at a time —
+                                // never the tree's.
+                                selectable = true,
                                 isEditing = isEditing,
                                 hasChildren = false,
                                 expanded = false,
@@ -1622,7 +1751,7 @@ internal fun PriorityWeightWindow(
                                 isBeingMoved = false,
                                 priorityLabel = null,
                                 priorityColumnWidth = WEIGHT_WINDOW_TITLE_WIDTH,
-                                taskColor = taskId?.let { taskColors[it] },
+                                taskColor = colorTaskId?.let { taskColors[it] },
                                 searchRanges = emptyList(),
                                 currentSearchRange = null,
                                 textOverflow = false,
@@ -1633,11 +1762,17 @@ internal fun PriorityWeightWindow(
                                 onOpenRelativePriority = {},
                                 onSetMinTime = {},
                                 onActivateMinTime = {},
-                                onClick = { clicked, _, _, _ ->
-                                    if (row.isOptional && taskId == null) {
-                                        emptyRowDraft = ""
-                                        emptyRowEditing = true
-                                    }
+                                onClick = { _, _, _, _ ->
+                                    // PRD §3/§4, the tree's rule verbatim: a press SELECTS the row and only
+                                    // a double-click on the title opens Edit Mode — the add row included,
+                                    // which is the tree's empty placeholder by another name. A press on a
+                                    // row that is not the one being edited also closes that editor (§4
+                                    // Forced Exit), as clicking another cell of the tree ends its session.
+                                    if (editingRowId != rowId) closeRowEditor()
+                                    selectedRowId = rowId
+                                    // The press may have come from a weight field of another row, which
+                                    // still held the keyboard; the selected row is what typing acts on.
+                                    if (editingRowId == null) keyboardFocus.requestFocus()
                                 },
                                 onDragSelect = { _, _ -> },
                                 moveDragActive = false,
@@ -1647,33 +1782,40 @@ internal fun PriorityWeightWindow(
                                 onMoveDropHover = { _, _, _ -> },
                                 onMoveDragEnd = {},
                                 onDoubleClick = {
-                                    if (row.isOptional && taskId == null) {
-                                        emptyRowDraft = ""
-                                        emptyRowEditing = true
+                                    if (editable && editingRowId != rowId) {
+                                        closeRowEditor()
+                                        editingRowDraft = title
+                                        // Null on the add row, which has no row to replace. A row's id is
+                                        // derived from the task it names, so this cannot go stale.
+                                        editingRowTask = taskId
+                                        editingRowId = rowId
                                     }
                                 },
-                                onTextChange = { draft ->
-                                    if (row.isOptional && taskId == null && cellId != null) {
-                                        emptyRowDraft = draft
-                                    }
-                                },
-                                onExitEdit = {
-                                    emptyRowEditing = false
-                                    emptyRowDraft = ""
-                                },
+                                onTextChange = { draft -> if (isEditing) editingRowDraft = draft },
+                                onExitEdit = { if (isEditing) closeRowEditor() },
                                 onToggleExpand = {},
                                 editMenus =
-                                    if (row.isOptional && taskId == null && cellId != null && emptyRowEditing) {
+                                    if (isEditing) {
                                         {
                                             OptionalTaskEditMenus(
                                                 state = state,
-                                                cellId = cellId,
-                                                draftText = emptyRowDraft,
-                                                onDraftChange = { emptyRowDraft = it },
-                                                onPickTask = {
-                                                    onIntent(SchedulerIntent.AddPriorityWeightTableTask(listId, it))
-                                                    emptyRowEditing = false
-                                                    emptyRowDraft = ""
+                                                eligibleTaskIds = eligibleTaskIds,
+                                                draftText = editingRowDraft,
+                                                onDraftChange = { editingRowDraft = it },
+                                                // Picking a task IS the commit — adding a row on the add
+                                                // row, re-pointing this one anywhere else. One intent, so
+                                                // either is one history unit.
+                                                onPickTask = { picked ->
+                                                    onIntent(
+                                                        SchedulerIntent.SetPriorityWeightTableRow(
+                                                            listId = listId,
+                                                            replacing = taskId,
+                                                            taskId = picked,
+                                                        ),
+                                                    )
+                                                    editingRowId = null
+                                                    editingRowTask = null
+                                                    editingRowDraft = ""
                                                 },
                                             )
                                         }
