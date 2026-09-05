@@ -19,12 +19,48 @@ is simply big), distinct from persisted-DB FORMAT compatibility (ADR 0007).
 
 ### The mitigations
 
-- The observed now-line is quantized under sim (`DISPLAY_NOW_QUANTUM_MILLIS`, read through a `derivedStateOf`) to
-  cap recompute frequency.
+- The display is not recomputed on a clock tick at all any more — it is recomputed at the boundaries the set
+  of rules names (`SchedulerDomain.displayResampleDelayMillis`); see the two sections below.
 - The deeper structural fix is to memoize the fixed-PAST portion with `remember(<real inputs>)` and recompute only
   the live tail.
 
 See the `timesim-large-account-ui-overload` note.
+
+## A continuously moving now-line is a LAYOUT cost, not a tick cost (2026-09-05)
+
+**Symptom.** Zoomed far in, the now-line advanced in visible jerks instead of gliding. The question behind the
+report was the right one: *is a continuously moving line simply expensive?*
+
+**Cause — one value doing two jobs.** `App.kt` sampled `nowMillis` on the Compose frame clock
+(`withFrameNanos`, 2026-09-01) so that the line would follow the clock. But `nowMillis` is what the whole of
+`App`'s body derives from — the sleep and screen-break projections, the derived grey bands, the layer regions,
+the reminder horizon, $t_{goal}$, the cull windows — so every frame re-ran that entire O(visible window) pass,
+sixty times a second, to move one line. And it still did not move smoothly: the placement read
+`LocalTime.hourOfDay`, which floors at the second, so at the zoom ceiling (6144 dp per hour) the line jumped
+~1.7 dp once a second.
+
+**Decision — split the two.**
+
+- **Derived from the clock ⇒ quantized** (250 ms at first; superseded the same day by the boundary rule
+  below, which is the real answer).
+- **The line ⇒ sampled per frame, read in the LAYOUT phase.** `CalendarUi.rememberNowLineHour` samples the
+  exact clock on `withFrameNanos` into a state read only from `Modifier.offset { … }`, and the placement uses
+  `hourOfDayExact` (a `Double`; a `Float` around 24 quantizes at ~10 ms all by itself). Re-placing a node
+  recomposes nothing and re-measures nothing.
+- **The sampler runs only while the line is on screen.** It is gated on the same cull window everything else
+  in the column is (`nowLineOnScreen`), so a column that is not today's, a grid scrolled to another week, and
+  a closed calendar ask for no frames at all — which is the honest answer to the energy question: the frame a
+  moving line costs is unavoidable, the recomposition behind it and the frames when nothing is moving are not.
+
+The overdue reminder tags stack on the same state, because CLAUDE.md's rule is that the stack's anchor and the
+line read one instant. What each of the two halves decides is worth stating: the quantized instant decides what
+**exists** (is there a line on this column, is it in view, which tags are overdue); the frame-sampled one
+decides only **where** those go.
+
+**This changes nothing in the engine.** `docs/scheduler_requirements.md`'s *"the $now line$ moves continuously
+forward in time"* is a statement about the scheduler's now-line, and that one is already walked and never
+teleported (`SchedulerEngine.sweepNowLineTo`, one `SchedulerDomain.sweepStepMillis` at a time, pinned by
+`NowLineSweepTest`). What was fixed here is only how the calendar DRAWS it.
 
 ## The calendar culls to the viewport (2026-08-21)
 
@@ -199,3 +235,52 @@ elsewhere", and without the second the jump would be pulled straight back on the
 Purely local Compose state like the zoom: never persisted, never synced.
 
 Tests: `RollingCalendarTest`.
+
+## The display is a PIECEWISE function of the now-line, so it is not polled at all (2026-09-05)
+
+The quantization above answered *how often can we afford to recompute?* That is the wrong question, and the
+user's follow-up said why: **nothing in the past is affected by the now-line moving** (the past is frozen — a
+20 s break is removed by pressing "look away now", a period is changed by hand; both are EVENTS), and the
+future panels *"simply follow the instructions of the set of rules given by the scheduler, telling what
+happens between periods of time"*. `docs/scheduler_requirements.md` says exactly that: the scheduler returns a
+**set of rules**. Between two of its boundaries there is nothing to recompute, at any rate.
+
+**Decision — the display's clock is the rule set's own boundaries.**
+
+`SchedulerDomain.displayResampleDelayMillis(bounds, now, tz, millisPerPixel)` is the whole rule, and `App`
+sleeps on its answer instead of ticking.
+
+- **The boundaries are the derived model's own bounds.** Every panel, band, marker and layer region the
+  calendar was just handed is built out of instants; the model therefore cannot change before the first of
+  them still ahead of the line. That is a sound over-approximation *by construction* — it can name a boundary
+  that turns out to change nothing, but it cannot miss one, because there is nothing in the model that is not
+  made of those instants. Plus the next local midnight, which is the one boundary no panel carries (the day
+  rollover, and the $t_{goal}$ staircase that steps with it).
+- **A bound sitting ON the line is a PIN, not a boundary.** This is the load-bearing distinction, not
+  bookkeeping: mode 1 pushes an owed pose onto the line as the half-open `(t_p, t_p + d]`, so its start is
+  literally `t_p + 1`, and a taken break is drawn to `t_p − 1`. Counted as boundaries they answer "one
+  millisecond" and the sleep becomes a busy loop measuring a picture that has not moved.
+  `NOW_LINE_ANCHOR_SLACK` is two milliseconds — those two cases and nothing else.
+- **A pin is re-derived at the display's own RESOLUTION.** What is pinned follows the line affinely — the
+  dragged pose slides at rate 1, the panel behind it grows at rate 1 — so the only reason to redraw it is that
+  it has moved far enough to see. The calendar reports how long the line takes to cross one pixel at the zoom
+  in force (`onNowLineResolutionChanged`; the zoom is Compose-only state that lives there): ~75 s at the
+  default zoom, ~0.6 s at the ceiling. This is the same principle as `visibleHourWindow`'s quantization one
+  section up — *the temporal resolution follows the spatial one* — and it is what makes the answer to "must a
+  dragged panel cost four recomputations a second?" a flat no: at the zoom the user normally sits at, it costs
+  one every thirty seconds, because that is the fastest the screen could show a difference.
+- **The floor and ceiling only bound the answer** (250 ms, 50 ms under acceleration; 30 s). The ceiling is
+  deliberately the engine's own production cadence: a boundary this rule gets wrong costs a late redraw and
+  never a wrong answer, and nothing here can go staler than it did when the engine's tick drove the display.
+- **The sampler's effect is keyed on its own tick, never on the delay.** `App` recomposes for plenty of
+  reasons unrelated to the clock (a peer's sync landing, an edit); a key that moved with the answer would
+  restart the sleep each time, and a busy enough app would never reach the end of one — the now-line would
+  simply stop. The delay is read through `rememberUpdatedState` so each iteration still sleeps on the freshest
+  answer.
+
+**What this does not do.** The pin is re-*derived* at one pixel of resolution, not placed continuously: a
+dragged pose's top edge and the growing panel behind it are composition-phase geometry, unlike the now-line
+itself. Making them layout-phase too would mean giving the block pipeline (`overlapLayout`, the slices, the
+hover tiling, the drag/resize gesture) a layout-phase notion of a block's bounds, which is a much larger
+change for a lag that is one pixel by construction. The now-line, which is the thing the eye tracks, is
+already exact.

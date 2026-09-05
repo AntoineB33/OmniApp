@@ -11,6 +11,66 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The display is a piecewise function of the now-line, so it is no longer polled — 2026-09-05
+
+`shared` (`App.kt`, `ui/CalendarUi.kt`, `domain/SchedulerDomain.kt`) + `DisplayResampleBoundaryTest`,
+`CLAUDE.md`, ADR 0009.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy and no DB migration.**
+
+Follow-up to the entry below, and it replaces the fixed 250 ms sample it introduced. The observation that
+prompted it: **nothing in the past is affected by the now-line moving** — a 20 s break is removed by pressing
+"look away now", a period is changed by hand, and both are EVENTS — and the future panels simply follow the
+set of rules the scheduler returned, which says what happens between t1 and t2. So a display that recomputes
+on a timer is answering the wrong question; the trigger should be t1.
+
+`SchedulerDomain.displayResampleDelayMillis` is that rule, and `App` sleeps on its answer. The boundaries are
+the derived model's **own bounds** — every panel, band, marker and layer region is built out of instants, so
+the model cannot change before the first one still ahead of the line (sound by construction; it can name a
+boundary that changes nothing, it cannot miss one) — plus the next local midnight, the one boundary no panel
+carries. A bound sitting **on** the line is a **pin**, not a boundary (`NOW_LINE_ANCHOR_SLACK`, 2 ms: a
+dragged pose starts at `t_p + 1`, a taken break is drawn to `t_p − 1`); counted as a boundary it answers "one
+millisecond" and the sleep becomes a busy loop. A pin follows the line **affinely**, so it is re-derived at
+the display's own **resolution**: the calendar reports how long the line takes to cross one pixel at the zoom
+in force (`onNowLineResolutionChanged`) — ~75 s at the default zoom, ~0.6 s at the ceiling — the same
+principle as `visibleHourWindow`'s quantization, the temporal resolution following the spatial one. A floor
+(250 ms; 50 ms accelerated) and a ceiling (30 s, the engine's own production cadence) bound the answer, so a
+boundary this gets wrong costs a late redraw and never a wrong answer.
+
+Net: an idle calendar with a break owed and dragging used to recompute 4×/s, and 60×/s before that. It now
+recomputes twice a minute at the default zoom, and at the zoom ceiling only as often as one pixel of movement.
+The now-line itself is unaffected — it is placed in the layout phase off its own frame sampler, so it glides
+however seldom the model behind it is re-derived.
+
+### The now-line moved in one-second steps, and cost a full recompose per frame — 2026-09-05
+
+`shared` (`ui/CalendarUi.kt`, `App.kt`) + `NowLineSecondsTest`, `CLAUDE.md`, ADR 0009.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy and no DB migration.**
+
+Reported: zoomed far enough in, the now-line advances in visible steps rather than gliding — with the
+question behind it, *does a continuously moving line have to be expensive?*
+
+One value was doing two jobs. `App.kt` sampled `nowMillis` on the Compose frame clock (`withFrameNanos`,
+2026-09-01) so the line would follow the clock, but `nowMillis` is what the whole of `App`'s body derives
+from — the sleep and screen-break projections, the derived grey bands, the layer regions, the reminder
+horizon, $t_{goal}$, the cull windows — so every frame re-ran that entire O(visible window) pass, sixty times
+a second, to move one line. And the line still stepped: its placement read `LocalTime.hourOfDay`, which
+floors at the second, so at the zoom ceiling (6144 dp per hour) it jumped ~1.7 dp once a second.
+
+The two are split. **Derived from the clock ⇒ quantized**: `DISPLAY_NOW_STEP_MILLIS`, 250 ms while a calendar
+is open (~0.4 dp of lag at the zoom ceiling, ~0.003 dp at the default zoom), the engine's own 30 s cadence
+when none is, 50 ms under acceleration. **The line ⇒ per frame, in the LAYOUT phase**:
+`CalendarUi.rememberNowLineHour` samples the exact clock into a state read only from `Modifier.offset { … }`,
+placed with the new `hourOfDayExact` (a `Double` — a `Float` around 24 quantizes at ~10 ms by itself), so
+re-placing it recomposes nothing and re-measures nothing. The sampler is gated on the same cull window the
+rest of the column uses, so a column that is not today's, a grid scrolled to another week and a closed
+calendar ask for no frames at all. The overdue reminder tags ride the same state — CLAUDE.md's rule is that
+the stack's anchor and the line read one instant.
+
+**The engine was already right and is untouched.** `docs/scheduler_requirements.md`'s *"the $now line$ moves
+continuously forward in time"* is about the scheduler's now-line, which is walked one
+`SchedulerDomain.sweepStepMillis` at a time by `SchedulerEngine.sweepNowLineTo` — the only route to
+`advanceTo` — and pinned by `NowLineSweepTest`. What changed here is only how the calendar draws it.
+
 ### The lock-history query deadlocked once its answer passed 4 KB — 2026-09-05
 
 `shared` (`jvmMain/scheduler/platform/WindowsPowerLog.kt`) + `WindowsPowerLogTest`, `CLAUDE.md`.

@@ -11,6 +11,7 @@ import kotlinx.datetime.toInstant
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.hourOfDay
+import org.example.project.ui.hourOfDayExact
 import org.example.project.ui.recordsForDay
 
 /**
@@ -37,6 +38,36 @@ class NowLineSecondsTest {
         assertEquals(16f + 41f / 60f + 47f / 3600f, LocalTime(16, 41, 47).hourOfDay(), 1e-6f)
         // Half a minute apart must not place at the same point — that collapse is the whole bug.
         assertTrue(LocalTime(16, 41, 0).hourOfDay() < LocalTime(16, 41, 30).hourOfDay())
+    }
+
+    @Test
+    fun the_now_line_itself_is_placed_below_the_second() {
+        // `docs/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in
+        // time"*. [hourOfDay] answers to the second, which is all anything DERIVED from the clock needs — it
+        // is recomputed on the app's quantized display instant. The LINE is not one of those: it is one
+        // number, placed on every frame, so it reads [hourOfDayExact] and the second is no longer its floor.
+        //
+        // The reported anomaly: at the zoom ceiling (128x, so 6144 dp per hour) one second is ~1.7 dp, and a
+        // line placed to the second advances in 1.7 dp jerks once a second instead of gliding.
+        val onTheSecond = LocalTime(16, 41, 47)
+        val quarterLater = LocalTime(16, 41, 47, 250_000_000)
+        // The tolerance is the FLOAT's own: [hourOfDay] is a `Float` around 24, whose steps are ~3e-6 h
+        // (~10 ms). That is exactly why the line's own reading is a `Double` — at the zoom ceiling the
+        // coarse type alone would quantize it, before the second does.
+        assertEquals(onTheSecond.hourOfDay().toDouble(), onTheSecond.hourOfDayExact(), 1e-5)
+        assertTrue(
+            quarterLater.hourOfDayExact() > onTheSecond.hourOfDayExact(),
+            "a quarter of a second must not place at the same point as the second it is inside",
+        )
+        // ...and it is the RIGHT quarter second: a quarter of 1/3600 of an hour.
+        assertEquals(
+            0.25 / 3600.0,
+            quarterLater.hourOfDayExact() - onTheSecond.hourOfDayExact(),
+            1e-12,
+        )
+        // The whole second is still exactly where [hourOfDay] puts it, so the line and everything placed
+        // beside it agree at every instant the coarse reading can name.
+        assertEquals(LocalTime(23, 59, 59).hourOfDay().toDouble(), LocalTime(23, 59, 59).hourOfDayExact(), 1e-5)
     }
 
     @Test

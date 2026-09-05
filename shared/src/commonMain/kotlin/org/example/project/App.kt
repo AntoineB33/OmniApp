@@ -148,6 +148,38 @@ private enum class FloatingWindow {
 // those loops within a display frame, so this is a comfortable margin, not a tight race.
 private const val SIM_PAUSE_LEAP_SETTLE_MILLIS: Long = 350
 
+// The DISPLAY now-line is not resampled on a timer: it is resampled when the SET OF RULES says the picture
+// changes ([SchedulerDomain.displayResampleDelayMillis]) — the next boundary any derived panel names, or, for
+// the one thing that follows the line affinely (a pose the line drags, the panel growing behind it, a live
+// band ending at it), the moment it would have moved by one pixel. Between those the app sleeps: nothing in
+// the past is a function of the line, and nothing in the future is either until a boundary is crossed.
+//
+// These two only bound that answer. The FLOOR keeps a boundary one millisecond away (a dragged pose starts at
+// `t_p + 1`) from becoming a busy loop, and is finer under acceleration because the sim clock covers a
+// boundary's worth of ground in a fraction of the real time. The CEILING is the safety net: it is the engine's
+// own production cadence, so however wrong the boundary set turns out to be, no derivation here can go staler
+// than it did when this was driven by the engine's tick — and one that is wrong costs a late redraw, never a
+// wrong answer.
+private const val DISPLAY_RESAMPLE_FLOOR_MILLIS: Long = 250
+private const val DISPLAY_RESAMPLE_FLOOR_ACCEL_MILLIS: Long = 50
+private const val DISPLAY_RESAMPLE_CEILING_MILLIS: Long = 30_000
+
+// What the calendar's temporal resolution falls back to with no calendar open to report one: a whole minute
+// per pixel, i.e. coarser than the ceiling, so nothing on screen is pinned to the line and the boundary alone
+// governs.
+private const val DEFAULT_NOW_LINE_MILLIS_PER_PIXEL: Long = 60_000
+
+/**
+ * The REAL milliseconds to sleep before the display is re-derived, from the answer
+ * [SchedulerDomain.displayResampleDelayMillis] gave in the (possibly accelerated) clock's own time base.
+ */
+private fun displaySleepMillis(clock: AppClock, simDelayMillis: Long): Long {
+    val speed = (clock as? SimAppClock)?.speed ?: 1.0
+    val floor = if (speed != 1.0) DISPLAY_RESAMPLE_FLOOR_ACCEL_MILLIS else DISPLAY_RESAMPLE_FLOOR_MILLIS
+    val real = if (speed > 0.0) (simDelayMillis / speed).toLong() else DISPLAY_RESAMPLE_CEILING_MILLIS
+    return real.coerceIn(floor, DISPLAY_RESAMPLE_CEILING_MILLIS)
+}
+
 @Composable
 @Preview
 fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedulerHost? = null) {
@@ -303,15 +335,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 onForegrounded = { engine.onAppForegrounded() },
             )
         }
-        // The visual now-line is sampled on Compose's frame clock. A fixed timer can either stutter between
-        // frames or wake the UI when no frame is due; the frame clock gives each rendered frame the exact clock
-        // instant, while the engine continues to use its own cadence for scheduling side effects.
+        // The instant the DISPLAY is derived at. Everything below that is a function of the clock — the sleep
+        // and screen-break projections, the derived grey bands, the layer regions, the reminder horizon,
+        // $t_goal$ — reads THIS value and is re-derived on every new one, so how often it moves is how often
+        // this composable does an O(visible window) pass (ADR 0009).
+        //
+        // It does not move on a timer. It moves when the set of rules says the picture changes — see the
+        // sampler at the bottom of this body, which is where the next value comes from and why.
+        //
+        // The now-LINE is not one of these derivations: it is one number. The calendar samples the exact clock
+        // on its own frame clock and places the line in the LAYOUT phase (`rememberNowLineHour`), so it glides
+        // continuously however seldom this is re-derived.
         var nowMillis by remember(clock) { mutableLongStateOf(clock.nowMillis()) }
-        LaunchedEffect(clock) {
-            while (true) {
-                withFrameNanos { nowMillis = clock.nowMillis() }
-            }
-        }
         // PRD §15 device-sleep gaps: past pauses drawn as greyed "Inactivity" bands (display-only; see the engine).
         val inactivityGaps by engine.inactivityGaps.collectAsState()
         // PRD §15/§17: start of this device's open active session (null while inactive) — carves the "Sleep" band
@@ -354,6 +389,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // stay in sync. "today" follows the (possibly simulated) clock so day rollovers are testable.
         val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz).date
         var calendarOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Calendar)) }
+        // Bumped by the sampler at the bottom of this body, purely so its own effect restarts: the clock can
+        // legitimately hand back the same instant (a paused sim clock), and a key that did not move would
+        // leave the loop with nothing to wake it.
+        var displayResampleTick by remember(clock) { mutableIntStateOf(0) }
+        // How many milliseconds the now-line takes to cross ONE PIXEL at the calendar's current zoom — the
+        // display's own temporal resolution, reported up by the grid because the zoom is Compose-only state
+        // that lives there. It is what bounds the resample rate for whatever is pinned to the line: at the
+        // default zoom the line crosses a pixel every ~75 s, at the ceiling every ~0.6 s, and redrawing more
+        // often than that redraws the picture already on screen.
+        var nowLineMillisPerPixel by remember { mutableLongStateOf(DEFAULT_NOW_LINE_MILLIS_PER_PIXEL) }
         // Every sort-2 pop-up in the app registers here: the host keeps at most one of them open and
         // dismisses it as soon as a press lands anywhere else (see TransientPopupHost).
         val transientPopups = remember { TransientPopupHost() }
@@ -1120,6 +1165,44 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     timer = true,
                 )
             }
+        // ---- The display's own clock ------------------------------------------------------------------
+        //
+        // `docs/scheduler_requirements.md`: the scheduler returns a SET OF RULES, and everything above is read
+        // out of it. So the display is a piecewise function of the now-line and there is nothing to poll:
+        // nothing in the past is a function of the line (the past is frozen — only an event changes it), and
+        // nothing in the future is either until the line crosses a boundary the rules themselves name. What
+        // does follow the line — a pose the line drags, the panel growing behind it, a live band ending at it
+        // — follows it AFFINELY, so it only has to be redrawn once it has moved far enough to see.
+        //
+        // The bounds of everything just derived ARE that set of boundaries: the model is built out of those
+        // instants, so it cannot change before the first one still ahead of the line. Hand them over and sleep
+        // until then (see [SchedulerDomain.displayResampleDelayMillis]; [displaySleepMillis] converts the
+        // answer out of the possibly-accelerated clock's time base and bounds it at both ends).
+        val displayBounds =
+            buildList(calendarRecords.size * 2) {
+                calendarRecords.forEach { add(it.range.startEpochMillis); add(it.range.endEpochMillis) }
+            }
+        val displayResampleDelay =
+            SchedulerDomain.displayResampleDelayMillis(
+                displayBounds, nowMillis, tz,
+                millisPerPixel =
+                    if (calendarOpen) nowLineMillisPerPixel else DEFAULT_NOW_LINE_MILLIS_PER_PIXEL,
+            )
+        // The sim clock's [SimAppClock.reconfigured] bump restarts the sleep at once when acceleration is
+        // turned on or off, so a speed change is never held up behind a sleep taken at the old speed.
+        val simReconfigured by simClock.reconfigured.collectAsState()
+        // Keyed on the TICK, never on the delay itself: this body recomposes for plenty of reasons that have
+        // nothing to do with the clock (a peer's sync landing, an edit), and a key that moved with the answer
+        // would restart the sleep each time — a busy enough app would then never reach the end of one and the
+        // now-line would simply stop. The delay is read through [rememberUpdatedState] instead, so each
+        // iteration still sleeps on the freshest answer.
+        val resampleDelay = rememberUpdatedState(displayResampleDelay)
+        LaunchedEffect(clock, displayResampleTick, simReconfigured) {
+            delay(displaySleepMillis(clock, resampleDelay.value))
+            nowMillis = clock.nowMillis()
+            displayResampleTick++
+        }
+
         // PRD §8: each task's own colour, so a task panel is drawn in the same colour as the task tree's
         // cell for that task. Both read the ACCOUNT's one [TaskHueMemo] — it holds the previous solution the
         // colour rule's ties are settled against, caches the answer per tree (so the two surfaces get the
@@ -1520,6 +1603,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             selectedDate = selectedDate,
                             today = today,
                             nowMillis = nowMillis,
+                            // The now-line's own instant: read afresh on every frame it is placed on, so it
+                            // glides however seldom [nowMillis] above is re-derived (see the display's own
+                            // clock, further up — it sleeps between the rule set's boundaries).
+                            nowExactMillis = { clock.nowMillis() },
                             onDismiss = { calendarOpen = false },
                             modifier = Modifier
                                 .align(Alignment.Center)
@@ -1634,6 +1721,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 visibleFirstDay = firstDay
                                 visibleDayCount = dayCount
                             },
+                            // ADR 0009: the grid's own temporal resolution, which is what bounds how
+                            // often anything pinned to the now-line is re-derived.
+                            onNowLineResolutionChanged = { nowLineMillisPerPixel = it },
                             jumpNonce = calendarJumpNonce,
                         )
 

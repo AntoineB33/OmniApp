@@ -2107,6 +2107,77 @@ object SchedulerDomain {
         planTasksOf(state, nowMillis).asSequence().map { it.minimumMillis }.filter { it > 0L }.minOrNull()
 
     /**
+     * How long the DISPLAY may wait before it is re-derived — **the boundary the set of rules names, or the
+     * instant the picture would move by one pixel, whichever comes first.**
+     *
+     * `docs/scheduler_requirements.md` says the scheduler returns *a set of rules*, and everything the
+     * calendar draws is read out of that set. So the display is a **piecewise** function of the now-line, and
+     * neither piece is a reason to recompute on a timer:
+     *
+     *  • **Nothing in the past is a function of the line.** The past is frozen; a break the app conducted,
+     *    a period the user drew and a banked record are facts, and only an EVENT (a "look away now", an edit)
+     *    changes one.
+     *  • **Nothing in the future is either, between two boundaries.** A panel says what happens from t1 to
+     *    t2; the line crossing t1 is what changes the picture, and t1 is a number the rules already gave us.
+     *  • **What does follow the line follows it AFFINELY** — a pose the line drags in mode 1 sits at
+     *    `(t_p, t_p + d]`, the panel behind it grows at the line, a live band ends at it — so the only reason
+     *    to redraw it is that it has moved far enough to see.
+     *
+     * Hence the two terms. [bounds] is every instant the derived model is built out of, and the smallest one
+     * still ahead of the line is the next boundary: the model cannot change before it (plus the next local
+     * midnight, which is the one boundary no panel carries — the day rollover and the $t_{goal}$ staircase).
+     * [millisPerPixel] is how long the line takes to cross one pixel at the zoom in force, and it applies only
+     * when something IS pinned to the line ([bounds] holding the line itself, within [NOW_LINE_ANCHOR_SLACK] —
+     * a dragged pose starts at `t_p + 1`): recomputing more often than that redraws a picture identical to the
+     * one on screen, and recomputing less often would show the pin lagging where the user could see it. With
+     * nothing pinned, the boundary alone governs and the app may sleep through hours of it.
+     *
+     * The answer is in the caller's own time base (sim millis under acceleration) and is at least 1; the
+     * caller clamps it to a real-time floor and to a ceiling that bounds any mistake this makes.
+     */
+    fun displayResampleDelayMillis(
+        bounds: List<Long>,
+        nowMillis: Long,
+        tz: TimeZone,
+        millisPerPixel: Long,
+    ): Long {
+        val nextMidnight =
+            Instant.fromEpochMilliseconds(nowMillis)
+                .toLocalDateTime(tz)
+                .date
+                .plus(DatePeriod(days = 1))
+                .atStartOfDayIn(tz)
+                .toEpochMilliseconds()
+        var next = nextMidnight
+        var pinned = false
+        for (bound in bounds) {
+            // A bound sitting ON the line is a PIN, never a boundary ahead of it — and the distinction is
+            // load-bearing, not bookkeeping: a dragged pose's own start is `t_p + 1`, so counting it as a
+            // boundary would answer "one millisecond" and turn the sleep into a busy loop measuring a band
+            // that has not moved.
+            if (bound >= nowMillis - NOW_LINE_ANCHOR_SLACK && bound <= nowMillis + NOW_LINE_ANCHOR_SLACK) {
+                pinned = true
+            } else if (bound > nowMillis && bound < next) {
+                next = bound
+            }
+        }
+        val toBoundary = next - nowMillis
+        val delay = if (pinned) minOf(toBoundary, millisPerPixel) else toBoundary
+        return maxOf(1L, delay)
+    }
+
+    /**
+     * How far either side of the now-line a derived bound still counts as sitting ON it — see
+     * [displayResampleDelayMillis].
+     *
+     * It is not slop: a period the line drags is the half-open `(t_p, t_p + d]`, so its start is literally
+     * `t_p + 1` ([DynamicPeriods.Instance.coveredFromMillis]), and a "taken" break is drawn to `t_p - 1`. Two
+     * milliseconds is those two cases and nothing else — a bound a whole frame away from the line is a
+     * boundary ahead of it, not a pin on it.
+     */
+    const val NOW_LINE_ANCHOR_SLACK: Long = 2
+
+    /**
      * Is any device of the account unlocked at [nowMillis]? — the input [tpMode] is a function of.
      *
      * It is read off the account-wide pause the calendar already draws ([displayInactivityGaps]): the derived

@@ -64,6 +64,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -524,6 +528,21 @@ data class PlacedDeviceSegment(
  * elapsed part of the panel the now-line sits in) read as being on the wrong side of the line.
  */
 internal fun LocalTime.hourOfDay(): Float = hour + minute / 60f + second / 3600f
+
+/**
+ * The same point, to the FULL resolution of the instant — the hour-of-day as a `Double`, sub-second remainder
+ * included.
+ *
+ * `docs/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in time"*. It
+ * is the **now-line's** own placement that reads this, and only it: [hourOfDay] answers to the second, which
+ * is what everything DERIVED from the clock is placed at (they are recomputed on the app's quantized display
+ * instant and could not be asked more often), but the line itself is one number and can be placed as finely
+ * as the clock can be read. At the zoom ceiling an hour is [MAX_CALENDAR_ZOOM] x 48 dp, so one second is
+ * ~1.7 dp: reading the line to the second there makes it advance in visible 1.7 dp jerks once a second, where
+ * this places it ~0.03 dp per frame — motion, not steps. See [rememberNowLineHour] for how it is read without
+ * recomposing anything.
+ */
+internal fun LocalTime.hourOfDayExact(): Double = toNanosecondOfDay() / 3_600_000_000_000.0
 
 /**
  * PRD §8: the portions of [records] that fall on [day] (in [tz]), each clipped to that day so a
@@ -2527,6 +2546,17 @@ fun CalendarFloatingWindow(
     selectedDate: LocalDate,
     today: LocalDate,
     nowMillis: Long,
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$*: **the exact clock**, read afresh on every frame the
+     * now-line is placed on.
+     *
+     * [nowMillis] is the app's QUANTIZED display instant: every band, panel and projection on this calendar is
+     * derived from it, so it may only move as often as those derivations can afford to be redone. The LINE is
+     * not one of those derivations — it is one number — so it is sampled on the frame clock and read back in
+     * the LAYOUT phase, which re-places it every frame while recomposing nothing (see [rememberNowLineHour]).
+     * Defaults to the quantized instant, which is what a caller with no clock to hand (a test, a preview) gets.
+     */
+    nowExactMillis: () -> Long = { nowMillis },
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     records: List<CalendarRecord> = emptyList(),
@@ -2602,6 +2632,18 @@ fun CalendarFloatingWindow(
      * schedule horizon and every display projection follow this instead.
      */
     onVisibleDaysChanged: (LocalDate, Int) -> Unit = { _, _ -> },
+    /**
+     * PRD §8 / ADR 0009: **how many milliseconds the now-line takes to cross ONE PIXEL** at the zoom in force
+     * — the display's own temporal resolution, reported up because the zoom is Compose-only state that lives
+     * in here.
+     *
+     * It is what bounds how often the app re-derives whatever is pinned to the line (a pose the line drags in
+     * mode 1, the panel growing behind it, a live band ending at it). Those follow the line affinely, so the
+     * only reason to redraw one is that it has moved far enough to see: ~75 s per pixel at the default zoom,
+     * ~0.6 s at the ceiling. Everything else waits for a boundary the rules named
+     * ([SchedulerDomain.displayResampleDelayMillis]).
+     */
+    onNowLineResolutionChanged: (Long) -> Unit = {},
     /**
      * PRD §7: bumped on every date pick in the lateral month calendar. The grid scrolls away from
      * [selectedDate] freely, so re-picking the day already selected must still jump back — this is what
@@ -2809,6 +2851,7 @@ fun CalendarFloatingWindow(
                     selectedDate = selectedDate,
                     today = today,
                     nowMillis = nowMillis,
+                    nowExactMillis = nowExactMillis,
                     records = records,
                     taskColors = taskColors,
                     zoomActions = zoomActions,
@@ -2827,6 +2870,7 @@ fun CalendarFloatingWindow(
                     overlapArmed = overlapArmed,
                     jumpNonce = jumpNonce,
                     onVisibleDaysChanged = onVisibleDaysChanged,
+                    onNowLineResolutionChanged = onNowLineResolutionChanged,
                     lockNowLine = lockNowLine,
                     onLockNowLineChange = { lockNowLine = it },
                 )
@@ -3104,6 +3148,17 @@ private fun WeekView(
     selectedDate: LocalDate,
     today: LocalDate,
     nowMillis: Long,
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$*: **the exact clock**, read afresh on every frame the
+     * now-line is placed on.
+     *
+     * [nowMillis] is the app's QUANTIZED display instant: every band, panel and projection on this calendar is
+     * derived from it, so it may only move as often as those derivations can afford to be redone. The LINE is
+     * not one of those derivations — it is one number — so it is sampled on the frame clock and read back in
+     * the LAYOUT phase, which re-places it every frame while recomposing nothing (see [rememberNowLineHour]).
+     * Defaults to the quantized instant, which is what a caller with no clock to hand (a test, a preview) gets.
+     */
+    nowExactMillis: () -> Long = { nowMillis },
     records: List<CalendarRecord>,
     /**
      * PRD §8: each task's own colour — its place in the one colour space the tree partitions
@@ -3127,6 +3182,18 @@ private fun WeekView(
     overlapArmed: Boolean,
     jumpNonce: Int,
     onVisibleDaysChanged: (LocalDate, Int) -> Unit,
+    /**
+     * PRD §8 / ADR 0009: **how many milliseconds the now-line takes to cross ONE PIXEL** at the zoom in force
+     * — the display's own temporal resolution, reported up because the zoom is Compose-only state that lives
+     * in here.
+     *
+     * It is what bounds how often the app re-derives whatever is pinned to the line (a pose the line drags in
+     * mode 1, the panel growing behind it, a live band ending at it). Those follow the line affinely, so the
+     * only reason to redraw one is that it has moved far enough to see: ~75 s per pixel at the default zoom,
+     * ~0.6 s at the ceiling. Everything else waits for a boundary the rules named
+     * ([SchedulerDomain.displayResampleDelayMillis]).
+     */
+    onNowLineResolutionChanged: (Long) -> Unit,
     /** PRD §8: hold the now-line at the middle of the viewport (see the lock block below). */
     lockNowLine: Boolean,
     /** Releases the lock: the user scrolled, or picked another date — either way, they looked elsewhere. */
@@ -3345,6 +3412,12 @@ private fun WeekView(
     // span the scroll has landed on is reported up rather than derived from a "focused week" that no
     // longer exists.
     LaunchedEffect(anchorDay, visibleDayCount) { onVisibleDaysChanged(anchorDay, visibleDayCount) }
+    // ADR 0009: the zoom is what decides how finely anything pinned to the now-line has to be re-derived,
+    // and it changes only when the user zooms — an event, never a tick. A whole hour is [hourHeight] tall, so
+    // one pixel of it is that many milliseconds.
+    val nowLineMillisPerPixel =
+        with(density) { (3_600_000.0 / hourHeight.toPx().toDouble()).toLong().coerceAtLeast(1L) }
+    LaunchedEffect(nowLineMillisPerPixel) { onNowLineResolutionChanged(nowLineMillisPerPixel) }
 
     // ADR 0009 hot path: place the records for the whole visible span ONCE, keyed by day, instead of having
     // each of the `DAY_COLUMNS x rowCount` columns scan every record in the account to find its own day's.
@@ -3628,6 +3701,7 @@ private fun WeekView(
                                     isToday = day == today,
                                     hourHeight = hourHeight,
                                     now = if (day == today) now else null,
+                                    nowExactMillis = nowExactMillis,
                                     records = recordsPerDay[day].orEmpty(),
                                     taskColors = taskColors,
                                     visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
@@ -3751,6 +3825,56 @@ private fun DayHeader(
     }
 }
 
+/**
+ * PRD §8 / `docs/scheduler_requirements.md` § *$now line$*: **the now-line's own position, sampled on the
+ * frame clock and readable without recomposing anything.**
+ *
+ * The requirement is that *"the $now line$ moves continuously forward in time"*, and the engine honours that
+ * where it counts — it walks the line, never teleports it (`SchedulerEngine.sweepNowLineTo`). What the
+ * CALENDAR draws is a second question, and it used to be answered badly at both ends: the whole app was
+ * recomposed once per display frame so that everything derived from the clock could follow the line, and the
+ * line was still placed to the whole second ([hourOfDay]) — so it moved in ~1.7 dp jerks at the zoom ceiling
+ * while costing an O(visible window) re-derivation sixty times a second. Both halves are wrong the same way:
+ * the line and the things derived from it were treated as one value.
+ *
+ * They are two. The app's `nowMillis` is QUANTIZED — every band, panel, projection and cull is a function of
+ * it, and those can only be redone a few times a second. The line is one number, so it is sampled here on
+ * every frame and read back in the LAYOUT phase (`Modifier.offset { … }`), which re-places it without
+ * recomposing, without re-measuring and without touching a single derivation. A moving line costs a frame; it
+ * does not have to cost a recomposition.
+ *
+ * [sampling] is what keeps it honest about energy: the caller passes `true` only while the line is actually on
+ * screen, so a column that is not today's — or a grid scrolled to another week, or a closed calendar — asks
+ * for no frames at all and the app goes idle. While it is `false` the state simply tracks [coarseHour], so
+ * anything reading it still lands where the quantized instant says.
+ */
+@Composable
+private fun rememberNowLineHour(
+    coarseHour: Float,
+    tz: TimeZone,
+    nowExactMillis: () -> Long,
+    sampling: Boolean,
+): State<Double> {
+    val state = remember { mutableDoubleStateOf(coarseHour.toDouble()) }
+    val exact = rememberUpdatedState(nowExactMillis)
+    // Not composition-phase writes: the value is read only from layout lambdas, and this keeps it in step
+    // with the quantized instant for as long as nothing is sampling it.
+    SideEffect { if (!sampling) state.doubleValue = coarseHour.toDouble() }
+    LaunchedEffect(sampling, tz) {
+        if (!sampling) return@LaunchedEffect
+        while (true) {
+            withFrameNanos {
+                state.doubleValue =
+                    Instant.fromEpochMilliseconds(exact.value())
+                        .toLocalDateTime(tz)
+                        .time
+                        .hourOfDayExact()
+            }
+        }
+    }
+    return state
+}
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun DayColumn(
@@ -3759,6 +3883,11 @@ private fun DayColumn(
     isToday: Boolean,
     hourHeight: Dp,
     now: LocalTime?,
+    /**
+     * The exact clock, for the now-line alone — see [rememberNowLineHour]. [now] is the quantized display
+     * instant every OTHER placement in this column is derived from.
+     */
+    nowExactMillis: () -> Long,
     records: List<PlacedRecord>,
     /**
      * PRD §8: each task's own colour — its place in the one colour space the tree partitions
@@ -3831,6 +3960,18 @@ private fun DayColumn(
     /** The same test for the fixed-height markers, whose position is a Dp down the column, not an hour. */
     fun onScreenDp(top: Dp, bottom: Dp) =
         hourHeight > 0.dp && onScreen(top / hourHeight, bottom / hourHeight)
+
+    // PRD §8 / `docs/scheduler_requirements.md` § *$now line$*: where the current-time indicator goes, and
+    // where the overdue reminder tags stack on it. Two readings of one instant, and they must be ONE
+    // instant (CLAUDE.md: "the lock's centring fraction and the reminder stack's anchor read the same
+    // instant, or the line is not the one on screen"):
+    //  • [nowHour] — the QUANTIZED display instant, in composition. It decides what EXISTS: whether this
+    //    column carries a line at all, whether it is scrolled into view, which tags are overdue.
+    //  • [nowLineHour] — the exact clock, sampled per frame and read back in the LAYOUT phase. It decides
+    //    only WHERE those elements are placed, which is the half that has to be continuous.
+    val nowHour = now?.hourOfDay()
+    val nowLineOnScreen = nowHour != null && onScreen(nowHour, nowHour)
+    val nowLineHour = rememberNowLineHour(nowHour ?: 0f, tz, nowExactMillis, sampling = nowLineOnScreen)
 
     // PRD §8: the bubble sections EVERY hoverable element in this column stacks under its own — the grey
     // periods the cursor sits inside and the two "nobody unlocked" LAYERS hatched over it. The layers
@@ -4481,19 +4622,26 @@ private fun DayColumn(
             )
         }
 
-        // Current-time indicator (only on today's column).
-        if (now != null) {
-            val offsetY = hourHeight * now.hourOfDay()
+        // Current-time indicator (only on today's column, and only while it is scrolled into view — the
+        // frame sampler behind [nowLineHour] runs for exactly as long as this is true, so a calendar looking
+        // at next week asks for no frames at all).
+        //
+        // Both offsets are LAYOUT-phase reads: the line moves by re-placing two nodes on each frame, and
+        // nothing above it is recomposed. That is the answer to "can the line move continuously without
+        // burning energy" — the redraw motion costs is unavoidable, the recomposition is not.
+        if (nowLineOnScreen) {
             Box(
                 modifier = Modifier
-                    .offset(y = offsetY)
+                    .offset { IntOffset(0, (hourHeight.toPx() * nowLineHour.value).roundToInt()) }
                     .fillMaxWidth()
                     .height(2.dp)
                     .background(CalColors.now),
             )
             Box(
                 modifier = Modifier
-                    .offset(y = offsetY - 4.dp)
+                    .offset {
+                        IntOffset(0, (hourHeight.toPx() * nowLineHour.value - 4.dp.toPx()).roundToInt())
+                    }
                     .size(8.dp)
                     .clip(CircleShape)
                     .background(CalColors.now),
@@ -4596,7 +4744,6 @@ private fun DayColumn(
         // they won the hit test against the tag underneath and the click that would check the reminder off
         // never reached it (the same "a lid over the tile" mistake [CalendarHoverTiles] exists to prevent).
         // So nothing is emitted after this block.
-        val nowHour = now?.hourOfDay()
         fun checkedAtHour(tag: PlacedRecord): Float? =
             tag.checkedAtMillis?.let {
                 Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay()
@@ -4618,9 +4765,21 @@ private fun DayColumn(
                 ReminderTag(tag, Modifier.offset(y = y)) { onToggleReminder(tag) }
             }
         reminderTags.filter(::onNowLine).forEachIndexed { i, tag ->
-            val y = hourHeight * (nowHour ?: 0f) + REMINDER_TAG_HEIGHT * i
+            val stackOffset = REMINDER_TAG_HEIGHT * i
+            // Culled on the quantized instant (what EXISTS), placed on the exact one (WHERE) — the same
+            // split the indicator above makes, and the reason the stack never drifts off the line it is
+            // supposed to be sitting on.
+            val y = hourHeight * (nowHour ?: 0f) + stackOffset
             if (!onScreenDp(y, y + REMINDER_TAG_HEIGHT)) return@forEachIndexed
-            ReminderTag(tag, Modifier.offset(y = y)) { onToggleReminder(tag) }
+            ReminderTag(
+                tag,
+                Modifier.offset {
+                    IntOffset(
+                        0,
+                        (hourHeight.toPx() * nowLineHour.value + stackOffset.toPx()).roundToInt(),
+                    )
+                },
+            ) { onToggleReminder(tag) }
         }
     }
 }

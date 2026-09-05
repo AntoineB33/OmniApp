@@ -726,6 +726,18 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   a layer region ending at `now` read as a claim about the future, a grey band ending before `now` as scheduled
   emptiness after it, and the elapsed half of the panel the line sits in as entirely unelapsed. The lock's
   centring fraction and the reminder stack's anchor read the same instant, or the line is not the one on screen.
+- **The NOW-LINE ITSELF goes one step further: it is placed BELOW the second, in the LAYOUT phase, off its own
+  frame sampler** (`hourOfDayExact`, `rememberNowLineHour`) — `docs/scheduler_requirements.md` § *$now line$*:
+  *"the $now line$ moves continuously forward in time"*. The split is the whole of it, and it is the same one
+  ADR 0009 makes everywhere else: **what is DERIVED from the clock** (every band, panel, projection and cull)
+  is a function of the app's **quantized** display instant, because each new value re-runs an O(visible
+  window) pass; **the line** is one number, so it is sampled on the frame clock and read back from a
+  `Modifier.offset { … }`, which re-places it every frame while recomposing nothing. Both halves were wrong
+  the same way before, and for the same reason — the two were one value: the whole app recomposed 60×/s so
+  that the derivations could follow the line, and the line still advanced in whole-second jerks (~1.7 dp at
+  the zoom ceiling) because `hourOfDay` was its floor. The sampler runs **only while the line is on screen**,
+  so a column that is not today's, a grid scrolled to another week and a closed calendar all ask for no
+  frames at all. The overdue reminder stack rides the same state, or it is not on the line the user sees.
 - **All three are MARKED one way: vertical lines, delimited** (`greyPeriodMarks`, the one place a grey period
   becomes something to paint). A screen break is drawn exactly like the inactivity band beside it — no blue
   outline, no `●`, no accent title: they are the same kind of period. **Lines, never a fill**, because a grey
@@ -817,6 +829,33 @@ to panels.
 - **Anything recomputed on every `nowMillis` tick must be bounded by the visible window, never O(total
   history).** Under sim the now-line ticks ~20×/s; an O(history) recompute pegs the UI thread and the window
   is created but never shown — which looks exactly like "the app won't open".
+- **THE DISPLAY IS NOT POLLED. It is re-derived when the SET OF RULES says the picture changes**
+  (`SchedulerDomain.displayResampleDelayMillis`), and the drawn line is not one of the things derived from
+  it. The scheduler returns a set of rules and everything `App`'s body builds is read out of it, so the
+  display is a **piecewise** function of the now-line: **nothing in the past is a function of the line** (the
+  past is frozen — only an event, a "look away now" or a hand edit, changes it), **nothing in the future is
+  either until the line crosses a boundary the rules already named**, and **what does follow the line follows
+  it AFFINELY** (a pose the line drags in mode 1 at `(t_p, t_p + d]`, the panel growing behind it, a live
+  band ending at it). So:
+  - **The boundaries are the derived model's own bounds.** The model is built out of those instants, so it
+    cannot change before the first one still ahead of the line — plus the next local midnight, the one
+    boundary no panel carries (the day rollover and the $t_{goal}$ staircase). Sleep until it.
+  - **A bound sitting ON the line is a PIN, never a boundary ahead of it** (`NOW_LINE_ANCHOR_SLACK`, 2 ms — a
+    dragged pose starts at `t_p + 1`, a taken break is drawn to `t_p − 1`). Counting one as a boundary answers
+    "one millisecond" and turns the sleep into a busy loop.
+  - **A pin is re-derived at the DISPLAY'S OWN RESOLUTION**, not at its bound: the calendar reports how long
+    the line takes to cross one pixel at the zoom in force (`onNowLineResolutionChanged` — ~75 s at the
+    default zoom, ~0.6 s at the ceiling), and redrawing more often than that redraws the picture already on
+    screen. Same principle as `visibleHourWindow`'s quantization: the temporal resolution follows the spatial
+    one.
+  - **The floor and the ceiling only BOUND that answer** (250 ms / 50 ms accelerated; 30 s). The ceiling is
+    the engine's own production cadence, so a boundary this gets wrong costs a late redraw and never a wrong
+    answer — no derivation can go staler than it did when the engine's tick drove it.
+  - **The sampler's effect is keyed on its own TICK, never on the delay.** `App` recomposes for plenty of
+    reasons that have nothing to do with the clock, and a key that moved with the answer would restart the
+    sleep each time — a busy app would then never reach the end of one and the now-line would stop.
+  The line's own continuity is bought separately and for free, in the layout phase (see *Calendar* above).
+  Never point the two at one value again, and never put this back on a timer.
 - **What the calendar COMPOSES is bounded by the visible window too.** A day row is one whole day tall while
   the viewport is not, so every `DayColumn` culls its output to `visibleHourWindow(...)`: a record scrolled
   out of view emits no UI node. This is a frame cost, not a tick cost — every floating window shares one
