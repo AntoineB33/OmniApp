@@ -43,14 +43,45 @@ sixty times a second, to move one line. And it still did not move smoothly: the 
 
 - **Derived from the clock ⇒ quantized** (250 ms at first; superseded the same day by the boundary rule
   below, which is the real answer).
-- **The line ⇒ sampled per frame, read in the LAYOUT phase.** `CalendarUi.rememberNowLineHour` samples the
-  exact clock on `withFrameNanos` into a state read only from `Modifier.offset { … }`, and the placement uses
-  `hourOfDayExact` (a `Double`; a `Float` around 24 quantizes at ~10 ms all by itself). Re-placing a node
-  recomposes nothing and re-measures nothing.
+- **The line ⇒ sampled per frame, read in the DRAW phase.** `CalendarUi.rememberNowLineHour` samples the
+  exact clock on `withFrameNanos` into a state read only from `Modifier.graphicsLayer { translationY = … }`,
+  and the placement uses `hourOfDayExact` (a `Double`; a `Float` around 24 quantizes at ~7 ms all by itself).
+  Re-drawing a layer recomposes nothing, re-measures nothing and re-places nothing.
 - **The sampler runs only while the line is on screen.** It is gated on the same cull window everything else
   in the column is (`nowLineOnScreen`), so a column that is not today's, a grid scrolled to another week, and
   a closed calendar ask for no frames at all — which is the honest answer to the energy question: the frame a
   moving line costs is unavoidable, the recomposition behind it and the frames when nothing is moving are not.
+
+### The two orders of magnitude that were still missing (2026-09-05, same report reopened)
+
+The fix above was reported as *still* stepping — the line, and the pose the line drags — and the report was
+right on both counts. "The lag is one pixel by construction" was a claim about the RESAMPLE, and it was
+quietly answering a different question from the one asked. Two more quantizations sat under it:
+
+- **The bands were still floored to the second.** `recordsForDay` placed every block at
+  `hour + minute/60 + second/3600`, so a bound PINNED to the line — the pose at `(t_p, t_p + d]`, the panel
+  ending at `t_p` — advanced one second at a time however finely the display resampled. At the zoom ceiling
+  that is ~1.7 dp, which is what "when zoomed in enough, it is not just one pixel" was measuring. Blocks now
+  read `hourOfDayExact` too; the residual is the `Float`'s own step (~7 ms ≈ 0.01 dp at that ceiling), so
+  `PlacedRecord` did not have to become `Double` and the whole block pipeline was left alone.
+- **The line was rounded to the pixel grid.** `Modifier.offset { IntOffset(…) }` cannot express a fraction of
+  a pixel, so a clock sampled at 60 Hz reached the screen as *hold still, then jump one whole pixel* — every
+  ~75 s at zoom 1, about twice a second at the ceiling. **One pixel is not "imperceptible": a discrete jump
+  is the single thing peripheral vision is best at.** `nowLineOffsetPx` returns a `Float` and the line, its
+  dot and the overdue-reminder stack are placed with `graphicsLayer { translationY = … }`, so Skia
+  anti-aliases the crossing. That is the end of the road — below one pixel a display has only intensity left,
+  and using it is exactly what "continuous motion on a discrete grid" means.
+
+**What is still quantized, and honestly so.** A BLOCK's edge is composition-phase `Dp` geometry
+(`Modifier.offset(y = hourHeight * startHour)`, which rounds to the pixel at placement) recomputed on the
+quantized display instant. So the pose the line drags now steps by exactly one pixel — the pixel grid, no
+longer a second of time — where the line beside it glides. Closing that last pixel means giving the block
+pipeline (`overlapLayout`, the slices, the hover tiling, the drag/resize gesture) per-frame float geometry, or
+carrying the affine "follows the line" rule into the draw phase as a `graphicsLayer` translation on pinned
+bands. The second is tractable for a band whose WHOLE span is pinned (a rigid translation) and is not for one
+with a single pinned edge (the panel growing behind the pose changes shape, not position) — and doing only
+the first would open a one-pixel seam between the pose and the panel above it, which is worse than the step.
+Left undone deliberately; this note is the record of the trade, not of a limit.
 
 The overdue reminder tags stack on the same state, because CLAUDE.md's rule is that the stack's anchor and the
 line read one instant. What each of the two halves decides is worth stating: the quantized instant decides what

@@ -11,6 +11,74 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A mode-3 period is drawn as one: "I'm away" hatches a layer — 2026-09-05
+
+`shared` (`domain/SchedulerDomain.kt`, `domain/SchedulerProgressive.kt`, `engine/SchedulerEngine.kt`,
+`App.kt`) + `CalendarLayerTest`, `AccountAwayModeTest`, `docs/scheduler_requirements.md`,
+`docs/invariants/{calendar,screen-breaks}.md`, ADR 0002, ADR 0003.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy and no DB migration.**
+
+The requirement: *the periods where some devices have the "I'm away" button clicked and the others are locked
+must be covered by a "no phone" layer and a "no computer" layer, and the now-line is in mode 3 on that kind of
+period and only there.* Half of it was missing, and the missing half is the button itself.
+
+**A layer had exactly one source, the device's OS lock history — and the button's whole point is that the
+machine stays UNLOCKED.** So the OS was silent over precisely the stretch the app was calling mode 3, and the
+calendar drew no hatch across a period it had itself decided nobody was at a screen for. The button now feeds
+the layer of **its own device's kind**: `SchedulerEngine` keeps the episodes
+(`declaredAwaySpans`/`declaredAwaySince`, closed at the flag's two edges — the button and the unlock that
+clears it), and `SchedulerDomain.declaredAwayRegions` reads them the way `displayInactivityGaps` reads the
+live pause (the closed ones plus the open one growing with the now-line and stopping there). The other devices
+need nothing: a peer's layer is already hatched whole ("a device that cannot be asked was locked"), so an away
+press with every other device locked comes out as BOTH layers — which by ADR 0002's identity *is* a no-screen
+period. Mode 3 and "a stretch carrying both layers" are now the same set.
+
+Two details that had to be right rather than convenient:
+
+* **The declaration is a CLAIM, not evidence** (`layerRegions`' asserted slot). The seam filter drops readings
+  under a minute, and a 40-second away spell is 40 seconds the mode was 3 for; and a failed lock query — which
+  legitimately silences the scan — must not silence the user's own statement.
+* **It belongs to ONE layer.** A press on the computer says nothing about the phone, so
+  `observedNoScreenRegions` takes `computerAway`/`phoneAway` beside the two histories. That is also the one
+  exception to *"the asserted regions are not evidence"*: a screen break is not time the user was absent for
+  and a declared absence is, so the same stretch cuts the on-screen panels over it and banks no record — the
+  rule the hatch and the bank already shared, reached from the third source.
+
+**The display was reading only its own button** (`App.kt`'s `t_p` mode), so a peer holding the account away
+left the calendar in mode 2 dragging a pose the fill had let elapse. `SchedulerEngine.accountAway` is exposed
+and the display now reads the engine's own `own || account`.
+
+**Two stale bits of vocabulary went with it.** `docs/scheduler_requirements.md`'s 20 s exception still said the
+line is *"in mode 2"* while it crosses the look-away — wording from when there were two modes, and
+unsatisfiable against the mode-2 the same section now defines (*"covered by 'no on-screen task' **but not one
+of the three dynamic periods**"*). It says mode 3, which is what the code has done since 2026-09-04.
+`SchedulerProgressive` kept its own `MODE_AT_SCREEN`/`MODE_AWAY` constants — a second copy of the vocabulary,
+which is how it never learned there was a third — and now uses `DynamicPeriods`'.
+
+### The now-line slides: sub-second bands, sub-pixel line — 2026-09-05
+
+`shared` (`ui/CalendarUi.kt`) + `NowLineSecondsTest`, ADR 0009, `docs/invariants/{calendar,display-hot-path}.md`.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy and no DB migration.**
+
+Reopened report: the line still advanced *"one step at a time"*, and so did the pose it drags — *"when zoomed
+in enough, it is not just one pixel"*. Both true; the earlier "the lag is one pixel by construction" was
+about the display RESAMPLE and quietly answered a different question. Two quantizations sat under it:
+
+- **`recordsForDay` floored every block to the whole second.** A bound PINNED to the line moves with it (the
+  pose is `(t_p, t_p + d]`, so its top edge *is* the line), so it lurched one second at a time — ~1.7 dp at
+  the zoom ceiling — however finely the display resampled. Blocks now read `hourOfDayExact`; the residual is
+  the `Float`'s own step (~7 ms ≈ 0.01 dp there), so `PlacedRecord` stayed `Float` and the block pipeline
+  (`overlapLayout`, the slices, the hover tiling, the gestures) was not touched.
+- **The line was rounded to the pixel grid.** `Modifier.offset { IntOffset(…) }` cannot carry a fraction, so a
+  clock sampled at 60 Hz reached the screen as *hold still, then jump a whole pixel* — every ~75 s at zoom 1,
+  about twice a second at the ceiling. The line, its dot and the overdue-reminder stack are now placed by
+  `graphicsLayer { translationY = nowLineOffsetPx(…) }` (a `Float`, product taken in `Double`), so Skia
+  anti-aliases the crossing. Draw-phase, so it is strictly cheaper than the layout read it replaces.
+
+Still quantized, deliberately: a BLOCK's edge is composition-phase `Dp` geometry recomputed on the quantized
+display instant, so the dragged pose now steps by exactly one pixel rather than by a second of time. ADR 0009
+records what closing that last pixel would cost and why doing it for only half the pinned bands is worse.
+
 ### The priority-weight table's rows are task cells, and its add row is its own — 2026-09-05
 
 `shared` (`ui/TaskSchedulerScreen.kt`, `domain/SchedulerDomain.kt`, `state/SchedulerIntent.kt`,

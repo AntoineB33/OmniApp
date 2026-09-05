@@ -363,6 +363,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val activeSessions by engine.activeSessions.collectAsState()
         // PRD §15: whether the user declared they are away from THIS device (left-menu "I'm away" button).
         val userAway by engine.userAway.collectAsState()
+        // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: and whether any OTHER device of the account
+        // has it on — the mode is a quantifier over the account, not a property of this install.
+        val accountAway by engine.accountAway.collectAsState()
+        // PRD §8 + the same section: the stretches this device's button was ON for. The OS log cannot show
+        // them (the machine stays unlocked while the user is away from it), so they are the only source there
+        // is for the layer over a declared absence — and a stretch where every device of the account is either
+        // locked or declared away IS mode 3, which the calendar has to draw as a stretch carrying both layers.
+        val declaredAwaySpans by engine.declaredAwaySpans.collectAsState()
+        val declaredAwaySince by engine.declaredAwaySince.collectAsState()
+        val declaredAwayRegions =
+            SchedulerDomain.declaredAwayRegions(declaredAwaySpans, declaredAwaySince, nowMillis)
         // `side-dev/README.md` § *3 Dynamic Restrictive Period*: what the DEVICES observed about whether
         // anybody was at a screen — the engine's ONE cached reading, the same value the reducer's fills and
         // the cue sweep are given. It reaches the recurrence bars below as the restrictive periods it is
@@ -379,7 +390,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val tpMode =
             SchedulerDomain.tpMode(
                 SchedulerDomain.anyDeviceUnlockedAt(inactivityGaps, inactiveSince, activeSince, nowMillis),
-                awayDeclared = userAway,
+                // This device's own flag OR the account's, exactly as the engine reads it: mode 3 is *at least
+                // one device away and every other one locked*, so a peer holding the account away puts this
+                // one in mode 3 too, with its own button off.
+                awayDeclared = userAway || accountAway,
             )
         // PRD §7/§15: what claim the OS granted the system-wide chords — shown in the keyboard-shortcuts window,
         // since a chord another application already owns is otherwise indistinguishable from a broken app.
@@ -1014,16 +1028,27 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // hatching a stretch nobody can vouch for is honest — but here it would erase every on-screen panel in
         // the displayed past on one PowerShell hiccup. So the OWN scan must SUCCEED to say anything, exactly as
         // `SchedulerEngine.readNoScreenEvidence` requires; a PEER's null keeps its assumed-locked meaning.
+        //
+        // The user's own "I'm away" stretches are the one thing here that is neither: not the OS's answer, and
+        // not a rule's promise either — the user SAID they were not at this screen, which is the very question
+        // the scan asks. So they hold whether or not the scan came back, and they ride the same regions the
+        // layer below hatches (one record, so the hatch and the cut cannot disagree).
+        val ownScannedLocked = lockedIntervals?.takeIf { lockHistoryScanned }
+        val ownIsComputer = ownLayer == SchedulerDomain.ActivityLayer.NoComputerUnlocked
         val observedNoScreenRegions =
-            lockedIntervals?.takeIf { lockHistoryScanned }?.let { locked ->
+            if (ownScannedLocked == null && declaredAwayRegions.isEmpty()) {
+                emptyList()
+            } else {
+                val locked = ownScannedLocked ?: emptyList()
                 SchedulerDomain.observedNoScreenRegions(
-                    computerLocked =
-                        if (ownLayer == SchedulerDomain.ActivityLayer.NoComputerUnlocked) locked else null,
-                    phoneLocked = if (ownLayer == SchedulerDomain.ActivityLayer.NoPhoneUnlocked) locked else null,
+                    computerLocked = if (ownIsComputer) locked else null,
+                    phoneLocked = if (ownIsComputer) null else locked,
                     sinceMillis = displayFloorMillis,
                     untilMillis = nowMillis,
+                    computerAway = if (ownIsComputer) declaredAwayRegions else emptyList(),
+                    phoneAway = if (ownIsComputer) emptyList() else declaredAwayRegions,
                 )
-            } ?: emptyList()
+            }
 
         // ADR 0009 hot path: the session history is indexed ONCE per change instead of being re-labelled for
         // every panel on every observed now-line (the segmentation below runs over every record there is).
@@ -1118,7 +1143,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 lockHistoryScanned -> lockedIntervals
                                 else -> emptyList() // not asked yet ≠ cannot be asked
                             },
-                        assertedRegions = layerAsserted,
+                        // The "I'm away" stretches belong to THIS device's layer alone — a press on the
+                        // computer says nothing about the phone — while everything in [layerAsserted] is a
+                        // claim about every screen at once. Asserted rather than evidence so the seam filter
+                        // cannot drop a declaration shorter than a minute: the mode was 3 for it.
+                        assertedRegions =
+                            if (layer == ownLayer) layerAsserted + declaredAwayRegions else layerAsserted,
                         sinceMillis = displayFloorMillis,
                         untilMillis = nowMillis,
                     )

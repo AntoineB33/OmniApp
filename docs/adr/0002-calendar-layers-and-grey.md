@@ -76,6 +76,37 @@ Ahead of the now-line nothing is observed, so only the ASSERTED regions hatch (`
 `App.kt`: §17 sleep windows, §15 screen breaks, the user's own no-screen periods), and those hold for
 both layers whatever any history says.
 
+## "I'm away" is a lock the OS cannot see — 2026-09-05
+
+The spec's mode 3 is *at least one device with the "I'm away" button clicked and all the other devices
+locked*, and the button's whole point is that the machine **stays unlocked** while it is on (the user has to
+leave a program running). So the OS lock history — the one source a layer had — is silent over exactly the
+stretch the mode is 3 for, and the calendar drew no hatch across a period the app itself was calling *no
+screen is in use*. The requirement is the other way round: that period must be **covered by a "no computer
+unlocked" layer and a "no phone unlocked" layer**, because it is a period where neither is unlocked.
+
+So the button joins the layer of **its own device's kind**, as a claim:
+
+- `SchedulerEngine` keeps the episodes (`declaredAwaySpans` + `declaredAwaySince`, closed at the two edges
+  the flag has — the button and the unlock that clears it) and `SchedulerDomain.declaredAwayRegions` reads
+  them the way `displayInactivityGaps` reads the live pause: the closed ones plus the open one growing with
+  the now-line and stopping there.
+- They arrive as `layerRegions`' **asserted** regions, not as evidence, for two reasons. The seam filter
+  would drop a declaration shorter than a minute, and the mode was 3 for that minute. And a failed lock
+  query must not silence them: the button is the user's own statement, not a query that can time out.
+- They belong to ONE layer. A press on the computer says nothing about the phone — which is why
+  `observedNoScreenRegions` takes `computerAway`/`phoneAway` beside the two histories rather than one list.
+
+The other devices need no equivalent: no channel carries a peer's lock history either, so a peer's layer is
+already hatched across the whole window ("a device that cannot be asked was locked"). The conjunction then
+comes out exactly right — an away press with every other device locked hatches **both** layers, which by this
+ADR's own identity *is* a no-screen period, so the same stretch also cuts the on-screen panels it covers and
+banks no record. That last part is deliberate and is the one exception to "the asserted regions are not
+evidence": a screen break is not time the user was absent for, and a declared absence is.
+
+Runtime state, like the flag itself — never persisted, never synced. After a restart the layer falls back to
+whatever the OS history says.
+
 ## A device that cannot be asked WAS LOCKED
 
 `null` from the seam ⇒ the layer hatches the **whole asked past**, `[displayFloor, now]`. The user's

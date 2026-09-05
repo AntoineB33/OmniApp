@@ -1,5 +1,9 @@
 package org.example.project
 
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -12,19 +16,27 @@ import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.hourOfDay
 import org.example.project.ui.hourOfDayExact
+import org.example.project.ui.nowLineOffsetPx
 import org.example.project.ui.recordsForDay
 
 /**
- * PRD §8: the now-line is placed in the SAME hour-of-day space every band, panel and layer region is —
- * seconds included ([hourOfDay]).
+ * PRD §8: the now-line, and everything the line DRAGS, are placed in one hour-of-day space and at the full
+ * resolution of the instant — see [hourOfDayExact] and [nowLineOffsetPx].
  *
- * The bug this pins: the current-time indicator was drawn at `hour + minute / 60`, so it sat at the start of
- * the current minute — up to 59 seconds behind the instant everything around it was placed at. At zoom 1 a
- * minute is under a pixel and it never showed; at the zoom the ceiling exists for (a 20-second look-away has
- * to be visible and hoverable, ADR 0002) a minute is hundreds of pixels, and everything the calendar placed
- * truthfully read as being on the wrong side of the line: a "no phone unlocked" layer region ending at `now`
- * looked like a claim about the future, a grey Inactivity band ending before `now` looked like scheduled
- * emptiness after it, and the elapsed part of the panel the line sits in looked entirely unelapsed.
+ * Three bugs, each one order of magnitude below the last, and each found by the same report ("it moves one
+ * step at a time"):
+ *
+ *  1. **The minute.** The indicator was drawn at `hour + minute / 60`, so it sat at the start of the current
+ *     minute — up to 59 s behind the instant everything around it was placed at. At the zoom the ceiling
+ *     exists for (a 20-second look-away has to be visible and hoverable, ADR 0002) a minute is hundreds of
+ *     pixels, and everything the calendar placed truthfully read as being on the wrong side of the line.
+ *  2. **The second.** Fixed for the line ([hourOfDayExact]) but not for the BANDS, which [recordsForDay]
+ *     still floored: the pose the line drags is `(t_p, t_p + d]`, so its top edge is the line, and it moved
+ *     a whole second at a time — ~1.7 dp at the ceiling — beside a line that glided.
+ *  3. **The pixel.** The line was frame-sampled and then rounded to the pixel grid by `IntOffset`, which
+ *     turns a glide back into a jump held still for one pixel's worth of travel (~75 s at zoom 1). A
+ *     fractional `translationY` is what buys the last order of magnitude; below one pixel a display has
+ *     nothing left but intensity, so anti-aliasing IS the continuous answer.
  */
 class NowLineSecondsTest {
     private val tz = TimeZone.UTC
@@ -68,6 +80,79 @@ class NowLineSecondsTest {
         // The whole second is still exactly where [hourOfDay] puts it, so the line and everything placed
         // beside it agree at every instant the coarse reading can name.
         assertEquals(LocalTime(23, 59, 59).hourOfDay().toDouble(), LocalTime(23, 59, 59).hourOfDayExact(), 1e-5)
+    }
+
+    @Test
+    fun a_band_pinned_to_the_now_line_is_placed_below_the_second_too() {
+        // The sequel to the test above, and the reported anomaly: the LINE went sub-second, but every BAND
+        // the line drags was still floored to the second by [recordsForDay]. At the zoom ceiling
+        // (128 x 48 dp = 6144 dp per hour) a second is ~1.7 dp, so a pose the line drags — `(t_p, t_p + d]`,
+        // i.e. a band whose top edge IS the line — held still for a whole second and then jumped 1.7 dp,
+        // while the line beside it glided. "The lag is one pixel" was only true at zoom 1.
+        val quarterPast = at(16, 41, 47) + 250L
+        val pose = CalendarRecord(
+            title = "rest",
+            range = TaskTimeRange(quarterPast, quarterPast + 5 * 60_000L),
+            screenBreak = true,
+        )
+        val onTheSecond = CalendarRecord(
+            title = "rest",
+            range = TaskTimeRange(at(16, 41, 47), at(16, 41, 47) + 5 * 60_000L),
+            screenBreak = true,
+        )
+        val placedQuarter = recordsForDay(listOf(pose), day, tz).single()
+        val placedSecond = recordsForDay(listOf(onTheSecond), day, tz).single()
+        assertTrue(
+            placedQuarter.startHour > placedSecond.startHour,
+            "a quarter of a second later must not place at the same point — that collapse IS the jerk",
+        )
+        // And at the RIGHT distance: a quarter of a second, in hours. The tolerance is the `Float`'s own
+        // step around hour 16 (~7 ms), which is under 0.02 dp even at the zoom ceiling.
+        assertEquals(
+            (0.25 / 3600.0).toFloat(),
+            placedQuarter.startHour - placedSecond.startHour,
+            2e-6f,
+        )
+    }
+
+    @Test
+    fun the_now_line_is_placed_between_pixels_not_on_them() {
+        // `docs/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in
+        // time"*. Sampling the clock per frame is only half of that — the other half is that the answer must
+        // reach the screen unrounded. `offset { IntOffset(…) }` cannot carry a fraction, so the line used to
+        // be snapped to the pixel grid: it stood still and then jumped a whole pixel (~75 s of travel at the
+        // default zoom, ~0.5 s at the ceiling), which is exactly the "moves one step at a time" report.
+        val density = Density(1f)
+        val hourHeight = 48.dp // zoom 1
+        with(density) {
+            // Ten frames at 60 Hz cover ~0.17 s: far under one pixel at this zoom (one pixel is ~75 s), so
+            // EVERY sample must still be a distinct position — that is what anti-aliasing then renders as
+            // motion. Rounded to the grid all ten would collapse onto one value.
+            val hours = (0 until 10).map { 16.0 + (it * 16_666_666L) / 3_600_000_000_000.0 }
+            val offsets = hours.map { nowLineOffsetPx(hourHeight, it) }
+            offsets.zipWithNext { a, b -> assertTrue(b > a, "frame $b must not land on frame $a") }
+            assertTrue(
+                offsets.any { abs(it - floor(it)) > 1e-4f },
+                "at least one frame must fall BETWEEN two pixels",
+            )
+        }
+    }
+
+    @Test
+    fun the_now_line_offset_keeps_its_precision_at_the_zoom_ceiling() {
+        // At the ceiling the offset is ~150 000 px, where a `Float` step is ~0.016 px. Taking the product in
+        // `Double` keeps a frame's worth of travel (~0.03 px there) above that; taking it in `Float` — or
+        // reading the hour as a `Float`, whose own step around 24 is ~7 ms — would quantize the glide before
+        // it ever reached the pixel grid.
+        val density = Density(1f)
+        val hourHeight = (128 * 48).dp // MAX_CALENDAR_ZOOM x BASE_HOUR_HEIGHT
+        with(density) {
+            val a = nowLineOffsetPx(hourHeight, 23.5)
+            val b = nowLineOffsetPx(hourHeight, 23.5 + 16_666_666L / 3_600_000_000_000.0)
+            assertTrue(b > a, "one frame of travel must survive the multiply at the zoom ceiling")
+            // One frame at 60 Hz is 1/216000 of an hour; at 6144 px per hour that is ~0.028 px.
+            assertEquals(0.0284f, b - a, 5e-3f)
+        }
     }
 
     @Test

@@ -36,6 +36,15 @@ Global rules that always apply: `CLAUDE.md`.
   answers). "Not asked yet" is a third state: the own layer draws nothing until its first scan lands.
 - **A stretch carrying BOTH layers is a no-screen period**, identical to the account-wide derived pause.
   `CalendarLayerTest` pins that identity — keep it true.
+- **"I'm away" hatches its own device's layer** (`SchedulerEngine.declaredAwaySpans`/`declaredAwaySince` →
+  `SchedulerDomain.declaredAwayRegions`, ADR 0002). The machine stays UNLOCKED while the button is on, so the
+  OS log is silent over exactly the stretch the now-line is in mode 3 for, and the requirement is that such a
+  stretch carries both layers. It rides the **asserted** slot, not the evidence one — the seam filter would
+  drop a declaration shorter than a minute, and a failed lock query must not silence the user's own statement
+  — and it belongs to the layer of **its own kind**: a press on the computer says nothing about the phone
+  (hence `observedNoScreenRegions`' `computerAway`/`phoneAway`). A peer needs no equivalent: its layer is
+  already hatched whole ("a device that cannot be asked was locked"), so an away press with every other device
+  locked comes out as both layers — which is what makes mode 3 and "a no-screen period" the same set.
 - Layers are non-interactive overlays: they displace nothing and register no pointer input. A layer is
   *named* by the hover bubble anyway — its section rides whatever the cursor is over, or the bottom-most
   hover pickup where that is nothing.
@@ -97,25 +106,33 @@ Global rules that always apply: `CLAUDE.md`.
   The effective cap is `maxCalendarZoom(dayHeightPxAtZoom1)`, which lowers it on a display where a whole day row
   would exceed what a Compose constraint can represent; **every** zoom path clamps through it, the fits
   (`calendarSpanZoom` / `wholeDayZoom`) included.
-- **Everything the grid places carries SECONDS, the NOW-LINE included** (`LocalTime.hourOfDay`). That ceiling is
-  what makes it load-bearing: at a zoom where a minute is hundreds of pixels, reading a time to the minute does
-  not round it, it MOVES it by up to 59 s. The indicator was drawn at `hour + minute / 60` and so sat at the top
-  of the current minute, which put the line on the wrong side of every band the calendar had placed truthfully —
-  a layer region ending at `now` read as a claim about the future, a grey band ending before `now` as scheduled
-  emptiness after it, and the elapsed half of the panel the line sits in as entirely unelapsed. The lock's
-  centring fraction and the reminder stack's anchor read the same instant, or the line is not the one on screen.
-- **The NOW-LINE ITSELF goes one step further: it is placed BELOW the second, in the LAYOUT phase, off its own
-  frame sampler** (`hourOfDayExact`, `rememberNowLineHour`) — `docs/scheduler_requirements.md` § *$now line$*:
-  *"the $now line$ moves continuously forward in time"*. The split is the whole of it, and it is the same one
-  ADR 0009 makes everywhere else: **what is DERIVED from the clock** (every band, panel, projection and cull)
-  is a function of the app's **quantized** display instant, because each new value re-runs an O(visible
-  window) pass; **the line** is one number, so it is sampled on the frame clock and read back from a
-  `Modifier.offset { … }`, which re-places it every frame while recomposing nothing. Both halves were wrong
-  the same way before, and for the same reason — the two were one value: the whole app recomposed 60×/s so
-  that the derivations could follow the line, and the line still advanced in whole-second jerks (~1.7 dp at
-  the zoom ceiling) because `hourOfDay` was its floor. The sampler runs **only while the line is on screen**,
-  so a column that is not today's, a grid scrolled to another week and a closed calendar all ask for no
-  frames at all. The overdue reminder stack rides the same state, or it is not on the line the user sees.
+- **Everything the grid places carries the FULL INSTANT, the NOW-LINE included** (`LocalTime.hourOfDayExact`,
+  read by `recordsForDay`). The zoom ceiling is what makes it load-bearing: where a minute is hundreds of
+  pixels, reading a time to the minute does not round it, it MOVES it by up to 59 s. The indicator was drawn
+  at `hour + minute / 60` and so sat at the top of the current minute, which put the line on the wrong side of
+  every band the calendar had placed truthfully — a layer region ending at `now` read as a claim about the
+  future, a grey band ending before `now` as scheduled emptiness after it, and the elapsed half of the panel
+  the line sits in as entirely unelapsed. **The SECOND is that same mistake one decade down, and it bites the
+  bands that FOLLOW the line**: the pose the line drags is `(t_p, t_p + d]`, so its top edge is the line, and
+  floored to the second it lurched ~1.7 dp at the ceiling however finely the display resampled. `Float` is
+  still fine for a block (its own step around hour 24 is ~7 ms ≈ 0.01 dp there); only the line needs `Double`.
+  The lock's centring fraction and the reminder stack's anchor read the same instant, or the line is not the
+  one on screen.
+- **The NOW-LINE ITSELF goes two steps further: it is placed below the second AND between pixels, in the DRAW
+  phase, off its own frame sampler** (`hourOfDayExact`, `nowLineOffsetPx`, `rememberNowLineHour`) —
+  `docs/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in time"*. The
+  split is the whole of it, and it is the same one ADR 0009 makes everywhere else: **what is DERIVED from the
+  clock** (every band, panel, projection and cull) is a function of the app's **quantized** display instant,
+  because each new value re-runs an O(visible window) pass; **the line** is one number, so it is sampled on
+  the frame clock and read back from a `Modifier.graphicsLayer { translationY = … }`, which re-draws it every
+  frame while recomposing, re-measuring and re-placing nothing. **`translationY` is a `Float` and that is the
+  point** — `offset { IntOffset(…) }` snapped the line to the pixel grid, and a value that glides rounded to
+  the grid does not glide: it holds still and jumps a whole pixel (~75 s of travel at zoom 1, ~0.5 s at the
+  ceiling). One pixel is not imperceptible when it is the only thing moving. Sub-pixel placement hands the
+  crossing to Skia's anti-aliasing, which is the whole of what continuous motion means on a discrete grid.
+  The sampler runs **only while the line is on screen**, so a column that is not today's, a grid scrolled to
+  another week and a closed calendar all ask for no frames at all. The overdue reminder stack rides the same
+  state — and the same fractional placement — or it is not on the line the user sees.
 - **All three are MARKED one way: vertical lines, delimited** (`greyPeriodMarks`, the one place a grey period
   becomes something to paint). A screen break is drawn exactly like the inactivity band beside it — no blue
   outline, no `●`, no accent title: they are the same kind of period. **Lines, never a fill**, because a grey
@@ -193,7 +210,10 @@ to panels.
   catastrophic for the bank, where one timeout would suppress every record. The OWN scan must SUCCEED to say
   anything; a PEER's null keeps its assumed-locked meaning.
 - **The asserted regions are deliberately NOT evidence.** A screen break suspends a chunk rather than cutting
-  it (§15), so folding breaks/sleep windows in would stop recording across every break.
+  it (§15), so folding breaks/sleep windows in would stop recording across every break. **The "I'm away"
+  stretches are the one exception** (`computerAway`/`phoneAway`): a break is not time the user was absent
+  for, a declared absence is — and it is the same statement the scan is trying to make, from the user
+  instead of the OS.
 - **The scan never runs on the engine's dispatcher** (ADR 0009): it is a process launch with a 20 s timeout,
   and inline it stalls the advance tick and every sweep behind it. 10-minute bucket, bounded 24 h window.
 - `StripNoScreenRecords` applies the same rule retroactively, once at engine start. Idempotent, and unlike the

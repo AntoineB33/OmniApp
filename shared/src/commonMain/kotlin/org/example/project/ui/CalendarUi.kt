@@ -84,6 +84,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -113,6 +114,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
@@ -519,30 +521,53 @@ data class PlacedDeviceSegment(
 )
 
 /**
- * A time of day as the hour-of-day fraction the grid places everything by — **SECONDS INCLUDED**.
+ * A time of day as the hour-of-day fraction, **to the second** — the coarse reading, kept for what only has
+ * to answer *which side of the line is this on*: the day-strip fraction, the now-line's own fallback while
+ * nothing is sampling it, and the reminder tags' overdue test.
  *
- * The same rule [recordsForDay] keeps for a record's own bounds, and for the same reason: the zoom ceiling
+ * It is NOT what places a band any more; see [hourOfDayExact], which [recordsForDay] reads. The zoom ceiling
  * exists so a 20-second look-away can be seen and hovered (ADR 0002), and at that zoom a minute is well over
- * a hundred pixels. Reading a time to the minute there does not round it — it moves it, by up to 59 seconds.
- * The now-line was drawn that way, so everything the calendar places truthfully (a band ending at `now`, the
- * elapsed part of the panel the now-line sits in) read as being on the wrong side of the line.
+ * a hundred pixels — reading a time to the minute there does not round it, it moves it, by up to 59 seconds.
+ * The now-line was drawn that way, so everything the calendar placed truthfully (a band ending at `now`, the
+ * elapsed part of the panel the now-line sits in) read as being on the wrong side of the line. The second is
+ * the same mistake one order of magnitude down, and it is why the placements went below it too.
  */
 internal fun LocalTime.hourOfDay(): Float = hour + minute / 60f + second / 3600f
 
 /**
  * The same point, to the FULL resolution of the instant — the hour-of-day as a `Double`, sub-second remainder
- * included.
+ * included. **What the grid places by** ([recordsForDay]) and what the now-line itself is drawn at.
  *
- * `docs/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in time"*. It
- * is the **now-line's** own placement that reads this, and only it: [hourOfDay] answers to the second, which
- * is what everything DERIVED from the clock is placed at (they are recomputed on the app's quantized display
- * instant and could not be asked more often), but the line itself is one number and can be placed as finely
- * as the clock can be read. At the zoom ceiling an hour is [MAX_CALENDAR_ZOOM] x 48 dp, so one second is
- * ~1.7 dp: reading the line to the second there makes it advance in visible 1.7 dp jerks once a second, where
- * this places it ~0.03 dp per frame — motion, not steps. See [rememberNowLineHour] for how it is read without
- * recomposing anything.
+ * `docs/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in time"*. At
+ * the zoom ceiling an hour is [MAX_CALENDAR_ZOOM] x 48 dp, so one second is ~1.7 dp: anything read to the
+ * second there advances in visible 1.7 dp jerks once a second. That bites twice —
+ *  • the LINE, which is one number and can be placed as finely as the clock can be read: at the ceiling this
+ *    moves it ~0.03 dp per frame, motion rather than steps (see [rememberNowLineHour], and note that the
+ *    remaining pixel grid is crossed by DRAWING it sub-pixel, not by rounding to it);
+ *  • and every bound PINNED to the line, which follows it affinely (a pose the line drags, the panel growing
+ *    behind it, a live band ending at it). Those are recomputed only on the app's quantized display instant,
+ *    so their step is at most the one pixel that instant is allowed to move by — but only if the value
+ *    itself is exact. Floored to the second it was ~1.7 dp at the ceiling instead, whatever the resample did.
+ *
+ * A `Float` around 24 steps by ~7 ms, which is under 0.01 dp at that ceiling — fine for a band, not for the
+ * line (which accumulates the multiply), so the line keeps the `Double` all the way to the pixel.
  */
 internal fun LocalTime.hourOfDayExact(): Double = toNanosecondOfDay() / 3_600_000_000_000.0
+
+/**
+ * Where the now-line is drawn, in pixels down from the top of a day column — the one arithmetic step between
+ * [hourOfDayExact] and the screen, kept out of the composable so it can be pinned by a test.
+ *
+ * It returns a `Float` and NOT an `Int` on purpose: this is the value a `graphicsLayer` translation takes,
+ * and its fractional part is the whole of the line's continuity below one pixel. Rounding here is what made
+ * the line advance in whole-pixel jumps — at the default zoom one every ~75 s, at the ceiling about two a
+ * second — where the clock behind it had been exact since it was frame-sampled.
+ *
+ * The product is taken in `Double` because at the zoom ceiling it is ~150 000 px: a `Float` hour would step
+ * by ~7 ms of travel before the multiply ever reached the pixel grid.
+ */
+internal fun Density.nowLineOffsetPx(hourHeight: Dp, hour: Double): Float =
+    (hourHeight.toPx().toDouble() * hour).toFloat()
 
 /**
  * PRD §8: the portions of [records] that fall on [day] (in [tz]), each clipped to that day so a
@@ -558,13 +583,19 @@ fun recordsForDay(
         val start = Instant.fromEpochMilliseconds(record.range.startEpochMillis).toLocalDateTime(tz)
         val end = Instant.fromEpochMilliseconds(record.range.endEpochMillis).toLocalDateTime(tz)
         if (start.date > day || end.date < day) return@mapNotNull null
-        // Seconds are kept (not just hour+minute): a sub-minute look-away (e.g. a 20-s screen break that
-        // stays within one minute) would otherwise collapse to startHour == endHour, giving its band a
-        // zero-length span — and a zero-length range gives [bubbleHoverZones] nothing to place, so the band
-        // (drawn at [SCREEN_BREAK_MIN_HEIGHT]) would be visible but un-hoverable (no info bubble). The
-        // device-segment math below already carries seconds for the same reason.
-        val startHour = if (start.date < day) 0f else start.hour + start.minute / 60f + start.second / 3600f
-        val endHour = if (end.date > day) 24f else end.hour + end.minute / 60f + end.second / 3600f
+        // Placed at the FULL resolution of the instant ([hourOfDayExact]), not floored to the second. Two
+        // reasons, one of which only shows up at the zoom the ceiling exists for:
+        //  • a sub-minute look-away (a 20-s screen break inside one minute) must not collapse to
+        //    startHour == endHour — a zero-length range gives [bubbleHoverZones] nothing to place, so the
+        //    band (drawn at [SCREEN_BREAK_MIN_HEIGHT]) would be visible but un-hoverable;
+        //  • a bound PINNED to the now-line (a pose the line drags starts at `t_p + 1`, the panel behind it
+        //    ends at `t_p`) moves with the line, and flooring it to the second makes it move ONE SECOND AT A
+        //    TIME. At the zoom ceiling (128 x 48 dp per hour) a second is ~1.7 dp, so the band the line drags
+        //    advanced in visible 1.7 dp jerks while the line beside it glided — the reported anomaly. Read
+        //    off the nanosecond-of-day the step is the `Float`'s own (~7 ms around hour 24, i.e. ~0.01 dp at
+        //    that same ceiling), which is comfortably under a pixel at every zoom.
+        val startHour = if (start.date < day) 0f else start.time.hourOfDayExact().toFloat()
+        val endHour = if (end.date > day) 24f else end.time.hourOfDayExact().toFloat()
         // PRD §14/§15/§18: reminders and alarm rings (zero-duration) render as fixed-height markers and
         // screen breaks (down to sub-minute durations) as min-height bands, so keep them even though the
         // block path would drop a ~zero-height period.
@@ -577,8 +608,8 @@ fun recordsForDay(
                 val s = Instant.fromEpochMilliseconds(seg.startMillis).toLocalDateTime(tz)
                 val e = Instant.fromEpochMilliseconds(seg.endMillis).toLocalDateTime(tz)
                 if (s.date > day || e.date < day) return@mapNotNull null
-                val sh = if (s.date < day) 0f else s.hour + s.minute / 60f + s.second / 3600f
-                val eh = if (e.date > day) 24f else e.hour + e.minute / 60f + e.second / 3600f
+                val sh = if (s.date < day) 0f else s.time.hourOfDayExact().toFloat()
+                val eh = if (e.date > day) 24f else e.time.hourOfDayExact().toFloat()
                 if (eh <= sh) null else PlacedDeviceSegment(sh.coerceIn(0f, 24f), eh.coerceIn(0f, 24f), seg.devices)
             }
         val dayStartHour = startHour.coerceIn(0f, 24f)
@@ -2553,7 +2584,7 @@ fun CalendarFloatingWindow(
      * [nowMillis] is the app's QUANTIZED display instant: every band, panel and projection on this calendar is
      * derived from it, so it may only move as often as those derivations can afford to be redone. The LINE is
      * not one of those derivations — it is one number — so it is sampled on the frame clock and read back in
-     * the LAYOUT phase, which re-places it every frame while recomposing nothing (see [rememberNowLineHour]).
+     * the DRAW phase, which re-draws it every frame while recomposing nothing (see [rememberNowLineHour]).
      * Defaults to the quantized instant, which is what a caller with no clock to hand (a test, a preview) gets.
      */
     nowExactMillis: () -> Long = { nowMillis },
@@ -3155,7 +3186,7 @@ private fun WeekView(
      * [nowMillis] is the app's QUANTIZED display instant: every band, panel and projection on this calendar is
      * derived from it, so it may only move as often as those derivations can afford to be redone. The LINE is
      * not one of those derivations — it is one number — so it is sampled on the frame clock and read back in
-     * the LAYOUT phase, which re-places it every frame while recomposing nothing (see [rememberNowLineHour]).
+     * the DRAW phase, which re-draws it every frame while recomposing nothing (see [rememberNowLineHour]).
      * Defaults to the quantized instant, which is what a caller with no clock to hand (a test, a preview) gets.
      */
     nowExactMillis: () -> Long = { nowMillis },
@@ -3839,9 +3870,11 @@ private fun DayHeader(
  *
  * They are two. The app's `nowMillis` is QUANTIZED — every band, panel, projection and cull is a function of
  * it, and those can only be redone a few times a second. The line is one number, so it is sampled here on
- * every frame and read back in the LAYOUT phase (`Modifier.offset { … }`), which re-places it without
- * recomposing, without re-measuring and without touching a single derivation. A moving line costs a frame; it
- * does not have to cost a recomposition.
+ * every frame and read back in the DRAW phase (`Modifier.graphicsLayer { translationY = … }`), which re-draws
+ * it without recomposing, without re-measuring, without re-placing and without touching a single derivation.
+ * A moving line costs a frame; it does not have to cost a recomposition. The layer is also what lets it be
+ * placed BETWEEN pixels ([nowLineOffsetPx]) — `offset { IntOffset(…) }` is integers, and a glide rounded to
+ * the pixel grid is not a glide, it is a jump held still for 75 s.
  *
  * [sampling] is what keeps it honest about energy: the caller passes `true` only while the line is actually on
  * screen, so a column that is not today's — or a grid scrolled to another week, or a closed calendar — asks
@@ -3967,7 +4000,7 @@ private fun DayColumn(
     // instant, or the line is not the one on screen"):
     //  • [nowHour] — the QUANTIZED display instant, in composition. It decides what EXISTS: whether this
     //    column carries a line at all, whether it is scrolled into view, which tags are overdue.
-    //  • [nowLineHour] — the exact clock, sampled per frame and read back in the LAYOUT phase. It decides
+    //  • [nowLineHour] — the exact clock, sampled per frame and read back in the DRAW phase. It decides
     //    only WHERE those elements are placed, which is the half that has to be continuous.
     val nowHour = now?.hourOfDay()
     val nowLineOnScreen = nowHour != null && onScreen(nowHour, nowHour)
@@ -4626,21 +4659,36 @@ private fun DayColumn(
         // frame sampler behind [nowLineHour] runs for exactly as long as this is true, so a calendar looking
         // at next week asks for no frames at all).
         //
-        // Both offsets are LAYOUT-phase reads: the line moves by re-placing two nodes on each frame, and
-        // nothing above it is recomposed. That is the answer to "can the line move continuously without
-        // burning energy" — the redraw motion costs is unavoidable, the recomposition is not.
+        // Both offsets are DRAW-phase reads, and both are SUB-PIXEL. Two separate things buy the glide, and
+        // the second one is the one that was missing:
+        //
+        //  • sampled per frame ([rememberNowLineHour]) and read from a `graphicsLayer` block, so a new
+        //    position re-draws two nodes and recomposes, re-measures and re-places nothing — the answer to
+        //    "can the line move continuously without burning energy": the frame motion costs is unavoidable,
+        //    everything above it is not;
+        //  • placed at a FRACTIONAL pixel. `offset { IntOffset(...) }` cannot express one — `IntOffset` is
+        //    integers — so the line used to be rounded to the pixel grid, and a value that glides rounded to
+        //    the grid does not: it holds still and then jumps a whole pixel, once every 75 s at the default
+        //    zoom and about twice a second at the ceiling. "One pixel" is not "imperceptible" when it is the
+        //    only thing on screen that moves; a discrete jump is precisely what the eye is built to catch.
+        //    A float `translationY` puts it between pixels instead and Skia anti-aliases the crossing, which
+        //    is what continuous motion looks like on a discrete grid — there is no finer answer than that,
+        //    since below one pixel a display has nothing left but intensity.
+        //
+        // The multiply stays in `Double` to the last step: the offset at the zoom ceiling is ~150 000 px, and
+        // a `Float` hour-of-day around 24 would quantize the product at ~7 ms of travel all by itself.
         if (nowLineOnScreen) {
             Box(
                 modifier = Modifier
-                    .offset { IntOffset(0, (hourHeight.toPx() * nowLineHour.value).roundToInt()) }
+                    .graphicsLayer { translationY = nowLineOffsetPx(hourHeight, nowLineHour.value) }
                     .fillMaxWidth()
                     .height(2.dp)
                     .background(CalColors.now),
             )
             Box(
                 modifier = Modifier
-                    .offset {
-                        IntOffset(0, (hourHeight.toPx() * nowLineHour.value - 4.dp.toPx()).roundToInt())
+                    .graphicsLayer {
+                        translationY = nowLineOffsetPx(hourHeight, nowLineHour.value) - 4.dp.toPx()
                     }
                     .size(8.dp)
                     .clip(CircleShape)
@@ -4768,16 +4816,14 @@ private fun DayColumn(
             val stackOffset = REMINDER_TAG_HEIGHT * i
             // Culled on the quantized instant (what EXISTS), placed on the exact one (WHERE) — the same
             // split the indicator above makes, and the reason the stack never drifts off the line it is
-            // supposed to be sitting on.
+            // supposed to be sitting on. Sub-pixel for the same reason too: the stack's anchor and the line
+            // read ONE instant, so a tag rounded to the pixel grid would step off a line that no longer does.
             val y = hourHeight * (nowHour ?: 0f) + stackOffset
             if (!onScreenDp(y, y + REMINDER_TAG_HEIGHT)) return@forEachIndexed
             ReminderTag(
                 tag,
-                Modifier.offset {
-                    IntOffset(
-                        0,
-                        (hourHeight.toPx() * nowLineHour.value + stackOffset.toPx()).roundToInt(),
-                    )
+                Modifier.graphicsLayer {
+                    translationY = nowLineOffsetPx(hourHeight, nowLineHour.value) + stackOffset.toPx()
                 },
             ) { onToggleReminder(tag) }
         }

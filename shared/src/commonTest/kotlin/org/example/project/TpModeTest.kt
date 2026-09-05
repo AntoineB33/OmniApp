@@ -14,7 +14,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `side-dev/README.md` § *$t_p$ 2 modes*, **wired end to end** — the mode is decided in one place and reaches
+ * `side-dev/README.md` § *$t_p$ 3 modes*, **wired end to end** — the mode is decided in one place and reaches
  * the plan through one seam.
  *
  * The rule is the user's: mode 1 while any device of the account is unlocked, mode 2 otherwise. It used to be
@@ -140,7 +140,7 @@ class TpModeTest {
 
     @Test
     fun both_away_modes_cover_the_line_with_no_on_screen_task() {
-        // `side-dev/README.md` § *$t_p$ 2 modes*: **"Mode 2: $now line$ must be covered by the period 'no
+        // `side-dev/README.md` § *$t_p$ 3 modes*: **"Mode 2: $now line$ must be covered by the period 'no
         // on-screen task'"**, and its own example — the gap back from the last such period to $t_p$ is covered
         // by one, *"filled with tasks that have a non-zero resilience to the kind 'no on-screen task', or no
         // task if none have such resilience"*.

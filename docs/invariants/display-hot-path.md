@@ -37,8 +37,16 @@ Global rules that always apply: `CLAUDE.md`.
   - **The sampler's effect is keyed on its own TICK, never on the delay.** `App` recomposes for plenty of
     reasons that have nothing to do with the clock, and a key that moved with the answer would restart the
     sleep each time — a busy app would then never reach the end of one and the now-line would stop.
-  The line's own continuity is bought separately and for free, in the layout phase (see *Calendar* above).
+  The line's own continuity is bought separately and for free, in the draw phase (see *Calendar* above).
   Never point the two at one value again, and never put this back on a timer.
+- **Nothing the now-line drags may be read to the second, and the line may not be rounded to the pixel.**
+  Both are the same mistake as reading it to the minute was, one order of magnitude down each time, and both
+  show up only at zoom. `recordsForDay` places every block at `hourOfDayExact` (a bound pinned to the line
+  moves WITH it, so flooring it to the second makes it jump ~1.7 dp at the zoom ceiling however finely the
+  display resamples), and the line, its dot and the overdue-reminder stack are placed with a **fractional**
+  `graphicsLayer { translationY = nowLineOffsetPx(…) }` — `IntOffset` cannot carry a fraction, and a glide
+  snapped to the pixel grid is not a glide. A block's edge is still whole-pixel `Dp` geometry; that residual
+  is deliberate and ADR 0009 records what closing it would cost.
 - **What the calendar COMPOSES is bounded by the visible window too.** A day row is one whole day tall while
   the viewport is not, so every `DayColumn` culls its output to `visibleHourWindow(...)`: a record scrolled
   out of view emits no UI node. This is a frame cost, not a tick cost — every floating window shares one

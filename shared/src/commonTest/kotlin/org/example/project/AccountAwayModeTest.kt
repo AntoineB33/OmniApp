@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.example.project.scheduler.domain.DynamicPeriods
+import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.sync.NextBreakState
@@ -65,7 +66,7 @@ class AccountAwayModeTest {
         }
     }
 
-    private class Harness(var now: Long, val gateway: FakeGateway) {
+    private class Harness(var now: Long, val gateway: FakeGateway, var unlocked: Boolean = true) {
         val vm = TaskSchedulerViewModel(initial = SchedulerState.empty(), store = null, saveDispatcher = Dispatchers.Default)
         val engine =
             SchedulerEngine(
@@ -74,7 +75,7 @@ class AccountAwayModeTest {
                 scope = CoroutineScope(Dispatchers.Unconfined),
                 // Unlocked, like a machine the user leaves running while they walk off — the case the button
                 // exists for, and the one where the lock signal alone says nothing.
-                screenActive = { true },
+                screenActive = { unlocked },
                 playCue = {},
                 pauseCue = gateway,
             )
@@ -140,5 +141,76 @@ class AccountAwayModeTest {
         h.engine.setUserAway(true)
         h.goIdle()
         assertEquals(DynamicPeriods.MODE_ON_BREAK, h.engine.tpModeNow(h.now))
+    }
+
+    @Test
+    fun the_button_records_the_stretch_it_was_on_so_the_calendar_can_hatch_it() = runTest {
+        // `docs/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: the period this device is declared
+        // away for has to be COVERED BY THE TWO LAYERS on the calendar — it is a stretch where no computer and
+        // no phone of the account is unlocked, which is what a no-screen period is. The OS cannot supply it:
+        // the machine stays unlocked the whole time (`screenActive = { true }` here, which is the case the
+        // button exists for), so the engine's own record of the button is the only source there is.
+        val h = Harness(NOW, FakeGateway())
+        assertTrue(h.engine.declaredAwaySpans.value.isEmpty())
+        assertEquals(null, h.engine.declaredAwaySince.value)
+
+        // A session is open first, so the press has one to finalize: pressing the button is what makes this
+        // device read idle, and mode 3 needs the account to be.
+        h.engine.heartbeatSampleForTest(active = true, suspended = false)
+        h.now += 60_000L
+        val pressed = h.now
+        h.engine.setUserAway(true)
+        assertEquals(pressed, h.engine.declaredAwaySince.value, "the press opens the stretch at the press")
+
+        // While the button is on the stretch grows with the now-line and stops there — the live shape the
+        // calendar draws, exactly like the Inactivity tail beside it.
+        h.now += 5 * 60_000L
+        assertEquals(
+            listOf(TaskTimeRange(pressed, h.now)),
+            SchedulerDomain.declaredAwayRegions(
+                h.engine.declaredAwaySpans.value, h.engine.declaredAwaySince.value, h.now,
+            ),
+        )
+        // …and the account is in mode 3 for the whole of it, which is the correspondence the requirement
+        // states: this kind of period and mode 3 are the same set.
+        assertEquals(DynamicPeriods.MODE_ON_BREAK, h.engine.tpModeNow(h.now))
+
+        val returned = h.now
+        h.engine.setUserAway(false)
+        assertEquals(
+            listOf(TaskTimeRange(pressed, returned)),
+            h.engine.declaredAwaySpans.value,
+            "the closed stretch",
+        )
+        assertEquals(null, h.engine.declaredAwaySince.value)
+        // Back at the screen: the hatch stays where it happened and grows no further (the past is frozen).
+        h.now += 60_000L
+        assertEquals(
+            listOf(TaskTimeRange(pressed, returned)),
+            SchedulerDomain.declaredAwayRegions(
+                h.engine.declaredAwaySpans.value, h.engine.declaredAwaySince.value, h.now,
+            ),
+        )
+    }
+
+    @Test
+    fun the_unlock_that_clears_the_button_closes_the_stretch_too() = runTest {
+        // The other of the flag's two edges (PRD §15: an unlock is the user visibly coming back). The record
+        // must close there as well, or the layer would go on hatching a machine somebody is sitting at.
+        val h = Harness(NOW, FakeGateway())
+        h.engine.setUserAway(true)
+        h.now += 2 * 60_000L
+
+        h.unlocked = false // the machine locks itself while the user is away
+        h.engine.onPlatformActivityChanged()
+        assertTrue(h.engine.userAway.value, "a lock is not a return")
+        assertEquals(NOW, h.engine.declaredAwaySince.value, "and it does not close the stretch")
+
+        h.now += 60_000L
+        val returned = h.now
+        h.unlocked = true // the user comes back and unlocks
+        h.engine.onPlatformActivityChanged()
+        assertTrue(!h.engine.userAway.value)
+        assertEquals(listOf(TaskTimeRange(NOW, returned)), h.engine.declaredAwaySpans.value)
     }
 }

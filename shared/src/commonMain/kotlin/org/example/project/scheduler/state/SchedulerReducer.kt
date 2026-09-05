@@ -82,7 +82,7 @@ object SchedulerReducer {
     var noScreenEvidence: () -> List<TaskTimeRange> = { emptyList() }
 
     /**
-     * `side-dev/README.md` § *$t_p$ 2 modes*: **which mode the now-line is in** — mode 1 while any device of
+     * `side-dev/README.md` § *$t_p$ 3 modes*: **which mode the now-line is in** — mode 1 while any device of
      * the account is unlocked, mode 2 otherwise. Read by every [SchedulerDomain.fillSchedule] call site here,
      * and by nothing else: it decides where the three dynamic periods sit relative to the line.
      *

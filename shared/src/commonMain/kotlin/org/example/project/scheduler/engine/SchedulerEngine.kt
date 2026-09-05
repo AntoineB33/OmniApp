@@ -441,6 +441,15 @@ class SchedulerEngine(
     private val _accountAway = MutableStateFlow(false)
 
     /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **is any device of the account away?** — the
+     * half of the mode-3 condition no device can answer from its own flag, exposed so the DISPLAY reads the
+     * mode off the same two facts the plan does ([liveTpMode]'s `_userAway.value || _accountAway.value`). A
+     * display reading only this device's button would draw the three dynamic periods in mode 2 while the fill
+     * placed them in mode 3, which is the one thing the single reading exists to prevent.
+     */
+    val accountAway: StateFlow<Boolean> = _accountAway.asStateFlow()
+
+    /**
      * The stretches the devices observed nobody at a screen for — the ONE reading of it in the app.
      *
      * `side-dev/README.md` § *3 Dynamic Restrictive Period*: the recurrence bars read their rest stretches out
@@ -496,6 +505,23 @@ class SchedulerEngine(
 
     /** PRD §15: whether the user declared they are away from this device (drives the left-menu button label). */
     val userAway: StateFlow<Boolean> = _userAway.asStateFlow()
+
+    // `docs/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: the CLOSED stretches this device was
+    // declared away for, and the start of the open one ([_declaredAwaySince], null while the button is off).
+    // Together they are the layer's reading of the button ([SchedulerDomain.declaredAwayRegions]): "I'm away"
+    // says this device's screen is not in use, which no OS lock log will ever show, and a stretch where it is
+    // true of every device of the account is exactly what mode 3 is — so it has to hatch, or the calendar
+    // contradicts the mode it is drawing. Appended to at the two edges the flag has ([noteAwayEdge]) and
+    // pruned to the window the no-screen evidence answers over. Runtime state like the flag itself: never
+    // persisted, never synced.
+    private val _declaredAwaySpans = MutableStateFlow<List<TaskTimeRange>>(emptyList())
+    private val _declaredAwaySince = MutableStateFlow<Long?>(null)
+
+    /** The closed "I'm away" stretches of this device — the calendar unions the open one in with the now-line. */
+    val declaredAwaySpans: StateFlow<List<TaskTimeRange>> = _declaredAwaySpans.asStateFlow()
+
+    /** The start of the open "I'm away" stretch, or null while the button is off. */
+    val declaredAwaySince: StateFlow<Long?> = _declaredAwaySince.asStateFlow()
 
     // The RAW platform lock signal ([screenActive], unmasked by the away flag or the debug leap) as of the last
     // sample — the only thing the away flag's automatic clearing is read from (see [noteScreenSignal]). A
@@ -605,7 +631,7 @@ class SchedulerEngine(
         SchedulerReducer.liveRestGap = {
             SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, clock.nowMillis())
         }
-        // `side-dev/README.md` § *$t_p$ 2 modes*: mode 1 while a device of the account is unlocked, mode 2
+        // `side-dev/README.md` § *$t_p$ 3 modes*: mode 1 while a device of the account is unlocked, mode 2
         // otherwise. Read at fill time from the same account-wide pause the calendar draws ([tpModeNow]).
         SchedulerReducer.tpMode = { tpModeNow() }
         // PRD §9 / `docs/scheduler_requirements.md` § *Progressive Calculation*: every refill materializes the
@@ -1049,6 +1075,7 @@ class SchedulerEngine(
     fun setUserAway(away: Boolean) {
         if (_userAway.value == away) return
         _userAway.value = away
+        noteAwayEdge(away)
         scope.launch {
             advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended = false)
             publishAway(away)
@@ -1123,6 +1150,7 @@ class SchedulerEngine(
         val signal = screenActive()
         val wasLocked = lastScreenSignal.getAndUpdate { signal } == false
         if (signal && wasLocked && _userAway.compareAndSet(expect = true, update = false)) {
+            noteAwayEdge(false)
             Diagnostics.log("\"I'm away\" cleared: this device was unlocked")
             // The flag is the account's business, not this device's ([publishAway]): a peer still holding the
             // account in mode 3 has to learn this device came back.
@@ -1294,7 +1322,7 @@ class SchedulerEngine(
     }
 
     /**
-     * `side-dev/README.md` § *$now line$ 2 modes*, **mode 2's own rule made a fact about the timeline**: the
+     * `side-dev/README.md` § *$now line$ 3 modes*, **mode 2's own rule made a fact about the timeline**: the
      * line was covered by "no on-screen task" at every instant of `[fromMillis, toMillis]`, so that stretch is
      * covered by one.
      *
@@ -1765,6 +1793,29 @@ class SchedulerEngine(
         }
     }
 
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: **keep this device's record of when its
+     * "I'm away" button was on** ([_declaredAwaySpans]), so the calendar layer can hatch it.
+     *
+     * The same shape as [noteTpMode] beside it and deliberately NOT the same fact: that one records the
+     * ACCOUNT's mode, this one this DEVICE's button. A layer is per device kind — an away press on the
+     * computer says nothing about the phone — and the button is what the OS cannot see, so this is the only
+     * source there is for it. The two edges are the only writers of [_userAway] ([setUserAway] and the unlock
+     * that clears it), and both call this.
+     */
+    private fun noteAwayEdge(away: Boolean) {
+        val now = clock.nowMillis()
+        val since = _declaredAwaySince.value
+        if (away) {
+            if (since == null) _declaredAwaySince.value = now
+        } else if (since != null) {
+            _declaredAwaySince.value = null
+            if (now > since) {
+                _declaredAwaySpans.value = pruneAwaySpans(_declaredAwaySpans.value + TaskTimeRange(since, now))
+            }
+        }
+    }
+
     /** The same window the no-screen evidence answers over, so neither record grows without bound. */
     private fun pruneAwaySpans(spans: List<TaskTimeRange>): List<TaskTimeRange> {
         val floor = clock.nowMillis() - NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS
@@ -1835,9 +1886,18 @@ class SchedulerEngine(
      * passes `null`, which [SchedulerDomain.observedNoScreenRegions] reads as assumed-LOCKED throughout, the
      * same default the calendar layers use. On a phone-less account that makes the intersection exactly this
      * computer's own locked spans.
+     *
+     * The user's own **"I'm away"** stretches ([SchedulerDomain.declaredAwayRegions]) join this device's
+     * history: the machine stays unlocked while the button is on, so the OS log will never show what the user
+     * has already said. It is the same answer read from the two ends, and `App.kt` hands the identical
+     * regions to the layers — one record, so the hatch and the bank cannot disagree about it.
      */
     private suspend fun readNoScreenEvidence(since: Long, until: Long): List<TaskTimeRange> {
         val own = SchedulerDomain.layerForDeviceKind(currentDeviceKind())
+        val away =
+            SchedulerDomain.declaredAwayRegions(
+                _declaredAwaySpans.value, _declaredAwaySince.value, clock.nowMillis(),
+            )
         // A query that FAILED is not evidence. `null` means "assumed locked throughout" to
         // [SchedulerDomain.observedNoScreenRegions] — the right default for the CALENDAR, where hatching a
         // stretch nobody can vouch for is honest — but the exact opposite of what the record bank needs: one
@@ -1858,10 +1918,21 @@ class SchedulerEngine(
                 runCatching { deviceLockedIntervals(since, until) }
                     .getOrNull()
                     ?.map { TaskTimeRange(it.startMillis, it.endMillis) }
-            } ?: return emptyList()
-        val computer = if (own == SchedulerDomain.ActivityLayer.NoComputerUnlocked) locked else null
-        val phone = if (own == SchedulerDomain.ActivityLayer.NoPhoneUnlocked) locked else null
-        return SchedulerDomain.observedNoScreenRegions(computer, phone, since, until)
+            }
+        // A failed scan still says nothing (`emptyList()` on the own side ⇒ an empty intersection), but it no
+        // longer silences the DECLARATION beside it: the button is the user's own statement, not a query that
+        // may time out, so it holds whether or not the log could be read.
+        if (locked == null && away.isEmpty()) return emptyList()
+        val ownLocked = locked ?: emptyList()
+        val isComputer = own == SchedulerDomain.ActivityLayer.NoComputerUnlocked
+        return SchedulerDomain.observedNoScreenRegions(
+            computerLocked = if (isComputer) ownLocked else null,
+            phoneLocked = if (isComputer) null else ownLocked,
+            sinceMillis = since,
+            untilMillis = until,
+            computerAway = if (isComputer) away else emptyList(),
+            phoneAway = if (isComputer) emptyList() else away,
+        )
     }
 
     /**

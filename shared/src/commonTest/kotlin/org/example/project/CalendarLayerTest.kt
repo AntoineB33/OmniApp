@@ -136,4 +136,77 @@ class CalendarLayerTest {
         val panels = listOf(at(0, 1), TaskTimeRange(T0 + HOUR + 30_000L, T4))
         assertTrue(SchedulerDomain.derivedInactivityBands(panels, T0, T4).isEmpty())
     }
+
+    // ----- "I'm away" is a lock the OS cannot see ------------------------------------------------------
+
+    @Test
+    fun the_away_button_hatches_its_own_device_layer_for_as_long_as_it_is_on() {
+        // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: mode 3 is "at least one device with the
+        // I'm away button clicked and all the other devices locked". The machine stays UNLOCKED while the
+        // button is on, so the OS log shows nothing at all for it — and without this the calendar would draw
+        // no layer over a stretch the now-line was in mode 3 for.
+        val away = at(1, 2)
+        assertEquals(listOf(away), regions(emptyList(), asserted = listOf(away)))
+        // It is a CLAIM, not a reading, so the sub-minute seam filter must not touch it: a 30-second away
+        // spell is 30 seconds the mode was 3 for.
+        val brief = TaskTimeRange(T0 + HOUR, T0 + HOUR + 30_000L)
+        assertEquals(listOf(brief), regions(emptyList(), asserted = listOf(brief)))
+    }
+
+    @Test
+    fun the_away_stretch_is_the_closed_episodes_plus_the_open_one_growing_with_the_now_line() {
+        val closed = listOf(at(0, 1))
+        // Button off: only what is closed.
+        assertEquals(closed, SchedulerDomain.declaredAwayRegions(closed, null, T4))
+        // Button on: the open episode reaches the now-line and no further, exactly as the live Inactivity
+        // tail does — nothing ahead of the line has happened yet.
+        assertEquals(
+            listOf(at(0, 1), at(2, 4)),
+            SchedulerDomain.declaredAwayRegions(closed, T0 + 2 * HOUR, T4),
+        )
+        // Pressed this instant: nothing has elapsed, so there is no region yet (never a zero-length band).
+        assertTrue(SchedulerDomain.declaredAwayRegions(emptyList(), T4, T4).isEmpty())
+        // Touching episodes fuse, like every other region list.
+        assertEquals(listOf(at(0, 4)), SchedulerDomain.declaredAwayRegions(listOf(at(0, 2)), T0 + 2 * HOUR, T4))
+    }
+
+    @Test
+    fun an_away_stretch_with_every_other_device_locked_is_a_no_screen_period() {
+        // The whole point, and the identity the requirement names: the period where one device is declared
+        // away and the others are locked carries BOTH layers, so it IS a no-screen period — the same set §9
+        // places the off-screen tasks in and refuses to bank an on-screen record over.
+        val away = at(1, 2)
+        assertEquals(
+            listOf(away),
+            SchedulerDomain.observedNoScreenRegions(
+                computerLocked = emptyList(), // this computer was never locked: the button is the only source
+                phoneLocked = null, // no phone can be asked ⇒ assumed locked throughout
+                sinceMillis = T0,
+                untilMillis = T4,
+                computerAway = listOf(away),
+            ),
+        )
+        // The declaration belongs to ITS OWN layer: a press on the computer says nothing about the phone, so
+        // it cannot make a no-screen period out of a stretch a phone was being used in.
+        assertTrue(
+            SchedulerDomain.observedNoScreenRegions(
+                computerLocked = emptyList(),
+                phoneLocked = emptyList(),
+                sinceMillis = T0,
+                untilMillis = T4,
+                computerAway = listOf(away),
+            ).isEmpty(),
+        )
+        // And a failed lock query does not silence it: the button is the user's own statement, not a scan.
+        assertEquals(
+            listOf(away),
+            SchedulerDomain.observedNoScreenRegions(
+                computerLocked = emptyList(),
+                phoneLocked = null,
+                sinceMillis = T0,
+                untilMillis = T4,
+                computerAway = listOf(away),
+            ),
+        )
+    }
 }

@@ -1265,6 +1265,38 @@ object SchedulerDomain {
     }
 
     /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: **the stretches the user DECLARED this
+     * device away from** — the closed episodes plus the open one growing with the now-line, the same shape
+     * [displayInactivityGaps] gives the live pause.
+     *
+     * "I'm away" is the user saying *this device's screen is not in use*, which is the sentence a LOCK says.
+     * The OS cannot see it — the machine stays unlocked — so it has to reach that device's layer some other
+     * way, and this is that way: it is unioned into the layer's ASSERTED regions ([layerRegions]) and into the
+     * no-screen reading built out of them ([observedNoScreenRegions]), never into its evidence. Both halves of
+     * that matter. It has to reach them, or the calendar contradicts the mode: mode 3 is *"at least one device
+     * with the button on and every other one locked"*, so a declared-away stretch on an otherwise locked
+     * account IS a stretch carrying both layers — a no-screen period — and the hatch has to show it. And it
+     * has to arrive as an assertion, or the seam filter ([MIN_INACTIVITY_BAND_MILLIS]) would silently drop a
+     * declaration shorter than a minute, hatching nothing over a period the mode was 3 for.
+     *
+     * Runtime state, like the flag itself ([org.example.project.scheduler.engine.SchedulerEngine.userAway]):
+     * never persisted and never synced, so a restart forgets the episodes and the layer falls back to whatever
+     * the OS history says. A PEER's declaration needs no equivalent — no channel carries a peer's lock history
+     * either, so that device's layer is already hatched across the whole window ("a device that cannot be
+     * asked was locked").
+     */
+    fun declaredAwayRegions(
+        closedSpans: List<TaskTimeRange>,
+        awaySinceMillis: Long?,
+        nowMillis: Long,
+    ): List<TaskTimeRange> {
+        val open =
+            awaySinceMillis?.takeIf { it < nowMillis }?.let { listOf(TaskTimeRange(it, nowMillis)) } ?: emptyList()
+        val all = (closedSpans + open).filter { it.endEpochMillis > it.startEpochMillis }
+        return if (all.isEmpty()) emptyList() else mergeOccupied(all)
+    }
+
+    /**
      * The start instant that a derived Inactivity/No-screen band should render as `∞` (open-ended into the
      * past), or null when none is. A derived band is open-started when **nothing precedes it** — no activity
      * session, task record, or user-authored/materialized panel begins strictly before it — so the inactivity
@@ -2340,6 +2372,13 @@ object SchedulerDomain {
      * every break — a different rule from the one this answers. The hand-drawn periods reach the bank by their
      * own route (the reducer unions them in).
      *
+     * [computerAway] / [phoneAway] are the ONE exception, and they are not an assertion in that sense: they
+     * are the stretches the USER said they were away from a device of that kind for ([declaredAwayRegions]),
+     * which is a statement that nobody was at that screen — exactly what a lock reports, and exactly what this
+     * function is asking. The rules' promises are left out because a break is not time the user was absent
+     * for; a declaration IS. They ride the asserted slot so the seam filter cannot drop a short one, and each
+     * belongs to its own layer: an away press on the computer says nothing about the phone.
+     *
      * [computerLocked] / [phoneLocked] are the OS lock/standby histories of the two device kinds over
      * `[sinceMillis, untilMillis]`, each **null when no device of that kind could tell** — and null carries the
      * same assumed-LOCKED meaning it has in [layerRegions], which is what makes a phone-less account's whole
@@ -2351,10 +2390,12 @@ object SchedulerDomain {
         phoneLocked: List<TaskTimeRange>?,
         sinceMillis: Long,
         untilMillis: Long,
+        computerAway: List<TaskTimeRange> = emptyList(),
+        phoneAway: List<TaskTimeRange> = emptyList(),
     ): List<TaskTimeRange> {
         if (untilMillis <= sinceMillis) return emptyList()
-        val computer = layerRegions(computerLocked, emptyList(), sinceMillis, untilMillis)
-        val phone = layerRegions(phoneLocked, emptyList(), sinceMillis, untilMillis)
+        val computer = layerRegions(computerLocked, computerAway, sinceMillis, untilMillis)
+        val phone = layerRegions(phoneLocked, phoneAway, sinceMillis, untilMillis)
         return intersectRegions(computer, phone)
     }
 
@@ -3473,7 +3514,7 @@ object SchedulerDomain {
         // rewrites the plan the user is already looking at; only a change to the scheduling rules
         // ([schedulingSignature]) re-plans from `now` (null).
         keepExistingUntilMillis: Long? = null,
-        // `side-dev/README.md` § *$t_p$ 2 modes*: which mode the now-line is in — mode 1 while a device of the
+        // `side-dev/README.md` § *$t_p$ 3 modes*: which mode the now-line is in — mode 1 while a device of the
         // account is unlocked, mode 2 otherwise ([tpMode] / [anyDeviceUnlockedAt]). It decides where the three
         // dynamic periods sit relative to the line and nothing else. The engine injects it through
         // `SchedulerReducer.tpMode`; the default is mode 1, which is what a shell with no device signal
@@ -3601,7 +3642,7 @@ object SchedulerDomain {
                 tasks = planTasks,
                 mode = tpMode,
             )
-        // `side-dev/README.md` § *$t_p$ 2 modes*, **mode 2**: *"$now line$ must be covered by the period 'no
+        // `side-dev/README.md` § *$t_p$ 3 modes*, **mode 2**: *"$now line$ must be covered by the period 'no
         // on-screen task'"*, and its own consequence example — *"the gap between the end of the 15min period
         // and $t_p$ is covered by a period 'no on-screen task', filled with tasks that have a non-zero
         // resilience to the kind 'no on-screen task', or no task if none have such resilience"*.

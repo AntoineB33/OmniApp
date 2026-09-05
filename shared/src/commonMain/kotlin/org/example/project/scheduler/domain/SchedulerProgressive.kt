@@ -98,7 +98,10 @@ class ProgressiveSchedule(
     var tpMillis: Long = startMillis
         private set
 
-    var mode: Int = MODE_AT_SCREEN
+    // `docs/scheduler_requirements.md` § *$now line$ 3 modes*. The vocabulary is [DynamicPeriods]' and there
+    // is no second copy of it here: this file treats the mode as opaque — it keys the regimes on it and hands
+    // it to [contextAt] — and a local set of constants is how one of the three came to be missing from it.
+    var mode: Int = DynamicPeriods.MODE_AT_SCREEN
         private set
 
     /**
@@ -332,7 +335,7 @@ class ProgressiveSchedule(
         contextAt(tpMillis, mode).windows.filter { it.endMillis == null || it.endMillis!! > ofMillis }
 
     /**
-     * `side-dev/README.md` § *now line 2 modes*: the switch is an ordinary move of the line to where it
+     * `side-dev/README.md` § *now line 3 modes*: the switch is an ordinary move of the line to where it
      * already is, so everything a move does — commit, keep or drop the chain — happens for it too.
      */
     fun setMode(mode: Int): List<PlannedRun> = advanceTo(tpMillis, mode)
@@ -455,11 +458,6 @@ class ProgressiveSchedule(
 
         /** How far ahead the rules at the line reach. */
         const val LOOKAHEAD_MILLIS: Long = 6L * 60 * 60 * 1000
-
-        /** `side-dev/README.md` § *now line 2 modes*: mode 1 is "a device of the account is unlocked". */
-        const val MODE_AT_SCREEN: Int = 1
-
-        const val MODE_AWAY: Int = 2
 
         const val DEFAULT_BUDGET_MILLIS: Long = 500L
 

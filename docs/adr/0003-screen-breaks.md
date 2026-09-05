@@ -232,6 +232,17 @@ every away edge and every sync moment. It arrives with the same reconcile-bounde
 input already carries. The engine's reading is `own || account`, and the `or` is not redundancy: the account's
 answer includes this device only once the publish has landed, and the button must work at the press, offline.
 
+**The display asks the same two questions.** `App.kt` derives its own `t_p` mode for the panels it draws, and
+until 2026-09-05 it read this device's button alone — so a peer holding the account away left the calendar in
+mode 2 dragging a pose the fill had let elapse. `SchedulerEngine.accountAway` is exposed for it and the
+reading is the engine's own, `own || account`.
+
+**And a mode-3 stretch has to be DRAWN as one.** It is a period where no computer and no phone of the account
+is unlocked, so the calendar covers it with both layers — the identity ADR 0002 is built on. One half of it is
+invisible to the OS: the away device stays unlocked, which is the whole point of the button, so the button
+feeds its own layer (`SchedulerDomain.declaredAwayRegions`, ADR 0002 § *"I'm away" is a lock the OS cannot
+see*). Mode 3 and "a stretch carrying both layers" are then the same set, which is what the spec asks for.
+
 The server keeps the mode-3 episode log the same way — from the away flags and the presence beats, never from
 a device's opinion of the mode — which is what a *waking* app reads back so its fast-forward move is walked in
 mode 3 where the account really was in it (`SchedulerEngine.awaySpansFor`, and § *the line never jumps* below).

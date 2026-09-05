@@ -89,7 +89,16 @@ identifiers, persisted keys.
   on is in mode 3, and the two would then place the three dynamic periods differently. So each device writes
   its own flag and reads back one boolean — "is any device of this account away" — on every away edge and every
   sync moment, never on a timer. The engine's reading is `own || account`: the `or` is not redundancy, it is
-  what makes the button take effect at the press, offline or before the round trip lands.
+  what makes the button take effect at the press, offline or before the round trip lands. **The display reads
+  the same two facts** (`App.kt`: `userAway || accountAway`, off `SchedulerEngine.accountAway`) — one of them
+  answering the mode differently from the fill is the calendar drawing the three dynamic periods where the
+  schedule did not put them.
+- **A mode-3 stretch is drawn as one** (ADR 0002, `docs/invariants/calendar.md`): the mode is *at least one
+  device away and every other one locked*, so every device's layer covers it and the calendar hatches BOTH —
+  which by the layers' own identity makes it a no-screen period. The away device is the half the OS cannot
+  report (its screen stays unlocked), so the button feeds that layer itself
+  (`SchedulerDomain.declaredAwayRegions`). Mode 3 and "a stretch carrying both layers" are the same set; keep
+  them so.
 - **Mode 2 is not mode 3, and the difference is the POSE.** Both cover the line with `no on-screen task`; only
   mode 3 lets a **dynamic period** cover it (`DynamicPeriods.breaksAreTakenAt`, the ONE predicate that tells
   them apart, and `lineIsCoveredAt` the one that says what they share). A locked screen says "no screen is in
