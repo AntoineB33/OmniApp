@@ -1,0 +1,8 @@
+Invariants for this directory. Paths are from the repo root; global rules are in `CLAUDE.md`.
+
+**Read before editing anything here:**
+
+- `docs/invariants/pause-cue.md`
+- `docs/invariants/sync-and-accounts.md`
+
+Reasoning and post-mortems: `docs/adr/`. Verify with `./gradlew :shared:jvmTest`.

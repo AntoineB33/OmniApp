@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-`CLAUDE.md` states the active invariants — what you must not break. These records say **why**, what was tried
+`CLAUDE.md` (global rules) and `docs/invariants/` (per subsystem) state the active invariants — what you must not break. These records say **why**, what was tried
 first, and which post-mortems produced each rule. Read the relevant one before changing a subsystem; the
 "rejected" and "post-mortem" sections exist because those mistakes were made and are tempting to remake.
 
@@ -33,5 +33,5 @@ migration history.
 
 ## Writing a new record
 
-Add a numbered file, link it from the table above, and put the one-line invariant in `CLAUDE.md`. Keep the
-invariant and the record in sync: if `CLAUDE.md` says "never X", the record says why X was tried and what broke.
+Add a numbered file, link it from the table above, and put the one-line invariant in the matching `docs/invariants/` file — or in `CLAUDE.md` if it can bite anywhere. Keep the
+invariant and the record in sync: if an invariant says "never X", the record says why X was tried and what broke.
