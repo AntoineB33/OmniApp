@@ -1590,9 +1590,9 @@ internal fun PriorityWeightWindow(
             .heightIn(max = 600.dp)
             .focusRequester(keyboardFocus)
             .focusable()
-            // PRD §4, the tree's own rule: a printable character typed on the selected row opens its Edit
-            // Mode seeded with that character. Only the rows this table owns can be typed into — a member
-            // row is a cell of the TREE, drawn here and edited there.
+            // PRD §4, the tree's own keyboard on the selected row: Delete/Backspace empties it, and a
+            // printable character opens its Edit Mode seeded with that character. Only the rows this table
+            // owns answer either — a member row is a cell of the TREE, drawn here and edited there.
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 if (event.isCtrlPressed || event.isMetaPressed || event.isAltPressed) {
@@ -1605,6 +1605,15 @@ internal fun PriorityWeightWindow(
                     tableRows.firstOrNull { priorityWeightRowId(listId, it) == selected }
                         ?: return@onPreviewKeyEvent false
                 if (!row.isOptional) return@onPreviewKeyEvent false
+                if (event.key == Key.Delete || event.key == Key.Backspace) {
+                    // PRD §4: the blank title is what deletes, so emptying the row IS removing it — the
+                    // same one intent the editor's own blank exit raises. The add row holds no task and so
+                    // has nothing to empty; the key is left unhandled there rather than swallowed.
+                    val task = row.taskId ?: return@onPreviewKeyEvent false
+                    onIntent(SchedulerIntent.SetPriorityWeightTableRow(listId, replacing = task))
+                    selectedRowId = null
+                    return@onPreviewKeyEvent true
+                }
                 // A dead key (^, ¨, ~ …) carries no character of its own, so Edit Mode opens empty and the
                 // composed letter lands in the field — the tree's reasoning, verbatim.
                 val typed =

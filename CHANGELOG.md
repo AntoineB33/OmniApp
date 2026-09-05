@@ -41,7 +41,11 @@ matches) said for a row that names an existing task instead of creating one. The
 from "already in the table" for that lookup (`eligibleWeightTableTaskIds`' `replacing`), or opening a row's
 editor blanked its colour before a key was pressed.
 
-**And the third gesture, which took the keyboard with it.** Typing a letter on the selected row must open it
+**Delete empties the selected row**, which removes it — §4's blank title read here, raising the same one
+intent the editor's blank exit does. It answers only on the rows the table owns: a member row is a cell of
+the tree, so Delete on one is left unhandled rather than deleting a task nobody opened this window to touch.
+
+**And the keyboard gestures took the focus with them.** Typing a letter on the selected row must open it
 seeded with that letter (PRD §4). With the window open that letter reached the TREE instead: a sort-2 pop-up
 is non-modal, so the tree kept the keyboard, began renaming its own selected cell — and entering Edit Mode is
 exactly what closes this window, so the keystroke aimed at the pop-up dismissed it. Non-modal is now stated

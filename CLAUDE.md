@@ -976,12 +976,17 @@ Categories, DefaultSubtree, Shortcuts, TimeSim) and every other pop-up in the ap
   `rowContent`.
 - **The gestures are the TREE'S, not this table's own**: a press **selects** the row (the add row included —
   it is the tree's empty placeholder by another name), only a **double-click on the TITLE** opens Edit Mode,
-  gated by `TaskRow`'s own `onTitle`, and **typing a printable character on the selected row opens it seeded
-  with that character** — for which the window takes the keyboard while it is open (§ *Pop-up windows*; a
-  dead key opens it empty, the tree's own reasoning). A press on a row that is not the one being edited
-  closes that editor (PRD §4 Forced Exit). The selection is one row, Compose-only (there is no move, no copy
-  and no keyboard walk here for a range to serve) — a way of looking at the table, never a fact about the
-  account.
+  gated by `TaskRow`'s own `onTitle`, **typing a printable character on the selected row opens it seeded with
+  that character** (a dead key opens it empty, the tree's own reasoning), and **Delete/Backspace empties the
+  selected row, which is what removes it** — §4's blank title, raising the same one intent the editor's own
+  blank exit does. The window takes the keyboard while it is open for those two (§ *Pop-up windows*). A press
+  on a row that is not the one being edited closes that editor (PRD §4 Forced Exit). The selection is one
+  row, Compose-only (there is no move, no copy and no keyboard walk here for a range to serve) — a way of
+  looking at the table, never a fact about the account.
+- **The keyboard reaches only the rows the TABLE owns**, exactly as the editing does: an optional row and the
+  add row. A member row is a cell of the tree, drawn here and edited there, so Delete on one is left
+  unhandled rather than deleting a task nobody opened this window to touch — and the add row holds no task,
+  so Delete there is unhandled too rather than swallowed.
 - **A row being typed into takes the colour of the task the draft RESOLVES to**, and none while it resolves
   to nothing. In the tree every keystroke commits the title, so a cell wears its task's colour as it is
   named; a weight-table row names an **existing** task and creates none, so the nearest true answer is the

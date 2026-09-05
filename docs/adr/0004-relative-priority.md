@@ -241,6 +241,10 @@ Two follow-ups the same day, both cases of the table answering *nearly* like the
   reasoning about this table when the whole point is that a row is a task cell — in the tree, a press on the
   empty placeholder selects it and nothing more. `TaskRow`'s own `onTitle` gate already tells a press on the
   title from one on the columns, so there was never anything to invent.
+- **Delete on the selected row empties it, which removes it.** The same rule as the editor's blank exit and
+  the same intent behind it — §4's blank title is what deletes, wherever a task cell is drawn. It reaches
+  only the rows the table owns: a member row is a cell of the tree, so Delete on one is left unhandled rather
+  than deleting a task nobody opened this window to touch.
 - **Typing on the selected row opens it, which meant taking the keyboard.** The tree's third gesture is that
   a printable character on the selected cell starts renaming it — and with the weight window open that fired
   on the *tree's* selected cell, behind the pop-up. Worse, entering Edit Mode is what closes this window, so
