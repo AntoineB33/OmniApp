@@ -28,7 +28,7 @@ class UserAwayUnlockTest {
                 clock = object : AppClock { override fun nowMillis(): Long = 9_000L },
                 scope = CoroutineScope(Dispatchers.Unconfined),
                 screenActive = { unlocked },
-                playCue = {},
+                speak = {},
             )
 
         /** Flip the OS session signal and deliver the notification the platform listener would. */

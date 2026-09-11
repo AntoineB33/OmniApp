@@ -324,7 +324,9 @@ identifiers, persisted keys.
   through the one funnel. It is **not** `screenBreak` (which means *regenerated*, and is why
   `restrictivePeriodsOf` drops those); it is the opposite. And it is not "a short `no task allowed` period":
   a 20-second Inactivity the user drew is a **pre-placed** period, which the README bars nothing after.
-- The **end** of a break is a notification, not only a voice cue.
+- The **end** of a break is a notification, not only a voice cue — as is every other thing the app says:
+  since *every notification has a voice*, "notification" and "cue" are two halves of one call and never two
+  mechanisms (§ *The Notifications switch* below).
 - A screen-break panel has **no Edit** (no editable object behind it). A sleep band's menu leads with Edit.
 
 ### Notification / voice-cue triggers
@@ -371,6 +373,24 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   the app posts goes through it — a break's start and end, "task to do now", the wind-down, an alarm, a
   chord's own receipt — so there is no exempt caller and no second gate. A mute with a list of exceptions is
   not a mute; never add the check anywhere else, and never post around it.
+- **Every notification is SPOKEN from that same call.** A notification is written for a user who is not
+  looking at OmniApp, so a silent one only reaches somebody already watching the corner it appears in. The
+  funnel posts and speaks together, from one text and at one instant — which is what makes it impossible to
+  say one thing and show another, and impossible for a new notification site to be silent by forgetting to
+  add a cue beside it. Never speak a notification anywhere but here.
+- **A phrase with a bundled recording is named, and everything else is synthesized from its own text.**
+  `notifyUser`'s `cue` parameter is passed by exactly the two notifications §15 fixes word for word (the
+  look-away's start and its resume), so those keep the shared Piper voice; every other phrase carries a task
+  title, an alarm's label or a chord and cannot be pre-rendered, so it goes to the platform synthesizer
+  ([`VoiceUtterance`], `spokenNotificationText`). Do **not** grow `VoiceCue` to try to cover them: an enum
+  that cannot say a task's name is not the funnel for a notification that must.
+- **The mute silences BOTH halves; the voice switch silences the voice alone.** `notificationsEnabled` is
+  "cancel every notification", and the loud half is not the one it may leave running. `notificationVoiceEnabled`
+  (persisted under its original key `lookAwayVoiceEnabled`) is the switch for the spoken half — with it off
+  the notifications still post, silently.
+- **The ONE voice with no notification behind it** is the pause-over cue an OS alarm fires on a phone whose
+  user has walked away from every screen (ADR 0006): there is nobody to read anything and the app is not even
+  running. Every other phrase the app speaks is a notification.
 - **The log is written BEFORE the platform call, muted or not.** The History window's **Notifications** source
   answers "what did the app decide to say", which is why it was never proof of delivery — and why the switch
   can silence the interruption without touching the record.
@@ -387,8 +407,7 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   device to say it to*, which is asked per cue, before the funnel, and decides whether the cue happens — the
   look-away's start has always been asked it. Do not fold it into `notifyUser`: an alarm rings a locked
   machine on purpose (ADR 0010), and a funnel with an exception is what this section forbids.
-- It says nothing about the **voice cues** (`lookAwayVoiceEnabled` is their switch) and nothing about the
-  **schedule**: a break still starts and ends where it did, silently.
+- It says nothing about the **schedule**: a break still starts and ends where it did, silently.
 
 ---
 

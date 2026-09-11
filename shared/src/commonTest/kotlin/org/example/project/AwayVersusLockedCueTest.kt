@@ -56,7 +56,7 @@ class AwayVersusLockedCueTest {
             deviceKind = DeviceKind.Desktop,
             // The machine stays UNLOCKED throughout — that is the case the button is for.
             screenActive = { true },
-            playCue = {},
+            speak = {},
         )
         configure(vm)
         engine.start()
@@ -92,7 +92,7 @@ class AwayVersusLockedCueTest {
             deviceKind = DeviceKind.Desktop,
             // The same absence, declared by the OS instead of by the button.
             screenActive = { unlocked },
-            playCue = {},
+            speak = {},
         )
         configure(vm)
         engine.start()

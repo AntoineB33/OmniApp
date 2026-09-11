@@ -11,6 +11,7 @@ import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.platform.VoiceCue
+import org.example.project.scheduler.platform.VoiceUtterance
 import org.example.project.scheduler.state.NotificationLogEntry
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -34,28 +35,32 @@ class NotificationLogTest {
         // The reported anomaly: "I don't see resume your work in the history notification." The look-away's
         // START posted a notification (so the column listed it) while its END only played a voice cue, which
         // writes the Diagnostics timeline and nothing else — so every break in the column began and none of
-        // them ever finished. The end now posts too; the SPOKEN half stays gated on the look-away voice switch.
-        val spoken = mutableListOf<VoiceCue>()
+        // them ever finished. Both halves now come from the one funnel — every notification the app posts
+        // is also said aloud — and the spoken half is gated on the app's voice switch alone.
+        val spoken = mutableListOf<VoiceUtterance>()
         val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
         val engine = SchedulerEngine(
             vm = vm,
             clock = object : AppClock { override fun nowMillis(): Long = 7_000L },
             scope = CoroutineScope(Dispatchers.Unconfined),
             screenActive = { true },
-            playCue = { spoken.add(it) },
+            speak = { spoken.add(it) },
         )
 
-        engine.announceResumeWork(voice = true)
+        engine.announceResumeWork()
         assertEquals(
             NotificationLogEntry(7_000L, "Screen break over", "Resume your work"),
             vm.state.value.notificationLog.single(),
         )
-        assertEquals(listOf(VoiceCue.ResumeWork), spoken)
+        // Spoken off the BUNDLED recording rather than re-synthesized from the notification's text: this
+        // is one of the two phrases PRD §15 fixes word for word.
+        assertEquals(listOf(VoiceUtterance.of(VoiceCue.ResumeWork)), spoken)
 
-        // Voice off: still logged (like the break's start, whose notification the switch doesn't gate).
-        engine.announceResumeWork(voice = false)
+        // Voice off: still posted and still logged, just not said.
+        vm.dispatch(SchedulerIntent.SetNotificationVoice(enabled = false))
+        engine.announceResumeWork()
         assertEquals(2, vm.state.value.notificationLog.size)
-        assertEquals(listOf(VoiceCue.ResumeWork), spoken)
+        assertEquals(listOf(VoiceUtterance.of(VoiceCue.ResumeWork)), spoken)
     }
 
     /**
@@ -77,7 +82,7 @@ class NotificationLogTest {
             clock = clock,
             scope = backgroundScope,
             screenActive = { true },
-            playCue = {},
+            speak = {},
         )
         // `side-dev/README.md`: where the break falls is the recurrence bars' answer, not an anchor's — so
         // the instant to cross is read off the placement itself, which is exactly what the cue keys on.

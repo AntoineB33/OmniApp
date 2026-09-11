@@ -775,10 +775,11 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §15 Screen breaks: enable/disable the spoken voice cue for the 20s look-away pause. Persisted; not
-     * undoable; does not touch the schedule.
+     * PRD §11/§15: enable/disable the app's VOICE — the spoken half of every notification it posts (see
+     * [org.example.project.scheduler.state.SchedulerState.notificationVoiceEnabled]). Persisted; not
+     * undoable; does not touch the schedule, and leaves the notifications themselves posting.
      */
-    data class SetLookAwayVoice(
+    data class SetNotificationVoice(
         val enabled: Boolean,
     ) : SchedulerIntent
 
@@ -787,7 +788,7 @@ sealed interface SchedulerIntent {
      * switch and the `Ctrl+Shift+Alt+N` chord, which are the same lever from two places.
      *
      * Silences what the app *posts* and nothing else: the notification log keeps every entry (so the History
-     * window's Notifications column is unchanged), the voice cues have their own switch, and the schedule is
+     * window's Notifications column is unchanged), the voice has its own switch too, and the schedule is
      * untouched. See [org.example.project.scheduler.state.SchedulerState.notificationsEnabled]. Persisted +
      * synced; not undoable.
      */

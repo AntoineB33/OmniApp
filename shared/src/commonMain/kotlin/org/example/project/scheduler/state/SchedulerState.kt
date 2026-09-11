@@ -604,11 +604,20 @@ data class SchedulerState(
      */
     val showReminders: Boolean = true,
     /**
-     * PRD §15 Screen breaks (20s look-away): whether the spoken voice cue is enabled — when the look-away pause
-     * is reached a voice says to look away and, at the pause's end, to resume work (in addition to the
-     * notification). On by default; persisted, not undoable.
+     * PRD §11/§15: whether the app SPEAKS. Every notification it posts is also said aloud — the task to do
+     * now, a screen break's start and end, the wind-down, an alarm, a chord's receipt — because a
+     * notification exists to reach a user who is not looking at OmniApp, and one that only appears in a
+     * corner of a screen they are not watching does not.
+     *
+     * The phrase is the notification's own text, except for the two cues PRD §15 fixes word for word (the
+     * look-away's "look 20 feet away" and its "resume your work"), which keep their pre-rendered recording.
+     *
+     * This switch governs the spoken half alone: with it off the notifications still post, silently. The
+     * account's [notificationsEnabled] governs BOTH — a mute that went on talking would not be a mute. On by
+     * default; persisted + synced (its persisted name is still `lookAwayVoiceEnabled`, which is what it was
+     * when it only governed the look-away cue), not undoable.
      */
-    val lookAwayVoiceEnabled: Boolean = true,
+    val notificationVoiceEnabled: Boolean = true,
     /**
      * PRD §11 Notifications: whether the app posts system notifications at all — the lateral menu's
      * **Notifications** switch and the system-wide `Ctrl+Shift+Alt+N` chord
@@ -616,8 +625,9 @@ data class SchedulerState(
      *
      * Off silences **every** notification the app would post, the system-wide chords' own receipts included:
      * they all funnel through `SchedulerEngine.notifyUser`, and a mute that let one class of them through
-     * would not be a mute. It says nothing about the voice cues ([lookAwayVoiceEnabled] is their switch) and
-     * nothing about the schedule — a break still starts and ends where it did, silently.
+     * would not be a mute. It silences the SPOKEN half too (every notification has a voice —
+     * [notificationVoiceEnabled] is the switch for that half alone) and says nothing about the schedule: a
+     * break still starts and ends where it did, silently.
      *
      * It never suppresses the **record**: [notificationLog] is appended before the platform call, so the
      * History window's Notifications column lists what the app decided to say whether or not the OS was told

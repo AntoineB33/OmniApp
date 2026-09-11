@@ -41,7 +41,7 @@ class NotificationMuteTest {
             clock = object : AppClock { override fun nowMillis(): Long = 4_000L },
             scope = CoroutineScope(Dispatchers.Unconfined),
             screenActive = { true },
-            playCue = {},
+            speak = {},
             postNotification = { title, message -> sink.posted.add(title to message) },
             clearNotifications = { sink.cleared++ },
         )
@@ -52,7 +52,7 @@ class NotificationMuteTest {
         val sink = Sink()
         assertTrue(vm.state.value.notificationsEnabled, "notifications ship ON")
 
-        engineWith(vm, sink).announceResumeWork(voice = false)
+        engineWith(vm, sink).announceResumeWork()
 
         assertEquals(listOf("Screen break over" to "Resume your work"), sink.posted)
         assertEquals(1, vm.state.value.notificationLog.size)
@@ -66,7 +66,7 @@ class NotificationMuteTest {
         engine.setNotificationsEnabled(false)
         sink.posted.clear()
 
-        engine.announceResumeWork(voice = false)
+        engine.announceResumeWork()
         // A chord's receipt is a notification like any other — the mute is not a list of exempt callers.
         engine.announceShortcutReceived(GlobalShortcut.LookAwayNow)
 
@@ -90,7 +90,7 @@ class NotificationMuteTest {
         val sink = Sink()
         val engine = engineWith(vm, sink)
 
-        engine.announceResumeWork(voice = false)
+        engine.announceResumeWork()
         engine.setNotificationsEnabled(false)
 
         assertEquals(1, sink.cleared)

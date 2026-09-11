@@ -102,7 +102,7 @@ class NowLineSweepTest {
                 // Awake and unlocked, which is what a machine that has just woken up reports — and what made
                 // reading the mode at the arrival answer mode 1 for the whole night.
                 screenActive = { true },
-                playCue = {},
+                speak = {},
             )
 
         /** Every position the line was seen at, with the mode it was asked in there. */

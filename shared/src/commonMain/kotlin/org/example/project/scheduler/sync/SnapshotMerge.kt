@@ -172,8 +172,11 @@ object SnapshotMerge {
                         local.shortcutBindings,
                         remote.shortcutBindings,
                     ) { bb, ll, rr -> pick(bb, ll, rr) },
-                lookAwayVoiceEnabled =
-                    pick(base.lookAwayVoiceEnabled, local.lookAwayVoiceEnabled, remote.lookAwayVoiceEnabled),
+                notificationVoiceEnabled = pick(
+                    base.notificationVoiceEnabled,
+                    local.notificationVoiceEnabled,
+                    remote.notificationVoiceEnabled,
+                ),
                 // PRD §11: the notifications switch is the account's, and an ordinary scalar beside the voice
                 // one — the notification LOG it governs is per-device and stays local either way.
                 notificationsEnabled =

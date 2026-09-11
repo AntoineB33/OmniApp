@@ -121,7 +121,7 @@ class BidirectionalSyncTest {
             // ...and exactly once: no further traffic while the app simply sits there.
             advanceUntilIdle()
             assertEquals(1, engine.reconcileCount)
-            assertEquals(true, vm.state.value.lookAwayVoiceEnabled) // untouched by the check
+            assertEquals(true, vm.state.value.notificationVoiceEnabled) // untouched by the check
         }
     }
 
@@ -139,7 +139,7 @@ class BidirectionalSyncTest {
             val afterStartup = engine.reconcileCount
 
             // An authoritative edit moves the fingerprint → exactly one auto-push reconcile after the debounce.
-            vm.dispatch(SchedulerIntent.SetLookAwayVoice(enabled = false))
+            vm.dispatch(SchedulerIntent.SetNotificationVoice(enabled = false))
             advanceUntilIdle()
             assertEquals(afterStartup + 1, engine.reconcileCount)
         }
@@ -154,9 +154,9 @@ class BidirectionalSyncTest {
             advanceUntilIdle()
             val afterStartup = engine.reconcileCount
 
-            vm.dispatch(SchedulerIntent.SetLookAwayVoice(enabled = false))
-            vm.dispatch(SchedulerIntent.SetLookAwayVoice(enabled = true))
-            vm.dispatch(SchedulerIntent.SetLookAwayVoice(enabled = false))
+            vm.dispatch(SchedulerIntent.SetNotificationVoice(enabled = false))
+            vm.dispatch(SchedulerIntent.SetNotificationVoice(enabled = true))
+            vm.dispatch(SchedulerIntent.SetNotificationVoice(enabled = false))
             advanceUntilIdle()
 
             assertEquals(afterStartup + 1, engine.reconcileCount) // one coalesced push, not three
@@ -209,11 +209,11 @@ class BidirectionalSyncTest {
             val afterStartup = engine.reconcileCount
 
             // Simulate a Realtime-driven pull landing through the engine's bound sink.
-            val remote = SchedulerStateCodec.syncFingerprint(SchedulerState.empty().copy(lookAwayVoiceEnabled = false))
+            val remote = SchedulerStateCodec.syncFingerprint(SchedulerState.empty().copy(notificationVoiceEnabled = false))
             engine.applyRemote!!(remote)
             advanceUntilIdle()
 
-            assertEquals(false, vm.state.value.lookAwayVoiceEnabled) // remote applied
+            assertEquals(false, vm.state.value.notificationVoiceEnabled) // remote applied
             // The pull reset the sync baseline and never went through the edit path — no push-back was enqueued.
             assertEquals(afterStartup, engine.reconcileCount)
         }
@@ -233,15 +233,15 @@ class BidirectionalSyncTest {
             val vm = vmOn(engine, RecordingSubscription(), dispatcher)
             advanceUntilIdle()
 
-            vm.dispatch(SchedulerIntent.SetLookAwayVoice(enabled = false))
+            vm.dispatch(SchedulerIntent.SetNotificationVoice(enabled = false))
             advanceUntilIdle()
-            assertEquals(false, vm.state.value.lookAwayVoiceEnabled)
+            assertEquals(false, vm.state.value.notificationVoiceEnabled)
 
             // Leaving the account (the store then reads the new account's — here empty — partition).
             engine.signOut()
             advanceUntilIdle()
 
-            assertEquals(true, vm.state.value.lookAwayVoiceEnabled, "the new account starts from its own data")
+            assertEquals(true, vm.state.value.notificationVoiceEnabled, "the new account starts from its own data")
         }
     }
 

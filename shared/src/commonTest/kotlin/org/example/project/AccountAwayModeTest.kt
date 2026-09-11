@@ -76,7 +76,7 @@ class AccountAwayModeTest {
                 // Unlocked, like a machine the user leaves running while they walk off — the case the button
                 // exists for, and the one where the lock signal alone says nothing.
                 screenActive = { unlocked },
-                playCue = {},
+                speak = {},
                 pauseCue = gateway,
             )
 

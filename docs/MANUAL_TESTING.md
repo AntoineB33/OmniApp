@@ -248,6 +248,24 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
   - [ ] On an AZERTY layout, `Shift+AltGr+E` still types its character (the hook must pass AltGr through).
   - [ ] `diagnostics.log` shows `global hotkeys: claim=Exclusive` at startup and one `global hotkey pressed`
         line per press (`scripts\collect-diagnostics.bat`).
+- [ ] **Every notification is spoken (PRD §11/§15).** With the lateral menu's **Voice** switch on (it ships
+      on, and is the switch that used to read "Look-away voice"), listen to each of these — the phrase must
+      match what the notification says, and arrive with it, not after it:
+  - [ ] Strike `Ctrl+Shift+Alt+E` from another application → the break is announced and the voice says
+        **"look 20 feet away"**, then **"resume your work"** twenty seconds later. These two are the
+        pre-rendered phrases: they must sound identical on the desktop and on the phone.
+  - [ ] Strike any chord (e.g. `Ctrl+Shift+Alt+Z`) → the receipt is spoken, naming the chord and what it
+        does. This is a **synthesized** phrase: on the desktop it uses Piper if
+        `%USERPROFILE%\.omniapp\piper` holds a model (same voice as the recordings) and the Windows
+        synthesizer otherwise; on the phone, its own `TextToSpeech`.
+  - [ ] Let the schedule move to another task → the **"Task to do now"** notification is spoken with the
+        task's title in it. An alarm or timer ringing speaks its label; the §17 wind-down speaks too.
+  - [ ] Turn **Voice** off → the same notifications still appear, silently, and the History window's
+        **Notifications** source still lists them. Turn it back on → they speak again. The setting survives a
+        relaunch and reaches a second device on the account.
+  - [ ] Turn **Notifications** off (with Voice on) → the app must go **completely silent**: nothing posted and
+        nothing spoken. A mute that went on talking is the failure this checks.
+  - [ ] Two notifications falling due together are spoken **one after the other**, never over each other.
 - [ ] **The Notifications switch cancels every notification (PRD §11).** With the lateral menu's
       **Notifications** switch on, hover it → the bubble names the live chord (`Ctrl+Shift+Alt+N` unless
       rebound). Then:

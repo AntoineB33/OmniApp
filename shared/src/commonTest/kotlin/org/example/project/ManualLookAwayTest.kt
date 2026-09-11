@@ -41,7 +41,7 @@ class ManualLookAwayTest {
             clock = clock,
             scope = backgroundScope,
             screenActive = { true },
-            playCue = {},
+            speak = {},
         )
         // Anchored 10 min back, so its own occurrence is not due for another 10 min: every break drawn here is
         // a manual one, and the anchor can only have moved because a manual break finished.

@@ -388,9 +388,9 @@ object SchedulerReducer {
             is SchedulerIntent.SetShowReminders ->
                 if (state.showReminders == intent.show) state
                 else state.copy(showReminders = intent.show)
-            is SchedulerIntent.SetLookAwayVoice ->
-                if (state.lookAwayVoiceEnabled == intent.enabled) state
-                else state.copy(lookAwayVoiceEnabled = intent.enabled)
+            is SchedulerIntent.SetNotificationVoice ->
+                if (state.notificationVoiceEnabled == intent.enabled) state
+                else state.copy(notificationVoiceEnabled = intent.enabled)
             is SchedulerIntent.SetNotificationsEnabled ->
                 if (state.notificationsEnabled == intent.enabled) state
                 else state.copy(notificationsEnabled = intent.enabled)

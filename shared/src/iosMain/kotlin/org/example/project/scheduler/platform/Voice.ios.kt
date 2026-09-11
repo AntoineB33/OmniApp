@@ -19,20 +19,27 @@ private val synthesizer = AVSpeechSynthesizer()
 private var currentPlayer: AVAudioPlayer? = null
 
 /**
- * PRD §15 iOS voice cue (⚠ code written on Windows, only compilable on a Mac — see docs/PAUSE_CUE_DELIVERY.md
- * step 3). Plays the same bundled Piper WAV as the other platforms via [AVAudioPlayer]; if the asset can't be
- * loaded/played it falls back to synthesizing the phrase with [AVSpeechSynthesizer].
+ * PRD §11/§15 iOS spoken output (⚠ code written on Windows, only compilable on a Mac — see
+ * docs/PAUSE_CUE_DELIVERY.md step 3). An utterance naming a [VoiceCue] plays the same bundled Piper WAV as
+ * the other platforms via [AVAudioPlayer]; one with no cue — every ordinary notification, whose text carries
+ * a task title, an alarm label or a chord — is synthesized with [AVSpeechSynthesizer], which is also the
+ * fallback when a bundled asset can't be loaded or played.
  *
  * NOTE (runtime, not compile): for audio to play while backgrounded / the ringer is silent, the app must
  * configure an AVAudioSession (playback category) + the "Audio" background mode. The pause-end cue is normally
  * delivered as a scheduled local notification (see PauseCueLocal.ios.kt), which sounds via the system.
  */
 @OptIn(ExperimentalForeignApi::class)
-actual fun playVoiceCue(cue: VoiceCue) {
+actual fun speak(utterance: VoiceUtterance) {
     scope.launch {
-        val bytes = voiceCueBytes(cue)
-        if (bytes != null && bytes.isNotEmpty() && runCatching { playData(bytes) }.getOrDefault(false)) return@launch
-        synthesizer.speakUtterance(AVSpeechUtterance.speechUtteranceWithString(cue.fallbackText))
+        val cue = utterance.cue
+        if (cue != null) {
+            val bytes = voiceCueBytes(cue)
+            if (bytes != null && bytes.isNotEmpty() && runCatching { playData(bytes) }.getOrDefault(false)) {
+                return@launch
+            }
+        }
+        synthesizer.speakUtterance(AVSpeechUtterance.speechUtteranceWithString(utterance.text))
     }
 }
 

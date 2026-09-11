@@ -11,6 +11,48 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every notification has a voice — 2026-09-11
+
+→ `shared` (`scheduler/platform/Voice.kt` + the five actuals, `scheduler/engine/SchedulerEngine.kt`,
+`scheduler/state/` + `SchedulerStateCodec.kt` + `SnapshotMerge.kt`, `ui/CalendarUi.kt`, `App.kt`);
+`docs/PRD_TaskScheduler.md` §11/§15, `docs/invariants/screen-breaks.md`. Tests: `NotificationVoiceTest`
+(new), `NotificationLogTest`, `NotificationMuteTest`, `GlobalShortcutReceiptTest`, `BidirectionalSyncTest`.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration**
+(the persisted key is deliberately unchanged, see below).
+
+Asked for as: *"Every notification must have a voice now."*
+
+**The voice moved INTO `notifyUser`, which is the whole change.** It used to be two mechanisms: the one
+funnel every notification goes through, and — beside two of the call sites — a `speakCue` that played a
+pre-rendered WAV. Everything else the app posts (the task to do now, a pose falling due, the wind-down, an
+alarm or timer, a chord's receipt, the un-mute receipt) was silent, and would have stayed silent by
+omission at every notification site added later. Now the funnel posts **and** speaks, from one text and at
+one instant, so the app cannot say one thing and show another and a new site cannot forget the voice.
+
+**A phrase with a recording is named; everything else is synthesized.** `VoiceCue` cannot grow to cover a
+notification carrying a task's title, an alarm's label or a chord, so the seam's currency is now a
+`VoiceUtterance` — a phrase, plus the cue whose bundled WAV records it when one does. The two phrases PRD
+§15 fixes word for word (the look-away's "look 20 feet away" and its "resume your work") pass their cue and
+keep the shared Piper voice; the rest go to the platform synthesizer: Piper → SAPI on the desktop (the live
+path that was already there as the bundled asset's fallback), `TextToSpeech` on Android (new, and the only
+thing on a phone that can say a phrase nobody pre-rendered), `AVSpeechSynthesizer` on iOS. One worker, one
+queue, one `stopSpeaking` as before. `spokenNotificationText` turns the two read-me fields into a sentence
+— line breaks end sentences, a spaced em dash becomes the comma a reader hears there, a message already
+opening with its title does not say it twice.
+
+**The two switches keep their jobs, and the mute grew the louder half.** `notificationsEnabled` silences
+**both** halves — a mute that went on talking would not be one — while the voice switch silences the voice
+alone, leaving the notifications posting silently. That switch is no longer the look-away cue's: it is the
+app's, renamed `notificationVoiceEnabled` and relabelled **"Voice"** in the lateral menu. Its **persisted
+and wire key stays `lookAwayVoiceEnabled`**: renaming it would make an older build on the same account read
+a new payload as "voice on" and hand nothing back, which is a real regression for no gain a comment cannot
+give. The History column is untouched by any of it — it still records what the app decided to say, muted or
+not, which is why it was never proof of delivery.
+
+The one voice with no notification behind it is unchanged: the pause-over cue an OS alarm fires on a phone
+whose user has walked away from every screen (ADR 0006), where there is nobody to read anything and the app
+is not even running.
+
 ### A resize cursor that names the SIDE it would take — 2026-09-11
 
 → `shared` (`ui/PlatformCursor.kt` + the five actuals, `ui/CalendarUi.kt`); `docs/PRD_TaskScheduler.md` §8,

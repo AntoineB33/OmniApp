@@ -69,33 +69,39 @@ private fun piperModel(): File? {
 }
 
 /**
- * PRD §15 voice cue on the desktop. Plays the **bundled** pre-rendered Piper WAV for [cue] (the shared asset
- * every platform now uses, so desktop and phone speak the identical voice). If the asset can't be loaded or
- * played, it falls back to synthesizing the phrase **live** — Piper (`scripts/setup-piper.ps1`), then the
- * Windows SAPI synthesizer — so cues still work even without the bundled resource.
+ * PRD §11/§15 spoken output on the desktop. An utterance that names a [VoiceCue] plays that cue's **bundled**
+ * pre-rendered Piper WAV (the shared asset every platform uses, so desktop and phone speak the identical
+ * voice for the fixed phrases); one that does not — every ordinary notification, whose text carries a task
+ * title, an alarm label or a chord and so can never be pre-rendered — is synthesized **live**: Piper
+ * (`scripts/setup-piper.ps1`) first, then the Windows SAPI synthesizer. A bundled cue that cannot be loaded
+ * or played falls through to the same live path, so a missing asset costs the voice nothing.
  *
- * Enqueued on [speechQueue] so it never blocks the UI and cues are serialized; the whole body runs on the
- * worker and blocks until the clip finishes so the next cue does not start mid-sentence. The cue captures
+ * Enqueued on [speechQueue] so it never blocks the UI and utterances are serialized; the whole body runs on
+ * the worker and blocks until the clip finishes so the next one does not start mid-sentence. It captures
  * [speechGeneration] at submit time and bails if a [stopSpeaking] has since superseded it.
  */
-actual fun playVoiceCue(cue: VoiceCue) {
+actual fun speak(utterance: VoiceUtterance) {
     val generation = speechGeneration.get()
     speechQueue.execute {
-        if (generation != speechGeneration.get()) return@execute // superseded before this cue started
-        val bytes = runCatching { runBlocking { voiceCueBytes(cue) } }.getOrNull()
-        val played = bytes != null && runCatching { playWavBytes(bytes, generation) }.getOrDefault(false)
-        if (played || generation != speechGeneration.get()) return@execute
-        // Bundled asset missing/unplayable: synthesize the phrase live so the cue still speaks.
-        val spoke = runCatching { speakWithPiper(cue.fallbackText, generation) }.getOrDefault(false)
+        if (generation != speechGeneration.get()) return@execute // superseded before this utterance started
+        val cue = utterance.cue
+        if (cue != null) {
+            val bytes = runCatching { runBlocking { voiceCueBytes(cue) } }.getOrNull()
+            val played = bytes != null && runCatching { playWavBytes(bytes, generation) }.getOrDefault(false)
+            if (played || generation != speechGeneration.get()) return@execute
+        }
+        // No bundled recording for this phrase (the ordinary case), or the asset was missing/unplayable:
+        // synthesize it live so the utterance still speaks.
+        val spoke = runCatching { speakWithPiper(utterance.text, generation) }.getOrDefault(false)
         if (!spoke && generation == speechGeneration.get()) {
-            runCatching { speakWithSapi(cue.fallbackText) }
+            runCatching { speakWithSapi(utterance.text) }
         }
     }
 }
 
 /**
- * PRD §15 (20s look-away): cut the cue currently playing and drop every cue still queued. Bumps
- * [speechGeneration] (so a queued cue that has already been dequeued onto the worker no-ops), clears the
+ * PRD §15 (20s look-away): cut the utterance currently playing and drop every one still queued. Bumps
+ * [speechGeneration] (so a queued utterance already dequeued onto the worker no-ops), clears the
  * pending queue, then stops the live audio line / synth process so an in-progress utterance ends at once.
  */
 actual fun stopSpeaking() {

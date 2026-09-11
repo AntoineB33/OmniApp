@@ -28,7 +28,7 @@ class GlobalShortcutReceiptTest {
             clock = object : AppClock { override fun nowMillis(): Long = 9_000L },
             scope = CoroutineScope(Dispatchers.Unconfined),
             screenActive = { true },
-            playCue = {},
+            speak = {},
         )
 
     @Test

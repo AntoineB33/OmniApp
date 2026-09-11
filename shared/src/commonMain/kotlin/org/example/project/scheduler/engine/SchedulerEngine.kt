@@ -57,7 +57,8 @@ import org.example.project.scheduler.platform.cancelSystemNotifications
 import org.example.project.scheduler.platform.sendSystemNotification
 import org.example.project.scheduler.platform.recentSleepGaps as platformRecentSleepGaps
 import org.example.project.scheduler.platform.VoiceCue
-import org.example.project.scheduler.platform.playVoiceCue as platformPlayVoiceCue
+import org.example.project.scheduler.platform.VoiceUtterance
+import org.example.project.scheduler.platform.speak as platformSpeak
 import org.example.project.scheduler.platform.stopSpeaking
 import org.example.project.scheduler.sync.DeviceHeartbeatPublisher
 import org.example.project.scheduler.sync.BreakWindow
@@ -323,11 +324,11 @@ class SchedulerEngine(
     private val deviceKind: DeviceKind = currentDeviceKind(),
     // PRD §15: whether this device's screen is active right now. Injectable for tests.
     private val screenActive: () -> Boolean = ::isScreenActive,
-    // PRD §15: the voice sink (defaults to the platform player of the bundled shared cue audio); injectable so
-    // cues are assertable in tests.
-    private val playCue: (VoiceCue) -> Unit = ::platformPlayVoiceCue,
+    // PRD §11/§15: the voice sink (defaults to the platform speaker — the bundled shared cue audio where the
+    // phrase has a recording, live synthesis otherwise); injectable so what was SAID is assertable in tests.
+    private val speak: (VoiceUtterance) -> Unit = ::platformSpeak,
     // PRD §11: the notification sink and the "withdraw what is already showing" seam (default to the platform
-    // notifier); injectable for the same reason [playCue] is — what the app POSTED is otherwise unassertable,
+    // notifier); injectable for the same reason [speak] is — what the app POSTED is otherwise unassertable,
     // and the mute below is precisely a rule about that call and not about the log beside it.
     private val postNotification: (String, String) -> Unit = ::sendSystemNotification,
     private val clearNotifications: () -> Unit = ::cancelSystemNotifications,
@@ -1192,45 +1193,78 @@ class SchedulerEngine(
     // machine that went to sleep, which is a lock.
     private fun deviceUnlocked(): Boolean = !debugForcedInactive && screenActive()
 
-    // Diagnostics-instrumented seams for every user-audible output: each posted notification and played voice
-    // cue lands in the cross-device timeline with the sim instant it fired at, so "this device stayed silent
-    // through that break" is answerable from scripts/collect-diagnostics.bat instead of a live repro.
-    private fun notifyUser(title: String, message: String) {
+    /**
+     * PRD §11/§15: **post a notification and say it aloud** — the one funnel, and now the only place either
+     * half happens.
+     *
+     * Every notification the app posts has a voice. A notification exists to reach a user who is *not* looking
+     * at OmniApp — that is the whole of what it is for — and a silent one only reaches somebody already
+     * watching the corner of the screen it appears in. So the spoken half is no longer an extra bolted onto
+     * two of the cues: it comes from the same call, with the same text, at the same instant, which is what
+     * makes it impossible for the app to say one thing and show another.
+     *
+     * [cue] is the exception that proves the rule: the two notifications §15 fixes the wording of (the
+     * look-away's start and its resume) name their **pre-rendered** phrase, so those keep the bundled shared
+     * voice they have always had instead of being re-synthesized from the notification's own sentence.
+     * Everything else — "task to do now: <task>", an alarm's label, a chord's receipt — is spoken from its own
+     * text ([VoiceUtterance.forNotification]), because no enum can carry a task title.
+     *
+     * Both outputs read the same two switches, in the same order, and nothing else reads them:
+     *
+     *  * the account's **Notifications** switch silences BOTH. It is "cancel every notification", and a mute
+     *    that went on talking would not be one — the half that survived it would be the loud half.
+     *  * [SchedulerState.notificationVoiceEnabled] silences the voice alone, which is what that switch is for.
+     *
+     * The **record** is written before either call, muted or not: the History window's Notifications column
+     * answers "what did the app decide to say", which is why it was never proof of delivery.
+     *
+     * The LOCK gate is deliberately NOT here — it is asked per cue, before this funnel ([deviceUnlocked]),
+     * because an alarm rings a locked machine on purpose (ADR 0010) and a funnel with an exception is not a
+     * funnel.
+     */
+    private fun notifyUser(title: String, message: String, cue: VoiceCue? = null) {
         val now = clock.nowMillis()
+        val st = vm.state.value
         // PRD §11: the account's Notifications switch, read HERE and nowhere else — this is the one funnel
         // every notification the app posts goes through (a break's start and end, "task to do now", the
         // wind-down, an alarm, a chord's own receipt), so gating it is what makes "cancel every notification"
         // mean every one of them rather than the handful somebody remembered to guard.
-        val muted = !vm.state.value.notificationsEnabled
+        val muted = !st.notificationsEnabled
+        val utterance = VoiceUtterance.forNotification(title, message, cue)
+        val spoken = !muted && st.notificationVoiceEnabled
         Diagnostics.log(
             "notification [$title] ${message.replace('\n', ' ')} " +
                 "(sim now=${Diagnostics.formatInstant(now)})" +
-                (if (muted) " [suppressed: notifications off]" else ""),
+                (if (muted) " [suppressed: notifications off]" else "") +
+                (if (spoken) " [spoken: ${utterance.text}]" else " [voice off]"),
         )
         // Append to the History Manager's local-only Notifications column (capped, non-syncing). Written
         // whether or not the OS is told: the switch silences the interruption, never the record, so the
         // column still answers "what did the app decide to say while I had it muted".
         vm.dispatch(SchedulerIntent.RecordNotification(title, message, now))
         if (!muted) postNotification(title, message)
+        if (spoken) speak(utterance)
     }
 
+    // A voice with no notification behind it. The ONE case is the pause-over cue an OS alarm fires on a phone
+    // whose user has walked away from every screen (PRD §15, ADR 0006): there is nobody to read anything, the
+    // server already decided what to say, and the app is not even running. Every other phrase the app speaks
+    // comes from [notifyUser], because every other phrase is a notification.
     private fun speakCue(cue: VoiceCue) {
         Diagnostics.log("voice cue ${cue.name} (sim now=${Diagnostics.formatInstant(clock.nowMillis())})")
-        playCue(cue)
+        speak(VoiceUtterance.of(cue))
     }
 
     /**
      * PRD §15: announce the END of a look-away break — "resume your work".
      *
-     * Posted as a NOTIFICATION as well as spoken. The History window's Notifications column lists what the app
-     * posted, and this cue used to be voice-only ([speakCue] writes the Diagnostics timeline, not the log), so
-     * the column showed every break starting and none of them ever finishing. The spoken half stays gated on
-     * the look-away voice switch ([SchedulerState.lookAwayVoiceEnabled], captured by the caller); the
-     * notification does not, exactly as the break's own start doesn't.
+     * Posted and spoken by the one funnel, naming [VoiceCue.ResumeWork] so the phrase comes off the bundled
+     * shared recording instead of being synthesized from the notification's text: this is one of the two cues
+     * §15 fixes word for word. It used to be voice-ONLY ([speakCue] writes the Diagnostics timeline, not the
+     * log), which is why the History column once showed every break starting and none of them finishing.
      */
-    internal fun announceResumeWork(voice: Boolean) {
-        notifyUser(RESUME_WORK_TITLE, RESUME_WORK_MESSAGE)
-        if (voice) speakCue(VoiceCue.ResumeWork)
+    internal fun announceResumeWork() {
+        notifyUser(RESUME_WORK_TITLE, RESUME_WORK_MESSAGE, VoiceCue.ResumeWork)
     }
 
     /**
@@ -2184,7 +2218,6 @@ class SchedulerEngine(
                     val st = vm.state.value
                     val simNow = clock.nowMillis()
                     val speed = (clock as? SimAppClock)?.speed ?: 1.0
-                    val voice = st.lookAwayVoiceEnabled
                     // Fire/stale is decided by each crossing's REAL age ([BoundarySweep]); the scan floor (not
                     // a fixed cap off sim-now) tiles consecutive sweeps so no crossing is clipped by a jump.
                     cueSweep.beginSweep(simNow, speed, clockGeneration())
@@ -2302,6 +2335,9 @@ class SchedulerEngine(
                                             // PRD §15: a break that runs out into a period the user does
                                             // not have to be at a screen for says so, so the user knows they
                                             // need not come back at the end of it.
+                                            // Spoken as the bundled "look 20 feet away" (PRD §15 fixes
+                                            // this cue's wording), while the notification says what the
+                                            // break runs out into — the two halves of one funnel call.
                                             notifyUser(
                                                 "Screen break",
                                                 SchedulerDomain.screenBreakStartNotificationMessage(
@@ -2310,8 +2346,8 @@ class SchedulerEngine(
                                                     startMillis = start,
                                                     endMillis = end,
                                                 ),
+                                                VoiceCue.LookAway,
                                             )
-                                            if (voice) speakCue(VoiceCue.LookAway)
                                             // Resume fires at `end`: same tick if the whole break was leaped
                                             // (queued below, sorted after this start); else armed for later.
                                             if (end > simNow) pendingEnds = pendingEnds + end
@@ -2323,7 +2359,7 @@ class SchedulerEngine(
                                         if (cueSweep.realLatenessMillis(end) <= LOOK_AWAY_START_FRESH_MILLIS &&
                                             deviceUnlocked()
                                         ) {
-                                            announceResumeWork(voice)
+                                            announceResumeWork()
                                         }
                                     }
                                 }
@@ -2397,7 +2433,7 @@ class SchedulerEngine(
                                     "look-away end ${Diagnostics.formatInstant(end)} resume cue suppressed: " +
                                         "device locked at crossing",
                                 )
-                                else -> announceResumeWork(voice)
+                                else -> announceResumeWork()
                             }
                         }
                     }
@@ -2463,7 +2499,6 @@ class SchedulerEngine(
         stopSpeaking()
         pendingEnds = emptySet()
         manualLookAwayJob?.cancel()
-        val voice = st.lookAwayVoiceEnabled
         manualLookAwayJob = scope.launch {
             // The break is the full duration counted from when the user was TOLD — but the message says what
             // it runs out into (PRD §15), so the window is measured before the cue rather than after it, and
@@ -2477,8 +2512,8 @@ class SchedulerEngine(
                     startMillis = startedAt,
                     endMillis = startedAt + lookAway.durationMillis,
                 ),
+                VoiceCue.LookAway,
             )
-            if (voice) speakCue(VoiceCue.LookAway)
             val resumeAt = clock.nowMillis() + lookAway.durationMillis
             while (clock.nowMillis() < resumeAt) {
                 val speed = (clock as? SimAppClock)?.speed ?: 1.0
@@ -2502,7 +2537,7 @@ class SchedulerEngine(
                 ),
             )
             requestReschedule(clock.nowMillis())
-            announceResumeWork(voice)
+            announceResumeWork()
         }
     }
 

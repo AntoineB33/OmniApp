@@ -1470,8 +1470,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleChoresManager = { onMenuWindowClicked(FloatingWindow.Reminders) { choresManagerOpen = it } },
                     historyManagerOpen = historyManagerOpen,
                     onToggleHistoryManager = { onMenuWindowClicked(FloatingWindow.History) { historyManagerOpen = it } },
-                    lookAwayVoiceEnabled = schedulerState.lookAwayVoiceEnabled,
-                    onToggleLookAwayVoice = { vm.dispatch(SchedulerIntent.SetLookAwayVoice(it)) },
+                    notificationVoiceEnabled = schedulerState.notificationVoiceEnabled,
+                    onToggleNotificationVoice = { vm.dispatch(SchedulerIntent.SetNotificationVoice(it)) },
                     // PRD §11: the Notifications switch. Driven through the ENGINE, not straight to the
                     // reducer like the display switches above it, because switching off also withdraws the
                     // notifications the OS is already showing — see [SchedulerEngine.setNotificationsEnabled].

@@ -1028,8 +1028,8 @@ fun LateralMenu(
     away: Boolean = false,
     onToggleAway: () -> Unit = {},
     /** PRD §15 (20s look-away): whether the spoken voice cue is enabled + toggle callback. */
-    lookAwayVoiceEnabled: Boolean = true,
-    onToggleLookAwayVoice: (Boolean) -> Unit = {},
+    notificationVoiceEnabled: Boolean = true,
+    onToggleNotificationVoice: (Boolean) -> Unit = {},
     /**
      * PRD §11 Notifications: whether the app posts system notifications at all. Off silences every one of
      * them — a break's start and end, "task to do now", the wind-down, an alarm, a chord's own receipt — and
@@ -1115,19 +1115,21 @@ fun LateralMenu(
             )
         }
 
-        // PRD §15 (20s look-away): spoken voice cue on/off.
+        // PRD §11/§15: the app's VOICE on/off — every notification it posts is also spoken, so this one
+        // switch governs all of them (it used to be the 20 s look-away cue's alone, which is still the name
+        // the setting is persisted under). The notifications themselves keep posting when it is off.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Look-away voice",
+                text = "Voice",
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f),
             )
             Switch(
-                checked = lookAwayVoiceEnabled,
-                onCheckedChange = onToggleLookAwayVoice,
+                checked = notificationVoiceEnabled,
+                onCheckedChange = onToggleNotificationVoice,
             )
         }
 

@@ -89,7 +89,7 @@ It is deterministic (fixed noise seed), which is what lets `AlarmTest` assert it
 | Android | common actual is inert (`SchedulerHolder` injects `AlarmRingService` directly, so this seam must never double-ring); the service plays the cycle through a `MODE_STATIC` `AudioTrack` with `setLoopPoints(…, -1)` on `USAGE_ALARM` |
 | iOS / web | no-ops; iOS ringing still unimplemented like the rest of its push path |
 
-The desktop thread is deliberately **not** the `playVoiceCue` worker, which plays each cue to completion and so
+The desktop thread is deliberately **not** the speech worker (`speak`), which plays each utterance to completion and so
 would mute every look-away cue for the length of a long ring.
 
 Android **falls back to the device's own alarm ringtone** if the PCM track can't be created — an alarm must never
