@@ -20,12 +20,11 @@ import org.example.project.time.AppClock
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
-import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * The History Manager's local-only Notifications column: recording appends (capped at
- * [SchedulerState.MAX_NOTIFICATION_LOG], keeping the FIRST that many), the log round-trips through the codec,
+ * The History Manager's local-only Notifications column: recording appends (a rolling tail capped at
+ * [SchedulerState.MAX_NOTIFICATION_LOG], keeping the most RECENT that many), the log round-trips through the codec,
  * an old payload written before the field existed still decodes, and the log is a per-device diagnostic that
  * never affects the sync fingerprint and is carried across a remote pull.
  */
@@ -135,8 +134,11 @@ class NotificationLogTest {
     }
 
     @Test
-    fun keeps_only_the_first_max_entries() {
-        // Fill the log to the cap, then assert the next record is a no-op (same instance -> no persist/push).
+    fun keeps_only_the_most_recent_max_entries() {
+        // The reported anomaly (2026-09-11): "the last notification is from 2026-09-07 17:25:37". Nothing had
+        // stopped firing — the log was a frozen first-N audit that had reached exactly MAX_NOTIFICATION_LOG on
+        // the release account at that instant, so every RecordNotification since returned the same state and
+        // the column never listed another cue. A full log must EVICT, never refuse.
         val full =
             SchedulerState.empty().copy(
                 notificationLog =
@@ -144,12 +146,36 @@ class NotificationLogTest {
                         NotificationLogEntry(it.toLong(), "t$it", "m$it")
                     },
             )
-        val next = SchedulerReducer.reduce(full, SchedulerIntent.RecordNotification("overflow", "dropped", 9_999))
-        assertSame(full, next)
+        val next = SchedulerReducer.reduce(full, SchedulerIntent.RecordNotification("overflow", "kept", 9_999))
+
+        assertEquals(SchedulerState.MAX_NOTIFICATION_LOG, next.notificationLog.size, "the cap still holds")
+        assertEquals(
+            NotificationLogEntry(9_999, "overflow", "kept"),
+            next.notificationLog.last(),
+            "the newest notification is recorded even at the cap",
+        )
+        // The OLDEST is what the cap costs now, not the newest: t0 is gone and t1 is the new floor.
+        assertEquals("t1", next.notificationLog.first().title)
+        assertTrue(next.notificationLog.none { it.title == "t0" })
+    }
+
+    /**
+     * The heal path for a DB the old build saturated: a log loaded at (or, defensively, over) the cap keeps
+     * recording, and drains back to the cap one eviction per notification rather than being truncated wholesale.
+     */
+    @Test
+    fun a_log_persisted_over_the_cap_still_records_and_drains() {
+        val over =
+            SchedulerState.empty().copy(
+                notificationLog =
+                    (0 until SchedulerState.MAX_NOTIFICATION_LOG + 5).map {
+                        NotificationLogEntry(it.toLong(), "t$it", "m$it")
+                    },
+            )
+        val next = SchedulerReducer.reduce(over, SchedulerIntent.RecordNotification("fresh", "kept", 9_999))
+
         assertEquals(SchedulerState.MAX_NOTIFICATION_LOG, next.notificationLog.size)
-        // The earliest entries are the ones retained; the overflow one never appears.
-        assertEquals("t0", next.notificationLog.first().title)
-        assertTrue(next.notificationLog.none { it.title == "overflow" })
+        assertEquals("fresh", next.notificationLog.last().title)
     }
 
     @Test

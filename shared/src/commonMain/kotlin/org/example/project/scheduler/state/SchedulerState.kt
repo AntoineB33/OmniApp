@@ -233,9 +233,9 @@ data class HistoryUnit(
 
 /**
  * One line in the History Manager's **Notifications** column: the text of a notification the app posted,
- * with the (sim) wall-clock instant it fired at. A bounded, per-device **diagnostic** log — capped at
- * [SchedulerState.MAX_NOTIFICATION_LOG]; the app keeps the *first* that many notifications and ignores every
- * one after (a fixed audit of the earliest notifications, not a rolling tail). Derived / local-only: recorded
+ * with the (sim) wall-clock instant it fired at. A bounded, per-device **diagnostic** log — a **rolling tail**
+ * capped at [SchedulerState.MAX_NOTIFICATION_LOG]: the app keeps the most RECENT that many notifications and
+ * drops the oldest, the same shape as [SupabaseUsageEntry]. Derived / local-only: recorded
  * via the non-syncing [org.example.project.scheduler.state.SchedulerIntent.RecordNotification], stripped from
  * the sync fingerprint, and carried across a remote pull ([SchedulerState.withLocalViewStateFrom]) so a
  * peer's snapshot never overwrites it.
@@ -780,12 +780,6 @@ data class SchedulerState(
      */
     val forcedStart: ForcedTaskStart? = null,
     /**
-     * A bounded, local-only diagnostic log of the notification text the app has posted, shown as the
-     * History Manager's **Notifications** column. Capped at [MAX_NOTIFICATION_LOG] — the earliest that
-     * many entries are kept and the rest ignored (see [NotificationLogEntry]). Derived / local-only: it
-     * never affects the sync fingerprint and is never adopted from a remote pull.
-     */
-    /**
      * PRD §7 **Keyboard shortcuts**: the chord the user has bound each system-wide
      * [org.example.project.scheduler.platform.GlobalShortcut] to, set in the keyboard-shortcuts window.
      *
@@ -845,6 +839,12 @@ data class SchedulerState(
      * clears it with [SchedulerIntent.DismissCategoryRuleError].
      */
     val categoryRuleError: String? = null,
+    /**
+     * A bounded, local-only diagnostic log of the notification text the app has posted, shown as the
+     * History Manager's **Notifications** column. A **rolling tail** capped at [MAX_NOTIFICATION_LOG] — the
+     * most recent that many entries are kept and the oldest dropped (see [NotificationLogEntry]).
+     * Derived / local-only: it never affects the sync fingerprint and is never adopted from a remote pull.
+     */
     val notificationLog: List<NotificationLogEntry> = emptyList(),
     /**
      * A bounded, local-only diagnostic log of every Supabase HTTP call the app made, shown as the History
@@ -1103,15 +1103,17 @@ data class SchedulerState(
 
     companion object {
         /**
-         * Cap on [notificationLog]: the app keeps the FIRST this-many notifications and ignores every one
-         * after (see [NotificationLogEntry]). A fixed audit of the earliest notifications, not a rolling tail.
+         * Cap on [notificationLog]: a **rolling tail** — the app keeps the most RECENT this-many notifications
+         * and drops the oldest (see [NotificationLogEntry]). A running view of what the app has lately decided
+         * to say, not a frozen audit of the earliest notifications: it was the latter until 2026-09-11, which
+         * made the column stop recording for good the moment it filled.
          */
         const val MAX_NOTIFICATION_LOG = 1000
 
         /**
          * Cap on [supabaseUsageLog]: a **rolling tail** — the app keeps the most RECENT this-many calls and
-         * drops the oldest (see [SupabaseUsageEntry]). A running view of ongoing free-plan consumption, not a
-         * frozen first-N audit like [MAX_NOTIFICATION_LOG].
+         * drops the oldest (see [SupabaseUsageEntry]), the same shape as [MAX_NOTIFICATION_LOG]. A running
+         * view of ongoing free-plan consumption.
          */
         const val MAX_SUPABASE_USAGE_LOG = 2000
 

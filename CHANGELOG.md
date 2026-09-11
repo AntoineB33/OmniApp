@@ -11,6 +11,32 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Anomaly: the Notifications column stopped at 2026-09-07 17:25:37 — 2026-09-11
+
+→ `shared` (`scheduler/state/SchedulerReducer.kt`, `SchedulerState.kt`, `SchedulerIntent.kt`);
+`NotificationLogTest`.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Reported as: *"in the History window filtered for notifications, the last notification is from
+2026-09-07 17:25:37."*
+
+**Nothing had stopped firing.** `diagnostics.log` recorded notifications right through 2026-09-10 (21:36
+*Screen break over*, 21:55 the 5-min pose, 22:07 *Task to do now*). What stopped was the **record**: a
+read-only probe of the release DB decoded `notificationLog.size = 1000` — exactly `MAX_NOTIFICATION_LOG` —
+with `last = 2026-09-07 17:25:37.707`, the reported instant to the millisecond.
+
+The log was a **frozen first-N audit**: `reduceRecordNotification` returned the same state instance once the
+log was full, so the ViewModel skipped the persist and every notification after was dropped for good. That
+is not a cap, it is an **expiry date** — the column had two months of stale July rows and could never list
+another cue. It is now a **rolling tail** (keep the most recent 1000, drop the oldest), the same shape as the
+`supabaseUsageLog` beside it, which is what makes it answer the only question it is ever asked: *was the cue
+I just missed one the app decided to send?* A DB the old build saturated heals on its own, one eviction per
+notification. `RecordNotification` still never requests a server push (per-device diagnostic, unchanged).
+
+Found on the way: the `notificationLog` field's KDoc was **orphaned** — it sat above
+`globalShortcutBindings`' own KDoc, documenting nothing, while the field itself carried none. Moved onto the
+field.
+
 ### Anomaly: every picker row red under a dragged pose — 2026-09-11
 
 → `docs/invariants/screen-breaks.md`, `docs/invariants/shortcuts.md`. `shared`

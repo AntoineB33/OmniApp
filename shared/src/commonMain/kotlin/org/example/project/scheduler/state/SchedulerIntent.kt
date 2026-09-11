@@ -1222,7 +1222,8 @@ sealed interface SchedulerIntent {
      * Append a posted notification's text to the local-only diagnostic log shown in the History Manager's
      * Notifications column. Dispatched by [org.example.project.scheduler.engine.SchedulerEngine.notifyUser]
      * every time a system notification is shown. Non-syncing (derived, per-device) and capped at
-     * [org.example.project.scheduler.state.SchedulerState.MAX_NOTIFICATION_LOG] — a no-op once full.
+     * [org.example.project.scheduler.state.SchedulerState.MAX_NOTIFICATION_LOG] — a **rolling tail**, so a
+     * full log evicts its oldest entry rather than refusing the new one.
      */
     data class RecordNotification(
         val title: String,

@@ -499,26 +499,37 @@ object SchedulerReducer {
         }
 
     /**
-     * Append a posted notification to [SchedulerState.notificationLog], keeping only the FIRST
-     * [SchedulerState.MAX_NOTIFICATION_LOG] entries. Once the log is full this is a no-op (returns the same
-     * state instance), so the ViewModel skips the persist and no further notifications are recorded.
+     * Append a posted notification to [SchedulerState.notificationLog], a **rolling tail** that keeps only the
+     * most recent [SchedulerState.MAX_NOTIFICATION_LOG] entries (drops the oldest), exactly like
+     * [reduceRecordSupabaseUsage] beside it.
+     *
+     * It was a frozen first-N audit until 2026-09-11 — once 1000 entries were in, this returned the same state
+     * instance and every notification after was dropped. That is not a cap, it is an expiry date: the column
+     * saturated on the release account at 2026-09-07 17:25:37 and would never have listed another cue, while
+     * its surviving 1000 rows aged into a two-month-stale window nobody diagnoses against. The whole point of
+     * the column is telling whether the cue the user just missed was one the app decided to send, and only the
+     * RECENT end of the log can answer that.
      */
     private fun reduceRecordNotification(
         state: SchedulerState,
         intent: SchedulerIntent.RecordNotification,
     ): SchedulerState {
-        if (state.notificationLog.size >= SchedulerState.MAX_NOTIFICATION_LOG) return state
-        return state.copy(
-            notificationLog = state.notificationLog +
-                NotificationLogEntry(intent.timeMillis, intent.title, intent.message),
-        )
+        val appended = state.notificationLog +
+            NotificationLogEntry(intent.timeMillis, intent.title, intent.message)
+        val capped =
+            if (appended.size > SchedulerState.MAX_NOTIFICATION_LOG) {
+                appended.takeLast(SchedulerState.MAX_NOTIFICATION_LOG)
+            } else {
+                appended
+            }
+        return state.copy(notificationLog = capped)
     }
 
     /**
      * Append one Supabase call to [SchedulerState.supabaseUsageLog], a **rolling tail** that keeps only the most
-     * recent [SchedulerState.MAX_SUPABASE_USAGE_LOG] entries (drops the oldest). Unlike the notification log this
-     * never saturates to a no-op — it always reflects the latest traffic — but it is likewise a per-device,
-     * non-syncing diagnostic (see [SchedulerIntent.RecordSupabaseUsage]).
+     * recent [SchedulerState.MAX_SUPABASE_USAGE_LOG] entries (drops the oldest) — the same shape as
+     * [reduceRecordNotification] beside it, and a per-device, non-syncing diagnostic just like it
+     * (see [SchedulerIntent.RecordSupabaseUsage]).
      */
     private fun reduceRecordSupabaseUsage(
         state: SchedulerState,
